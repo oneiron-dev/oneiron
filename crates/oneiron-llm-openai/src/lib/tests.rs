@@ -239,3 +239,74 @@ fn a_reply_that_names_no_finish_is_not_a_stop() {
     .expect("the reply decodes");
     assert_eq!(stopped.finish_reason, oneiron::FinishReason::Stop);
 }
+
+/// F14 H122 (Sol, round 7): a tool call this decoder could not read was
+/// dropped, and the reply decoded as a `Stop` with only its text, which the
+/// policy classifier took for a finished, tool-free answer: an Allow. A reply
+/// that asked for a tool is pending, never a verdict, so a malformed
+/// `tool_calls` field or entry fails the decode, buffered and streamed. A
+/// tool-free answer and a well-formed tool call still decode.
+#[test]
+fn a_malformed_tool_call_never_decodes_as_a_finished_answer() {
+    let allow = "{\"violation\":0,\"policy_category\":null}";
+    let buffered = |tool_calls: serde_json::Value| {
+        super::parse_openai_chat_response(&json!({ "choices": [{
+            "finish_reason": "stop",
+            "message": { "role": "assistant", "content": allow, "tool_calls": tool_calls },
+        }] }))
+    };
+    for tool_calls in [
+        json!([{ "type": "function", "function": { "name": "check_policy", "arguments": "{}" } }]),
+        json!([{ "id": "call-1", "type": "function", "function": { "arguments": "{}" } }]),
+        json!([{ "id": "call-1", "type": "function" }]),
+        json!(["call-1"]),
+        json!({ "id": "call-1", "function": { "name": "check_policy" } }),
+        json!("call-1"),
+    ] {
+        assert!(
+            buffered(tool_calls.clone()).is_err(),
+            "H122: {tool_calls} decoded as a finished, tool-free answer"
+        );
+    }
+    let streamed = |tool_calls: serde_json::Value| {
+        let mut stream = super::stream::OpenAiCompatStreamAccumulator::new();
+        stream.push_chunk(json!({
+            "choices": [{
+                "index": 0,
+                "delta": { "content": allow, "tool_calls": tool_calls },
+                "finish_reason": "stop",
+            }],
+            "usage": { "prompt_tokens": 3, "completion_tokens": 1 },
+        }))
+    };
+    for tool_calls in [
+        json!([{ "index": 0, "type": "function", "function": { "name": "check_policy", "arguments": "{}" } }]),
+        json!([{ "index": 0, "id": "call-1", "type": "function", "function": { "arguments": "{}" } }]),
+        json!({ "index": 0, "id": "call-1" }),
+        json!("call-1"),
+    ] {
+        assert!(
+            streamed(tool_calls.clone()).is_err(),
+            "H122: a streamed {tool_calls} finished as a tool-free answer"
+        );
+    }
+
+    // The controls.
+    let answer = buffered(serde_json::Value::Null).expect("a tool-free answer decodes");
+    assert_eq!(answer.finish_reason, oneiron::FinishReason::Stop);
+    let called = buffered(json!([{ "id": "call-1", "type": "function",
+        "function": { "name": "check_policy", "arguments": "{}" } }]))
+    .expect("a well-formed tool call decodes");
+    assert!(
+        called
+            .message
+            .content
+            .iter()
+            .any(|part| matches!(part, ContentPart::ToolCall { .. }))
+    );
+    assert!(
+        streamed(json!([{ "index": 0, "id": "call-1", "type": "function",
+            "function": { "name": "check_policy", "arguments": "{}" } }]))
+        .is_ok()
+    );
+}

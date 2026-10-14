@@ -168,12 +168,17 @@ pub fn parse_openai_chat_response(body: &JsonValue) -> LlmResult<LlmResponse> {
             signature: None,
         });
     }
-    if let Some(tool_calls) = message.get("tool_calls").and_then(JsonValue::as_array) {
-        for call in tool_calls {
-            if let Some(part) = parse_openai_tool_call(call) {
-                content.push(part);
+    // A reply that asked for a tool is no finished answer, however its text
+    // reads. A tool call this decoder cannot read fails the decode rather than
+    // leaving the reply looking tool-free.
+    match message.get("tool_calls") {
+        None | Some(JsonValue::Null) => {}
+        Some(JsonValue::Array(tool_calls)) => {
+            for call in tool_calls {
+                content.push(parse_openai_tool_call(call).ok_or(FatalLlmError::InvalidRequest)?);
             }
         }
+        Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
     }
 
     if content.is_empty() {

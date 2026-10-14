@@ -75,32 +75,37 @@ impl OpenAiCompatStreamAccumulator {
             {
                 events.extend(self.assembly.reasoning("reasoning-0", text, None)?);
             }
-            if let Some(tools) = delta.get("tool_calls").and_then(JsonValue::as_array) {
-                for tool in tools {
-                    let index = tool
-                        .get("index")
-                        .and_then(JsonValue::as_u64)
-                        .ok_or(FatalLlmError::InvalidRequest)?;
-                    let header = self.tools.entry(index).or_default();
-                    if let Some(id) = tool.get("id").and_then(JsonValue::as_str)
-                        && header.call_id != id
-                    {
-                        header.call_id.push_str(id);
-                    }
-                    let function = &tool["function"];
-                    if let Some(name) = function.get("name").and_then(JsonValue::as_str)
-                        && header.name != name
-                    {
-                        header.name.push_str(name);
-                    }
-                    if let Some(fragment) = function.get("arguments").and_then(JsonValue::as_str) {
-                        events.extend(self.assembly.tool(
-                            &format!("tool-{index}"),
-                            &header.call_id,
-                            &header.name,
-                            fragment,
-                        )?);
-                    }
+            // As in the buffered decoder, a tool call this decoder cannot read
+            // fails the stream rather than leaving the reply looking tool-free.
+            let tools = match delta.get("tool_calls") {
+                None | Some(JsonValue::Null) => &[][..],
+                Some(JsonValue::Array(tools)) => tools.as_slice(),
+                Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+            };
+            for tool in tools {
+                let index = tool
+                    .get("index")
+                    .and_then(JsonValue::as_u64)
+                    .ok_or(FatalLlmError::InvalidRequest)?;
+                let header = self.tools.entry(index).or_default();
+                if let Some(id) = tool.get("id").and_then(JsonValue::as_str)
+                    && header.call_id != id
+                {
+                    header.call_id.push_str(id);
+                }
+                let function = &tool["function"];
+                if let Some(name) = function.get("name").and_then(JsonValue::as_str)
+                    && header.name != name
+                {
+                    header.name.push_str(name);
+                }
+                if let Some(fragment) = function.get("arguments").and_then(JsonValue::as_str) {
+                    events.extend(self.assembly.tool(
+                        &format!("tool-{index}"),
+                        &header.call_id,
+                        &header.name,
+                        fragment,
+                    )?);
                 }
             }
         }
@@ -117,6 +122,9 @@ impl OpenAiCompatStreamAccumulator {
         match self.pending_finish.take() {
             Some(reason) => {
                 for (index, header) in &self.tools {
+                    if header.call_id.is_empty() || header.name.is_empty() {
+                        return Err(FatalLlmError::InvalidRequest.into());
+                    }
                     self.assembly.tool(
                         &format!("tool-{index}"),
                         &header.call_id,
