@@ -487,7 +487,7 @@ fn mcp_credential_gate(
     let carried = match bounds {
         McpRecordBounds::Filtered => Ok(()),
         McpRecordBounds::Born => {
-            let landing = actor.landing.clone().map_err(mcp_landing_refusal)?;
+            let landing = actor.landing.map_err(mcp_landing_refusal)?;
             auth.require_record_scope_carried(axis(actor.scope.world_ref), axis(landing))
         }
         McpRecordBounds::Unrestricted => auth.require_unrestricted_record_scope(),

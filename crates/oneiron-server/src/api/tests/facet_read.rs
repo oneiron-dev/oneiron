@@ -47,7 +47,7 @@ fn facets() -> Facets {
             .expect("onboard person");
     }
     bind_room_owner(&server, owner);
-    let room = |seed: u64| {
+    let room = |seed: u128| {
         let facet = seeded_test_entity_id(seed);
         server
             .vault
