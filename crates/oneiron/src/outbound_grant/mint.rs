@@ -76,7 +76,7 @@ impl Vault {
         intent: &ScopedMcpGrantMintIntent,
         created_at: u64,
     ) -> Result<StandingOutboundGrant> {
-        if owner.principal_ref() != intent.principal_ref {
+        if owner.principal_ref_in_txn(self, &self.store.env.read_txn()?)? != intent.principal_ref {
             return Err(Error::Gate(
                 crate::error::GateError::ConsentOwnerNotAuthenticated(
                     "scoped grant principal does not match its owner",

@@ -156,7 +156,7 @@ impl ConsentActorIdentity {
         principal_ref: &str,
         authenticated_owner: &AuthenticatedOwner,
     ) -> bool {
-        authenticated_owner.principal_ref() == principal_ref
+        authenticated_owner.names_principal(principal_ref)
             && self.authenticates_principal(principal_ref)
     }
 }

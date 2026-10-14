@@ -128,11 +128,11 @@ impl Vault {
         owner: &AuthenticatedOwner,
     ) -> Result<ProjectMintReceipt> {
         let intent = card.evaluate_action(tap, owner)?;
-        let digest = *blake3::hash(&encode(&(card, owner.actor()))?).as_bytes();
         let tap_key = *blake3::hash(card.card_id.as_bytes()).as_bytes();
         let source = EntityId::from_hex(&intent.source_message_ref).map_err(|_| invalid())?;
         let txn = self.store.env.read_txn()?;
         let actor = owner.revalidate_in_txn(self, &txn)?;
+        let digest = *blake3::hash(&encode(&(card, actor))?).as_bytes();
         if let Some(receipt) = self.project_tap_in_txn(&txn, &tap_key, &digest)? {
             return Ok(receipt);
         }

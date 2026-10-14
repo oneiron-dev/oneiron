@@ -79,6 +79,13 @@ impl AuthenticatedOwner {
         Ok(&self.principal_ref)
     }
 
+    /// Whether this proof was authenticated for `principal_ref`. A
+    /// comparison for a card with no vault at hand, never authority: the act
+    /// the card leads to revalidates the proof.
+    pub(crate) fn names_principal(&self, principal_ref: &str) -> bool {
+        self.principal_ref == principal_ref
+    }
+
     /// [`Self::revalidate_in_txn`], for a door that names its actor by
     /// principal reference.
     pub(crate) fn principal_ref_in_txn(
@@ -338,7 +345,8 @@ impl Vault {
     /// when the proof no longer holds.
     pub fn recheck_owner(&self, owner: &AuthenticatedOwner) -> Result<()> {
         let txn = self.store.env.read_txn()?;
-        owner.revalidate_in_txn(self, &txn)
+        owner.revalidate_in_txn(self, &txn)?;
+        Ok(())
     }
 
     fn is_store_truth_human_actor(&self, actor: &EntityId) -> Result<bool> {

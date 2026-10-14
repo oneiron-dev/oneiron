@@ -126,14 +126,13 @@ pub(crate) fn validate_owner_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     owner: &crate::consent::AuthenticatedOwner,
-) -> Result<()> {
+) -> Result<crate::EntityId> {
     let actor = owner.revalidate_in_txn(vault, txn)?;
     let refused = || {
         Error::Gate(crate::error::GateError::ConsentOwnerNotAuthenticated(
             "maintenance requires a live owner in this vault",
         ))
     };
-    let actor = actor;
     if !matches!(
         crate::vault::live_entity_row_in_txn(&vault.store, txn, &actor)?,
         crate::vault::LiveEntityRow::Live {
@@ -145,5 +144,5 @@ pub(crate) fn validate_owner_in_txn(
     {
         return Err(refused());
     }
-    Ok(())
+    Ok(actor)
 }

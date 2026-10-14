@@ -187,7 +187,7 @@ impl Vault {
             ConnectorSubscription {
                 version: 1,
                 agent,
-                owner: owner.actor(),
+                owner: owner.revalidate(self)?,
                 connector_key,
                 filter,
                 active: true,
@@ -215,7 +215,7 @@ impl Vault {
             return Err(invalid());
         }
         let mut row = decode_subscription(&body)?;
-        if row.owner != owner.actor() {
+        if row.owner != owner.revalidate(self)? {
             return Err(invalid());
         }
         row.active = false;
@@ -228,7 +228,7 @@ impl Vault {
         row: ConnectorSubscription,
     ) -> Result<()> {
         let envelope = WriteEnvelope::new(
-            WriteActor::new(owner.actor(), EdgeActorClass::Human),
+            WriteActor::new(owner.revalidate(self)?, EdgeActorClass::Human),
             ClaimSource::UserStated,
             WriteProvenance::new(Value::Map(vec![
                 (

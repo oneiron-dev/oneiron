@@ -67,7 +67,7 @@ impl OffRecordSession<'_> {
         if let Some(owner) = owner
             && self.room()?.is_some()
         {
-            self.require_in_room(owner.actor())?;
+            self.require_in_room(owner.actor_for_read(self.vault)?)?;
         }
         let outcome = {
             let mut state = self.recording_state()?;
@@ -138,28 +138,28 @@ impl OffRecordSession<'_> {
                 let Some(owner) = owner else {
                     return Ok(None);
                 };
-                if room.is_some() {
-                    owner.revalidate_as_vault_owner_in_txn(self.vault, wtxn)?;
+                let actor = if room.is_some() {
+                    owner.revalidate_as_vault_owner_in_txn(self.vault, wtxn)?
                 } else {
-                    owner.revalidate_in_txn(self.vault, wtxn)?;
-                }
+                    owner.revalidate_in_txn(self.vault, wtxn)?
+                };
                 if let Some(room) = room {
                     super::room::require_sight_in_txn(
                         self.vault,
                         wtxn,
                         &self.session_ref,
                         room,
-                        owner.actor(),
+                        actor,
                         &times,
                     )?;
                 }
-                Ok(Some(Hearing::in_txn(self.vault, wtxn, room)))
+                Ok(Some((actor, Hearing::in_txn(self.vault, wtxn, room))))
             })?;
-            if let (Some(owner), Some(hearing)) = (owner, hearing) {
+            if let Some((actor, hearing)) = hearing {
                 post_notice(
                     &mut state,
                     super::types::OffRecordNoticeAct::SavedTurn,
-                    owner.actor(),
+                    actor,
                     hearing,
                 );
                 self.entry.publish_state(&state);

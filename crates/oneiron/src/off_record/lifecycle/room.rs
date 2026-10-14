@@ -311,15 +311,16 @@ impl OffRecordSession<'_> {
     /// membership shows them are saved.
     pub fn save_talk_as(&self, owner: &crate::consent::AuthenticatedOwner) -> Result<SavedTurns> {
         let room = match self.room()? {
-            Some(_) => Some(self.require_in_room(owner.actor())?),
+            Some(_) => Some(self.require_in_room(owner.actor_for_read(self.vault)?)?),
             None => None,
         };
         let authority = |vault: &Vault, txn: &heed::RoTxn<'_>| {
-            owner.revalidate_as_vault_owner_in_txn(vault, txn)
+            owner.revalidate_as_vault_owner_in_txn(vault, txn).map(drop)
         };
         // Refused the same way whether or not there is anything to save yet.
-        authority(self.vault, &self.vault.store.env.read_txn()?)?;
-        self.save_talk(owner.actor(), room, authority)
+        let actor = owner
+            .revalidate_as_vault_owner_in_txn(self.vault, &self.vault.store.env.read_txn()?)?;
+        self.save_talk(actor, room, authority)
     }
 
     /// The talk so far, gathered: the messages of this stretch already in

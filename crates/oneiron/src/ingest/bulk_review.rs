@@ -58,7 +58,7 @@ impl Vault {
         validate_batch(batch)?;
         let hash = content_hash(batch)?.to_hex();
         let bound = GrantBound::action(
-            ActorBound::new(owner.actor().to_hex())?,
+            ActorBound::new(owner.revalidate(self)?.to_hex())?,
             ActionClass::new("claims.import.review")?,
             ActionEnvelope::new([
                 format!("request:{}", batch.request_id.to_hex()),

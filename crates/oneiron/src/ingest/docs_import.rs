@@ -152,7 +152,7 @@ impl Vault {
         }
         let hash = blake3::hash(&bytes).to_hex().to_string();
         let bound = GrantBound::action(
-            ActorBound::new(owner.actor().to_hex())?,
+            ActorBound::new(owner.revalidate(self)?.to_hex())?,
             ActionClass::new("docs.import")?,
             ActionEnvelope::new([
                 format!("corpus:{}", docs.corpus_id),

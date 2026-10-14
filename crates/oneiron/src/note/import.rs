@@ -180,7 +180,13 @@ impl Vault {
     /// A storage error.
     pub fn note_title_free(&self, owner: &AuthenticatedOwner, title: &str) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
-        Ok(super::title_index::holder_in_txn(&self.store, &txn, owner.actor(), title)?.is_none())
+        Ok(super::title_index::holder_in_txn(
+            &self.store,
+            &txn,
+            owner.actor_for_read(self)?,
+            title,
+        )?
+        .is_none())
     }
 
     /// The exact batch, described for one approve-once act of `owner`.
@@ -197,7 +203,7 @@ impl Vault {
     ) -> Result<ComposedEffect> {
         validate_batch(batch)?;
         let bound = GrantBound::action(
-            ActorBound::new(owner.actor().to_hex())?,
+            ActorBound::new(owner.revalidate(self)?.to_hex())?,
             ActionClass::new(REVIEW)?,
             ActionEnvelope::new([
                 format!("request:{}", batch.request_id.to_hex()),
@@ -237,9 +243,9 @@ impl Vault {
             .iter()
             .map(|note| Self::imported_note_id(&batch.folder, &note.path))
             .collect::<Result<Vec<_>>>()?;
-        let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
         self.with_write_txn(|txn| {
             let owner_actor = owner.revalidate_in_txn(self, txn)?;
+            let actor = WriteActor::new(owner_actor, EdgeActorClass::Human);
             scan_titles(&self.store, txn, batch)?;
             let receipt = self.approve_once_in_txn(txn, owner, digest)?;
             self.take_decision_slot_in_txn(txn, &slot, receipt.decision_id())?;

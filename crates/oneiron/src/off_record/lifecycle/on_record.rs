@@ -30,6 +30,8 @@ pub(crate) struct OnRecordSaver {
     /// in sits in the room's ledger. The saving is bound to that membership.
     joined: u64,
     owner: crate::consent::AuthenticatedOwner,
+    /// The owner's actor, as the flip's revalidation returned it.
+    actor: EntityId,
 }
 
 impl OnRecordSaver {
@@ -38,9 +40,8 @@ impl OnRecordSaver {
     /// ends the saving for good: joining again does not bring it back.
     pub(crate) fn holds_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
         match self.owner.revalidate_as_vault_owner_in_txn(vault, txn) {
-            Ok(()) => Ok(is_member_in_txn(vault, txn, self.room, self.owner.actor())?
-                && vault.current_join_in_txn(txn, self.room, self.owner.actor())?
-                    == Some(self.joined)),
+            Ok(actor) => Ok(is_member_in_txn(vault, txn, self.room, actor)?
+                && vault.current_join_in_txn(txn, self.room, actor)? == Some(self.joined)),
             Err(Error::Gate(_)) => Ok(false),
             Err(error) => Err(error),
         }
@@ -119,23 +120,23 @@ impl<'vault> OffRecordSession<'vault> {
     /// Once they are not, saving stops, and only a new flip starts it again.
     pub fn flip_on_record_as(&self, owner: &crate::consent::AuthenticatedOwner) -> Result<()> {
         let in_room = self.room()?.is_some();
-        {
+        let actor = {
             let txn = self.vault.store.env.read_txn()?;
             if in_room {
-                owner.revalidate_as_vault_owner_in_txn(self.vault, &txn)?;
+                owner.revalidate_as_vault_owner_in_txn(self.vault, &txn)?
             } else {
-                owner.revalidate_in_txn(self.vault, &txn)?;
+                owner.revalidate_in_txn(self.vault, &txn)?
             }
-        }
+        };
         let room = if in_room {
-            let room = self.require_in_room(owner.actor())?;
+            let room = self.require_in_room(actor)?;
             let joined = self
                 .vault
-                .current_join_in_txn(&self.vault.store.env.read_txn()?, room, owner.actor())?
+                .current_join_in_txn(&self.vault.store.env.read_txn()?, room, actor)?
                 .ok_or_else(|| {
                     Error::OffRecord(OffRecordError::OffRecordNotInRoom {
                         session_ref: self.session_ref.clone(),
-                        actor_ref: owner.actor().to_hex(),
+                        actor_ref: actor.to_hex(),
                     })
                 })?;
             Some((room, joined))
@@ -162,12 +163,13 @@ impl<'vault> OffRecordSession<'vault> {
                 room,
                 joined,
                 owner: owner.clone(),
+                actor,
             });
             let hearing = Hearing::now(self.vault, state.record.room);
             post_notice(
                 &mut state,
                 OffRecordNoticeAct::SavingFromHere,
-                owner.actor(),
+                actor,
                 hearing,
             );
             self.entry.publish_state(&state);
@@ -264,7 +266,7 @@ impl<'vault> OffRecordSession<'vault> {
         post_notice(
             &mut state,
             OffRecordNoticeAct::SavingStopped,
-            saver.owner.actor(),
+            saver.actor,
             hearing,
         );
         self.entry.publish_state(&state);
@@ -317,7 +319,7 @@ impl<'vault> OffRecordSession<'vault> {
     fn saving_stopped(&self, saver: &OnRecordSaver) -> Error {
         Error::OffRecord(OffRecordError::OffRecordSavingStopped {
             session_ref: self.session_ref.clone(),
-            saver_ref: saver.owner.actor().to_hex(),
+            saver_ref: saver.actor.to_hex(),
         })
     }
 }

@@ -221,7 +221,7 @@ impl Vault {
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
         let receipt = self.with_write_txn_grouped(|txn| {
-            super::forks::owner_in_txn(self, txn, owner)?;
+            let owner_actor = super::forks::owner_in_txn(self, txn, owner)?;
             let mut h = storage::head(&self.store, txn, entity)?;
             let doc = storage::load(&self.store, txn, &h)?;
             let applied = floor(self, txn, entity, &h.incarnation, &doc, requested)?;
@@ -257,7 +257,7 @@ impl Vault {
                 receipt: receipt_id.to_hex(),
                 entity: entity.to_hex(),
                 document: h.document,
-                actor: owner.actor().to_hex(),
+                actor: owner_actor.to_hex(),
                 requested: requested.to_vec(),
                 applied,
                 at,

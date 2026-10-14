@@ -520,7 +520,7 @@ impl Vault {
                 receipt_reasons: Vec::new(),
                 system_notices: Vec::new(),
                 actor_class: edge_actor_class_str(EdgeActorClass::Human).to_owned(),
-                actor_ref: Some(actor.to_hex()),
+                actor_ref: Some(actor.entity_ref().to_hex()),
                 content_kind: GATE_BUNDLE_CONTENT_KIND.to_owned(),
                 policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
                 claim_id: None,
