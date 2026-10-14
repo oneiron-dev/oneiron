@@ -167,6 +167,15 @@ fn waiting(vault: &crate::Vault) -> Vec<(EntityId, String, Vec<String>, [u8; 32]
         .collect()
 }
 
+/// `rows` as (claim, reasons), by claim id. A regate records a fresh
+/// decision for every row, and the tray lists by `created_at`, then decision
+/// id, so a list taken after one need not keep the order of the list before.
+fn by_claim(rows: &[(EntityId, String, Vec<String>, [u8; 32])]) -> Vec<(EntityId, Vec<String>)> {
+    let mut rows: Vec<_> = rows.iter().map(|row| (row.0, row.2.clone())).collect();
+    rows.sort_by_key(|row| row.0);
+    rows
+}
+
 fn approve(vault: &crate::Vault, id: &EntityId) -> crate::Result<()> {
     let body = vault.get_claim(id)?.expect("waiting claim");
     vault
@@ -300,13 +309,8 @@ fn waiting_consents_re_bind_and_stay_approvable() {
     assert_ne!(after, before);
     let rebound = waiting(&vault);
     assert_eq!(
-        rebound
-            .iter()
-            .map(|row| (row.0, row.2.clone()))
-            .collect::<Vec<_>>(),
-        rows.iter()
-            .map(|row| (row.0, row.2.clone()))
-            .collect::<Vec<_>>(),
+        by_claim(&rebound),
+        by_claim(&rows),
         "every row keeps the reasons it waited under"
     );
     assert!(rebound.iter().all(|row| row.3 == after));
@@ -355,11 +359,14 @@ fn a_held_correction_whose_verdict_changed_is_re_staged_and_its_grant_lands() {
         }),
         "the rows that waited: {rows:?}"
     );
-    let restaged = waiting(&vault);
+    let (rows, restaged) = (by_claim(&rows), by_claim(&waiting(&vault)));
+    assert_eq!(
+        restaged.iter().map(|row| row.0).collect::<Vec<_>>(),
+        rows.iter().map(|row| row.0).collect::<Vec<_>>()
+    );
     for (before, after) in rows.iter().zip(&restaged) {
-        assert_eq!(before.0, after.0);
         assert_eq!(
-            before.2 == after.2,
+            before.1 == after.1,
             before.0 != porto,
             "only the correction's verdict changed"
         );
