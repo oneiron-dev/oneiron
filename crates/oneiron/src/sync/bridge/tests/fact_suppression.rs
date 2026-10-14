@@ -434,12 +434,22 @@ mod removed_carriers {
         let vault = test_vault();
         let (owner, tasks) = owned_tasks_for_fact_replay(&vault, LEARNED_AT, 2);
         let fact = EntityId::now();
-        // A link to the id is local delete scope, so the delete publishes.
+        // Index residue of a row whose header is gone is local delete scope,
+        // so the delete publishes a tombstone without a header to read.
         vault
-            .batch()
-            .edge(&tasks[1].0, crate::EdgeKind::DerivedFrom, &fact, 1.0)
-            .commit()
+            .put_entity(&fact, ENTITY_TYPE_TASK, at(), LEARNED_AT, &task_body())
             .unwrap();
+        {
+            let mut wtxn = vault.store.env.write_txn().unwrap();
+            assert!(
+                vault
+                    .store
+                    .entities
+                    .delete(&mut wtxn, fact.as_bytes())
+                    .unwrap()
+            );
+            wtxn.commit().unwrap();
+        }
         let window =
             crate::deletion::window_label_from_timestamp(vault.store.clock.now_recorded_at());
         persist(
