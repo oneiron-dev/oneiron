@@ -1348,11 +1348,13 @@ fn federated_selector_guest_response_cannot_auto_approve_above_local_ceiling() {
     );
 }
 
-/// W1b T2 (H60 residue): the federated selector door refuses a client with
+/// W1b T2 (H60 residue): the federated selector doors refuse a client with
 /// no federation peer bound, whose responses would import as its own
-/// device's, as the federated import door does; the bound client's request
-/// encodes in the guest test above. The refusal records nothing: the next
-/// full-window update is untouched.
+/// device's, as the federated import door does: the request builder, and a
+/// deferred-selector reply, which would otherwise send the retry (PR review
+/// r1). The bound client's request encodes in the guest test above, and its
+/// retry here. The refusal records nothing: the next full-window update is
+/// untouched.
 #[test]
 fn selector_request_builder_refuses_an_unbound_client_and_records_nothing() {
     let manager = test_manager();
@@ -1369,6 +1371,25 @@ fn selector_request_builder_refuses_an_unbound_client_and_records_nothing() {
         .import_federated_window_update(key, &update, FederationAdmissionRole::Member)
         .expect_err("an unbound client imports nothing federated");
     assert_eq!(format!("{refused:?}"), format!("{import_refused:?}"));
+
+    let mut deferred = vec![0x5a; 32];
+    deferred.extend(
+        crate::sync::encode_selector_vv_request(&test_selector(), &VersionVector::new().encode())
+            .expect("selector request encodes"),
+    );
+    let deferred =
+        transport::encode_window_sync(key, window_sub_tags::SELECTOR_DEFERRED, &deferred)
+            .into_result()
+            .expect("deferred selector reply encodes");
+    let retry_refused = client
+        .handle_server_message(&deferred)
+        .expect_err("an unbound client sends no selector retry");
+    assert_eq!(format!("{retry_refused:?}"), format!("{refused:?}"));
+    let (mut bound, _bound_rx) = test_federated_client(&manager);
+    let retry = bound
+        .handle_server_message(&deferred)
+        .expect("a bound client retries the deferred selector");
+    assert_eq!(retry.len(), 1);
 
     let response = transport::encode_window_sync(key, window_sub_tags::UPDATE, &update)
         .into_result()
