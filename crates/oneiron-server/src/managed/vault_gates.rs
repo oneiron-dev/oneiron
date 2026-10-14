@@ -25,7 +25,7 @@ pub(super) fn provision_host_authority(
     if keystore.install_on(vault, data_dir)
         && let Err(error) = vault.provision_host_node(issuer)
     {
-        tracing::warn!(%error, "this host's node is not in the roster; serving on");
+        tracing::warn!(kind = ?error.kind(), "this host's node is not in the roster; serving on");
     }
     Ok(())
 }

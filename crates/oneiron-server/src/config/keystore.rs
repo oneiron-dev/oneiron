@@ -90,8 +90,10 @@ impl KeystoreConfig {
                 false
             }
             Err(error) => {
+                // The keystore's closed error, or none for an unresolved key
+                // directory; never the chain's text.
                 tracing::warn!(
-                    %error,
+                    reason = ?error.downcast_ref::<oneiron_keystore::KeystoreError>(),
                     "no this-device-only keystore; world-key doors are unavailable"
                 );
                 false
