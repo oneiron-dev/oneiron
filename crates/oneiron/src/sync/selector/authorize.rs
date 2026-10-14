@@ -677,7 +677,7 @@ pub(super) fn filter_window_doc(
     // authority-mode NOTE drop).
     let flagged = if withhold_device_only {
         crate::settings::device_local_worlds_at(
-            &vault.store,
+            vault,
             &rtxn,
             crate::claim::CallerLocality::OffDevice,
         )?

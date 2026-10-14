@@ -172,7 +172,7 @@ pub(super) fn scan_admitted_tasks_with_limits_in(
     scan_cap: usize,
 ) -> Result<TaskEntityPageScan> {
     let store = &vault.store;
-    let kept = crate::settings::device_local_worlds_at(store, txn, locality)?;
+    let kept = crate::settings::device_local_worlds_at(vault, txn, locality)?;
     let mut index_after = None;
     scan_task_entity_pages(page_size, scan_cap, |_, limit| {
         let mut page = Vec::new();
