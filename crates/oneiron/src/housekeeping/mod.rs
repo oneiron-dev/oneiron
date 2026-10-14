@@ -342,6 +342,12 @@ pub enum SweepOutcome {
 pub enum SweepWork {
     SecretLeases {
         expired: u64,
+        /// Files a revoke or an expiry had kept that this run removed.
+        files_removed: u64,
+        /// Files still kept: not removable yet, or not the file the vault
+        /// wrote. Retried on later runs; never a failed item, so they hold
+        /// no other lease's expiry back.
+        files_kept: u64,
     },
     CriticalConfirms {
         demoted: u64,
@@ -393,7 +399,11 @@ impl SweepWork {
     /// Whether the run found nothing to do.
     pub fn is_idle(&self) -> bool {
         match *self {
-            Self::SecretLeases { expired } => expired == 0,
+            Self::SecretLeases {
+                expired,
+                files_removed,
+                files_kept,
+            } => expired == 0 && files_removed == 0 && files_kept == 0,
             Self::CriticalConfirms { demoted, .. } => demoted == 0,
             Self::SymbolLeases { released } => released == 0,
             Self::VoicePrints { pruned } => pruned == 0,

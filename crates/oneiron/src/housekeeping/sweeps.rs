@@ -8,7 +8,9 @@
 //! document at a time, so one document that fails cannot hold the others. The
 //! rest scan their own table in one call: the lease and print sweeps when a
 //! deadline a door noted comes due and hourly besides, symbol holds every five
-//! minutes, and the erasure sweep daily, hourly while an obligation waits.
+//! minutes, and the erasure sweep daily, hourly while an obligation waits. The
+//! lease sweep also retries a bounded number of files a revoke or an expiry
+//! could not remove then.
 
 use super::{Deadline, HardEraseWork, HousekeepingSweep, SweepWork};
 use crate::error::{Error, Result};
@@ -17,6 +19,9 @@ use crate::{EntityId, Vault};
 /// The cache's hard age bound: the longest serve window (ARCH-0019, Dormant
 /// 168 h), so eviction never takes a row the read gate could still serve.
 const PPR_CACHE_MAX_AGE_SECS: u64 = 168 * 60 * 60;
+
+/// Kept secret-lease files one run tries to remove again.
+const SECRET_TEARDOWN_RETRIES: usize = 64;
 
 /// Rows one cache-eviction page reads.
 const PPR_CACHE_PAGE: usize = 512;
@@ -55,9 +60,16 @@ pub(super) fn run(
     cursor: Option<&[u8]>,
 ) -> Result<Run> {
     let work = match sweep {
-        HousekeepingSweep::SecretLeaseExpiry => SweepWork::SecretLeases {
-            expired: count(vault.expire_secret_leases(now)?),
-        },
+        HousekeepingSweep::SecretLeaseExpiry => {
+            let expired = count(vault.expire_secret_leases(now)?);
+            let (files_removed, files_kept) =
+                vault.retry_kept_secret_teardowns(now, SECRET_TEARDOWN_RETRIES)?;
+            SweepWork::SecretLeases {
+                expired,
+                files_removed,
+                files_kept,
+            }
+        }
         HousekeepingSweep::CriticalConfirmExpiry => return critical_confirms(vault, deadline),
         HousekeepingSweep::SymbolLeaseExpiry => SweepWork::SymbolLeases {
             released: count(vault.expire_symbol_leases(now)?.len()),
