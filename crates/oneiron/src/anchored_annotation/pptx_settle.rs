@@ -42,7 +42,7 @@ impl crate::Vault {
             .ok_or(Error::EntityNotFound)?;
         let inspection = inspect_pptx_with_limits(&bytes, &limits).map_err(|_| invalid_anchor())?;
         let mut threads: BTreeMap<_, _> = self
-            .annotation_threads_for_artifact_in_txn(txn, artifact)?
+            .effect_annotation_threads_for_artifact_in_txn(txn, artifact)?
             .into_iter()
             .map(|t| (t.thread_id, t))
             .collect();
@@ -119,10 +119,10 @@ impl crate::Vault {
                     )?;
                 }
                 PptxCommentAction::Resolve { resolved } => {
-                    let thread = threads
-                        .get(&patch.thread_id)
+                    let thread = self
+                        .annotation_thread_in_txn(txn, artifact, &patch.thread_id, !*resolved)?
                         .ok_or(Error::Artifact(ArtifactError::AnnotationThreadNotFound))?;
-                    if self.pptx_thread_author_in_txn(txn, artifact, patch.thread_id)?
+                    if self.pptx_thread_author_in_txn(txn, artifact, patch.thread_id, !*resolved)?
                         != Some(actor.entity_ref())
                     {
                         return Err(Error::Artifact(ArtifactError::SettleNotAuthorized(
@@ -196,10 +196,16 @@ impl crate::Vault {
         txn: &heed::RoTxn<'_>,
         artifact: &EntityId,
         thread: EntityId,
+        for_effects: bool,
     ) -> Result<Option<EntityId>> {
         let mut first: Option<(EntityId, EntityId)> = None;
         for id in self.claims_for_subject_in_txn(txn, artifact)? {
-            let Some(body) = self.get_claim_in_txn(txn, &id)? else {
+            let body = if for_effects {
+                self.get_claim_for_effect_in_txn(txn, &id)?
+            } else {
+                self.get_claim_in_txn(txn, &id)?
+            };
+            let Some(body) = body else {
                 continue;
             };
             if body.predicate != ANNOTATION_COMMENT_PREDICATE || !claim_surfaceable(&body) {

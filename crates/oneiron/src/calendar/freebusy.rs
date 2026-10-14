@@ -21,7 +21,8 @@
 //! an expansion failure must never degrade to a silently empty union.
 
 use super::query::{
-    CalendarRead, CalendarSel, matches_selectors, validate_selectors, visit_calendar_events,
+    CalendarRead, CalendarSel, matches_selectors, validate_selectors,
+    visit_calendar_events_for_effect,
 };
 use crate::claim::{ScopedRead, ScopedReadResult};
 use crate::entity_id::EntityId;
@@ -79,7 +80,7 @@ fn freebusy_in(
 
     let bounds = ordered(range);
     let mut rows = Vec::new();
-    visit_calendar_events(read, |row| {
+    visit_calendar_events_for_effect(read, |row| {
         rows.push(row);
         Ok(())
     })?;
@@ -87,7 +88,7 @@ fn freebusy_in(
         .iter()
         .filter_map(|row| row.facts.exception().cloned())
         .collect();
-    let withheld_exception = read.withheld_exception_series()?;
+    let withheld_exception = read.withheld_exception_series(true)?;
     let mut intervals = Vec::new();
     for row in rows {
         if !matches_selectors(row.facts.systems(), calendars)

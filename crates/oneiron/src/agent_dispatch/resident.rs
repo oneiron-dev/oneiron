@@ -120,6 +120,28 @@ impl Vault {
         })
     }
 
+    fn resident_binding_for_effect_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+    ) -> Result<Option<(EntityId, ResidentAgentSpec)>> {
+        let mut found = None;
+        for id in self.claims_for_subject_in_txn(txn, &agent)? {
+            let Some(body) = self.get_claim_for_effect_in_txn(txn, &id)? else {
+                continue;
+            };
+            if body.predicate != PREDICATE || !claim_surfaceable(&body) {
+                continue;
+            }
+            let spec = decode(agent, &body.value)?;
+            if found.as_ref().is_some_and(|(_, old)| old != &spec) {
+                return Err(invalid());
+            }
+            found = Some((id, spec));
+        }
+        Ok(found)
+    }
+
     fn resident_binding(&self, agent: EntityId) -> Result<Option<(EntityId, ResidentAgentSpec)>> {
         let mut found = None;
         for id in self.claims_for_subject(&agent)? {
@@ -150,9 +172,14 @@ impl AgentDispatcher<'_> {
         limit: usize,
         now: u64,
     ) -> Result<Vec<AgentDispatchOutcome>> {
-        let Some(spec) = self.vault.resident_agent(agent)? else {
+        let binding = {
+            let txn = self.vault.store.env.read_txn()?;
+            self.vault.resident_binding_for_effect_in_txn(&txn, agent)?
+        };
+        let Some((_, spec)) = binding else {
             return Ok(Vec::new());
         };
+        validate(self.vault, &spec)?;
         if spec.wake == ResidentWakeMode::Manual {
             return Ok(Vec::new());
         }

@@ -6,6 +6,7 @@
 //! invariant ONE-1816 asserts mechanically, which is why the `booking.*`
 //! claim-family door lives in [`lifecycle`] and is only re-exported here.
 
+mod admission;
 pub mod agent_api;
 pub mod agent_front;
 pub mod anti_abuse;
@@ -24,6 +25,7 @@ pub mod solver;
 #[cfg(test)]
 mod tests;
 
+pub use admission::active_future_booking_count_for_contact;
 pub use companion_preset::{
     COMPANION_PROPOSAL_LINK_PREFIX, COMPANION_PROPOSAL_META_PREFIX, COMPANION_PROPOSAL_TAP_ACTION,
     ChoiceId, CompanionConfirmationMode, CompanionPresetRow, CompanionProposal,

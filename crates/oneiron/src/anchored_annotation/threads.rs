@@ -160,18 +160,23 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<AnnotationThread> {
-        let thread = self
-            .get_annotation_thread(artifact_id, thread_id)?
-            .ok_or(Error::Artifact(ArtifactError::AnnotationThreadNotFound))?;
-        let head = ThreadHead {
-            thread_id: *thread_id,
-            origin_version: thread.origin_version,
-            anchor_version: thread.anchor.version,
-            state,
-            locator: thread.anchor.locator.clone(),
-            drift: thread.drift,
-        };
-        let new_head_id = self.with_write_txn_grouped(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
+            let thread = self
+                .annotation_thread_in_txn(
+                    wtxn,
+                    artifact_id,
+                    thread_id,
+                    state != ThreadState::Resolved,
+                )?
+                .ok_or(Error::Artifact(ArtifactError::AnnotationThreadNotFound))?;
+            let head = ThreadHead {
+                thread_id: *thread_id,
+                origin_version: thread.origin_version,
+                anchor_version: thread.anchor.version,
+                state,
+                locator: thread.anchor.locator.clone(),
+                drift: thread.drift,
+            };
             let new_head_id = self.write_thread_head_in_txn(
                 wtxn,
                 artifact_id,
@@ -182,15 +187,14 @@ impl Vault {
                 learned_at,
             )?;
             self.supersede_claim_in_txn(wtxn, &new_head_id, &thread.head_claim_id, learned_at)?;
-            Ok(new_head_id)
-        })?;
-        Ok(AnnotationThread {
-            thread_id: *thread_id,
-            anchor: thread.anchor,
-            origin_version: thread.origin_version,
-            state,
-            drift: thread.drift,
-            head_claim_id: new_head_id,
+            Ok(AnnotationThread {
+                thread_id: *thread_id,
+                anchor: thread.anchor,
+                origin_version: thread.origin_version,
+                state,
+                drift: thread.drift,
+                head_claim_id: new_head_id,
+            })
         })
     }
 
@@ -236,16 +240,15 @@ impl Vault {
         ))
     }
 
-    /// Transaction-composable [`Vault::annotation_threads_for_artifact`]: reads
-    /// the live thread heads through the caller's txn (settle's re-anchor sweep).
-    pub(super) fn annotation_threads_for_artifact_in_txn(
+    /// Reads the thread heads a mutation may use through the caller's transaction.
+    pub(super) fn effect_annotation_threads_for_artifact_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         artifact_id: &EntityId,
     ) -> Result<Vec<AnnotationThread>> {
         Ok(threads_from_active_claims(
             *artifact_id,
-            self.active_annotation_claims_in_txn(rtxn, artifact_id)?,
+            self.effect_annotation_claims_in_txn(rtxn, artifact_id)?,
         ))
     }
 
@@ -255,25 +258,10 @@ impl Vault {
         artifact_id: &EntityId,
         thread_id: &EntityId,
     ) -> Result<Vec<AnnotationComment>> {
-        let mut comments = Vec::new();
-        for (claim_id, body) in self.active_annotation_claims(artifact_id)? {
-            if body.predicate != ANNOTATION_COMMENT_PREDICATE {
-                continue;
-            }
-            let comment = match decode_comment(&body.value, claim_id) {
-                Ok(comment) => comment,
-                Err(err) => {
-                    warn_malformed_annotation_claim(claim_id, &body.predicate, &err);
-                    continue;
-                }
-            };
-            if comment.thread_id != *thread_id {
-                continue;
-            }
-            comments.push(comment);
-        }
-        comments.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.claim_id.cmp(&b.claim_id)));
-        Ok(comments)
+        Ok(comments_from_active_claims(
+            *thread_id,
+            self.active_annotation_claims(artifact_id)?,
+        ))
     }
 
     /// Converts a thread into a task-brief (OF-368 D4).
@@ -296,32 +284,32 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<TaskBrief> {
-        let thread = self
-            .get_annotation_thread(artifact_id, thread_id)?
-            .ok_or(Error::Artifact(ArtifactError::AnnotationThreadNotFound))?;
-        let comments = self.annotation_thread_comments(artifact_id, thread_id)?;
-        let thread_text = comments
-            .iter()
-            .map(|comment| comment.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-
         let task_id = self.store.clock.entity_id()?;
         let brief_claim_id = self.store.clock.entity_id()?;
         let brief_ref = format!("brief:{}", thread_id.to_hex());
         let task_body = task_role_body(TaskRole::Task)?;
         let brief_envelope = annotation_envelope(actor, "assign_brief")?;
-        let brief_value = encode_brief_value(
-            thread_id,
-            &task_id,
-            &brief_ref,
-            thread.anchor.version,
-            &thread.anchor.locator,
-            assignee.as_ref(),
-            &thread_text,
-        );
-
         self.with_write_txn_grouped(|wtxn| {
+            let claims = self.effect_annotation_claims_in_txn(wtxn, artifact_id)?;
+            let thread = threads_from_active_claims(*artifact_id, claims.clone())
+                .into_iter()
+                .find(|thread| thread.thread_id == *thread_id)
+                .ok_or(Error::Artifact(ArtifactError::AnnotationThreadNotFound))?;
+            let comments = comments_from_active_claims(*thread_id, claims);
+            let thread_text = comments
+                .iter()
+                .map(|comment| comment.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let brief_value = encode_brief_value(
+                thread_id,
+                &task_id,
+                &brief_ref,
+                thread.anchor.version,
+                &thread.anchor.locator,
+                assignee.as_ref(),
+                &thread_text,
+            );
             let mut batch = self
                 .batch_in()
                 .put(&task_id, ENTITY_TYPE_TASK, occurred, learned_at, &task_body)
@@ -345,18 +333,17 @@ impl Vault {
                     BRIEF_ASSIGN_EDGE_WEIGHT,
                 );
             }
-            batch.apply(wtxn)
-        })?;
-
-        let artifact_version = thread.anchor.version;
-        Ok(TaskBrief {
-            brief_ref,
-            task_id,
-            thread_id: *thread_id,
-            anchor: thread.anchor,
-            artifact_version,
-            thread_text,
-            assignee,
+            batch.apply(wtxn)?;
+            let artifact_version = thread.anchor.version;
+            Ok(TaskBrief {
+                brief_ref,
+                task_id,
+                thread_id: *thread_id,
+                anchor: thread.anchor,
+                artifact_version,
+                thread_text,
+                assignee,
+            })
         })
     }
 
@@ -472,6 +459,41 @@ impl Vault {
         Ok(())
     }
 
+    pub(super) fn annotation_thread_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        artifact_id: &EntityId,
+        thread_id: &EntityId,
+        for_effects: bool,
+    ) -> Result<Option<AnnotationThread>> {
+        let claims = if for_effects {
+            self.effect_annotation_claims_in_txn(txn, artifact_id)?
+        } else {
+            self.active_annotation_claims_in_txn(txn, artifact_id)?
+        };
+        Ok(threads_from_active_claims(*artifact_id, claims)
+            .into_iter()
+            .find(|thread| thread.thread_id == *thread_id))
+    }
+
+    /// Reads the annotation claims a mutation may use in the caller's snapshot.
+    fn effect_annotation_claims_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        artifact_id: &EntityId,
+    ) -> Result<Vec<(EntityId, ClaimBody)>> {
+        let mut out = Vec::new();
+        for claim_id in self.claims_for_subject_in_txn(txn, artifact_id)? {
+            let Some(body) = self.get_claim_for_effect_in_txn(txn, &claim_id)? else {
+                continue;
+            };
+            if crate::claim::claim_surfaceable(&body) && is_annotation_predicate(&body.predicate) {
+                out.push((claim_id, body));
+            }
+        }
+        Ok(out)
+    }
+
     /// The live-read cohort of annotation claims on `artifact_id`: only claims
     /// that pass the engine's standard read gate
     /// ([`crate::claim::claim_surfaceable`] — `appr ∈ {auto, approved}`,
@@ -479,8 +501,8 @@ impl Vault {
     ///
     /// Gating here (rather than on bare `life = active`) keeps agent-authored
     /// `Proposed` heads and stale claims out of every live read that flows
-    /// through this helper — thread + comment reads, brief assignment, and
-    /// newest-head selection — so a non-admitted head can never override an
+    /// through this helper — thread + comment reads and newest-head
+    /// selection — so a non-admitted head can never override an
     /// admitted one on read. History / consent-review still goes through the
     /// ungated [`crate::Vault::get_claim`] door.
     fn active_annotation_claims(
@@ -491,9 +513,7 @@ impl Vault {
         self.active_annotation_claims_in_txn(&rtxn, artifact_id)
     }
 
-    /// Transaction-composable [`Vault::active_annotation_claims`]: reads the
-    /// live-read annotation cohort through the caller's txn, so settle can gather
-    /// threads inside the same write txn that appends the version.
+    /// Reads the display cohort through the caller's transaction.
     fn active_annotation_claims_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -565,6 +585,31 @@ pub(super) fn thread_from_head(
         drift: head.drift,
         head_claim_id,
     }
+}
+
+fn comments_from_active_claims(
+    thread_id: EntityId,
+    claims: Vec<(EntityId, ClaimBody)>,
+) -> Vec<AnnotationComment> {
+    let mut comments = Vec::new();
+    for (claim_id, body) in claims {
+        if body.predicate != ANNOTATION_COMMENT_PREDICATE {
+            continue;
+        }
+        let comment = match decode_comment(&body.value, claim_id) {
+            Ok(comment) => comment,
+            Err(err) => {
+                warn_malformed_annotation_claim(claim_id, &body.predicate, &err);
+                continue;
+            }
+        };
+        if comment.thread_id != thread_id {
+            continue;
+        }
+        comments.push(comment);
+    }
+    comments.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.claim_id.cmp(&b.claim_id)));
+    comments
 }
 
 fn validate_comment_text(text: &str) -> Result<()> {

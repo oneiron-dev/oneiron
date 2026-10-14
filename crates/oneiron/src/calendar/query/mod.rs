@@ -31,7 +31,7 @@ mod service;
 
 pub use self::facts::CalendarRead;
 pub(in crate::calendar) use self::facts::receipted;
-pub(crate) use self::facts::visit_calendar_events;
+pub(crate) use self::facts::{event_row_for_effect_in_txn, visit_calendar_events_for_effect};
 pub use self::requests::{
     CalendarEventView, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel,
     MAX_CALENDAR_SEARCH_LIMIT,

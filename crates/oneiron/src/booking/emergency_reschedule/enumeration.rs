@@ -40,7 +40,7 @@ pub(super) fn enumerate_with_refusals(
 ) -> Result<Vec<AffectedBooking>, BookingError> {
     verify_logged_owner_instruction(vault, request)?;
     let mut events = Vec::new();
-    visit_calendar_events(&CalendarRead::Vault(vault), |row| {
+    visit_calendar_events_for_effect(&CalendarRead::Vault(vault), |row| {
         if let Some(occurred) = row.occurred
             && occurred.start > now_utc
             && occurred.start <= request.affected_window.end
