@@ -8,6 +8,7 @@
  * lifetime and frees them on `dispose`.
  */
 import type { IWorkbookData, IWorksheetData } from "@univerjs/core";
+import type { PreviewBudget } from "./budget";
 import type { ParseOptions } from "./parse";
 
 /** Seed a session with the workbook bytes; response is the outline. */
@@ -17,6 +18,8 @@ export interface InitRequest {
   readonly session: string;
   readonly bytes: Uint8Array;
   readonly name?: string;
+  /** The budget the worker checks the package against again. */
+  readonly budget?: PreviewBudget;
 }
 
 /** Parse one sheet in an already-initialised session (bytes NOT re-sent). */

@@ -31,7 +31,7 @@ export class ParseSessionStore {
           return {
             kind: "init",
             id: request.id,
-            workbook: readWorkbookOutline(request.bytes, request.name),
+            workbook: readWorkbookOutline(request.bytes, request.name, request.budget),
           };
         }
         case "sheet": {

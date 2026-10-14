@@ -14,6 +14,8 @@
  * a Web Worker and in tests.
  */
 import * as XLSX from "xlsx";
+import { checkSheetCount, PREVIEW_BUDGET, preflightPackage, WorkbookBudgetError } from "./budget";
+import type { PreviewBudget } from "./budget";
 import type {
   CellValueType,
   ICellData,
@@ -30,6 +32,10 @@ import type {
 const DEFAULT_LOCALE = "enUS" as unknown as LocaleType;
 const APP_VERSION = "0.0.0-oneiron-xlsx-viewer";
 
+/** Excel's grid: no real sheet holds a row or column past these. */
+const MAX_ROWS = 1_048_576;
+const MAX_COLUMNS = 16_384;
+
 /** Univer `CellValueType` numeric members (STRING=1, NUMBER=2, BOOLEAN=3). */
 const CELL_TYPE = { STRING: 1, NUMBER: 2, BOOLEAN: 3 } as const;
 
@@ -40,6 +46,11 @@ export interface ParseOptions {
    * never a recomputation. Default: true.
    */
   readonly includeFormulaText?: boolean;
+  /**
+   * The lines the preview stays within; a workbook over one is refused with a
+   * `WorkbookBudgetError`. Default: `PREVIEW_BUDGET`.
+   */
+  readonly budget?: PreviewBudget;
 }
 
 /** Minimal identity for a sheet, cheap to obtain without parsing its cells. */
@@ -86,9 +97,18 @@ function emptyWorkbook(id: string, name: string): IWorkbookData {
  * from being fully materialised up front. Every sheet in the returned workbook
  * is a stub with empty `cellData`; call {@link readSheet} to populate one.
  */
-export function readWorkbookOutline(bytes: Uint8Array, name = "workbook"): IWorkbookData {
-  const wb = XLSX.read(bytes, { bookSheets: true, bookProps: true });
+export function readWorkbookOutline(
+  bytes: Uint8Array,
+  name = "workbook",
+  budget: PreviewBudget = PREVIEW_BUDGET,
+): IWorkbookData {
+  const wb = XLSX.read(preflightPackage(bytes, budget), { bookSheets: true, bookProps: true });
   const names = wb.SheetNames ?? [];
+  checkSheetCount(names.length, budget);
+  return outlineOf(names, name);
+}
+
+function outlineOf(names: readonly string[], name: string): IWorkbookData {
   const id = sheetId(name);
   const workbook = emptyWorkbook(id, name);
   const order: string[] = [];
@@ -108,9 +128,11 @@ export function readWorkbookOutline(bytes: Uint8Array, name = "workbook"): IWork
 }
 
 /** Sheet names in workbook order, without parsing cells. */
-export function readSheetMetas(bytes: Uint8Array): SheetMeta[] {
-  const wb = XLSX.read(bytes, { bookSheets: true });
-  return (wb.SheetNames ?? []).map((name) => ({ id: sheetId(name), name }));
+export function readSheetMetas(bytes: Uint8Array, budget: PreviewBudget = PREVIEW_BUDGET): SheetMeta[] {
+  const wb = XLSX.read(preflightPackage(bytes, budget), { bookSheets: true });
+  const names = wb.SheetNames ?? [];
+  checkSheetCount(names.length, budget);
+  return names.map((name) => ({ id: sheetId(name), name }));
 }
 
 function toCellData(cell: XLSX.CellObject, includeFormula: boolean): ICellData | undefined {
@@ -182,20 +204,36 @@ export function readSheet(
   options: ParseOptions = {},
 ): Partial<IWorksheetData> {
   const includeFormula = options.includeFormulaText ?? true;
-  const wb = XLSX.read(bytes, {
+  const budget = options.budget ?? PREVIEW_BUDGET;
+  const wb = XLSX.read(preflightPackage(bytes, budget), {
     sheets: [sheetName],
+    ...sheetReadOptions(includeFormula),
+  });
+  return sheetOf(wb, sheetName, includeFormula, budget);
+}
+
+function sheetReadOptions(includeFormula: boolean): XLSX.ParsingOptions {
+  return {
     cellFormula: includeFormula,
     cellNF: false,
     cellStyles: false,
     cellDates: false,
     cellHTML: false,
-  });
+  };
+}
+
+function sheetOf(
+  wb: XLSX.WorkBook,
+  sheetName: string,
+  includeFormula: boolean,
+  budget: PreviewBudget,
+): Partial<IWorksheetData> {
   const ws = wb.Sheets[sheetName];
   const sid = sheetId(sheetName);
   if (!ws) {
     return { id: sid, name: sheetName, rowCount: 0, columnCount: 0, cellData: {} };
   }
-  return { id: sid, name: sheetName, ...worksheetToCellData(ws, includeFormula) };
+  return { id: sid, name: sheetName, ...worksheetToCellData(ws, includeFormula, budget) };
 }
 
 /**
@@ -205,14 +243,21 @@ export function readSheet(
  * file whose stored dimension is inflated (e.g. `A1:XFD1048576`) but holds a
  * couple of far-apart cells must not spin billions of iterations. Dimensions
  * come from `!ref`; if it is absent they fall back to the observed extent.
+ * Either way they stop at Excel's grid, and a cell past it is dropped: no
+ * saved workbook holds one, so a dimension past it is crafted.
+ * A sheet with more cells, or more cell and formula text, than `budget`
+ * allows is refused with a `WorkbookBudgetError` rather than handed on.
  */
 export function worksheetToCellData(
   ws: XLSX.WorkSheet,
   includeFormula: boolean,
+  budget: PreviewBudget = PREVIEW_BUDGET,
 ): { rowCount: number; columnCount: number; cellData: IWorksheetData["cellData"] } {
   const cellData: Record<number, Record<number, ICellData>> = {};
   let maxRow = 0;
   let maxCol = 0;
+  let cells = 0;
+  let textChars = 0;
   for (const addr of Object.keys(ws)) {
     if (addr.startsWith("!")) {
       continue; // `!ref`, `!merges`, `!cols`, ... metadata keys
@@ -221,39 +266,62 @@ export function worksheetToCellData(
     if (!raw) {
       continue;
     }
+    cells += 1;
+    if (cells > budget.sheetCells) {
+      throw new WorkbookBudgetError("sheetCells", "a sheet holds more cells than the budget");
+    }
     const { r, c } = XLSX.utils.decode_cell(addr);
+    if (r >= MAX_ROWS || c >= MAX_COLUMNS) {
+      continue;
+    }
     if (r > maxRow) maxRow = r;
     if (c > maxCol) maxCol = c;
     const cell = toCellData(raw, includeFormula);
     if (cell === undefined) {
       continue;
     }
+    textChars += textLength(cell);
+    if (textChars > budget.sheetTextChars) {
+      throw new WorkbookBudgetError("sheetTextChars", "a sheet holds more text than the budget");
+    }
     (cellData[r] ??= {})[c] = cell;
   }
   const ref = ws["!ref"];
   const range = ref ? XLSX.utils.decode_range(ref) : undefined;
   return {
-    rowCount: range ? range.e.r + 1 : maxRow + 1,
-    columnCount: range ? range.e.c + 1 : maxCol + 1,
+    rowCount: Math.min(range ? range.e.r + 1 : maxRow + 1, MAX_ROWS),
+    columnCount: Math.min(range ? range.e.c + 1 : maxCol + 1, MAX_COLUMNS),
     cellData: cellData as IWorksheetData["cellData"],
   };
 }
 
+/** Characters of text and formula text a converted cell carries. */
+function textLength(cell: ICellData): number {
+  const formula = (cell.custom as { oneironFormula?: string } | undefined)?.oneironFormula;
+  return (typeof cell.v === "string" ? cell.v.length : 0) + (formula?.length ?? 0);
+}
+
 /**
- * Eagerly parse the entire workbook (outline + every sheet). Convenience for
- * small workbooks and tests; the lazy path ({@link readWorkbookOutline} +
- * {@link readSheet}) is what the viewer uses for large files.
+ * Eagerly parse the entire workbook (outline + every sheet) in one SheetJS
+ * pass. Convenience for small workbooks and tests; the lazy path
+ * ({@link readWorkbookOutline} + {@link readSheet}) is what the viewer uses
+ * for large files.
  */
 export function readWorkbook(
   bytes: Uint8Array,
   options: ParseOptions & { name?: string } = {},
 ): IWorkbookData {
   const { name = "workbook", ...parseOptions } = options;
-  const outline = readWorkbookOutline(bytes, name);
+  const includeFormula = parseOptions.includeFormulaText ?? true;
+  const budget = parseOptions.budget ?? PREVIEW_BUDGET;
+  const wb = XLSX.read(preflightPackage(bytes, budget), sheetReadOptions(includeFormula));
+  const names = wb.SheetNames ?? [];
+  checkSheetCount(names.length, budget);
+  const outline = outlineOf(names, name);
   const sheets: IWorkbookData["sheets"] = {};
   for (const sid of outline.sheetOrder) {
     const stub = outline.sheets[sid]!;
-    sheets[sid] = readSheet(bytes, stub.name!, parseOptions);
+    sheets[sid] = sheetOf(wb, stub.name!, includeFormula, budget);
   }
   return { ...outline, sheets };
 }
