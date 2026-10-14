@@ -417,7 +417,10 @@ fn percent(confidence: f32) -> u8 {
     scaled as u8
 }
 
-fn envelope_digest(envelope: &crate::tagging::DerivationEnvelope) -> [u8; 32] {
+/// The version of a tag set: every field of its envelope. The served stack
+/// is one, so a head swap at a fixed checkpoint is another derivation and
+/// owes the turn a new read; a stack absent and a stack named empty differ.
+pub(super) fn envelope_digest(envelope: &crate::tagging::DerivationEnvelope) -> [u8; 32] {
     let mut hash = blake3::Hasher::new();
     hash.update(b"oneiron:dreamer-sieve:tag-envelope:v1");
     for field in [
@@ -428,6 +431,16 @@ fn envelope_digest(envelope: &crate::tagging::DerivationEnvelope) -> [u8; 32] {
     ] {
         hash.update(&(field.len() as u64).to_be_bytes());
         hash.update(field.as_bytes());
+    }
+    match &envelope.stack {
+        Some(stack) => {
+            hash.update(&[1]);
+            hash.update(&(stack.len() as u64).to_be_bytes());
+            hash.update(stack.as_bytes());
+        }
+        None => {
+            hash.update(&[0]);
+        }
     }
     *hash.finalize().as_bytes()
 }

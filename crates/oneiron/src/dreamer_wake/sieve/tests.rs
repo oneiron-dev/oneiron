@@ -128,10 +128,12 @@ fn drain(vault: &Vault, now: u64) -> u64 {
     passes + 1
 }
 
-/// A fake oneiroNER tagger: each word it knows is a `PERSON`.
+/// A fake oneiroNER tagger: each word it knows is a `PERSON`. It names the
+/// served `stack` beside its checkpoint when it has one.
 struct Names {
     model: ModelId,
     known: Vec<&'static str>,
+    stack: Option<&'static str>,
 }
 
 impl ExtractionEncoder for Names {
@@ -162,7 +164,7 @@ impl ExtractionEncoder for Names {
             vad: None,
             context_links: Vec::new(),
             speaker_links: Vec::new(),
-            stack_sha16: None,
+            stack_sha16: self.stack.map(str::to_owned),
         })
     }
 }
@@ -290,6 +292,7 @@ fn saved_tags_stand_in_for_the_rule_names_once_the_tagger_saves_them() {
     let tagger: Arc<dyn ExtractionEncoder> = Arc::new(Names {
         model: "fixture/names@v1".parse().expect("model id"),
         known: vec!["Mirela"],
+        stack: None,
     });
     TaggingReconciler::new(Arc::clone(&vault), tagger)
         .expect("reconciler")
@@ -309,6 +312,67 @@ fn saved_tags_stand_in_for_the_rule_names_once_the_tagger_saves_them() {
     assert_eq!(
         vault.sieve_pass(NOW + 2).expect("pass"),
         SievePass::default()
+    );
+}
+
+/// CodeRabbit (#1418): the version of a tag set left the served stack out,
+/// so the tags a head swap saved at the same checkpoint read as the set the
+/// sieve had read, and its spans went on indexing the old set's mentions. A
+/// head swap is another derivation: its save owes the turn a read, and the
+/// names come from the new set.
+#[test]
+fn a_head_swap_at_one_checkpoint_reads_the_new_tags_names() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let text = "Ada met Mirela on 2026-10-12.";
+    let turn = witness(&vault, "74747474747474747474747474747474", text);
+    let tag = |stack: &'static str, known: Vec<&'static str>| {
+        let tagger: Arc<dyn ExtractionEncoder> = Arc::new(Names {
+            model: "fixture/names@v1".parse().expect("model id"),
+            known,
+            stack: Some(stack),
+        });
+        TaggingReconciler::new(Arc::clone(&vault), tagger)
+            .expect("reconciler")
+            .drain_once()
+            .expect("drain");
+        vault.turn_tags(&turn).expect("tags").expect("saved tags")
+    };
+    let before = tag("aaaaaaaaaaaaaaaa", vec!["Mirela"]);
+    vault.sieve_pass(NOW).expect("pass");
+    assert_eq!(
+        flags(&vault, &turn, text),
+        vec![
+            (SpanKind::Name, "Mirela".to_owned(), "tag"),
+            (SpanKind::Date, "2026-10-12".to_owned(), "rule"),
+        ]
+    );
+
+    // The served head swaps at the same checkpoint and the turn is tagged
+    // again: the same input, tagger, save path and parameters.
+    vault
+        .with_write_txn(|txn| crate::tagging::mark_turn_in_txn(&vault, txn, turn))
+        .expect("mark");
+    let after = tag("bbbbbbbbbbbbbbbb", vec!["Ada"]);
+    assert_eq!(vault.sieve_pass(NOW + 1).expect("pass").turns_read, 1);
+    assert_eq!(
+        flags(&vault, &turn, text),
+        vec![
+            (SpanKind::Name, "Ada".to_owned(), "tag"),
+            (SpanKind::Date, "2026-10-12".to_owned(), "rule"),
+        ]
+    );
+    assert_eq!(
+        crate::tagging::DerivationEnvelope {
+            stack: before.envelope.stack.clone(),
+            ..after.envelope.clone()
+        },
+        before.envelope,
+        "only the stack differs"
+    );
+    assert_ne!(
+        read::envelope_digest(&before.envelope),
+        read::envelope_digest(&after.envelope)
     );
 }
 
