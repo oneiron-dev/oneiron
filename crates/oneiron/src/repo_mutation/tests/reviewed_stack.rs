@@ -441,6 +441,53 @@ fn standalone_reviewed_conflict_resolution_is_bound_and_replays_its_claim_receip
 }
 
 #[test]
+fn a_reviewed_resolution_names_the_head_an_unrelated_write_moved() {
+    let (_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    create_conflicting_branches(&repo);
+    let subject = put_branch_subject(&vault);
+    let open = vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref(&repo),
+            RepoMutationOperation::RecordConflict {
+                branch_subject: subject,
+                branch_name: "left".into(),
+                ours_ref: "left".into(),
+                theirs_ref: "right".into(),
+            },
+        ))
+        .unwrap()
+        .repo_conflict_claim_id
+        .unwrap();
+    vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref(&repo),
+            RepoMutationOperation::CommitFile {
+                path: "unrelated.txt".into(),
+                content: b"unrelated\n".to_vec(),
+                message: "Unrelated write".into(),
+            },
+        ))
+        .unwrap();
+    let proposed = propose(
+        &vault,
+        &repo,
+        RepoMutationOperation::ResolveConflictFile {
+            branch_subject: subject,
+            open_conflict_claim_id: open,
+            branch_name: "left".into(),
+            path: "README.md".into(),
+            content: b"resolved\n".to_vec(),
+            message: "Reviewed resolution".into(),
+        },
+    );
+    approve(&vault, &proposed);
+    let applied = vault.apply_repo_proposal(proposed.id).unwrap();
+    assert!(applied.repo_conflict_claim_id.is_some());
+    assert!(vault.repo_conflict_claims(&subject).unwrap().is_empty());
+}
+
+#[test]
 fn stale_later_document_refuses_whole_stack_before_first_effect() {
     let (_dir, vault) = open_test_vault();
     let repo = init_repo();

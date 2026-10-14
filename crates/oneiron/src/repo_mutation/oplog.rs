@@ -435,6 +435,13 @@ pub(super) fn repo_mutation_repo_key_hash(repo_ref: &RepoRef) -> String {
     repo_key_hash(&repo_mutation_repo_key(repo_ref))
 }
 
+/// Whether two refs name the same repository, whatever commit each pins. An
+/// open conflict names its repository and branch; the write that resolves it
+/// pins the HEAD it lands on, which unrelated writes may have moved.
+pub(super) fn same_repository(left: &RepoRef, right: &RepoRef) -> bool {
+    repo_mutation_repo_key(left) == repo_mutation_repo_key(right)
+}
+
 pub(super) fn repo_mutation_repo_key(repo_ref: &RepoRef) -> String {
     match repo_ref {
         RepoRef::LocalFolder { path, .. } => format!("local:{path}"),

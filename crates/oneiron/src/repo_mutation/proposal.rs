@@ -677,7 +677,7 @@ pub(super) fn validate_conflict(
         .into_iter()
         .any(|claim| {
             claim.claim_id == *open_conflict_claim_id
-                && claim.repo_ref == repo
+                && super::oplog::same_repository(&claim.repo_ref, &repo)
                 && claim.branch == *branch_name
                 && claim.conflicted_paths.contains(&proposal.path)
         });

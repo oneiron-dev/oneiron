@@ -1333,6 +1333,63 @@ fn repo_conflict_record_keeps_branches_mountable_and_queryable() {
     );
 }
 
+/// A file write names the HEAD it lands on; an open conflict names its
+/// repository and branch. An unrelated write that moves HEAD leaves the
+/// conflict resolvable by a write naming the new HEAD.
+#[test]
+fn a_conflict_stays_resolvable_after_an_unrelated_write_moves_head() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    create_conflicting_branches(&repo);
+    let branch_subject = put_branch_subject(&vault);
+    let open = vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref(&repo),
+            RepoMutationOperation::RecordConflict {
+                branch_subject,
+                branch_name: "left".to_owned(),
+                ours_ref: "left".to_owned(),
+                theirs_ref: "right".to_owned(),
+            },
+        ))
+        .expect("record conflict")
+        .repo_conflict_claim_id
+        .expect("open claim id");
+    run_git_at_path(repo.path(), &["checkout".to_owned(), "left".to_owned()])
+        .expect("checkout left");
+    vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref(&repo),
+            RepoMutationOperation::CommitFile {
+                path: "unrelated.txt".to_owned(),
+                content: b"unrelated\n".to_vec(),
+                message: "unrelated write".to_owned(),
+            },
+        ))
+        .expect("an unrelated write moves HEAD");
+
+    let resolved = vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref(&repo),
+            RepoMutationOperation::ResolveConflictFile {
+                branch_subject,
+                open_conflict_claim_id: open,
+                branch_name: "left".to_owned(),
+                path: "README.md".to_owned(),
+                content: b"resolved branch\n".to_vec(),
+                message: "resolve readme conflict".to_owned(),
+            },
+        ))
+        .expect("the open conflict resolves at the new HEAD");
+    assert!(resolved.repo_conflict_claim_id.is_some());
+    assert!(
+        vault
+            .repo_conflict_claims(&branch_subject)
+            .expect("active open conflicts")
+            .is_empty()
+    );
+}
+
 #[test]
 fn repo_conflict_resolution_supersedes_open_claim_and_writes_clean_tree() {
     let (_vault_dir, vault) = open_test_vault();

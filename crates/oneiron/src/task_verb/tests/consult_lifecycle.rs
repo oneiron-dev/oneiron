@@ -201,45 +201,29 @@ fn result_contract_is_addressed_and_partitioned() {
 #[test]
 fn one_replica_settles_once_and_replays_idempotently() {
     let (_dir, vault) = open_consult_vault();
-    let asker = own_agent(&vault);
-    grant_outbound(&vault, asker, 0xD1);
-    let (on_time, peer, question) = open_consult(&vault);
-    let late = vault
-        .memory(asker, EdgeActorClass::Agent)
-        .tasks_create(&consult_spec(question, peer, CONSULT_DEADLINE))
-        .expect("second consult")
-        .task_ref
-        .expect("second task ref");
+    let (task_ref, peer, question) = open_consult(&vault);
     let result_ref = consult_turn(&vault, 0x80).entity_ref();
-    let peer_facade = vault.memory(peer, EdgeActorClass::Agent);
+    let other_result = consult_turn(&vault, 0x81).entity_ref();
+    let facade = vault.memory(peer, EdgeActorClass::Agent);
 
-    let mut far_future = answer_input(result_ref, question);
-    far_future.completed_at = u64::MAX;
-    peer_facade
-        .land_consult_result(on_time, &far_future)
-        .expect_err("a completion later than the engine clock is refused");
-
-    // Inside the deadline, the answer lands.
-    peer_facade
-        .land_consult_result(on_time, &answer_input(result_ref, question))
-        .expect("an answer inside the deadline lands");
-
-    // Past the deadline, before any sweep: a backdated answer is refused.
-    clock.set(CONSULT_DEADLINE + 1);
-    let refused = peer_facade
-        .land_consult_result(
-            late,
-            &answer_input(consult_turn(&vault, 0x81).entity_ref(), question),
-        )
-        .expect_err("the consult's deadline has passed");
-    assert_eq!(refused.code, crate::memory::MEMORY_CODE_INVALID_STATE);
-    let stored = task_verb_body(&vault, late)
+    let first = facade
+        .land_consult_result(task_ref, &answer_input(result_ref, question))
+        .expect("first answer settles");
+    let replay = facade
+        .land_consult_result(task_ref, &answer_input(result_ref, question))
+        .expect("identical replay is idempotent");
+    let conflicting = facade
+        .land_consult_result(task_ref, &answer_input(other_result, question))
+        .expect_err("a different second result is refused");
+    let stored = task_verb_body(&vault, task_ref)
         .expect("decode body")
         .expect("typed body");
-    assert!(
-        stored.terminal().is_none(),
-        "nothing settled the late consult"
-    );
+
+    assert_eq!(usize::from(first.idempotent_replay), 0);
+    assert_eq!(usize::from(replay.idempotent_replay), 1);
+    assert_eq!(replay.terminal, first.terminal);
+    assert_eq!(conflicting.code, crate::memory::MEMORY_CODE_INVALID_STATE);
+    assert_eq!(stored.terminal(), Some(&first.terminal));
 }
 
 #[test]
@@ -546,32 +530,48 @@ fn a_consult_answer_lands_only_inside_its_deadline_on_the_engine_clock() {
         },
     )
     .expect("open vault");
-    let (task_ref, peer, question) = open_consult(&vault);
+    let asker = own_agent(&vault);
+    grant_outbound(&vault, asker, 0xD1);
+    let (on_time, peer, question) = open_consult(&vault);
+    let late = vault
+        .memory(asker, EdgeActorClass::Agent)
+        .tasks_create(&consult_spec(question, peer, CONSULT_DEADLINE))
+        .expect("second consult")
+        .task_ref
+        .expect("second task ref");
     let result_ref = consult_turn(&vault, 0x80).entity_ref();
     let peer_facade = vault.memory(peer, EdgeActorClass::Agent);
 
     let mut far_future = answer_input(result_ref, question);
     far_future.completed_at = u64::MAX;
     peer_facade
-        .land_consult_result(task_ref, &far_future)
+        .land_consult_result(on_time, &far_future)
         .expect_err("a completion later than the engine clock is refused");
+
+    // Inside the deadline, the answer lands.
+    peer_facade
+        .land_consult_result(on_time, &answer_input(result_ref, question))
+        .expect("an answer inside the deadline lands");
 
     // Past the deadline, before any sweep: a backdated answer is refused.
     clock.set(CONSULT_DEADLINE + 1);
-    let late = peer_facade
-        .land_consult_result(task_ref, &answer_input(result_ref, question))
+    let refused = peer_facade
+        .land_consult_result(
+            late,
+            &answer_input(consult_turn(&vault, 0x81).entity_ref(), question),
+        )
         .expect_err("the consult's deadline has passed");
-    assert_eq!(late.code, crate::memory::MEMORY_CODE_INVALID_STATE);
-    let stored = task_verb_body(&vault, task_ref)
+    assert_eq!(refused.code, crate::memory::MEMORY_CODE_INVALID_STATE);
+    let stored = task_verb_body(&vault, late)
         .expect("decode body")
         .expect("typed body");
-    assert!(stored.terminal().is_none(), "nothing settled the consult");
-
-    // On time, the same answer lands.
-    clock.set(CONSULT_NOW + 10);
     assert!(
-        peer_facade
-            .land_consult_result(task_ref, &answer_input(result_ref, question))
-            .is_ok()
+        stored.terminal().is_none(),
+        "nothing settled the late consult"
     );
+    // The answer that landed in time still replays after the deadline.
+    let replay = peer_facade
+        .land_consult_result(on_time, &answer_input(result_ref, question))
+        .expect("an identical replay after the deadline");
+    assert_eq!(usize::from(replay.idempotent_replay), 1);
 }

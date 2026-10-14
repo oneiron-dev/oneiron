@@ -370,7 +370,10 @@ pub(super) fn complete_ask_member_in_txn(
     now: u64,
 ) -> MemoryResult<()> {
     let mut body = consult_body_in_txn(vault, txn, answer.task_ref)?;
-    if body.terminal().is_none() && body.settled_ladder_disposition().is_none() {
+    // A member consult past its deadline on the engine clock is the expiry
+    // sweep's to settle. The word still counts under the ask's own cutoff.
+    let overdue = body.ttl.is_some_and(|ttl| ttl.deadline_at < now);
+    if !overdue && body.terminal().is_none() && body.settled_ladder_disposition().is_none() {
         body.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
             disposition: TaskTerminalDisposition::Completed,
             result_ref: Some(word.result_ref),
