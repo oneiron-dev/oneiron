@@ -24,6 +24,8 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
         dimensions = config.dimensions,
         "starting oneiron sync server"
     );
+    let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
+    refuse_unauthenticated_public_bind(&config, addr)?;
 
     let dicts = resolve_dict_search_paths(&config.dict_search_paths);
     if let Some(warning) = dicts.warning {
@@ -99,7 +101,6 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
                     .map(zeroize::Zeroizing::new),
             }
         }));
-    let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     // Same bind, named through the listener enum managed mode also uses.
     // `Tcp` is the only variant this path can produce, so unmanaged serve
     // still binds host:port and nothing else. Bound before any worker
@@ -173,6 +174,26 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
     }
     result?;
 
+    Ok(())
+}
+
+/// With no `auth_secret`, `--insecure-allow-unauthenticated` lets a request
+/// with no credential act as the owner, so that mode serves only loopback.
+/// The address judged is the one this path binds, before the vault opens. A
+/// dev server reachable from the LAN sets a secret instead; there is no
+/// override. Managed serve never comes here: the supervisor owns its socket.
+fn refuse_unauthenticated_public_bind(
+    config: &ServeConfig,
+    addr: SocketAddr,
+) -> anyhow::Result<()> {
+    if config.auth_secret.is_none()
+        && config.allow_unauthenticated
+        && !addr.ip().to_canonical().is_loopback()
+    {
+        anyhow::bail!(
+            "unauthenticated mode (--insecure-allow-unauthenticated) serves only a loopback host such as 127.0.0.1 or [::1], and {addr} is reachable from the network; bind loopback or set ONEIRON_AUTH_SECRET"
+        );
+    }
     Ok(())
 }
 
