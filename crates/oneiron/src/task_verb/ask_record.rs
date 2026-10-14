@@ -306,8 +306,9 @@ impl crate::memory::Memory<'_> {
     /// each member TASK, the TASK its class came from and its question and
     /// context rows are listed as producers of what the call answers from the
     /// group. Off this device a group with any such row a device-local world
-    /// keeps reads as no group, and so does one whose class came from a
-    /// governed TASK it never recorded while any world is device-local.
+    /// keeps reads as no group. A group whose class came from a governed
+    /// TASK it never recorded reads as no group wherever it is read: no
+    /// answer derived from it could list that TASK.
     pub(super) fn ask_group_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -331,7 +332,7 @@ impl crate::memory::Memory<'_> {
         self.produced_from(rows.iter().copied());
         let store = &self.vault().store;
         let kept = crate::settings::device_local_worlds_at(store, txn, self.locality())?;
-        if group.class_source_unrecorded() && !kept.is_empty() {
+        if group.class_source_unrecorded() {
             return Ok(None);
         }
         for row in &rows {

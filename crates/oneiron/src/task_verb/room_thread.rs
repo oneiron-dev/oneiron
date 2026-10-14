@@ -90,9 +90,10 @@ pub(super) fn thread_tasks_capped(
         // Ask-group ladders live on the existing group row. A peer consult
         // without a group has no promised nudge; a governed ask supplies its
         // next notice or its absolute cutoff without a duplicate cursor.
-        // Both come from the group's class, so from the TASK that gave it
-        // (DEC-0005): off this device, while a world is device-local, a group
-        // that never recorded that TASK gives neither.
+        // Both come from the group's class, so from the TASK that gave it,
+        // and so does a human member's follow-up cursor (DEC-0005). A group
+        // whose class TASK is kept at the caller's locality, or was never
+        // recorded, gives none of them.
         let ask_group = body.consult.as_ref().map(|payload| payload.correlation_ref);
         let group = match ask_group {
             Some(group_id) => {
@@ -101,11 +102,21 @@ pub(super) fn thread_tasks_capped(
                         .members
                         .iter()
                         .any(|member| member.task == id.to_hex())
-                        && (kept.is_empty() || !group.class_source_unrecorded())
                 })
             }
             None => None,
         };
+        let mut withheld = group
+            .as_ref()
+            .is_some_and(super::ask_record::AskGroup::class_source_unrecorded);
+        for task in group
+            .iter()
+            .flat_map(super::ask_record::AskGroup::class_tasks)
+        {
+            withheld |=
+                crate::settings::device_local_keeps_among(&vault.store, &txn, &kept, &task)?;
+        }
+        let group = group.filter(|_| !withheld);
         let group_settled = match ask_group.filter(|_| group.is_some()) {
             Some(group_id) => super::ask_settlement::read_result(vault, &txn, group_id)?.is_some(),
             None => false,
@@ -128,11 +139,12 @@ pub(super) fn thread_tasks_capped(
             ask_due,
             group_settled,
             class_tasks,
+            withheld,
         ));
     }
     drop(txn);
     let mut result = Vec::new();
-    for (id, thread, body, cancelled, ask_due, group_settled, class_tasks) in candidates {
+    for (id, thread, body, cancelled, ask_due, group_settled, class_tasks, withheld) in candidates {
         // `Memory::get_entity` opens a reader of its own: finish the index
         // snapshot first or LMDB refuses recursive reuse of its reader slot.
         // Room membership alone never grants TASK visibility.
@@ -156,7 +168,7 @@ pub(super) fn thread_tasks_capped(
                         kind: crate::workspace_roster::RoomWaitKind::HumanTask,
                         who: actor_ref,
                         since: body.created_at,
-                        next_nudge: cursor.and_then(|row| row.next_due_at),
+                        next_nudge: cursor.and_then(|row| row.next_due_at).filter(|_| !withheld),
                     })
                 }
                 Some(TaskAssignee::Peer { actor_ref } | TaskAssignee::Child { actor_ref })

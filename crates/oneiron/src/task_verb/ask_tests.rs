@@ -3317,7 +3317,9 @@ fn an_ask_off_this_device_reads_no_device_local_context_claim() -> Result<()> {
 /// caller's governed TASK, so its group keeps that TASK and each read of the
 /// ask through its handle lists it. Once the TASK's world is device-local, a
 /// caller off this device reads the ask as no ask; on this device it still
-/// reads it.
+/// reads it. Sol R11 F1: a group stored before groups kept that TASK reads
+/// as no ask on this device too, so no answer kept for a later replay is
+/// derived from a TASK it cannot list.
 #[test]
 fn an_ask_off_this_device_takes_no_class_from_a_device_local_governed_task() -> Result<()> {
     use crate::claim::CallerLocality;
@@ -3366,6 +3368,35 @@ fn an_ask_off_this_device_takes_no_class_from_a_device_local_governed_task() -> 
     assert!(listed.contains(&governed), "{listed:?}");
     let (here, _) = status(CallerLocality::OnDevice);
     assert_eq!(here?, portable);
+
+    let txn = fixture.vault.store.env.read_txn()?;
+    let raw = fixture
+        .vault
+        .get_raw_in(&txn, &receipt.handle.group_ref)?
+        .ok_or("stored ask group")?;
+    drop(txn);
+    let (header, body) = raw.split_at(crate::batch::ENTITY_METADATA_HEADER_LEN);
+    let rmpv::Value::Map(fields) = rmpv::decode::read_value(&mut &body[..])? else {
+        return Err("an ask group is a map".into());
+    };
+    let older = rmpv::Value::Map(
+        fields
+            .into_iter()
+            .filter(|(key, _)| key.as_str() != Some("governed_task"))
+            .collect(),
+    );
+    let mut stored = header.to_vec();
+    rmpv::encode::write_value(&mut stored, &older)?;
+    fixture.vault.with_write_txn(|wtxn| {
+        fixture
+            .vault
+            .store
+            .entities
+            .put(wtxn, receipt.handle.group_ref.as_bytes(), &stored)?;
+        Ok(())
+    })?;
+    let (here, _) = status(CallerLocality::OnDevice);
+    assert!(here.is_err(), "{here:?}");
     Ok(())
 }
 

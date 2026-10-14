@@ -1164,13 +1164,17 @@ fn peer_ask_wait_projects_its_existing_followup_ladder() -> Result<()> {
     Ok(())
 }
 
-/// Wonder R10 F2: a peer ask's wait takes its next notice from the ask's
-/// group, whose class comes from the TASK the ask names. A projection that
-/// shows the wait lists that TASK among the rows its answer was derived
-/// from, so a host withholds the answer off this device once the TASK's
-/// world is device-local (DEC-0005).
+/// Wonder R10 F2: an ask's waits take their next notice from the ask's
+/// group, whose class comes from the TASK the ask names: a peer's from its
+/// ladder, a human's from the follow-up cursor that ladder set. A projection
+/// that shows the waits lists that TASK among the rows its answer was
+/// derived from, so a host judges the answer by it again before it leaves
+/// this device (DEC-0005). Wonder R11 F1, F2: once the TASK's world is
+/// device-local, a projection off this device, with or without a host to
+/// judge it, takes no notice from the ask; on this device it still does.
 #[test]
 fn a_peer_ask_wait_lists_the_task_its_class_came_from() -> Result<()> {
+    use crate::claim::CallerLocality;
     use crate::task_verb::{
         ConsultPayloadRef, TaskAskDefault, TaskAskQuestion, TaskAskSpec, TaskAskTarget,
         TaskAssignee, TaskCreateSpec,
@@ -1228,37 +1232,63 @@ fn a_peer_ask_wait_lists_the_task_its_class_came_from() -> Result<()> {
         .task_ref
         .unwrap();
     let before = crate::unix_seconds_now();
-    let mut ask = TaskAskSpec::shorthand(
-        Some(TaskAskTarget::Responder(TaskAssignee::Peer {
-            actor_ref: peer,
-        })),
-        TaskAskQuestion::new(ConsultPayloadRef::Turn(root)),
-        Some(before + 300),
-        TaskAskDefault::AskMe,
+    let mut members = Vec::new();
+    for (key, who) in [
+        ("peer", TaskAssignee::Peer { actor_ref: peer }),
+        ("human", TaskAssignee::Human { actor_ref: owner }),
+    ] {
+        let mut ask = TaskAskSpec::shorthand(
+            Some(TaskAskTarget::Responder(who)),
+            TaskAskQuestion::new(ConsultPayloadRef::Turn(root)),
+            Some(before + 300),
+            TaskAskDefault::AskMe,
+        );
+        ask.intent_key = key.into();
+        ask.task_ref = Some(class_task);
+        ask.remind = Some(vec![30, 60]);
+        members.extend(memory.tasks_ask(&ask).unwrap().task_refs);
+    }
+    let policy = RoomThreadPolicy {
+        now: before + 100,
+        fresh_for: 1,
+        rows_per_list: 8,
+        tokens_per_list: 512,
+        fill: RoomThreadFill::Stage,
+        waits_per_thread: 8,
+    };
+    let notices = |locality| {
+        let producers = crate::memory::ProducerRows::default();
+        let projection = vault
+            .memory(owner, EdgeActorClass::Human)
+            .at(locality)
+            .listing_producers(&producers)
+            .rooms_threads(room, policy)
+            .unwrap();
+        let mut notices = projection.waiting.rows[0]
+            .waits
+            .iter()
+            .map(|wait| (wait.kind, wait.next_nudge.is_some()))
+            .collect::<Vec<_>>();
+        notices.sort_by_key(|(kind, _)| *kind == RoomWaitKind::Ask);
+        (notices, producers.take())
+    };
+    let (portable, listed) = notices(CallerLocality::OffDevice);
+    assert_eq!(
+        portable,
+        vec![(RoomWaitKind::HumanTask, true), (RoomWaitKind::Ask, true)]
     );
-    ask.task_ref = Some(class_task);
-    ask.remind = Some(vec![30, 60]);
-    let receipt = memory.tasks_ask(&ask).unwrap();
-    let producers = crate::memory::ProducerRows::default();
-    let projection = vault
-        .memory(owner, EdgeActorClass::Human)
-        .listing_producers(&producers)
-        .rooms_threads(
-            room,
-            RoomThreadPolicy {
-                now: before + 100,
-                fresh_for: 1,
-                rows_per_list: 8,
-                tokens_per_list: 512,
-                fill: RoomThreadFill::Stage,
-                waits_per_thread: 8,
-            },
-        )
-        .unwrap();
-    assert!(projection.waiting.rows[0].waits[0].next_nudge.is_some());
-    let listed = producers.take();
-    assert!(listed.contains(&receipt.task_refs[0]), "{listed:?}");
-    assert!(listed.contains(&class_task), "{listed:?}");
+    for row in members.iter().chain([&class_task]) {
+        assert!(listed.contains(row), "{listed:?}");
+    }
+
+    vault.set_world_device_only(world, true)?;
+    let (kept, listed) = notices(CallerLocality::OffDevice);
+    assert_eq!(
+        kept,
+        vec![(RoomWaitKind::HumanTask, false), (RoomWaitKind::Ask, false)]
+    );
+    assert!(!listed.contains(&class_task), "{listed:?}");
+    assert_eq!(notices(CallerLocality::OnDevice).0, portable);
     Ok(())
 }
 
