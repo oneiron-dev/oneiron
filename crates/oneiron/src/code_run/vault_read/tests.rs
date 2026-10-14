@@ -614,9 +614,11 @@ fn context_pack_run_row_publishes_only_actor_visible_ids() {
         vec![admitted_id.to_hex()],
         "only the admitted claim is answered"
     );
-    assert!(
-        response.0.stats.claims_suppressed >= 1,
-        "the scoped filter removed the denied claim from the assembled pack"
+    // F19 H287: the scoped filter removed the denied claim, and no stat says
+    // so: a count of withheld claims would tell the reader one matched.
+    assert_eq!(
+        response.0.stats.claims_suppressed, 0,
+        "no stat counts a claim the reader cannot read"
     );
 
     let denied_bytes = *denied_id.as_bytes();

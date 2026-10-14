@@ -108,7 +108,8 @@ pub(in crate::context_pack) struct ContextPackRun<'a> {
     pub(in crate::context_pack) telemetry: ContextPackTelemetry<'a>,
     /// Original pipeline scope count, retained by ordinary finalization.
     pub(in crate::context_pack) total_in_scope: usize,
-    pub(in crate::context_pack) clamped_out: u64,
+    /// Scored candidates the disclosure clamp's candidate sweep dropped.
+    pub(in crate::context_pack) clamped: Vec<EntityId>,
     pub(in crate::context_pack) replay_config: Option<serde_json::Value>,
 }
 
@@ -117,7 +118,7 @@ pub struct UnfinalizedContextPack<'a> {
     pub(super) telemetry_run_id: Option<RetrievalRunId>,
     pub(super) telemetry: ContextPackTelemetry<'a>,
     pub(super) total_in_scope: usize,
-    pub(super) clamped_out: u64,
+    pub(super) clamped: Vec<EntityId>,
     pub(super) replay_config: Option<serde_json::Value>,
 }
 
@@ -130,7 +131,20 @@ impl UnfinalizedContextPack<'_> {
     /// this assembly (OF-365 ILD-2). Non-clamped runs report 0.
     #[must_use]
     pub fn clamped_out(&self) -> u64 {
-        self.clamped_out
+        u64::try_from(self.clamped.len()).unwrap_or(u64::MAX)
+    }
+
+    /// [`Self::clamped_out`] as a caller reading through `read` may learn
+    /// it: only dropped rows `read` reads count, so the number never says
+    /// that a row the caller cannot read matched. Denial reads as absence.
+    pub fn clamped_out_under(&self, read: &crate::claim::ScopedRead<'_>) -> Result<u64> {
+        let mut count: u64 = 0;
+        for id in &self.clamped {
+            if read.is_entity_readable(id)? {
+                count = count.saturating_add(1);
+            }
+        }
+        Ok(count)
     }
 
     pub fn finish_projected_json(

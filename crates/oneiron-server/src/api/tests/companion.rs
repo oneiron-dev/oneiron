@@ -166,22 +166,56 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
 
     let revoke_path = format!("/v1/companion/access-grants/{grant_id}/revoke");
     let revoke_request = json!({ "revoked_at": 20_u64 });
-    let (status, body) = route_json(
-        server.clone(),
-        core_request_with_principal_ref(
-            "POST",
-            &revoke_path,
-            "companion:access-grant:write",
-            &other_principal_ref,
-            Some(&revoke_request),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_error_envelope(&body, "FORBIDDEN");
+    // F19 H64: another principal's grant, a row that is no grant, and an id
+    // never written all read alike to a writer bound to another principal,
+    // and a caller without the write verb is refused before any lookup.
+    let not_a_grant = seeded_test_entity_id(0x1265_0008);
+    server
+        .vault
+        .put_entity(
+            &not_a_grant,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"not a grant",
+        )
+        .expect("seed a non-grant row");
+    let revoke_as = |id: String, scope: &'static str| {
+        route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                &format!("/v1/companion/access-grants/{id}/revoke"),
+                scope,
+                &other_principal_ref,
+                Some(&revoke_request),
+            ),
+        )
+    };
+    let missing = seeded_test_entity_id(0x1265_0009).to_hex();
+    let mut answers = Vec::new();
+    for id in [&grant_id, &not_a_grant.to_hex(), &missing] {
+        let (status, body) = revoke_as(id.clone(), "companion:access-grant:write").await;
+        answers.push((
+            status,
+            error_envelope(&body)["code"].clone(),
+            error_envelope(&body)["details"].clone(),
+        ));
+        let (status, body) = revoke_as(id.clone(), "core:read").await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(
+            error_envelope(&body)["details"]["requiredScope"],
+            Value::from("companion:access-grant:write")
+        );
+    }
+    assert_eq!(answers[2].0, StatusCode::NOT_FOUND, "{answers:?}");
     assert_eq!(
-        error_envelope(&body)["details"]["requiredScope"],
-        Value::from("core:auth")
+        answers[0], answers[2],
+        "another principal's grant reads as missing"
+    );
+    assert_eq!(
+        answers[1], answers[2],
+        "a row that is no grant reads as missing"
     );
     assert_eq!(
         server

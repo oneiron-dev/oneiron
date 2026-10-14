@@ -4,6 +4,7 @@ use super::super::json_payload;
 use super::super::parse_entity_id_param;
 use super::super::parse_optional_entity_id;
 use super::super::unix_seconds_now;
+use super::auth::require_companion_access_grant_write;
 use super::auth::require_companion_access_grant_write_for_principal;
 use super::errors::companion_create_error;
 use super::errors::companion_engine_error;
@@ -172,15 +173,24 @@ pub(crate) async fn revoke_companion_access_grant(
     let req = json_payload(payload)?;
     let revoked_at = req.revoked_at.unwrap_or_else(unix_seconds_now);
 
-    let existing = server
-        .vault
-        .get_access_grant(&grant_id)
-        .map_err(|error| {
-            tracing::error!(error = %error, id = %grant_id.to_hex(), "companion access grant read failed");
-            companion_engine_error("companion access grant read failed", error)
-        })?
-        .ok_or_else(|| ApiError::not_found("access_grant", None))?;
-    require_companion_access_grant_write_for_principal(&auth, &existing.principal_ref)?;
+    // The verb is checked before any lookup, and a grant the caller may not
+    // revoke reads as one that does not exist: no status tells a missing
+    // grant, another principal's grant, or a row of another type apart.
+    require_companion_access_grant_write(&auth)?;
+    let absent = || ApiError::not_found("access_grant", None);
+    let existing = match server.vault.get_access_grant(&grant_id) {
+        Ok(Some(grant)) => grant,
+        Ok(None) => return Err(absent().into()),
+        Err(error) if error.kind() == oneiron::ErrorKind::InvalidEntityType => {
+            return Err(absent().into());
+        }
+        Err(error) => {
+            tracing::error!(kind = ?error.kind(), "companion access grant read failed");
+            return Err(companion_engine_error("companion access grant read failed", error).into());
+        }
+    };
+    require_companion_access_grant_write_for_principal(&auth, &existing.principal_ref)
+        .map_err(|_| absent())?;
     if existing.scope.companion_profile_refs().is_none() {
         return Err(ApiError::bad_request(
             "grant is not companion_profile scoped",

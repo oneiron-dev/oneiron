@@ -1265,3 +1265,62 @@ async fn an_agent_only_room_never_reads_as_the_owner_alone_for_a_bare_host() {
         "an agent's room never holds Tier A: {after}"
     );
 }
+
+/// F19 H146 and H287: a narrowed reader's pack counts no row it cannot read.
+/// The clamp's count names only withheld rows the reader reads, and no stat
+/// counts the claims its own grant withholds, so a query that matches hidden
+/// claims reads the same as before they existed.
+#[tokio::test]
+async fn a_narrowed_readers_pack_counts_no_row_it_cannot_read() {
+    let (_dir, server) = interlocutor_test_server();
+    let identity_ref = seeded_test_entity_id(0x2519_0001);
+    let principal = seeded_test_entity_id(0x2519_0002);
+    seed_counterparty_contact(&server, principal, identity_ref, "lantern@example.com");
+    let party = seed_text_turn(&server, "lantern festival needle19");
+    seed_disclosure_scope(&server, principal, disclosure_base_world_clearance());
+    // The reader reads turns and its own contact row, never a claim.
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        principal,
+        &[
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT,
+        ],
+    );
+    let counts = || async {
+        let (status, body) = route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                "/v1/core/context-pack",
+                "core:read",
+                &principal.to_hex(),
+                Some(&json!({ "query": "needle19", "limit": 10 })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["disclosure"]["mode"], "absence_clamp", "{body}");
+        (
+            body["disclosure"]["clamped_out"].clone(),
+            body["stats"]["claims_suppressed"].clone(),
+        )
+    };
+    let before = counts().await;
+    // One claim the clamp withholds (another world), one the reader's own
+    // grant withholds (a claim, in the base world the clamp admits).
+    seed_disclosure_claim_in_world(
+        &server,
+        party,
+        "private diary entry needle19",
+        seeded_test_entity_id(0x2519_00f1),
+    );
+    seed_disclosure_claim_in_world(
+        &server,
+        party,
+        "festival details needle19",
+        oneiron::claim::base_world_id(),
+    );
+    assert_eq!(counts().await, before, "hidden matches move no count");
+    assert_eq!(before, (json!(0), json!(0)));
+}

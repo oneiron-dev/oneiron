@@ -556,6 +556,9 @@ pub(crate) fn apply_context_pack_response_retrieval_budget(
 }
 
 pub(crate) fn scrub_context_pack_visible_stats(pack: &mut oneiron::ContextPack) {
+    // How many claims the scope withheld is a count of rows the caller may
+    // not read: it never leaves as a stat (F19).
+    pack.stats.claims_suppressed = 0;
     pack.stats.candidates_considered = pack.results.len();
     pack.stats.entities_hydrated = pack.results.len();
     pack.stats.neighbors_hydrated = pack.neighbors.len();
