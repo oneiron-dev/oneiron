@@ -232,7 +232,11 @@ pub(super) fn discover_in(
         ));
     };
     #[cfg(feature = "sync")]
-    let device_only = crate::settings::device_only_worlds_in(vault, txn)?;
+    let device_only = crate::settings::device_local_worlds_at(
+        vault,
+        txn,
+        crate::claim::CallerLocality::OffDevice,
+    )?;
     #[cfg(not(feature = "sync"))]
     let device_only = BTreeSet::new();
     let ids: Vec<_> = pins.iter().map(|(id, _)| *id).collect();
@@ -438,7 +442,11 @@ fn newest_claims(
     let ids: Vec<_> = ordered.into_iter().map(|(_, id)| id).collect();
     // The worlds this device keeps to itself; none without sync.
     #[cfg(feature = "sync")]
-    let device_only = crate::settings::device_only_worlds_in(vault, txn)?;
+    let device_only = crate::settings::device_local_worlds_at(
+        vault,
+        txn,
+        crate::claim::CallerLocality::OffDevice,
+    )?;
     #[cfg(not(feature = "sync"))]
     let device_only = BTreeSet::new();
     let rows = read.get_entities_parts_in_txn(txn, &ids)?;

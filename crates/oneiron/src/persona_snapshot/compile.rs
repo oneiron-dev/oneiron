@@ -305,10 +305,15 @@ impl crate::Vault {
             .as_ref()
             .map(|key| key.actor_ref().to_owned());
 
+        let kept = {
+            let rtxn = self.store.env.read_txn()?;
+            crate::settings::device_local_worlds_at(self, &rtxn, options.locality)?
+        };
         let mut read_receipt = None;
         let subject_claims = self.persona_snapshot_candidate_claims(
             subject_ref,
             audience_read.as_ref(),
+            &kept,
             &mut read_receipt,
         )?;
 
@@ -440,6 +445,7 @@ impl crate::Vault {
             let other_claims = self.persona_snapshot_candidate_claims(
                 other,
                 audience_read.as_ref(),
+                &kept,
                 &mut read_receipt,
             )?;
             let other_name = top_claim_text(&other_claims, PERSONA_SNAPSHOT_NAME_PREDICATE)
@@ -572,12 +578,14 @@ impl crate::Vault {
         })
     }
 
-    /// Admissible claims about `person_ref`; with an audience, only those the
-    /// audience may read, the audience read folded into `receipt`.
+    /// Admissible claims about `person_ref`, none in a `kept` world; with an
+    /// audience, only those the audience may read, the audience read folded
+    /// into `receipt`.
     fn persona_snapshot_candidate_claims(
         &self,
         person_ref: &EntityId,
         audience: Option<&ScopedRead<'_>>,
+        kept: &BTreeSet<EntityId>,
         receipt: &mut Option<ScopedReadReceipt>,
     ) -> Result<Vec<CandidateClaim>> {
         let mut candidates = Vec::new();
@@ -598,7 +606,10 @@ impl crate::Vault {
                 continue;
             }
             let body = decode_claim_body(body_bytes, true)?;
-            if body.subject != ClaimSubject::Entity(*person_ref) || !admissible_claim(&body) {
+            if body.subject != ClaimSubject::Entity(*person_ref)
+                || !admissible_claim(&body)
+                || body.world.is_some_and(|world| kept.contains(&world))
+            {
                 continue;
             }
             if persona_snapshot_tier_a_clamped(&body) {

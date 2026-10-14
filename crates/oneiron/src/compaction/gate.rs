@@ -14,7 +14,7 @@ use serde_json::Value;
 use crate::FinishReason;
 use crate::tokenizer::count_context_pack_tokens;
 
-use super::driver::{CompactionProduct, CompactionRequest};
+use super::driver::{CompactionProduct, CompactionRequest, CompactionWindowMessage};
 
 /// The JSON schema a compaction backend is asked to answer in. The gate's
 /// schema check reads exactly these three keys and nothing else.
@@ -41,18 +41,77 @@ pub fn compaction_request_input(
     request: &CompactionRequest,
     retry: Option<CompactionCheck>,
 ) -> Value {
+    input_document(
+        request.turn_start,
+        &request.window,
+        &request.pins,
+        request.summary_token_budget,
+        retry,
+    )
+}
+
+fn input_document(
+    turn_start: u64,
+    window: &[CompactionWindowMessage],
+    pins: &[String],
+    summary_token_budget: u64,
+    retry: Option<CompactionCheck>,
+) -> Value {
     serde_json::json!({
-        "from": request.turn_start,
-        "through": request.window.last().map_or(request.turn_start, |message| message.turn),
-        "max_summary_tokens": request.summary_token_budget,
-        "pins": request.pins,
+        "from": turn_start,
+        "through": window.last().map_or(turn_start, |message| message.turn),
+        "max_summary_tokens": summary_token_budget,
+        "pins": pins,
         "retry": retry.map(CompactionCheck::as_str),
-        "steps": request
-            .window
-            .iter()
-            .map(|message| serde_json::json!({"step": message.turn, "text": message.content}))
-            .collect::<Vec<_>>(),
+        "steps": window.iter().map(step_frame).collect::<Vec<_>>(),
     })
+}
+
+fn step_frame(message: &CompactionWindowMessage) -> Value {
+    serde_json::json!({"step": message.turn, "text": message.content})
+}
+
+/// The tokens [`compaction_request_input`] renders for `window` from
+/// `turn_start` with `pins`, on its costliest try (whichever retry it names),
+/// counted as a backend counts its input. The retry's name sits between
+/// fixed keys, so the costliest is found on an empty input.
+pub(crate) fn compaction_input_tokens(
+    turn_start: u64,
+    window: &[CompactionWindowMessage],
+    pins: &[String],
+    summary_token_budget: u64,
+) -> u64 {
+    let render =
+        |window: &[CompactionWindowMessage], pins: &[String], retry: Option<CompactionCheck>| {
+            count_context_pack_tokens(
+                &input_document(turn_start, window, pins, summary_token_budget, retry).to_string(),
+            ) as u64
+        };
+    let retry = [
+        None,
+        Some(CompactionCheck::NaturalStop),
+        Some(CompactionCheck::Schema),
+        Some(CompactionCheck::Size),
+        Some(CompactionCheck::Pins),
+        Some(CompactionCheck::Degeneracy),
+        Some(CompactionCheck::Coverage),
+    ]
+    .into_iter()
+    .max_by_key(|retry| render(&[], &[], *retry))
+    .flatten();
+    render(window, pins, retry)
+}
+
+/// The tokens one more pin adds to [`compaction_request_input`]: the pin as
+/// a JSON string, escapes included, and the comma that joins it.
+pub(crate) fn compaction_pin_input_tokens(pin: &str) -> u64 {
+    count_context_pack_tokens(&Value::from(pin).to_string()) as u64 + 1
+}
+
+/// The tokens one step adds to [`compaction_request_input`]: its JSON frame,
+/// escapes included, and the comma that joins it to the step before.
+pub(crate) fn compaction_step_input_tokens(message: &CompactionWindowMessage) -> u64 {
+    count_context_pack_tokens(&step_frame(message).to_string()) as u64 + 1
 }
 
 /// One pre-swap check, in gate order.
@@ -406,6 +465,8 @@ impl CompactionOff {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompactionRefusal {
     pub suppression: CompactionSuppression,
-    /// Operator-facing detail for logs; never shown to the model.
+    /// Operator-facing detail for the refusal's receiver; never shown to the
+    /// model. Logs carry only `suppression`: the detail can quote a provider's
+    /// error body.
     pub detail: String,
 }

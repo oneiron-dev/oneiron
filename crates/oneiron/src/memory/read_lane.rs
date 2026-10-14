@@ -51,8 +51,14 @@ impl Memory<'_> {
             .with_claim_status(claims))
     }
 
-    /// The bound actor's read key, verified in one snapshot.
+    /// The bound actor's read key, verified in one snapshot, for the caller
+    /// where it sits.
     fn actor_read_key(&self) -> MemoryResult<ScopedReadActorKey> {
+        Ok(self.identity_read_key()?.at(self.locality))
+    }
+
+    /// The bound actor's read key by identity alone.
+    fn identity_read_key(&self) -> MemoryResult<ScopedReadActorKey> {
         let txn = self
             .vault
             .store

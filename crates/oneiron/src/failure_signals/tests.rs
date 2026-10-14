@@ -622,3 +622,72 @@ fn public_door_counts_nine_classes_without_provenance_references() -> Result<()>
     }
     Ok(())
 }
+
+#[test]
+fn a_failed_turn_exports_as_counts_never_its_text() -> Result<()> {
+    // Owner ruling 2026-10-14 (fix 6): telemetry never carries world text.
+    // A managed deployment must export; what it exports for a failed turn is
+    // the closed tier-1 aggregate. The transcript-sampling tier is gone.
+    use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+    const SENTINEL: &str = "sentinel-row-text-c41e";
+    let dir = tempfile::tempdir()?;
+    let mut config = crate::test_util::embedding_test_config();
+    config.retrieval_telemetry_capture = true;
+    config.failure_signals.deployment = crate::config::failure_signals::DeploymentTier::Managed;
+    let vault = crate::Vault::open(dir.path(), config)?;
+    let actor = EntityId::from_bytes([0x61; 16])?;
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"actor",
+    )?;
+    let turn = EntityId::now();
+    vault
+        .memory(actor, crate::EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::now().to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            occurred_at: 10,
+            messages: vec![WitnessMessage {
+                id: None,
+                author: WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: format!("where did I put {SENTINEL}?"),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+        })
+        .expect("authorized witness");
+    // The turn's retrieval came back empty: a memory miss.
+    let run = crate::store::RetrievalRunRecord::new(
+        crate::store::RetrievalRunId::now(),
+        crate::store::RetrievalAction::Pipeline,
+        3_601,
+        1,
+        vec![crate::store::RetrievalSignal::Text],
+        vec![],
+        3,
+        0,
+        Some("no_results".into()),
+    );
+    vault.store.record_retrieval_run(&run)?;
+    let ids = vault.run_retrieval_miss_detector("retrieval", 10)?;
+    vault.record_failure_signal(
+        &vault
+            .tier1_observation(ids[0])?
+            .expect("retrieval producer"),
+        input(FailureClassV1::MemoryMiss),
+    )?;
+
+    let rows = vault.export_tier1_failure_counts()?;
+    assert_eq!(rows.iter().map(Tier1FailureCount::count).sum::<u64>(), 1);
+    let wire = serde_json::to_string(&rows).expect("tier-1 export");
+    assert!(
+        !wire.contains(SENTINEL),
+        "failed turn text in the export: {wire}"
+    );
+    Ok(())
+}

@@ -41,7 +41,12 @@ pub(in crate::sync) fn window_is_device_only(vault: &Vault, key: &WindowKey) -> 
         return Ok(false);
     };
     let rtxn = vault.store.env.read_txn()?;
-    Ok(crate::settings::device_only_worlds_in(vault, &rtxn)?.contains(&world))
+    Ok(crate::settings::device_local_worlds_at(
+        vault,
+        &rtxn,
+        crate::claim::CallerLocality::OffDevice,
+    )?
+    .contains(&world))
 }
 
 /// Whether a full-window send of `doc` ships nothing now: the window belongs
@@ -114,7 +119,7 @@ pub fn raw_update_verdict(
         Ok(UpdateVerdict::Uninspectable)
     })();
     verdict.unwrap_or_else(|error| {
-        tracing::warn!(window_key, %error, "raw window update not inspectable");
+        tracing::warn!(kind = ?error.kind(), "raw window update not inspectable");
         UpdateVerdict::Uninspectable
     })
 }
@@ -217,7 +222,7 @@ pub(super) fn delta_carries_device_only(
 /// The worlds withheld from any other machine now.
 fn flagged_worlds(vault: &Vault) -> Result<BTreeSet<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
-    crate::settings::device_only_worlds_in(vault, &rtxn)
+    crate::settings::device_local_worlds_at(vault, &rtxn, crate::claim::CallerLocality::OffDevice)
 }
 
 fn carries_device_only(
@@ -311,7 +316,11 @@ pub(in crate::sync) fn device_only_ids(
     entities: &LoroMap,
     edges: &LoroMap,
 ) -> Result<HashSet<EntityId>> {
-    let flagged = crate::settings::device_only_worlds_in(vault, rtxn)?;
+    let flagged = crate::settings::device_local_worlds_at(
+        vault,
+        rtxn,
+        crate::claim::CallerLocality::OffDevice,
+    )?;
     let mut withheld = HashSet::new();
     if flagged.is_empty() {
         return Ok(withheld);

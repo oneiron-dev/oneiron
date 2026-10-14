@@ -139,6 +139,16 @@ fn follows_the_prompt(case: &Case) -> Reply {
     }))
 }
 
+/// Stops the server gracefully off this test's runtime thread: the fake
+/// model runs on that thread, and a call a pass makes after the signal is
+/// answered while the pass finishes. Blocking the thread in [`stop`] left
+/// that call unanswered and the server waiting for it.
+async fn stop_serving(child: std::process::Child) {
+    tokio::task::spawn_blocking(move || stop(child))
+        .await
+        .unwrap();
+}
+
 /// Serves until the model has heard `calls` requests and then a quiet spell,
 /// then stops gracefully.
 async fn serve_until(config: &Path, fake: &FakeLlm, calls: usize) {
@@ -157,7 +167,7 @@ async fn serve_until(config: &Path, fake: &FakeLlm, calls: usize) {
         }
         heard = now;
     }
-    stop(child);
+    stop_serving(child).await;
 }
 
 fn claims_on(
@@ -294,7 +304,7 @@ async fn binds_once(case: Case) {
     let calls = fake.seen().len();
     let child = serve(&config);
     tokio::time::sleep(Duration::from_secs(5)).await;
-    stop(child);
+    stop_serving(child).await;
     assert_eq!(fake.seen().len(), calls, "a finished pass makes no call");
     held(&Vault::open_owned(&vault_path, vault_config()).unwrap());
 }
@@ -352,19 +362,22 @@ async fn a_vault_seeded_before_the_critical_classes_holds_that_correction_too() 
     .await;
 }
 
-/// Engine ruling 2026-10-14 (NIGHTLY-SWITCH): a provider set to
-/// `response_format = "none"` sends the extraction call no
-/// `response_format`, and an answer that breaks the extraction schema is
-/// refused as it is under the default, which still sends the schema: the
-/// pass writes the same claims, none from that answer. The answer holds a
-/// writable Lisbon candidate beside a stray item the decoder would skip, so
-/// only the schema check refuses it: without the stray item, the same answer
-/// lands Lisbon under `none` (Sol r3).
+/// DREAMER-SEAT (owner ruling A, 2026-10-14; Engine notes): the extraction
+/// call carries no schema on any provider, whether the provider is set to
+/// `response_format = "none"` or left at the default, and the engine's own
+/// check still refuses an answer that breaks the extraction contract: the
+/// pass writes the same claims in both arms, none from that answer. The
+/// answer holds a writable Lisbon candidate beside a stray item the decoder
+/// would skip, so only the contract check refuses it: without the stray
+/// item, the same answer lands Lisbon. The vault configures no reasoning
+/// level, so every extraction call to this local server names `medium`, in
+/// the effort field and in the chat template's arguments, with a 4,096-token
+/// thinking budget.
 #[tokio::test]
-async fn an_off_schema_answer_is_refused_with_or_without_the_schema_on_the_wire() {
+async fn an_off_contract_answer_is_refused_with_no_schema_on_any_wire() {
     let none = "response_format = \"none\"\n";
     let mut written = Vec::new();
-    for (line, sends, stray) in [("", true, true), (none, false, true), (none, false, false)] {
+    for (line, stray) in [("", true), (none, true), ("", false)] {
         let dir = tempfile::tempdir().unwrap();
         let vault_path = dir.path().join("vault");
         std::fs::create_dir_all(&vault_path).unwrap();
@@ -421,19 +434,22 @@ async fn an_off_schema_answer_is_refused_with_or_without_the_schema_on_the_wire(
             .collect();
         assert!(!extraction.is_empty(), "the pass called the model");
         for call in extraction {
+            let body = &call.body;
+            assert_eq!(body.get("response_format"), None, "{body}");
+            assert_eq!(body["reasoning_effort"], "medium", "{body}");
             assert_eq!(
-                call.body.get("response_format").is_some(),
-                sends,
-                "{}",
-                call.body
+                body["chat_template_kwargs"],
+                json!({"reasoning_effort": "medium"}),
+                "{body}"
             );
+            assert_eq!(body["reasoning_budget_tokens"], 4_096, "{body}");
         }
         let vault = Vault::open_owned(&vault_path, vault_config()).unwrap();
         let person = EntityId::from_hex(PERSON).unwrap();
         assert_eq!(
             claims_on(&vault, person, "residence.city").len(),
             usize::from(!stray),
-            "the off-schema answer wrote nothing; the same answer in schema lands"
+            "the off-contract answer wrote nothing; the same answer within it lands"
         );
         let predicates: std::collections::BTreeSet<String> = vault
             .entities_by_type(ENTITY_TYPE_CLAIM)

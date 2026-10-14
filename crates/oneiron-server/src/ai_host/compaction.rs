@@ -43,10 +43,6 @@ const COMPACTION_RUN: &str = "code-mode-compaction";
 /// tokenizer may count up to twice as long as the engine's.
 const REPLY_FRAME_TOKENS: u64 = 64;
 
-/// The share of a pass's input room (one part in this many) kept for each
-/// step's JSON frame and the escapes its text gains in it.
-const STEP_FRAME_SHARE: u64 = 8;
-
 /// Code mode's compaction, settled once when code mode is bound.
 pub(super) enum CodeModeCompaction {
     Off(CompactionOff),
@@ -109,7 +105,7 @@ impl CodeModeCompaction {
             Ok(prompt) => prompt.text,
             Err(error) => {
                 tracing::warn!(
-                    %error,
+                    kind = ?error.kind(),
                     prompt_package = %prompt_package.display(),
                     "code mode's prompt package holds no compaction prompt; runs keep their raw window"
                 );
@@ -130,7 +126,7 @@ impl CodeModeCompaction {
         });
         let mut registry = CompactionBackendRegistry::new();
         if let Err(error) = registry.register(backend) {
-            tracing::error!(%error, "the compaction backend did not register");
+            tracing::error!(kind = ?error.kind(), "the compaction backend did not register");
             return Self::Off(CompactionOff::BackendFailed);
         }
         Self::Live(Arc::new(LiveCompaction {
@@ -187,7 +183,7 @@ impl CodeModeCompaction {
             ),
             Ok(None) => RunCompaction::off(CompactionOff::Disabled),
             Err(error) => {
-                tracing::error!(%error, "a run's compaction driver did not build");
+                tracing::error!(kind = ?error.kind(), "a run's compaction driver did not build");
                 RunCompaction::off(CompactionOff::BackendFailed)
             }
         }
@@ -343,18 +339,21 @@ impl CompactionBackend for ServedCompactionBackend {
         CompactionTierClass::Cheap
     }
 
-    /// Read on the vault's live route, as a pass is admitted.
-    fn window_token_limit(&self, summary_token_budget: u64) -> Option<u64> {
+    /// Read on the vault's live route, as a pass is admitted: what its
+    /// context holds beside the reply and the prompt, as [`Self::compact`]
+    /// counts it.
+    fn input_token_limit(&self, summary_token_budget: u64) -> Option<u64> {
         let context = self
             .models
             .seat(self.role)
             .and_then(|seat| self.models.route_role(&self.vault, self.role, seat).ok())
             .and_then(|route| self.allowances.get(&route.model).copied())
             .unwrap_or(0);
-        let room = context
-            .saturating_sub(output_tokens(summary_token_budget))
-            .saturating_sub(self.prompt_tokens);
-        Some(room - room / STEP_FRAME_SHARE)
+        Some(
+            context
+                .saturating_sub(output_tokens(summary_token_budget))
+                .saturating_sub(self.prompt_tokens),
+        )
     }
 
     fn compact(

@@ -493,9 +493,14 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
             "one",
         )
         .unwrap();
-    let bundle_id = runs::review(vault, &unbound, runs::RunName::Id(run))
-        .unwrap()
-        .bundle_id;
+    let bundle_id = runs::review(
+        vault,
+        &unbound,
+        runs::RunName::Id(run),
+        oneiron::claim::CallerLocality::OnDevice,
+    )
+    .unwrap()
+    .bundle_id;
 
     // Admitted at the door, then revoked before any act reaches the writer.
     let admitted = crate::api::owner_routes::owner(&auth, &server).expect("the owner is admitted");
@@ -548,13 +553,26 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
         oneiron::run_tree::GateConsentBundleAction::Decline,
     ] {
         let run = runs::RunName::Id(run);
-        refused_owner(runs::resolve(vault, &admitted, run, &bundle_id, action).unwrap_err());
+        refused_owner(
+            runs::resolve(
+                vault,
+                &admitted,
+                run,
+                &bundle_id,
+                action,
+                oneiron::claim::CallerLocality::OnDevice,
+            )
+            .unwrap_err(),
+        );
     }
     assert_eq!(
         vault.get_claim(&proposal).unwrap().unwrap().approval,
         oneiron::ClaimApprovalStatus::Proposed
     );
-    assert_eq!(runs::pending(vault).unwrap()[0].run_id, run);
+    assert_eq!(
+        runs::pending(vault, oneiron::claim::CallerLocality::OnDevice).unwrap()[0].run_id,
+        run
+    );
 
     // Cleanup review, persona export and off-record controls refuse the same
     // queued proof.
@@ -576,14 +594,22 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
     let cleanup_proposal = cleanup_run.proposal.unwrap().to_hex();
     refused_owner(cleanup::accept(vault, &admitted, &cleanup_proposal).unwrap_err());
     assert!(vault.archived_entity(&husk).unwrap().is_none());
-    let card = persona::preview(vault, &subject).unwrap();
+    let card = persona::preview(vault, &subject, oneiron::claim::CallerLocality::OnDevice).unwrap();
     let export = persona::ExportRequest {
         subject,
         stamp: card.stamp,
         strike: Vec::new(),
         unstrike: Vec::new(),
     };
-    refused_owner(persona::export(vault, &admitted, &export).unwrap_err());
+    refused_owner(
+        persona::export(
+            vault,
+            &admitted,
+            &export,
+            oneiron::claim::CallerLocality::OnDevice,
+        )
+        .unwrap_err(),
+    );
     let room: off_record::Enter = serde_json::from_value(
         json!({ "session_ref": "revoked-room", "mode": "off_record", "backend": "local" }),
     )
@@ -953,4 +979,28 @@ async fn a_credential_shaped_run_id_is_never_served_and_its_ref_decides_the_run(
         vault.get_claim(&proposal).unwrap().unwrap().approval,
         oneiron::ClaimApprovalStatus::Approved
     );
+}
+
+#[test]
+fn server_sink_logs_a_failed_owner_action_by_kind_never_its_text() {
+    // Owner ruling 2026-10-14 (fix 6): logs never carry world text. A host
+    // failure is an `anyhow` chain whose messages can quote what the owner
+    // asked for; the server sink used to print the whole chain.
+    const SENTINEL: &str = "sentinel-row-text-3e88";
+    let sink = crate::logging::tests::CapturedSink::default();
+    sink.with_production_subscriber(|| {
+        let engine = oneiron::Error::InvalidConfig(format!("no world named {SENTINEL}"));
+        let chained = anyhow::Error::new(engine).context(format!("restore {SENTINEL}"));
+        let _ = crate::api::owner_routes::owner_error(crate::owner::OwnerError::Host(chained));
+        let _ = crate::api::owner_routes::owner_error(crate::owner::OwnerError::Host(
+            anyhow::anyhow!("backup of {SENTINEL} failed"),
+        ));
+    });
+    let written = sink.text();
+    assert!(
+        !written.contains(SENTINEL),
+        "owner action text reached the log: {written}"
+    );
+    assert!(written.contains("Some(InvalidConfig)"), "{written}");
+    assert!(written.contains("owner action failed"), "{written}");
 }

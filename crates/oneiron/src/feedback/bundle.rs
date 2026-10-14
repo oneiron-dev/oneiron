@@ -6,10 +6,9 @@ use std::io::Cursor;
 use serde::{Deserialize, Serialize};
 
 use crate::config::VaultConfig;
+use crate::edge::EdgeKind;
 
-use super::error::{
-    FeedbackError, bounded, checked_embedding_model, checked_note, checked_sentence, checked_token,
-};
+use super::error::{FeedbackError, bounded, checked_embedding_model, checked_note, checked_token};
 
 /// Stable encoding token for the v1 feedback bundle wire contract.
 pub const FEEDBACK_BUNDLE_ENCODING: &str = "oneiron.feedback.bundle.v1";
@@ -34,9 +33,6 @@ pub const FEEDBACK_USER_NOTE_MAX_BYTES: usize = 4096;
 
 /// Maximum accepted length of any single reference token in bytes.
 pub const FEEDBACK_REF_MAX_BYTES: usize = 256;
-
-/// Maximum accepted length of the healer mechanism sentence in bytes.
-pub const FEEDBACK_MECHANISM_MAX_BYTES: usize = 512;
 
 /// Maximum number of hops carried by one healer diagnosis DAG.
 pub const FEEDBACK_DAG_MAX_HOPS: usize = 64;
@@ -217,7 +213,9 @@ impl FeedbackConfigSnapshot {
 pub struct FeedbackDagHop {
     /// Reference the hop reasons from.
     pub from_ref: String,
-    /// Named relation between the two references.
+    /// The edge kind the hop walks, by its canon snake_case name
+    /// ([`EdgeKind::name`]). Any other word is refused: a relation is a closed
+    /// vocabulary, so a healer cannot write row text into it.
     pub relation: String,
     /// Reference the hop reasons to.
     pub to_ref: String,
@@ -226,31 +224,32 @@ pub struct FeedbackDagHop {
 impl FeedbackDagHop {
     /// Builds one hop.
     #[must_use]
-    pub fn new(
-        from_ref: impl Into<String>,
-        relation: impl Into<String>,
-        to_ref: impl Into<String>,
-    ) -> Self {
+    pub fn new(from_ref: impl Into<String>, relation: EdgeKind, to_ref: impl Into<String>) -> Self {
         Self {
             from_ref: from_ref.into(),
-            relation: relation.into(),
+            relation: relation.name().to_owned(),
             to_ref: to_ref.into(),
         }
     }
 
     fn validate(&self) -> Result<(), FeedbackError> {
         checked_token("dag hop from_ref", &self.from_ref, FEEDBACK_REF_MAX_BYTES)?;
-        checked_token("dag hop relation", &self.relation, FEEDBACK_REF_MAX_BYTES)?;
+        if EdgeKind::from_name(&self.relation).is_none() {
+            return Err(FeedbackError::InvalidBundle(
+                "dag hop relation must be an edge kind name".to_owned(),
+            ));
+        }
         checked_token("dag hop to_ref", &self.to_ref, FEEDBACK_REF_MAX_BYTES)
     }
 }
 
-/// What the self-healer concluded: references, an ordered reasoning DAG, and
-/// one plain-language mechanism sentence.
+/// What the self-healer concluded: references and an ordered reasoning DAG.
 ///
-/// This is a summary, never a dump. References are opaque tokens, the DAG is
-/// an ordered list of hops, and the mechanism sentence is length-capped and
-/// single-line, so a raw stack trace or a configuration dump cannot ride here.
+/// This is a summary, never a dump: references are opaque tokens and the DAG
+/// is an ordered list of hops whose relations are edge kinds. It carries no
+/// prose. A healer's own sentence
+/// could quote the rows it reasoned over, and feedback never carries world
+/// text the owner did not write (owner ruling 2026-10-14).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FeedbackHealerDiagnosis {
@@ -260,19 +259,16 @@ pub struct FeedbackHealerDiagnosis {
     pub subject_refs: BTreeSet<String>,
     /// Ordered reasoning hops, first hop first.
     pub dag: Vec<FeedbackDagHop>,
-    /// One-sentence mechanism, when the healer produced one.
-    pub mechanism: Option<String>,
 }
 
 impl FeedbackHealerDiagnosis {
-    /// Builds a diagnosis with no subjects, no hops, and no mechanism.
+    /// Builds a diagnosis with no subjects and no hops.
     #[must_use]
     pub fn new(diagnosis_ref: impl Into<String>) -> Self {
         Self {
             diagnosis_ref: diagnosis_ref.into(),
             subject_refs: BTreeSet::new(),
             dag: Vec::new(),
-            mechanism: None,
         }
     }
 
@@ -293,9 +289,6 @@ impl FeedbackHealerDiagnosis {
         bounded("healer dag", self.dag.len(), FEEDBACK_DAG_MAX_HOPS)?;
         for hop in &self.dag {
             hop.validate()?;
-        }
-        if let Some(mechanism) = self.mechanism.as_deref() {
-            checked_sentence("healer mechanism", mechanism, FEEDBACK_MECHANISM_MAX_BYTES)?;
         }
         Ok(())
     }
@@ -319,7 +312,7 @@ pub struct FeedbackBundle {
     pub config: Option<FeedbackConfigSnapshot>,
     /// Self-healer conclusion, when one exists.
     pub healer_diagnosis: Option<FeedbackHealerDiagnosis>,
-    /// What the person wrote, after redaction.
+    /// What the owner wrote, as they wrote it. The engine never fills this.
     pub user_note: Option<String>,
 }
 
@@ -421,7 +414,7 @@ pub fn decode_feedback_bundle(bytes: &[u8]) -> Result<FeedbackBundle, FeedbackEr
     Ok(bundle)
 }
 
-/// Lowercase hex digest binding the exact post-redaction bundle bytes.
+/// Lowercase hex digest binding the exact bundle bytes a destination receives.
 ///
 /// The preimage is the encoding token, a NUL, the big-endian byte length, and
 /// the bytes. Length-prefixing keeps two different bundles from colliding

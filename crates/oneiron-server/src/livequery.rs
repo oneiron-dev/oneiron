@@ -72,10 +72,57 @@ fn rpc_error(request_id: u64, error: AppError) -> Result<Vec<Vec<u8>>, ProtocolE
     )?])
 }
 
+/// A read RPC's reply frames, and the rows its result carries as its
+/// producer named them: `None` when it could not.
+pub(crate) struct RpcReply {
+    request_id: u64,
+    frames: Vec<Vec<u8>>,
+    /// `None` for a refusal, which carries no rows.
+    rows: Option<Option<Vec<oneiron::EntityId>>>,
+}
+
+impl RpcReply {
+    fn answer(
+        request_id: u64,
+        result: Result<(Value, Option<Vec<oneiron::EntityId>>), AppError>,
+    ) -> Result<Self, ProtocolError> {
+        let (frames, rows) = match result {
+            Ok((value, rows)) => match rpc_result(request_id, value) {
+                Ok(frames) => (frames, Some(rows)),
+                Err(_) => (
+                    rpc_error(
+                        request_id,
+                        AppError::bad_request("RPC result byte limit exceeded", None),
+                    )?,
+                    None,
+                ),
+            },
+            Err(error) => (rpc_error(request_id, error)?, None),
+        };
+        Ok(Self {
+            request_id,
+            frames,
+            rows,
+        })
+    }
+
+    /// The frames as `conn`'s send door takes them: each chunk of a result
+    /// carries the rows the release judges again (DEC-0005).
+    pub(crate) fn queued(self, conn: u32) -> Vec<Vec<u8>> {
+        let Some(rows) = self.rows else {
+            return self.frames;
+        };
+        self.frames
+            .into_iter()
+            .map(|frame| routing::wrap(conn, self.request_id, 0, rows.as_deref(), frame))
+            .collect()
+    }
+}
+
 /// Both identity claims come from the credential, exactly as on the HTTP facade.
 fn bound_memory<'a>(vault: &'a oneiron::Vault, auth: &CoreAuth) -> Result<Memory<'a>, AppError> {
     let (actor, class) = bound_reader(auth)?;
-    let memory = vault.memory(actor, class);
+    let memory = vault.memory(actor, class).at(auth.locality());
     // Reads run under the credential this principal presented (ONE-1187-D6).
     Ok(match auth.verified_slip() {
         Some(proof) => memory.with_read_proof(proof),
@@ -125,15 +172,24 @@ pub(crate) fn residence_rpc(
     auth: &CoreAuth,
     request: RpcRequest,
     index_cache: &mut Option<ResidenceIndexCache>,
-) -> Result<Vec<Vec<u8>>, ProtocolError> {
+) -> Result<RpcReply, ProtocolError> {
     residence::run(server, auth, request, index_cache)
 }
 
+#[cfg(test)]
 pub(crate) fn bound_rpc(
     server: &crate::server::SyncServer,
     auth: &CoreAuth,
     request: RpcRequest,
 ) -> Result<Vec<Vec<u8>>, ProtocolError> {
+    bound_rpc_reply(server, auth, request).map(|reply| reply.frames)
+}
+
+pub(crate) fn bound_rpc_reply(
+    server: &crate::server::SyncServer,
+    auth: &CoreAuth,
+    request: RpcRequest,
+) -> Result<RpcReply, ProtocolError> {
     let result = (|| {
         if !read_method(&request.method) {
             return Err(AppError::bad_request("unknown read RPC", Some("method")));
@@ -145,15 +201,7 @@ pub(crate) fn bound_rpc(
         let memory = bound_memory(server.vault(), auth)?;
         read.run(server, auth, &memory)
     })();
-    match result {
-        Ok(value) => rpc_result(request.request_id, value).or_else(|_| {
-            rpc_error(
-                request.request_id,
-                AppError::bad_request("RPC result byte limit exceeded", None),
-            )
-        }),
-        Err(error) => rpc_error(request.request_id, error),
-    }
+    RpcReply::answer(request.request_id, result)
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -250,6 +298,39 @@ mod socket_tests;
 
 #[cfg(test)]
 mod production_tests;
+
+#[cfg(test)]
+mod device_local_tests;
+
+/// A device-only flag committed while a reply sits in a socket's queue,
+/// before its send door releases it.
+#[cfg(test)]
+pub(crate) mod release_hook {
+    use std::cell::Cell;
+
+    thread_local! {
+        // Per thread: the socket runs on the test's own current-thread
+        // runtime.
+        static FLAG: Cell<Option<oneiron::EntityId>> = const { Cell::new(None) };
+    }
+
+    pub(crate) fn arm(world: oneiron::EntityId) {
+        FLAG.set(Some(world));
+    }
+
+    pub(crate) fn run(server: &crate::server::SyncServer) {
+        if let Some(world) = FLAG.take() {
+            server
+                .vault()
+                .keep_world_on_this_machine_under_for_test(
+                    &crate::test_credentials::host_issuer(&server),
+                    world,
+                    true,
+                )
+                .expect("device-only flag");
+        }
+    }
+}
 
 #[cfg(test)]
 mod production_socket_tests;

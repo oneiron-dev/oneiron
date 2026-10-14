@@ -185,7 +185,11 @@ impl Memory<'_> {
                     str::to_owned,
                 );
             let mut reactions = if matches!(entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
-                lane.reaction_lines(id)?
+                let mut counted = Vec::new();
+                let lines = lane.reaction_lines_counting(id, &mut counted)?;
+                // Each reaction claim a line counts is a producer of the item.
+                self.produced_from(counted);
+                lines
             } else {
                 Vec::new()
             };

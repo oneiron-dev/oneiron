@@ -87,8 +87,9 @@ pub(crate) async fn get_core_conversation_transcript(
     let query = super::query_params(query)?;
     let (actor, class) = reader(&auth)?;
     let proof = auth.verified_slip().cloned();
+    let locality = auth.locality();
     let read = tokio::task::spawn_blocking(move || {
-        let memory = server.vault.memory(actor, class);
+        let memory = server.vault.memory(actor, class).at(locality);
         let memory = match &proof {
             Some(proof) => memory.with_read_proof(proof),
             None => memory,
@@ -101,7 +102,10 @@ pub(crate) async fn get_core_conversation_transcript(
     })
     .await
     .unwrap_or_else(|error| {
-        tracing::warn!(%error, "transcript read failed to join");
+        tracing::warn!(
+            panicked = error.is_panic(),
+            "transcript read failed to join"
+        );
         Err(MemoryError::new(
             MEMORY_CODE_INTERNAL,
             "the transcript read did not finish",
@@ -154,7 +158,7 @@ fn refusal(error: MemoryError) -> EnvelopedApiError {
             error.suggestions,
         ),
         _ => {
-            tracing::error!(code = %error.code, error = %error.message, "transcript read failed");
+            tracing::error!(code = %error.code, "transcript read failed");
             ApiError::internal_server_error("transcript read failed")
         }
     };

@@ -561,6 +561,15 @@ fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
     .unwrap();
     assert!(first.same_authority(&later));
     assert_eq!(first.idempotency_principal(), later.idempotency_principal());
+    // Sol on the device-local reads (F1): the same slip bound on this device
+    // and then off it is not the same authority, so a live view an on-device
+    // socket read is never resumed off the device.
+    assert!(
+        !first
+            .clone()
+            .at(CallerLocality::OnDevice)
+            .same_authority(&later.at(CallerLocality::OffDevice))
+    );
     let mut narrowed = CapabilitySlip::from_token(&token).unwrap();
     narrowed
         .attenuate(

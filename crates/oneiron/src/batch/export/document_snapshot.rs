@@ -8,6 +8,7 @@ use super::{
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::CallerLocality;
 use crate::context_pack::PackFormat;
 use crate::edge::parse_strict_edge_record;
 use crate::entity_id::EntityId;
@@ -42,15 +43,19 @@ impl Vault {
     /// credential custody rows and unpublished LFS chunks are excluded. No
     /// caller can disable nulling.
     pub fn export_whole_vault(&self, format: PackFormat) -> Result<WholeVaultExport> {
-        self.export_whole_vault_with_admission(format, |_| Ok(()))
+        self.export_whole_vault_with_admission(format, CallerLocality::OnDevice, |_| Ok(()))
     }
 
     /// The actor facade supplies an owner admission evaluated in the SAME
     /// snapshot as the rows. The host-level Vault export retains its existing
     /// direct door; transport callers must use the admitted memory facade.
+    /// For a caller off this device the snapshot holds no row a device-local
+    /// world keeps here (DEC-0005), so no edge, package or receipt of one
+    /// follows; one whose world cannot be read stays too.
     pub(crate) fn export_whole_vault_with_admission<E: From<Error>>(
         &self,
         format: PackFormat,
+        locality: CallerLocality,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
     ) -> std::result::Result<WholeVaultExport, E> {
         let artifact = self.whole_vault_export_manifest_artifact(
@@ -59,6 +64,7 @@ impl Vault {
         let storage = ExportManifest::from_json_for_import(artifact.bytes())?;
         let rtxn = self.store.env.read_txn().map_err(Error::from)?;
         admit(&rtxn)?;
+        let device_only = crate::settings::device_local_worlds_at(self, &rtxn, locality)?;
         let mut entities = Vec::new();
         let mut included = BTreeSet::new();
         let mut skill_packages = BTreeMap::new();
@@ -68,6 +74,19 @@ impl Vault {
         for entry in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &rtxn)? {
             let (id, raw) = entry?;
             if whole_vault_export_excludes_entity(self, &id)? {
+                continue;
+            }
+            if crate::settings::device_only_withholds_raw(
+                &self.store,
+                &rtxn,
+                &device_only,
+                &id,
+                Some(&raw),
+            )
+            .or_else(|error| match error {
+                Error::CorruptedIndex(_) => Ok(true),
+                error => Err(error),
+            })? {
                 continue;
             }
             let header = EntityMetadataHeader::parse(&raw)

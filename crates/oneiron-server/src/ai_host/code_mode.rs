@@ -63,7 +63,10 @@ pub(super) async fn bind(
             return server;
         }
         Err(error) => {
-            tracing::error!(%error, "the QuickJS component load stopped");
+            tracing::error!(
+                panicked = error.is_panic(),
+                "the QuickJS component load stopped"
+            );
             return server;
         }
     };
@@ -143,7 +146,7 @@ async fn shadow_check(settings: &CodeCheckSettings) -> Option<Arc<ShadowCheck>> 
             None
         }
         Err(error) => {
-            tracing::error!(%error, "the code checker load stopped");
+            tracing::error!(panicked = error.is_panic(), "the code checker load stopped");
             None
         }
     }

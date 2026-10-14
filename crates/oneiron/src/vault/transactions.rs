@@ -117,7 +117,22 @@ impl Vault {
         &self,
         excluded_types: &[u8],
     ) -> Result<Option<u64>> {
+        self.latest_learned_at_excluding_entity_types_at(
+            excluded_types,
+            crate::claim::CallerLocality::OnDevice,
+        )
+    }
+
+    /// [`Self::latest_learned_at_excluding_entity_types`] for a caller at
+    /// `locality`: no row a device-local world keeps dates it for one off
+    /// this device (DEC-0005).
+    pub fn latest_learned_at_excluding_entity_types_at(
+        &self,
+        excluded_types: &[u8],
+        locality: crate::claim::CallerLocality,
+    ) -> Result<Option<u64>> {
         let txn = self.store.env.read_txn()?;
+        let flagged = crate::settings::device_local_worlds_at(self, &txn, locality)?;
         for row in self.store.port_entity_timeline(
             &txn,
             crate::ports::TimelineQuery {
@@ -130,7 +145,9 @@ impl Vault {
                 .store
                 .port_entity_record(&txn, &row.id)?
                 .ok_or(Error::CorruptedIndex("temporal learned dangling entity"))?;
-            if !excluded_types.contains(&entity.entity_type) {
+            if !excluded_types.contains(&entity.entity_type)
+                && !crate::settings::device_local_keeps_among(&self.store, &txn, &flagged, &row.id)?
+            {
                 return Ok(Some(row.timestamp));
             }
         }

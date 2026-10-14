@@ -1015,7 +1015,11 @@ fn a_conflicted_root_never_lets_a_private_world_go() {
     .unwrap();
     let withheld = |vault: &Vault| {
         let txn = vault.store.env.read_txn().unwrap();
-        crate::settings::device_only_worlds_in(vault, &txn)
+        crate::settings::device_local_worlds_at(
+            vault,
+            &txn,
+            crate::claim::CallerLocality::OffDevice,
+        )
     };
     assert!(withheld(&host.vault).unwrap().contains(&world));
 

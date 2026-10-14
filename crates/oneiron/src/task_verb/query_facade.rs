@@ -34,7 +34,7 @@ use super::consts::{
 use super::consult_result::CancelTargetState;
 use super::presence_scan::{
     cancel_target_state, is_cancelable_attempt_state, is_running_attempt_state,
-    superseded_attempt_ids, task_presence, task_presence_for_id, terminal_attempt_status,
+    superseded_attempt_ids, task_presence_at, task_presence_for_id, terminal_attempt_status,
 };
 use super::rate_limit::{task_create_owner_in, task_verb_contract};
 use super::route_receipts::{
@@ -107,7 +107,7 @@ impl Memory<'_> {
     }
 
     fn section_rows(&self) -> MemoryResult<TasksSectionRows> {
-        let snapshot = task_presence(self.vault())?;
+        let snapshot = task_presence_at(self.vault(), self.locality())?;
         for failure in &snapshot.read_failures {
             tracing::warn!(
                 task_ref = %failure.task_ref.to_hex(),

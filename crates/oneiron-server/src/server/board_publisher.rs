@@ -98,10 +98,10 @@ impl SyncServer {
                 }
                 Ok(Ok(None)) => {}
                 Ok(Err(error)) => {
-                    tracing::warn!(%error, task = %task.to_hex(), "board publisher could not read a committed TASK");
+                    tracing::warn!(kind = ?error.kind(), task = %task.to_hex(), "board publisher could not read a committed TASK");
                 }
                 Err(error) => {
-                    tracing::warn!(%error, task = %task.to_hex(), "board publisher read did not finish");
+                    tracing::warn!(panicked = error.is_panic(), task = %task.to_hex(), "board publisher read did not finish");
                 }
             }
         }

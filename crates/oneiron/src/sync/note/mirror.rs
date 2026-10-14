@@ -52,7 +52,11 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
     )?;
     let mut state = State::default();
     let txn = vault.store.env.read_txn()?;
-    let flagged = crate::settings::device_only_worlds_in(vault, &txn)?;
+    let flagged = crate::settings::device_local_worlds_at(
+        vault,
+        &txn,
+        crate::claim::CallerLocality::OffDevice,
+    )?;
     let mut local = BTreeSet::new();
     let mut removed = BTreeSet::new();
     for (key, raw) in rows(doc, "entities")? {
@@ -212,7 +216,11 @@ pub(crate) fn copy_judged(vault: &Vault, source: &LoroDoc, out: &LoroDoc) -> Res
         .map(|(key, _)| id(key))
         .collect::<Result<BTreeSet<_>>>()?;
     let txn = vault.store.env.read_txn()?;
-    let flagged = crate::settings::device_only_worlds_in(vault, &txn)?;
+    let flagged = crate::settings::device_local_worlds_at(
+        vault,
+        &txn,
+        crate::claim::CallerLocality::OffDevice,
+    )?;
     let dropped = dropped_in(vault, &txn, &flagged, source, &ids)?;
     drop(txn);
     copy_selected(source, out, &dropped)

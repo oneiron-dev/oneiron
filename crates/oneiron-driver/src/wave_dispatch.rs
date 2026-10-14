@@ -78,7 +78,8 @@ pub(crate) struct WaveDispatchPass {
 #[derive(Debug)]
 pub(crate) struct WaveHandoffFailure {
     pub(crate) candidate: WaveDispatchCandidate,
-    pub(crate) reason: String,
+    /// A closed reason, never an error's text: error text can echo a TASK.
+    pub(crate) reason: &'static str,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -198,7 +199,7 @@ impl WaveDispatchPump {
                 }
                 Ok(None) => {}
                 // The planning attempt stays queued; its lease expiry retries it.
-                Err(error) => tracing::error!(%error, "wave plan attempt failed"),
+                Err(_) => tracing::error!(reason = "wave_plan_failed", "wave plan attempt failed"),
             }
             pass.next_cursor = self.cursor;
             pass.earliest_retry = self.next_delay(now);
@@ -272,7 +273,7 @@ impl WaveDispatchPump {
                 Ok(None) => {
                     self.failed.retain(|key, _| key.task != task);
                 }
-                Err(error) => {
+                Err(_) => {
                     // Keep scanning this page and later pages, but revisit a
                     // transiently unreadable TASK after a bounded delay.
                     self.dirty = true;
@@ -282,7 +283,7 @@ impl WaveDispatchPump {
                             task,
                             route: WaveDispatchRoute::External,
                         },
-                        reason: error.to_string(),
+                        reason: "task_unreadable",
                     });
                 }
             }
@@ -342,11 +343,11 @@ impl WaveDispatchPump {
                 self.failed.remove(&candidate);
                 return Ok(false);
             }
-            Err(error) => {
+            Err(_) => {
                 self.defer(candidate);
                 return Err(WaveHandoffFailure {
                     candidate,
-                    reason: error.to_string(),
+                    reason: "currency_check_failed",
                 });
             }
             Ok(true) => {}
@@ -363,14 +364,14 @@ impl WaveDispatchPump {
                         self.defer(candidate);
                         Err(WaveHandoffFailure {
                             candidate,
-                            reason: "handoff receipt is stale".into(),
+                            reason: "handoff_receipt_stale",
                         })
                     }
-                    Err(error) => {
+                    Err(_) => {
                         self.defer(candidate);
                         Err(WaveHandoffFailure {
                             candidate,
-                            reason: error.to_string(),
+                            reason: "receipt_check_failed",
                         })
                     }
                 }
@@ -383,14 +384,14 @@ impl WaveDispatchPump {
                 self.defer(candidate);
                 Err(WaveHandoffFailure {
                     candidate,
-                    reason: "deferred".into(),
+                    reason: "deferred",
                 })
             }
-            Err(error) => {
+            Err(_) => {
                 self.defer(candidate);
                 Err(WaveHandoffFailure {
                     candidate,
-                    reason: error.to_string(),
+                    reason: "dispatch_failed",
                 })
             }
         }

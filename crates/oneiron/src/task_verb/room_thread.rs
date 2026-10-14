@@ -15,6 +15,17 @@ pub(crate) fn thread_tasks(
     members: &BTreeSet<String>,
     now: u64,
 ) -> MemoryResult<Vec<RoomThreadTask>> {
+    thread_tasks_capped(memory, roots, members, now, 100_000)
+}
+
+/// Testable body of [`thread_tasks`]: `cap` is the room census guard.
+pub(super) fn thread_tasks_capped(
+    memory: &Memory<'_>,
+    roots: &std::collections::BTreeMap<EntityId, EntityId>,
+    members: &BTreeSet<String>,
+    now: u64,
+    cap: usize,
+) -> MemoryResult<Vec<RoomThreadTask>> {
     if roots.is_empty() {
         return Ok(Vec::new());
     }
@@ -29,12 +40,18 @@ pub(crate) fn thread_tasks(
         .read_lane(crate::claim::ClaimReadStatus::Surfaceable)?
         .for_audience(&audience);
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    // Off this device a TASK a device-local world keeps is no match, nor
+    // counts toward the census guard (DEC-0005).
+    let kept = crate::settings::device_local_worlds_at(vault, &txn, memory.locality())?;
     let mut candidates = Vec::new();
     for row in vault
         .store
         .port_entity_ids_by_type(&txn, crate::registry::ENTITY_TYPE_TASK, None)?
     {
         let id = row?;
+        if crate::settings::device_local_keeps_among(&vault.store, &txn, &kept, &id)? {
+            continue;
+        }
         let Some(body) = task_verb_body_in(vault, &txn, id)? else {
             continue;
         };
@@ -67,29 +84,53 @@ pub(crate) fn thread_tasks(
         // No persisted thread→TASK index is added: this issue forbids new
         // stored state. The guard applies to relevant rows, not unrelated
         // TASKs belonging to other rooms in the vault.
-        if candidates.len() == 100_000 {
+        if candidates.len() == cap {
             return Err(Error::IndexOverflow("room thread TASK matches").into());
         }
         // Ask-group ladders live on the existing group row. A peer consult
         // without a group has no promised nudge; a governed ask supplies its
         // next notice or its absolute cutoff without a duplicate cursor.
+        // Both come from the group's class, so from the TASK that gave it,
+        // and so does a human member's follow-up cursor (DEC-0005). A group
+        // whose class TASK is kept at the caller's locality, or was never
+        // recorded, gives none of them.
         let ask_group = body.consult.as_ref().map(|payload| payload.correlation_ref);
-        let group_settled = if let Some(group_id) = ask_group {
-            super::ask_record::read_group(vault, &txn, group_id)?.is_some_and(|group| {
-                group
-                    .members
-                    .iter()
-                    .any(|member| member.task == id.to_hex())
-            }) && super::ask_settlement::read_result(vault, &txn, group_id)?.is_some()
-        } else {
-            false
+        let group = match ask_group {
+            Some(group_id) => {
+                super::ask_record::read_group(vault, &txn, group_id)?.filter(|group| {
+                    group
+                        .members
+                        .iter()
+                        .any(|member| member.task == id.to_hex())
+                })
+            }
+            None => None,
         };
-        let ask_due = if body.task_kind() == super::TaskKind::Consult && !group_settled {
-            super::ask_record::ask_notice_at_in(vault, &txn, id, 0)?
-                .map(|(notice, cutoff)| notice.map_or(cutoff, |at| at.min(cutoff)))
-        } else {
-            None
+        let mut withheld = group
+            .as_ref()
+            .is_some_and(super::ask_record::AskGroup::class_source_unrecorded);
+        for task in group
+            .iter()
+            .flat_map(super::ask_record::AskGroup::class_tasks)
+        {
+            withheld |=
+                crate::settings::device_local_keeps_among(&vault.store, &txn, &kept, &task)?;
+        }
+        let group = group.filter(|_| !withheld);
+        let group_settled = match ask_group.filter(|_| group.is_some()) {
+            Some(group_id) => super::ask_settlement::read_result(vault, &txn, group_id)?.is_some(),
+            None => false,
         };
+        let ask_due =
+            if body.task_kind() == super::TaskKind::Consult && group.is_some() && !group_settled {
+                super::ask_record::ask_notice_at_in(vault, &txn, id, 0)?
+                    .map(|(notice, cutoff)| notice.map_or(cutoff, |at| at.min(cutoff)))
+            } else {
+                None
+            };
+        let class_tasks = group
+            .map(|group| group.class_tasks().collect::<Vec<_>>())
+            .unwrap_or_default();
         candidates.push((
             id,
             thread,
@@ -97,11 +138,13 @@ pub(crate) fn thread_tasks(
             authority.cancelled,
             ask_due,
             group_settled,
+            class_tasks,
+            withheld,
         ));
     }
     drop(txn);
     let mut result = Vec::new();
-    for (id, thread, body, cancelled, ask_due, group_settled) in candidates {
+    for (id, thread, body, cancelled, ask_due, group_settled, class_tasks, withheld) in candidates {
         // `Memory::get_entity` opens a reader of its own: finish the index
         // snapshot first or LMDB refuses recursive reuse of its reader slot.
         // Room membership alone never grants TASK visibility.
@@ -125,7 +168,7 @@ pub(crate) fn thread_tasks(
                         kind: crate::workspace_roster::RoomWaitKind::HumanTask,
                         who: actor_ref,
                         since: body.created_at,
-                        next_nudge: cursor.and_then(|row| row.next_due_at),
+                        next_nudge: cursor.and_then(|row| row.next_due_at).filter(|_| !withheld),
                     })
                 }
                 Some(TaskAssignee::Peer { actor_ref } | TaskAssignee::Child { actor_ref })
@@ -179,6 +222,13 @@ pub(crate) fn thread_tasks(
             Some((result, at)) if scoped.is_entity_readable(&result)? => Some((result, at)),
             _ => None,
         };
+        // The thread's counts are derived from this TASK and its result, its
+        // wait from the TASK its ask's class came from.
+        memory.produced_from(
+            std::iter::once(id)
+                .chain(delivered.map(|(result, _)| result))
+                .chain(class_tasks),
+        );
         result.push(RoomThreadTask {
             task: id,
             thread,

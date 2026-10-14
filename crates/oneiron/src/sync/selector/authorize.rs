@@ -659,7 +659,11 @@ pub(super) fn filter_window_doc(
     // flag holds here, as it keeps every other row (this corrects #1402's
     // authority-mode NOTE drop).
     let flagged = if withhold_device_only {
-        crate::settings::device_only_worlds_in(vault, &rtxn)?
+        crate::settings::device_local_worlds_at(
+            vault,
+            &rtxn,
+            crate::claim::CallerLocality::OffDevice,
+        )?
     } else {
         BTreeSet::new()
     };

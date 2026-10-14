@@ -5501,8 +5501,7 @@ fn a_summary_never_leaves_without_a_note_the_export_drops() -> crate::Result<()>
     crate::sync::window::test_hooks::arm_device_only_flag_race(world);
     let raced = exported()?;
     assert!(
-        crate::settings::device_only_worlds_in(&vault, &vault.store.env.read_txn()?)?
-            .contains(&world),
+        vault.world_is_device_only(world)?,
         "the flag landed mid-export"
     );
     assert_eq!(

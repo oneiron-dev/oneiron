@@ -88,6 +88,9 @@ pub extern "C" fn oneiron_vault_open(
                             )
                         })?;
                     let dimensions = config.dimensions;
+                    // Crash output never carries world text: the engine's hook goes in before
+                    // any vault opens (owner ruling 2026-10-14, fix 6).
+                    oneiron::panic_report::install_panic_hook();
                     let vault = engine(Vault::open(&path, config))?;
                     let handle = Box::into_raw(Box::new(OneironVault {
                         vault: Arc::new(vault),

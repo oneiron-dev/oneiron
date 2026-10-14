@@ -36,15 +36,19 @@ impl SessionReadSet {
     /// `line`. One count cap covers them and the lifecycle rows, and the whole
     /// rider, install receipts included, fits the one board row a STREAM
     /// delta joins it into. Rejections come first. The fold is read-only:
-    /// what it delivers moves only on `acknowledge`.
+    /// what it delivers moves only on `acknowledge`. A caller at `locality`
+    /// off this device learns no outcome of a claim a device-local world
+    /// keeps (DEC-0005); it stays owed until it may leave.
     pub fn fold_own_changes(
         &self,
         vault: &Vault,
         actor: Option<EntityId>,
+        locality: crate::claim::CallerLocality,
         line: &mut ChangedLine,
         cap: usize,
     ) -> Result<()> {
         let txn = vault.store.env.read_txn()?;
+        let flagged = crate::settings::device_local_worlds_at(vault, &txn, locality)?;
         let mut delivery = ChangedDelivery {
             generation: self.delivery_generation(),
             ..ChangedDelivery::default()
@@ -84,7 +88,14 @@ impl SessionReadSet {
                 .iter()
                 .chain(watched.iter().filter(|id| !read.contains(*id)))
             {
-                if let Some((claim, to)) = proposal_state(vault, &txn, id)? {
+                if let Some((claim, to)) = proposal_state(vault, &txn, id)?
+                    && !crate::settings::device_local_keeps_among(
+                        &vault.store,
+                        &txn,
+                        &flagged,
+                        &claim,
+                    )?
+                {
                     settled.push(Settled {
                         id: id.clone(),
                         claim,

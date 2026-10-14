@@ -58,9 +58,12 @@ impl JsCodeModeHost for Host {
                 reason: SelfDurableWaitReason::HumanInput,
                 prompt: None,
             }),
-            SelfCall::AgentVerb(call) => SelfDispatchOutcome::AgentVerb(
-                serde_json::json!({"verb": call.verb.as_str(), "input": call.input}),
-            ),
+            SelfCall::AgentVerb(call) => {
+                SelfDispatchOutcome::AgentVerb(crate::code_run::AgentVerbAnswer {
+                    output: serde_json::json!({"verb": call.verb.as_str(), "input": call.input}),
+                    rows: Some(Vec::new()),
+                })
+            }
             _ => return Err(Error::InvalidConfig("unexpected test call".into())),
         };
         Ok(SelfDispatchResponse {
