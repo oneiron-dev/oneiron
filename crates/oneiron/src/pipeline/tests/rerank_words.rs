@@ -154,12 +154,16 @@ impl Reranker for WritingReranker<'_> {
     }
 }
 
-/// The context pack, read live, of a search for lanterns that `reranker`
-/// scores.
-fn scored_pack<'a>(vault: &'a Vault, reranker: &'a dyn Reranker) -> Result<crate::ContextPack> {
+/// The context pack, read at `read_mode`, of a search for lanterns that
+/// `reranker` scores.
+fn scored_pack<'a>(
+    vault: &'a Vault,
+    reranker: &'a dyn Reranker,
+    read_mode: ReadMode,
+) -> Result<crate::ContextPack> {
     vault
         .context_pack()
-        .read_mode(ReadMode::Live)
+        .read_mode(read_mode)
         .search_text("lantern", 10)
         .rerank(reranker, RerankOptions::default())
         .run()
@@ -176,14 +180,16 @@ fn put_subject(vault: &Vault) -> Result<()> {
     )
 }
 
-/// The context pack a reranker (binding unless `unbound`) scores claim `id`
-/// in, born with `old`, put again with newer words whose index publication
-/// waits, and put back to `old` while the reranker scores it.
+/// The context pack, read at `read_mode`, a reranker (binding unless
+/// `unbound`) scores claim `id` in, born with `old`, put again with newer
+/// words whose index publication waits, and put back to `old` while the
+/// reranker scores it.
 fn restored_pack(
     vault: &Vault,
     id: EntityId,
     old: Vec<u8>,
     unbound: bool,
+    read_mode: ReadMode,
 ) -> Result<crate::ContextPack> {
     put_subject(vault)?;
     put_twice(vault, id, ENTITY_TYPE_CLAIM, &old, &claim_body("new-words"))?;
@@ -203,7 +209,7 @@ fn restored_pack(
         write: &restore,
         unbound,
     };
-    scored_pack(vault, &reranker)
+    scored_pack(vault, &reranker, read_mode)
 }
 
 /// Astra on #1426 (F2): a claim scored at its pin was hydrated from the body
@@ -211,21 +217,27 @@ fn restored_pack(
 /// equalled the pin by the time the pack hydrated. A write restoring the
 /// pinned bytes did that, and the pack served the words retrieval read live
 /// under the score for the pinned ones. A scored claim takes the cache only
-/// when it holds the pinned body.
+/// when it holds the pinned body. Sol R15 on this branch: an indexed hit no
+/// reranker binds, restored the same way, was withheld as a row written
+/// since the gate read it, though the pack reads it at its pin too.
 #[test]
 fn a_restored_claim_is_served_at_the_words_scored() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let id = entity_id(0x6C);
+    for (unbound, read_mode) in [(false, ReadMode::Live), (true, ReadMode::Indexed)] {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x6C);
 
-    let pack = restored_pack(&vault, id, claim_body("old-words"), false)?;
+        let pack = restored_pack(&vault, id, claim_body("old-words"), unbound, read_mode)?;
 
-    let served = pack.results.first().expect("the claim");
-    assert_eq!(served.id, id);
-    assert_eq!(
-        served.fields.as_ref().and_then(|fields| fields.get("val")),
-        Some(&serde_json::json!("old-words")),
-        "{served:?}"
-    );
+        let served = pack.results.first();
+        assert_eq!(
+            served.map(|row| (
+                row.id,
+                row.fields.as_ref().and_then(|fields| fields.get("val"))
+            )),
+            Some((id, Some(&serde_json::json!("old-words")))),
+            "unbound {unbound}: {served:?}"
+        );
+    }
     Ok(())
 }
 
@@ -247,6 +259,7 @@ fn a_restored_claim_with_no_live_support_is_not_served() -> Result<()> {
             id,
             cited_body(entity_id(0x7D), "old-words"),
             unbound,
+            ReadMode::Live,
         )?;
 
         assert!(
@@ -443,12 +456,151 @@ fn a_claim_rewritten_while_it_is_scored_is_not_served_on_its_old_verdict() -> Re
         unbound: true,
     };
 
-    let pack = scored_pack(&vault, &reranker)?;
+    let pack = scored_pack(&vault, &reranker, ReadMode::Live)?;
 
     assert!(
         pack.results.iter().all(|row| row.id != id),
         "{:?}",
         pack.results
+    );
+    Ok(())
+}
+
+/// A claim body of `value` about the subject [`put_subject`] stores.
+fn valued_body(predicate: &str, value: rmpv::Value, public: bool) -> Vec<u8> {
+    let mut body = ClaimBody::new(
+        predicate,
+        ClaimSubject::Entity(entity_id(0x7C)),
+        value,
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    if public {
+        body.scope = Some(rmpv::Value::Map(vec![(
+            rmpv::Value::from("sensitivity"),
+            rmpv::Value::from("public"),
+        )]));
+    }
+    crate::claim::encode_claim_body(&body).expect("encode claim body")
+}
+
+/// Sol and Wonder R15 on this branch: the gate's verdict stood for a claim
+/// only when the body hydrated equalled the body the gate read, by a
+/// comparison a NaN in an opaque value never passes. A claim holding one,
+/// unchanged, was withheld from every pack, as a result and as a neighbor.
+#[test]
+fn an_unchanged_claim_holding_a_nan_is_served() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    put_subject(&vault)?;
+    let body = valued_body(
+        "test.rerank_words",
+        rmpv::Value::Array(vec![
+            rmpv::Value::from("old-words"),
+            rmpv::Value::F64(f64::NAN),
+        ]),
+        false,
+    );
+    let (result, neighbor, seed) = (entity_id(0x6A), entity_id(0x69), entity_id(0x6F));
+    crate::test_util::publish_seeded_revisions(&vault);
+    for (id, text) in [(result, Some("the brass lantern")), (neighbor, None)] {
+        let batch = vault.batch().put(
+            &id,
+            ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &body,
+        );
+        match text {
+            Some(text) => batch.text(&id, &[("body", text)]).commit()?,
+            None => batch.commit()?,
+        }
+    }
+    vault
+        .batch()
+        .put(
+            &seed,
+            ENTITY_TYPE_ASSET_TEXT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&serde_json::json!({"content": "a lantern shelf"}))
+                .expect("body"),
+        )
+        .text(&seed, &[("body", "the lantern shelf")])
+        .commit()?;
+    vault.put_edge(&seed, crate::edge::EdgeKind::Supports, &neighbor, 1.0)?;
+
+    let pack = vault
+        .context_pack()
+        .read_mode(ReadMode::Live)
+        .search_text("lantern", 10)
+        .edge_hop(1)
+        .run()?;
+
+    assert!(
+        pack.results.iter().any(|row| row.id == result)
+            && pack.neighbors.iter().any(|row| row.id == neighbor),
+        "{pack:?}"
+    );
+    Ok(())
+}
+
+/// Wonder R15 on this branch: a pack read live serves a word-bound claim at
+/// its pin, while the disclosure clamp judged the claim on the body the gate
+/// read live. Pinned words of a Tier-A predicate, behind a live body a guest
+/// may read, reached the guest. The body served is judged.
+#[test]
+fn a_clamped_pack_serves_no_tier_a_words_a_pin_holds() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    put_subject(&vault)?;
+    let id = entity_id(0x6C);
+    put_twice(
+        &vault,
+        id,
+        ENTITY_TYPE_CLAIM,
+        &valued_body("voice_print.label", rmpv::Value::from("old-words"), true),
+        &valued_body("test.rerank_words", rmpv::Value::from("new-words"), true),
+    )?;
+    let contact = entity_id(0xC0);
+    vault.create_counterparty_contact(
+        &contact,
+        &crate::counterparty_contact::CounterpartyContactRecord::user_introduction(
+            entity_id(0xA0),
+            "guest@example.com",
+            10,
+        )?,
+    )?;
+    let guest = crate::disclosure::DisclosureContext::resolve(
+        &vault,
+        crate::interlocutor::InterlocutorSet::with_session_owner(vec![
+            crate::interlocutor::Interlocutor::known_contact(
+                contact,
+                "guest@example.com",
+                crate::counterparty_contact::CounterpartyFirstTouch::UserIntroduction,
+            ),
+        ]),
+    )?;
+    let reranker = ClaimKeepingReranker::default();
+
+    let pack = vault
+        .context_pack()
+        .read_mode(ReadMode::Live)
+        .search_text("lantern", 10)
+        .rerank(&reranker, RerankOptions::default())
+        .disclosure_context(guest)
+        .run()?;
+
+    assert_eq!(
+        *reranker.claims.lock().unwrap(),
+        [rmpv::Value::from("old-words")]
+    );
+    assert!(
+        pack.results
+            .iter()
+            .chain(&pack.neighbors)
+            .all(|row| row.id != id),
+        "{pack:?}"
     );
     Ok(())
 }

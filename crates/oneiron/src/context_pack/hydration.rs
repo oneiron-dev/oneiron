@@ -86,6 +86,17 @@ pub(crate) fn context_entity_matches_read_snapshot(
     Ok(true)
 }
 
+/// Whether two decoded claim bodies are one body. `ClaimBody`'s derived
+/// equality is not reflexive over a NaN in an opaque value, so bodies that
+/// encode to the same bytes are one too.
+fn same_claim_body(left: &ClaimBody, right: &ClaimBody) -> bool {
+    left == right
+        || matches!(
+            (crate::claim::encode_claim_body(left), crate::claim::encode_claim_body(right)),
+            (Ok(left), Ok(right)) if left == right
+        )
+}
+
 /// Hydrates one entity for the context pack.
 ///
 /// Type-0 (CLAIM) records pass through the D19 status gate here too — pack
@@ -178,10 +189,13 @@ pub(super) fn hydrate_entity(
         // row whose body is another was written since retrieval read it, and
         // no verdict in this run stands for it: it is not served.
         let cached = options.claim_bodies.and_then(|cache| cache.get(&id));
-        let judged_here = cached.is_none() || options.words_pinned || raw != live_raw;
+        let pinned = matches!(options.read_mode, crate::vault::ReadMode::Pinned(_));
+        let judged_here = cached.is_none() || pinned || raw != live_raw;
         match (cached, &decoded_here) {
             // Pipeline-gated result: the body the gate admitted.
-            (Some(cached), Some(body)) if cached == body => gated_claim_body = Some(cached),
+            (Some(cached), Some(body)) if same_claim_body(cached, body) => {
+                gated_claim_body = Some(cached);
+            }
             (_, Some(body)) if judged_here && claim_surfaceable(body) => {
                 gated_claim_body = Some(body);
             }
@@ -200,6 +214,14 @@ pub(super) fn hydrate_entity(
         && !crate::claim::has_live_support_in_txn(store, rtxn, body)?
     {
         *claims_suppressed += 1;
+        return Ok(None);
+    }
+
+    // The clamp's sweeps judge a claim on the body the gate read or on its
+    // live row, and a pin may serve another: the body served is judged too.
+    if let (Some(clamp), Some(body)) = (options.clamp, gated_claim_body)
+        && !clamp.admits(store.base(), rtxn, &id, ENTITY_TYPE_CLAIM, Some(body))?
+    {
         return Ok(None);
     }
 
