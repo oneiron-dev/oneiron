@@ -9,7 +9,7 @@ use crate::llm::{BudgetLease, LlmBackend};
 
 use super::super::binding::PolicyContentBinding;
 use super::super::pattern::{PatternEvaluation, PolicyPatternRole};
-use super::super::planes::PolicyPlane;
+use super::super::planes::{HostedLegalPolicy, PolicyPlane};
 use super::super::request::{HostedOutagePolicy, PolicyModelConfig};
 use super::super::verdict::{
     PolicyClassifyDecision, PolicyClassifyVerdict, PolicyPassAudit, PolicySkipReason,
@@ -205,6 +205,20 @@ pub struct RelayClassifiedPass {
     /// the fact travels with the pass rather than being re-derived.
     pub hosted_policy_in_play: bool,
     pub resolution: RelayResolution,
+    /// The hosted legal policy this pass classified against, stamped by the
+    /// hosted seam that handed it the policy. `None` for every pass that seam
+    /// did not run. An attestation names this policy and no other, so a pass
+    /// over one policy is never evidence for the policy registered after it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hosted_policy_read: Option<HostedPolicyRead>,
+}
+
+/// Which hosted legal policy a pass read: version AND hash, the pair an
+/// attestation is matched on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HostedPolicyRead {
+    pub version: String,
+    pub policy_hash: String,
 }
 
 impl RelayBoundaryPass {
@@ -224,7 +238,22 @@ impl RelayBoundaryPass {
             degraded,
             hosted_policy_in_play,
             resolution,
+            hosted_policy_read: None,
         }))
+    }
+
+    /// Stamps the hosted policy a pass that ran here classified against.
+    /// Called by the hosted seam with the policy it handed the pass, and by
+    /// nothing else.
+    #[must_use]
+    pub(in super::super) fn read_under(mut self, hosted: Option<&HostedLegalPolicy>) -> Self {
+        if let Self::Classified(pass) = &mut self {
+            pass.hosted_policy_read = hosted.map(|policy| HostedPolicyRead {
+                version: policy.version.clone(),
+                policy_hash: policy.policy_hash.clone(),
+            });
+        }
+        self
     }
 
     /// The verdict, present only when OUR infra ran a relay pass.
@@ -465,6 +494,7 @@ pub(super) fn degraded_hosted_pass(
         degrade_halts,
         hosted_policy_in_play,
         resolution: RelayResolution::Unresolved,
+        hosted_policy_read: None,
     }))
 }
 

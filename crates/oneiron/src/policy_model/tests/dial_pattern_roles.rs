@@ -105,7 +105,7 @@ fn an_attestation_recording_no_hosted_dial_attests_nothing() -> Result<()> {
     let config = PolicyModelConfig::default();
     let binding = vault.relay_verify_binding(&request, &config)?;
     let fresh = PolicyClassifyVerdict::clean_allow(binding, &config, PolicyPlane::OwnerPolicy)
-        .attesting_hosted_plane(&policy, &config, &answered_pass());
+        .attesting_hosted_plane(&policy, &config, &answered_pass(&policy));
 
     let mut wire = serde_json::to_value(&fresh).expect("verdict serializes");
     wire.get_mut("hosted_attestation")
@@ -144,7 +144,7 @@ fn a_hosted_dial_flip_sends_an_attested_receipt_back_through_the_hosted_pass() -
     verdicts.insert(
         binding.content_hash,
         PolicyClassifyVerdict::clean_allow(binding, &minted_under, PolicyPlane::OwnerPolicy)
-            .attesting_hosted_plane(&policy, &minted_under, &answered_pass()),
+            .attesting_hosted_plane(&policy, &minted_under, &answered_pass(&policy)),
     );
     let backend = clean_backend();
     let budget = lease("hosted-dial-attestation");

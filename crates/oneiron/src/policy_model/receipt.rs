@@ -41,33 +41,13 @@ use super::request::PolicyClassifyRequest;
 use super::verdict::{PolicyClassifyVerdict, PolicyVerdictCategory};
 
 impl Vault {
-    pub(super) fn append_policy_model_gate_receipt(
-        &self,
-        request: &PolicyClassifyRequest,
-        verdict: &PolicyClassifyVerdict,
-        outcome: &str,
-        reason_codes: Vec<String>,
-        system_notices: Vec<GateSystemNoticeRecord>,
-    ) -> Result<String> {
-        let mut wtxn = self.store.env.write_txn()?;
-        let receipt_ref = self.append_policy_model_gate_receipt_in_txn(
-            &mut wtxn,
-            request,
-            verdict,
-            outcome,
-            reason_codes,
-            system_notices,
-        )?;
-        wtxn.commit()?;
-        Ok(receipt_ref)
-    }
-
-    /// Transaction-composable [`Vault::append_policy_model_gate_receipt`].
+    /// Writes a policy verdict's gate row in the caller's transaction.
     ///
-    /// Exists so a caller whose PRECONDITION must still hold at write time can
-    /// test it in the same transaction that writes the row — the relay
-    /// receipt re-checks its policy binding there, so a manifest that moved
-    /// after the pass cannot be receipted under a binding nobody can
+    /// Every writer's PRECONDITION must still hold at write time, so each
+    /// tests it in the same transaction that writes the row — the relay
+    /// receipt re-checks its policy binding there, and the owner doors settle
+    /// their verdict against the policy in force there, so a manifest that
+    /// moved after the pass is never receipted under a binding nobody can
     /// reproduce.
     pub(super) fn append_policy_model_gate_receipt_in_txn(
         &self,

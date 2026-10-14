@@ -387,7 +387,8 @@ impl PolicyClassifyVerdict {
     /// Marks this verdict as having been decided with `policy`'s hosted legal
     /// plane in play. The vault-side runner calls this so a relay can verify
     /// the hosted question was asked; nothing else may. A `pass` that did not
-    /// ask it, or whose answer halted, leaves the verdict unattested.
+    /// ask it, that asked it of another policy, or that halted leaves the
+    /// verdict unattested.
     #[must_use]
     pub fn attesting_hosted_plane(
         mut self,
@@ -414,21 +415,33 @@ impl PolicyClassifyVerdict {
             super::relay::RelayResolution::NoPolicyInPlay
             | super::relay::RelayResolution::VaultSideDecided => false,
         };
-        // A degrade that HALTED the pass left no verdict anyone may reuse:
-        // the manifest moved, no output contract, or an outage under `Halt`.
-        // The attestation records only THAT the pass degraded, so minting one
-        // would let a reuse wave through what this pass stopped. The halt is
-        // read from the pass, where it was resolved, never from the posture
-        // the caller hands in now. Unattested, a reuse runs its own pass.
-        if !ran_here || !ran.hosted_policy_in_play || (ran.degraded.is_some() && ran.degrade_halts)
-        {
+        // A pass that HALTED left nothing anyone may reuse: a hosted Block,
+        // RouteToHelp or Hold, or a degrade that stopped the relay (the
+        // manifest moved, no output contract, an outage under `Halt`). The
+        // attestation carries no hosted decision, so minting one onto this
+        // verdict would let the carrier's own decision stand in for the
+        // hosted one the pass reached. The halt is read from the pass, never
+        // from the posture the caller hands in now. Unattested, a reuse runs
+        // its own pass, which halts again.
+        //
+        // And the policy is the one the pass READ, stamped where it ran. A
+        // `policy` argument naming any other — one registered after the pass,
+        // say — attests nothing, because the pass is no evidence about it.
+        let read_policy = ran.hosted_policy_read.as_ref().filter(|read| {
+            read.version == policy.version && read.policy_hash == policy.policy_hash
+        });
+        let Some(read_policy) = read_policy else {
+            self.hosted_attestation = None;
+            return self;
+        };
+        if !ran_here || !ran.hosted_policy_in_play || pass.must_halt_relay() {
             self.hosted_attestation = None;
             return self;
         }
         self.hosted_attestation = Some(Box::new(HostedPlaneAttestation {
             plane: PolicyPlane::HostedLegal,
-            policy_version: policy.version.clone(),
-            policy_hash: policy.policy_hash.clone(),
+            policy_version: read_policy.version.clone(),
+            policy_hash: read_policy.policy_hash.clone(),
             // The dial the pass RAN under, never the caller's current one: a
             // pattern-gated pass is no evidence of a classify-all one.
             classifier_mode: ran.verdict.classifier_mode,

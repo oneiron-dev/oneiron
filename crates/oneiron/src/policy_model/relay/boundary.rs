@@ -169,6 +169,12 @@ impl Vault {
                 .await?;
         }
         let owner = self.record_owner_plane_receipt(&request, owner, config)?;
+        // The hosted half took its last binding check before the owner half's
+        // last await, so the manifest may have moved under it too. It is
+        // checked again here, after every owner retry: a moved binding comes
+        // back as the hosted plane's halting degrade, with its row. No retry —
+        // the degrade is the typed answer to a policy that will not hold.
+        let relay = self.relay_pass_in_force(&request, domain, registry, relay, config)?;
         let owner_model_skipped = owner.model_skipped();
         Ok(DualPlanePass {
             owner: owner.verdict,
@@ -179,6 +185,37 @@ impl Vault {
 }
 
 impl Vault {
+    /// `relay` while its binding is the one in force, and otherwise the
+    /// `PolicyBindingMovedMidPass` degrade the binding-checked receipt writes.
+    fn relay_pass_in_force(
+        &self,
+        request: &PolicyClassifyRequest,
+        domain: &AttestedRelayDomain,
+        registry: &EdgeServiceRegistry,
+        relay: RelayBoundaryPass,
+        config: &PolicyModelConfig,
+    ) -> Result<RelayBoundaryPass> {
+        let Some(verdict) = relay.boundary_verdict().cloned() else {
+            return Ok(relay);
+        };
+        let moved = self.append_relay_receipt_binding_checked(
+            &RelayReceipt {
+                request,
+                domain,
+                pass: &relay,
+                receipt_breach: None,
+                hosted: registry.hosted_legal_policy(domain.service_identity()),
+                config,
+            },
+            &verdict,
+            &format!("relay_boundary_{}", verdict.decision.ledger_str()),
+            Vec::new(),
+            Vec::new(),
+            RelayReceiptRow::OnlyIfBindingMoved,
+        )?;
+        Ok(moved.unwrap_or(relay))
+    }
+
     /// Writes the OWNER plane's row for a dual-plane pass.
     ///
     /// The relay side receipts itself; this is the other half of the same
@@ -200,6 +237,8 @@ impl Vault {
         pass: OwnerPlanePass,
         config: &PolicyModelConfig,
     ) -> Result<OwnerPlanePass> {
+        #[cfg(test)]
+        super::super::classify::before_owner_receipt();
         if pass.verdict.decision == PolicyClassifyDecision::Allow
             && pass.verdict.audit.is_none()
             && !self.policy_model_verdict_is_stale_with_config(&pass.verdict, request, config)?

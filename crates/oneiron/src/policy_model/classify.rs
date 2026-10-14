@@ -208,11 +208,7 @@ impl Vault {
         config: &PolicyModelConfig,
     ) -> Result<PolicyClassifyVerdict> {
         #[cfg(test)]
-        BEFORE_BARE_RECEIPT.with(|hook| {
-            if let Some(hook) = hook.take() {
-                hook();
-            }
-        });
+        before_owner_receipt();
         // F107's window, on the doors F94 and F99 built: the verdict was bound
         // to a policy frontier, and the door hands it out after a LATER
         // transaction. The silence rule only drops an Allow that still
@@ -473,123 +469,6 @@ impl Vault {
             .map(|prompt| prompt.llm_request(config)))
     }
 
-    pub fn policy_model_verdict_is_stale(
-        &self,
-        verdict: &PolicyClassifyVerdict,
-        request: &PolicyClassifyRequest,
-    ) -> Result<bool> {
-        self.policy_model_verdict_is_stale_with_config(
-            verdict,
-            request,
-            &PolicyModelConfig::default(),
-        )
-    }
-
-    /// Whether the manifest has moved out from under a verdict, so a caller
-    /// about to act on it should derive a fresh one first.
-    ///
-    /// Two things can go stale, and they are asked about separately.
-    ///
-    /// The CONTENT half of the binding — subject, content, world, safeguard
-    /// selector — is about the question. A verdict for other content, another
-    /// world or another classifier is not this verdict, whatever the plane is
-    /// doing.
-    ///
-    /// The FRONTIER half is about the manifest the plane decided against, and
-    /// it is only asked of a plane that is ON. A disabled plane decides
-    /// nothing, so an edit elsewhere in the manifest cannot invalidate its
-    /// clean allow — and reporting it stale only sends the caller to re-derive
-    /// its way back to the identical clean allow. Mirrors the same
-    /// short-circuit the live-context resolver already applies.
-    ///
-    /// That short-circuit is about the CLEAN ALLOW, not about the plane. A
-    /// plane that is off returns the inert clean allow and can return nothing
-    /// else, so any other verdict in a caller's hand was minted while the
-    /// plane was ON and the owner has since opted out. Reporting that one
-    /// fresh would let a `Block` the owner switched off keep blocking, which
-    /// is the owner-sovereignty violation this whole predicate exists to
-    /// prevent — so the ON to OFF transition reads STALE.
-    ///
-    /// The DIAL is asked beside the frontier, and only of a live plane for the
-    /// same reason. It is the owner dial and never the hosted one: a hosted
-    /// flip has nothing to say about a verdict the owner plane decided. Both
-    /// directions matter. A clean allow minted under `PatternGated` must not
-    /// survive a flip to `ClassifyAll` — that releases content the config now
-    /// says a model has to look at. And a `Block` the model decided under
-    /// `ClassifyAll` must not survive a flip to `PatternGated` where nothing
-    /// escalates, which is the same switched-off rule still enforcing, arrived
-    /// at by a different route. A verdict recording NO dial at all predates
-    /// the field and reads stale, because a compat gap that guesses is a
-    /// compat gap that releases content.
-    pub fn policy_model_verdict_is_stale_with_config(
-        &self,
-        verdict: &PolicyClassifyVerdict,
-        request: &PolicyClassifyRequest,
-        config: &PolicyModelConfig,
-    ) -> Result<bool> {
-        let rtxn = self.store.env.read_txn()?;
-        self.policy_model_verdict_is_stale_in_txn(&rtxn, verdict, request, config)
-    }
-
-    /// The owner-plane verdict a door may hand out from `txn`: `verdict`
-    /// while it answers the policy in force there, and otherwise the plane's
-    /// typed fail-open, [`PolicySkipReason::PolicyMoving`] bound to the
-    /// frontier in force. The flag says the frontier moved.
-    ///
-    /// The owner plane is SOVEREIGN and fails OPEN, so a manifest that moved
-    /// after the pass is not an error. What it never does is hand out a
-    /// decision for a policy no longer in force: not an old Allow, and not an
-    /// old warn or block either, which stamped with the new frontier would
-    /// pass the enforcement door's freshness check as if the new policy had
-    /// reached it.
-    pub(super) fn owner_verdict_in_force_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        verdict: &PolicyClassifyVerdict,
-        request: &PolicyClassifyRequest,
-        config: &PolicyModelConfig,
-    ) -> Result<(PolicyClassifyVerdict, bool)> {
-        if !self.policy_model_verdict_is_stale_in_txn(txn, verdict, request, config)? {
-            return Ok((verdict.clone(), false));
-        }
-        let policy = gate::resolve_policy_manifest(&self.store, txn)?;
-        let moving = PolicyClassifyVerdict::skipped(
-            PolicySkipReason::PolicyMoving,
-            content_binding(request, &policy, config)?,
-            config,
-            PolicyPlane::OwnerPolicy,
-        );
-        Ok((moving, true))
-    }
-
-    fn policy_model_verdict_is_stale_in_txn(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        verdict: &PolicyClassifyVerdict,
-        request: &PolicyClassifyRequest,
-        config: &PolicyModelConfig,
-    ) -> Result<bool> {
-        let policy = gate::resolve_policy_manifest(&self.store, rtxn)?;
-        if policy.diagnostics().loaded_manifest_forces_fail_closed()
-            || policy.owner_policy_rows_dropped()
-        {
-            return Ok(true);
-        }
-        let fresh = content_binding(request, &policy, config)?;
-        if verdict.binding.content_hash != fresh.content_hash
-            || verdict.safeguard_binding != config.safeguard_binding.selector()
-        {
-            return Ok(true);
-        }
-        if policy.owner_policy_enabled() {
-            return Ok(
-                verdict.binding.read_frontier_hash != fresh.read_frontier_hash
-                    || verdict.classifier_mode != Some(config.owner_classifier_mode),
-            );
-        }
-        Ok(!verdict.is_inert_clean_allow())
-    }
-
     /// `None` when the owner plane is off; `Err` when it is on but its
     /// configuration cannot be read, which is a defect the caller must see
     /// rather than a verdict.
@@ -669,10 +548,19 @@ pub(crate) async fn stateless_owner_classification(
 
 #[cfg(test)]
 thread_local! {
-    /// Runs once as a bare door's receipt writer starts: the window between
-    /// a pinned pass and the row that hands it out.
-    pub(super) static BEFORE_BARE_RECEIPT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+    /// Runs once as an owner receipt writer starts: the window between a
+    /// pinned pass and the row that hands it out.
+    pub(super) static BEFORE_OWNER_RECEIPT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn before_owner_receipt() {
+    BEFORE_OWNER_RECEIPT.with(|hook| {
+        if let Some(hook) = hook.take() {
+            hook();
+        }
+    });
 }
 
 /// What the owner plane concluded. A pass whose model did not get to speak

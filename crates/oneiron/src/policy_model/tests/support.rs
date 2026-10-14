@@ -281,8 +281,9 @@ pub(super) fn hosted_row(
 }
 
 /// The hosted policy used by most relay cases: serious crime is a block.
-/// A pass the model ANSWERED: no degrade, so posture is not evidence about it.
-pub(super) fn answered_pass() -> RelayBoundaryPass {
+/// A pass the model ANSWERED over `policy`: no degrade, so posture is not
+/// evidence about it.
+pub(super) fn answered_pass(policy: &HostedLegalPolicy) -> RelayBoundaryPass {
     RelayBoundaryPass::classified(
         PolicyClassifyVerdict::clean_allow(
             PolicyContentBinding {
@@ -296,12 +297,13 @@ pub(super) fn answered_pass() -> RelayBoundaryPass {
         true,
         RelayResolution::ModelDecided,
     )
+    .read_under(Some(policy))
 }
 
 /// A pass that PROCEEDED THROUGH a model outage, the shape a host running
 /// `ProceedReceipted` raises. Only reusable where proceeding was tolerated,
 /// which is what the attestation has to record.
-pub(super) fn degraded_pass() -> RelayBoundaryPass {
+pub(super) fn degraded_pass(policy: &HostedLegalPolicy) -> RelayBoundaryPass {
     RelayBoundaryPass::Classified(Box::new(RelayClassifiedPass {
         verdict: PolicyClassifyVerdict::skipped(
             PolicySkipReason::BackendUnavailable,
@@ -316,12 +318,14 @@ pub(super) fn degraded_pass() -> RelayBoundaryPass {
         degrade_halts: false,
         hosted_policy_in_play: true,
         resolution: RelayResolution::Unresolved,
+        hosted_policy_read: None,
     }))
+    .read_under(Some(policy))
 }
 
 /// The same outage under `Halt`: the pass stopped the relay.
-pub(super) fn halted_degraded_pass() -> RelayBoundaryPass {
-    let RelayBoundaryPass::Classified(mut pass) = degraded_pass() else {
+pub(super) fn halted_degraded_pass(policy: &HostedLegalPolicy) -> RelayBoundaryPass {
+    let RelayBoundaryPass::Classified(mut pass) = degraded_pass(policy) else {
         unreachable!("degraded_pass is a classified pass");
     };
     pass.degrade_halts = true;

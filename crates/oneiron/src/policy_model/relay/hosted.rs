@@ -47,7 +47,24 @@ impl Vault {
     /// With no hosted policy bound to the attested identity there is nothing to
     /// pin and no model call to pin it across, so the re-check is skipped
     /// whole.
+    ///
+    /// Every pass it returns names the hosted policy it was handed, so an
+    /// attestation minted from it can name that policy and no later one.
     pub(super) async fn hosted_relay_pass(
+        &self,
+        request: &PolicyClassifyRequest,
+        hosted: Option<&HostedLegalPolicy>,
+        patterns: Option<&CompiledPatternRules>,
+        config: &PolicyModelConfig,
+        safeguard: Option<RelaySafeguardTier<'_>>,
+    ) -> Result<RelayBoundaryPass> {
+        Ok(self
+            .hosted_relay_pass_pinned(request, hosted, patterns, config, safeguard)
+            .await?
+            .read_under(hosted))
+    }
+
+    async fn hosted_relay_pass_pinned(
         &self,
         request: &PolicyClassifyRequest,
         hosted: Option<&HostedLegalPolicy>,

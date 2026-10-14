@@ -49,8 +49,9 @@ mod trust;
 use super::planes;
 
 pub use self::outcome::{
-    DualPlanePass, InMemoryVaultSideVerdicts, RelayBoundaryDegrade, RelayBoundaryPass,
-    RelayClassifiedPass, RelayResolution, RelaySafeguardTier, VaultSideVerdictSource,
+    DualPlanePass, HostedPolicyRead, InMemoryVaultSideVerdicts, RelayBoundaryDegrade,
+    RelayBoundaryPass, RelayClassifiedPass, RelayResolution, RelaySafeguardTier,
+    VaultSideVerdictSource,
 };
 pub use self::registry::EdgeServiceRegistry;
 pub use self::trust::{

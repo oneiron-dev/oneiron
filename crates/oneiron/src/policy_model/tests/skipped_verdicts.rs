@@ -454,6 +454,87 @@ fn a_halted_hosted_pass_is_never_a_reusable_attestation() -> Result<()> {
     Ok(())
 }
 
+/// H122, receipt reuse, what the pass decided and over which policy: a real
+/// hosted Block attested onto the owner's Allow carrier, and a real pass over
+/// one hosted policy attested under the policy registered after it, used to
+/// give a later cloud relay a trusted Allow. The same answered pass attested
+/// under its own policy is still reused, the control.
+#[test]
+fn a_hosted_pass_attests_only_its_own_policy_and_never_its_halt() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
+    let config = PolicyModelConfig::default();
+    let budget = lease("attested-reuse");
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
+    let amended = hosted_edge_registry(HostedLegalPolicy {
+        version: "2099-01-01".to_owned(),
+        ..hosted_serious_crime_block()
+    });
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let binding = vault.relay_verify_binding(&request, &config)?;
+    let reuse = |registry: &EdgeServiceRegistry,
+                 pass: &RelayBoundaryPass,
+                 backend: &CountingPolicyBackend| {
+        let source = StaticVaultSideVerdicts {
+            verdict: PolicyClassifyVerdict::clean_allow(binding, &config, PolicyPlane::OwnerPolicy)
+                .attesting_hosted_plane(&registered_policy(registry), &config, pass),
+            requested_hash: Mutex::new(None),
+        };
+        block_on(vault.relay_boundary_pass(
+            request.clone(),
+            &cloud_witness(),
+            registry,
+            &config,
+            Some(tier(backend, &budget)),
+            &source,
+        ))
+    };
+
+    let blocked = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &registry,
+        &config,
+        Some(tier(&blocking_backend(), &budget)),
+    )?;
+    assert_eq!(
+        blocked.boundary_verdict().map(|verdict| verdict.decision),
+        Some(PolicyClassifyDecision::Block)
+    );
+    assert_eq!(blocked.degraded(), None);
+    let backend = CountingPolicyBackend::clean();
+    assert_ne!(
+        reuse(&registry, &blocked, &backend)?,
+        RelayBoundaryPass::TrustedVaultSide,
+        "H122: a hosted Block was attested onto an Allow"
+    );
+    assert_eq!(backend.calls(), 1, "the reuse runs its own hosted pass");
+
+    let answered = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &registry,
+        &config,
+        Some(tier(&clean_backend(), &budget)),
+    )?;
+    assert_eq!(answered.resolution(), Some(RelayResolution::ModelDecided));
+    let backend = CountingPolicyBackend::clean();
+    assert_ne!(
+        reuse(&amended, &answered, &backend)?,
+        RelayBoundaryPass::TrustedVaultSide,
+        "H122: a pass over one hosted policy attested the policy registered after it"
+    );
+    assert_eq!(backend.calls(), 1, "the reuse runs its own hosted pass");
+
+    let backend = CountingPolicyBackend::clean();
+    assert_eq!(
+        reuse(&registry, &answered, &backend)?,
+        RelayBoundaryPass::TrustedVaultSide
+    );
+    assert_eq!(backend.calls(), 0);
+    Ok(())
+}
+
 /// H121, the bare door: the owner tightens a row while the model is
 /// answering, and the model's clean answer is about the policy it replaced.
 /// The bare classify door used to return that `Allow` and receipt it against
@@ -522,7 +603,7 @@ fn a_bare_classify_never_hands_out_a_verdict_the_policy_moved_under() -> Result<
         let vault = std::rc::Rc::new(vault);
         put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
         let hook_vault = std::rc::Rc::clone(&vault);
-        crate::policy_model::classify::BEFORE_BARE_RECEIPT.with(|slot| {
+        crate::policy_model::classify::BEFORE_OWNER_RECEIPT.with(|slot| {
             *slot.borrow_mut() = Some(Box::new(move || {
                 put_policy_manifest_bytes(&hook_vault, test_id(0x48), &spoilers_manifest("block"))
                     .expect("receipt-time manifest write");
@@ -550,12 +631,11 @@ fn a_bare_classify_never_hands_out_a_verdict_the_policy_moved_under() -> Result<
     Ok(())
 }
 
-/// Answers `body`, and on exactly one call moves the owner's manifest.
+/// Answers `body`, and on each listed call moves the owner's manifest.
 struct MovesOnCall<'v> {
     vault: &'v Vault,
-    manifest: Vec<u8>,
+    moves: Vec<(usize, Vec<u8>)>,
     body: &'static str,
-    on_call: usize,
     calls: AtomicUsize,
 }
 
@@ -565,8 +645,9 @@ impl LlmBackend for MovesOnCall<'_> {
         _request: LlmRequest,
         _lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
-        if self.calls.fetch_add(1, Ordering::SeqCst) == self.on_call {
-            put_policy_manifest_bytes(self.vault, test_id(0x48), &self.manifest)
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if let Some((_, manifest)) = self.moves.iter().find(|(on_call, _)| *on_call == call) {
+            put_policy_manifest_bytes(self.vault, test_id(0x48), manifest)
                 .expect("mid-call manifest write");
         }
         let body = self.body.to_owned();
@@ -588,9 +669,8 @@ fn a_dual_plane_owner_verdict_answers_the_policy_in_force_after_the_join() -> Re
     put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
     let backend = MovesOnCall {
         vault: &vault,
-        manifest: spoilers_manifest("block"),
+        moves: vec![(1, spoilers_manifest("block"))],
         body: r#"{"violation":0,"policy_category":null}"#,
-        on_call: 1,
         calls: AtomicUsize::new(0),
     };
     let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
@@ -612,5 +692,167 @@ fn a_dual_plane_owner_verdict_answers_the_policy_in_force_after_the_join() -> Re
         !vault.policy_model_verdict_is_stale_with_config(&pass.owner, &request, &config)?,
         "H121: the dual-plane door handed out a replaced policy's verdict"
     );
+    Ok(())
+}
+
+/// H122, the dual-plane door's hosted half: it settles, then the owner half
+/// pins again after the join and the manifest moves during that call too. The
+/// hosted verdict bound to the frontier in between used to be handed back as
+/// a relayable Allow; it is the halting binding-moved degrade.
+#[test]
+fn a_dual_plane_hosted_half_never_relays_on_a_binding_the_owner_repin_moved() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
+    // Call 0 is the owner half. Call 1 is the hosted half, which moves the
+    // manifest and settles at call 2. Call 3 is the owner pinning again after
+    // the join, which moves it once more.
+    let backend = MovesOnCall {
+        vault: &vault,
+        moves: vec![
+            (1, spoilers_manifest("block")),
+            (3, spoilers_manifest("warn")),
+        ],
+        body: r#"{"violation":0,"policy_category":null}"#,
+        calls: AtomicUsize::new(0),
+    };
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let config = PolicyModelConfig::default();
+    let budget = lease("dual-hosted-moving");
+    let pass = block_on(vault.classify_both_planes(
+        request.clone(),
+        &hosted_witness(),
+        &hosted_edge_registry(hosted_serious_crime_block()),
+        &config,
+        Some(tier(&backend, &budget)),
+        &EMPTY_VAULT_SIDE_VERDICTS,
+    ))?;
+    assert!(
+        backend.calls.load(Ordering::SeqCst) >= 4,
+        "the owner half pinned again after the hosted half settled"
+    );
+    assert_eq!(
+        pass.relay.degraded(),
+        Some(RelayBoundaryDegrade::PolicyBindingMovedMidPass),
+        "H122: the hosted half was handed back on a binding no longer in force"
+    );
+    assert!(pass.relay.must_halt_relay());
+    assert!(!vault.policy_model_verdict_is_stale_with_config(&pass.owner, &request, &config)?);
+    Ok(())
+}
+
+/// Moves the owner's manifest to `manifest` as the next owner receipt writer
+/// starts.
+fn move_policy_before_owner_receipt(vault: &std::rc::Rc<Vault>, manifest: Vec<u8>) {
+    let hook_vault = std::rc::Rc::clone(vault);
+    crate::policy_model::classify::BEFORE_OWNER_RECEIPT.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(move || {
+            put_policy_manifest_bytes(&hook_vault, test_id(0x48), &manifest)
+                .expect("receipt-time manifest write");
+        }));
+    });
+}
+
+/// H121, the classify-and-enforce doors' last window: the pass is pinned,
+/// then the owner edits the policy before the row the door writes. The doors
+/// used to record and return the decision reached for the replaced policy: a
+/// warn, a clean Allow, and the model-less door's verdict under the old
+/// frontier. Each records and returns the plane's fail-open at the frontier
+/// in force.
+#[test]
+fn an_enforce_door_never_records_a_verdict_the_policy_moved_under() -> Result<()> {
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let config = PolicyModelConfig::default();
+    for body in [
+        Some(r#"{"violation":0,"policy_category":null}"#),
+        Some(r#"{"violation":1,"policy_category":"owner:spoilers"}"#),
+        None,
+    ] {
+        let (_tmp, vault) = temp_vault();
+        let vault = std::rc::Rc::new(vault);
+        put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
+        move_policy_before_owner_receipt(&vault, spoilers_manifest("block"));
+        let enforcement = match body {
+            Some(body) => block_on(vault.enforce_policy_model_with_backend(
+                request.clone(),
+                &config,
+                &static_backend(body),
+                &lease("enforce-moving"),
+            ))?,
+            None => vault.enforce_policy_model_with_config(request.clone(), &config)?,
+        };
+        assert_eq!(
+            enforcement.verdict.decision,
+            PolicyClassifyDecision::Skipped(PolicySkipReason::PolicyMoving),
+            "H121: {body:?} was enforced for a replaced policy"
+        );
+        assert_eq!(enforcement.action, PolicyEnforcementAction::Skipped);
+        assert!(!vault.policy_model_verdict_is_stale_with_config(
+            &enforcement.verdict,
+            &request,
+            &config
+        )?);
+        let receipts = gate_receipts(&vault)?;
+        assert_eq!(receipts.len(), 1, "{body:?}: the fail-open is receipted");
+        assert!(has_trace(
+            &receipts[0],
+            "gate.policy_model.owner_plane_frontier_moved"
+        ));
+    }
+    Ok(())
+}
+
+/// H121, the owner opting out before the row: the owner switches the plane
+/// off while a warn is on its way out. The doors used to hand out a skip no
+/// enforcement door would take from an off plane, so the opt-out stranded the
+/// content. They answer as an off plane does, with the inert clean allow, and
+/// the content goes out.
+#[test]
+fn an_owner_opt_out_before_the_row_releases_the_content() -> Result<()> {
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let config = PolicyModelConfig::default();
+    let warn = r#"{"violation":1,"policy_category":"owner:spoilers"}"#;
+    let opted_out = base_policy_manifest(vec![
+        owner_policy_enabled(false),
+        owner_rows(vec![owner_row_with_action(
+            "owner:spoilers",
+            "Avoid spoilers in outbound content.",
+            "warn",
+        )]),
+        owner_document(OWNER_DOCUMENT),
+        owner_contract("category_json"),
+    ]);
+
+    // The bare door, then the enforcement door on what it handed out.
+    let (_tmp, vault) = temp_vault();
+    let vault = std::rc::Rc::new(vault);
+    put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
+    move_policy_before_owner_receipt(&vault, opted_out.clone());
+    let verdict = block_on(vault.classify_policy_model_with_backend(
+        request.clone(),
+        &config,
+        &static_backend(warn),
+        &lease("opt-out"),
+    ))?;
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+    let enforced = vault.enforce_policy_model_verdict(request.clone(), &config, verdict, false)?;
+    assert_eq!(
+        enforced.action,
+        PolicyEnforcementAction::Allow,
+        "H121: an opted-out owner's verdict was refused"
+    );
+
+    // The classify-and-enforce door.
+    let (_tmp, vault) = temp_vault();
+    let vault = std::rc::Rc::new(vault);
+    put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
+    move_policy_before_owner_receipt(&vault, opted_out);
+    let enforcement = block_on(vault.enforce_policy_model_with_backend(
+        request,
+        &config,
+        &static_backend(warn),
+        &lease("opt-out-enforce"),
+    ))?;
+    assert_eq!(enforcement.action, PolicyEnforcementAction::Allow);
+    assert_eq!(enforcement.final_content.as_deref(), Some(CLEAN_CONTENT));
     Ok(())
 }
