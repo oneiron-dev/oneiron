@@ -264,7 +264,7 @@ impl<'a> PipelineBuilder<'a> {
         self.off_device
             .then(|| {
                 crate::settings::device_local_worlds_at(
-                    &self.vault.store,
+                    self.vault,
                     txn,
                     crate::claim::CallerLocality::OffDevice,
                 )

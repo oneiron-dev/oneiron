@@ -131,11 +131,6 @@ side_tables! {
     SKILL_OPTIMIZE_MIN_OUTCOMES: VaultMeta b"settings:skill_optimize:v1:min_outcomes" Raw;
     /// Persisted activation-risk threshold dial for skill-scan consent escalation. Key: ().
     SKILL_SCAN_ACTIVATION_RISK_THRESHOLD: VaultMeta b"settings:skill_scan:v1:activation_risk_threshold" Raw;
-    /// Moves (u64) in every transaction that sets or clears a device-only flag. Key: ().
-    DEVICE_ONLY_GENERATION: VaultMeta b"settings:sync:v1:device_only_generation" Raw;
-    /// Flags a WORLD as device-only: its rows, claims and NOTEs never leave this device. Key: hex32
-    /// (world id).
-    DEVICE_ONLY_WORLD: VaultMeta b"settings:sync:v1:device_only_world:" Raw;
     /// Local, engine-written provenance and monotonic revocation latch for one admitted brief share
     /// (issuer, gate decision id, effect-target digest, revocation state), proving the row was
     /// created through the share door and not a generic grant write. Key: id16.
