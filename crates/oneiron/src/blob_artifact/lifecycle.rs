@@ -41,8 +41,8 @@ pub(crate) struct BlobArtifactLifecycleCleanup {
 /// A released ASSET gets a deletion fence, never a tombstone: its id is the
 /// hash of its bytes, and a tombstone would refuse the same bytes uploaded
 /// again on every peer for good. The fence refuses a stale carrier at
-/// replicated ingest, and the export door scrubs that carrier from the live
-/// window history-free. A new artifact holding the same bytes lifts it.
+/// replicated ingest, and the export door deletes that carrier from the live
+/// window as an ordinary delete. A new artifact holding the same bytes lifts it.
 pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,

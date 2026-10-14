@@ -59,6 +59,32 @@ fn delete_artifact(node: &mut TestNode, artifact: &EntityId) {
     node.recover(WINDOW);
 }
 
+/// Brings both windows level the way a sync connection does: each side answers the other's
+/// version vector through the window export door, and the other imports that reply. Panics if
+/// either side is still behind after five rounds, the bound past which ARCH-0023b re-bootstraps.
+fn sync_through_doors(a: &TestNode, b: &TestNode) {
+    let key = WindowKey::new(WINDOW);
+    for _ in 0..5 {
+        let (vv_a, vv_b) = (a.doc(WINDOW).oplog_vv(), b.doc(WINDOW).oplog_vv());
+        if vv_a == vv_b {
+            return;
+        }
+        let to_b =
+            window::export_window_updates_since(&a.vault, &key, a.doc(WINDOW), &vv_b.encode())
+                .unwrap();
+        b.doc(WINDOW).import(&to_b).unwrap();
+        let to_a =
+            window::export_window_updates_since(&b.vault, &key, b.doc(WINDOW), &vv_a.encode())
+                .unwrap();
+        a.doc(WINDOW).import(&to_a).unwrap();
+    }
+    assert_eq!(
+        a.doc(WINDOW).oplog_vv(),
+        b.doc(WINDOW).oplog_vv(),
+        "a peer behind the other's window never caught up through its export door"
+    );
+}
+
 /// The ASSET row whose body is exactly `bytes`.
 fn asset_of(vault: &Vault, bytes: &[u8]) -> Option<EntityId> {
     vault
@@ -174,9 +200,7 @@ fn a_deleted_artifact_takes_its_version_bytes_off_every_replica() {
         !holds(&a, &unique),
         "the lagging carrier passed on to A resurrected the deleted bytes"
     );
-    // The export doors take that carrier out again. Each scrub pins its window history-free, so
-    // both vaults exchange the scrubs before B's window closes: a peer behind a history-free
-    // window needs a full re-bootstrap, which plain updates cannot give it.
+    // The export doors take that carrier out again.
     for node in [&a, &b] {
         window::export_window_updates_since(
             &node.vault,
@@ -195,14 +219,16 @@ fn a_deleted_artifact_takes_its_version_bytes_off_every_replica() {
         );
     }
 
-    // The last artifact holding the shared bytes goes on B: they leave both vaults.
+    // The last artifact holding the shared bytes goes on B while its window is closed, so B
+    // persists and reloads the window: they leave both vaults, and A, which never saw B's
+    // reload, still catches up through B's export door.
     delete_artifact(&mut b, &own);
-    exchange(&a, &b, WINDOW);
+    sync_through_doors(&a, &b);
     assert!(!holds(&a, &shared) && !holds(&b, &shared));
 
     // Positive control: the same bytes uploaded again are a new reference, and they sync.
     upload(&mut a, T0 + 20, &[UNIQUE]);
-    exchange(&a, &b, WINDOW);
+    sync_through_doors(&a, &b);
     assert!(holds(&a, &unique));
     assert!(
         holds(&b, &unique),

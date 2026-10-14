@@ -171,7 +171,7 @@ fn artifact_is_live(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<boo
 }
 
 /// Fences an ASSET whose last artifact went: replicated ingest refuses its carrier, and the
-/// export door scrubs that carrier from the live window and pins the window history-free. A
+/// export door deletes that carrier from the live window without pinning it history-free. A
 /// fence already there stays as it is: an explicit delete's fence never becomes liftable.
 pub(super) fn fence_released_asset(
     store: &Store,
@@ -207,16 +207,25 @@ pub(crate) fn readmit_held_asset_in_txn(
     lift_release_fence(store, txn, asset)
 }
 
+/// Whether only a release fences `asset`: its fence holds the release value and no hard-delete
+/// marker stands beside it.
+pub(crate) fn release_fenced_only(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    asset: &EntityId,
+) -> Result<bool> {
+    let key = HexId(*asset);
+    Ok(crate::deletion::ROW_DELETION_FENCE
+        .get(store, txn, &key)?
+        .is_some_and(|value| value == RELEASE_FENCE)
+        && !crate::deletion::HARD_DELETE_MARKER.contains(store, txn, &key)?)
+}
+
 /// Drops the fence a release left on `asset`. A fence an explicit delete left, and a hard-delete
 /// marker, stay.
 fn lift_release_fence(store: &Store, txn: &mut RwTxn<'_>, asset: &EntityId) -> Result<()> {
-    let key = HexId(*asset);
-    if crate::deletion::ROW_DELETION_FENCE
-        .get(store, txn, &key)?
-        .is_some_and(|value| value == RELEASE_FENCE)
-        && !crate::deletion::HARD_DELETE_MARKER.contains(store, txn, &key)?
-    {
-        crate::deletion::ROW_DELETION_FENCE.delete(store, txn, &key)?;
+    if release_fenced_only(store, txn, asset)? {
+        crate::deletion::ROW_DELETION_FENCE.delete(store, txn, &HexId(*asset))?;
     }
     Ok(())
 }

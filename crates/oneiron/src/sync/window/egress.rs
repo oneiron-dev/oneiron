@@ -324,23 +324,44 @@ pub(in crate::sync) fn withdrawn_delete_carriers(
 
 /// Scrubs every [`withdrawn_delete_carriers`] entry from the live document.
 /// The window is pinned history-free first, so neither the body nor the
-/// withdrawal's operations ship.
+/// withdrawal's operations ship. Returns whether it pinned.
+///
+/// A carrier only a blob-artifact release fences (H125) is dropped with an
+/// ordinary delete and does not pin: nobody withdrew a delete there, the bytes
+/// went because no live artifact holds them. Their old set operation stays in
+/// Loro history until the sweep's shallow compaction, as for any deleted row.
+/// A pin would answer every later version request with a snapshot rooted at
+/// this vault's newest operation, which a peer even one change behind cannot
+/// apply.
 pub(super) fn scrub_withdrawn_delete_carriers(
     vault: &Vault,
     key: &WindowKey,
     doc: &LoroDoc,
 ) -> Result<bool> {
-    let withdrawn = withdrawn_delete_carriers(vault, &vault.store.env.read_txn()?, doc)?;
+    let (withdrawn, pin) = {
+        let rtxn = vault.store.env.read_txn()?;
+        let withdrawn = withdrawn_delete_carriers(vault, &rtxn, doc)?;
+        let mut pin = false;
+        for (_, id) in &withdrawn {
+            if !crate::blob_artifact::release_fenced_only(&vault.store, &rtxn, id)? {
+                pin = true;
+                break;
+            }
+        }
+        (withdrawn, pin)
+    };
     if withdrawn.is_empty() {
         return Ok(false);
     }
-    require_history_free_window(vault, key)?;
+    if pin {
+        require_history_free_window(vault, key)?;
+    }
     let entities = doc.get_map("entities");
     for (raw_key, _) in &withdrawn {
         map_delete(&entities, raw_key)?;
     }
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-    Ok(true)
+    Ok(pin)
 }
 
 /// Remove attribution carriers defeated by permanent author-redaction facts.
