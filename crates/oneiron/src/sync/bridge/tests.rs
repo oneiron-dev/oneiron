@@ -2545,6 +2545,7 @@ fn tombstone_value(reason: crate::deletion::TombstoneReason, deleted_at: u64) ->
         request_id: [0x5A; 16],
     }
     .encode()
+    .to_vec()
 }
 
 /// F24 round 6 (H219): an own-device tombstone for a stored task authority
@@ -2632,11 +2633,12 @@ fn observer_b_refuses_a_replayed_tombstone_for_a_fact() {
 }
 
 /// F24 round 6 (H219): a tombstone that reaches this vault before its fact
-/// row cannot suppress the fact. A soft and a hard tombstone name two
-/// cancellations in one import; the rows and their links arrive in later
-/// ones, and both tasks read cancelled.
+/// row suppresses the row, and a suppressed fact reads as a refusal, never
+/// as a cancellation never made. A soft and a hard tombstone name two
+/// cancellations in one import, the rows arrive in the next, and both tasks'
+/// authority reads refuse; a third task with no suppressed fact still reads.
 #[test]
-fn a_tombstone_before_a_fact_row_cannot_suppress_it() {
+fn a_fact_tombstoned_before_it_arrives_reads_as_a_refusal() {
     use crate::deletion::TombstoneReason;
     use crate::task_authority::{
         TaskAuthorityFact, TaskAuthorityFactKind, encode_task_authority_fact_body,
@@ -2647,8 +2649,8 @@ fn a_tombstone_before_a_fact_row_cannot_suppress_it() {
         start: learned_at,
         end: learned_at,
     };
-    let (owner, tasks) = owned_tasks_for_fact_replay(&vault, learned_at, 2);
-    let cancellations: Vec<_> = tasks
+    let (owner, tasks) = owned_tasks_for_fact_replay(&vault, learned_at, 3);
+    let cancellations: Vec<_> = tasks[..2]
         .iter()
         .map(|(task, _)| (EntityId::now(), *task))
         .collect();
@@ -2686,30 +2688,22 @@ fn a_tombstone_before_a_fact_row_cannot_suppress_it() {
         }
     });
     import_doc(&doc, &rows).unwrap();
-    let value =
-        encode_edge_value_for_crdt(EdgeKind::ScopedTo, 0.7, learned_at, None, None).unwrap();
-    let links = forged_update_against(&doc, |fork| {
-        for (fact, task) in &cancellations {
-            map_insert_bytes(
-                &fork.get_map("edges"),
-                &format_edge_key(fact, EdgeKind::ScopedTo, task),
-                &value,
-            )
-            .unwrap();
-        }
-    });
-    import_doc(&doc, &links).unwrap();
 
-    for (fact, task) in &cancellations {
-        assert!(
-            vault.live_entity_row(fact).unwrap().is_live(),
-            "a fact tombstoned before it arrived still materializes"
-        );
-        assert!(
-            task_reads_cancelled(&vault, *task),
-            "a cancellation tombstoned before it arrived still reads"
+    for (_, task) in &cancellations {
+        assert_matches!(
+            vault.task_authority_state(*task),
+            Err(Error::InvariantViolation("task authority fact suppressed")),
+            "a cancellation tombstoned before it arrived reads as a refusal"
         );
     }
+    assert_eq!(
+        vault
+            .task_authority_state(tasks[2].0)
+            .unwrap()
+            .map(|state| (state.owner_ref, state.cancelled)),
+        Some((owner, false)),
+        "positive control: a task with no suppressed fact still reads"
+    );
 }
 
 /// ONE-1608 forged-retirement regression: `blocks` is retirable ONLY through

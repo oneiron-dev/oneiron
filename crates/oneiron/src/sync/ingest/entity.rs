@@ -318,6 +318,13 @@ fn admit(
     let delete_protected = id == crate::dreamer_runner::authority::dreamer_actor_id()?
         || crate::registry::is_delete_protected_engine_record(header.entity_type);
     if !delete_protected && deleted_here(ctx, wtxn, &id) {
+        crate::task_authority::note_suppressed_fact_in_txn(
+            &vault.store,
+            wtxn,
+            &id,
+            header.entity_type,
+            &blob[ENTITY_METADATA_HEADER_LEN..],
+        )?;
         return Ok(EntityStep::Skip);
     }
     // NOTE replay may not discharge or outlive an unproven purge retry (the old native NOTE

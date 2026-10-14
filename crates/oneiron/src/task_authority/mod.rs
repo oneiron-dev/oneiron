@@ -32,6 +32,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::habit::{TaskRole, task_role_from_body_bytes};
 use crate::registry::ENTITY_TYPE_TASK;
+use crate::side_table::{self, SideTable};
 #[cfg(test)]
 use crate::temporal::TimeRange;
 use crate::vault::MAX_EDGE_QUERY_RESULTS;
@@ -558,6 +559,36 @@ pub(crate) fn is_task_authority_fact_in(
         ))
 }
 
+/// Tasks an authority fact of which was refused at admission because its id
+/// was deleted here before the fact arrived. Presence-only.
+const SUPPRESSED: SideTable<EntityId, [u8; 1], side_table::Raw> =
+    SideTable::new(&side_table::TASK_FACT_SUPPRESSED);
+
+/// A replicated row `id` refused because it was deleted here: when it is a
+/// task authority fact this vault does not hold, its task is marked, so the
+/// task's facts read as a refusal. A tombstone that reached this vault before
+/// a fact would otherwise make a cancellation or a consent requirement read
+/// as never made.
+pub(crate) fn note_suppressed_fact_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    body: &[u8],
+) -> Result<()> {
+    if entity_type != ENTITY_TYPE_TASK || is_task_authority_fact_in(store, wtxn, id)? {
+        return Ok(());
+    }
+    let Ok(fact) = decode_task_authority_fact_body(body) else {
+        return Ok(());
+    };
+    SUPPRESSED.put(store, wtxn, &fact.task_ref, &[1])
+}
+
+fn fact_suppressed() -> Error {
+    Error::InvariantViolation("task authority fact suppressed")
+}
+
 /// A fact is read through its `fact --ScopedTo--> task` link, so removing
 /// the link, or the fact, would read as a requirement never made or a party
 /// never named, and let the next fact stand as the first. No door removes
@@ -646,6 +677,11 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         task_ref: EntityId,
     ) -> Result<TaskAuthorityFacts> {
+        // A fact this vault never admitted is not a fact never made: no
+        // cancellation, consent requirement or party is guessed past it.
+        if SUPPRESSED.contains(&self.store, rtxn, &task_ref)? {
+            return Err(fact_suppressed());
+        }
         let mut facts = TaskAuthorityFacts::default();
         for (scanned, entry) in self
             .store
