@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `build.rs` | src | s | — | — | — |
 | `src/lib/alloc.rs` | src | s | 6 crate-vis | — | Rust-owned buffer/array constructors and generic free_vec |
-| `src/lib/entity.rs` | src | s | 12 fn | — | Free fns plus vault lifecycle, health, and entity entry points |
+| `src/lib/entity.rs` | src | m | 12 fn | — | Free fns plus vault lifecycle, health, and entity entry points |
 | `src/lib/guard.rs` | src | s | 6 crate-vis | — | Panic guard and raw-pointer slice/out/vault helpers |
 | `src/lib/mod.rs` | src | s | 3 re-export | — | C ABI for on-device iOS and macOS access to the Oneiron vault |
 | `src/lib/parse.rs` | src | s | 16 crate-vis | — | ID/enum/limit/query/format parsing and validation helpers |
