@@ -267,9 +267,9 @@ pub(in crate::batch) fn apply_put(
         authority_dominates_key_squatter =
             check_authority_log_store_key(store, wtxn, &id, &entry_hash, data)?
                 == AuthorityLogKeyOccupant::CrossTypeSquatter;
-        // H72: every store door, local or replicated, keeps the log inside
-        // the fold bounds and holds rows no key that may vouch signed; a slip
-        // issuer's restrictions always land.
+        // H72: every store door, local or replicated, holds rows no key that
+        // may vouch signed. The owner's work always lands; another key's rows
+        // past its bound wait (rule 5), a replica retrying them each drain.
         match crate::authority::authority_door(store, wtxn, posture, &entry)? {
             crate::authority::AuthorityDoor::Lands => {}
             crate::authority::AuthorityDoor::AtBound => {

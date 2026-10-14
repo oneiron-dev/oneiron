@@ -139,81 +139,127 @@ fn a_signers_full_bound_still_folds() {
     assert_eq!(fold.valid_entries.len(), MAX_AUTHORITY_ROWS_PER_SIGNER);
 }
 
-/// Substrate invariant: the store door refuses a signer's row past its bound
-/// with a typed error naming the signer, and writes nothing. A row that only
-/// restricts still lands for that signer, the genesis owner and so a slip
-/// issuer, and another signer the owner cosigns for still writes; alone, it
-/// is held.
+/// Substrate invariant (rule 5): a key no slip issuer vouches for, here an
+/// admin the owner admitted, stores up to the `authority_log_signer_bound`
+/// policy row. Its next row waits with a typed error naming it, nothing is
+/// written, and the log raises its typed check. Its removal of a machine
+/// the fold holds live still lands, and its revocation of a key the fold
+/// never held waits. The waiting row lands once the owner cosigns it, and
+/// the owner's own rows never meet the bound.
 #[test]
-fn a_signer_at_its_bound_is_refused_but_restrictions_and_other_signers_land() {
-    const BOUND: usize = 16;
-    with_rows_per_signer_for_test(BOUND, || {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-        let genesis = genesis_entry(64, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-        let mut chain = confirm_chain(&genesis, 64, BOUND, |_| vec![]);
-        let over = chain.pop().unwrap();
-        let at = TimeRange { start: 1, end: 1 };
-        let mut rows = vec![(genesis.clone(), at, 1)];
-        rows.extend(chain.iter().map(|entry| (entry.clone(), at, 1)));
-        vault.put_authority_log_entries(&rows).unwrap();
-        let stored = vault
-            .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-            .unwrap();
-        assert_eq!(stored, BOUND as u64);
-
-        let err = vault.put_authority_log_entry(&over, at, 1).unwrap_err();
-        assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
-        let owner = ed_key(64);
-        let label = authority_signer_label(&authority_key_from_ed(&owner));
-        assert!(err.to_string().contains(&label), "{err}");
-        assert_eq!(
-            vault
-                .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-                .unwrap(),
-            stored
-        );
-
-        let vault_id = genesis_vault_id(&genesis).unwrap();
-        let head = authority_entry_hash(chain.last().unwrap()).unwrap();
-        let revoke = sign_ed(
-            unsigned_entry(
-                Some(vault_id),
-                BOUND as u64 + 1,
-                vec![head],
-                AuthorityOp::SlipRevoke { slip_id: [9; 32] },
-                authority_key_from_ed(&owner),
-                3,
-            ),
-            &owner,
-        );
-        vault.put_authority_log_entry(&revoke, at, 1).unwrap();
-        let stranger = ed_key(65);
-        let other = unsigned_entry(
-            Some(vault_id),
+fn a_signer_past_its_bound_waits_but_live_restrictions_and_owner_rows_land() {
+    const BOUND: usize = 8;
+    let host = host();
+    let request = request_for(host.vault_id, EntityId::now(), &ed_key(66));
+    host.vault
+        .enroll_machine(
+            &host.issuer,
+            &host.owner,
+            &request,
+            MachineRole::Owned(MachineOwnership::Yours),
+        )
+        .unwrap();
+    let at = TimeRange { start: 1, end: 1 };
+    let fold = || host.vault.authority_fold().unwrap();
+    let owner_row = |op| {
+        crate::authority::slip_vault::next_entry(
+            &host.issuer,
+            &fold(),
+            op,
+            host.vault.now_recorded_at(),
+        )
+        .unwrap()
+    };
+    let signing = ed_key(65);
+    let admin = authority_key_from_ed(&signing);
+    host.vault
+        .put_authority_log_entry(
+            &owner_row(AuthorityOp::EnrollDevice {
+                device: device(admin.clone(), ROLE_ADMIN, AuthorityTier::Software),
+            }),
+            at,
             1,
-            vec![head],
-            confirm_op(BOUND + 1),
-            authority_key_from_ed(&stranger),
+        )
+        .unwrap();
+    let admin_row = |seq: usize, op, cosigned: bool| {
+        let entry = unsigned_entry(
+            Some(host.vault_id),
+            seq as u64,
+            fold().append_heads.iter().copied().collect(),
+            op,
+            admin.clone(),
             3,
         );
-        let err = vault
-            .put_authority_log_entry(&sign_ed(other.clone(), &stranger), at, 1)
-            .unwrap_err();
-        assert_eq!(
-            err.kind(),
-            crate::error::ErrorKind::AuthorityLogSignerPending
-        );
-        vault
-            .put_authority_log_entry(&cosign_ed(other, &stranger, &owner), at, 1)
+        if cosigned {
+            host_cosigned(entry, &signing, &host.issuer)
+        } else {
+            sign_ed(entry, &signing)
+        }
+    };
+    let stored = || {
+        host.vault
+            .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
+            .unwrap()
+    };
+    let label = authority_signer_label(&admin);
+    host.vault
+        .set_authority_observation_policy(AuthorityObservationPolicy {
+            log_signer_bound: BOUND as u64,
+            ..AuthorityObservationPolicy::default()
+        })
+        .unwrap();
+    for n in 0..BOUND {
+        host.vault
+            .put_authority_log_entry(&admin_row(n + 1, confirm_op(n), false), at, 1)
             .unwrap();
-        assert_eq!(
-            vault
-                .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-                .unwrap(),
-            stored + 2
-        );
+    }
+    let before = stored();
+    let over = admin_row(BOUND + 1, confirm_op(BOUND), false);
+    let err = host
+        .vault
+        .put_authority_log_entry(&over, at, 1)
+        .unwrap_err();
+    assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
+    assert!(err.to_string().contains(&label), "{err}");
+    assert_eq!(stored(), before);
+    let checks = host.vault.authority_log_checks().unwrap();
+    assert!(
+        checks.contains(&AuthorityLogCheck {
+            kind: AuthorityLogCheck::SIGNER_BOUND,
+            signer: Some(label.clone()),
+            count: BOUND as u64,
+            threshold: BOUND as u64,
+        }),
+        "{checks:?}"
+    );
+
+    let never_held = AuthorityOp::RevokeDevice {
+        revoked_key: authority_key_from_ed(&ed_key(67)),
+    };
+    let err = host
+        .vault
+        .put_authority_log_entry(&admin_row(BOUND + 1, never_held, false), at, 1)
+        .unwrap_err();
+    assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
+    let current = fold().machine(request.machine).unwrap().profile.clone();
+    let removal = AuthorityOp::MachineProfile(MachineProfile {
+        role: MachineRole::Removed,
+        revision: current.revision + 1,
+        ..current
     });
+    host.vault
+        .put_authority_log_entry(&admin_row(BOUND + 1, removal, false), at, 1)
+        .unwrap();
+    host.vault
+        .put_authority_log_entry(&admin_row(BOUND + 2, confirm_op(BOUND), true), at, 1)
+        .unwrap();
+    for n in 0..=BOUND {
+        host.vault
+            .put_authority_log_entry(&owner_row(confirm_op(100 + n)), at, 1)
+            .unwrap();
+    }
+    assert_eq!(stored(), before + 2 + BOUND as u64 + 1);
+    assert!(!fold().authority_log_past_bound());
 }
 
 fn claims_numbered(template: &SlipClaims, n: usize) -> SlipClaims {
@@ -397,16 +443,17 @@ fn host_cosigned(
 
 /// Bug repro: no door stores a row that no owner, admin or install key
 /// signed, and a key that is not a slip issuer stores no more than its
-/// bound, whatever its rows do. An agent key the host enrolled, or the key
-/// of a machine the owner holds as theirs, once stored slip revokes and
-/// actor revocations without end, through sync and then through the public
-/// local door (review round 2, F2), and the fold counted each one, so past
-/// the fold's row bound the owner's vault failed closed. The fold applies
-/// none of them. Rows the key signs alone are now held at the local door
-/// too; rows the host cosigns count toward the key's bound, and a handoff
-/// it signs is refused at once.
+/// bound of its own rows. An agent key the host enrolled, or the key of a
+/// machine the owner holds as theirs, once stored slip revokes and actor
+/// revocations without end, through sync and then through the public local
+/// door (review round 2, F2), and the fold counted each one, so past the
+/// fold's row bound the owner's vault failed closed. The fold applies none
+/// of them, so rows the key signs alone are held at the local door too.
+/// Rows the host cosigns are the owner's work and land past the key's
+/// bound (rule 5). An install key's own world edits wait past its bound,
+/// and a handoff the key signs waits whoever cosigns it.
 #[test]
-fn agent_and_machine_keys_rows_count_toward_their_bounds_whatever_they_do() {
+fn agent_and_machine_keys_rows_land_only_with_the_owner_or_under_their_bound() {
     const BOUND: usize = 8;
     for machine in [false, true] {
         let host = host();
@@ -422,8 +469,9 @@ fn agent_and_machine_keys_rows_count_toward_their_bounds_whatever_they_do() {
         let signing = ed_key(72);
         let key = authority_key_from_ed(&signing);
         let at = TimeRange { start: 1, end: 1 };
+        let own_machine = EntityId::now();
         if machine {
-            let request = request_for(host.vault_id, EntityId::now(), &signing);
+            let request = request_for(host.vault_id, own_machine, &signing);
             host.vault
                 .enroll_machine(
                     &host.issuer,
@@ -477,7 +525,7 @@ fn agent_and_machine_keys_rows_count_toward_their_bounds_whatever_they_do() {
         };
         let stored = || host.vault.export_signed_authority_history().unwrap().len();
         let before = stored();
-        let assert_full = |err: crate::error::Error| {
+        let assert_waits = |err: crate::error::Error| {
             assert_eq!(
                 err.kind(),
                 crate::error::ErrorKind::AuthorityLogFull,
@@ -485,9 +533,10 @@ fn agent_and_machine_keys_rows_count_toward_their_bounds_whatever_they_do() {
             );
             assert!(err.to_string().contains(&authority_signer_label(&key)));
         };
+        let mut seq = 0;
         with_rows_per_signer_for_test(BOUND, || {
-            let mut landed = 0;
-            for n in 0..10 * BOUND {
+            for n in 0..BOUND + 2 {
+                seq += 1;
                 let op = match n % 3 {
                     0 => AuthorityOp::SlipMint(SlipMintAction {
                         claims: claims_numbered(&root.claims, n),
@@ -500,20 +549,15 @@ fn agent_and_machine_keys_rows_count_toward_their_bounds_whatever_they_do() {
                         epoch: n as u64,
                     },
                 };
-                let alone = row(n + 1, parent, op.clone(), false);
+                let alone = row(seq, parent, op.clone(), false);
                 assert_held(
                     host.vault
                         .put_authority_log_entry(&alone, at, 1)
                         .unwrap_err(),
                 );
-                let entry = row(n + 1, parent, op, true);
-                match host.vault.put_authority_log_entry(&entry, at, 1) {
-                    Ok(_) => {
-                        landed += 1;
-                        parent = authority_entry_hash(&entry).unwrap();
-                    }
-                    Err(err) => assert_full(err),
-                }
+                let entry = row(seq, parent, op, true);
+                host.vault.put_authority_log_entry(&entry, at, 1).unwrap();
+                parent = authority_entry_hash(&entry).unwrap();
             }
             let fold = host.vault.authority_fold().unwrap();
             assert!(
@@ -525,8 +569,26 @@ fn agent_and_machine_keys_rows_count_toward_their_bounds_whatever_they_do() {
                 fold.machine(witness.machine)
                     .is_some_and(FoldedMachine::is_mine)
             );
-            assert_eq!(landed, BOUND, "machine {machine}");
-            assert_eq!(stored() - before, BOUND, "machine {machine}");
+            assert_eq!(stored() - before, BOUND + 2, "machine {machine}");
+            if machine {
+                seq += 1;
+                let edit = row(
+                    seq,
+                    parent,
+                    AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
+                        world: EntityId::now(),
+                        owner: host.owner.actor(),
+                        machine: own_machine,
+                        settings: WorldPrivacy::default(),
+                    }),
+                    false,
+                );
+                assert_waits(
+                    host.vault
+                        .put_authority_log_entry(&edit, at, 1)
+                        .unwrap_err(),
+                );
+            }
         });
         let handoff = AuthorityOp::ReRoot {
             new_device: device(
@@ -535,17 +597,17 @@ fn agent_and_machine_keys_rows_count_toward_their_bounds_whatever_they_do() {
                 AuthorityTier::Software,
             ),
         };
-        let alone = row(10 * BOUND + 1, parent, handoff.clone(), false);
+        let alone = row(seq + 1, parent, handoff.clone(), false);
         assert_held(
             host.vault
                 .put_authority_log_entry(&alone, at, 1)
                 .unwrap_err(),
         );
-        let err = host
-            .vault
-            .put_authority_log_entry(&row(10 * BOUND + 1, parent, handoff, true), at, 1)
-            .unwrap_err();
-        assert_full(err);
+        assert_waits(
+            host.vault
+                .put_authority_log_entry(&row(seq + 1, parent, handoff, true), at, 1)
+                .unwrap_err(),
+        );
     }
 }
 
@@ -1233,7 +1295,18 @@ fn a_binding_held_by_both_edges_imports_before_its_signers_later_rows() {
         source.put_authority_log_entry(entry, at, 1).unwrap();
     }
     let expected = source.authority_fold().unwrap();
-    assert!(expected.valid_entries.contains(&hash(&bind)));
+    assert!(
+        expected.valid_entries.contains(&hash(&bind)),
+        "bind {:?} other {:?} enroll_first {:?}: {:?}",
+        &hash(&bind)[..3],
+        &hash(&other)[..3],
+        &hash(&enroll_first)[..3],
+        expected
+            .issues
+            .iter()
+            .map(|issue| format!("{issue:?}").chars().take(60).collect::<String>())
+            .collect::<Vec<_>>()
+    );
 
     let history = source.export_signed_authority_history().unwrap();
     let mut reversed = history.clone();
@@ -1377,16 +1450,14 @@ fn a_cosigned_handoff_imports_after_its_signers_admission() {
     }
 }
 
-/// Bug repro (review round 4, Astra F1): at the owner's bound, a demotion
-/// and a counted row of the same sequence imported demotion first, as the
-/// import put every machine revision ahead. The demotion took the last
-/// slot, the counted row met the bound, and the import aborted. A revision
-/// that may restrict past the bound now stages last among its equals. An
-/// admission another admitter signs on the demotion once pulled the
-/// demotion, but not its counted sibling, ahead (review round 5, Astra F3);
-/// the sibling now goes with it.
+/// Bug repro (review round 4, Astra F1; round 5, Astra F3), under rule 5:
+/// the owner's rows past the per-signer bound land, a demotion among them
+/// with a counted sibling of the same sequence, and an admission another
+/// admitter signs on the demotion. The history imports in either order to
+/// the fold that holds the demotion: the demotion's equal-sequence sibling
+/// stages with it.
 #[test]
-fn a_demotion_and_its_counted_sibling_import_at_the_bound() {
+fn the_owners_rows_past_the_signer_bound_land_and_import_in_any_order() {
     const BOUND: usize = 16;
     let host = host();
     let request = request_for(host.vault_id, EntityId::now(), &ed_key(76));
@@ -1428,17 +1499,12 @@ fn a_demotion_and_its_counted_sibling_import_at_the_bound() {
             ..current
         });
         let mut sibling = None;
-        for n in 0.. {
+        for n in 0..=BOUND {
             let (confirm, demotion) = (next(confirm_op(n)), next(demote.clone()));
-            match host.vault.put_authority_log_entry(&confirm, at, 1) {
-                Ok(_) => sibling = Some(demotion),
-                Err(err) => {
-                    assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
-                    break;
-                }
-            }
+            host.vault.put_authority_log_entry(&confirm, at, 1).unwrap();
+            sibling = Some(demotion);
         }
-        let demotion = sibling.expect("the owner's bound left room for a row");
+        let demotion = sibling.unwrap();
         host.vault
             .put_authority_log_entry(&demotion, at, 1)
             .unwrap();
@@ -1470,98 +1536,15 @@ fn a_demotion_and_its_counted_sibling_import_at_the_bound() {
     });
 }
 
-/// Bug repro (review round 4, Sol F4): past the bound, the door took the
-/// next revision of any "yours" head that was not conflicted as a pure
-/// demotion. A head this install holds back at its signer's sequence floor
-/// is not live, and a demotion over it lifts the hold, so its
-/// acknowledgements could widen a world the hold kept narrow. Only a
-/// demotion of a live "yours" head lands past the bound.
-#[test]
-fn a_demotion_past_the_bound_never_lifts_a_floor_hold() {
-    const BOUND: usize = 16;
-    let host = host();
-    let request = request_for(host.vault_id, EntityId::now(), &ed_key(77));
-    host.vault
-        .enroll_machine(
-            &host.issuer,
-            &host.owner,
-            &request,
-            MachineRole::Owned(MachineOwnership::Yours),
-        )
-        .unwrap();
-    let at = TimeRange { start: 1, end: 1 };
-    let fold = || host.vault.authority_fold().unwrap();
-    let current = fold().machine(request.machine).unwrap().profile.clone();
-    let revision = |class, revision| {
-        AuthorityOp::MachineProfile(MachineProfile {
-            role: MachineRole::Owned(class),
-            revision,
-            ..current.clone()
-        })
-    };
-    // A later row of the owner lands first, so the next "yours" revision
-    // reaches this install past its floor and is held.
-    let (seq, heads) = {
-        let fold = fold();
-        (
-            fold.append_sequences[&host.issuer.public_key()],
-            fold.append_heads.iter().copied().collect::<Vec<_>>(),
-        )
-    };
-    let signed = |seq, op| {
-        host.issuer
-            .sign_entry(Some(host.vault_id), seq, heads.clone(), op, 2)
-            .unwrap()
-    };
-    let later = signed(seq + 2, confirm_op(900));
-    let held = signed(
-        seq + 1,
-        revision(MachineOwnership::Yours, current.revision + 1),
-    );
-    host.vault.put_authority_log_entry(&later, at, 1).unwrap();
-    host.vault.put_authority_log_entry(&held, at, 1).unwrap();
-    let head = fold().machine(request.machine).cloned().unwrap();
-    assert!(head.floor_held && head.profile.revision == current.revision + 1);
-
-    with_rows_per_signer_for_test(BOUND, || {
-        let next = |op| {
-            crate::authority::slip_vault::next_entry(
-                &host.issuer,
-                &fold(),
-                op,
-                host.vault.now_recorded_at(),
-            )
-            .unwrap()
-        };
-        for n in 0.. {
-            if let Err(err) = host
-                .vault
-                .put_authority_log_entry(&next(confirm_op(n)), at, 1)
-            {
-                assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
-                break;
-            }
-        }
-        let demotion = next(revision(MachineOwnership::WorkSchool, current.revision + 2));
-        let err = host
-            .vault
-            .put_authority_log_entry(&demotion, at, 1)
-            .unwrap_err();
-        assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
-    });
-}
-
-/// Bug repro (review rounds 2 and 3): two replicas at the owner's bound
-/// each demote one machine from the same head, and one of them then
+/// Bug repro (review rounds 2 and 3): two replicas past the owner's old
+/// bound each demote one machine from the same head, and one of them then
 /// removes it. The door judged the second demotion against the machine as
 /// this vault already held it, demoted or removed, so refused it as full,
-/// and a later removal on its line was stranded. Then it took any owned,
-/// not "yours" revision past the bound, so a newer one could clear the
-/// demotions' conflict and widen a world. A demotion of the head and a
-/// sibling or older revision land past the bound, in either order; a newer
-/// revision counts.
+/// and a later removal on its line was stranded. The owner's revisions now
+/// meet no bound (rule 5): both demotions and the removal land past the
+/// signer bound, in either order.
 #[test]
-fn concurrent_demotions_of_one_machine_land_past_the_bound() {
+fn concurrent_demotions_of_one_machine_land_past_the_signer_bound() {
     const BOUND: usize = 8;
     let host = host();
     let request = request_for(host.vault_id, EntityId::now(), &ed_key(74));
@@ -1584,17 +1567,11 @@ fn concurrent_demotions_of_one_machine_land_past_the_bound() {
         .unwrap()
     };
     with_rows_per_signer_for_test(BOUND, || {
-        let mut n = 0;
-        let full = loop {
-            match host
-                .vault
+        for n in 0..=BOUND {
+            host.vault
                 .put_authority_log_entry(&next(confirm_op(n)), at, 1)
-            {
-                Ok(_) => n += 1,
-                Err(err) => break err,
-            }
-        };
-        assert_eq!(full.kind(), crate::error::ErrorKind::AuthorityLogFull);
+                .unwrap();
+        }
         let current = host
             .vault
             .authority_fold()
@@ -1614,12 +1591,6 @@ fn concurrent_demotions_of_one_machine_land_past_the_bound() {
         let second = next(revision(MachineOwnership::Rented, current.revision + 1));
         assert_eq!(first.parent_hashes, second.parent_hashes);
         host.vault.put_authority_log_entry(&first, at, 1).unwrap();
-        let newer = next(revision(MachineOwnership::Rented, current.revision + 2));
-        let err = host
-            .vault
-            .put_authority_log_entry(&newer, at, 1)
-            .unwrap_err();
-        assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
         host.vault
             .set_machine_role(
                 &host.issuer,
@@ -1748,4 +1719,95 @@ fn a_world_edit_lands_only_from_its_own_machines_install_key() {
     host.vault
         .put_authority_log_entry(&edit(first).0, at, 1)
         .unwrap();
+}
+
+/// Rule 5 (Engine check): the owner's work never waits, so past every bound
+/// it would close the fold. The log warns at half of what one fold reads:
+/// its counted rows at half of what one chain holds before the pair bound,
+/// and its slip issuers' handoffs at half the handoff bound.
+#[test]
+fn the_log_warns_at_half_of_one_folds_bounds() {
+    const BOUND: usize = 4;
+    let headroom = |vault: &crate::Vault| {
+        vault
+            .authority_log_checks()
+            .unwrap()
+            .into_iter()
+            .filter(|check| check.kind == AuthorityLogCheck::FOLD_HEADROOM)
+            .map(|check| (check.count, check.threshold))
+            .collect::<Vec<_>>()
+    };
+    let at = TimeRange { start: 1, end: 1 };
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let genesis = genesis_entry(68, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let mut rows = vec![(genesis.clone(), at, 1)];
+    rows.extend(
+        confirm_chain(&genesis, 68, BOUND - 1, |_| vec![])
+            .into_iter()
+            .map(|entry| (entry, at, 1)),
+    );
+    let half = rows.pop().unwrap();
+    with_rows_per_signer_for_test(BOUND, || {
+        vault.put_authority_log_entries(&rows).unwrap();
+        assert!(headroom(&vault).is_empty());
+        vault.put_authority_log_entries(&[half]).unwrap();
+        assert_eq!(headroom(&vault), vec![(BOUND as u64, 2 * BOUND as u64)]);
+    });
+
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let genesis = genesis_entry(69, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    vault.put_authority_log_entry(&genesis, at, 1).unwrap();
+    let (mut signer, mut parent) = (ed_key(69), authority_entry_hash(&genesis).unwrap());
+    for n in 1..=MAX_AUTHORITY_FOLD_HANDOFFS / 2 {
+        assert!(headroom(&vault).is_empty(), "{n} handoffs");
+        let next = ed_key(170 + n as u8);
+        let handoff = sign_ed(
+            unsigned_entry(
+                Some(vault_id),
+                1,
+                vec![parent],
+                AuthorityOp::ReRoot {
+                    new_device: device(
+                        authority_key_from_ed(&next),
+                        ROLE_OWNER | ROLE_ADMIN,
+                        AuthorityTier::Software,
+                    ),
+                },
+                authority_key_from_ed(&signer),
+                2,
+            ),
+            &signer,
+        );
+        vault.put_authority_log_entry(&handoff, at, 1).unwrap();
+        (signer, parent) = (next, authority_entry_hash(&handoff).unwrap());
+    }
+    let half = MAX_AUTHORITY_FOLD_HANDOFFS as u64 / 2;
+    assert_eq!(
+        headroom(&vault),
+        vec![(half, MAX_AUTHORITY_FOLD_HANDOFFS as u64)]
+    );
+}
+
+/// Substrate invariant: an observation policy row written before the signer
+/// bound existed, three u64be, still reads, with the default bound.
+#[test]
+fn a_policy_row_written_before_the_signer_bound_reads_with_its_default() {
+    use crate::side_table::RawValue;
+    let old: Vec<u8> = [10_u64, 20, 30]
+        .iter()
+        .flat_map(|value| value.to_be_bytes())
+        .collect();
+    let policy = AuthorityObservationPolicy::from_raw(&old).unwrap();
+    assert_eq!(
+        (
+            policy.stale_roster_window_secs,
+            policy.ingest_window_secs,
+            policy.ingest_check_threshold,
+            policy.log_signer_bound,
+        ),
+        (10, 20, 30, DEFAULT_AUTHORITY_LOG_SIGNER_BOUND)
+    );
 }

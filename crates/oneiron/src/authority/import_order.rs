@@ -126,8 +126,8 @@ fn stage_order<'r>(
 }
 
 /// A queued row's place: its tier (the consent structure's rows and what
-/// they wait for, then the rest; rows that may restrict past the bound last
-/// in each; handoffs last of all), then the order given.
+/// they wait for, then the rest; an owned but not "yours" machine revision
+/// last in each; handoffs last of all), then the order given.
 type Turn = (u8, usize);
 
 /// A handoff's tier, after every other row.
@@ -231,9 +231,10 @@ impl<'r> Stager<'r> {
         }
         // The consent structure's rows, and every row they wait for, by
         // parent or by sequence, go first, with their signer's other rows of
-        // the same sequence, so a row that may restrict never passes a
-        // counted one there (review round 5, Astra F3). In each tier, the
-        // rows that may restrict past the bound go last. A handoff goes after
+        // the same sequence, so a demotion never passes its counted sibling
+        // there (review round 5, Astra F3). In each tier, an owned but not
+        // "yours" revision goes last, the order the issuer's past-bound
+        // exception needed before rule 5 retired it. A handoff goes after
         // every row beside it, so a row its predecessors signed beside it
         // lands before it retires them (review round 5, Astra F2).
         let mut tier: Vec<u8> = entries

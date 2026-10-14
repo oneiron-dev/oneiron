@@ -6,7 +6,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use loro::LoroDoc;
 use oneiron::registry::ENTITY_TYPE_EVENT;
 use oneiron::sync::bridge::{Materializer, register_observer_b};
-use oneiron::sync::quarantine::{QuarantineContainer, quarantined_records};
+use oneiron::sync::quarantine::{QuarantineContainer, pending_remat_windows, quarantined_records};
 use oneiron::sync::quota::{
     MaintenanceIngestQuotaConfig, maintenance_ingest_quota_snapshots,
     set_maintenance_ingest_quota_config,
@@ -17,7 +17,8 @@ use oneiron::sync::window::forward_rematerialize;
 use oneiron::{
     EntityId, TimeRange, Vault, VaultConfig, authority::AUTHORITY_LOG_SCHEMA_VERSION,
     authority::AuthorityAttestation, authority::AuthorityEntryHash, authority::AuthorityKey,
-    authority::AuthorityLogEntry, authority::AuthorityOp, authority::AuthoritySignature,
+    authority::AuthorityLogCheck, authority::AuthorityLogEntry,
+    authority::AuthorityObservationPolicy, authority::AuthorityOp, authority::AuthoritySignature,
     authority::AuthorityTier, authority::AuthorityVaultId,
     authority::DEFAULT_PENDING_WIDEN_DELAY_SECS, authority::DeviceAuthority, authority::ROLE_ADMIN,
     authority::ROLE_AGENT, authority::ROLE_OWNER, authority::authority_entry_hash,
@@ -563,6 +564,95 @@ fn a_frame_carrying_a_whole_log_in_entity_id_order_lands_every_row() {
     );
     assert_eq!(fold.valid_entries, expected.valid_entries);
     assert_eq!(fold.roster, expected.roster);
+}
+
+/// H72, rule 5 (Engine check): a key no slip issuer vouches for, here an
+/// admin the owner admitted, stores up to the `authority_log_signer_bound`
+/// row. Its next row in the same frame waits: not stored, its typed refusal
+/// and its retry marker kept, and the log raises the
+/// `authority_log_signer_bound` check. The owner raises the row, and the next pass lands the held row
+/// with no re-send.
+#[test]
+fn a_row_past_its_signers_bound_waits_and_lands_once_the_owner_raises_it() {
+    let (_dir, vault) = test_vault();
+    let vault = Arc::new(vault);
+    let window_key = WindowKey::new(WINDOW);
+    let doc = create_window_doc("user", &window_key);
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+    let (owner_key, genesis, vault_id) = seed_local_genesis(&vault, 0x51);
+    let bound = |log_signer_bound| {
+        vault
+            .set_authority_observation_policy(AuthorityObservationPolicy {
+                log_signer_bound,
+                ..AuthorityObservationPolicy::default()
+            })
+            .unwrap();
+    };
+    bound(2);
+    let admin = SigningKey::from_bytes(&[0x71; 32]);
+    let admitted = sign_entry(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            AuthorityOp::EnrollDevice {
+                device: device(authority_key_from_ed(&admin), ROLE_ADMIN),
+            },
+            authority_key_from_ed(&owner_key),
+            LEARNED_AT + 1,
+        ),
+        &owner_key,
+    );
+    let mut parent = authority_entry_hash(&admitted).unwrap();
+    let rows: Vec<_> = (1..=3)
+        .map(|seq| {
+            let row = set_tier_floor_entry(vault_id, parent, &admin, seq);
+            parent = authority_entry_hash(&row).unwrap();
+            row
+        })
+        .collect();
+    let stored = |row: &AuthorityLogEntry| {
+        vault
+            .entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
+            .unwrap()
+            .contains(&oneiron::authority::authority_log_entity_id(row).unwrap())
+    };
+    let signer_checks = || {
+        vault
+            .authority_log_checks()
+            .unwrap()
+            .into_iter()
+            .filter(|check| check.kind == AuthorityLogCheck::SIGNER_BOUND)
+            .map(|check| (check.signer.is_some(), check.count, check.threshold))
+            .collect::<Vec<_>>()
+    };
+
+    insert_authority_entry(&doc, &admitted);
+    for row in &rows {
+        insert_authority_entry(&doc, row);
+    }
+    doc.commit();
+    forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+    assert!(stored(&admitted) && stored(&rows[0]) && stored(&rows[1]));
+    assert!(!stored(&rows[2]), "the row past its signer's bound waits");
+    assert!(
+        entity_quarantine_reasons(&vault).contains(&"AuthorityLogFull".to_owned()),
+        "{:?}",
+        entity_quarantine_reasons(&vault)
+    );
+    assert_eq!(
+        pending_remat_windows(&vault).unwrap(),
+        vec![WINDOW.to_owned()],
+        "the held row keeps its retry marker"
+    );
+    assert_eq!(signer_checks(), vec![(true, 2, 2)]);
+
+    bound(4);
+    forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+    assert!(stored(&rows[2]), "the held row lands with no re-send");
+    assert!(pending_remat_windows(&vault).unwrap().is_empty());
+    assert!(signer_checks().is_empty());
 }
 
 /// Invalid envelopes retain the existing occupant; valid retries displace it.

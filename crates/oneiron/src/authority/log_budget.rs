@@ -77,6 +77,13 @@ pub(super) fn ancestor_edges_bound() -> usize {
     2 * rows_per_signer() * rows_per_signer()
 }
 
+/// The counted rows one chain holds when its ancestor pairs reach
+/// [`ancestor_edges_bound`]. A log that is one chain, as each local
+/// writer's is, closes there, short of the fold's row bound.
+fn chain_rows_bound() -> usize {
+    2 * rows_per_signer()
+}
+
 impl AuthorityFold {
     /// True when the fold refused its log for exceeding a bound. Such a fold
     /// also reads as [`Self::vault_root_is_conflicted`], so every authority
@@ -602,7 +609,8 @@ pub struct AuthorityLogCheck {
     /// The signer's stored rows, or the log's counted rows or slip-issuer
     /// handoffs.
     pub count: u64,
-    /// The bound `count` reached.
+    /// The bound `count` reached, or for a headroom check the fold bound
+    /// whose half it reached.
     pub threshold: u64,
 }
 
@@ -611,9 +619,11 @@ impl AuthorityLogCheck {
     /// `authority_log_signer_bound` row: its further rows wait until the
     /// owner raises the row, and then land on the next drain.
     pub const SIGNER_BOUND: &'static str = "authority_log_signer_bound";
-    /// The log's counted rows, or its slip issuers' handoffs, reached half of
-    /// what one fold reads. The owner's work is never held, so past all of
-    /// it the fold fails closed.
+    /// The log's counted rows reached half of what one chain of them holds
+    /// before the fold's ancestor-pair bound (twice the per-signer bound,
+    /// short of the fold's row bound), or its slip issuers' handoffs half of
+    /// the handoff bound. The owner's work is never held, so past them the
+    /// fold fails closed.
     pub const FOLD_HEADROOM: &'static str = "authority_log_fold_headroom";
 }
 
@@ -637,7 +647,7 @@ impl crate::Vault {
             })
             .collect();
         for (count, fold_bound) in [
-            (view.counted, fold_entries_bound()),
+            (view.counted, chain_rows_bound()),
             (view.issuer_handoffs, MAX_AUTHORITY_FOLD_HANDOFFS),
         ] {
             if count >= fold_bound / 2 {
