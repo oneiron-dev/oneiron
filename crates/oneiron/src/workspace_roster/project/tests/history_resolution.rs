@@ -665,7 +665,7 @@ fn a_resolution_chain_past_the_depth_guard_settles_for_its_last_link() -> Result
         row.roster.extend([x.to_hex(), y.to_hex()]);
     })?;
     let n = signed_over(&vault, id, &birth, holder, |row| {
-        row.roster.push(y.to_hex())
+        row.roster.push(y.to_hex());
     })?;
     replay_project(&vault, id, &w, 2)?;
     replay_project(&vault, id, &n, 3)?;
@@ -724,5 +724,33 @@ fn a_resolution_chain_past_the_depth_guard_settles_for_its_last_link() -> Result
     assert_eq!(served.witness.map(|witness| witness.head), Some(hn));
     assert!(seats_of(&vault, id).contains(&y));
     assert!(!seats_of(&vault, id).contains(&x));
+
+    // Bug repro (Astra #1434 r12 F1): a later sibling C reopens the board
+    // fork, and H resolves it at the live door for a fresh M over the whole
+    // chain. The door's gate judged the new link's priors from its own end
+    // and refused M.
+    let c = signed_over(&vault, id, &birth, holder, |row| row.depth_remaining -= 1)?;
+    replay_project(&vault, id, &c, 300)?;
+    assert!(matches!(
+        vault
+            .project_frontier(id)?
+            .map(|frontier| frontier.disposition),
+        Some(ProjectDisposition::Fork {
+            rank: ProjectRank::Board,
+            ..
+        })
+    ));
+    let m = signed_over(&vault, id, &birth, holder, |row| {
+        row.roster.push(y.to_hex());
+        row.depth_remaining -= 1;
+    })?;
+    let hm = head_of(id, &m)?;
+    let tip = chain.last().ok_or_else(invalid)?.hash()?;
+    let contenders = sorted(vec![hn, head_of(id, &c)?]);
+    let settle = resolution(&vault, id, holder, anchor, vec![tip], contenders, hm)?;
+    vault.resolve_project_fork(id, m, settle)?;
+    let served = vault.project_frontier(id)?.ok_or(Error::EntityNotFound)?;
+    assert_eq!(served.disposition, ProjectDisposition::Settled);
+    assert_eq!(served.witness.map(|witness| witness.head), Some(hm));
     Ok(())
 }

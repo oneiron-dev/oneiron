@@ -18,6 +18,13 @@ use std::rc::Rc;
 /// `supersedes`) and revisions the fold follows from one entry.
 const MAX_FOLD_DEPTH: usize = 4 * MAX_PROJECT_ANCHORS;
 
+#[cfg(test)]
+thread_local! {
+    /// How many resolution envelopes this thread verified: a frozen re-check
+    /// verifies only the ones its saved view rests on.
+    pub(super) static ENVELOPES_VERIFIED: Cell<u64> = const { Cell::new(0) };
+}
+
 /// The settlement one resolution gives at its node.
 #[derive(Clone, Default)]
 pub(super) struct Settlement {
@@ -304,6 +311,8 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         else {
             return Ok(ProjectVerdict::Quarantined(reason::NOT_A_STATE));
         };
+        #[cfg(test)]
+        ENVELOPES_VERIFIED.with(|count| count.set(count.get() + 1));
         let holder = match self.reader.verify_envelope(
             self.id,
             &resolution.slip_wire,
@@ -335,6 +344,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         if next_rank != Some(ProjectRank::Board) {
             return Ok(ProjectVerdict::Quarantined(reason::RESOLUTION_SUCCESSOR));
         }
+        self.judge_priors_first(resolution)?;
         for prior in &resolution.prior {
             match self.row(prior) {
                 None => return Ok(ProjectVerdict::Pending(reason::NOT_HELD)),
@@ -479,45 +489,54 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             .collect())
     }
 
-    /// The valid resolutions at `node`. Each is judged after every prior it
-    /// names there, as seals are, so a chain of any length never meets the
-    /// depth guard and every pass over the node judges it alike (Sol #1434
-    /// r11 F2).
+    /// The valid resolutions at `node`.
     pub(super) fn valid_resolutions_at(
         &self,
         node: ProjectRevisionHash,
     ) -> Result<BTreeMap<ProjectRevisionHash, &'r ProjectResolution>> {
-        let held: BTreeMap<ProjectRevisionHash, &'r ProjectResolution> = (self.held)
-            .resolutions_at(&node)
-            .filter_map(|hash| match self.row(hash) {
-                Some(ProjectRevision::Resolution { resolution, .. }) => Some((*hash, resolution)),
-                _ => None,
-            })
-            .collect();
-        let mut judged = BTreeSet::new();
         let mut valid = BTreeMap::new();
-        for start in held.keys() {
-            let mut todo = vec![(*start, false)];
-            while let Some((hash, priors_judged)) = todo.pop() {
-                if judged.contains(&hash) {
-                    continue;
-                }
-                if !priors_judged {
-                    todo.push((hash, true));
-                    todo.extend(
-                        (held[&hash].prior.iter())
-                            .filter(|prior| held.contains_key(*prior) && !judged.contains(*prior))
-                            .map(|prior| (*prior, false)),
-                    );
-                    continue;
-                }
-                judged.insert(hash);
-                if self.verdict(hash)? == ProjectVerdict::Visible {
-                    valid.insert(hash, held[&hash]);
-                }
+        for hash in self.held.resolutions_at(&node) {
+            if let Some(ProjectRevision::Resolution { resolution, .. }) = self.row(hash)
+                && self.verdict(*hash)? == ProjectVerdict::Visible
+            {
+                valid.insert(*hash, resolution);
             }
         }
         Ok(valid)
+    }
+
+    /// Judges the held prior closure of `resolution` at its anchor, each
+    /// envelope after its own priors, so its judgement finds every prior
+    /// memoized. A chain of any length never meets the depth guard, every
+    /// door judges it alike, and only that closure is judged: a frozen
+    /// re-check never judges envelopes held after the freeze (Sol #1434 r11
+    /// F2, Astra r12 F1, Sol r12 F1).
+    fn judge_priors_first(&self, resolution: &ProjectResolution) -> Result<()> {
+        let mut entered = BTreeSet::new();
+        let mut todo: Vec<(ProjectRevisionHash, bool)> = resolution
+            .prior
+            .iter()
+            .map(|prior| (*prior, false))
+            .collect();
+        while let Some((hash, priors_judged)) = todo.pop() {
+            if priors_judged {
+                self.verdict(hash)?;
+                continue;
+            }
+            if self.verdicts.borrow().contains_key(&hash) || !entered.insert(hash) {
+                continue;
+            }
+            if let Some(ProjectRevision::Resolution {
+                resolution: earlier,
+                ..
+            }) = self.row(&hash)
+                && earlier.anchor == resolution.anchor
+            {
+                todo.push((hash, true));
+                todo.extend(earlier.prior.iter().map(|prior| (*prior, false)));
+            }
+        }
+        Ok(())
     }
 
     /// The valid seals no valid seal supersedes.

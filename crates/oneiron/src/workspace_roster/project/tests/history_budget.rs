@@ -562,3 +562,47 @@ fn revoking_a_conflicting_resolution_a_frozen_view_rested_on_serves_no_authority
     }
     Ok(())
 }
+
+/// Bug repro (Sol #1434 r12 F1): B removes X (C1) or lowers the depth (C2)
+/// over S0, and R0 settles the tie for C1. Past the budget, B adds four
+/// resolutions at S0 that build on R0. A fresh read re-checks the frozen
+/// view by verifying R0 alone: an envelope held after the freeze spends no
+/// verification there, however many arrive.
+#[cfg(feature = "sync")]
+#[test]
+fn a_frozen_re_check_verifies_only_the_envelopes_its_view_rests_on() -> Result<()> {
+    let (b, x) = (EntityId::now(), EntityId::now());
+    let dir = tempfile::tempdir()?;
+    let vault = open(&dir)?;
+    let project = board_signed_s0(&vault, &[x], &[b], |_| {})?;
+    let (id, s0) = (project.id, &project.s0);
+    let c1 = signed_over(&vault, id, s0, b, without(x))?;
+    let c2 = signed_over(&vault, id, s0, b, |row| row.depth_remaining -= 1)?;
+    replay_project(&vault, id, &c1, 3)?;
+    replay_project(&vault, id, &c2, 4)?;
+    let (anchor, h1) = (head_of(id, s0)?, head_of(id, &c1)?);
+    let contenders = sorted(vec![h1, head_of(id, &c2)?]);
+    let mut link = envelope(
+        id,
+        resolution(&vault, id, b, anchor, vec![], contenders.clone(), h1)?,
+    );
+    put_companion(&vault, &link, 10)?;
+    assert!(!seats_of(&vault, id).contains(&x));
+    vault.set_project_history_policy(&owner(&vault)?, ProjectHistoryPolicy { max_revisions: 1 })?;
+    for at in 11..15 {
+        let prior = vec![link.hash()?];
+        link = envelope(
+            id,
+            resolution(&vault, id, b, anchor, prior, contenders.clone(), h1)?,
+        );
+        put_companion(&vault, &link, at)?;
+    }
+    let verified = || super::super::validity::ENVELOPES_VERIFIED.with(std::cell::Cell::get);
+    let before = verified();
+    let served = vault.project_frontier(id)?.ok_or(Error::EntityNotFound)?;
+    assert_eq!(verified() - before, 1);
+    assert!(over(&vault, id)?.is_some());
+    assert!(served.effective.is_some());
+    assert!(!seats_of(&vault, id).contains(&x));
+    Ok(())
+}
