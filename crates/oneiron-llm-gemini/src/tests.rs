@@ -4,8 +4,10 @@ use serde_json::json;
 /// F14 H122 (Astra, round 7): a Gemini part with text beside a function call
 /// decoded as its text alone, a `Stop` the policy classifier took for a
 /// finished, tool-free answer: an Allow. A part holds one piece of data, so a
-/// second one beside the text fails the decode, buffered and streamed. A text
-/// part with its thought markers and a lone function call still decode.
+/// second one beside the text fails the decode, buffered and streamed, and so
+/// does content or parts of a shape the decoder cannot walk (Astra, round 8).
+/// A text part with its thought markers and a lone function call still
+/// decode, and so does a final chunk with no content.
 #[test]
 fn a_function_call_beside_text_never_decodes_as_a_finished_answer() {
     let allow = "{\"violation\":0,\"policy_category\":null}";
@@ -32,6 +34,25 @@ fn a_function_call_beside_text_never_decodes_as_a_finished_answer() {
         );
     }
 
+    // Content of another shape, after text already streamed, is no Stop
+    // either: a later chunk's parts may not be skipped as absent.
+    for content in [
+        json!({ "role": "model", "parts": { "functionCall": { "name": "check_policy", "args": {} } } }),
+        json!({ "role": "model", "parts": "functionCall" }),
+        json!([{ "parts": [{ "functionCall": { "name": "check_policy", "args": {} } }] }]),
+    ] {
+        let mut stream = super::stream::GeminiAccumulator::default();
+        stream
+            .push(json!({ "candidates": [{ "content": { "role": "model", "parts": [{ "text": allow }] } }] }))
+            .expect("the answer's text streams");
+        assert!(
+            stream
+                .push(json!({ "candidates": [{ "content": content, "finishReason": "STOP" }] }))
+                .is_err(),
+            "H122: a streamed {content} finished the text as a tool-free answer"
+        );
+    }
+
     // The controls.
     let answer = super::wire::parse_response(reply(
         json!({ "text": allow, "thoughtSignature": "signature" }),
@@ -43,4 +64,11 @@ fn a_function_call_beside_text_never_decodes_as_a_finished_answer() {
     ))
     .expect("a lone function call decodes");
     assert_eq!(called.finish_reason, oneiron::FinishReason::ToolCalls);
+    let mut stream = super::stream::GeminiAccumulator::default();
+    stream
+        .push(json!({ "candidates": [{ "content": { "role": "model", "parts": [{ "text": allow }] } }] }))
+        .expect("the answer's text streams");
+    stream
+        .push(json!({ "candidates": [{ "finishReason": "STOP" }] }))
+        .expect("a final chunk with no content finishes the answer");
 }

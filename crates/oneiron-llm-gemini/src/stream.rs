@@ -59,10 +59,19 @@ impl GeminiAccumulator {
             return Ok(vec![]);
         };
         let mut events = Vec::new();
-        if let Some(parts) = candidate
-            .pointer("/content/parts")
-            .and_then(Value::as_array)
-        {
+        // Content this decoder cannot walk could hold a tool request behind
+        // the text before it, so content or parts of any other shape fail the
+        // decode rather than read as no parts.
+        let parts = match candidate.get("content") {
+            None | Some(Value::Null) => None,
+            Some(Value::Object(content)) => match content.get("parts") {
+                None | Some(Value::Null) => None,
+                Some(Value::Array(parts)) => Some(parts),
+                Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+            },
+            Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+        };
+        if let Some(parts) = parts {
             for part in parts {
                 // A part holds one piece of data. A second beside its text, a
                 // function call above all, would vanish behind a tool-free
