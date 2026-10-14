@@ -331,8 +331,13 @@ impl PipelineBuilder<'_> {
         // does not decode there, or whose body there the run would not serve
         // (CodeRabbit on #1426), is not reranked: its words go to no model.
         let claim = if kind == Some(ENTITY_TYPE_CLAIM) {
-            match body.and_then(|body| crate::claim::decode_claim_body(body, true).ok()) {
-                Some(claim) if self.pin_served(rtxn, id, &claim, claim_gate)? => Some(claim),
+            let decoded = body.and_then(|body| crate::claim::decode_claim_body(body, true).ok());
+            match (indexed.as_deref(), decoded) {
+                (Some(raw), Some(claim))
+                    if self.pin_served(rtxn, id, raw, &claim, claim_gate)? =>
+                {
+                    Some(claim)
+                }
                 _ => return Ok(BoundWords::UNSCORED),
             }
         } else {
@@ -368,23 +373,32 @@ impl PipelineBuilder<'_> {
         Ok(words)
     }
 
-    /// Whether the run serves claim `id` at `pinned`, its body at its pin,
-    /// as hydration judges a pin: the body the gate admitted, or another that
-    /// is surfaceable with live support, behind an admitted body that is
-    /// surfaceable too.
+    /// Whether the run serves claim `id` at its pin, the row `pinned_raw`
+    /// whose body is `pinned`, as hydration judges a pin. A pin that is not
+    /// the live row stands only behind a live body the gate admitted that is
+    /// surfaceable, whatever the run's filter admits (the history rule; Sol
+    /// and Astra R22 on this branch: a stale live body equal to the pinned
+    /// one passed). Then the pinned body is the gate's, or one surfaceable
+    /// with live support.
     fn pin_served(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
+        pinned_raw: &[u8],
         pinned: &ClaimBody,
         claim_gate: &ClaimStatusGateCache,
     ) -> Result<bool> {
         let admitted = claim_gate.decisions.get(id).and_then(Option::as_ref);
+        let live = self.vault.live_entity_in_txn(&self.read, rtxn, id)?;
+        if live.map(|row| row.encode()).as_deref() != Some(pinned_raw)
+            && !admitted.is_some_and(claim_surfaceable)
+        {
+            return Ok(false);
+        }
         if admitted.is_some_and(|admitted| same_claim_body(admitted, pinned)) {
             return Ok(true);
         }
-        Ok(admitted.is_none_or(claim_surfaceable)
-            && claim_surfaceable(pinned)
+        Ok(claim_surfaceable(pinned)
             && crate::claim::has_live_support_in_txn(&self.read, rtxn, pinned)?)
     }
 
