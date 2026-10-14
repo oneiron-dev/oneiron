@@ -1837,6 +1837,73 @@ fn one_row_update_releasing_different_stamps_on_two_devices_converges() {
     }
 }
 
+/// Astra R5 F3 on #1432: an edge value that is not bytes refuses the frame
+/// whether the row it names is stored or not, so the refusal tells the peer
+/// nothing about the row.
+#[test]
+fn an_edge_value_that_is_not_bytes_is_refused_whether_or_not_its_row_is_stored() {
+    let window_key = WindowKey::new("2026-05");
+    let (_dir, vault, _) = test_vault_with_grant(entity_id(0xD0));
+    let [peer, stored, absent, facet] = [1, 2, 3, 4].map(|n| entity_id(0xD0 + n));
+    put_row(&vault, stored, ENTITY_TYPE_EVENT);
+    for kind in [EdgeKind::FacetOf, EdgeKind::AddressedTo] {
+        for (name, src) in [("stored", stored), ("absent", absent)] {
+            let probe = create_window_doc("federation-peer", &window_key);
+            insert_malformed_edge(&probe, src, kind, facet);
+            probe.commit();
+            let update = probe.export(ExportMode::all_updates()).unwrap();
+            let admitted = admit_peer_window_update(
+                &vault,
+                &window_key,
+                &update,
+                FederationAdmissionRole::Member,
+                peer,
+            );
+            assert!(
+                matches!(admitted, Err(Error::InvalidKey)),
+                "{kind:?} onto the {name} row: {admitted:?}"
+            );
+        }
+    }
+}
+
+/// Astra R5 F2 on #1432: each update that brings a row releases every stamp
+/// its sender holds on the row, so a sender holds only a bounded number there.
+#[test]
+fn a_sender_holds_a_bounded_number_of_stamps_on_one_row() {
+    let window_key = WindowKey::new("2026-05");
+    let (_dir, vault, _) = test_vault_with_grant(entity_id(0x60));
+    let [peer, row] = [1, 2].map(|n| entity_id(0x60 + n));
+    let role = FederationAdmissionRole::Member;
+    let ahead = create_window_doc("federation-peer", &window_key);
+    for n in 0..40_u8 {
+        insert_edge(&ahead, row, EdgeKind::FacetOf, entity_id(0x70 + n));
+    }
+    ahead.commit();
+    let ahead = ahead.export(ExportMode::all_updates()).unwrap();
+    admit_peer_window_update(&vault, &window_key, &ahead, role, peer).unwrap();
+    let birth = create_window_doc("federation-peer", &window_key);
+    insert_entity(&birth, row, ENTITY_TYPE_EVENT, b"row");
+    birth.commit();
+    let birth = birth.export(ExportMode::all_updates()).unwrap();
+
+    let admitted = create_window_doc("local", &window_key);
+    admitted
+        .import(&admit_peer_window_update(&vault, &window_key, &birth, role, peer).unwrap())
+        .unwrap();
+    let mut released = 0;
+    map_for_each_value_bytes(&admitted.get_map("edges"), |key, _| {
+        if key.starts_with(&row.to_hex()) {
+            released += 1;
+        }
+    });
+    assert_eq!(
+        released,
+        crate::federation::facet_read::MAX_HELD_PER_ROW,
+        "the row's birth released every stamp its sender sent ahead"
+    );
+}
+
 /// OUT-OF-ORDER RESIDUE — the leg the admission drop alone cannot close, and
 /// the reason the selector needs a read mirror of the write table.
 ///

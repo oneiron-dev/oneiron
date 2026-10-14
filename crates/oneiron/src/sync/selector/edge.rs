@@ -81,6 +81,13 @@ pub(super) fn copy_admitted_edges(
         if result.is_err() {
             return;
         }
+        // A value that is not bytes refuses the frame whatever row it names:
+        // judged after the stored endpoints, the outcome would tell the peer
+        // whether they exist (Astra R5 F3 on #1432).
+        let Some(value) = value else {
+            result = Err(Error::InvalidKey);
+            return;
+        };
         if let Some((src, kind, tgt)) = super::bridge::parse_edge_key(key) {
             if kind != EdgeKind::AddressedTo
                 && let Err(reserved) = crate::edge::validate_public_edge_kind(kind)
@@ -96,10 +103,6 @@ pub(super) fn copy_admitted_edges(
             match verdict {
                 Ok(AdmittedEdgeVerdict::Copy) => {}
                 Ok(AdmittedEdgeVerdict::Hold) => {
-                    let Some(value) = value else {
-                        result = Err(Error::InvalidKey);
-                        return;
-                    };
                     // Only a value replay could write is held; any other is
                     // the peer's rejection, typed as the materializers type it.
                     match crate::edge::decode_edge_value_for_kind(EdgeKind::FacetOf, value) {
@@ -117,13 +120,8 @@ pub(super) fn copy_admitted_edges(
                 Ok(AdmittedEdgeVerdict::DropRejected(off_table)) => {
                     // Quarantine-and-continue: the peer's forged row gets
                     // typed durable evidence, the window's other N-1 rows
-                    // still admit. `payload` is the raw value when present.
-                    rejections.push(
-                        QuarantineContainer::Edges,
-                        key,
-                        &off_table,
-                        value.unwrap_or(&[]),
-                    );
+                    // still admit. `payload` is the raw value.
+                    rejections.push(QuarantineContainer::Edges, key, &off_table, value);
                     return;
                 }
                 // A LOCAL fault reading endpoint types (corrupted stored
@@ -136,9 +134,7 @@ pub(super) fn copy_admitted_edges(
                 }
             }
         }
-        result = value
-            .ok_or(Error::InvalidKey)
-            .and_then(|bytes| map_insert_bytes(target, key, bytes));
+        result = map_insert_bytes(target, key, value);
     });
     result?;
     // Evidence commits only once the copy pass itself succeeded: a pass that
@@ -240,7 +236,7 @@ fn admitted_addressing_verdict(
     source_entities: &loro::LoroMap,
     src: EntityId,
     tgt: EntityId,
-    value: Option<&[u8]>,
+    value: &[u8],
 ) -> Result<AdmittedEdgeVerdict> {
     let reject = || {
         AdmittedEdgeVerdict::DropRejected(Error::Registry(RegistryError::ReservedEdgeKind(
@@ -269,10 +265,7 @@ fn admitted_addressing_verdict(
     {
         return Ok(reject());
     }
-    let Some(bytes) = value else {
-        return Ok(reject());
-    };
-    let Ok(fields) = crate::edge::decode_edge_value_for_kind(EdgeKind::AddressedTo, bytes) else {
+    let Ok(fields) = crate::edge::decode_edge_value_for_kind(EdgeKind::AddressedTo, value) else {
         return Ok(reject());
     };
     let Some(body) = raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..) else {

@@ -25,6 +25,11 @@ use crate::{EntityId, Vault};
 const PARKED_STAMP: SideTable<(HexId, HexId, String), Vec<u8>, Raw> =
     SideTable::new(&side_table::FEDERATION_PARKED_FACET_STAMP);
 
+/// The most stamps one sender holds on one row ahead of it. Every update that
+/// brings the row releases them all, so the bound is the work one small update
+/// can make admission do (Astra R5 F2 on #1432); a row sits in a few facets.
+pub(crate) const MAX_HELD_PER_ROW: usize = 16;
+
 /// Whether the stored row `id`, with header and body `raw` as `view` holds
 /// it, sits in one of `facets`. A TASK sits in the facet its birth stamp
 /// names; any row sits in each facet a `FacetOf` edge of its names, and, for a room and
@@ -108,7 +113,8 @@ fn stamp_prefix(src: EntityId, facet: EntityId) -> String {
 }
 
 /// Holds the stamp `src -FacetOf-> facet`, with its edge `value`, under the
-/// sender's `lane`.
+/// sender's `lane`. A stamp past the sender's [`MAX_HELD_PER_ROW`] on that row
+/// is not held, so it never counts (fail-closed).
 pub(crate) fn park_stamp(
     dbs: &impl SideTableDbs,
     wtxn: &mut heed::RwTxn<'_>,
@@ -116,12 +122,18 @@ pub(crate) fn park_stamp(
     lane: &str,
     value: &[u8],
 ) -> Result<()> {
-    PARKED_STAMP.put(
-        dbs,
-        wtxn,
-        &(HexId(src), HexId(facet), lane.to_owned()),
-        &value.to_vec(),
-    )
+    let key = (HexId(src), HexId(facet), lane.to_owned());
+    if PARKED_STAMP.get(dbs, wtxn, &key)?.is_none() {
+        let held = PARKED_STAMP
+            .scan_keys(dbs, wtxn, src.to_hex().as_bytes())?
+            .into_iter()
+            .filter(|held| held.2 == lane)
+            .count();
+        if held >= MAX_HELD_PER_ROW {
+            return Ok(());
+        }
+    }
+    PARKED_STAMP.put(dbs, wtxn, &key, &value.to_vec())
 }
 
 /// Discards every held copy of the stamp `src -FacetOf-> facet`.
