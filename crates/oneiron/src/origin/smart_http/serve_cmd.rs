@@ -259,7 +259,7 @@ impl ServeChild {
     }
 
     /// Reaps the child and reports whether it exited cleanly. A child whose
-    /// output has ended has [`SERVE_REAP_TIMEOUT`] to exit; past it, it is
+    /// output has ended has `SERVE_REAP_TIMEOUT` to exit; past it, it is
     /// killed and reaped, and the exchange fails.
     pub fn wait(&mut self) -> Result<bool> {
         let deadline = Instant::now() + SERVE_REAP_TIMEOUT;
