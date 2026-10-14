@@ -169,6 +169,11 @@ fn a_deleted_artifact_takes_its_version_bytes_off_every_replica() {
         !holds(&b, &unique),
         "a lagging peer's stale carrier resurrected the deleted bytes"
     );
+    exchange(&a, &b, WINDOW);
+    assert!(
+        !holds(&a, &unique),
+        "the lagging carrier passed on to A resurrected the deleted bytes"
+    );
 
     // The last artifact holding the shared bytes goes on B: they leave both vaults.
     delete_artifact(&mut b, &own);
