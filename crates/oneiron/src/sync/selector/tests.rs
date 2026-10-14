@@ -1414,6 +1414,74 @@ fn admission_drop_leaves_no_pending_remat_work() {
     );
 }
 
+/// Astra on #1432 F2: a facet-narrowed reader reads a row in ANY of its
+/// facets, so a stamp a peer adds to a row this vault already holds would put
+/// the row in front of readers it was withheld from. The admission door drops
+/// it with typed evidence for either role: a reader narrowed to the added
+/// facet still does not read the row, while the stamp a row is born with in
+/// the same frame still lands.
+#[test]
+fn a_peer_stamp_onto_a_stored_row_puts_it_in_no_new_facet() {
+    for (role, seed) in [
+        (FederationAdmissionRole::Member, 0x6B_u8),
+        (FederationAdmissionRole::Guest, 0x73_u8),
+    ] {
+        let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(seed));
+        let window_key = WindowKey::new("2026-05");
+        let [work, private, held, born] = [1, 2, 3, 4].map(|n| entity_id(seed + n));
+        for (id, kind) in [
+            (work, ENTITY_TYPE_FACET),
+            (private, ENTITY_TYPE_FACET),
+            (held, ENTITY_TYPE_EVENT),
+        ] {
+            vault
+                .put_entity(&id, kind, TimeRange { start: 1, end: 1 }, 1, b"row")
+                .unwrap();
+        }
+        vault
+            .put_edge(&held, EdgeKind::FacetOf, &private, 1.0)
+            .unwrap();
+
+        let remote = create_window_doc("federation-peer", &window_key);
+        insert_edge(&remote, held, EdgeKind::FacetOf, work);
+        insert_entity(&remote, born, ENTITY_TYPE_EVENT, b"born");
+        insert_edge(&remote, born, EdgeKind::FacetOf, work);
+        remote.commit();
+        let update = remote.export(ExportMode::all_updates()).unwrap();
+        let admitted = admit_federated_window_update(&vault, &window_key, &update, role)
+            .expect("a peer's stamp must not fail the admission closed");
+        let local = create_window_doc("local", &window_key);
+        local.import(&admitted).unwrap();
+        crate::sync::window::forward_rematerialize(
+            &vault,
+            &local,
+            &crate::sync::bridge::Materializer::new(),
+            &window_key,
+        )
+        .unwrap();
+
+        let only =
+            |facet: EntityId| ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(facet)]));
+        assert!(
+            !vault.row_in_facets(&held, &only(work)).unwrap(),
+            "{role:?}: a peer's stamp put a held row in front of a work reader"
+        );
+        assert!(vault.row_in_facets(&held, &only(private)).unwrap());
+        assert!(
+            vault.row_in_facets(&born, &only(work)).unwrap(),
+            "{role:?}: the stamp a row is born with still lands"
+        );
+        assert!(
+            quarantined_records(&vault)
+                .unwrap()
+                .iter()
+                .any(|(_, record)| record.reason_code == "FacetStampImmutable"
+                    && record.container == QuarantineContainer::Edges),
+            "{role:?}: the dropped stamp leaves typed evidence"
+        );
+    }
+}
+
 /// OUT-OF-ORDER RESIDUE — the leg the admission drop alone cannot close, and
 /// the reason the selector needs a read mirror of the write table.
 ///

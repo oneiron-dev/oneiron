@@ -126,9 +126,9 @@ enum AdmittedEdgeVerdict {
     /// On-table, not a `FacetOf` row at all, or a row whose DECIDING endpoint
     /// type is not knowable yet — copy it and let the replay gate own it.
     Copy,
-    /// PROVABLY off-table on the facts in hand: a known off-table source, or a
-    /// known non-FACET target, is each sufficient alone. Drop with this typed
-    /// rejection.
+    /// PROVABLY off-table on the facts in hand (a known off-table source, or
+    /// a known non-FACET target, is each sufficient alone), or a new stamp
+    /// onto a row this vault already holds. Drop with this typed rejection.
     DropRejected(Error),
 }
 
@@ -232,17 +232,36 @@ fn admitted_facet_of_verdict(
     }
     let src_type = admitted_endpoint_type(vault, rtxn, source_entities, &src)?;
     let tgt_type = admitted_endpoint_type(vault, rtxn, source_entities, &tgt)?;
-    if !crate::batch::facet_of_endpoints_provably_off_table(src_type, tgt_type) {
-        return Ok(AdmittedEdgeVerdict::Copy);
+    if crate::batch::facet_of_endpoints_provably_off_table(src_type, tgt_type) {
+        return Ok(AdmittedEdgeVerdict::DropRejected(Error::Registry(
+            RegistryError::InvalidFacetOfEdge {
+                src,
+                src_type,
+                tgt,
+                tgt_type,
+            },
+        )));
     }
-    Ok(AdmittedEdgeVerdict::DropRejected(Error::Registry(
-        RegistryError::InvalidFacetOfEdge {
-            src,
-            src_type,
-            tgt,
-            tgt_type,
-        },
-    )))
+    // A peer places only a row it brings. A stamp onto a row this vault
+    // already holds puts the row in a facet it was not born in, and a
+    // narrowed reader reads a row in ANY of its facets, so an added stamp
+    // only widens who reads it (Astra on #1432). A stamp this vault already
+    // holds adds nothing, so a re-sent frame still copies.
+    if crate::batch::stored_entity_type(&vault.store, rtxn, &src)?.is_some()
+        && crate::ports::EdgeStoreRead::port_edge_get(
+            &vault.store,
+            rtxn,
+            &src,
+            EdgeKind::FacetOf,
+            &tgt,
+        )?
+        .is_none()
+    {
+        return Ok(AdmittedEdgeVerdict::DropRejected(Error::Registry(
+            RegistryError::FacetStampImmutable { src },
+        )));
+    }
+    Ok(AdmittedEdgeVerdict::Copy)
 }
 
 /// One endpoint's type byte at admission time: the stored row first (permanent

@@ -338,6 +338,42 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
+    /// A facet stamp puts its source in front of every reader narrowed to
+    /// the facet, so a door's credential places only a row its lane reads, in
+    /// a facet its Scope holds (Astra on #1432). Any other source is refused
+    /// as a missing one is.
+    pub(crate) fn require_facet_placement(
+        &self,
+        reader: ScopedReadActorKey,
+        src: EntityId,
+        tgt: EntityId,
+    ) -> Result<()> {
+        let Self::Canonical(vault) = self else {
+            // A room's rows include overlay rows the vault's grants cannot
+            // name, so a session-bound run places none on a door's key.
+            return Err(unplaceable(src, tgt, None));
+        };
+        let in_scope = reader
+            .authority_scope()
+            .is_none_or(|scope| scope.facets.contains(&crate::federation::ScopeId(tgt)));
+        let reads = in_scope
+            && vault
+                .scoped_read(reader)
+                .read(&[crate::claim::PointRead::id(src)], None)?
+                .value
+                .first()
+                .is_some_and(Option::is_some);
+        if reads {
+            return Ok(());
+        }
+        let txn = vault.store.env.read_txn()?;
+        Err(unplaceable(
+            src,
+            tgt,
+            crate::batch::stored_entity_type(&vault.store, &txn, &tgt)?,
+        ))
+    }
+
     /// Emits ONE speech bubble through the run's bound storage (ONE-1686).
     ///
     /// Returning a [`WitnessReceipt`] rather than a flag is the contract: a
@@ -509,4 +545,14 @@ impl<'a> ExecutorStorage<'a> {
             Self::Session(binding) => binding.get_raw_output(output),
         }
     }
+}
+
+/// The refusal a facet stamp onto a missing source gets.
+fn unplaceable(src: EntityId, tgt: EntityId, tgt_type: Option<u8>) -> crate::Error {
+    crate::Error::Registry(crate::error::RegistryError::InvalidFacetOfEdge {
+        src,
+        src_type: None,
+        tgt,
+        tgt_type,
+    })
 }

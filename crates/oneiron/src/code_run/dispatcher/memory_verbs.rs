@@ -328,11 +328,20 @@ impl HostSelfDispatcher<'_> {
         }))
     }
 
+    /// A facet stamp its door admitted with a key places only a row that
+    /// key's lane reads (`ExecutorStorage::require_facet_placement`).
     pub(super) fn dispatch_memory_put_edge(
         &self,
         call: SelfMemoryPutEdgeCall,
+        read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         ensure_public_memory_edge_kind(call.kind)?;
+        if call.kind == EdgeKind::FacetOf
+            && let Some(reader) = read_as
+        {
+            self.storage
+                .require_facet_placement(reader, call.src, call.tgt)?;
+        }
         let admission = self.non_candidate_code_emission_admission()?;
         if matches!(
             admission.as_ref().map(|admission| admission.lane),

@@ -48,15 +48,21 @@ pub(crate) fn facets_admit_in(
             return Ok(true);
         }
     }
+    // A peer can add a room edge to a row it did not write, and under the
+    // any-facet rule an added room only widens (Astra on #1432): a row whose
+    // edges name two rooms sits in neither.
     let room = match header.entity_type {
         ENTITY_TYPE_CONVERSATION => Some(id),
-        ENTITY_TYPE_TURN => out_target(view, txn, id, EdgeKind::ChildOf)?,
-        ENTITY_TYPE_MESSAGE => match out_target(view, txn, id, EdgeKind::BelongsTo)? {
-            Some(room) => Some(room),
-            None => match out_target(view, txn, id, EdgeKind::PartOf)? {
-                Some(turn) => out_target(view, txn, turn, EdgeKind::ChildOf)?,
-                None => None,
-            },
+        ENTITY_TYPE_TURN => one_room(out_targets(view, txn, id, EdgeKind::ChildOf)?),
+        ENTITY_TYPE_MESSAGE => match out_targets(view, txn, id, EdgeKind::BelongsTo)? {
+            rooms if !rooms.is_empty() => one_room(rooms),
+            _ => {
+                let mut rooms = Vec::new();
+                for turn in out_targets(view, txn, id, EdgeKind::PartOf)? {
+                    rooms.extend(out_targets(view, txn, turn, EdgeKind::ChildOf)?);
+                }
+                one_room(rooms)
+            }
         },
         _ => None,
     };
@@ -67,22 +73,27 @@ pub(crate) fn facets_admit_in(
         .is_some_and(|room| !room.meet(facets).is_bottom()))
 }
 
-/// The target of `id`'s first outgoing `kind` edge.
-fn out_target(
+/// The targets of `id`'s outgoing `kind` edges.
+fn out_targets(
     view: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     kind: EdgeKind,
-) -> Result<Option<EntityId>> {
+) -> Result<Vec<EntityId>> {
     view.port_edges(txn, &id, EdgeDirection::Out, Some(kind), None)?
-        .next()
         .map(|edge| edge.map(|edge| edge.target))
-        .transpose()
+        .collect()
+}
+
+/// The one room `rooms` names, if they name exactly one.
+fn one_room(rooms: Vec<EntityId>) -> Option<EntityId> {
+    let first = *rooms.first()?;
+    rooms.iter().all(|room| *room == first).then_some(first)
 }
 
 impl Vault {
     /// Whether the row `id` sits in one of `facets`, by the rule every read
-    /// lane applies ([`facets_admit_in`]). A row that is not stored sits in
+    /// lane applies (`facets_admit_in`). A row that is not stored sits in
     /// none.
     pub fn row_in_facets(&self, id: &EntityId, facets: &ScopeAxis<ScopeId>) -> Result<bool> {
         if matches!(facets, ScopeAxis::All) {

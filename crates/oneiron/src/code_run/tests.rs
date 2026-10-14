@@ -1192,6 +1192,117 @@ fn self_memory_put_edge_refuses_same_as() -> Result<()> {
     Ok(())
 }
 
+/// A host door that admits every call a run serves itself on one key's lane.
+struct LaneDoor(crate::claim::ScopedReadActorKey);
+
+impl AgentVerbDoor for LaneDoor {
+    fn call(
+        &self,
+        _: &SelfAgentVerbCall,
+        _: &crate::memory::HostWriteOrigin,
+    ) -> std::result::Result<AgentVerbAnswer, AgentVerbRefusal> {
+        Err(AgentVerbRefusal {
+            code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
+        })
+    }
+
+    fn admit_run_call(
+        &self,
+        _: RunCall,
+    ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal> {
+        Ok(Some(self.0.clone()))
+    }
+}
+
+/// `holder`'s agent credential, narrowed to `facets`, as the key a door
+/// admits a run's calls with.
+fn facet_reader(
+    vault: &Vault,
+    holder: EntityId,
+    facets: [EntityId; 2],
+) -> Result<crate::claim::ScopedReadActorKey> {
+    let tag = b"code-run facet placement";
+    let issuer = crate::authority::HostSlipIssuer::from_secret(tag)?;
+    let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;
+    claims.slip_id = *blake3::hash(tag).as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = holder.to_hex();
+    claims.actor_class = Some("agent".into());
+    claims.scope.facets = facets.into_iter().map(crate::federation::ScopeId).collect();
+    let slip = vault.mint_capability_slip(&issuer, claims)?;
+    let binding = issuer.binding_proof(&slip, tag)?;
+    let proof = vault.verify_capability_slip(&issuer.public_key(), &slip, tag, &binding)?;
+    Ok(crate::claim::ScopedReadActorKey::from_verified_slip(&proof).expect("a read credential"))
+}
+
+/// Astra on #1432 F2, the local door: a facet stamp puts its source in front
+/// of every reader narrowed to the facet, so a run whose door binds a
+/// credential over {work, home} places only a row that credential reads, in
+/// one of its own facets. It stamps a work EVENT into home, and neither a
+/// private EVENT into work nor the work EVENT into private: each is refused
+/// as a stamp onto a missing row is.
+#[test]
+fn a_door_credential_stamps_only_a_row_it_reads_into_its_own_facets() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0xAD);
+    install_self_memory_allow_policy(&vault, actor)?;
+    let [work, home, private, shared, held] =
+        [0xB4, 0xC4, 0xD4, 0xB5, 0xC5].map(|seed| EntityId::from_bytes([seed; 16]).expect("id"));
+    for (id, kind) in [
+        (work, crate::registry::ENTITY_TYPE_FACET),
+        (home, crate::registry::ENTITY_TYPE_FACET),
+        (private, crate::registry::ENTITY_TYPE_FACET),
+        (shared, crate::registry::ENTITY_TYPE_EVENT),
+        (held, crate::registry::ENTITY_TYPE_EVENT),
+    ] {
+        vault.put_entity(&id, kind, range(1), 1, b"row")?;
+    }
+    vault.put_edge(&shared, EdgeKind::FacetOf, &work, 1.0)?;
+    vault.put_edge(&held, EdgeKind::FacetOf, &private, 1.0)?;
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-facet-placement",
+    )?
+    .with_agent_verb_door(std::sync::Arc::new(LaneDoor(facet_reader(
+        &vault,
+        actor,
+        [work, home],
+    )?)));
+    let stamp = |src, tgt| {
+        dispatcher.dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+            src,
+            EdgeKind::FacetOf,
+            tgt,
+            1.0,
+        )))
+    };
+
+    stamp(shared, home)?;
+    for (src, tgt) in [(held, work), (shared, private)] {
+        let refused = stamp(src, tgt).expect_err("an unplaceable stamp is refused");
+        assert!(
+            matches!(
+                refused,
+                Error::Registry(crate::error::RegistryError::InvalidFacetOfEdge {
+                    src_type: None,
+                    ..
+                })
+            ),
+            "{refused:?}"
+        );
+    }
+    let only = |facet| {
+        crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+            crate::federation::ScopeId(facet),
+        ]))
+    };
+    assert!(vault.row_in_facets(&shared, &only(home))?);
+    assert!(!vault.row_in_facets(&held, &only(work))?);
+    assert!(!vault.row_in_facets(&shared, &only(private))?);
+    Ok(())
+}
+
 // ── ONE-1709: the `self.context` descriptor bridge ──────────────────────
 
 /// Speech replay rows bind the outer effect, host-stamped request and complete
