@@ -163,28 +163,29 @@ fn validate_window_update(
         }
         // A shallow snapshot also carries the state at its root, where a
         // carrier deleted after the root survives outside the retained ops.
-        // Loro keeps that root as encoded, apart from the latest-state
-        // section a sender may also ship, and a later export of the doc
-        // reuses it. So read the root from such an export, where a latest
-        // section cannot mask it, rather than from the imported state.
+        // Loro keeps that root as encoded and later exports reuse it, with
+        // the sender's latest-state section beside it once the retained range
+        // is long. That section can mask the root, and a checkout repairs
+        // only the keys the retained ops touch. So rebuild the snapshot
+        // without it, which makes Loro replay the retained ops from the
+        // encoded root alone, and read both ends of that replay.
         if candidate.is_shallow() {
-            let root = candidate.shallow_since_frontiers();
-            let encoded = candidate
-                .export(loro::ExportMode::shallow_snapshot(&root))
-                .map_err(|e| {
-                    Error::sync_engine(
-                        crate::error::SyncEngineContext::LoroExportShallowSnapshot,
-                        e,
-                    )
-                })?;
-            let rooted = LoroDoc::from_snapshot(&encoded).map_err(decode_error)?;
-            rooted.checkout(&root).map_err(decode_error)?;
+            let rebuilt = without_latest_state(update)
+                .ok_or_else(|| decode_error(loro::LoroError::DecodeDataCorruptionError))?;
+            let rooted = LoroDoc::from_snapshot(&rebuilt).map_err(decode_error)?;
             let mut at_root = None;
-            map_for_each_value_bytes(&rooted.get_map("entities"), |_, blob| {
-                if at_root.is_none() {
-                    at_root = blob.and_then(local_only);
-                }
-            });
+            let mut scan = |doc: &LoroDoc| {
+                map_for_each_value_bytes(&doc.get_map("entities"), |_, blob| {
+                    if at_root.is_none() {
+                        at_root = blob.and_then(local_only);
+                    }
+                });
+            };
+            scan(&rooted);
+            rooted
+                .checkout(&rooted.shallow_since_frontiers())
+                .map_err(decode_error)?;
+            scan(&rooted);
             if let Some(error) = at_root {
                 return Err(error);
             }
@@ -419,4 +420,32 @@ fn check_tombstone_residence(
         ));
     }
     Ok(())
+}
+
+/// `snapshot` with its latest-state section swapped for Loro's empty mark, so
+/// a decode rebuilds the latest state from the encoded root and the retained
+/// ops. Loro 1.16 lays a fast snapshot out as a 22-byte header (magic,
+/// checksum, mode) and three u32-length-prefixed sections (ops, latest state,
+/// root state); the checksum is xxh32 over everything from byte 20.
+/// `None` for any other layout, so admission refuses rather than guesses.
+fn without_latest_state(snapshot: &[u8]) -> Option<Vec<u8>> {
+    const HEADER: usize = 22;
+    let mut rest = snapshot.get(HEADER..)?;
+    let mut sections = [&[][..]; 3];
+    for section in &mut sections {
+        let (len, tail) = rest.split_first_chunk::<4>()?;
+        let len = usize::try_from(u32::from_le_bytes(*len)).ok()?;
+        (*section, rest) = tail.split_at_checked(len)?;
+    }
+    if !rest.is_empty() {
+        return None;
+    }
+    let mut rebuilt = snapshot[..HEADER].to_vec();
+    for section in [sections[0], &b"E"[..], sections[2]] {
+        rebuilt.extend_from_slice(&u32::try_from(section.len()).ok()?.to_le_bytes());
+        rebuilt.extend_from_slice(section);
+    }
+    let checksum = xxhash_rust::xxh32::xxh32(&rebuilt[20..], u32::from_le_bytes(*b"LORO"));
+    rebuilt[16..20].copy_from_slice(&checksum.to_le_bytes());
+    Some(rebuilt)
 }

@@ -3846,10 +3846,37 @@ fn diagnostic_carriers_never_leave_window_in_live_state_or_history() -> Result<(
     Ok(())
 }
 
+// A fast snapshot is a 22-byte header (magic, checksum, mode) and three
+// length-prefixed sections: oplog, latest state, root state.
+fn snapshot_sections(blob: &[u8]) -> [&[u8]; 3] {
+    let mut rest = &blob[22..];
+    [(); 3].map(|()| {
+        let (len, tail) = rest.split_at(4);
+        let len = usize::try_from(u32::from_le_bytes(len.try_into().unwrap())).unwrap();
+        let (section, tail) = tail.split_at(len);
+        rest = tail;
+        section
+    })
+}
+
+fn snapshot_with_sections(header_from: &[u8], sections: [&[u8]; 3]) -> Vec<u8> {
+    let mut out = header_from[..22].to_vec();
+    for section in sections {
+        out.extend_from_slice(&u32::try_from(section.len()).unwrap().to_le_bytes());
+        out.extend_from_slice(section);
+    }
+    let checksum = xxhash_rust::xxh32::xxh32(&out[20..], u32::from_le_bytes(*b"LORO"));
+    out[16..20].copy_from_slice(&checksum.to_le_bytes());
+    out
+}
+
 /// A shallow snapshot whose encoded root holds `carrier` under `masked`, with
 /// a latest-state section spliced in from a twin whose root holds a clean
-/// value there. Both share one peer and counters, so the retained op agrees.
-fn masked_shallow_root(carrier: &[u8]) -> Result<Vec<u8>> {
+/// value there. Both share peers and counters, so the retained ops agree.
+/// With `long`, two branches of 129 ops each, on keys other than `masked`,
+/// sit unjoined above the root: Loro then ships a latest-state section of
+/// its own, and a later export at the doc's heads keeps the same root.
+fn masked_shallow_root(carrier: &[u8], long: bool) -> Result<Vec<u8>> {
     let shallow = |value: &[u8]| -> Result<Vec<u8>> {
         let doc = LoroDoc::new();
         doc.set_peer_id(7).unwrap();
@@ -3857,34 +3884,36 @@ fn masked_shallow_root(carrier: &[u8]) -> Result<Vec<u8>> {
         doc.commit();
         map_insert_bytes(&doc.get_map("entities"), "ordinary", b"ordinary")?;
         doc.commit();
+        let root = doc.oplog_frontiers();
+        let base = doc.oplog_vv();
+        let branches = if long {
+            vec![doc.fork(), doc.fork()]
+        } else {
+            Vec::new()
+        };
+        for (peer, branch) in (8..).zip(&branches) {
+            branch.set_peer_id(peer).unwrap();
+            for n in 0..129 {
+                let tail = format!("tail-{peer}-{n}");
+                map_insert_bytes(&branch.get_map("entities"), &tail, b"ordinary")?;
+            }
+            branch.commit();
+            let ops = branch.export(loro::ExportMode::updates(&base)).unwrap();
+            doc.import(&ops).unwrap();
+        }
         Ok(doc
-            .export(loro::ExportMode::shallow_snapshot(&doc.oplog_frontiers()))
+            .export(loro::ExportMode::shallow_snapshot(&root))
             .unwrap())
     };
-    // A fast snapshot is a 22-byte header (magic, checksum, mode) and three
-    // length-prefixed sections: oplog, latest state, root state.
-    fn sections(blob: &[u8]) -> Vec<&[u8]> {
-        let mut rest = &blob[22..];
-        (0..3)
-            .map(|_| {
-                let (len, tail) = rest.split_at(4);
-                let len = usize::try_from(u32::from_le_bytes(len.try_into().unwrap())).unwrap();
-                let (section, tail) = tail.split_at(len);
-                rest = tail;
-                section
-            })
-            .collect()
-    }
     let (with_carrier, clean) = (shallow(carrier)?, shallow(b"clean")?);
-    let (target, mask) = (sections(&with_carrier), sections(&clean));
-    let mut out = with_carrier[..22].to_vec();
-    for section in [target[0], mask[2], target[2]] {
-        out.extend_from_slice(&u32::try_from(section.len()).unwrap().to_le_bytes());
-        out.extend_from_slice(section);
-    }
-    let checksum = xxhash_rust::xxh32::xxh32(&out[20..], u32::from_le_bytes(*b"LORO"));
-    out[16..20].copy_from_slice(&checksum.to_le_bytes());
-    Ok(out)
+    let (target, mask) = (snapshot_sections(&with_carrier), snapshot_sections(&clean));
+    // A short range ships no latest state, so its root stands in as one.
+    assert_eq!(mask[1] == b"E", !long);
+    let latest = if long { mask[1] } else { mask[2] };
+    Ok(snapshot_with_sections(
+        &with_carrier,
+        [target[0], latest, target[2]],
+    ))
 }
 
 #[test]
@@ -3949,21 +3978,36 @@ fn local_only_update_admission_is_side_effect_free_and_checks_hidden_history() -
     }
     // A sender can also ship a latest-state section that masks a carrier
     // left in the snapshot's encoded root, which a later export reuses.
-    for carrier in [&diagnostic, &custody] {
-        let masked = masked_shallow_root(carrier)?;
+    // Past 256 retained ops the export ships that section again, and with
+    // unjoined heads it keeps the root, so the mask outlives persistence.
+    for (carrier, long) in [
+        (&diagnostic, false),
+        (&custody, false),
+        (&diagnostic, true),
+        (&custody, true),
+    ] {
+        let masked = masked_shallow_root(carrier, long)?;
         let shown = LoroDoc::from_snapshot(&masked).unwrap();
         let entities = shown.get_map("entities");
         assert_eq!(map_get_bytes(&entities, "masked"), Some(b"clean".to_vec()));
         let persisted = shown
             .export(loro::ExportMode::shallow_snapshot(&shown.oplog_frontiers()))
             .unwrap();
-        let reloaded = LoroDoc::from_snapshot(&persisted).unwrap();
+        let [ops, _, root] = snapshot_sections(&persisted);
+        let unmasked = snapshot_with_sections(&persisted, [ops, b"E", root]);
+        let reloaded = LoroDoc::from_snapshot(&unmasked).unwrap();
         assert_eq!(
             map_get_bytes(&reloaded.get_map("entities"), "masked").as_ref(),
-            Some(carrier)
+            Some(carrier),
+            "the persisted root keeps the carrier (long: {long})"
         );
-        assert!(refused(validate_window_update_locality(&doc, &masked)));
+        assert!(
+            refused(validate_window_update_locality(&doc, &masked)),
+            "a masked root was admitted (long: {long})"
+        );
     }
+    // The same long shape, sent honestly, is admitted.
+    validate_window_update_locality(&doc, &masked_shallow_root(b"clean", true)?)?;
     let ordinary = doc.fork();
     map_insert_bytes(&ordinary.get_map("entities"), "second", b"ordinary")?;
     ordinary.commit();
