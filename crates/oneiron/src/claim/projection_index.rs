@@ -138,6 +138,9 @@ pub(crate) fn claim_ids_for_predicate_in_txn(
 ) -> Result<Vec<EntityId>> {
     predicate_ids_in_txn(store, txn, predicate_hash(predicate), 10_000)
 }
+/// A predicate index row: `(predicate hash, claim id)` and its value.
+type PredicateRow = Result<(([u8; 32], EntityId), String)>;
+
 /// One page of a predicate's posting list: at most `limit` claim ids after
 /// `after`, in id order. A walk that pages through every page reads each claim
 /// once, however long the list, without a whole-list ceiling.
@@ -150,7 +153,7 @@ pub(crate) fn claim_ids_for_predicate_page_in_txn(
 ) -> Result<Vec<EntityId>> {
     let hash = predicate_hash(predicate);
     let after = after.map(|id| (hash, id));
-    let rows: Box<dyn Iterator<Item = Result<(([u8; 32], EntityId), String)>> + '_> = match &after {
+    let rows: Box<dyn Iterator<Item = PredicateRow> + '_> = match &after {
         Some(after) => Box::new(PREDICATE_INDEX.iter_range(
             store,
             txn,
