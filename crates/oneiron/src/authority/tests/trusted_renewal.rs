@@ -102,17 +102,18 @@ fn two_copies(role: MachineRole, again: impl Fn(AuthorityKey) -> DeviceAuthority
         .collect();
     first_seen.insert(hash(loser_copy), 150);
     first_seen.insert(hash(&handoff), 200);
+    let winning = hash(winner_copy);
     TwoCopies {
         id,
         machine,
         request,
-        winner: hash(winner_copy),
+        winner: winning,
         entries: vec![
             genesis,
             enrol_a,
             enrol_b,
-            copy_a.clone(),
-            copy_b.clone(),
+            copy_a,
+            copy_b,
             sibling,
             handoff.clone(),
         ],
