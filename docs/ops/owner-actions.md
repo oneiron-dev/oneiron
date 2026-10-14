@@ -238,9 +238,11 @@ keeps each sweep's schedule, so a restart neither repeats a sweep early nor drop
 erasure runs, the server writes down and closes the sync windows no client is using, so their
 history can be compacted; a window in use waits for the next run.
 
-Every hour the server also runs `git gc --auto` on each repository it serves, one at a time and
-like a push: under the repository's lock and a git exchange permit, never waiting for either, so a
-repository a push holds waits for the next hour. A push itself starts no maintenance.
+Every hour the server also runs `git gc --auto` on each repository it serves, one at a time, under
+a git exchange permit it waits for and the repository's lock. Maintenance never turns a push away:
+a repository a push holds waits for the next hour, and a push that comes while maintenance runs
+asks for the repository, the maintenance ends its git at once, and the push goes ahead. A push
+itself starts no maintenance.
 
 A managed vault that is stopped between uses tells its supervisor when to wake it: a
 `housekeeping` entry in its wake ledger carries the next secret-lease expiry, voice-print

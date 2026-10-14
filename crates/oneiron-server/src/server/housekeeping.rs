@@ -2,11 +2,11 @@
 //! the engine's pass ([`oneiron::Vault::housekeeping`]) on a blocking thread,
 //! off the request path, unless the last pass is still running; the engine
 //! decides which sweeps are due. After it, the host prunes what only the
-//! process holds, MCP credentials that were revoked or have expired, and
-//! hourly runs the served repositories' git maintenance under exchange
-//! permits. The owner's "run now" is a pass of the same kind. Every pass is
-//! held in [`HousekeepingPasses`], so stopping the host stops and waits for
-//! each.
+//! process holds, MCP credentials that were revoked or have expired. Hourly,
+//! on a task of its own, the host runs the served repositories' git
+//! maintenance, each repository waiting for a git exchange permit. The
+//! owner's "run now" is a pass of the same kind. Every pass is held in
+//! [`HousekeepingPasses`], so stopping the host stops and waits for each.
 //!
 //! Log lines carry a sweep's code, its counts and an error's kind, never row
 //! text or an error's message.
@@ -21,6 +21,7 @@ use tokio::task::JoinHandle;
 
 use super::core::SyncServer;
 use super::lifecycle::LifecycleJobKind;
+use crate::admission::Permit;
 
 /// How long one scheduled pass may keep starting sweeps. Well inside a tick,
 /// so a pass has ended before the next tick asks for another.
@@ -31,6 +32,10 @@ const OWNER_PASS_BUDGET: Duration = Duration::from_secs(60);
 
 /// How often the served repositories get their git maintenance.
 pub(super) const SERVED_REPOSITORY_MAINTENANCE_EVERY: Duration = Duration::from_secs(60 * 60);
+
+/// How often repository maintenance waiting for a git exchange permit asks
+/// again.
+const GIT_PERMIT_POLL: Duration = Duration::from_millis(500);
 
 /// The host's write gate for a pass. `None` skips the tick: a managed vault
 /// frozen for reap writes nothing. What it returns is held until the pass
@@ -86,25 +91,19 @@ impl HousekeepingPasses {
 impl SyncServer {
     /// Starts one scheduled pass on a task of its own, held for the host's
     /// stop, unless the last pass is still running, the host is stopping, or
-    /// the host's gate refused the tick. With `repositories`, the pass also
-    /// runs the served repositories' git maintenance. Returns whether a pass
-    /// started.
-    pub(super) async fn start_housekeeping_pass(
-        self: &Arc<Self>,
-        admit: &HousekeepingAdmission,
-        repositories: bool,
-    ) -> bool {
+    /// the host's gate refused the tick.
+    pub(super) async fn start_housekeeping_pass(self: &Arc<Self>, admit: &HousekeepingAdmission) {
         if self.housekeeping_passes.stopping()
             || !self
                 .begin_lifecycle_job(LifecycleJobKind::Housekeeping)
                 .await
         {
             tracing::debug!("housekeeping tick skipped: the last pass is still running");
-            return false;
+            return;
         }
         let Some(admission) = admit() else {
             self.end_lifecycle_job(LifecycleJobKind::Housekeeping).await;
-            return false;
+            return;
         };
         let server = Arc::clone(self);
         let budget = self.housekeeping_passes.budget(HOUSEKEEPING_PASS_BUDGET);
@@ -121,14 +120,36 @@ impl SyncServer {
                 }
             }
             server.prune_mcp_credentials().await;
-            if repositories {
-                server.maintain_served_repositories().await;
-            }
             server
                 .end_lifecycle_job(LifecycleJobKind::Housekeeping)
                 .await;
         });
         self.housekeeping_passes.hold(pass);
+    }
+
+    /// Starts the served repositories' git maintenance on a task of its own,
+    /// held for the host's stop, unless the last run is still going or the
+    /// host is stopping. Returns whether a run started.
+    pub(super) async fn start_repository_maintenance(
+        self: &Arc<Self>,
+        admit: &HousekeepingAdmission,
+    ) -> bool {
+        if self.housekeeping_passes.stopping()
+            || !self
+                .begin_lifecycle_job(LifecycleJobKind::RepositoryMaintenance)
+                .await
+        {
+            return false;
+        }
+        let server = Arc::clone(self);
+        let admit = Arc::clone(admit);
+        let run = tokio::spawn(async move {
+            server.maintain_served_repositories(admit).await;
+            server
+                .end_lifecycle_job(LifecycleJobKind::RepositoryMaintenance)
+                .await;
+        });
+        self.housekeeping_passes.hold(run);
         true
     }
 
@@ -171,20 +192,19 @@ impl SyncServer {
         }
     }
 
-    /// `git gc --auto` over the served repositories, each under a git
-    /// exchange permit and the repository coordinator, never waiting for
-    /// either: a repository a push holds waits for the next run.
-    async fn maintain_served_repositories(self: &Arc<Self>) {
+    /// `git gc --auto` over the served repositories. Each waits for a git
+    /// exchange permit, then takes the host's write gate, both held until its
+    /// maintenance ends; the engine gives the repository up to any push that
+    /// asks for it.
+    async fn maintain_served_repositories(self: &Arc<Self>, admit: HousekeepingAdmission) {
         let server = Arc::clone(self);
         let run = tokio::task::spawn_blocking(move || {
             maintain_served_repositories(
                 server.vault(),
                 || {
-                    server
-                        .transfers
-                        .admit_git_maintenance()
-                        .ok()
-                        .map(|permit| Box::new(permit) as Box<dyn Send>)
+                    let permit = server.wait_for_git_permit()?;
+                    let admission = admit()?;
+                    Some(Box::new((permit, admission)) as Box<dyn Send>)
                 },
                 || server.housekeeping_passes.stopping(),
             )
@@ -210,6 +230,21 @@ impl SyncServer {
                     "served repository maintenance task failed"
                 );
             }
+        }
+    }
+
+    /// Waits on this blocking thread for a git exchange permit, asking again
+    /// each poll, until one is free or the host stops. An exchange that wants
+    /// one meanwhile takes it first.
+    fn wait_for_git_permit(&self) -> Option<Permit<String>> {
+        loop {
+            if self.housekeeping_passes.stopping() {
+                return None;
+            }
+            if let Ok(permit) = self.transfers.admit_git_maintenance() {
+                return Some(permit);
+            }
+            std::thread::sleep(GIT_PERMIT_POLL);
         }
     }
 }

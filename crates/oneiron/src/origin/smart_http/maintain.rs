@@ -2,11 +2,12 @@
 //!
 //! The serve path pins automatic maintenance off, so nothing a push starts can
 //! outlive its exchange. The host runs it here instead: `git gc --auto`, one
-//! repository at a time, as an exchange would, under the host's exchange
-//! permit and the repository coordinator, and never waiting for either. A
-//! repository a push holds is left for the next run. `--auto` does work only
-//! past git's own thresholds (loose objects, pack count), so a run over a
-//! quiet repository costs a directory read.
+//! repository at a time, under the host's exchange permit and the repository
+//! coordinator. Maintenance never turns a push away: it takes the coordinator
+//! only when it is free, leaves a repository a writer holds for the next run,
+//! and gives the coordinator up, ending its git, as soon as a writer asks for
+//! it. `--auto` does work only past git's own thresholds (loose objects, pack
+//! count), so a run over a quiet repository costs a directory read.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,7 +19,7 @@ use super::serve::repo_common_dir;
 use super::serve_cmd::path_arg;
 use crate::Vault;
 use crate::error::Result;
-use crate::git_wire::{GitWireProcessEnv, try_lock_repository};
+use crate::git_wire::{GitWireProcessEnv, try_lock_repository_for_maintenance};
 
 /// The longest one repository's maintenance may run before it is killed.
 pub const SERVED_REPOSITORY_GC_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -47,17 +48,19 @@ pub struct ServedRepositoryMaintenance {
     pub repositories: u64,
     /// Repositories `git gc --auto` ran to completion on.
     pub maintained: u64,
-    /// Repositories left for a later run: a push held the repository, no
-    /// exchange permit was free, or the run was asked to stop.
+    /// Repositories left for a later run: a writer held the repository or
+    /// asked for it, the host had no permit for it, or the run was asked to
+    /// stop.
     pub deferred: u64,
     /// Repositories whose maintenance failed or ran past its time.
     pub failed: u64,
 }
 
 /// Runs `git gc --auto` on every served repository. `admit` takes the host's
-/// exchange permit for one repository, held until its maintenance ends, or
-/// returns `None` when none is free. `stop` asks the run to start no further
-/// repository and to end the one in flight.
+/// hold for one repository, its exchange permit, kept until that
+/// repository's maintenance ends, or returns `None` when the host has none
+/// to give. `stop` asks the run to start no further repository and to end
+/// the one in flight.
 pub fn maintain_served_repositories(
     vault: &Vault,
     mut admit: impl FnMut() -> Option<Box<dyn Send>>,
@@ -81,11 +84,11 @@ pub fn maintain_served_repositories(
             report.failed += 1;
             continue;
         };
-        let Some(_coordinator) = try_lock_repository(&common_dir)? else {
+        let Some(coordinator) = try_lock_repository_for_maintenance(&common_dir)? else {
             report.deferred += 1;
             continue;
         };
-        match collect_garbage(&repo_dir, &stop) {
+        match collect_garbage(&repo_dir, || stop() || coordinator.asked_to_give_way()) {
             Ok(Gc::Done) => report.maintained += 1,
             Ok(Gc::Stopped) => report.deferred += 1,
             Ok(Gc::Failed) | Err(_) => report.failed += 1,
@@ -123,8 +126,9 @@ enum Gc {
 }
 
 /// Runs `git gc --auto --quiet` in `repo_dir` with a closed environment, as the
-/// leader of its own process group, so a kill ends every git it started.
-fn collect_garbage(repo_dir: &Path, stop: &impl Fn() -> bool) -> Result<Gc> {
+/// leader of its own process group, so a kill ends every git it started. Once
+/// `give_way` says so, the run ends at once, finished or not.
+fn collect_garbage(repo_dir: &Path, give_way: impl Fn() -> bool) -> Result<Gc> {
     let process_env = GitWireProcessEnv::capture()?;
     let mut command = oneiron_spawn::command(process_env.git_binary().as_os_str());
     for pinned in PINNED {
@@ -147,16 +151,16 @@ fn collect_garbage(repo_dir: &Path, stop: &impl Fn() -> bool) -> Result<Gc> {
     let mut child = command.spawn()?;
     let deadline = Instant::now() + SERVED_REPOSITORY_GC_TIMEOUT;
     loop {
+        if give_way() {
+            end(&mut child);
+            return Ok(Gc::Stopped);
+        }
         if let Some(status) = child.try_wait()? {
             return Ok(if status.success() {
                 Gc::Done
             } else {
                 Gc::Failed
             });
-        }
-        if stop() {
-            end(&mut child);
-            return Ok(Gc::Stopped);
         }
         if Instant::now() >= deadline {
             end(&mut child);

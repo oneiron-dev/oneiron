@@ -59,6 +59,7 @@ pub(super) enum LifecycleJobKind {
     LeaseExpiry,
     ReassertDrain,
     Housekeeping,
+    RepositoryMaintenance,
 }
 
 /// The lifecycle loop, and the housekeeping pass it last started. Dropping it
@@ -114,16 +115,19 @@ impl SyncServer {
         let tick = tokio::spawn(async move {
             let mut interval = tokio::time::interval(tick);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            // The served repositories' maintenance runs with the first pass
-            // and then once an interval.
+            // The served repositories' maintenance runs on the first tick and
+            // then once an interval.
             let mut repositories_due = Instant::now();
             loop {
                 interval.tick().await;
                 server.run_scheduled_lifecycle_tick().await;
-                // The pass runs on a task of its own, so a long sweep never
-                // holds back the next tick's lease expiry.
-                let repositories = Instant::now() >= repositories_due;
-                if server.start_housekeeping_pass(&admit, repositories).await && repositories {
+                // The pass and the maintenance run on tasks of their own, so
+                // neither holds back the next tick's lease expiry, nor one
+                // the other.
+                server.start_housekeeping_pass(&admit).await;
+                if Instant::now() >= repositories_due
+                    && server.start_repository_maintenance(&admit).await
+                {
                     repositories_due = Instant::now() + SERVED_REPOSITORY_MAINTENANCE_EVERY;
                 }
             }
