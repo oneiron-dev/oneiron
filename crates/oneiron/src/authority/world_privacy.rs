@@ -383,8 +383,8 @@ pub(super) struct FrontierEdit {
     /// restriction only: it never counts at full strength (Astra #1430).
     restriction_only: bool,
     /// Two copies of it disagreed on its mark, past or what it replaced: it
-    /// never counts at full strength, and it meets the default as well (Sol
-    /// P2 round 11).
+    /// never counts at full strength, it meets the default as well (Sol P2
+    /// round 11), and no machine may edit its world (`roster_read`).
     disputed: bool,
 }
 
@@ -549,10 +549,27 @@ fn world_meet(state: &FoldState, world: EntityId, counting: Counting) -> Privacy
     contributions.fold(first, |meet, next| meet.meet(&next))
 }
 
+/// The read that decides who may edit `world`. Where two copies of one of
+/// its edits disagreed, each copy's view could admit a different editor, and
+/// the narrower meet of both can admit one neither copy did: no machine may
+/// edit it, as under a conflicted vault root (Sol P2 round 12, F1).
+fn roster_read(state: &FoldState, world: EntityId) -> EffectiveRead {
+    let disputed = state.worlds.get(&world).is_some_and(|frontier| {
+        frontier
+            .live
+            .values()
+            .chain(frontier.superseded.values())
+            .any(|edit| edit.disputed)
+    });
+    if disputed {
+        return EffectiveWorldPrivacy::unknowable().read;
+    }
+    world_meet(state, world, Counting::Roster).effective().read
+}
+
 fn may_edit(state: &FoldState, machine: EntityId, world: EntityId) -> bool {
-    let read = world_meet(state, world, Counting::Roster).effective().read;
     let is_mine = |id| is_mine(state, id);
-    edit_standing(&read, machine, is_mine, is_mine).is_some()
+    edit_standing(&roster_read(state, world), machine, is_mine, is_mine).is_some()
 }
 
 /// The `WorldPrivacy` transition, after the shape, signature, retired,
@@ -636,7 +653,7 @@ pub(super) fn folded_worlds(state: &FoldState) -> BTreeMap<EntityId, FoldedWorld
                         .map(|(hash, edit)| (*hash, edit.machine))
                         .collect(),
                     effective: world_meet(state, *world, Counting::Install).effective(),
-                    roster_read: world_meet(state, *world, Counting::Roster).effective().read,
+                    roster_read: roster_read(state, *world),
                 },
             )
         })
