@@ -1,7 +1,8 @@
 //! Ticket 7: `git receive-pack` writes a push certificate into the object
 //! store as a blob before any hook runs, so no door window ever reads it. The
 //! origin offers no signed push and refuses a request that sends one before
-//! the backend reads a byte.
+//! the backend reads a byte, plain or gzipped (round 1, Sol F2 / Astra F1:
+//! JGit gzips its pushes, so a gzipped one is read inflated, not refused).
 
 use std::process::{Command, Stdio};
 
@@ -89,8 +90,9 @@ fn a_push_certificate_never_reaches_the_object_store() {
     );
     assert!(!doomed().is_empty(), "a refused push deletes nothing");
 
-    // An encoded body cannot be read for one, so it is refused the same way.
-    let encoded = receive_pack(&vault, body, Some("gzip"));
+    // Gzipped, as JGit sends a push, the body is read inflated: the same
+    // certificate is refused the same way.
+    let encoded = receive_pack(&vault, gzip(&body), Some("gzip"));
     assert!(
         matches!(
             encoded,
@@ -98,6 +100,7 @@ fn a_push_certificate_never_reaches_the_object_store() {
         ),
         "{encoded:?}"
     );
+    assert!(!has_object(&repo, &certificate_oid));
 
     // The advertisement offers no signed push, even when the repository's
     // config would have git offer one.
@@ -112,30 +115,49 @@ fn a_push_certificate_never_reaches_the_object_store() {
         String::from_utf8_lossy(&advertised.body)
     );
 
-    // Control: an ordinary push with a pack still lands, its command section
-    // read ahead of the backend and handed on intact.
-    let tip = commit_file(source, "notes.txt", "a clean note\n");
-    let create = format!("{zero} {} refs/heads/work\0report-status\n", tip.as_str());
-    let mut body = pkt(&create);
-    body.extend(b"0000");
-    let mut child = Command::new("git")
-        .current_dir(source)
-        .args(["pack-objects", "--stdout", "--revs"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("spawn pack-objects");
-    child
-        .stdin
-        .take()
-        .expect("pack-objects stdin")
-        .write_all(format!("{}\n^{}\n", tip.as_str(), second.as_str()).as_bytes())
-        .expect("write revs");
-    let pack = child.wait_with_output().expect("pack-objects");
-    assert!(pack.status.success());
-    body.extend(pack.stdout);
-    let report = receive_pack(&vault, body, None).expect("a push with a pack is served");
-    assert_eq!(report.door.verdict, DoorWindowVerdict::Clean);
-    assert!(report.landing.is_some());
-    assert_eq!(git(&repo, &["rev-parse", "refs/heads/work"]), tip.as_str());
+    // Control: an ordinary push with a pack still lands, plain or gzipped,
+    // its command section read ahead of the backend and handed on intact.
+    let mut base = second;
+    for (branch, encoding) in [("work", None), ("zipped", Some("gzip"))] {
+        let tip = commit_file(source, &format!("{branch}.txt"), "a clean note\n");
+        let create = format!(
+            "{zero} {} refs/heads/{branch}\0report-status\n",
+            tip.as_str()
+        );
+        let mut body = pkt(&create);
+        body.extend(b"0000");
+        let mut child = Command::new("git")
+            .current_dir(source)
+            .args(["pack-objects", "--stdout", "--revs"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn pack-objects");
+        child
+            .stdin
+            .take()
+            .expect("pack-objects stdin")
+            .write_all(format!("{}\n^{}\n", tip.as_str(), base.as_str()).as_bytes())
+            .expect("write revs");
+        let pack = child.wait_with_output().expect("pack-objects");
+        assert!(pack.status.success());
+        body.extend(pack.stdout);
+        if encoding.is_some() {
+            body = gzip(&body);
+        }
+        let report = receive_pack(&vault, body, encoding).expect("a push with a pack is served");
+        assert_eq!(report.door.verdict, DoorWindowVerdict::Clean, "{branch}");
+        assert!(report.landing.is_some(), "{branch}");
+        assert_eq!(
+            git(&repo, &["rev-parse", &format!("refs/heads/{branch}")]),
+            tip.as_str()
+        );
+        base = tip;
+    }
+}
+
+fn gzip(body: &[u8]) -> Vec<u8> {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(body).expect("gzip");
+    encoder.finish().expect("gzip")
 }

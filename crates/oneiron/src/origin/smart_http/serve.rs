@@ -149,12 +149,6 @@ fn serve_request(
     body: &mut (dyn Read + Send),
     sink: &mut dyn ServeSink,
 ) -> Result<ServeReport> {
-    let commands = if request.is_receive_pack() {
-        read_command_section(request, body)?
-    } else {
-        Vec::new()
-    };
-    let body = &mut io::Cursor::new(commands).chain(body);
     let repo_dir = origin_repo_dir(vault, repo_name)?;
     let project_root = origin_serving_root(vault)?;
     let mut tickets = request
@@ -192,6 +186,30 @@ fn serve_request(
     // This also runs for advertisements and no-op retries. A crash after the
     // backend effect must not leave a ref hidden merely because no new hook runs.
     vault.reconcile_receive_pack_operations(&repo_dir)?;
+    // No byte of the body is read before the admission above is checked and
+    // recorded. A push body the backend would inflate is inflated here
+    // instead, once: the command section read below is then the one
+    // receive-pack reads, and the backend gets the whole body plain.
+    let plain;
+    let mut inflated;
+    let (request, body): (&ServeRequest, &mut (dyn Read + Send)) =
+        if request.is_receive_pack() && backend_inflates(request) {
+            plain = ServeRequest {
+                content_length: None,
+                content_encoding: None,
+                ..request.clone()
+            };
+            inflated = flate2::read::GzDecoder::new(body);
+            (&plain, &mut inflated)
+        } else {
+            (request, body)
+        };
+    let commands = if request.is_receive_pack() {
+        read_command_section(body)?
+    } else {
+        Vec::new()
+    };
+    let body = &mut io::Cursor::new(commands).chain(body);
     let mut child = command.spawn(request)?;
     let exchange = run_exchange(
         &ExchangeSetup {
@@ -429,18 +447,12 @@ fn join_thread<T>(joined: std::thread::Result<Result<T>>) -> Result<T> {
 /// store as a blob before any hook runs, so its bytes would stay there with no
 /// door having read them, even on a delete-only push. This origin offers no
 /// signed push (the advertisement drops the capability), and a request that
-/// sends a certificate anyway is refused here. A body this cannot read is
-/// refused too: an encoded one (a stock client never encodes a push), a
-/// malformed pkt-line, or a section past [`ORIGIN_MAX_COMMAND_SECTION_BYTES`].
-/// Returns the bytes read, which go to the backend ahead of the rest.
-fn read_command_section(request: &ServeRequest, body: &mut (dyn Read + Send)) -> Result<Vec<u8>> {
-    if request
-        .content_encoding
-        .as_deref()
-        .is_some_and(|encoding| !encoding.eq_ignore_ascii_case("identity"))
-    {
-        return Err(push_refused("the origin reads no encoded push body"));
-    }
+/// sends a certificate anyway is refused here. A section this cannot read is
+/// refused too: a malformed pkt-line, or one past
+/// [`ORIGIN_MAX_COMMAND_SECTION_BYTES`]. `body` is what receive-pack would
+/// read, already inflated where the backend would inflate it. Returns the
+/// bytes read, which go to the backend ahead of the rest.
+fn read_command_section(body: &mut (dyn Read + Send)) -> Result<Vec<u8>> {
     let mut section = Vec::new();
     loop {
         let start = section.len();
@@ -475,6 +487,14 @@ fn read_command_section(request: &ServeRequest, body: &mut (dyn Read + Send)) ->
             return Err(push_refused("the origin accepts no push certificate"));
         }
     }
+}
+
+/// Whether `git http-backend` would inflate this request's body before
+/// receive-pack reads it: for exactly these two encodings, spelled exactly so
+/// (http-backend.c, `run_service`). Any other body reaches receive-pack as it
+/// came, and is read here as it came.
+fn backend_inflates(request: &ServeRequest) -> bool {
+    matches!(request.content_encoding.as_deref(), Some("gzip" | "x-gzip"))
 }
 
 /// Appends up to `count` bytes of `body` to `into`; whether all of them came.

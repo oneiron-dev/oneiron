@@ -39,8 +39,9 @@
 //!   config says, and a request whose command section carries one is refused
 //!   before the backend reads a byte. That section, up to its first flush, is
 //!   the one part of a request body read ahead, under a fixed bound
-//!   (`ORIGIN_MAX_COMMAND_SECTION_BYTES`); an encoded push body, which a stock
-//!   client never sends, is refused rather than read.
+//!   (`ORIGIN_MAX_COMMAND_SECTION_BYTES`). A body the backend would inflate
+//!   (gzip, as JGit sends one) is inflated here instead, once, so the section
+//!   read is the one receive-pack reads; the backend gets it plain.
 //! - **Only journalable refs move.** The door window refuses a push whose
 //!   proposed names the landing could not journal — names outside the GitWire
 //!   ref grammar, a name proposed twice, or a batch larger than the GitWire
