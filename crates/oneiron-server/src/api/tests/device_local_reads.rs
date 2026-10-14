@@ -618,29 +618,29 @@ async fn a_keyed_board_retry_off_this_device_replays_no_device_local_row() {
 }
 
 /// Sol R5 F3: a keyed write replays its first success to a retry. Once the
-/// claim its receipt names by short ref is device-local, the replay goes out
-/// again on this device but not off it, and the write is not repeated.
+/// claim its answer names is device-local, the replay goes out again on this
+/// device but not off it, and the write is not repeated.
 #[tokio::test]
 async fn a_keyed_write_retried_off_this_device_replays_no_device_local_row() {
     let (_dir, server, caller, grower) = serve();
     let world = put_world(&server.vault);
-    let claim = json!({
-        "predicate": "test.orchid_keyed",
-        "subject_ref": grower.to_hex(),
-        "value": "orchid",
-        "confidence": 1.0,
-        "source": "user_stated",
-        "world_ref": world.to_hex(),
-    });
+    let claim = put_orchid_claim(
+        &server,
+        grower,
+        "test.orchid_keyed",
+        Some(world),
+        "orchid ledger keyed",
+    );
+    // A keyed route: the facade's verbs carry no idempotency layer.
     let keyed = |from| {
-        let (caller, claim) = (&caller, claim.clone());
+        let caller = &caller;
         async move {
             caller
                 .call_keyed(
                     from,
                     "POST",
-                    "/v1/core/facade/claim_upsert",
-                    Some(claim),
+                    "/v1/core/memory/verbs/retract",
+                    Some(json!({"id": claim.to_hex()})),
                     Some("kept-claim"),
                 )
                 .await
@@ -648,19 +648,12 @@ async fn a_keyed_write_retried_off_this_device_replays_no_device_local_row() {
     };
     let (status, first) = keyed(HERE).await;
     assert_eq!(status, StatusCode::OK, "{first}");
-    let reference = first["claim_short_id"]
-        .as_str()
-        .unwrap_or_else(|| panic!("{first}"))
-        .to_owned();
-    assert!(
-        oneiron::entity_id::parse_short_ref_syntax(&reference).is_ok(),
-        "{first}"
-    );
+    assert_eq!(first["id"], claim.to_hex(), "{first}");
 
     server.vault.set_world_device_only(world, true).unwrap();
     let (status, refused) = keyed(AWAY).await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
-    assert!(!refused.to_string().contains(&reference), "{refused}");
+    assert!(!refused.to_string().contains(&claim.to_hex()), "{refused}");
     let (status, replayed) = keyed(HERE).await;
     assert_eq!(status, StatusCode::OK, "{replayed}");
     assert_eq!(replayed, first);
