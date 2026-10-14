@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Stdio};
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use super::paths::{SERVE_QUARANTINE_PREFIX, SERVE_REAP_TIMEOUT, serve_failed};
@@ -227,6 +227,7 @@ impl ServeCommand {
             stdin: Some(stdin),
             stdout: Some(stdout),
             stderr: Some(stderr),
+            ended: None,
         })
     }
 }
@@ -253,6 +254,8 @@ pub struct ServeChild {
     stdin: Option<ChildStdin>,
     stdout: Option<ChildStdout>,
     stderr: Option<ChildStderr>,
+    /// How the reaped child ended.
+    ended: Option<ExitStatus>,
 }
 
 impl ServeChild {
@@ -285,6 +288,7 @@ impl ServeChild {
         let mut pause = Duration::from_millis(1);
         loop {
             if let Some(status) = self.child.try_wait()? {
+                self.ended = Some(status);
                 return Ok(status.success());
             }
             if Instant::now() >= deadline {
@@ -301,7 +305,14 @@ impl ServeChild {
     /// Ends a child whose request could not be completed.
     pub fn kill(&mut self) {
         self.end();
-        let _ = self.child.wait();
+        self.ended = self.child.wait().ok();
+    }
+
+    /// Whether the reaped child exited by itself rather than by a signal,
+    /// such as the kill an exchange sends. One that had already exited when
+    /// it was killed exited by itself.
+    pub(super) fn exited_by_itself(&self) -> bool {
+        self.ended.is_some_and(|status| status.code().is_some())
     }
 
     /// Kills the child and the service it runs without reaping it, from
@@ -352,10 +363,11 @@ impl IncomingQuarantines {
         }
     }
 
-    /// The backend exited by itself, so git removed its own quarantine:
-    /// anything new beside it is not this exchange's to remove.
-    pub(super) fn exited(&mut self) {
-        self.sweep = false;
+    /// Settles the sweep on how the reaped `backend` ended. One that exited
+    /// by itself removed its own quarantine, so anything new beside it is not
+    /// this exchange's to remove.
+    pub(super) fn settle(&mut self, backend: &ServeChild) {
+        self.sweep = !backend.exited_by_itself();
     }
 
     fn present(objects: &Path) -> BTreeSet<OsString> {

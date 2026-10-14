@@ -284,10 +284,13 @@ fn a_push_killed_mid_pack_leaves_no_quarantine_behind() {
 }
 
 /// A push body that, as it is first read, makes a quarantine the way another
-/// receive-pack on the same object store would, outside this process.
+/// receive-pack on the same object store would, outside this process. Past
+/// `bytes` it ends, or with a `stall` goes quiet and fails as a transport
+/// whose own wait ran out does.
 struct BodyBesideAnotherPush {
     bytes: io::Cursor<Vec<u8>>,
     other: Option<PathBuf>,
+    stall: Option<Duration>,
 }
 
 impl Read for BodyBesideAnotherPush {
@@ -296,7 +299,14 @@ impl Read for BodyBesideAnotherPush {
             fs::create_dir_all(&other)?;
             fs::write(other.join("incoming.pack"), b"another push's objects")?;
         }
-        self.bytes.read(out)
+        let read = self.bytes.read(out)?;
+        match self.stall {
+            Some(stall) if read == 0 && !out.is_empty() => {
+                std::thread::sleep(stall);
+                Err(io::ErrorKind::TimedOut.into())
+            }
+            _ => Ok(read),
+        }
     }
 }
 
@@ -330,6 +340,7 @@ fn a_push_that_ends_by_itself_leaves_another_quarantine_alone() {
     let mut body = BodyBesideAnotherPush {
         bytes: io::Cursor::new(bytes),
         other: Some(other.clone()),
+        stall: None,
     };
 
     let report = serve_bounded(
@@ -343,6 +354,48 @@ fn a_push_that_ends_by_itself_leaves_another_quarantine_alone() {
     )
     .expect("the push is served");
     assert!(report.landing.is_some(), "the push lands");
+    assert_eq!(
+        fs::read(other.join("incoming.pack")).expect("the other quarantine is still there"),
+        b"another push's objects"
+    );
+}
+
+/// Round 4 (Sol, Astra): a backend that answered and exited before its body
+/// came is not one this exchange killed, even when the exchange then fails
+/// on that body and ends it.
+#[test]
+fn a_backend_that_exits_before_its_body_leaves_another_quarantine_alone() {
+    let (_vault_dir, vault) = temp_vault();
+    let (_source, repo, _, _) = served_repo(&vault);
+    // The wrong media type: http-backend answers 415 and exits unread.
+    let request = ServeRequest {
+        method: "POST".into(),
+        path_info: "/demo.git/git-receive-pack".into(),
+        query_string: String::new(),
+        content_type: Some("text/plain".into()),
+        content_length: Some(64),
+        content_encoding: None,
+        git_protocol: None,
+        remote_user: Some(EntityId::now().to_hex()),
+        remote_addr: Some("127.0.0.1".into()),
+    };
+    let other = repo.join("objects").join("tmp_objdir-incoming-another");
+    let mut body = BodyBesideAnotherPush {
+        bytes: io::Cursor::new(Vec::new()),
+        other: Some(other.clone()),
+        stall: Some(Duration::from_secs(1)),
+    };
+
+    let served = serve_bounded(
+        &vault,
+        "demo",
+        &request,
+        DoorSeam::Landed,
+        Duration::from_secs(5),
+        &mut body,
+        &mut CapturingSink::default(),
+    );
+    assert!(served.is_err(), "{served:?}");
     assert_eq!(
         fs::read(other.join("incoming.pack")).expect("the other quarantine is still there"),
         b"another push's objects"

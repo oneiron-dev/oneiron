@@ -298,13 +298,17 @@ fn serve_request(
         Ok(exchange) => exchange,
         Err(error) => {
             child.kill();
+            if let Some(quarantines) = quarantines.as_mut() {
+                quarantines.settle(&child);
+            }
             return Err(error);
         }
     };
-    let succeeded = child.wait()?;
+    let succeeded = child.wait();
     if let Some(quarantines) = quarantines.as_mut() {
-        quarantines.exited();
+        quarantines.settle(&child);
     }
+    let succeeded = succeeded?;
     if !succeeded {
         return Err(serve_failed(format!(
             "git http-backend exited with a failure: {}",
