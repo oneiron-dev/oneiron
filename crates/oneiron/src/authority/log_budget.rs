@@ -3,14 +3,18 @@
 //!
 //! The fold indexes every row's whole ancestry and probes each handoff by
 //! folding its line again, so its work grows with the square of the log and
-//! with the number of handoffs. Each signer may store a generous bound of
-//! rows. The slip issuer's slip ops count toward no bound: every sign-in
-//! mints one, so a busy owner's log gains thousands a year. The rows it
-//! signs that only take authority away always land. Every door, local or
-//! replicated, holds a row no owner, admin or install key signed: the fold
-//! applies none. A fold handed more than its own bounds fails closed: it
-//! holds no root and reads as a conflicted one, which every authority gate
-//! refuses.
+//! with the number of handoffs. Every door, local or replicated, holds a row
+//! no owner, admin or install key signed: the fold applies none. The owner's
+//! work, any row a slip issuer signs or cosigns, never meets a bound (the
+//! owner's rate law, rule 5): the fold's own bounds stay its limit, and the
+//! log's headroom check warns the owner at half of them. The slip issuer's
+//! slip ops count toward no bound at all: every sign-in mints one, so a busy
+//! owner's log gains thousands a year. Any other key stores up to the
+//! `authority_log_signer_bound` policy row; past it, its rows wait, never
+//! refused, a typed check asks the owner, and raising the row lands them on
+//! the next drain. A revocation of something the fold holds live always
+//! lands. A fold handed more than its own bounds fails closed: it holds no
+//! root and reads as a conflicted one, which every authority gate refuses.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -18,9 +22,9 @@ use std::sync::Arc;
 use super::*;
 use crate::store::Store;
 
-/// Most rows one signer may store. A slip issuer's slip ops and the rows it
-/// signs that only restrict (revocations, burns, machine removals and
-/// demotions) are never refused.
+/// The fold's unit of bounds, and the default of the
+/// `authority_log_signer_bound` policy row: the rows a key no slip issuer
+/// vouches for stores before the rest wait.
 pub const MAX_AUTHORITY_ROWS_PER_SIGNER: usize = 2048;
 /// Most handoffs (`ReRoot` rows) one fold holds. The fold probes each one by
 /// folding its line again; a vault re-roots once per host move.
@@ -50,6 +54,17 @@ fn rows_per_signer() -> usize {
         return rows;
     }
     MAX_AUTHORITY_ROWS_PER_SIGNER
+}
+
+/// The rows a signer stores before the rest wait, unless a slip issuer
+/// signed or cosigned them: the policy row, or a test's scaled bound.
+fn signer_bound(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<usize> {
+    #[cfg(test)]
+    if let Some(rows) = ROWS_PER_SIGNER_FOR_TEST.with(std::cell::Cell::get) {
+        return Ok(rows);
+    }
+    let bound = authority_observation_policy_in_txn(store, txn)?.log_signer_bound;
+    Ok(usize::try_from(bound).unwrap_or(usize::MAX))
 }
 
 fn fold_entries_bound() -> usize {
@@ -398,9 +413,10 @@ pub(super) fn refuse_over_budget(entries: &[AuthorityLogEntry]) -> Option<Author
 #[derive(Debug)]
 pub(crate) struct AuthorityDoorView {
     structure: AuthorityStructure,
-    /// Per signer: its stored rows, and how many of them are slip ops or
-    /// only restrict.
-    rows: BTreeMap<AuthorityKey, (usize, usize)>,
+    /// Per signer: its stored rows.
+    rows: BTreeMap<AuthorityKey, usize>,
+    /// The stored rows a fold counts: all but the slip issuers' slip ops.
+    counted: usize,
     /// The stored handoffs a slip issuer signed.
     issuer_handoffs: usize,
 }
@@ -440,18 +456,18 @@ fn door_view(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<Arc<A
             entries.push(decode_authority_log_entry_body(&body)?);
         }
         let structure = authority_structure(entries.iter());
-        let mut rows = BTreeMap::<AuthorityKey, (usize, usize)>::new();
-        let mut issuer_handoffs = 0;
+        let mut rows = BTreeMap::<AuthorityKey, usize>::new();
+        let (mut counted, mut issuer_handoffs) = (0, 0);
         for entry in &entries {
-            let (stored, exempt) = rows.entry(entry.signer_key().clone()).or_default();
-            *stored += 1;
-            *exempt += usize::from(is_slip_op(&entry.op) || only_restricts(&entry.op));
-            issuer_handoffs +=
-                usize::from(is_handoff(entry) && structure.issuers.contains(entry.signer_key()));
+            *rows.entry(entry.signer_key().clone()).or_default() += 1;
+            let issuer = structure.issuers.contains(entry.signer_key());
+            counted += usize::from(!(issuer && is_slip_op(&entry.op)));
+            issuer_handoffs += usize::from(issuer && is_handoff(entry));
         }
         Ok(AuthorityDoorView {
             structure,
             rows,
+            counted,
             issuer_handoffs,
         })
     })
@@ -482,43 +498,43 @@ pub(crate) fn signer_has_standing(
     Ok(door_view(store, txn)?.structure.stands(signer))
 }
 
-/// A row that only takes authority away: a revocation, a burn, or a machine
-/// removal. It always lands when a slip issuer signed it.
+/// A revocation the fold applies with consent: of a device, or of an actor
+/// binding.
 fn only_restricts(op: &AuthorityOp) -> bool {
-    matches!(op, AuthorityOp::RevokeDevice { .. })
-        || super::revoke_proof::restrictive_withdrawal(op)
+    matches!(
+        op,
+        AuthorityOp::RevokeDevice { .. } | AuthorityOp::RevokeActor { .. }
+    ) || super::revoke_proof::removes_machine(op)
 }
 
-/// A machine revision that only restricts, judged against the machine the
-/// local fold holds under the same keys: as the next revision, the
-/// demotion of a head this install holds as live and "yours" (not
-/// conflicted, floor-held, stale or unsettled), or an owned but not "yours"
-/// revision no newer than the head. Such a sibling or older revision never
-/// wins the merge, so concurrent demotions land in any order, a removal
-/// included. Any other newer one could clear a conflict or a floor hold,
-/// and its acknowledgements widen a world, so it counts.
-fn restricts_machine(fold: &AuthorityFold, op: &AuthorityOp) -> bool {
-    let AuthorityOp::MachineProfile(profile) = op else {
-        return false;
-    };
-    let yours = MachineRole::Owned(MachineOwnership::Yours);
-    matches!(profile.role, MachineRole::Owned(_))
-        && profile.role != yours
-        && fold.machines.get(&profile.machine).is_some_and(|known| {
-            known.profile.machine_key == profile.machine_key
-                && known.profile.encryption_key == profile.encryption_key
-                && (profile.revision <= known.profile.revision
-                    || (known.is_mine()
-                        && Some(profile.revision) == known.profile.revision.checked_add(1)))
-        })
+/// Whether `op` takes away something the local fold holds live: a device, an
+/// actor binding or a machine. A revocation of nothing changes nothing, so
+/// it can wait like any other row.
+fn restricts_live(fold: &AuthorityFold, op: &AuthorityOp) -> bool {
+    match op {
+        AuthorityOp::RevokeDevice { revoked_key } => fold
+            .roster
+            .get(revoked_key)
+            .is_some_and(|device| !device.revoked),
+        AuthorityOp::RevokeActor { authority_key, .. } => fold
+            .actor_bindings
+            .get(authority_key)
+            .is_some_and(|binding| binding.status == ActorBindingStatus::Active),
+        AuthorityOp::MachineProfile(profile) if profile.role == MachineRole::Removed => fold
+            .machines
+            .get(&profile.machine)
+            .is_some_and(|machine| machine.profile.role != MachineRole::Removed),
+        _ => false,
+    }
 }
 
 /// What a store door does with an AUTHORITY_LOG row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AuthorityDoor {
     Lands,
-    /// The row would take its signer past its bound, or the log past
-    /// [`MAX_AUTHORITY_FOLD_HANDOFFS`].
+    /// The row waits: its signer, which no slip issuer vouched for here, is
+    /// at its bound, or it is a handoff no slip issuer signed, which the
+    /// fold never applies. A replica retries it on every drain.
     AtBound,
     /// No key that may vouch for the row signed it. The fold applies no row
     /// without an owner's or admin's consent, and no world edit but its
@@ -528,13 +544,13 @@ pub(crate) enum AuthorityDoor {
 }
 
 /// The door's verdict on storing `entry`, at every door, local or
-/// replicated. A row already stored always lands. A slip issuer's slip ops
-/// and the rows it signs that only restrict are never refused and count
-/// toward no bound, and its machine demotions land past the bound. Every
-/// row any other key stores counts toward that key's bound, whatever it
-/// does, and a handoff it signs is refused at once: the fold applies no
-/// slip op, restriction or handoff such a key signs. The door reads the
-/// stored log's structure as the fold's bounds do.
+/// replicated. A row already stored always lands. The owner's work, a row a
+/// slip issuer signs or cosigns, always lands, but a handoff only when a
+/// slip issuer signs it. Any other key's row lands while its signer is under
+/// the `authority_log_signer_bound` row, and past it only as a revocation of
+/// something the fold holds live; the rest wait (rule 5: never refused, and
+/// one compromised admin or install key never closes the owner's fold). The
+/// door reads the stored log's structure as the fold's bounds do.
 pub(crate) fn authority_door(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -552,29 +568,87 @@ pub(crate) fn authority_door(
     if !view.structure.vouches_for(entry) || verify_entry_signatures(entry).is_err() {
         return Ok(AuthorityDoor::Unowned);
     }
+    let issuers = &view.structure.issuers;
     let signer = entry.signer_key();
-    let issuer = view.structure.issuers.contains(signer);
-    let (stored, exempt) = view.rows.get(signer).copied().unwrap_or_default();
-    let mut rows = stored + 1;
-    if issuer {
-        if is_slip_op(&entry.op) || only_restricts(&entry.op) {
-            return Ok(AuthorityDoor::Lands);
-        }
-        rows -= exempt;
+    if is_handoff(entry) {
+        return Ok(if issuers.contains(signer) {
+            AuthorityDoor::Lands
+        } else {
+            AuthorityDoor::AtBound
+        });
     }
-    if is_handoff(entry) && (!issuer || view.issuer_handoffs >= MAX_AUTHORITY_FOLD_HANDOFFS) {
-        return Ok(AuthorityDoor::AtBound);
-    }
-    if rows <= rows_per_signer() {
+    if signed_by(entry, issuers)
+        || view.rows.get(signer).copied().unwrap_or_default() < signer_bound(store, txn)?
+    {
         return Ok(AuthorityDoor::Lands);
     }
-    if !issuer {
-        return Ok(AuthorityDoor::AtBound);
+    if only_restricts(&entry.op) {
+        let fold = authority_view_readonly_for_store_in_txn(store, posture, txn)?;
+        if restricts_live(&fold, &entry.op) {
+            return Ok(AuthorityDoor::Lands);
+        }
     }
-    let fold = authority_view_readonly_for_store_in_txn(store, posture, txn)?;
-    Ok(if restricts_machine(&fold, &entry.op) {
-        AuthorityDoor::Lands
-    } else {
-        AuthorityDoor::AtBound
-    })
+    Ok(AuthorityDoor::AtBound)
+}
+
+/// A typed OF-520 question about the authority log's bounds, read from the
+/// stored log: evidence for the owner, never a refusal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorityLogCheck {
+    /// [`Self::SIGNER_BOUND`] or [`Self::FOLD_HEADROOM`].
+    pub kind: &'static str,
+    /// The signer at its bound, for a signer-bound check.
+    pub signer: Option<String>,
+    /// The signer's stored rows, or the log's counted rows or slip-issuer
+    /// handoffs.
+    pub count: u64,
+    /// The bound `count` reached.
+    pub threshold: u64,
+}
+
+impl AuthorityLogCheck {
+    /// A key no slip issuer vouches for reached the
+    /// `authority_log_signer_bound` row: its further rows wait until the
+    /// owner raises the row, and then land on the next drain.
+    pub const SIGNER_BOUND: &'static str = "authority_log_signer_bound";
+    /// The log's counted rows, or its slip issuers' handoffs, reached half of
+    /// what one fold reads. The owner's work is never held, so past all of
+    /// it the fold fails closed.
+    pub const FOLD_HEADROOM: &'static str = "authority_log_fold_headroom";
+}
+
+impl crate::Vault {
+    /// The open checks on the stored authority log: each key no slip issuer
+    /// vouches for that reached its bound, and the log's headroom once it
+    /// reaches half of one fold's bounds.
+    pub fn authority_log_checks(&self) -> crate::error::Result<Vec<AuthorityLogCheck>> {
+        let txn = self.store.env.read_txn()?;
+        let view = door_view(&self.store, &txn)?;
+        let bound = signer_bound(&self.store, &txn)?;
+        let mut checks: Vec<_> = view
+            .rows
+            .iter()
+            .filter(|(signer, rows)| **rows >= bound && !view.structure.issuers.contains(*signer))
+            .map(|(signer, rows)| AuthorityLogCheck {
+                kind: AuthorityLogCheck::SIGNER_BOUND,
+                signer: Some(authority_signer_label(signer)),
+                count: *rows as u64,
+                threshold: bound as u64,
+            })
+            .collect();
+        for (count, fold_bound) in [
+            (view.counted, fold_entries_bound()),
+            (view.issuer_handoffs, MAX_AUTHORITY_FOLD_HANDOFFS),
+        ] {
+            if count >= fold_bound / 2 {
+                checks.push(AuthorityLogCheck {
+                    kind: AuthorityLogCheck::FOLD_HEADROOM,
+                    signer: None,
+                    count: count as u64,
+                    threshold: fold_bound as u64,
+                });
+            }
+        }
+        Ok(checks)
+    }
 }

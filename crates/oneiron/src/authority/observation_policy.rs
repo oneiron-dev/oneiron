@@ -11,6 +11,9 @@ pub const DEFAULT_STALE_ROSTER_WINDOW_SECS: u64 = 24 * 60 * 60;
 pub const DEFAULT_AUTHORITY_INGEST_CHECK_THRESHOLD: u64 = 1_000_000;
 /// Width of the local monotonic ingest observation window.
 pub const DEFAULT_AUTHORITY_INGEST_WINDOW_SECS: u64 = 60 * 60;
+/// Rows one signer no slip issuer vouches for stores before its next rows
+/// wait, far above fleet scale (H72).
+pub const DEFAULT_AUTHORITY_LOG_SIGNER_BOUND: u64 = super::MAX_AUTHORITY_ROWS_PER_SIGNER as u64;
 
 /// Device-local authority observation policy durations. Key: ().
 const POLICY: SideTable<(), AuthorityObservationPolicy, Raw> =
@@ -18,6 +21,7 @@ const POLICY: SideTable<(), AuthorityObservationPolicy, Raw> =
 
 /// Version-one local observation policy. Durations use elapsed monotonic time,
 /// never an entry timestamp. The ingest threshold raises a check, not a stop.
+/// A row written before the signer bound existed reads with its default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AuthorityObservationPolicy {
     /// Inclusive age at which a pre-revocation approval remains usable.
@@ -26,6 +30,10 @@ pub struct AuthorityObservationPolicy {
     pub ingest_window_secs: u64,
     /// Raise one typed check when the count becomes strictly greater than this.
     pub ingest_check_threshold: u64,
+    /// The `authority_log_signer_bound` row: rows a signer stores before the
+    /// rest of what it signs waits, unless a slip issuer signed or cosigned
+    /// them (H72). Raising it lands the waiting rows on the next drain.
+    pub log_signer_bound: u64,
 }
 
 impl Default for AuthorityObservationPolicy {
@@ -34,6 +42,7 @@ impl Default for AuthorityObservationPolicy {
             stale_roster_window_secs: DEFAULT_STALE_ROSTER_WINDOW_SECS,
             ingest_window_secs: DEFAULT_AUTHORITY_INGEST_WINDOW_SECS,
             ingest_check_threshold: DEFAULT_AUTHORITY_INGEST_CHECK_THRESHOLD,
+            log_signer_bound: DEFAULT_AUTHORITY_LOG_SIGNER_BOUND,
         }
     }
 }
@@ -45,17 +54,23 @@ impl AuthorityObservationPolicy {
                 "authority ingest observation window must be positive".to_owned(),
             ));
         }
+        if self.log_signer_bound == 0 {
+            return Err(Error::InvalidConfig(
+                "authority log signer bound must be positive".to_owned(),
+            ));
+        }
         Ok(())
     }
 }
 
 impl RawValue for AuthorityObservationPolicy {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        let mut raw = Vec::with_capacity(24);
+        let mut raw = Vec::with_capacity(32);
         for value in [
             self.stale_roster_window_secs,
             self.ingest_window_secs,
             self.ingest_check_threshold,
+            self.log_signer_bound,
         ] {
             raw.extend_from_slice(&value.to_be_bytes());
         }
@@ -63,10 +78,10 @@ impl RawValue for AuthorityObservationPolicy {
     }
 
     fn from_raw(raw: &[u8]) -> std::result::Result<Self, CodecError> {
-        if raw.len() != 24 {
+        if raw.len() != 24 && raw.len() != 32 {
             return Err(Error::CorruptedIndex("authority observation policy").into());
         }
-        let mut values = [0_u64; 3];
+        let mut values = [0_u64, 0, 0, DEFAULT_AUTHORITY_LOG_SIGNER_BOUND];
         for (slot, bytes) in values.iter_mut().zip(raw.chunks_exact(8)) {
             *slot = u64::from_be_bytes(
                 bytes
@@ -78,6 +93,7 @@ impl RawValue for AuthorityObservationPolicy {
             stale_roster_window_secs: values[0],
             ingest_window_secs: values[1],
             ingest_check_threshold: values[2],
+            log_signer_bound: values[3],
         };
         policy.validate()?;
         Ok(policy)

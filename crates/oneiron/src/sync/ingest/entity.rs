@@ -110,8 +110,9 @@ pub(in crate::sync) struct EntityRefusal {
 pub(in crate::sync) enum RefusalRetry {
     /// No later local change admits these bytes.
     Terminal,
-    /// A later pass may admit them: the quota window rolls over, or the pack kind is installed
-    /// (`pack_sync::pack_rejection_keeps_retry_marker`).
+    /// A later pass may admit them: the quota window rolls over, the pack kind is installed
+    /// (`pack_sync::pack_rejection_keeps_retry_marker`), or the owner raises the authority log's
+    /// signer bound (H72, rule 5).
     Retry,
     /// Admission waits on another replicated row this vault has not seen yet.
     DependencyPending,
@@ -133,7 +134,8 @@ impl RefusalRetry {
         } else if matches!(
             err,
             Error::Sync(SyncError::MaintenanceIngestQuotaExceeded { .. })
-        ) || pack_sync::pack_rejection_keeps_retry_marker(err)
+        ) || err.kind() == ErrorKind::AuthorityLogFull
+            || pack_sync::pack_rejection_keeps_retry_marker(err)
         {
             Self::Retry
         } else {
