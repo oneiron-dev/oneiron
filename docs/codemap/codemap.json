@@ -20229,7 +20229,7 @@
      "path": "src/identity_topology/admission_disposition.rs",
      "purpose": "Signed append-only admission facts, independent of a decision's erasable author",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 15,
       "enum": 1,
       "struct": 1
      }
@@ -20399,7 +20399,7 @@
      "path": "src/identity_topology/shell_edge_reconcile.rs",
      "purpose": "Derives and reconciles the canonical `merged_into` / `split_into` shell edge set from the ledger fold — the…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -32001,7 +32001,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/side_table/decls/sync_state.rs",
@@ -34838,6 +34838,14 @@
       "crate-vis": 8,
       "fn": 4
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/sync/bridge/companion_identity_tests.rs",
+     "purpose": "H161 (W2-T5): a type-74 admission seal counts only when this vault sealed it, or a live machine the owner…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -41284,7 +41292,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 118,
+     "files": 119,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -41434,7 +41442,7 @@
    "over_bar": 38,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2512,
-   "test_files": 807
+   "test_files": 808
   },
   "oneiron-android": {
    "files": [

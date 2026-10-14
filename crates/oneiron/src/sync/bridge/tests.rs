@@ -61,9 +61,11 @@ fn decode_observer_u_seq_rejects_bad_lengths_without_panic() {
     }
 }
 
-/// Import an independently signed producer witness through Observer B.
-/// Delivery is separate from the decision record, so reference deferral and
-/// same-ID immutability remain observable in the surrounding test.
+/// Import a signed producer witness through Observer B. Delivery is separate
+/// from the decision record, so reference deferral and same-ID immutability
+/// remain observable in the surrounding test. The witness is `vault`'s own
+/// seal, which it counts with no roster entry (H161); whose seals a receiver
+/// counts is checked in `companion_identity_tests.rs`.
 fn deliver_signed_admission_for_test(
     vault: &Vault,
     doc: &LoroDoc,
