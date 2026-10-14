@@ -56,7 +56,9 @@ fn pack_gives(pack: &crate::memory::MemoryPack, said: &str) -> bool {
 /// that does not yield) is cut at its first candidate, inside the channel,
 /// and its hits are dropped. The deadline counts from the instant the test
 /// measures from; the answer's quarter of the budget is slack for a loaded
-/// host.
+/// host. It runs in a process of its own, as under nextest, where it takes
+/// 6.7 s: in the shared libtest process, beside tests that spawn git, answers
+/// came 1.1 s and 4.3 s past their stages.
 #[test]
 fn a_slow_channel_never_holds_a_call_mode_answer_past_its_deadline() {
     use crate::memory::RecallEffort;
@@ -65,7 +67,27 @@ fn a_slow_channel_never_holds_a_call_mode_answer_past_its_deadline() {
     use crate::task_verb::sdk::{RecallDoor, RecallRequest, recall_at_door};
     use std::time::{Duration, Instant};
 
+    const CHILD: &str = "ONEIRON_CALL_MODE_DEADLINE_CHILD";
     const DEADLINE_MS: u64 = 4_000;
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "memory::tests_regressions::recall::a_slow_channel_never_holds_a_call_mode_answer_past_its_deadline",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .expect("run the deadline test in its own process");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "{stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x81);
     let facade = facade_for(&vault, actor);

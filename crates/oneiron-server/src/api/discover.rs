@@ -8,6 +8,8 @@ use super::SKILL_PACK_MIME_TYPE;
 use super::SKILL_PACK_NAME;
 use super::SKILL_PACK_RESOLUTION;
 use super::check_api_auth;
+use crate::auth::CoreAuth;
+use crate::auth::Locality;
 use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use crate::error::ErrorCode;
@@ -373,50 +375,80 @@ pub(crate) struct RateLimitStatus {
 )]
 pub(crate) async fn discover(
     headers: HeaderMap,
+    Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<Json<DiscoverResponse>, ApiError> {
-    check_api_auth(&headers, &server)?;
-    discover_response(&server).map(Json)
+    let auth = check_api_auth(&headers, &server)?.at(locality);
+    discover_response(&server, &auth).map(Json)
 }
 
-pub(crate) fn discover_response(server: &SyncServer) -> Result<DiscoverResponse, ApiError> {
+/// Whether `auth` discovers the whole vault: the server's own secret, the
+/// unattenuated host root, or the owner's own full credential. Any other
+/// credential the legacy plane admits, an agent's full-scope slip included,
+/// counts and names only the rows its own lane reads.
+fn discovers_whole_vault(server: &SyncServer, auth: &CoreAuth) -> Result<bool, ApiError> {
+    let Some(proof) = auth.verified_slip() else {
+        return Ok(true);
+    };
+    if proof.claims().holder_ref == "host" {
+        return Ok(proof.is_full_vault_owner_grade());
+    }
+    Ok(super::credential_read_key(server.vault(), proof)?.reads_as_vault_owner())
+}
+
+/// The vault's inventory as `auth` may learn it, where its connection sits:
+/// one off this device counts, dates and names no row a device-local world
+/// keeps (DEC-0005).
+pub(crate) fn discover_response(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> Result<DiscoverResponse, ApiError> {
+    let locality = auth.locality();
+    let lane = if discovers_whole_vault(server, auth)? {
+        None
+    } else {
+        Some(super::scoped_read_for_legacy_api(server, auth)?)
+    };
     let mut counts = BTreeMap::new();
     let mut personas = Vec::new();
     let mut conversations = Vec::new();
     let mut claim_ids = Vec::new();
+    let mut lane_namespaces = BTreeSet::new();
     let mut last_activity = None;
 
     for entity_type in u8::MIN..=u8::MAX {
-        if !is_agent_visible_entity_type(entity_type) {
+        if !is_agent_visible_entity_type(entity_type)
+            || (lane.is_some() && entity_type == oneiron::registry::ENTITY_TYPE_SECRET_CUSTODY)
+        {
             continue;
         }
 
+        // Off this device a device-local row never counts toward the scan's
+        // cap, so no overflow hints at one.
         let ids = server
             .vault
-            .entities_by_type(entity_type)
+            .entities_by_type_at(entity_type, locality)
             .inspect_err(|e| {
                 tracing::error!(error = %e, entity_type, "discover count scan failed");
             })
             .map_err(|_| ApiError::internal_server_error("discover count scan failed"))?;
+        let rows = match &lane {
+            Some(lane) => lane_rows(lane, &ids, &mut lane_namespaces)?,
+            None => vault_rows(server, ids)?,
+        };
 
-        if ids.is_empty() {
+        if rows.is_empty() {
             continue;
         }
 
-        counts.insert(entity_type.to_string(), ids.len() as u64);
+        counts.insert(entity_type.to_string(), rows.len() as u64);
 
-        for id in &ids {
-            let learned_at = server
-                .vault
-                .get_learned_at(id)
-                .inspect_err(|e| {
-                    tracing::error!(error = %e, id = %id.to_hex(), "discover activity scan failed");
-                })
-                .map_err(|_| ApiError::internal_server_error("discover activity scan failed"))?;
+        for (_, learned_at) in &rows {
             last_activity =
-                Some(last_activity.map_or(learned_at, |current: u64| current.max(learned_at)));
+                Some(last_activity.map_or(*learned_at, |current: u64| current.max(*learned_at)));
         }
 
+        let ids: Vec<_> = rows.into_iter().map(|(id, _)| id).collect();
         match entity_type {
             oneiron::registry::ENTITY_TYPE_CLAIM => claim_ids.extend(ids),
             oneiron::registry::ENTITY_TYPE_PERSON => {
@@ -427,6 +459,21 @@ pub(crate) fn discover_response(server: &SyncServer) -> Result<DiscoverResponse,
             }
             _ => {}
         }
+    }
+    let whole = lane.is_none();
+    let namespaces = match lane {
+        Some(_) => lane_namespaces.into_iter().collect(),
+        None => predicate_namespaces(&server.vault, &claim_ids)?,
+    };
+    // The whole vault was read raw, in snapshots after the one that judged
+    // the credential. Judged again once they are read, it vouches for every
+    // row: a revocation is final, so a credential still whole-vault now held
+    // through every read.
+    if whole
+        && auth.verified_slip().is_some()
+        && !(auth.credential_is_live(&server.vault) && discovers_whole_vault(server, auth)?)
+    {
+        return Err(ApiError::unauthorized());
     }
 
     Ok(DiscoverResponse {
@@ -444,11 +491,74 @@ pub(crate) fn discover_response(server: &SyncServer) -> Result<DiscoverResponse,
         feature_flags: feature_flags(server),
         outbound_capabilities: outbound_capability_discovery(),
         counts,
-        predicate_namespaces: predicate_namespaces(&server.vault, &claim_ids)?,
+        predicate_namespaces: namespaces,
         last_activity,
         runtime: runtime_status_for_config(&server.config),
     })
 }
+
+/// Each of `ids` with its learned-at, read raw for a caller that discovers
+/// the whole vault.
+fn vault_rows(
+    server: &SyncServer,
+    ids: Vec<oneiron::EntityId>,
+) -> Result<Vec<(oneiron::EntityId, u64)>, ApiError> {
+    ids.into_iter()
+        .map(|id| {
+            let learned_at = server
+                .vault
+                .get_learned_at(&id)
+                .inspect_err(|e| {
+                    tracing::error!(error = %e, id = %id.to_hex(), "discover activity scan failed");
+                })
+                .map_err(|_| ApiError::internal_server_error("discover activity scan failed"))?;
+            Ok((id, learned_at))
+        })
+        .collect()
+}
+
+/// The ids of `ids` that `lane` reads, each with its learned-at, adding each
+/// CLAIM's predicate namespace to `namespaces`. Both come from the revision
+/// the lane admitted, in the snapshot it admitted it in, never from a newer
+/// revision it may withhold.
+fn lane_rows(
+    lane: &oneiron::claim::ScopedRead<'_>,
+    ids: &[oneiron::EntityId],
+    namespaces: &mut BTreeSet<String>,
+) -> Result<Vec<(oneiron::EntityId, u64)>, ApiError> {
+    let mut rows = Vec::new();
+    for chunk in ids.chunks(DISCOVER_LANE_READ_CHUNK) {
+        let reads: Vec<_> = chunk
+            .iter()
+            .map(|id| oneiron::claim::PointRead::id(*id))
+            .collect();
+        let read = lane
+            .read(&reads, None)
+            .map_err(|e| super::core_engine_error("discover read scope failed", e))?;
+        for row in read.value.into_iter().flatten() {
+            let Some(body) = &row.body else {
+                continue;
+            };
+            if row.entity_type == oneiron::registry::ENTITY_TYPE_CLAIM {
+                let claim = oneiron::claim::decode_claim_body(body, true)
+                    .inspect_err(|e| {
+                        tracing::error!(error = %e, id = %row.id.to_hex(), "discover predicate scan failed");
+                    })
+                    .map_err(|_| ApiError::internal_server_error("discover predicate scan failed"))?;
+                if let Some(namespace) = claim.predicate.split('.').next() {
+                    namespaces.insert(namespace.to_owned());
+                }
+            }
+            rows.push((row.id, row.learned_at));
+        }
+    }
+    Ok(rows)
+}
+
+/// How many ids one lane read judges: each row's admission and the metadata
+/// discovery takes from it share a snapshot, and no read holds one for the
+/// whole vault.
+const DISCOVER_LANE_READ_CHUNK: usize = 512;
 
 pub(crate) fn is_agent_visible_entity_type(entity_type: u8) -> bool {
     // Host infrastructure rows are not agent memory: the policy manifest is

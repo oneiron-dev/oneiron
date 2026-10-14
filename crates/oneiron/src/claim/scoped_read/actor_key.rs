@@ -20,11 +20,28 @@ pub struct ScopedReadActorKey {
     authority: Option<crate::federation::Scope>,
     /// Set only on the vault owner's own key; see [`Self::vault_owner`].
     owner: Option<EntityId>,
+    /// Set only on a narrower credential of the owner's; see
+    /// [`Self::exempt_while_owner`].
+    pub(super) owner_exemption: Option<EntityId>,
     /// The room turn this key reads inside, when a host bound one.
     pub(super) room_turn: Option<Box<RoomTurnCeiling>>,
     /// The worlds this read asked for (ARCH-0022). Every row it serves,
     /// ranked or reached through the graph, lies in one of them.
     pub(super) worlds: Option<crate::pipeline::WorldAuthoritySet>,
+    /// Whether the caller sits off this device; see [`Self::at`].
+    off_device: bool,
+}
+
+/// Where a read's caller sits relative to this device (DEC-0005). Only the
+/// host decides it, from the connection the caller reached it on; nothing the
+/// caller sends sets it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallerLocality {
+    /// On this device: the embedded host, or a caller on its local socket or
+    /// loopback.
+    OnDevice,
+    /// Anywhere else.
+    OffDevice,
 }
 
 /// A room turn's read ceiling (ARCH-0067 §8). It travels with the key, so
@@ -259,8 +276,10 @@ impl ScopedReadActorKey {
             proof: None,
             authority: None,
             owner: None,
+            owner_exemption: None,
             room_turn: None,
             worlds: None,
+            off_device: false,
         })
     }
 
@@ -291,14 +310,23 @@ impl ScopedReadActorKey {
             proof: None,
             authority: None,
             owner: Some(owner),
+            owner_exemption: None,
             room_turn: None,
             worlds: None,
+            off_device: false,
         }
     }
 
     /// The owner this key was minted for, when it is the vault owner's key.
     pub(crate) fn vault_owner_ref(&self) -> Option<EntityId> {
         self.owner
+    }
+
+    /// Whether this is the vault owner's own key, which reads all of the
+    /// owner's vault while its binding holds (`Self::vault_owner`).
+    #[must_use]
+    pub fn reads_as_vault_owner(&self) -> bool {
+        self.owner.is_some()
     }
 
     /// This key, bound to the credential it was presented with: every read
@@ -332,6 +360,22 @@ impl ScopedReadActorKey {
         self
     }
 
+    /// Read for a caller at `locality`. A caller off this device reads no
+    /// row a device-local world keeps here, whatever its credential grants:
+    /// DEC-0005 gives the owner's own devices, not the owner, a ceiling over
+    /// those worlds. The ceiling only narrows: once off the device, a key
+    /// never reads on it again.
+    #[must_use]
+    pub fn at(mut self, locality: CallerLocality) -> Self {
+        self.off_device |= locality == CallerLocality::OffDevice;
+        self
+    }
+
+    /// Whether this key reads for a caller off this device.
+    pub(crate) fn off_device(&self) -> bool {
+        self.off_device
+    }
+
     /// Attach the authenticated principal. An unbound delegated caller has no grants.
     #[must_use]
     pub fn require_access_grants(mut self, principal_ref: Option<EntityId>) -> Self {
@@ -343,14 +387,28 @@ impl ScopedReadActorKey {
     /// A vault-internal reader (the Dreamer), or a credential's holder other
     /// than the owner, under the delegated relationship gate: a row that
     /// names a relationship or a private scope passes only on this
-    /// principal's live grants. A row that names neither is the vault's own
-    /// and stays readable, where a delegated key refuses every such MESSAGE
-    /// or SUMMARY.
+    /// principal's live grants, and a holder with no principal has none. A
+    /// row that names neither is the vault's own and stays readable, where a
+    /// delegated key refuses every such MESSAGE or SUMMARY.
     #[must_use]
-    pub(crate) fn require_relationship_grants(self, principal_ref: EntityId) -> Self {
+    pub(crate) fn require_relationship_grants(self, principal_ref: Option<EntityId>) -> Self {
         Self {
             unscoped_rows_open: true,
-            ..self.require_access_grants(Some(principal_ref))
+            ..self.require_access_grants(principal_ref)
+        }
+    }
+
+    /// A narrower credential of the vault owner's: it reads a relationship's
+    /// rows as the owner does only while `owner` is still the vault's bound
+    /// owner in the read's own snapshot, so a lane kept past a revocation
+    /// loses the exemption with the binding. Otherwise it reads under the gate
+    /// any other holder's key does ([`Self::require_relationship_grants`]).
+    /// It never takes the owner's floor.
+    #[must_use]
+    pub(crate) fn exempt_while_owner(self, owner: EntityId) -> Self {
+        Self {
+            owner_exemption: Some(owner),
+            ..self.require_relationship_grants(Some(owner))
         }
     }
 

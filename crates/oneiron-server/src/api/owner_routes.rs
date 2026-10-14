@@ -432,7 +432,10 @@ async fn pending_runs(
     State(server): State<Arc<SyncServer>>,
 ) -> OwnerReply<Vec<runs::PendingRun>> {
     owner(&auth, &server)?;
-    Ok(Json(blocking(move || runs::pending(server.vault())).await?))
+    let locality = auth.locality();
+    Ok(Json(
+        blocking(move || runs::pending(server.vault(), locality)).await?,
+    ))
 }
 
 /// A run, named by its id or by its `run_ref`, never one field read as both.
@@ -450,9 +453,10 @@ async fn review_run(
 ) -> OwnerReply<runs::RunReview> {
     let owner = owner(&auth, &server)?;
     let query = query_params(query)?;
+    let locality = auth.locality();
     let review = blocking(move || {
         let run = runs::RunName::from_fields(query.run_id.as_deref(), query.run_ref.as_deref())?;
-        runs::review(server.vault(), &owner, run)
+        runs::review(server.vault(), &owner, run, locality)
     })
     .await?;
     Ok(Json(review))
@@ -491,10 +495,18 @@ async fn decide_run(
 ) -> OwnerReply<runs::RunResolved> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
+    let locality = auth.locality();
     let resolved = blocking(move || {
         let run =
             runs::RunName::from_fields(request.run_id.as_deref(), request.run_ref.as_deref())?;
-        runs::resolve(server.vault(), &owner, run, &request.bundle_id, action)
+        runs::resolve(
+            server.vault(),
+            &owner,
+            run,
+            &request.bundle_id,
+            action,
+            locality,
+        )
     })
     .await?;
     Ok(Json(resolved))
@@ -599,7 +611,9 @@ async fn preview_persona(
 ) -> OwnerReply<persona::Preview> {
     owner(&auth, &server)?;
     let query = query_params(query)?;
-    let preview = blocking(move || persona::preview(server.vault(), &query.subject)).await?;
+    let locality = auth.locality();
+    let preview =
+        blocking(move || persona::preview(server.vault(), &query.subject, locality)).await?;
     Ok(Json(preview))
 }
 
@@ -610,7 +624,9 @@ async fn export_persona(
 ) -> OwnerReply<persona::Exported> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let exported = blocking(move || persona::export(server.vault(), &owner, &request)).await?;
+    let locality = auth.locality();
+    let exported =
+        blocking(move || persona::export(server.vault(), &owner, &request, locality)).await?;
     Ok(Json(exported))
 }
 
@@ -700,10 +716,10 @@ async fn read_graph_fs(
 ) -> OwnerReply<graph_fs::GraphFsReply> {
     owner(&auth, &server)?;
     // The owner's own scoped read: the tree is what the owner's slip reads.
-    let reader = auth
+    let proof = auth
         .verified_slip()
-        .and_then(oneiron::claim::ScopedReadActorKey::from_verified_slip)
         .ok_or_else(|| ApiError::forbidden_scope("owner"))?;
+    let reader = super::credential_read_key(server.vault(), proof)?.at(auth.locality());
     let query = query_params(query)?;
     let reply = blocking(move || graph_fs::run(server.vault(), reader, &query)).await?;
     Ok(Json(reply))

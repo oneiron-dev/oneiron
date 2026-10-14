@@ -68,6 +68,7 @@
       "name": "cancel",
       "input": "TaskRequest",
       "output": "crate::task_verb::TaskCancelReceipt",
+      "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
       "call": "memory.cancel(crate::task_verb::TaskCancelTarget::Task(crate::EntityId::from_hex(&input.task_ref)?))?",
       "scope": "Write",
       "proposes": true,
@@ -102,6 +103,7 @@
       "name": "describe",
       "input": "DescribeRequest",
       "output": "crate::task_verb::TaskDescription",
+      "mcp_served": "input.task_ref.as_deref().and_then(|id| oneiron::EntityId::from_hex(id).ok())",
       "call": "if input.self_target { Err(MemoryError::bad_request(\"describe(self) requires a bound run session\"))? } else { memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)? }",
       "scope": "Read",
       "mcp_fields": {
@@ -161,6 +163,7 @@
       "name": "tasks.update",
       "input": "TaskRequest",
       "output": "crate::task_verb::TaskUpdateReceipt",
+      "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
       "call": "memory.tasks_update(crate::EntityId::from_hex(&input.task_ref)?)?",
       "scope": "Write",
       "mcp_scope": "addressed",
@@ -217,6 +220,7 @@
         "validate": "crate::memory::caps::check_claim_input(&input)?;"
       },
       "section": false,
+      "mcp_served_output": "[Some(output.claim_short_id.as_str()), output.superseded_short_id.as_deref()].into_iter().flatten().filter_map(|reference| oneiron::memory::resolve_entity_ref(&server.vault, reference).ok())",
       "binding": {
         "args": [
           {
@@ -333,6 +337,7 @@
       "name": "receipts",
       "input": "ReceiptsRequest",
       "output": "Vec<crate::memory::MemoryReceipt>",
+      "mcp_served_output": "output.iter().filter_map(|receipt| receipt.claim_ref.as_deref()).filter_map(|id| oneiron::EntityId::from_hex(id).ok())",
       "call": "memory.receipts(input.limit.unwrap_or(100))?",
       "scope": "Read",
       "admission": {
@@ -368,7 +373,7 @@
       "output": "Option<crate::memory::KeyValueItem>",
       "call": "memory.key_value_get(&input)?",
       "scope": "Read",
-      "admission": {},
+      "admission": {"unrestricted_record_scope": true},
       "section": false,
       "binding": {
         "wire": "json",
@@ -449,7 +454,7 @@
       "output": "Vec<crate::memory::KeyValueItem>",
       "call": "memory.key_value_search(&input)?",
       "scope": "Read",
-      "admission": {},
+      "admission": {"unrestricted_record_scope": true},
       "section": false,
       "binding": {
         "wire": "json",
@@ -478,7 +483,7 @@
       "output": "Vec<Vec<String>>",
       "call": "memory.key_value_namespaces(&input)?",
       "scope": "Read",
-      "admission": {},
+      "admission": {"unrestricted_record_scope": true},
       "section": false,
       "binding": {
         "wire": "json",
@@ -504,6 +509,7 @@
       "output": "crate::task_verb::TaskAskPreflight",
       "call": "memory.tasks_can_ask(&input.ask)?",
       "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
       "section": false,
       "binding": {
         "wire": "json",
@@ -524,8 +530,10 @@
       "name": "peek",
       "input": "crate::task_verb::TaskAskHandle",
       "output": "Vec<crate::task_verb::TaskAskPersonEvidence>",
+      "mcp_served": "[input.group_ref]",
       "call": "memory.tasks_ask_peek(input)?",
       "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
       "section": false,
       "binding": {
         "wire": "json",
@@ -558,6 +566,7 @@
       "name": "tasks.wait",
       "input": "crate::task_verb::sdk::TaskWaitRequest",
       "output": "crate::task_verb::TaskAskWait",
+      "mcp_served": "[input.handle.group_ref]",
       "call": "memory.tasks_wait(input.handle, Some(&input.step_key))?",
       "scope": "Write",
       "mcp_fields": {
@@ -570,6 +579,7 @@
       "name": "tasks.answer",
       "input": "crate::task_verb::sdk::TaskAnswerRequest",
       "output": "crate::task_verb::TaskAskAnswer",
+      "mcp_served": "[input.handle.group_ref]",
       "call": "memory.tasks_answer(&input.handle, &input.word)?",
       "scope": "Write",
       "mcp_fields": {
@@ -582,8 +592,11 @@
       "name": "tasks.outcomes",
       "input": "crate::task_verb::TaskAskHandle",
       "output": "Vec<crate::llm::decision::questions::CalibrationPair>",
+      "mcp_served": "[input.group_ref]",
+      "mcp_served_output": "output.iter().flat_map(|pair| pair.derived_from.iter().copied())",
       "call": "memory.tasks_ask_outcomes(&input)?",
       "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
       "mcp_fields": {
         "spec": "$"
       },

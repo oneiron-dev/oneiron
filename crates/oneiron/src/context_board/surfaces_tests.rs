@@ -64,7 +64,13 @@ fn a_restored_checkpoint_cannot_push_the_rider_past_the_row_byte_limit() {
         ..ChangedLine::default()
     };
     session
-        .fold_own_changes(&vault, Some(id(7)), &mut line, 16)
+        .fold_own_changes(
+            &vault,
+            Some(id(7)),
+            crate::claim::CallerLocality::OnDevice,
+            &mut line,
+            16,
+        )
         .unwrap();
     assert!(!line.events.is_empty());
     let rows = line.render();
@@ -150,7 +156,13 @@ fn a_refused_later_write_never_answers_for_a_settled_proposal() -> crate::Result
     }))
     .unwrap();
     let mut line = ChangedLine::default();
-    session.fold_own_changes(&vault, Some(id(7)), &mut line, 16)?;
+    session.fold_own_changes(
+        &vault,
+        Some(id(7)),
+        crate::claim::CallerLocality::OnDevice,
+        &mut line,
+        16,
+    )?;
     let [ChangedEvent::Proposal { change, .. }] = line.events.as_slice() else {
         panic!("one settled proposal rides: {:?}", line.events);
     };
@@ -217,7 +229,13 @@ fn an_outcome_delivered_past_a_full_watch_rides_once_per_submission() -> crate::
     };
     let wake = |session: &mut SessionReadSet| -> crate::Result<usize> {
         let mut line = ChangedLine::default();
-        session.fold_own_changes(&vault, Some(actor), &mut line, 16)?;
+        session.fold_own_changes(
+            &vault,
+            Some(actor),
+            crate::claim::CallerLocality::OnDevice,
+            &mut line,
+            16,
+        )?;
         session.acknowledge(&line);
         Ok(line.events.len())
     };

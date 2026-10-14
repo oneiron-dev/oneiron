@@ -21,8 +21,10 @@ impl Memory<'_> {
         let effective = input.effective(
             &holders.iter().copied().collect(),
             now,
-            self.ask_class_in_txn(&txn, input.task_ref)?,
+            self.ask_class_in_txn(&txn, input.task_ref)?
+                .map(|(_, class)| class),
         )?;
+        self.ask_question_in(&txn, &effective.what)?;
         if super::rate_limit::task_actor_ceiling(
             self.vault(),
             &txn,
@@ -76,6 +78,7 @@ impl Memory<'_> {
                     reference.entity_ref(),
                 )?;
             }
+            let mut vetoes = Vec::new();
             let route = match super::ask_facade::ask_assignee(&effective.who, actor, kind) {
                 super::TaskAssignee::Human { actor_ref } => {
                     crate::human_task::resolve_native_human_route_for_actor_in(
@@ -83,11 +86,14 @@ impl Memory<'_> {
                         &txn,
                         actor_ref,
                         self.actor(),
+                        &mut vetoes,
                     )
                     .ok()
                 }
                 _ => None,
             };
+            // A standing veto that took the route decides what is read.
+            self.produced_from(vetoes);
             let face = match &route {
                 Some(route) => self
                     .vault()
@@ -108,5 +114,19 @@ impl Memory<'_> {
             });
         }
         Ok(TaskAskPreflight { recipients })
+    }
+
+    /// Reads an ask's question and context rows as the ask reads them: each
+    /// is listed as a producer of what the call answers, and off this device
+    /// one a device-local world keeps reads as no row (DEC-0005).
+    pub(super) fn ask_question_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        what: &TaskAskQuestion,
+    ) -> MemoryResult<()> {
+        for row in std::iter::once(what.reference).chain(what.context_refs.iter().copied()) {
+            self.read_producer_in(txn, row.entity_ref())?;
+        }
+        Ok(())
     }
 }

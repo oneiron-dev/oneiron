@@ -149,6 +149,7 @@ impl CoreAuth {
             // Local host proofs have no caveats. Their logged mint id is stable.
             instrument: Some(claims.slip_id),
             verified_slip: Some(verified),
+            locality: CallerLocality::OffDevice,
         })
     }
     /// An adapter without record-Scope enforcement cannot accept a narrowed
@@ -191,21 +192,25 @@ impl CoreAuth {
         Ok(())
     }
     /// May this credential read `id`? A verified slip reads through the
-    /// actor-scoped lane its own proof builds, so its policy floor applies on
-    /// every route. A credential with no verified slip is the owner's server
-    /// secret and reads every entity.
+    /// actor-scoped lane its own proof builds (the engine's one credential
+    /// key), so its policy floor and relationship grants apply on every
+    /// route. A credential with no verified slip is the owner's server secret
+    /// and reads every entity, but for one a device-local world keeps from a
+    /// caller off this device (DEC-0005).
     pub(crate) fn can_read_entity(
         &self,
         vault: &oneiron::Vault,
         id: &oneiron::EntityId,
     ) -> oneiron::Result<bool> {
         let Some(proof) = self.verified_slip() else {
-            return Ok(true);
+            return Ok(self.locality == CallerLocality::OnDevice || !vault.device_local_keeps(id)?);
         };
-        let Some(key) = oneiron::claim::ScopedReadActorKey::from_verified_slip(proof) else {
+        let Some(key) = vault.credential_read_key(proof)? else {
             return Ok(false);
         };
-        vault.scoped_read(key).is_entity_readable(id)
+        vault
+            .scoped_read(key.at(self.locality))
+            .is_entity_readable(id)
     }
     pub(crate) fn credential_is_live_in_write_txn(
         &self,

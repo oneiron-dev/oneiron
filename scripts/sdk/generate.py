@@ -295,7 +295,7 @@ def mcp_input_dispatch(row):
     name, method = row['name'], row['name'].replace('.', '_')
     decode = f'let input: {rust_type(row["input"])} = serde_json::from_value(input).map_err(|_| invalid())?;\n'
     if row.get('context') == 'board':
-        return f'{json.dumps(name)} => {{\n{decode}execute_mcp_board_verb(server, actor, |context| oneiron::task_verb::sdk::{method}(context, input)).await }},\n'
+        return f'{json.dumps(name)} => {{\n{decode}execute_mcp_board_verb(server, actor, served, |context| oneiron::task_verb::sdk::{method}(context, input)).await }},\n'
     body = ''
     if name == 'describe':
         # describe(self) renders the authenticated run brief, the same door REST takes.
@@ -313,12 +313,15 @@ def mcp_input_dispatch(row):
                  'if !auth.is_owner_grade() { return Err(McpGatewayError::new(-32020, "forbidden", "full-vault export requires owner authority")); }\n'
                  f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
                  'let proof = auth.verified_slip().ok_or_else(|| McpGatewayError::new(-32020, "forbidden", "full-vault export requires verified owner authority"))?;\n'
-                 'let output = if proof.claims().holder_ref == "host" { server.vault.export_with_verified_host_owner(&input, proof) } else { memory.export_with_verified_owner(&input, proof) }.map_err(mcp_facade_error)?;\n')
+                 'let output = if proof.claims().holder_ref == "host" { server.vault.export_with_verified_host_owner(&input, proof, actor.locality()) } else { memory.export_with_verified_owner(&input, proof) }.map_err(mcp_facade_error)?;\n')
     elif row.get('server_door'):
         # A server door runs the verb with the host's execution inputs, as on REST.
         body += (f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
                  'let proof = actor.auth.as_ref().and_then(crate::auth::CoreAuth::verified_slip).cloned();\n'
-                 f'let output = server.{row["server_door"]}(actor.actor_ref, actor.actor_class, proof, None, input).await.map_err(mcp_facade_error)?;\n')
+                 f'let (output, listed) = server.{row["server_door"]}_listing(actor.actor_ref, actor.actor_class, proof, actor.locality(), None, input).await;\n'
+                 '// Derived from these rows too, though it names none of them.\n'
+                 'served.extend(listed);\n'
+                 'let output = output.map_err(mcp_facade_error)?;\n')
     else:
         body += decode
         if name == 'describe':
@@ -327,10 +330,15 @@ def mcp_input_dispatch(row):
                      '    // The section is narrowed to this credential before its\n'
                      "    // render cap, so its counts are the credential's rows alone.\n"
                      '    let rows = memory.describe_rows().map_err(mcp_facade_error)?;\n'
-                     '    let (value, source) = mcp_tasks_section(server, actor, rows)?;\n'
+                     '    let (value, source) = mcp_tasks_section(server, actor, rows, served)?;\n'
                      '    return Ok((value, source, McpCarrierPolicy::Drain, None));\n'
                      '}\n')
+        if 'mcp_served' in row:
+            # The rows the verb reads by name: a continuation of its result is released only while they may leave.
+            body += f'served.extend({row["mcp_served"]});\n'
         body += f'let output = oneiron::task_verb::sdk::{method}(&memory, input).map_err(mcp_facade_error)?;\n'
+        if 'mcp_served_output' in row:
+            body += f'served.extend({row["mcp_served_output"]});\n'
     if row.get('lands_turn'):
         body += 'server.ai.turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);\n'
     if 'mcp_result' in row:
@@ -353,9 +361,10 @@ async fn execute_mcp_agent_verb(
         server: &Arc<SyncServer>,
         args: &McpVerbToolArgs,
         actor: &McpCallContext,
+        served: &mut Vec<oneiron::EntityId>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
         let input = mcp_agent_verb_input(args.tool.name, &args.payload.arguments)?;
-        execute_agent_verb_input(server, args.tool.name, input, actor, None).await
+        execute_agent_verb_input(server, args.tool.name, input, actor, None, served).await
     }
 
 fn mcp_agent_verb_input(tool: &str, a: &crate::mcp::McpVerbArguments) -> Result<Value, McpGatewayError> {
@@ -371,19 +380,39 @@ pub(crate) fn mcp_agent_verb_arguments(tool: &str, input: &Value) -> Result<crat
 /// gate every other door applies. Every MCP door reaches the verb table here.
 /// The input names only fields the verb's advertised closed schema lists, and
 /// a code-mode call's claims are written under its run's host `origin`.
+/// Every row the result was derived from is listed in `served`: those its
+/// input names, and those the verb's reads picked themselves.
 pub(crate) async fn execute_agent_verb_input(
         server: &Arc<SyncServer>,
         tool: &str,
         input: Value,
         actor: &McpCallContext,
         origin: Option<oneiron::memory::HostWriteOrigin>,
+        served: &mut Vec<oneiron::EntityId>,
+    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
+        let producers = oneiron::memory::ProducerRows::default();
+        let produced = execute_agent_verb_listing(server, tool, input, actor, origin, &producers, served).await;
+        served.extend(producers.take());
+        produced
+    }
+
+/// [`execute_agent_verb_input`], its surface listing in `producers` the rows
+/// its reads pick.
+async fn execute_agent_verb_listing(
+        server: &Arc<SyncServer>,
+        tool: &str,
+        input: Value,
+        actor: &McpCallContext,
+        origin: Option<oneiron::memory::HostWriteOrigin>,
+        producers: &oneiron::memory::ProducerRows,
+        served: &mut Vec<oneiron::EntityId>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''
     result += invalid + '''if let Some(field) = crate::mcp::verb_input_unknown_field(tool, &input) {
         return Err(McpGatewayError::new(-32602, "tool_args_invalid", format!("{tool} input names unknown field `{field}`")));
     }
     // A narrowed connector's TASKs are born in its own world and facet.
-    let memory = server.vault.memory(actor.actor_ref, actor.actor_class).with_birth_position(actor.scope.birth_position());
+    let memory = crate::api::credential_memory(&server.vault, actor.auth.as_ref(), actor.actor_ref, actor.actor_class).at(actor.locality()).with_birth_position(actor.scope.birth_position()).listing_producers(producers);
     let memory = match origin { Some(origin) => memory.with_host_origin(origin), None => memory };
     match tool {
 '''
@@ -483,10 +512,10 @@ def outputs():
                 let input: oneiron::memory::ExportOptions = facade_input(value)?;
                 let proof = auth.verified_slip().ok_or_else(|| FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]))?;
                 let output = if proof.claims().holder_ref == "host" {{
-                    server.vault.export_with_verified_host_owner(&input, proof)?
+                    server.vault.export_with_verified_host_owner(&input, proof, auth.locality())?
                 }} else {{
                     let (actor, class) = facade_actor(&auth)?;
-                    server.vault.memory(actor, class).export_with_verified_owner(&input, proof)?
+                    server.vault.memory(actor, class).at(auth.locality()).export_with_verified_owner(&input, proof)?
                 }};
                 Ok(Json(serde_json::to_value(output).map_err(|_| FacadeApiError::new(
                     StatusCode::INTERNAL_SERVER_ERROR, MEMORY_CODE_INTERNAL,
@@ -496,7 +525,7 @@ def outputs():
             continue
         # `readable` names the credential read checks: each caller-named ref is
         # refused before the engine call, and `rows` filters the typed result.
-        guard, result = '', f'facade_invoke(&server, &headers, actor, class, "{r["name"]}", value)?'
+        guard, result = '', f'facade_invoke(&server, &headers, &auth, actor, class, "{r["name"]}", value)?'
         readables = r.get('admission', {}).get('readable', [])
         # A room turn refuses an unserved verb before any credential lookup,
         # so the refusal says nothing about the target the lookup would read.
@@ -506,13 +535,13 @@ def outputs():
             guard += f'facade_room_turn_serves(&headers, "{r["name"]}", oneiron::memory::RoomTurnHandle::serves("{r["name"]}"))?;'
         for readable in readables:
             if readable == 'rows':
-                result = f'facade_readable_task_rows(&server.vault, &auth, oneiron::task_verb::sdk::{method}(&server.vault.memory(actor,class), facade_input(value)?)?)?'
+                result = f'facade_readable_task_rows(&server.vault, &auth, oneiron::task_verb::sdk::{method}(&credential_memory(&server.vault, Some(&auth), actor, class).at(auth.locality()), facade_input(value)?)?)?'
             else:
                 guard += f'facade_admit_readable_ref(&server.vault, &auth, &value, "{readable}")?;'
         # A server door runs the verb with the host's execution inputs, off the
         # runtime, inside the room turn the request names, if any.
         if r.get('server_door'):
-            result = f'facade_output(server.{r["server_door"]}(actor, class, auth.verified_slip().cloned(), facade_room_turn(&headers)?, facade_input(value)?).await?)?'
+            result = f'facade_output(server.{r["server_door"]}(actor, class, auth.verified_slip().cloned(), auth.locality(), facade_room_turn(&headers)?, facade_input(value)?).await?)?'
         # The typed result path consumes facade_input; invoke decodes its own input.
         validation = (f'oneiron::task_verb::sdk::validate_input("{r["name"]}", &value)?;\n         '
                       if 'rows' in r.get('admission', {}).get('readable', []) or r.get('server_door') else '')

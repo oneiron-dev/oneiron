@@ -2,8 +2,8 @@
 
 use super::{
     McpCallContext, McpCarrierPolicy, McpGatewayError, execute_mcp_board_verb, mcp_current_board,
-    mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page, mcp_request_id,
-    mcp_resolve_page, mcp_scoped_tasks_section,
+    mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page, mcp_release_result,
+    mcp_request_id, mcp_resolve_page, mcp_scoped_tasks_section,
 };
 use crate::error::{ApiError, ApiErrorDetails, ErrorCode};
 use crate::mcp::McpActorClass;
@@ -21,8 +21,9 @@ fn mcp_tasks_section(
     server: &Arc<SyncServer>,
     actor: &McpResolvedActor,
     rows: oneiron::context_board::TasksSectionRows,
+    served: &mut Vec<oneiron::EntityId>,
 ) -> Result<(Value, crate::mcp::McpPageSource), McpGatewayError> {
-    let (section, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows)?;
+    let (section, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows, served)?;
     // The footer type is `oneiron::context_board::tasks::TasksOverflow`,
     // whose module is private and which `context_board` does not
     // re-export, so the method item cannot be named from this crate.
@@ -134,6 +135,7 @@ pub(crate) async fn execute_mcp_generated_verb(
         continuable,
     )
     .await?;
+    let mut served = Vec::new();
     let (mut output, health, carrier, snapshot, producer_epoch) =
         if let Some(continuation) = dispatch.continuation.as_ref() {
             let snapshot = continuation.snapshot.clone().ok_or_else(|| {
@@ -152,8 +154,9 @@ pub(crate) async fn execute_mcp_generated_verb(
             )
         } else {
             let (output, source, carrier, producer_epoch) = if args.tool.memory_method().is_some() {
-                let (output, capabilities) =
+                let (output, capabilities, producers) =
                     super::memory_response::execute(server, &args, actor).await?;
+                served.extend(producers);
                 // One native response, with its own bounded query/batch
                 // semantics. Do not invent an MCP cursor over nested DTOs.
                 (
@@ -175,8 +178,16 @@ pub(crate) async fn execute_mcp_generated_verb(
                 } else {
                     None
                 };
-                let (output, source, carrier, epoch) =
-                    execute_mcp_agent_verb(server, &args, actor).await?;
+                let produced = execute_mcp_agent_verb(server, &args, actor, &mut served).await;
+                // A refusal is released by the rows its verb served first.
+                let (output, source, carrier, epoch) = produced.map_err(|error| {
+                    super::device_release::mcp_release_error(
+                        server,
+                        actor,
+                        Some(served.as_slice()),
+                        error,
+                    )
+                })?;
                 (output, source, carrier, epoch.or(task_epoch))
             };
             let snapshot = McpPageSnapshot {
@@ -184,6 +195,7 @@ pub(crate) async fn execute_mcp_generated_verb(
                 source,
                 health: source.health(),
                 keyframe: None,
+                rows: served,
             };
             (output, source.health(), carrier, snapshot, producer_epoch)
         };
@@ -213,14 +225,16 @@ pub(crate) async fn execute_mcp_generated_verb(
             args.payload.cache,
         ),
     });
-    Ok(mcp_endpoint_result(
+    let continued = dispatch.continuation.is_some();
+    let result = mcp_endpoint_result(
         server,
         actor,
         format!("{} completed", args.tool.name),
         structured,
         carrier,
     )
-    .await)
+    .await;
+    mcp_release_result(server, actor, &snapshot.rows, continued, result)
 }
 
 /// Caps whichever row array this verb result pages over, in place.
@@ -252,19 +266,23 @@ pub(crate) fn mcp_scoped_read<'a>(
     vault: &'a oneiron::Vault,
     actor: &McpResolvedActor,
 ) -> Result<oneiron::claim::ScopedRead<'a>, McpGatewayError> {
-    let key = actor
+    let refused = || {
+        McpGatewayError::new(
+            -32001,
+            "mcp_auth_required",
+            "scoped reads require the authenticated connector proof",
+        )
+    };
+    let proof = actor
         .auth
         .as_ref()
         .and_then(crate::auth::CoreAuth::verified_slip)
-        .and_then(oneiron::claim::ScopedReadActorKey::from_verified_slip)
-        .ok_or_else(|| {
-            McpGatewayError::new(
-                -32001,
-                "mcp_auth_required",
-                "scoped reads require the authenticated connector proof",
-            )
-        })?;
-    Ok(vault.scoped_read(key))
+        .ok_or_else(refused)?;
+    let key = vault
+        .credential_read_key(proof)
+        .map_err(|error| McpGatewayError::new(-32603, "engine_error", error.to_string()))?
+        .ok_or_else(refused)?;
+    Ok(vault.scoped_read(key.at(actor.locality())))
 }
 
 pub(crate) fn mcp_actor_result(actor: &McpResolvedActor) -> Value {
@@ -421,6 +439,7 @@ async fn execute_mcp_agent_verb(
     server: &Arc<SyncServer>,
     args: &McpVerbToolArgs,
     actor: &McpCallContext,
+    served: &mut Vec<oneiron::EntityId>,
 ) -> Result<
     (
         Value,
@@ -431,7 +450,7 @@ async fn execute_mcp_agent_verb(
     McpGatewayError,
 > {
     let input = mcp_agent_verb_input(args.tool.name, &args.payload.arguments)?;
-    execute_agent_verb_input(server, args.tool.name, input, actor, None).await
+    execute_agent_verb_input(server, args.tool.name, input, actor, None, served).await
 }
 
 fn mcp_agent_verb_input(
@@ -786,12 +805,41 @@ pub(crate) fn mcp_agent_verb_arguments(
 /// gate every other door applies. Every MCP door reaches the verb table here.
 /// The input names only fields the verb's advertised closed schema lists, and
 /// a code-mode call's claims are written under its run's host `origin`.
+/// Every row the result was derived from is listed in `served`: those its
+/// input names, and those the verb's reads picked themselves.
 pub(crate) async fn execute_agent_verb_input(
     server: &Arc<SyncServer>,
     tool: &str,
     input: Value,
     actor: &McpCallContext,
     origin: Option<oneiron::memory::HostWriteOrigin>,
+    served: &mut Vec<oneiron::EntityId>,
+) -> Result<
+    (
+        Value,
+        crate::mcp::McpPageSource,
+        McpCarrierPolicy,
+        Option<u64>,
+    ),
+    McpGatewayError,
+> {
+    let producers = oneiron::memory::ProducerRows::default();
+    let produced =
+        execute_agent_verb_listing(server, tool, input, actor, origin, &producers, served).await;
+    served.extend(producers.take());
+    produced
+}
+
+/// [`execute_agent_verb_input`], its surface listing in `producers` the rows
+/// its reads pick.
+async fn execute_agent_verb_listing(
+    server: &Arc<SyncServer>,
+    tool: &str,
+    input: Value,
+    actor: &McpCallContext,
+    origin: Option<oneiron::memory::HostWriteOrigin>,
+    producers: &oneiron::memory::ProducerRows,
+    served: &mut Vec<oneiron::EntityId>,
 ) -> Result<
     (
         Value,
@@ -816,10 +864,15 @@ pub(crate) async fn execute_agent_verb_input(
         ));
     }
     // A narrowed connector's TASKs are born in its own world and facet.
-    let memory = server
-        .vault
-        .memory(actor.actor_ref, actor.actor_class)
-        .with_birth_position(actor.scope.birth_position());
+    let memory = crate::api::credential_memory(
+        &server.vault,
+        actor.auth.as_ref(),
+        actor.actor_ref,
+        actor.actor_class,
+    )
+    .at(actor.locality())
+    .with_birth_position(actor.scope.birth_position())
+    .listing_producers(producers);
     let memory = match origin {
         Some(origin) => memory.with_host_origin(origin),
         None => memory,
@@ -828,7 +881,7 @@ pub(crate) async fn execute_agent_verb_input(
         "board.expand" => {
             let input: oneiron::task_verb::sdk::BoardExpandRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            execute_mcp_board_verb(server, actor, |context| {
+            execute_mcp_board_verb(server, actor, served, |context| {
                 oneiron::task_verb::sdk::board_expand(context, input)
             })
             .await
@@ -836,7 +889,7 @@ pub(crate) async fn execute_agent_verb_input(
         "board.refresh" => {
             let input: oneiron::task_verb::sdk::BoardRefreshRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            execute_mcp_board_verb(server, actor, |context| {
+            execute_mcp_board_verb(server, actor, served, |context| {
                 oneiron::task_verb::sdk::board_refresh(context, input)
             })
             .await
@@ -844,7 +897,7 @@ pub(crate) async fn execute_agent_verb_input(
         "board.subscribe" => {
             let input: oneiron::task_verb::sdk::BoardSubscriptionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            execute_mcp_board_verb(server, actor, |context| {
+            execute_mcp_board_verb(server, actor, served, |context| {
                 oneiron::task_verb::sdk::board_subscribe(context, input)
             })
             .await
@@ -852,7 +905,7 @@ pub(crate) async fn execute_agent_verb_input(
         "board.unsubscribe" => {
             let input: oneiron::task_verb::sdk::BoardSubscriptionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            execute_mcp_board_verb(server, actor, |context| {
+            execute_mcp_board_verb(server, actor, served, |context| {
                 oneiron::task_verb::sdk::board_unsubscribe(context, input)
             })
             .await
@@ -860,6 +913,7 @@ pub(crate) async fn execute_agent_verb_input(
         "cancel" => {
             let input: oneiron::task_verb::sdk::TaskRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend(oneiron::EntityId::from_hex(&input.task_ref).ok());
             let output =
                 oneiron::task_verb::sdk::cancel(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
@@ -882,9 +936,15 @@ pub(crate) async fn execute_agent_verb_input(
                 // The section is narrowed to this credential before its
                 // render cap, so its counts are the credential's rows alone.
                 let rows = memory.describe_rows().map_err(mcp_facade_error)?;
-                let (value, source) = mcp_tasks_section(server, actor, rows)?;
+                let (value, source) = mcp_tasks_section(server, actor, rows, served)?;
                 return Ok((value, source, McpCarrierPolicy::Drain, None));
             }
+            served.extend(
+                input
+                    .task_ref
+                    .as_deref()
+                    .and_then(|id| oneiron::EntityId::from_hex(id).ok()),
+            );
             let output =
                 oneiron::task_verb::sdk::describe(&memory, input).map_err(mcp_facade_error)?;
             let (value, source) = mcp_describe_result(output)?;
@@ -901,6 +961,7 @@ pub(crate) async fn execute_agent_verb_input(
         "tasks.update" => {
             let input: oneiron::task_verb::sdk::TaskRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend(oneiron::EntityId::from_hex(&input.task_ref).ok());
             let output =
                 oneiron::task_verb::sdk::tasks_update(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
@@ -922,6 +983,17 @@ pub(crate) async fn execute_agent_verb_input(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output =
                 oneiron::task_verb::sdk::claim_upsert(&memory, input).map_err(mcp_facade_error)?;
+            served.extend(
+                [
+                    Some(output.claim_short_id.as_str()),
+                    output.superseded_short_id.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                .filter_map(|reference| {
+                    oneiron::memory::resolve_entity_ref(&server.vault, reference).ok()
+                }),
+            );
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -934,10 +1006,19 @@ pub(crate) async fn execute_agent_verb_input(
                 .as_ref()
                 .and_then(crate::auth::CoreAuth::verified_slip)
                 .cloned();
-            let output = server
-                .recall_off_runtime(actor.actor_ref, actor.actor_class, proof, None, input)
-                .await
-                .map_err(mcp_facade_error)?;
+            let (output, listed) = server
+                .recall_off_runtime_listing(
+                    actor.actor_ref,
+                    actor.actor_class,
+                    proof,
+                    actor.locality(),
+                    None,
+                    input,
+                )
+                .await;
+            // Derived from these rows too, though it names none of them.
+            served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -961,7 +1042,9 @@ pub(crate) async fn execute_agent_verb_input(
                 )
             })?;
             let output = if proof.claims().holder_ref == "host" {
-                server.vault.export_with_verified_host_owner(&input, proof)
+                server
+                    .vault
+                    .export_with_verified_host_owner(&input, proof, actor.locality())
             } else {
                 memory.export_with_verified_owner(&input, proof)
             }
@@ -974,6 +1057,12 @@ pub(crate) async fn execute_agent_verb_input(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output =
                 oneiron::task_verb::sdk::receipts(&memory, input).map_err(mcp_facade_error)?;
+            served.extend(
+                output
+                    .iter()
+                    .filter_map(|receipt| receipt.claim_ref.as_deref())
+                    .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
+            );
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
@@ -1027,6 +1116,7 @@ pub(crate) async fn execute_agent_verb_input(
         "peek" => {
             let input: oneiron::task_verb::TaskAskHandle =
                 serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend([input.group_ref]);
             let output = oneiron::task_verb::sdk::peek(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -1042,6 +1132,7 @@ pub(crate) async fn execute_agent_verb_input(
         "tasks.wait" => {
             let input: oneiron::task_verb::sdk::TaskWaitRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend([input.handle.group_ref]);
             let output =
                 oneiron::task_verb::sdk::tasks_wait(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
@@ -1050,6 +1141,7 @@ pub(crate) async fn execute_agent_verb_input(
         "tasks.answer" => {
             let input: oneiron::task_verb::sdk::TaskAnswerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend([input.handle.group_ref]);
             let output =
                 oneiron::task_verb::sdk::tasks_answer(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
@@ -1058,8 +1150,14 @@ pub(crate) async fn execute_agent_verb_input(
         "tasks.outcomes" => {
             let input: oneiron::task_verb::TaskAskHandle =
                 serde_json::from_value(input).map_err(|_| invalid())?;
+            served.extend([input.group_ref]);
             let output = oneiron::task_verb::sdk::tasks_outcomes(&memory, input)
                 .map_err(mcp_facade_error)?;
+            served.extend(
+                output
+                    .iter()
+                    .flat_map(|pair| pair.derived_from.iter().copied()),
+            );
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }

@@ -137,7 +137,15 @@ fn outcome_horizon_field_mutation_privacy_and_reopen_are_rechecked() -> Result<(
             .tasks_ask_outcomes(&receipt.handle)
             .is_err()
     );
-    assert!(calibration_pairs(&vault, stranger, task)?.is_empty());
+    assert!(
+        calibration_pairs(
+            &vault,
+            stranger,
+            task,
+            crate::claim::CallerLocality::OnDevice
+        )?
+        .is_empty()
+    );
     assert!(read_question(&vault, stranger, task, None)?.is_none());
 
     // A label is immutable. Neither a different value nor different routing

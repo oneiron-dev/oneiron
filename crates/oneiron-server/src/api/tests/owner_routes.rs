@@ -493,9 +493,14 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
             "one",
         )
         .unwrap();
-    let bundle_id = runs::review(vault, &unbound, runs::RunName::Id(run))
-        .unwrap()
-        .bundle_id;
+    let bundle_id = runs::review(
+        vault,
+        &unbound,
+        runs::RunName::Id(run),
+        oneiron::claim::CallerLocality::OnDevice,
+    )
+    .unwrap()
+    .bundle_id;
 
     // Admitted at the door, then revoked before any act reaches the writer.
     let admitted = crate::api::owner_routes::owner(&auth, &server).expect("the owner is admitted");
@@ -548,13 +553,26 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
         oneiron::run_tree::GateConsentBundleAction::Decline,
     ] {
         let run = runs::RunName::Id(run);
-        refused_owner(runs::resolve(vault, &admitted, run, &bundle_id, action).unwrap_err());
+        refused_owner(
+            runs::resolve(
+                vault,
+                &admitted,
+                run,
+                &bundle_id,
+                action,
+                oneiron::claim::CallerLocality::OnDevice,
+            )
+            .unwrap_err(),
+        );
     }
     assert_eq!(
         vault.get_claim(&proposal).unwrap().unwrap().approval,
         oneiron::ClaimApprovalStatus::Proposed
     );
-    assert_eq!(runs::pending(vault).unwrap()[0].run_id, run);
+    assert_eq!(
+        runs::pending(vault, oneiron::claim::CallerLocality::OnDevice).unwrap()[0].run_id,
+        run
+    );
 
     // Cleanup review, persona export and off-record controls refuse the same
     // queued proof.
@@ -576,14 +594,22 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
     let cleanup_proposal = cleanup_run.proposal.unwrap().to_hex();
     refused_owner(cleanup::accept(vault, &admitted, &cleanup_proposal).unwrap_err());
     assert!(vault.archived_entity(&husk).unwrap().is_none());
-    let card = persona::preview(vault, &subject).unwrap();
+    let card = persona::preview(vault, &subject, oneiron::claim::CallerLocality::OnDevice).unwrap();
     let export = persona::ExportRequest {
         subject,
         stamp: card.stamp,
         strike: Vec::new(),
         unstrike: Vec::new(),
     };
-    refused_owner(persona::export(vault, &admitted, &export).unwrap_err());
+    refused_owner(
+        persona::export(
+            vault,
+            &admitted,
+            &export,
+            oneiron::claim::CallerLocality::OnDevice,
+        )
+        .unwrap_err(),
+    );
     let room: off_record::Enter = serde_json::from_value(
         json!({ "session_ref": "revoked-room", "mode": "off_record", "backend": "local" }),
     )

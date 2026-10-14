@@ -460,13 +460,14 @@ fn standing_comm_state_vetoes_an_otherwise_live_route() {
             "{veto}: the route is live before the veto"
         );
 
+        let unreachable = EntityId::now();
         if veto == "opt_out" {
             record_comm_inbound_stop(&vault, HUMAN_ADDRESS, "email", NOW).expect("record the STOP");
             run_comm_projector(&vault).expect("project the STOP into standing state");
         } else {
             vault
                 .put_claim(
-                    &EntityId::now(),
+                    &unreachable,
                     &CommClaimValue::ReachableVia {
                         party_ref: person,
                         channel_class: "email".to_owned(),
@@ -487,6 +488,24 @@ fn standing_comm_state_vetoes_an_otherwise_live_route() {
             ),
             "{veto}: the veto takes the channel away"
         );
+        // Sol R8 F4: the route read is derived from the veto, so a reader
+        // that lists its producers lists the veto (DEC-0005).
+        let txn = vault.store.env.read_txn().expect("read txn");
+        let mut vetoes = Vec::new();
+        assert!(
+            super::followup::resolve_native_human_route_with_sender_in(
+                &vault,
+                &txn,
+                person,
+                None,
+                &mut vetoes,
+            )
+            .is_err()
+        );
+        assert!(!vetoes.is_empty(), "{veto}");
+        if veto == "not_reachable" {
+            assert!(vetoes.contains(&unreachable), "{veto}: {vetoes:?}");
+        }
     }
 }
 

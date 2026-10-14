@@ -75,6 +75,32 @@ pub(super) fn restrict_principal_read_types(
 ) {
     use oneiron::federation::{Scope, ScopeAxis};
     use rmpv::Value as Mp;
+    let mut scope = Scope::top();
+    scope.verbs = ScopeAxis::Some(["read".to_owned()].into());
+    scope.bands = ScopeAxis::Some(allowed.iter().copied().collect());
+    let scope = rmp_serde::to_vec_named(&scope).unwrap();
+    let scope = rmpv::decode::read_value(&mut scope.as_slice()).unwrap();
+    edit_vault_policy(server, 200, |entries| {
+        entries.retain(|(key, _)| key.as_str() != Some("scoped_grants"));
+        entries.push((
+            Mp::from("scoped_grants"),
+            Mp::Array(vec![Mp::Map(vec![
+                (Mp::from("actor_ref"), Mp::from(principal.to_hex())),
+                (Mp::from("effector"), Mp::from("core:read")),
+                (Mp::from("scope"), scope),
+                (Mp::from("receipt_required"), Mp::Boolean(false)),
+            ])]),
+        ));
+    });
+}
+
+/// Rewrites the vault policy manifest as the owner, at `now`.
+pub(super) fn edit_vault_policy(
+    server: &SyncServer,
+    now: u64,
+    edit: impl FnOnce(&mut Vec<(rmpv::Value, rmpv::Value)>),
+) {
+    use rmpv::Value as Mp;
     let owner_ref = server.vault.ensure_embedded_owner_actor().unwrap();
     let owner = server
         .vault
@@ -104,26 +130,12 @@ pub(super) fn restrict_principal_read_types(
             }
         })
         .expect("the vault policy manifest");
-    entries.retain(|(key, _)| key.as_str() != Some("scoped_grants"));
-    let mut scope = Scope::top();
-    scope.verbs = ScopeAxis::Some(["read".to_owned()].into());
-    scope.bands = ScopeAxis::Some(allowed.iter().copied().collect());
-    let scope = rmp_serde::to_vec_named(&scope).unwrap();
-    let scope = rmpv::decode::read_value(&mut scope.as_slice()).unwrap();
-    entries.push((
-        Mp::from("scoped_grants"),
-        Mp::Array(vec![Mp::Map(vec![
-            (Mp::from("actor_ref"), Mp::from(principal.to_hex())),
-            (Mp::from("effector"), Mp::from("core:read")),
-            (Mp::from("scope"), scope),
-            (Mp::from("receipt_required"), Mp::Boolean(false)),
-        ])]),
-    ));
+    edit(&mut entries);
     let mut manifest = Vec::new();
     rmpv::encode::write_value(&mut manifest, &Mp::Map(entries)).unwrap();
     server
         .vault
-        .install_owner_policy_manifest(&owner, id, manifest, 200)
+        .install_owner_policy_manifest(&owner, id, manifest, now)
         .unwrap();
 }
 

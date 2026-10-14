@@ -37,12 +37,14 @@ pub mod caps;
 mod chat;
 mod claims;
 mod conversation_list;
+mod credential_key;
 mod dreamer;
 mod entity_delete;
 mod export;
 mod expression_preference;
 pub mod extraction;
 mod key_value;
+mod locality;
 mod machine_write;
 mod notes;
 mod outbound;
@@ -90,6 +92,7 @@ pub use key_value::{
     KeyValueAddress, KeyValueDeleteReceipt, KeyValueItem, KeyValueNamespaces, KeyValuePut,
     KeyValuePutReceipt, KeyValueSearch,
 };
+pub use locality::ProducerRows;
 pub use oneiron_contracts::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,
@@ -133,6 +136,7 @@ pub(crate) use witness::{MessageStreamRuntime, message_stream_finality_in_txn};
 pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;
+pub(crate) use credential_key::owner_exemption_holds_in_txn;
 pub(crate) use support::{
     facade_provenance, hard_deleted_refusal, verify_actor_binding, verify_actor_binding_in_txn,
     verify_deletion_authority_in_txn, verify_owner_actor_binding_in_txn,

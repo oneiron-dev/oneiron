@@ -118,3 +118,104 @@ pub fn mark_esign_sent(
 pub fn effect_preset() -> crate::federation::Scope {
     crate::federation::scope_codec::effect_preset()
 }
+
+/// Test door: `owner` asks `holder` a question bound to the `outcome.earned`
+/// claims about `holder` (or, with `linked_by`, about what `holder` reaches
+/// over that edge kind), `holder` answers it, and the live policy lets
+/// `owner` read the claims that label it. A host reads calibration pairs end
+/// to end this way without a model. Both must be PERSON rows. Returns the
+/// ask's handle and the time it was answered.
+///
+/// # Errors
+/// Any write failure, or the ask or its answer being refused.
+#[doc(hidden)]
+pub fn settle_outcome_ask(
+    vault: &Vault,
+    owner: EntityId,
+    holder: EntityId,
+    linked_by: Option<&str>,
+) -> crate::memory::MemoryResult<(crate::task_verb::TaskAskHandle, u64)> {
+    use crate::task_verb::{
+        ConsultPayloadRef, TaskAskDefault, TaskAskQuestion, TaskAskSpec, TaskAskTarget,
+        TaskAskWord, TaskAssignee,
+    };
+    let bytes = crate::gate::default_policy_manifest()?;
+    let mut manifest: serde_json::Value =
+        rmp_serde::from_slice(&bytes).map_err(|_| crate::Error::CorruptedIndex("policy"))?;
+    manifest["scoped_grants"] = serde_json::json!([{
+        "actor_ref": owner.to_hex(),
+        "effector": "core:read",
+        "scope": crate::federation::scope_codec::read_preset(),
+        "receipt_required": false,
+    }]);
+    if let Some(rules) = manifest["rules"].as_array_mut() {
+        for predicate in ["outcome.earned", "judgment.answer"] {
+            rules.push(serde_json::json!({"prefix": predicate, "exact": true,
+                "axes": {"criticality": "normal", "sensitivity": "normal"}}));
+        }
+    }
+    let manifest = rmp_serde::to_vec_named(&manifest)
+        .map_err(|_| crate::Error::InvariantViolation("fixture policy"))?;
+    put_policy_manifest_bytes(vault, crate::gate::default_policy_manifest_id()?, &manifest)?;
+
+    let turn = EntityId::now();
+    let now = crate::unix_seconds_now();
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![("role".into(), "question".into())]),
+    )
+    .map_err(|_| crate::Error::InvariantViolation("fixture turn"))?;
+    vault.put_entity(
+        &turn,
+        crate::registry::ENTITY_TYPE_TURN,
+        TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+        &body,
+    )?;
+    let question = TaskAskQuestion {
+        reference: ConsultPayloadRef::parse(vault, &format!("tn_{}", turn.to_hex()))?,
+        revision: 1,
+        options: Default::default(),
+        context_refs: Vec::new(),
+        label: None,
+        outcome_binding: Some(crate::llm::decision::questions::OutcomeBinding {
+            source: crate::llm::decision::questions::OutcomeSource::Claim {
+                predicate: "outcome.earned".into(),
+            },
+            horizon: 60,
+            mapping: [("won".into(), true), ("lost".into(), false)].into(),
+            noise_weight: 0.8,
+            linked_by: linked_by.map(str::to_owned),
+        }),
+        ladder_answer: None,
+        class_key: None,
+        commitment: false,
+    };
+    let spec = TaskAskSpec {
+        intent_key: format!("outcome-{}", turn.to_hex()),
+        ..TaskAskSpec::shorthand(
+            Some(TaskAskTarget::Responder(TaskAssignee::Human {
+                actor_ref: holder,
+            })),
+            question,
+            Some(u64::MAX),
+            TaskAskDefault::AskMe,
+        )
+    };
+    let handle = vault
+        .memory(owner, crate::EdgeActorClass::Human)
+        .tasks_ask(&spec)?
+        .handle;
+    vault
+        .memory(holder, crate::EdgeActorClass::Human)
+        .tasks_answer(&handle, &TaskAskWord::new(holder))?;
+    let answered =
+        crate::llm::decision::questions::read_question(vault, owner, handle.group_ref, None)?
+            .ok_or(crate::Error::EntityNotFound)?
+            .created_at;
+    Ok((handle, answered))
+}
