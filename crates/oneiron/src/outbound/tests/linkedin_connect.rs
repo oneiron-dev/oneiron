@@ -93,6 +93,22 @@ fn connect_dispatch_to(
     sink: &mut LinkedInMcpVerifiedConnectSink<ConnectTransport>,
     policy: Option<LinkedInSeatSandboxPolicy>,
 ) -> std::result::Result<OutboundDispatchResult, Box<dyn std::error::Error>> {
+    connect_dispatch_at(
+        vault, actor, receipt_id, intent_ref, recipient, sink, policy, 1_060,
+    )
+}
+
+#[expect(clippy::too_many_arguments, reason = "one test dispatch, spelled out")]
+fn connect_dispatch_at(
+    vault: &Vault,
+    actor: OutboundDispatchActor,
+    receipt_id: &str,
+    intent_ref: &str,
+    recipient: &str,
+    sink: &mut LinkedInMcpVerifiedConnectSink<ConnectTransport>,
+    policy: Option<LinkedInSeatSandboxPolicy>,
+    occurred_at: u64,
+) -> std::result::Result<OutboundDispatchResult, Box<dyn std::error::Error>> {
     let intent = OutboundIntent::from_trigger(
         OutboundIntentDraft::new(
             "agent-alpha",
@@ -110,7 +126,7 @@ fn connect_dispatch_to(
         intent,
         actor,
         OutboundDispatchGate::allow_when_policy_grants(),
-        1_060,
+        occurred_at,
         OutboundDeliveryWindowDecision::DeliverNow,
     )
     .counterparty_ref(recipient);
@@ -585,5 +601,36 @@ fn a_connect_past_the_daily_cap_is_held_on_an_unchanged_snapshot()
         "FAILBEFORE H359 race: the admission took the last allowance twice"
     );
     assert!(racing_sink.transport().calls.is_empty());
+
+    // The window is a day of the dispatch clock's seconds: yesterday's
+    // connect no longer spends today's allowance.
+    let (_tmp, vault, actor) = connect_fixture()?;
+    let mut sink = capped_connect_sink("intent:day:first", "linkedin:member:jane-doe")?;
+    connect_dispatch_to(
+        &vault,
+        actor.clone(),
+        "receipt:day:first",
+        "intent:day:first",
+        "linkedin:member:jane-doe",
+        &mut sink,
+        Some(daily_connect_cap_of_one()?),
+    )?;
+    let mut next_day = capped_connect_sink("intent:day:second", "linkedin:member:john-roe")?;
+    let next = connect_dispatch_at(
+        &vault,
+        actor,
+        "receipt:day:second",
+        "intent:day:second",
+        "linkedin:member:john-roe",
+        &mut next_day,
+        Some(daily_connect_cap_of_one()?),
+        1_060 + 86_401,
+    )?;
+    assert_ne!(
+        next.outcome,
+        OutboundDispatchOutcome::Held,
+        "H359: yesterday's connect spent today's allowance"
+    );
+    assert_eq!(next_day.transport().calls.len(), 1);
     Ok(())
 }

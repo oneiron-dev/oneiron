@@ -127,15 +127,18 @@ pub(super) fn ledger_rows<'txn>(
 
 /// How many ledger rows of this server and tool were created at or after
 /// `since_ms`, read in the caller's transaction. Every row is an admitted
-/// call, settled or not; server and tool compare as the capability lookup
-/// spells them (trimmed, ASCII case folded). A row that does not decode counts
-/// as well: an accounting gap never opens a bound.
+/// call, settled or not, except a suppressed semantic duplicate, which was
+/// never admitted for transport, and the `exclude`d attempt (an exact retry's
+/// own row). Server and tool compare as the capability lookup spells them
+/// (trimmed, ASCII case folded). A row that does not decode counts as well:
+/// an accounting gap never opens a bound.
 pub(crate) fn admitted_calls_since_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     server: &str,
     tool: &str,
     since_ms: u64,
+    exclude: Option<crate::attempt_queue::AttemptId>,
 ) -> IntentLedgerResult<u32> {
     let same = |stored: &str, wanted: &str| stored.trim().eq_ignore_ascii_case(wanted.trim());
     let mut admitted = 0_u32;
@@ -146,6 +149,11 @@ pub(crate) fn admitted_calls_since_in_txn(
                 same(&record.server, server)
                     && same(&record.tool, tool)
                     && record.created_ms >= since_ms
+                    && Some(record.attempt_id) != exclude
+                    && record.recorded_outcome
+                        != Some(RecordedOutboundOutcome::Abandoned(
+                            IntentEscalationReason::DedupeSuppressed,
+                        ))
             }
             Err(_) => true,
         };

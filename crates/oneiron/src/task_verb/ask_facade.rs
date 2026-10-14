@@ -59,9 +59,9 @@ impl Memory<'_> {
                     "Propose the ask through the authority surface.",
                 ));
             }
-            // One ask counts once on the asker's create window, whatever its
+            // One ask counts once on the asker's ask window, whatever its
             // recipients; a replay returned above never counts again.
-            super::rate_limit::record_task_create(
+            super::rate_limit::record_task_ask(
                 self.vault(),
                 txn,
                 self.actor(),

@@ -164,6 +164,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             &prepared.server,
             &prepared.tool,
             ceiling.since_ms,
+            None,
         )?;
         if ceiling.prior.max(admitted) >= ceiling.cap {
             let effect =

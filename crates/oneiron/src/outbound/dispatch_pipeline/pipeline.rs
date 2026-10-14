@@ -159,6 +159,9 @@ impl OutboundDispatchPipeline {
             owner_proof,
             parked: None,
             suppression_receipt: None,
+            // A completed replay sends nothing, so it neither spends nor
+            // rechecks today's allowance.
+            admission_ceiling: None,
         })?;
         let result = crate::outbound::receipt_fields::dispatch_result_receipt(
             &request,

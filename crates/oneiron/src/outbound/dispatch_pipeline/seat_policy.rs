@@ -10,10 +10,11 @@ use crate::outbound::capability::OutboundVerbContract;
 use crate::outbound::dispatch_types::{OutboundDispatchError, OutboundDispatchRequest};
 use crate::outbound_chokepoint::AdmissionCeiling;
 
-/// The window a seat's daily caps count over, in the ledger's milliseconds.
-/// A rolling day holds every send of the host's calendar day and possibly a
-/// few more, so it never counts fewer.
-const SEAT_CAP_WINDOW_MS: u64 = 24 * 60 * 60 * 1000;
+/// The window a seat's daily caps count over. Dispatch stamps the ledger with
+/// the request's `occurred_at`, which is engine-clock seconds, so the window
+/// is in seconds too. A rolling day holds every send of the host's calendar
+/// day and possibly a few more, so it never counts fewer.
+const SEAT_CAP_WINDOW_SECS: u64 = 24 * 60 * 60;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum SeatPolicyAction {
@@ -81,7 +82,15 @@ impl SeatLedgerCount {
             LINKEDIN_SEND_DM_VERB => (policy.state.dm_sends_today, policy.limits.daily_dm_cap),
             _ => return Ok(Self::default()),
         };
-        let since_ms = request.occurred_at.saturating_sub(SEAT_CAP_WINDOW_MS);
+        let since_ms = request.occurred_at.saturating_sub(SEAT_CAP_WINDOW_SECS);
+        // An exact retry of this logical send already holds its admission;
+        // its own Pending row is not a second one.
+        let own_attempt = crate::outbound::dispatch_attempt_id::outbound_dispatch_attempt_id(
+            request
+                .ledger_identity_ref
+                .as_deref()
+                .unwrap_or(&request.intent_ref),
+        )?;
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         let admitted = crate::outbound_intent_ledger::admitted_calls_since_in_txn(
             vault,
@@ -89,6 +98,7 @@ impl SeatLedgerCount {
             LINKEDIN_CHANNEL,
             &verb_contract.kind,
             since_ms,
+            Some(own_attempt),
         )
         .map_err(OutboundDispatchError::Chokepoint)?;
         let admitted = u16::try_from(admitted).unwrap_or(u16::MAX);
