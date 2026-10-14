@@ -1,0 +1,490 @@
+//! The one re-wrap sequence (contract §4). Every door that marks this
+//! install's own machine or changes its pin runs it in its one write
+//! transaction: `activate_owner_root`, `pin_owner_root`, `restore_world_keys`,
+//! and `anchor_machine` on this install's own request.
+//!
+//! 1. Before the door's marks and pin, it opens each key this machine can
+//!    open: from a counted wrap to it, or from a record this machine signed
+//!    itself, whatever the pin, checked against that record's commitment.
+//! 2. The door appends its marks and writes the pin. The sequence refolds and
+//!    opens each further key from a counted wrap to the new root with the
+//!    door's seed. A key this machine will not read under the new pin is
+//!    first wrapped, on the old pin's standing rows, to the new root and to
+//!    this machine, so a later door here opens it from its own record.
+//! 3. It lists the worlds this install holds whose settings the pin change
+//!    made differ. It edits none: only the owner re-asserts a world.
+//! 4. It wraps each key this machine may still read to the new root and to
+//!    every machine mine under the new pin that may read the world.
+//! 5. It refolds and puts each key it reached in exactly one list.
+//!
+//! A key is reached when this machine holds a counted wrap of it, a record
+//! of its own wrapping it to itself, or (with the door's seed) a counted
+//! wrap of it to the new root. A reached key that is conflicted, or whose
+//! every envelope fails to open, is reported with that reason, never
+//! dropped.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use ed25519_dalek::SigningKey;
+
+use super::{
+    MachineSecret, RecoveryRootSeed, SequenceCounter, WorldKey, WorldKeyBinding, WorldKeyId,
+    WrapRecipient, open_counted, open_world_key, recipients,
+};
+use crate::authority::{
+    AuthorityFold, AuthorityView, Destination, EffectiveRead, EffectiveWorldPrivacy,
+    MachineAdmitter, PinnedRoot, RecoveryRootId, WorldKeyWrapsRecord, invalid_authority,
+    own_world_key_records_in_txn, read_pin_and_earlier_in_txn,
+};
+use crate::error::Result;
+use crate::{EntityId, Vault};
+
+/// Why a pin door left a key without a new wrap.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Withheld {
+    /// This machine is not mine under the new pin.
+    NotMine,
+    /// The local read excludes this machine: conflicted, nowhere, or one
+    /// other machine.
+    NotReadable,
+    /// The WORLD row is unknown, deleted or erased here: never opened.
+    NotLive,
+    /// The world now reads everywhere: no wrap counts for it, so its older
+    /// keys keep only the wraps they already have.
+    NotPrivate,
+    /// The key's counted records name other bytes or another owner for its
+    /// id, or bytes other than the ones this machine opened: it is never
+    /// current, never opened, and gets no new wrap.
+    Conflicted,
+    /// Every envelope this door could open the key from failed: a corrupt
+    /// wrap, or one sealed to another key. A well-signed record can carry
+    /// one, since the fold never sees inside an envelope.
+    Unopenable,
+}
+
+/// A world this install holds whose settings the pin change made differ.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NarrowedWorld {
+    pub world: EntityId,
+    pub earlier: EffectiveWorldPrivacy,
+    pub now: EffectiveWorldPrivacy,
+    /// The earlier frontier's signers; `true` is mine under the new pin.
+    pub earlier_signers: Vec<(EntityId, bool)>,
+}
+
+/// What a pin door did to the keys this machine reached.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RepinReport {
+    pub rewrapped: Vec<WorldKeyId>,
+    pub withheld: Vec<(WorldKeyId, Withheld)>,
+    pub narrowed: Vec<NarrowedWorld>,
+}
+
+/// The door the sequence runs for.
+pub(crate) struct RepinDoor<'a> {
+    pub(crate) secret: &'a MachineSecret,
+    pub(crate) signing: &'a SigningKey,
+    /// The root the new pin names.
+    pub(crate) new_root: RecoveryRootId,
+    /// The seed the door holds, which opens counted wraps to the new root.
+    pub(crate) seed: Option<&'a RecoveryRootSeed>,
+    /// A kit restore lists a world kept on another machine as needing a
+    /// re-home, never as withheld.
+    pub(crate) restore: bool,
+}
+
+/// A key the sequence reached.
+struct Reached {
+    key: Reach,
+    owner: EntityId,
+}
+
+/// What became of a reached key.
+enum Reach {
+    Opened(WorldKey),
+    /// Its world is not live here: never opened.
+    NotLive,
+    /// Conflicted where it was reached: never opened.
+    Conflicted,
+    /// Every envelope tried failed.
+    Unopenable,
+}
+
+impl Reach {
+    fn opened(&self) -> Option<&WorldKey> {
+        match self {
+            Self::Opened(key) => Some(key),
+            Self::NotLive | Self::Conflicted | Self::Unopenable => None,
+        }
+    }
+}
+
+/// Step 1's result, taken before the door's marks and pin.
+pub(crate) struct RepinStart {
+    old: AuthorityView,
+    reached: BTreeMap<WorldKeyId, Reached>,
+    /// Each held world's earlier settings and the earlier frontier's signers.
+    earlier: BTreeMap<EntityId, (EffectiveWorldPrivacy, Vec<EntityId>)>,
+    /// The admitter the pin singleton keeps as `earlier` once the pin moves.
+    pub(crate) earlier_admitter: Option<MachineAdmitter>,
+}
+
+/// Step 5's result.
+pub(crate) struct RepinFinish {
+    pub(crate) report: RepinReport,
+    /// A kit restore's keys of worlds kept on another machine.
+    pub(crate) needs_rehome: Vec<WorldKeyId>,
+    /// A kit restore's keys this machine may read, for the session ring
+    /// once the door commits.
+    pub(crate) usable: Vec<WorldKey>,
+}
+
+impl Vault {
+    /// Step 1, before the door's marks and pin.
+    pub(crate) fn repin_start_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        door: &RepinDoor<'_>,
+    ) -> Result<RepinStart> {
+        let me = door.secret.machine;
+        let my_key = door.signing.verifying_key().to_bytes();
+        let old = self.authority_view_readonly_in_txn(txn)?;
+        let (_, kept) = read_pin_and_earlier_in_txn(&self.store, txn)?;
+        let old_mine = old
+            .trusted_machine(me)
+            .is_some_and(|trusted| trusted.profile.machine_key == my_key);
+        let old_admitter = old.pinned_root.map_or(MachineAdmitter::Roster, |pin| {
+            MachineAdmitter::Anchor(pin.anchor_key)
+        });
+        let earlier_admitter = if old_mine { Some(old_admitter) } else { kept };
+        // The earlier settings: the local ones, or the earlier admitter's
+        // read when this machine was not mine under the old pin. With no
+        // earlier admitter, the local settings before the door.
+        let earlier_view = match kept {
+            Some(admitter) if !old_mine => {
+                self.authority_view_under_admitter_in_txn(txn, &old, admitter)?
+            }
+            _ => old.clone(),
+        };
+        let mut earlier = BTreeMap::new();
+        for (world, folded) in &earlier_view.worlds {
+            if self.world_row_live_in_txn(txn, *world)? {
+                earlier.insert(
+                    *world,
+                    (
+                        earlier_view.world_privacy(*world),
+                        folded.live.values().copied().collect(),
+                    ),
+                );
+            }
+        }
+        let to_me = WrapRecipient::Machine(me);
+        let mut own = own_world_key_records_in_txn(&self.store, txn, &old, me, my_key)?;
+        own.retain(|(_, record)| record.wraps.iter().any(|(to, _)| *to == to_me));
+        let mut reached = BTreeMap::new();
+        for key in old.all_world_keys() {
+            let mine = key.wraps.contains_key(&to_me);
+            let signed = own.iter().any(|(_, record)| record.key == key.id);
+            if !mine && !signed {
+                continue;
+            }
+            let reach = if !self.world_row_live_in_txn(txn, key.id.world)? {
+                Reach::NotLive
+            } else if key.conflicted {
+                Reach::Conflicted
+            } else {
+                open_counted(&old, key, to_me, &door.secret.secret)
+                    .or_else(|| open_own(&old, &own, key.id, Some(key.commitment), door.secret))
+                    .map_or(Reach::Unopenable, Reach::Opened)
+            };
+            reached.insert(
+                key.id,
+                Reached {
+                    key: reach,
+                    owner: key.owner,
+                },
+            );
+        }
+        // Keys this machine wrapped itself that count nowhere here.
+        for (_, record) in &own {
+            if old.world_key(&record.key).is_some() || reached.contains_key(&record.key) {
+                continue;
+            }
+            let reach = if self.world_row_live_in_txn(txn, record.key.world)? {
+                open_own(&old, &own, record.key, None, door.secret)
+                    .map_or(Reach::Unopenable, Reach::Opened)
+            } else {
+                Reach::NotLive
+            };
+            reached.insert(
+                record.key,
+                Reached {
+                    key: reach,
+                    owner: record.owner,
+                },
+            );
+        }
+        Ok(RepinStart {
+            old,
+            reached,
+            earlier,
+            earlier_admitter,
+        })
+    }
+
+    /// Steps 2-5, after the door appended its marks and wrote the pin.
+    pub(crate) fn repin_finish_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        door: &RepinDoor<'_>,
+        mut start: RepinStart,
+    ) -> Result<RepinFinish> {
+        let me = door.secret.machine;
+        let my_key = door.signing.verifying_key().to_bytes();
+        let mid = self.authority_view_readonly_in_txn(txn)?;
+        let root = self
+            .root_recipient_in_txn(txn, &mid, door.new_root)?
+            .ok_or_else(invalid_authority)?;
+        let to_root = WrapRecipient::RecoveryRoot(door.new_root);
+        let mine = |fold: &AuthorityFold| {
+            fold.trusted_machine(me)
+                .is_some_and(|trusted| trusted.profile.machine_key == my_key)
+        };
+        // Step 1's pre-wraps count under the old pin, so only a machine mine
+        // there makes them, and only for the keys it reached there: a key the
+        // seed opens already has its root wrap.
+        let pre_wrap: BTreeSet<WorldKeyId> = if mine(&start.old) {
+            start.reached.keys().copied().collect()
+        } else {
+            BTreeSet::new()
+        };
+        // Every key with a counted wrap to the new root is reached, so a
+        // restore lists each one: a key step 1 could not open gets its turn
+        // with the seed.
+        if let Some(seed) = door.seed {
+            let recovery = seed.recovery_secret()?;
+            for key in mid.all_world_keys() {
+                let retry = start
+                    .reached
+                    .get(&key.id)
+                    .is_none_or(|reached| matches!(reached.key, Reach::Unopenable));
+                if !retry || !key.wraps.contains_key(&to_root) {
+                    continue;
+                }
+                let reach = if !self.world_row_live_in_txn(txn, key.id.world)? {
+                    Reach::NotLive
+                } else if key.conflicted {
+                    Reach::Conflicted
+                } else {
+                    open_counted(&mid, key, to_root, &recovery)
+                        .map_or(Reach::Unopenable, Reach::Opened)
+                };
+                start.reached.insert(
+                    key.id,
+                    Reached {
+                        key: reach,
+                        owner: key.owner,
+                    },
+                );
+            }
+        }
+        let reads = |fold: &AuthorityFold, world: EntityId| {
+            mine(fold)
+                && fold.world_privacy(world).read != EffectiveRead::Everywhere
+                && fold.world_readable_on(world, Destination::Machine(me))
+        };
+        let my_public = door.secret.secret.public_key().clone();
+        let mut seq = SequenceCounter::new();
+        // A key this machine will not read under the new pin is wrapped
+        // first on the old pin's rows, to the new root and to itself.
+        for (id, reached) in &start.reached {
+            let Some(key) = reached.key.opened() else {
+                continue;
+            };
+            if !pre_wrap.contains(id)
+                || mid.world_privacy(id.world).read == EffectiveRead::Everywhere
+                || reads(&mid, id.world)
+            {
+                continue;
+            }
+            let records = self.append_world_key_wraps_in_txn(
+                txn,
+                &start.old,
+                door.signing,
+                me,
+                key,
+                reached.owner,
+                &[
+                    (to_root, root.key.clone()),
+                    (WrapRecipient::Machine(me), my_public.clone()),
+                ],
+                &mut seq,
+            )?;
+            let after = self.authority_view_readonly_in_txn(txn)?;
+            if !records
+                .iter()
+                .all(|hash| after.valid_entries.contains(hash))
+            {
+                return Err(invalid_authority());
+            }
+        }
+        let narrowed = start
+            .earlier
+            .iter()
+            .filter_map(|(world, (before, signers))| {
+                let now = mid.world_privacy(*world);
+                (now != *before).then(|| NarrowedWorld {
+                    world: *world,
+                    earlier: before.clone(),
+                    now,
+                    earlier_signers: signers
+                        .iter()
+                        .map(|signer| (*signer, mid.trusted_machine(*signer).is_some()))
+                        .collect(),
+                })
+            })
+            .collect();
+        let mut appended = Vec::new();
+        for (id, reached) in &start.reached {
+            let Some(key) = reached.key.opened() else {
+                continue;
+            };
+            if !reads(&mid, id.world) {
+                continue;
+            }
+            let counted = mid.world_key(id);
+            if counted.is_some_and(|held| other_bytes(held, key, reached.owner)) {
+                continue;
+            }
+            let missing: Vec<_> = recipients(&mid, id.world, Some(root.clone()))
+                .into_iter()
+                .filter(|(to, _)| !counted.is_some_and(|held| held.wraps.contains_key(to)))
+                .collect();
+            appended.extend(self.append_world_key_wraps_in_txn(
+                txn,
+                &mid,
+                door.signing,
+                me,
+                key,
+                reached.owner,
+                &missing,
+                &mut seq,
+            )?);
+        }
+        self.require_counted_in_txn(txn, &appended)?;
+        let after = self.authority_view_readonly_in_txn(txn)?;
+        let mut finish = RepinFinish {
+            report: RepinReport {
+                narrowed,
+                ..RepinReport::default()
+            },
+            needs_rehome: Vec::new(),
+            usable: Vec::new(),
+        };
+        for (id, reached) in start.reached {
+            let read = after.world_privacy(id.world).read;
+            let held = after.world_key(&id);
+            let key = match reached.key {
+                Reach::NotLive => Err(Withheld::NotLive),
+                Reach::Conflicted => Err(Withheld::Conflicted),
+                Reach::Unopenable => Err(Withheld::Unopenable),
+                Reach::Opened(_) if read == EffectiveRead::Everywhere => Err(Withheld::NotPrivate),
+                // The counted key under this id must be the bytes this
+                // machine opened, or its wraps say nothing about them.
+                Reach::Opened(key)
+                    if held.is_some_and(|held| other_bytes(held, &key, reached.owner)) =>
+                {
+                    Err(Withheld::Conflicted)
+                }
+                Reach::Opened(_) if !mine(&after) => Err(Withheld::NotMine),
+                Reach::Opened(_) if !reads(&after, id.world) => {
+                    if door.restore
+                        && matches!(read, EffectiveRead::OneMachine(other) if other != me)
+                    {
+                        finish.needs_rehome.push(id);
+                        continue;
+                    }
+                    Err(Withheld::NotReadable)
+                }
+                Reach::Opened(key) => Ok(key),
+            };
+            let key = match key {
+                Ok(key) => key,
+                Err(reason) => {
+                    finish.report.withheld.push((id, reason));
+                    continue;
+                }
+            };
+            let wrapped = held.is_some_and(|held| {
+                held.wraps.contains_key(&to_root)
+                    && held.wraps.contains_key(&WrapRecipient::Machine(me))
+            });
+            if !wrapped {
+                return Err(invalid_authority());
+            }
+            finish.report.rewrapped.push(id);
+            if door.restore {
+                finish.usable.push(key);
+            }
+        }
+        Ok(finish)
+    }
+
+    /// This vault's own log folded under `admitter`'s trust, for the read
+    /// an earlier admitter gives (`read_X`).
+    pub(crate) fn authority_view_under_admitter_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        admitter: MachineAdmitter,
+    ) -> Result<AuthorityView> {
+        let pin = match admitter {
+            MachineAdmitter::Roster => None,
+            MachineAdmitter::Anchor(anchor_key) => fold
+                .root_anchors()
+                .get(&anchor_key)
+                .and_then(|ids| ids.first())
+                .map(|id| PinnedRoot {
+                    id: *id,
+                    anchor_key,
+                }),
+        };
+        self.authority_view_under_pin_in_txn(txn, pin)
+    }
+}
+
+/// The fold's key under this id is conflicted, or names bytes or an owner
+/// other than the key this machine opened.
+fn other_bytes(held: &crate::authority::FoldedWorldKey, key: &WorldKey, owner: EntityId) -> bool {
+    held.conflicted || held.commitment != key.commitment() || held.owner != owner
+}
+
+/// Opens `id` from a record this machine signed itself, checked against that
+/// record's commitment, and against `commitment` when the fold holds the key.
+fn open_own(
+    fold: &AuthorityFold,
+    own: &[(crate::authority::AuthorityEntryHash, WorldKeyWrapsRecord)],
+    id: WorldKeyId,
+    commitment: Option<[u8; 32]>,
+    secret: &MachineSecret,
+) -> Option<WorldKey> {
+    let vault_id = fold.vault_id?;
+    let me = WrapRecipient::Machine(secret.machine);
+    own.iter()
+        .map(|(_, record)| record)
+        .filter(|record| {
+            record.key == id && commitment.is_none_or(|held| held == record.commitment)
+        })
+        .find_map(|record| {
+            let (_, bytes) = record.wraps.iter().find(|(to, _)| *to == me)?;
+            let envelope = oneiron_crypto::Envelope::parse(bytes).ok()?;
+            let binding = WorldKeyBinding {
+                vault_id,
+                key: id,
+                owner: record.owner,
+                policy: record.policy,
+                commitment: record.commitment,
+            };
+            open_world_key(&binding, me, &secret.secret, &envelope).ok()
+        })
+}

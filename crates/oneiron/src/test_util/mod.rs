@@ -8,6 +8,7 @@
 //! model, HNSW params); a copy that is value-identical to the shared
 //! helper is a drift hazard and must route through it.
 
+pub(crate) mod log_capture;
 pub(crate) mod row_dump;
 /// Test-only-file classification for the source-scanning fences. The
 /// integration binaries mount the same file through `tests/common`.
@@ -15,6 +16,8 @@ pub(crate) mod source_scan;
 
 mod channel_identity;
 pub(crate) use channel_identity::{put_native_mail_sender, self_held_identity_in_state};
+mod dreamer_rows;
+pub(crate) use dreamer_rows::{seeded_without_dreamer_rows, without_dreamer_rows};
 
 use crate::config::VaultConfig;
 use crate::entity_id::EntityId;

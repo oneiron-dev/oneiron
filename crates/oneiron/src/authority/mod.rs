@@ -32,6 +32,7 @@ pub use crate::gate::manifest_authenticity::ManifestContribution;
 mod ancestor_index;
 mod ancestry_evaluator;
 mod anchor_fold;
+mod anchor_marks;
 mod causal_write;
 mod checkpoint;
 mod claim_write;
@@ -44,9 +45,12 @@ mod handoff_equivocation;
 mod history_transfer;
 mod host_re_root;
 mod ingest_observation;
+mod install_fold;
+mod machine_claims;
 mod machine_enroll;
 mod machine_identity;
 mod machine_profile;
+mod machine_standing;
 mod machine_write;
 mod mesh_machine;
 mod observation_policy;
@@ -66,6 +70,12 @@ mod slip_vault;
 mod stale_roster;
 mod tier_floor;
 mod vault_api;
+mod world_key_fold;
+mod world_key_support;
+mod world_privacy;
+mod world_privacy_door;
+mod world_refold;
+mod world_strength;
 mod write_authorization;
 
 #[cfg(test)]
@@ -89,10 +99,12 @@ pub use oneiron_authority::authority::{
     FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture,
     FederationPactState, FederationPactStatus, FoldedDevice, GENESIS_FRAGILE_FLAG,
     GenesisRecoveryStep, MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-    MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS, MAX_PACT_SCOPE_BYTES,
+    MACHINE_SEEN_WORLD_EDITS_MAX, MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS, MAX_PACT_SCOPE_BYTES,
     MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS, MachineEncryptionKey, MachineOwnership, MachineProfile,
-    MachineRole, OwnerRootRecord, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
-    RecoveryRootId, SlipClaims, SlipMintAction, authority_entry_hash, authority_log_entity_id,
+    MachineRole, ModelOrder, OwnerRootRecord, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
+    ROLE_RECOVERY, ReadLocation, RecoveryRootId, SealedCopies, SlipClaims, SlipMintAction,
+    WORLD_MODEL_ROUTE_MAX_BYTES, WORLD_MODEL_ROUTES_MAX, WorldKeyWrapsRecord, WorldPrivacy,
+    WorldPrivacyEdit, authority_entry_hash, authority_log_entity_id,
     authority_log_entity_id_from_hash, authority_transcript, decode_authority_log_entry_body,
     encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
     genesis_vault_id, machine_profile_proof_transcript, sign_federation_pact_gesture,
@@ -144,9 +156,8 @@ pub(crate) use claim_write::{
 };
 pub(crate) use first_seen_clock::*;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
-#[cfg(test)]
-pub(crate) use pinned_root::write_pinned_root_in_txn;
 pub(crate) use pinned_root::{drop_pinned_root_in_txn, is_pinned_root_row};
+pub(crate) use pinned_root::{read_pin_and_earlier_in_txn, write_pinned_root_in_txn};
 pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
 use readonly_fold::authority_view_readonly_for_store_in_txn;
@@ -159,6 +170,7 @@ pub(crate) use sequence_observation::record_authority_sequence_observation_in_tx
 
 // Module-internal only: nothing here leaves `authority`.
 use ancestor_index::*;
+pub(crate) use anchor_marks::anchor_mark_stands;
 use entry_transition::*;
 use machine_profile::{
     KeyClaim, MachineChain, apply_anchor_profile, apply_machine_profile, merge_machine_maps,
@@ -172,3 +184,14 @@ use op_apply::*;
 use sequence_observation::{AuthorityLocalObservations, authority_local_observations_in_txn};
 use stale_roster::{apply_stale_roster_window, next_stale_roster_deadline};
 use tier_floor::*;
+pub use world_key_fold::{FoldedWorldKey, WORLD_KEY_WRAPS_PER_RECIPIENT, WrappedKey};
+pub(crate) use world_key_support::{
+    next_sequence, own_world_key_records_in_txn, owner_root_record_in_txn,
+    owner_root_records_in_txn, sign_side_entry, standing_rows,
+};
+pub use world_privacy::{
+    Destination, EffectiveModelOrder, EffectiveRead, EffectiveWorldPrivacy, FoldedWorld,
+    WorldEditStanding,
+};
+pub use world_privacy_door::{EditOrigin, WorldPrivacyView, world_readable_on_machine_in};
+use world_strength::{WorldFrontier, apply_world_privacy, merge_world_frontiers};

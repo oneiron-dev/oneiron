@@ -33,6 +33,7 @@ fn anchor_mark(host: &Host, prepared: &PreparedRoot, request: &MachineEnrolmentR
         role: MachineRole::Owned(MachineOwnership::Yours),
         revision: 1,
         machine_proof: request.machine_proof,
+        seen_world_edits: BTreeSet::new(),
     });
     let fold = host.vault.authority_fold().unwrap();
     let at = prepared.entry().ts;

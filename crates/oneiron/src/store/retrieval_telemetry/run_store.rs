@@ -560,7 +560,6 @@ fn stage_context_pack_retrieval_run_finalize(
         claims_suppressed,
         surfaced_result_ids,
         empty_reason,
-        pack_output,
         pack_config,
     } = finalize;
     let Some(mut record) = RETRIEVAL_RUN.get(target, &*wtxn, &run_id)? else {
@@ -602,7 +601,6 @@ fn stage_context_pack_retrieval_run_finalize(
         trace.final_stage.candidates = record.score_breakdown.clone();
     }
     record.empty_reason = empty_reason;
-    record.pack_output = pack_output;
     if let Some(pack_config) = pack_config
         && let Some(inputs) = record.replay_inputs.as_mut()
     {

@@ -9,6 +9,7 @@ use super::SKILL_PACK_NAME;
 use super::SKILL_PACK_RESOLUTION;
 use super::check_api_auth;
 use crate::auth::CoreAuth;
+use crate::auth::Locality;
 use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use crate::error::ErrorCode;
@@ -374,9 +375,10 @@ pub(crate) struct RateLimitStatus {
 )]
 pub(crate) async fn discover(
     headers: HeaderMap,
+    Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<Json<DiscoverResponse>, ApiError> {
-    let auth = check_api_auth(&headers, &server)?;
+    let auth = check_api_auth(&headers, &server)?.at(locality);
     discover_response(&server, &auth).map(Json)
 }
 
@@ -394,10 +396,14 @@ fn discovers_whole_vault(server: &SyncServer, auth: &CoreAuth) -> Result<bool, A
     Ok(super::credential_read_key(server.vault(), proof)?.reads_as_vault_owner())
 }
 
+/// The vault's inventory as `auth` may learn it, where its connection sits:
+/// one off this device counts, dates and names no row a device-local world
+/// keeps (DEC-0005).
 pub(crate) fn discover_response(
     server: &SyncServer,
     auth: &CoreAuth,
 ) -> Result<DiscoverResponse, ApiError> {
+    let locality = auth.locality();
     let lane = if discovers_whole_vault(server, auth)? {
         None
     } else {
@@ -417,9 +423,11 @@ pub(crate) fn discover_response(
             continue;
         }
 
+        // Off this device a device-local row never counts toward the scan's
+        // cap, so no overflow hints at one.
         let ids = server
             .vault
-            .entities_by_type(entity_type)
+            .entities_by_type_at(entity_type, locality)
             .inspect_err(|e| {
                 tracing::error!(error = %e, entity_type, "discover count scan failed");
             })
@@ -534,7 +542,7 @@ fn lane_rows(
             if row.entity_type == oneiron::registry::ENTITY_TYPE_CLAIM {
                 let claim = oneiron::claim::decode_claim_body(body, true)
                     .inspect_err(|e| {
-                        tracing::error!(error = %e, id = %row.id.to_hex(), "discover predicate scan failed");
+                        tracing::error!(kind = ?e.kind(), id = %row.id.to_hex(), "discover predicate scan failed");
                     })
                     .map_err(|_| ApiError::internal_server_error("discover predicate scan failed"))?;
                 if let Some(namespace) = claim.predicate.split('.').next() {
@@ -601,7 +609,7 @@ pub(crate) fn predicate_namespaces(
         let Some(claim) = vault
             .get_claim(id)
             .inspect_err(|e| {
-                tracing::error!(error = %e, id = %id.to_hex(), "discover predicate scan failed");
+                tracing::error!(kind = ?e.kind(), id = %id.to_hex(), "discover predicate scan failed");
             })
             .map_err(|_| ApiError::internal_server_error("discover predicate scan failed"))?
         else {

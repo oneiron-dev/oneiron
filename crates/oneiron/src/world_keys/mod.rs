@@ -16,8 +16,12 @@
 //! replicates is public keys and sealed envelopes (`oneiron-crypto`, purpose
 //! `WorldDek`). An unwrapped key or a seed never replicates.
 
+mod doors;
 mod machine;
+mod reassert;
+mod repin;
 mod root;
+mod root_doors;
 mod root_issue;
 mod state;
 mod vault_doors;
@@ -26,47 +30,24 @@ mod wrap;
 #[cfg(test)]
 mod tests;
 
+pub use self::doors::WorldKeyStatus;
+pub use self::repin::{NarrowedWorld, RepinReport, Withheld};
+pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore};
+pub use crate::error::KitRecord;
+pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recipients};
 pub use self::machine::{machine_encryption_key, machine_secret};
 pub use self::root::{RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin};
 pub use self::root_issue::PreparedRoot;
 pub use self::state::{WorldRecoveryState, recovery_state};
 pub use self::wrap::{open_world_key, seal_world_key};
+pub use oneiron_authority::authority::{
+    FIRST_GENERATION, PolicyRevision, WORLD_KEY_EPOCH, WorldKeyId, WrapRecipient,
+};
 
 use zeroize::Zeroizing;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
-
-/// The crypto epoch every world-key envelope is sealed at.
-pub const WORLD_KEY_EPOCH: u64 = 1;
-/// The key generation P6b mints. Rotation (P11) is not ratified; the field is bound
-/// now so that rotation does not change the format.
-pub const FIRST_GENERATION: u64 = 1;
-
-/// One world key: the world, its generation, and the random id of the mint that made it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct WorldKeyId {
-    pub world: EntityId,
-    pub generation: u64,
-    pub mint: [u8; 16],
-}
-
-impl WorldKeyId {
-    /// The envelope `key_id`: world (16) ‖ generation (8, big-endian) ‖ mint (16).
-    #[must_use]
-    pub fn envelope_key_id(&self) -> [u8; 40] {
-        let mut out = [0u8; 40];
-        out[..16].copy_from_slice(self.world.as_bytes());
-        out[16..24].copy_from_slice(&self.generation.to_be_bytes());
-        out[24..].copy_from_slice(&self.mint);
-        out
-    }
-}
-
-/// The world's settings as the wrapping machine saw them: a digest of the world's live
-/// settings edits (P2). All zero means no edit.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct PolicyRevision(pub [u8; 32]);
 
 /// Everything a wrap is bound to. A reader states it from its own records; the
 /// envelope's claims are never the expectation.
@@ -80,30 +61,6 @@ pub struct WorldKeyBinding {
     /// The key's commitment, fixed by its mint record: a wrap that opens to other
     /// bytes is refused.
     pub commitment: [u8; 32],
-}
-
-/// Who one envelope opens for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum WrapRecipient {
-    /// A machine (its MACHINE row) through its machine secret.
-    Machine(EntityId),
-    /// The recovery root, through the kit.
-    RecoveryRoot(RecoveryRootId),
-}
-
-impl WrapRecipient {
-    /// The envelope `recipient`: 0x01 ‖ machine id (17 B), or 0x02 ‖ root id (33 B).
-    #[must_use]
-    pub fn envelope_recipient(&self) -> Vec<u8> {
-        let (tag, id): (u8, &[u8]) = match self {
-            Self::Machine(machine) => (0x01, &machine.as_bytes()[..]),
-            Self::RecoveryRoot(root) => (0x02, &root.0[..]),
-        };
-        let mut out = Vec::with_capacity(1 + id.len());
-        out.push(tag);
-        out.extend_from_slice(id);
-        out
-    }
 }
 
 /// An unwrapped world key. It has no `Clone` and no `Serialize`, its `Debug` prints

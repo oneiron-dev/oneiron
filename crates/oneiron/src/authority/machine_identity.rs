@@ -303,6 +303,7 @@ impl Vault {
             role,
             revision: 1,
             machine_proof: request.machine_proof,
+            seen_world_edits: std::collections::BTreeSet::new(),
         };
         self.append_machine_profile_in_txn(txn, issuer, &fold, profile)
     }
@@ -348,8 +349,25 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         fold: &AuthorityFold,
-        profile: MachineProfile,
+        mut profile: MachineProfile,
     ) -> Result<FoldedMachine> {
+        // A revision that takes "yours" away keeps the effect of the machine's
+        // world edits it has seen; one it never saw only counts stricter. A
+        // later revision of a machine already not the owner's took nothing
+        // away: it carries that list, and the fold reads only the first. Nor
+        // does one whose "yours" no longer stands by the roster rule.
+        let current = fold.machine(profile.machine);
+        profile.seen_world_edits = match current.and_then(|folded| folded.roster.as_ref()) {
+            Some(head) if !head.profile.says_mine() => head.profile.seen_world_edits.clone(),
+            Some(_)
+                if !current.is_some_and(|folded| {
+                    folded.roster_view().admits(&MachineAdmitter::Roster)
+                }) =>
+            {
+                std::collections::BTreeSet::new()
+            }
+            _ => super::world_privacy::live_edits_by(fold, profile.machine),
+        };
         profile.validate()?;
         let now = self.instant_in_txn(txn)?.secs();
         let entry = next_entry(
@@ -378,7 +396,7 @@ impl Vault {
 
     /// A live MACHINE row, created empty when absent. Never another kind, and
     /// never a deleted, archived or stale row.
-    fn ensure_machine_row_in_txn(
+    pub(super) fn ensure_machine_row_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         machine: EntityId,

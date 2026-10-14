@@ -90,7 +90,7 @@ pub(super) fn restrictive_withdrawal(op: &AuthorityOp) -> bool {
     }
 }
 
-fn removes_machine(op: &AuthorityOp) -> bool {
+pub(super) fn removes_machine(op: &AuthorityOp) -> bool {
     matches!(op, AuthorityOp::MachineProfile(profile) if profile.role == MachineRole::Removed)
 }
 
@@ -115,10 +115,26 @@ pub(super) fn derive_revoke_facts(
         // records which of a signer's rows this vault saw first, so the proof
         // applies none inside the branch and accepts what the fold accepts
         // when the branch arrives on its own, siblings at one sequence
-        // included (Astra #1423b, Sol #1423 r8 and r9).
-        let context = if removal {
+        // included (Astra #1423b, Sol #1423 r8 and r9). A row of it past its
+        // floor still lands restriction only: the proof's copy acknowledges
+        // nothing the ordinary fold's copy does not (Astra #1430b). The fold
+        // with no vouch (`floor_vouched: None`) vouches for no branch either
+        // (Sol P2 round 18, F2).
+        let removal_vouch = removal && context.floor_vouched.is_some();
+        let branch: BTreeSet<_> = if removal_vouch {
+            ancestors
+                .get(hash)
+                .into_iter()
+                .flatten()
+                .chain([hash])
+                .copied()
+                .collect()
+        } else {
+            BTreeSet::new()
+        };
+        let context = if removal_vouch {
             FoldContext {
-                sequence_floors: None,
+                floor_vouched: Some(&branch),
                 ..context
             }
         } else {
@@ -156,6 +172,15 @@ pub(super) fn derive_revoke_facts(
                             .iter()
                             .filter(|(_, removal)| removal.entry == *hash)
                             .map(|(signer, removal)| (signer.clone(), removal.clone()))
+                            .collect(),
+                        // The removal's own revision, past its floor here
+                        // still: the proof never erases that mark (Astra
+                        // #1430b).
+                        revisions: chain
+                            .revisions
+                            .iter()
+                            .filter(|(revision, _)| *revision == hash)
+                            .map(|(revision, held)| (*revision, std::sync::Arc::clone(held)))
                             .collect(),
                     }),
                 }

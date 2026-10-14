@@ -59,10 +59,23 @@ pub(crate) fn read_pinned_root_in_txn(
         .transpose()
 }
 
+/// The pin and the earlier admitter the singleton keeps beside it.
+pub(crate) fn read_pin_and_earlier_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(Option<PinnedRoot>, Option<MachineAdmitter>)> {
+    Ok(match PINNED_ROOT.get(store, txn, &())? {
+        Some(raw) => {
+            let (root, earlier) = decode(&raw)?;
+            (Some(root), earlier)
+        }
+        None => (None, None),
+    })
+}
+
 /// Pins `root` in the caller's write transaction and moves the authority
 /// cache generation with it, so every view and verdict keyed by the
 /// generation refolds under the new pin. An abort drops both.
-#[cfg(test)]
 pub(crate) fn write_pinned_root_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,

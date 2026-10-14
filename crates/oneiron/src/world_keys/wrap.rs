@@ -16,8 +16,8 @@ use zeroize::Zeroizing;
 use super::{WORLD_KEY_EPOCH, WorldKey, WorldKeyBinding, WrapRecipient, base_world, refused};
 use crate::error::Result;
 
-const PAYLOAD_LABEL: &[u8] = b"oneiron/world-key/v1\0";
-const PAYLOAD_LEN: usize = PAYLOAD_LABEL.len() + 16 + 32 + 32;
+const PAYLOAD_LABEL: &[u8] = oneiron_authority::authority::WORLD_KEY_PAYLOAD_LABEL;
+const PAYLOAD_LEN: usize = oneiron_authority::authority::WORLD_KEY_PAYLOAD_LEN;
 const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
 const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
 

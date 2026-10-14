@@ -6,10 +6,16 @@
 //! (`DIAGNOSTIC`, Maintenance/System) carrying engine-authored actor / source /
 //! criticality metadata, the invariant inputs the verdict was computed from
 //! (`expected`, `actual`, `delta`), a content-addressed replay coordinate,
-//! evidence refs, bitemporal validity, and exactly ONE explicitly typed escaped
-//! leaf for untrusted detail. That is what makes a failure addressable,
-//! provenance-carrying and re-derivable by the later healer, instead of a
-//! string somebody has to parse back into meaning.
+//! evidence refs and bitemporal validity. That is what makes a failure
+//! addressable, provenance-carrying and re-derivable by the later healer,
+//! instead of a string somebody has to parse back into meaning.
+//!
+//! An event carries no free text. Diagnostics never carry world text (owner
+//! ruling 2026-10-14), and escaping text is not the same as keeping it out, so
+//! the invariant inputs are numbers and the body's `untrusted_detail` key is
+//! always nil. What a finding is about is named by its evidence refs. A body
+//! stored before that ruling reads with its text dropped and keeps its id;
+//! the write door refuses one (see [`decode_diagnostic_event_body`]).
 //!
 //! # Determinism is the contract
 //!
@@ -41,6 +47,7 @@
 pub use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
 
 mod admission;
+use admission::stored_diagnostic_event;
 pub(crate) use admission::{
     reject_off_record_diagnostic_sources, validate_diagnostic_event_admission,
 };
@@ -76,8 +83,10 @@ pub use repair::{
 pub(crate) use repair::{RegisteredHealer, run_healer_proposals};
 
 pub use self::detector_runner::{diagnostic_event_id, run_deterministic_detectors};
-use self::diagnostic_codec::validate_diagnostic_event_body_bytes;
 pub use self::diagnostic_codec::{decode_diagnostic_event_body, encode_diagnostic_event_body};
+use self::diagnostic_codec::{
+    validate_diagnostic_event_body_bytes, validate_stored_diagnostic_event_body_bytes,
+};
 pub use self::event::{
     DIAGNOSTIC_BODY_KEYS, DIAGNOSTIC_SCHEMA_VERSION, DeterministicDetector, DiagnosticCriticality,
     DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation, DiagnosticReplayCoordinate,
@@ -108,8 +117,6 @@ mod tripwire_tests;
 // through `use super::*`: every self-heal-internal item the tests name bare,
 // and the crate/std imports the tests relied on. After the directory split
 // the seam re-imports both so the tests resolve exactly as they did before.
-#[cfg(test)]
-use self::diagnostic_codec::*;
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]

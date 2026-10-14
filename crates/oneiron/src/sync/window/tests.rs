@@ -3917,7 +3917,7 @@ fn device_only_world_fixture(vault: &Vault, window: &WindowKey) -> Result<(Entit
         at,
         b"person",
     )?;
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     let mut body = crate::claim::ClaimBody::new(
         "test.device_only",
         crate::claim::ClaimSubject::Entity(person),
@@ -4001,7 +4001,7 @@ fn resident_device_only_windows(vault: &Vault) -> Result<ResidentDeviceOnly> {
     )?;
     body.world = Some(portable_world);
     vault.put_claim(&portable_claim, &body, occurred, at)?;
-    vault.set_world_device_only(private_world, false)?;
+    vault.keep_world_on_this_machine_for_test(private_world, false)?;
     vault
         .batch()
         .edge(&portable_claim, EdgeKind::About, &person, 1.0)
@@ -4022,7 +4022,7 @@ fn resident_device_only_windows(vault: &Vault) -> Result<ResidentDeviceOnly> {
         let key = crate::sync::bridge::format_edge_key(&src, kind, &dst);
         assert!(packed.get(&key).is_some(), "{key} packed while portable");
     }
-    vault.set_world_device_only(private_world, true)?;
+    vault.keep_world_on_this_machine_for_test(private_world, true)?;
     Ok(ResidentDeviceOnly {
         private_world,
         private_claim,
@@ -4105,7 +4105,7 @@ fn clearing_device_only_exports_the_resident_claim_again() -> Result<()> {
     };
     exchange(&receiver)?;
     assert!(receiver.oplog_vv().is_empty());
-    vault.set_world_device_only(fx.private_world, false)?;
+    vault.keep_world_on_this_machine_for_test(fx.private_world, false)?;
 
     exchange(&receiver)?;
     assert!(
@@ -4225,7 +4225,7 @@ fn base_window_carrying_an_edge_to_a_device_only_claim_is_withheld_whole() -> Re
 
     let withheld = exported_to_empty_receiver(&vault, &month, &base)?;
     assert!(withheld.oplog_vv().is_empty());
-    vault.set_world_device_only(fx.private_world, false)?;
+    vault.keep_world_on_this_machine_for_test(fx.private_world, false)?;
     let shipped = exported_to_empty_receiver(&vault, &month, &base)?;
     assert!(
         shipped
@@ -4321,7 +4321,7 @@ fn base_month_withholds_a_resident_note_and_world_once_the_world_turns_device_on
     for id in [note, world] {
         assert!(base.get_map("entities").get(&id.to_hex()).is_some());
     }
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
 
     let received = exported_to_empty_receiver(&vault, &month, &base)?;
     for id in [note, world] {
@@ -4338,11 +4338,82 @@ fn packing_withholds_a_note_in_a_device_only_world() -> Result<()> {
     let (_dir, vault) = test_vault();
     let world = EntityId::now();
     let (note, month) = note_in_world(&vault, world)?;
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     let base = create_window_doc("base", &month);
     reverse_rematerialize(&vault, &base, &month)?;
 
     assert!(base.get_map("entities").get(&note.to_hex()).is_none());
+    Ok(())
+}
+
+/// A stamp never travels with its TASK (DEC-0005). The upgrade sweep settles
+/// every local TASK put before birth stamps in base reality once, so it still
+/// ships while a world is device-only. One a peer replicates in later stays
+/// unstamped, and this device keeps it while any world is device-only.
+#[test]
+fn device_only_holds_a_task_replicated_after_the_upgrade_sweep_but_ships_one_it_settled()
+-> Result<()> {
+    let (_dir, vault) = test_vault();
+    let world = EntityId::now();
+    note_in_world(&vault, world)?;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let task = vault
+        .memory(owner, EdgeActorClass::Human)
+        .put_structural(&crate::memory::StructuralPutInput {
+            id: None,
+            kind: "TASK".into(),
+            body: serde_json::json!({"role": 4, "content": "errand"}),
+            text_fields: None,
+            edges: None,
+            occurred_at: 10,
+            learned_at: None,
+        })
+        .unwrap();
+    let task = EntityId::from_hex(&task.id_hex)?;
+    let raw = vault.get_raw(&task)?.expect("task");
+    let header = crate::batch::EntityMetadataHeader::parse(&raw).expect("header");
+    let month = WindowKey::from_timestamp(header.learned_at);
+    let ships = |id: EntityId| -> Result<bool> {
+        let base = create_window_doc("base", &month);
+        reverse_rematerialize(&vault, &base, &month)?;
+        let received = exported_to_empty_receiver(&vault, &month, &base)?;
+        Ok(received.get_map("entities").get(&id.to_hex()).is_some())
+    };
+    // A vault from before the sweep's third version: the TASK has no stamp.
+    vault.with_write_txn(|txn| {
+        crate::federation::record_scope::retire_stamp(&vault.store, txn, task)?;
+        vault
+            .store
+            .vault_meta
+            .put(txn, b"scope:claim-codec:v2", &[2])?;
+        Ok(())
+    })?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    assert!(
+        !ships(task)?,
+        "an unstamped TASK is kept until it is placed"
+    );
+
+    crate::batch::sweep_scope_stamps(&vault.store)?;
+    assert!(ships(task)?);
+    let later = EntityId::now();
+    vault
+        .batch()
+        .put_replicated(
+            &later,
+            crate::registry::ENTITY_TYPE_TASK,
+            TimeRange {
+                start: header.learned_at,
+                end: header.learned_at,
+            },
+            header.learned_at,
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )
+        .commit()?;
+    assert!(!ships(later)?);
+
+    vault.keep_world_on_this_machine_for_test(world, false)?;
+    assert!(ships(later)?);
     Ok(())
 }
 

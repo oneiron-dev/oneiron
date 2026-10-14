@@ -412,16 +412,17 @@ pub(crate) fn authority_row_resident(
 }
 
 impl AuthorityFold {
-    /// Whether `entry` stands on a retired key: it, or a row in its ancestry
-    /// that this fold does not hold, is signed by a key a handoff retired. Such
-    /// a key keeps no standing: its rows that stand are already here in a
-    /// handoff's line, because a handoff folds only once its whole ancestry
-    /// does. The fold refuses such a row with its descendants, so a door
-    /// refuses a new row that descends from one, whoever signs it. `row` reads
-    /// an ancestor by hash, stored or arriving beside `entry`; the walk stops
-    /// at rows this fold holds, whose ancestry it holds too. An approval the
-    /// stale-roster window expired counts as held here: it stood in the
-    /// settled fold, so no fence refused it, though it approves nothing now.
+    /// Whether `entry` stands on a retired key: it, or, for a main-log row, a
+    /// row in its ancestry that this fold does not hold, is signed by a key a
+    /// handoff retired. Such a key keeps no standing: its rows that stand are
+    /// already here in a handoff's line, because a handoff folds only once its
+    /// whole ancestry does. The fold refuses such a row with its descendants,
+    /// so a door refuses a new row that descends from one, whoever signs it.
+    /// `row` reads an ancestor by hash, stored or arriving beside `entry`; the
+    /// walk stops at rows this fold holds, whose ancestry it holds too. An
+    /// approval the stale-roster window expired counts as held here: it stood
+    /// in the settled fold, so no fence refused it, though it approves nothing
+    /// now.
     ///
     /// An owner anchor's row is none (`anchor_signed`): its anchor names a
     /// root this fold holds or one arriving beneath it, so a root and its marks
@@ -434,6 +435,13 @@ impl AuthorityFold {
         entry: &AuthorityLogEntry,
         row: &mut dyn FnMut(&AuthorityEntryHash) -> crate::error::Result<Option<AuthorityLogEntry>>,
     ) -> crate::error::Result<bool> {
+        // A world's edit stands on no main-log row the fold refuses: it is
+        // judged with each such row crossed (`refold_world_edits`), so only its
+        // own signer counts here (Wonder P2 round 1, W4).
+        if super::world_privacy::side_world(&entry.op).is_some() {
+            return Ok(!self.valid_entries.contains(hash)
+                && entry_signer_keys(entry).any(|key| self.retired_keys.contains(key)));
+        }
         if self.retired_keys.is_empty() {
             return Ok(false);
         }

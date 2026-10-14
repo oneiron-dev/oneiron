@@ -581,4 +581,5 @@ fn zero_remote_lease_duration_is_rejected() {
 }
 
 mod device;
+mod device_local;
 mod payload;

@@ -42,11 +42,11 @@ impl DeterministicDetector for ConsentDeniedDetector {
                 delta: Value::from(-1_i64),
                 replay: DiagnosticReplayCoordinate {
                     content_hash: observation.payload_digest,
-                    run_ref: Some(input.scope_ref.to_owned()),
+                    // The receipt's id, never the scope label a caller wrote.
+                    run_ref: Some(observation.source_ref.to_hex()),
                     checkpoint_ref: None,
                 },
                 evidence_refs: vec![observation.source_ref],
-                untrusted_detail: None,
                 valid_from: observation.observed_at,
                 valid_to: None,
             })

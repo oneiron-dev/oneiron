@@ -143,8 +143,33 @@ pub struct AuthorityFold {
     /// The roster marks a key P1 accepts signed, judged on the merged
     /// history: the only marks that renew a stale trusted roster revision.
     pub(super) accepted_roster_marks: BTreeSet<AuthorityEntryHash>,
+    /// Each edited world's settings, keyed by its WORLD row.
+    pub worlds: BTreeMap<EntityId, FoldedWorld>,
+    /// Well-signed world edits from a machine that could not edit that
+    /// world: valid entries without effect.
+    pub refused_world_edits: BTreeSet<AuthorityEntryHash>,
+    /// What this install holds back beside the roster rule (Astra #1430).
+    pub(super) install: InstallBound,
+    /// Every world key with a counted record, keyed by id (world first).
+    pub(super) world_keys: BTreeMap<WorldKeyId, FoldedWorldKey>,
+    /// Well-signed key records that count for nothing under this install's
+    /// pin: valid entries without effect.
+    pub refused_world_keys: BTreeSet<AuthorityEntryHash>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
+}
+
+/// What bounds this install's view beside the roster rule (Astra #1430).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct InstallBound {
+    /// The machine revisions and world edits this install holds back: each
+    /// revision that landed restriction only, and each edit that never counts
+    /// at full strength here, one valid without effect included.
+    pub(super) held_back: BTreeSet<AuthorityEntryHash>,
+    /// The first still-future second at which the fold with no vouch that
+    /// bounds this view changes (`install_fold::NoVouch`). A cached view
+    /// lasts no longer.
+    pub(super) no_vouch_deadline: Option<u64>,
 }
 
 /// One folded `{signing_key_id, actor_ref, actor_class, epoch, status}` tuple.
@@ -278,6 +303,13 @@ pub(super) struct FoldState {
     /// enrolled as its own root, and each key marked for the cloud (role or
     /// tier). Custody also passes along `key_admitters`.
     pub(super) host_custody_keys: BTreeSet<AuthorityKey>,
+    pub(super) worlds: BTreeMap<EntityId, WorldFrontier>,
+    pub(super) refused_world_edits: BTreeSet<AuthorityEntryHash>,
+    /// Each world key's counted records, merged by union.
+    pub(super) world_keys:
+        BTreeMap<WorldKeyId, std::sync::Arc<super::world_key_fold::WorldKeyState>>,
+    /// Well-signed key records that count for nothing here, merged by union.
+    pub(super) refused_world_keys: BTreeSet<AuthorityEntryHash>,
     /// Each roster key's admitters, merged by union: the keys that enrolled,
     /// rotated to or re-rooted to it, on any branch. A key is in the host's
     /// custody when it, or any key up this graph, is marked as the host's,
@@ -509,6 +541,14 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .anchor_entries
         .extend(right.anchor_entries.iter().copied());
+    merge_world_frontiers(&mut merged.worlds, &right.worlds);
+    merged
+        .refused_world_edits
+        .extend(right.refused_world_edits.iter().copied());
+    super::world_key_fold::merge_world_keys(&mut merged.world_keys, &right.world_keys);
+    merged
+        .refused_world_keys
+        .extend(right.refused_world_keys.iter().copied());
     merged
         .host_custody_keys
         .extend(right.host_custody_keys.iter().cloned());

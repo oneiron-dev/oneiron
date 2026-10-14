@@ -311,7 +311,7 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
             json!({"id":hit.id.to_hex(),"score":hit.score})).collect::<Vec<_>>()}})
         }
         SelfDispatchOutcome::DurableWait(value) => json!({"waitId":value.wait_id.to_hex()}),
-        SelfDispatchOutcome::AgentVerb(output) => json!({"output":output}),
+        SelfDispatchOutcome::AgentVerb(answer) => json!({"output":answer.output}),
         SelfDispatchOutcome::Denied(value) => {
             json!({"denied":value.outcome,"reasonCodes":value.reason_codes})
         }

@@ -33,10 +33,6 @@ impl PreparedRoot {
     }
 
     /// The root's signed record, which activation publishes.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "activate_owner_root publishes it")
-    )]
     pub(crate) fn entry(&self) -> &AuthorityLogEntry {
         &self.entry
     }

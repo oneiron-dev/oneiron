@@ -257,7 +257,7 @@ pub(crate) async fn core_memory_timeline(
     let view = params.view.unwrap_or(View::Summary);
     let scoped_read = scoped_read_for_core_auth(&server.vault, &auth)?;
     let timeline = scoped_read.memory_timeline(&id).map_err(|error| {
-        tracing::error!(error = %error, id = %id.to_hex(), "core memory timeline failed");
+        tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory timeline failed");
         core_engine_error("core memory timeline failed", error)
     })?;
 
@@ -354,7 +354,7 @@ pub(crate) async fn core_memory_verb(
             )?
             .commit()
             .map_err(|error| {
-                tracing::error!(error = %error, id = %id.to_hex(), "core memory remember failed");
+                tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory remember failed");
                 core_engine_error("core memory remember failed", error)
             })?;
 
@@ -381,7 +381,7 @@ pub(crate) async fn core_memory_verb(
                 .supersede_claim(&new_id, &old_id, at)
                 .map_err(|error| {
                     tracing::error!(
-                        error = %error,
+                        kind = ?error.kind(),
                         new_id = %new_id.to_hex(),
                         old_id = %old_id.to_hex(),
                         "core memory supersede failed"
@@ -404,7 +404,7 @@ pub(crate) async fn core_memory_verb(
             let id = parse_required_entity_id(req.id.as_deref(), "id")?;
             let at = req.at.unwrap_or_else(unix_seconds_now);
             server.vault.retract_claim(&id, at).map_err(|error| {
-                tracing::error!(error = %error, id = %id.to_hex(), "core memory retract failed");
+                tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory retract failed");
                 core_engine_error("core memory retract failed", error)
             })?;
 
@@ -433,7 +433,7 @@ pub(crate) async fn core_memory_verb(
                 .vault
                 .delete_entity_with_reason(&id, reason)
                 .map_err(|error| {
-                    tracing::error!(error = %error, id = %id.to_hex(), "core memory delete failed");
+                    tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory delete failed");
                     core_engine_error("core memory delete failed", error)
                 })?;
 

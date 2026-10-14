@@ -103,6 +103,7 @@ pub(super) fn profile(
         role,
         revision,
         machine_proof: request.machine_proof,
+        seen_world_edits: BTreeSet::new(),
     })
 }
 

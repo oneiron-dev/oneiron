@@ -197,6 +197,35 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
         tracing::trace!(target: "oneiron::authority::cache", generation = fold.generation(), "exact authority fold cache hit");
         return Ok(fold);
     }
+    let (view, next_deadline_secs) = fold_view_for_key(store, posture, txn, key)?;
+    cache_fold_if_committed(store, key, next_deadline_secs, &view);
+    Ok(view)
+}
+
+/// This vault's own log folded as an install pinned to `pin` would fold it,
+/// in the caller's snapshot: what a pin door compares before it moves the
+/// pin, and the read under another admitter. Never cached, so the cached
+/// view stays the stored pin's.
+pub(super) fn authority_view_under_pin_for_store_in_txn(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    pin: Option<PinnedRoot>,
+) -> Result<AuthorityView> {
+    let key = AuthorityCacheKey {
+        pin,
+        ..authority_cache_key(store, posture, txn)?
+    };
+    Ok(fold_view_for_key(store, posture, txn, key)?.0)
+}
+
+/// The full fold behind `key`, and the next stale-roster deadline it holds.
+fn fold_view_for_key(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    key: AuthorityCacheKey,
+) -> Result<(AuthorityView, Option<u64>)> {
     tracing::trace!(target: "oneiron::authority::cache", generation = key.generation, "full authority fold fallback");
     let mut first_seen_at_secs = BTreeMap::new();
     // Read once: all entries in this fold share one snapshot clock and marker.
@@ -233,7 +262,8 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
         key.pin.as_ref(),
     );
     // The fold's only clock-sensitive transition is stale-roster approval
-    // expiry. Slip TTL is checked by each caller against its own snapshot
+    // expiry, here and in the fold with no vouch that bounds this install's
+    // view. Slip TTL is checked by each caller against its own snapshot
     // clock, not frozen into this authority view.
     let next_deadline_secs = next_stale_roster_deadline(
         &entries,
@@ -241,13 +271,15 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
         &first_seen_at_secs,
         now_secs,
         key.policy.stale_roster_window_secs,
-    );
+    )
+    .into_iter()
+    .chain(fold.install.no_vouch_deadline)
+    .min();
     let view = AuthorityView {
         fold: Arc::new(fold),
         generation: key.generation,
     };
-    cache_fold_if_committed(store, key, next_deadline_secs, &view);
-    Ok(view)
+    Ok((view, next_deadline_secs))
 }
 
 /// First-seen seconds for ONE entry inside a readonly fold, reproducing the

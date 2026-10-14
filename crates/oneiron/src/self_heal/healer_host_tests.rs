@@ -57,7 +57,6 @@ fn external_runner_reads_failure_corpus_and_patch_release_is_human_only() {
             checkpoint_ref: None,
         },
         evidence_refs: vec![],
-        untrusted_detail: None,
         valid_from: 1,
         valid_to: None,
     };
@@ -326,7 +325,6 @@ fn healer_diagnostic_events_read_returns_its_receipt() {
             checkpoint_ref: None,
         },
         evidence_refs: vec![],
-        untrusted_detail: None,
         valid_from: 1,
         valid_to: None,
     };

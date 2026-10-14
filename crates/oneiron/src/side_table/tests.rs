@@ -316,8 +316,8 @@ fn pre_move_fixture_coverage_is_explicit() {
         );
         covered.insert(owners[0].name);
     }
-    assert_eq!(rows.len(), 535, "the sampled pre-move rows changed");
-    assert_eq!(covered.len(), 526, "the sampled table count changed");
+    assert_eq!(rows.len(), 534, "the sampled pre-move rows changed");
+    assert_eq!(covered.len(), 525, "the sampled table count changed");
     let uncovered: BTreeSet<_> = declarations
         .iter()
         .filter(|decl| !covered.contains(decl.name))
@@ -385,7 +385,6 @@ fn pre_move_fixture_coverage_is_explicit() {
         "DELETION_ROW_FENCE_BACKFILLED",
         "DELETION_TOPOLOGY_DELETE_INTENT",
         "DELETION_WINDOW_LABEL",
-        "DEVICE_ONLY_GENERATION",
         "DISPATCH_OBSERVATION",
         "DREAMER_BUDGET_STEP_CHARGE",
         "DREAMER_CONSOLIDATION_KEY_RULES",
@@ -394,6 +393,22 @@ fn pre_move_fixture_coverage_is_explicit() {
         "DREAMER_PROACTIVITY_CONFIRMED",
         "DREAMER_PROACTIVITY_JUDGE_ASKS",
         "DREAMER_PROACTIVITY_PRESENTATION",
+        "DREAMER_PROJECTION_GIVEN",
+        "DREAMER_PROJECTION_LATEST",
+        "DREAMER_PROJECTION_RIDER",
+        "DREAMER_PROJECTION_RIDER_OF",
+        "DREAMER_PROJECTION_RIDES",
+        "DREAMER_PROJECTION_ROUND",
+        "DREAMER_PROJECTOR_POLICY",
+        "DREAMER_SIEVE_CONTINUE",
+        "DREAMER_SIEVE_CURSOR",
+        "DREAMER_SIEVE_OWED",
+        "DREAMER_SIEVE_POLICY",
+        "DREAMER_SIEVE_QUEUE",
+        "DREAMER_SIEVE_RETRY",
+        "DREAMER_SIEVE_SPANS",
+        "DREAMER_SIEVE_TURN",
+        "DREAMER_SIEVE_WITHHELD",
         "DREAMER_TURN_REDIRTY",
         "DREAMER_WAKE_POLICY",
         "DREAMER_WAKE_PROJECTION",
@@ -411,9 +426,6 @@ fn pre_move_fixture_coverage_is_explicit() {
         "ESIGN_PUBLIC_RATE_V2",
         "ESIGN_RECIPIENT_CAPABILITY_INDEX",
         "EXPORT_RECEIPT",
-        "FAILURE_SIGNALS_TIER2_SAMPLE",
-        "FAILURE_SIGNALS_TIER2_SOURCE",
-        "FAILURE_SIGNALS_TIER2_WEEK",
         "FEDERATION_ACTOR_CONTENT_INFLIGHT",
         "GATE_AUTO_SIGNALS_WINDOW",
         "GATE_DECISION_CLAIM_CONTEXT",
@@ -482,6 +494,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "OWNER_POLICY_NOTIFICATION_RULE_RECEIPT",
         "OWNER_POLICY_SECRET_SCAN_MODE",
         "OWNER_POLICY_SECRET_SCAN_RECEIPT",
+        "OWNER_POLICY_WORLD_PRIVACY_RECEIPT",
         "PORTS_WITHDRAWN",
         "PROJECT_DEPTH_LOCAL_BIRTH",
         "PROJECT_GOAL_INTAKE_ADMISSION",
@@ -502,6 +515,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "PROPOSAL_SUBMISSION",
         "RETRIEVAL_AGE",
         "RETRIEVAL_AGE_BY_RUN",
+        "RETRIEVAL_TRACE_KEY_LOCAL",
         "ROOMS_THREAD_CHILDREN",
         "RUN_TREE_ASK_WAIT",
         "SCOPE_RECORD",

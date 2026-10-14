@@ -261,6 +261,8 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         }
         OP_KIND_MACHINE_PROFILE => super::machine_profile::decode_machine_profile(entries),
         OP_KIND_OWNER_ROOT => super::owner_root::decode_owner_root(entries),
+        OP_KIND_WORLD_PRIVACY => super::world_privacy::decode_world_privacy(entries),
+        OP_KIND_WORLD_KEY_WRAPS => super::world_key_wraps::decode_world_key_wraps(entries),
         _ => Err(invalid_authority()),
     }
 }

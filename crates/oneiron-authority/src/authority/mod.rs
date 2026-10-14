@@ -23,6 +23,8 @@ mod slip_claims;
 mod slip_wire;
 mod wire_decode;
 mod wire_encode;
+mod world_key_wraps;
+mod world_privacy;
 
 pub use confirm::*;
 pub use constants::*;
@@ -37,3 +39,5 @@ pub use slip_claims::*;
 pub use slip_wire::*;
 pub use wire_decode::*;
 pub use wire_encode::*;
+pub use world_key_wraps::*;
+pub use world_privacy::*;

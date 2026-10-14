@@ -154,7 +154,11 @@ pub fn lfs_object_withheld(vault: &Vault, oid: LfsOid) -> Result<bool> {
     let _accepting = vault.device_only_acceptance();
     let object = vault.lfs_object(oid)?.ok_or_else(invalid)?;
     let txn = vault.store.env.read_txn()?;
-    let flagged = crate::settings::device_only_worlds_in(&vault.store, &txn)?;
+    let flagged = crate::settings::device_local_worlds_at(
+        vault,
+        &txn,
+        crate::claim::CallerLocality::OffDevice,
+    )?;
     if flagged.is_empty() {
         return Ok(false);
     }

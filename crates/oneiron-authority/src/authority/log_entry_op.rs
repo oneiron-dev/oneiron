@@ -128,6 +128,13 @@ pub enum AuthorityOp {
     MachineProfile(MachineProfile),
     /// An owner recovery root, signed by its own anchor (world privacy P6b).
     OwnerRoot(OwnerRootRecord),
+    /// One owner edit of a world's settings, signed by the install key of a
+    /// machine the owner marked "yours". A side-branch entry: no entry but a
+    /// later edit of the same world takes it as a parent.
+    WorldPrivacy(WorldPrivacyEdit),
+    /// One machine's wraps of one world key, signed by that machine's install
+    /// key. A side-branch entry of the key's world, like its settings edits.
+    WorldKeyWraps(WorldKeyWrapsRecord),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -179,8 +186,10 @@ impl AuthorityLogEntry {
             _ => {}
         }
         validate_op(&self.op)?;
-        if let AuthorityOp::OwnerRoot(record) = &self.op {
-            record.validate_entry(self)?;
+        match &self.op {
+            AuthorityOp::OwnerRoot(record) => record.validate_entry(self)?,
+            AuthorityOp::WorldKeyWraps(record) => record.validate_entry(self)?,
+            _ => {}
         }
         self.signer.validate()?;
         let mut previous_cosign_key: Option<&AuthorityKey> = None;
@@ -438,6 +447,8 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         }
         AuthorityOp::MachineProfile(profile) => profile.validate(),
         AuthorityOp::OwnerRoot(record) => record.validate(),
+        AuthorityOp::WorldPrivacy(edit) => edit.settings.validate(),
+        AuthorityOp::WorldKeyWraps(record) => record.validate(),
     }
 }
 

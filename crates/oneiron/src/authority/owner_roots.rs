@@ -90,7 +90,7 @@ impl Vault {
 
 /// [`Vault::owner_root_records`] in the caller's snapshot, against the fold
 /// read in it.
-fn owner_root_records_in_txn(
+pub(super) fn owner_root_records_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,

@@ -2,9 +2,9 @@
 //! No model grade, label, or mint operation signs or schedules a T1 run.
 use super::{
     DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation, DiagnosticSourceKind,
-    decode_diagnostic_event_body,
+    stored_diagnostic_event,
     tiered::{DetectorPolicy, ProposedDiagnostic, TelemetryJudge},
-    validate_diagnostic_event_admission, validate_token,
+    validate_token,
 };
 use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
@@ -84,8 +84,7 @@ impl Vault {
         {
             return Err(Error::InvalidConfig("not a live diagnostic entity".into()));
         }
-        validate_diagnostic_event_admission(id, row.occurred, &row.body)?;
-        decode_diagnostic_event_body(&row.body)
+        stored_diagnostic_event(id, row.occurred, &row.body)
     }
     /// A model cannot label its own findings. The owner proof is rechecked in
     /// the transaction that writes the label, and the cited event must be a

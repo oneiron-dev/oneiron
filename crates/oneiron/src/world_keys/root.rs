@@ -88,6 +88,12 @@ impl RecoveryRootSeed {
         matches!(self.origin, SeedOrigin::Kit { stored_pieces } if stored_pieces >= 2)
     }
 
+    /// Where the seed came from.
+    #[must_use]
+    pub fn origin(&self) -> SeedOrigin {
+        self.origin
+    }
+
     /// The recovery keypair's secret half. It opens the root's wraps.
     pub fn recovery_secret(&self) -> Result<HybridSecretKey> {
         HybridSecretKey::from_seed(&self.bytes, RECOVERY_KEY_LABEL)

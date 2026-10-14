@@ -16,6 +16,7 @@ pub(super) fn fold_anchor_entry(
     entry: &AuthorityLogEntry,
     signer: &AuthorityKey,
     hash: AuthorityEntryHash,
+    restriction_only: bool,
 ) -> Option<std::result::Result<(), AuthorityFoldIssue>> {
     let anchor = match (&entry.op, signer) {
         (AuthorityOp::OwnerRoot(record), _) => {
@@ -46,7 +47,7 @@ pub(super) fn fold_anchor_entry(
     }
     Some(
         advance(state, entry, signer, hash)
-            .and_then(|()| apply_anchor_profile(state, anchor, profile, hash))
+            .and_then(|()| apply_anchor_profile(state, anchor, profile, hash, restriction_only))
             .map(|()| {
                 state.anchor_entries.insert(hash);
             }),

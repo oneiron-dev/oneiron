@@ -21,6 +21,7 @@ mod places;
 #[cfg(feature = "test-support")]
 mod read_fixture;
 mod reader_table;
+mod retrieval_trace_key;
 mod search_retrieval;
 mod transactions;
 mod vector_evidence;
@@ -58,6 +59,8 @@ pub(crate) use self::entities::{
 pub(crate) use self::identity::VaultId;
 pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
 pub use self::reader_table::ReaderTableShortfall;
+#[cfg(test)]
+pub(crate) use self::retrieval_trace_key::unkeyed_for_test;
 
 /// Main vault API wrapping LMDB storage and configuration.
 pub struct Vault {
@@ -68,6 +71,14 @@ pub struct Vault {
     /// it after open; it is never persisted and never shared across vaults.
     pub(crate) device_keystore:
         std::sync::Mutex<Option<std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>>>,
+    /// The world keys this machine opened (world privacy P6b): in memory only,
+    /// never persisted, and wiped when the vault handle drops.
+    pub(crate) world_key_ring: std::sync::Mutex<
+        std::collections::HashMap<
+            crate::world_keys::WorldKeyId,
+            std::sync::Arc<crate::world_keys::WorldKey>,
+        >,
+    >,
     /// Serializes per-request voice-ref uploads with consent withdrawal.
     pub(crate) voice_ref_guard: std::sync::RwLock<()>,
     #[cfg(feature = "sync")]
@@ -80,6 +91,9 @@ pub struct Vault {
     pub(crate) analyzer: MultilingualAnalyzer,
     /// Which vault this handle belongs to, resolved once at open.
     vault_id: VaultId,
+    /// The key over this vault's stored retrieval-trace fork hashes,
+    /// resolved once at open.
+    retrieval_trace_key: self::retrieval_trace_key::RetrievalTraceKey,
     // Declared after Store: LMDB closes before process ownership is released.
     writer_lease: Option<VaultWriterLease>,
     /// Posture/custody pairing this handle was opened under, retained from the

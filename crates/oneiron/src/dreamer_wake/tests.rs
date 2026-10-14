@@ -571,6 +571,117 @@ fn executor_panic_parks_attempt_and_refunds_reservation() -> Result<()> {
     Ok(())
 }
 
+/// Panics quoting the row it was consolidating, as a real executor's
+/// `expect`/`unwrap` on a parsed body would.
+struct RowQuotingPanicExecutor;
+
+const PANIC_ROW_SENTINEL: &str = "sentinel-row-text-7f3a: my sister's diagnosis";
+
+impl DreamerAttemptExecutor for RowQuotingPanicExecutor {
+    async fn execute(
+        &mut self,
+        _attempt: &DreamerAdmittedAttempt,
+        _ctx: &mut WakeAttemptContext<'_>,
+    ) -> Result<DreamerAttemptExecution> {
+        panic!("could not consolidate {PANIC_ROW_SENTINEL:?}");
+    }
+}
+
+/// Set when `an_embedded_dreamer_panic_prints_no_row_text` starts this test
+/// binary as its child.
+const PANIC_CHILD_ENV: &str = "ONEIRON_TEST_DREAMER_PANIC_CHILD";
+const PANIC_CHILD_DONE: &str = "dreamer panic child: pass returned";
+
+/// The child half of `an_embedded_dreamer_panic_prints_no_row_text`: a host
+/// that installed the engine's hook opens a vault and runs a pass whose
+/// executor panics. A no-op unless that check started it.
+#[test]
+fn embedded_dreamer_panic_child() -> Result<()> {
+    if std::env::var_os(PANIC_CHILD_ENV).is_none() {
+        return Ok(());
+    }
+    crate::panic_report::install_panic_hook();
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    enqueue_micro(&store, "row-quoting", 10)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+    let result = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut RowQuotingPanicExecutor,
+        &WakeCancellation::new(),
+    ));
+    assert!(matches!(result, Err(crate::Error::InvariantViolation(_))));
+    eprintln!("{PANIC_CHILD_DONE}");
+    Ok(())
+}
+
+/// Owner ruling 2026-10-14 (fix 6): crash output never carries world text,
+/// embedded vaults included. The panic hook runs before the driver's
+/// `catch_unwind` returns, so the host's hook, not the driver's log line,
+/// decides what a caught Dreamer panic prints to stderr. The hook is
+/// process-global and stderr is the sink, so the pass runs in a child.
+#[test]
+fn an_embedded_dreamer_panic_prints_no_row_text() {
+    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "--exact",
+            "dreamer_wake::tests::embedded_dreamer_panic_child",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(PANIC_CHILD_ENV, "1")
+        .output()
+        .expect("the child test runs");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for shown in [&stdout, &stderr] {
+        assert!(!shown.contains("sentinel-row-text-7f3a"), "{shown}");
+    }
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert!(
+        stderr.contains(PANIC_CHILD_DONE),
+        "the child ran the pass: {stderr}"
+    );
+    assert!(stderr.contains("payload withheld"), "{stderr}");
+}
+
+#[test]
+fn executor_panic_leaves_no_row_text_in_logs() -> Result<()> {
+    // Owner ruling 2026-10-14 (fix 6): logs never carry world text. A panic
+    // payload is arbitrary text, so the driver must log a fixed kind, not it.
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "row-quoting", 10)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+
+    let capture = crate::test_util::log_capture::LogCapture::default();
+    let result = capture.with_default(|| {
+        let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
+        let mut exec = RowQuotingPanicExecutor;
+        block_on_ready(driver.run_wake_pass(
+            run_input(DreamerConsolidationScope::Micro, node_id, 20),
+            &mut exec,
+            &WakeCancellation::new(),
+        ))
+    });
+    assert!(matches!(result, Err(crate::Error::InvariantViolation(_))));
+    capture.assert_absent("sentinel-row-text-7f3a");
+    let lines = capture.lines();
+    let attempt_hex = crate::entity_id::bytes_to_hex_lower(queued.attempt.id.as_bytes());
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("executor_panic") && line.contains(&attempt_hex)),
+        "the panic is still reported, by kind and attempt: {lines:#?}"
+    );
+    let parked = store
+        .parked_attempt(queued.attempt.id)?
+        .expect("parked row");
+    assert!(!parked.reason.contains("sentinel-row-text-7f3a"));
+    Ok(())
+}
+
 #[test]
 fn pass_yields_at_each_attempt_boundary_for_cancellation() -> Result<()> {
     // ONE-1683: run_wake_pass must yield once per attempt boundary so a

@@ -329,11 +329,15 @@ impl LocalFoldContext {
     pub(super) fn context(&self) -> FoldContext<'_> {
         FoldContext {
             sequence_floors: None,
+            floor_vouched: None,
+            install_held: None,
             entry_ancestors: None,
             peer_consent_roots: &self.peer_consent_roots,
             consent_arm: folded_device_can_authority_consent,
             hosted: false,
+            machine_standing: &crate::authority::machine_standing::every_chain,
             pre_handoff_entries: None,
+            pin: None,
         }
     }
 }
@@ -386,6 +390,10 @@ pub(super) fn single_owner_state(
         root_anchors: BTreeMap::new(),
         anchor_entries: BTreeSet::new(),
         host_custody_keys: BTreeSet::new(),
+        worlds: BTreeMap::new(),
+        refused_world_edits: BTreeSet::new(),
+        world_keys: BTreeMap::new(),
+        refused_world_keys: BTreeSet::new(),
         key_admitters: BTreeMap::new(),
         hosted: false,
         actor_rows: BTreeSet::new(),
@@ -861,5 +869,22 @@ impl RosterChain for FoldedMachine {
         self.roster
             .as_ref()
             .expect("the roster profiled this machine")
+    }
+}
+
+/// P2's single-revision machine, read from P6b's chains: the roster chain's
+/// head, and mine by it under no pin (the P2 port's mechanical test change).
+pub(super) trait RosterHead {
+    fn head(&self) -> &MachineRevision;
+    fn mine(&self) -> bool;
+}
+
+impl RosterHead for FoldedMachine {
+    fn head(&self) -> &MachineRevision {
+        self.roster.as_ref().expect("a roster chain")
+    }
+
+    fn mine(&self) -> bool {
+        self.is_mine(None)
     }
 }

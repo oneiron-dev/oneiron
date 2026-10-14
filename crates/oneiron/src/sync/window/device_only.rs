@@ -41,7 +41,12 @@ pub(in crate::sync) fn window_is_device_only(vault: &Vault, key: &WindowKey) -> 
         return Ok(false);
     };
     let rtxn = vault.store.env.read_txn()?;
-    Ok(crate::settings::device_only_worlds_in(&vault.store, &rtxn)?.contains(&world))
+    Ok(crate::settings::device_local_worlds_at(
+        vault,
+        &rtxn,
+        crate::claim::CallerLocality::OffDevice,
+    )?
+    .contains(&world))
 }
 
 /// Whether a full-window send of `doc` ships nothing now: the window belongs
@@ -52,7 +57,7 @@ pub(in crate::sync) fn window_withheld(
     key: &WindowKey,
     doc: &LoroDoc,
 ) -> Result<bool> {
-    carries_device_only(vault, &flagged_worlds(vault)?.1, key, doc)
+    carries_device_only(vault, &flagged_worlds(vault)?, key, doc)
 }
 
 /// What a raw send of window bytes may do, against the flag as it stands now.
@@ -77,11 +82,12 @@ const FLAG_PASSES: usize = 3;
 /// stand alone (a snapshot, a selector's synthetic update), otherwise as the
 /// operation range the live window must hold in full.
 ///
-/// Opening and reading the window takes time, and a flag may be committed
-/// meanwhile. Bytes are portable only if the flag generation read after the
-/// inspection is the one the inspection ran against; otherwise they are
-/// inspected again under the new flag set. That read and the acceptance hold
-/// the vault's device-only flag lock, which a flag commit takes too, so a flag
+/// Opening and reading the window takes time, and the withheld set may grow
+/// meanwhile: a settings edit lands, or a machine's standing expires with no
+/// write at all. Bytes are portable only if the set read after the inspection
+/// withholds no world the inspection did not; otherwise they are inspected
+/// again under the new set. That read and the acceptance hold the vault's
+/// device-only flag lock, which a settings commit takes too, so an edit
 /// committed before the verdict accepts is always seen. No read transaction
 /// is held across the inspection or the send.
 pub fn raw_update_verdict(
@@ -92,7 +98,7 @@ pub fn raw_update_verdict(
     let verdict = (|| -> Result<UpdateVerdict> {
         let vault = manager.vault();
         let accepting = vault.device_only_acceptance();
-        let (mut generation, mut flagged) = flagged_worlds(vault)?;
+        let mut flagged = flagged_worlds(vault)?;
         if flagged.is_empty() {
             return Ok(UpdateVerdict::Portable);
         }
@@ -103,17 +109,17 @@ pub fn raw_update_verdict(
                 return Ok(verdict);
             }
             let accepting = vault.device_only_acceptance();
-            let (now, now_flagged) = flagged_worlds(vault)?;
-            if now == generation || now_flagged.is_empty() {
+            let now_flagged = flagged_worlds(vault)?;
+            if now_flagged.is_subset(&flagged) {
                 return Ok(UpdateVerdict::Portable);
             }
             drop(accepting);
-            (generation, flagged) = (now, now_flagged);
+            flagged = now_flagged;
         }
         Ok(UpdateVerdict::Uninspectable)
     })();
     verdict.unwrap_or_else(|error| {
-        tracing::warn!(window_key, %error, "raw window update not inspectable");
+        tracing::warn!(kind = ?error.kind(), "raw window update not inspectable");
         UpdateVerdict::Uninspectable
     })
 }
@@ -200,7 +206,7 @@ pub(super) fn delta_carries_device_only(
     doc: &LoroDoc,
     from: &VersionVector,
 ) -> Result<bool> {
-    let (_, flagged) = flagged_worlds(vault)?;
+    let flagged = flagged_worlds(vault)?;
     if flagged.is_empty() {
         return Ok(false);
     }
@@ -213,13 +219,10 @@ pub(super) fn delta_carries_device_only(
     )
 }
 
-/// The flag generation and the flagged worlds, read in one transaction.
-fn flagged_worlds(vault: &Vault) -> Result<(u64, BTreeSet<EntityId>)> {
+/// The worlds withheld from any other machine now.
+fn flagged_worlds(vault: &Vault) -> Result<BTreeSet<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok((
-        crate::settings::device_only_generation_in(&vault.store, &rtxn)?,
-        crate::settings::device_only_worlds_in(&vault.store, &rtxn)?,
-    ))
+    crate::settings::device_local_worlds_at(vault, &rtxn, crate::claim::CallerLocality::OffDevice)
 }
 
 fn carries_device_only(
@@ -313,7 +316,11 @@ pub(in crate::sync) fn device_only_ids(
     entities: &LoroMap,
     edges: &LoroMap,
 ) -> Result<HashSet<EntityId>> {
-    let flagged = crate::settings::device_only_worlds_in(&vault.store, rtxn)?;
+    let flagged = crate::settings::device_local_worlds_at(
+        vault,
+        rtxn,
+        crate::claim::CallerLocality::OffDevice,
+    )?;
     let mut withheld = HashSet::new();
     if flagged.is_empty() {
         return Ok(withheld);

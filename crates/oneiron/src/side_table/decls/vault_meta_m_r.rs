@@ -203,6 +203,9 @@ side_tables! {
     /// Receipt of one owner change to the secret-scan switch, in revision order. Key: u64be
     /// revision.
     OWNER_POLICY_SECRET_SCAN_RECEIPT: VaultMeta b"owner_policy:secret_scan:receipt:v1:" Named;
+    /// Receipt of one owner change to a world's privacy settings on this machine, in revision
+    /// order. Key: u64be revision.
+    OWNER_POLICY_WORLD_PRIVACY_RECEIPT: VaultMeta b"owner_policy:world_privacy:receipt:v1:" Named;
     /// Marker (engine version string) that the built-in connector packs have been seeded. Key: ().
     SKILL_HUB_PACK_BUILTIN_SEED: VaultMeta b"pack.builtin.seeded.v1" Raw;
     /// Candidate knowledge-pack receipt. Key: lowercase hex content hash.
@@ -383,6 +386,10 @@ side_tables! {
     RETRIEVAL_TRACE_FORK_INDEX: VaultMeta b"retr_trace_fork:v0:" Raw;
     /// Retrieval runs by turn. Key: id16 + u64be + id16.
     RETRIEVAL_TURN_INDEX: VaultMeta b"retr_turn:v1:" Raw;
+    /// Random 32-byte key over every stored retrieval-trace fork hash, minted at the store's first
+    /// open. Outside the `retr_` telemetry families, so no telemetry read, purge or export reaches it;
+    /// node-local, never synced, and a runtime row no checkpoint image carries. Key: ().
+    RETRIEVAL_TRACE_KEY_LOCAL: VaultMeta b"retrieval_trace_key:local:v1" Raw;
     /// Blake3 stamp of a written claim body, used to detect a review verdict claim edited outside its
     /// producer. Key: id16.
     CRITIC_REVIEW_CLAIM_TRUST: VaultMeta b"review:claim:v1:" Raw;

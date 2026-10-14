@@ -94,7 +94,7 @@ pub use crate::gate::{PolicyRowAction, PolicyRowChange, PolicyRowScope, PolicyWh
 pub use owner_rows::{
     PolicyChangedEvent, PolicyNotificationFailure, PolicyNotificationMode, PolicyNotificationRule,
     PolicyNotificationTarget, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt,
-    PolicyRowSubmission, SecretScanReceipt, policy_row_grant_target,
+    PolicyRowSubmission, SecretScanReceipt, WorldPrivacyReceipt, policy_row_grant_target,
 };
 pub(crate) use owner_rows::{is_live_vault_owner_in_txn, owners_in_txn};
 mod notice;

@@ -333,6 +333,7 @@ fn a_forged_mark_never_makes_a_machine_mine() {
         role: MachineRole::Owned(MachineOwnership::Yours),
         revision: 1,
         machine_proof: request.machine_proof,
+        seen_world_edits: BTreeSet::new(),
     };
     let forge = |signer: &SigningKey| {
         let fold = host.vault.authority_fold().unwrap();
