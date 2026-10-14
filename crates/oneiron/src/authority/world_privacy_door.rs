@@ -145,7 +145,8 @@ impl Vault {
         let previous = fold.world_privacy(world);
         let orphaned_from = if standing == WorldEditStanding::RepicksOrphan {
             super::world_privacy::orphaned_from(&previous.read, |id| {
-                fold.machine(id).is_some_and(FoldedMachine::is_mine)
+                fold.machine(id)
+                    .is_some_and(super::world_privacy::mine_by_roster)
             })
         } else {
             BTreeSet::new()

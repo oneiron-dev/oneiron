@@ -3,7 +3,9 @@
 //! many such edits chain and in whatever order they arrive.
 use super::history_transfer::re_root_entry;
 use super::machine_identity::{host, request_for};
-use super::support::{authority_key_from_ed, ed_key, genesis_entry, sign_ed, unsigned_entry};
+use super::support::{
+    authority_key_from_ed, cosign_ed, device, ed_key, genesis_entry, sign_ed, unsigned_entry,
+};
 use super::world_privacy::{
     edit_by, land, other_machine, read_of, settings, stored_entries, world_row,
 };
@@ -334,4 +336,257 @@ fn a_stale_machine_never_widens_a_world() {
     );
     assert!(after.machine(stale).is_some_and(|folded| folded.stale));
     assert_eq!(after.world_privacy(world).read, EffectiveRead::MyMachines);
+}
+
+/// An edit refused because another machine held the world stays refused when
+/// that holder later goes stale here: the holder is still the owner's by the
+/// roster, so losing its standing on one install never accepts what every
+/// install refused (Sol P2 round 3, F1).
+#[test]
+fn a_holder_going_stale_never_accepts_a_refused_edit() {
+    let old = ed_key(114);
+    let next = ed_key(115);
+    let genesis = genesis_entry(114, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
+    let (holder, holder_key) = (EntityId::now(), ed_key(116));
+    let (other, other_key) = (EntityId::now(), ed_key(117));
+    let mark = |parent: &AuthorityLogEntry, signer: &SigningKey, seq, machine, key, revision| {
+        let request = request_for(id, machine, key);
+        sign_ed(
+            unsigned_entry(
+                Some(id),
+                seq,
+                vec![hash(parent)],
+                AuthorityOp::MachineProfile(MachineProfile {
+                    machine,
+                    owner: EntityId::now(),
+                    machine_key: request.machine_key,
+                    encryption_key: request.encryption_key,
+                    role: MachineRole::Owned(MachineOwnership::Yours),
+                    revision,
+                    machine_proof: request.machine_proof,
+                    seen_world_edits: BTreeSet::new(),
+                }),
+                authority_key_from_ed(signer),
+                2,
+            ),
+            signer,
+        )
+    };
+    let holder_mark = mark(&genesis, &old, 1, holder, &holder_key, 1);
+    let other_mark = mark(&holder_mark, &old, 2, other, &other_key, 1);
+    let world = EntityId::now();
+    let edit = |parents: &[&AuthorityLogEntry], machine, key: &SigningKey, read| {
+        let mut parents: Vec<_> = parents.iter().map(|&parent| hash(parent)).collect();
+        parents.sort();
+        sign_ed(
+            unsigned_entry(
+                Some(id),
+                1,
+                parents,
+                AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
+                    world,
+                    owner: EntityId::now(),
+                    machine,
+                    settings: settings(read),
+                }),
+                authority_key_from_ed(key),
+                2,
+            ),
+            key,
+        )
+    };
+    let kept = edit(
+        &[&other_mark],
+        holder,
+        &holder_key,
+        ReadLocation::OneMachine(holder),
+    );
+    let refused = edit(
+        &[&other_mark, &kept],
+        other,
+        &other_key,
+        ReadLocation::Everywhere,
+    );
+    // The new root marks the other machine again, never the holder.
+    let handoff = re_root_entry(id, &other_mark, &old, 3, &next);
+    let renewed = mark(&handoff, &next, 1, other, &other_key, 2);
+    let entries = [
+        genesis,
+        holder_mark,
+        other_mark,
+        kept,
+        refused.clone(),
+        handoff,
+        renewed,
+    ];
+    let first_seen: BTreeMap<_, _> = entries.iter().map(|entry| (hash(entry), 100)).collect();
+    for now in [100, 100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1] {
+        let fold = fold_authority_log_with_seen_times(&entries, &first_seen, now);
+        assert!(fold.refused_world_edits.contains(&hash(&refused)));
+        assert_eq!(
+            fold.world_privacy(world).read,
+            EffectiveRead::OneMachine(holder)
+        );
+        assert!(!fold.world_readable_on(world, Destination::Machine(other)));
+    }
+    let after = fold_authority_log_with_seen_times(
+        &entries,
+        &first_seen,
+        100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1,
+    );
+    assert!(after.machine(holder).is_some_and(|folded| folded.stale));
+    assert!(after.machine(other).is_some_and(FoldedMachine::is_mine));
+}
+
+/// A mark that still says "yours" acknowledges no edit when its signer turns
+/// out to be in a host's custody: on a hosted fold the edit it lists raced
+/// that loss of standing, and only narrows (Sol P2 round 3, F2). The DAG is
+/// the custody one of `custody_marked_on_another_branch_reaches_the_successor`.
+#[test]
+fn a_custodial_mark_acknowledges_no_widening() {
+    let root = ed_key(120);
+    let genesis = genesis_entry(120, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
+    let (custodied, admitted, successor) = (ed_key(121), ed_key(122), ed_key(123));
+    let ordinary = |key: &SigningKey| {
+        device(
+            authority_key_from_ed(key),
+            ROLE_OWNER | ROLE_ADMIN,
+            AuthorityTier::Software,
+        )
+    };
+    let entry = |seq,
+                 parents: &[&AuthorityLogEntry],
+                 op,
+                 signer: &SigningKey,
+                 cosigner: Option<&SigningKey>| {
+        let mut parents: Vec<_> = parents.iter().map(|&parent| hash(parent)).collect();
+        parents.sort();
+        let unsigned = unsigned_entry(Some(id), seq, parents, op, authority_key_from_ed(signer), 2);
+        match cosigner {
+            Some(cosigner) => cosign_ed(unsigned, signer, cosigner),
+            None => sign_ed(unsigned, signer),
+        }
+    };
+    let plain = entry(
+        1,
+        &[&genesis],
+        AuthorityOp::EnrollDevice {
+            device: ordinary(&custodied),
+        },
+        &root,
+        None,
+    );
+    let marked = entry(
+        2,
+        &[&genesis],
+        AuthorityOp::EnrollDevice {
+            device: device(
+                authority_key_from_ed(&custodied),
+                ROLE_OWNER | ROLE_ADMIN | ROLE_CLOUD,
+                AuthorityTier::CloudCustodial,
+            ),
+        },
+        &root,
+        None,
+    );
+    let enrolled = entry(
+        1,
+        &[&plain],
+        AuthorityOp::EnrollDevice {
+            device: ordinary(&admitted),
+        },
+        &custodied,
+        Some(&root),
+    );
+    let (machine, machine_key) = (EntityId::now(), ed_key(124));
+    let request = request_for(id, machine, &machine_key);
+    let profile = |revision, seen_world_edits| {
+        AuthorityOp::MachineProfile(MachineProfile {
+            machine,
+            owner: EntityId::now(),
+            machine_key: request.machine_key,
+            encryption_key: request.encryption_key.clone(),
+            role: MachineRole::Owned(MachineOwnership::Yours),
+            revision,
+            machine_proof: request.machine_proof,
+            seen_world_edits,
+        })
+    };
+    let mark = entry(
+        1,
+        &[&enrolled],
+        profile(1, BTreeSet::new()),
+        &admitted,
+        None,
+    );
+    let world = EntityId::now();
+    let edit = |seq, parents: &[&AuthorityLogEntry], read| {
+        let mut parents: Vec<_> = parents.iter().map(|&parent| hash(parent)).collect();
+        parents.sort();
+        sign_ed(
+            unsigned_entry(
+                Some(id),
+                seq,
+                parents,
+                AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
+                    world,
+                    owner: EntityId::now(),
+                    machine,
+                    settings: settings(read),
+                }),
+                authority_key_from_ed(&machine_key),
+                2,
+            ),
+            &machine_key,
+        )
+    };
+    let narrow = edit(1, &[&mark], ReadLocation::MyMachines);
+    let widen = edit(2, &[&mark, &narrow], ReadLocation::Everywhere);
+    // The same key marks the machine again, listing the widening, before the
+    // branches meet.
+    let acknowledged = entry(
+        2,
+        &[&mark],
+        profile(2, BTreeSet::from([hash(&widen)])),
+        &admitted,
+        None,
+    );
+    let joining = entry(
+        3,
+        &[&marked, &acknowledged],
+        AuthorityOp::ReRoot {
+            new_device: ordinary(&successor),
+        },
+        &admitted,
+        Some(&root),
+    );
+    let entries = [
+        genesis,
+        plain,
+        marked,
+        enrolled,
+        mark,
+        narrow,
+        widen.clone(),
+        acknowledged,
+        joining.clone(),
+    ];
+    let fold = fold_authority_log_for_posture(
+        &entries,
+        &BTreeMap::new(),
+        10,
+        &BTreeMap::new(),
+        crate::HostingPrivacyPosture::Hosted,
+    );
+    for accepted in [&joining, &widen] {
+        assert!(fold.valid_entries.contains(&hash(accepted)));
+    }
+    let folded = fold.machine(machine).unwrap();
+    assert_eq!(folded.signer_class, SignerClass::Custodial);
+    assert!(folded.profile.seen_world_edits.contains(&hash(&widen)));
+    assert_eq!(fold.world_privacy(world).read, EffectiveRead::MyMachines);
 }

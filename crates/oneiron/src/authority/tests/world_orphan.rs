@@ -1,7 +1,8 @@
 //! World privacy orphan re-pick: a world whose read names no machine still
 //! the owner's is re-picked from another of the owner's machines, and never
 //! while a machine it names is still the owner's.
-use super::machine_identity::{encryption_key, host};
+use super::machine_identity::{encryption_key, host, request_for};
+use super::support::ed_key;
 use super::world_privacy::{
     edit_by, enrol_here, land, other_machine, read_of, set, settings, stored_entries, world_row,
 };
@@ -159,9 +160,11 @@ fn a_conflict_with_one_live_contender_is_not_orphaned() {
 
 /// A world one machine kept to itself, when a handoff from elsewhere never
 /// marked that machine again: the handoff hangs off the main log alone and
-/// keeps the world's restriction, and once the old machine goes stale here,
-/// a machine the new root marked re-picks the world through the owner's door
-/// (Sol P2 round 2, F1 and F3).
+/// keeps the world's restriction (Sol P2 round 2, F3). Once the old machine
+/// goes stale here it no longer reads the world, but it is still the owner's
+/// by the roster, so the world is not orphaned on any install until the
+/// owner removes it; then a machine the new root marked re-picks the world
+/// through the owner's door (Sol P2 rounds 2 and 3, F1).
 #[test]
 fn a_stale_holders_world_is_re_picked_after_a_handoff() {
     let host = host();
@@ -232,12 +235,106 @@ fn a_stale_holders_world_is_re_picked_after_a_handoff() {
     let fold = host.vault.authority_fold().unwrap();
     assert!(fold.machine(old).is_some_and(|folded| folded.stale));
     assert!(fold.machine(here).is_some_and(FoldedMachine::is_mine));
+    assert!(!fold.world_readable_on(world, Destination::Machine(old)));
+    assert_eq!(fold.world_edit_standing(here, world), None);
+    assert!(repick().is_err());
+
+    host.vault
+        .set_machine_role(&next, &owner, old, MachineRole::Removed)
+        .unwrap();
     assert_eq!(
-        fold.world_edit_standing(here, world),
+        host.vault
+            .authority_fold()
+            .unwrap()
+            .world_edit_standing(here, world),
         Some(WorldEditStanding::RepicksOrphan)
     );
     let receipt = repick().unwrap();
     assert_eq!(receipt.orphaned_from, vec![old.to_hex()]);
     assert_eq!(receipt.next.read, EffectiveRead::OneMachine(here));
+    assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(here));
+}
+
+/// A removal that reached this replica after a later row of its signer still
+/// stands in the log, so the world it orphans is re-picked here through the
+/// owner's door, the edit finding the removal among its parents (Sol P2
+/// round 3, F3).
+#[test]
+fn a_world_orphaned_by_a_removal_that_arrived_late_is_re_picked() {
+    let host = host();
+    let here = enrol_here(&host);
+    let world = world_row(&host);
+    let (holder, holder_key) =
+        other_machine(&host, 79, MachineRole::Owned(MachineOwnership::Yours));
+    land(
+        &host,
+        &[edit_by(
+            &host,
+            holder,
+            &holder_key,
+            world,
+            settings(ReadLocation::OneMachine(holder)),
+        )],
+    );
+    let before = host.vault.authority_fold().unwrap();
+    let seq = before.append_sequences[&host.issuer.public_key()];
+    let root_entry = |seq, op| {
+        host.issuer
+            .sign_entry(
+                Some(host.vault_id),
+                seq,
+                before.append_heads.iter().copied().collect(),
+                op,
+                2,
+            )
+            .unwrap()
+    };
+    let removal = root_entry(
+        seq + 1,
+        AuthorityOp::MachineProfile(MachineProfile {
+            role: MachineRole::Removed,
+            revision: 2,
+            ..before.machine(holder).unwrap().profile.clone()
+        }),
+    );
+    let node = EntityId::now();
+    let request = request_for(host.vault_id, node, &ed_key(80));
+    let sibling = root_entry(
+        seq + 2,
+        AuthorityOp::MachineProfile(MachineProfile {
+            machine: node,
+            owner: host.owner.actor(),
+            machine_key: request.machine_key,
+            encryption_key: request.encryption_key,
+            role: MachineRole::HostedNode,
+            revision: 1,
+            machine_proof: request.machine_proof,
+            seen_world_edits: BTreeSet::new(),
+        }),
+    );
+    // The higher row first, in a write of its own.
+    land(&host, &[sibling]);
+    land(&host, &[removal.clone()]);
+
+    let fold = host.vault.authority_fold().unwrap();
+    assert!(
+        fold.valid_entries
+            .contains(&authority_entry_hash(&removal).unwrap())
+    );
+    assert!(fold.machine(holder).is_some_and(|folded| folded.removed));
+    assert_eq!(
+        fold.world_edit_standing(here, world),
+        Some(WorldEditStanding::RepicksOrphan)
+    );
+    let receipt = host
+        .vault
+        .set_world_privacy_as(
+            &host.owner,
+            EditOrigin::ThisMachine,
+            world,
+            settings(ReadLocation::OneMachine(here)),
+        )
+        .unwrap();
+    assert_eq!(receipt.orphaned_from, vec![holder.to_hex()]);
     assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(here));
 }

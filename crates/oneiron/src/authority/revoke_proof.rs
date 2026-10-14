@@ -82,7 +82,7 @@ pub(super) fn restrictive_withdrawal(op: &AuthorityOp) -> bool {
     }
 }
 
-fn removes_machine(op: &AuthorityOp) -> bool {
+pub(super) fn removes_machine(op: &AuthorityOp) -> bool {
     matches!(op, AuthorityOp::MachineProfile(profile) if profile.role == MachineRole::Removed)
 }
 

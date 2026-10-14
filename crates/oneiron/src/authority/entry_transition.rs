@@ -41,10 +41,14 @@ pub(super) fn fold_entry_state(
 
     // A strictly older observed sequence is rollback. Equal-sequence siblings
     // have separate hashes and fold under their own ancestry, not a fork alarm.
-    if context
-        .sequence_floors
-        .and_then(|floors| floors.get(&hash))
-        .is_some_and(|floor| entry.seq < *floor)
+    // A machine removal is terminal on every replica: a sibling that arrived
+    // first never refuses it, so it stands in the log, where a later edit
+    // finds it among its parents (Sol P2 round 3, F3).
+    if !super::revoke_proof::removes_machine(&entry.op)
+        && context
+            .sequence_floors
+            .and_then(|floors| floors.get(&hash))
+            .is_some_and(|floor| entry.seq < *floor)
     {
         return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }

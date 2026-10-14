@@ -172,20 +172,38 @@ impl AuthorityFold {
         machine: EntityId,
         world: EntityId,
     ) -> Option<WorldEditStanding> {
-        let is_mine = |id| self.machine(id).is_some_and(FoldedMachine::is_mine);
-        edit_standing(&self.world_privacy(world).read, machine, is_mine, is_mine)
+        edit_standing(
+            &self.world_privacy(world).read,
+            machine,
+            |id| self.machine(id).is_some_and(FoldedMachine::is_mine),
+            |id| self.machine(id).is_some_and(mine_by_roster),
+        )
     }
 }
 
-/// `is_mine` judges the editor, `counted` the machines the world's read
-/// names. The fold keeps an edit from a machine this install no longer counts
-/// (it only narrows), so the editor is judged by the roster rule there, while
-/// orphaning follows what this install counts, as the door sees it.
+/// Mine by the roster rule alone, as the fold judges standing at an edit's
+/// parents. This install's own projections (a revision gone stale here, a
+/// roster with no settled root) weaken an edit; they never decide whether it
+/// stands, so every install keeps the same edits, and a machine losing its
+/// standing here never turns a refused edit into an accepted one (Sol P2
+/// round 3, F1).
+pub(super) fn mine_by_roster(folded: &FoldedMachine) -> bool {
+    FoldedMachine {
+        stale: false,
+        admitter_unsettled: false,
+        ..folded.clone()
+    }
+    .is_mine()
+}
+
+/// `is_mine` judges the editor, `named_mine` the machines the world's read
+/// names, both by the roster rule in the fold. The door judges its own
+/// machine as this install counts it, which only refuses more.
 fn edit_standing(
     read: &EffectiveRead,
     machine: EntityId,
     is_mine: impl Fn(EntityId) -> bool,
-    counted: impl Fn(EntityId) -> bool,
+    named_mine: impl Fn(EntityId) -> bool,
 ) -> Option<WorldEditStanding> {
     if !is_mine(machine) {
         return None;
@@ -197,7 +215,7 @@ fn edit_standing(
         EffectiveRead::Conflicted { contenders } if contenders.contains(&machine) => {
             Some(WorldEditStanding::Contends)
         }
-        _ if !orphaned_from(read, counted).is_empty() => Some(WorldEditStanding::RepicksOrphan),
+        _ if !orphaned_from(read, named_mine).is_empty() => Some(WorldEditStanding::RepicksOrphan),
         _ => None,
     }
 }
@@ -360,13 +378,17 @@ fn is_mine(state: &FoldState, machine: EntityId) -> bool {
 }
 
 /// Full strength while the edit's machine is the owner's, or when the
-/// revision that took that away had seen the edit, and this install counted
-/// the machine when the edit was made.
+/// revision that took "yours" away had seen the edit, and this install
+/// counted the machine when the edit was made. A revision that still says
+/// "yours" took nothing away: when it stops standing for another reason (its
+/// signer found in a host's custody) it acknowledges no edit (Sol P2 round 3,
+/// F2).
 fn full_strength(state: &FoldState, hash: &AuthorityEntryHash, edit: &FrontierEdit) -> bool {
     !edit.narrow_only
         && derived_machine(state, edit.machine).is_some_and(|folded| {
             folded.is_mine()
                 || (!folded.conflicted
+                    && !folded.profile.says_mine()
                     && folded.profile.seen_world_edits.contains(hash)
                     && (!folded.removed || folded.profile.role == MachineRole::Removed))
         })
@@ -426,18 +448,10 @@ fn world_meet(state: &FoldState, world: EntityId) -> PrivacyMeet {
     contributions.fold(first, |meet, next| meet.meet(&next))
 }
 
-fn may_edit(
-    state: &FoldState,
-    machine: EntityId,
-    world: EntityId,
-    standing: MachineStanding<'_>,
-) -> bool {
+fn may_edit(state: &FoldState, machine: EntityId, world: EntityId) -> bool {
     let read = world_meet(state, world).effective().read;
-    let counted = |id| {
-        derived_machine(state, id)
-            .is_some_and(|folded| folded.is_mine() && standing(state, &folded))
-    };
-    edit_standing(&read, machine, |id| is_mine(state, id), counted).is_some()
+    let is_mine = |id| is_mine(state, id);
+    edit_standing(&read, machine, is_mine, is_mine).is_some()
 }
 
 /// The `WorldPrivacy` transition, after the shape, signature, retired,
@@ -475,7 +489,7 @@ pub(super) fn apply_world_privacy(
     }
     // Well signed but from a machine that cannot edit this world: valid and
     // without effect, so it never stalls what descends from it.
-    if !may_edit(state, edit.machine, edit.world, standing) {
+    if !may_edit(state, edit.machine, edit.world) {
         state.refused_world_edits.insert(hash);
         return Ok(());
     }
