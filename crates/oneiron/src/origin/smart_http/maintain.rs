@@ -20,7 +20,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use super::paths::{ORIGIN_REPO_DIR_SUFFIX, origin_serving_root, validate_repo_name};
 use super::serve::repo_common_dir;
@@ -160,7 +160,7 @@ fn collect_garbage(repo_dir: &Path, give_way: impl Fn() -> bool) -> Result<Gc> {
     let process_env = GitWireProcessEnv::capture()?;
     let mut check = git(&process_env, repo_dir)?;
     check.args(["config", "--get-all", GC_COMMAND_KEY]);
-    match run(check, &give_way)? {
+    match run(check, repo_dir, &give_way)? {
         // `git config` exits 1 when the key is not set.
         Run::Exited(status) if status.code() == Some(1) => {}
         Run::Exited(status) if status.success() => return Ok(Gc::Refused),
@@ -169,7 +169,7 @@ fn collect_garbage(repo_dir: &Path, give_way: impl Fn() -> bool) -> Result<Gc> {
     }
     let mut gc = git(&process_env, repo_dir)?;
     gc.args(["gc", "--auto", "--quiet"]);
-    Ok(match run(gc, &give_way)? {
+    Ok(match run(gc, repo_dir, &give_way)? {
         Run::Exited(status) if status.success() => Gc::Done,
         Run::Exited(_) | Run::TimedOut => Gc::Failed,
         Run::Stopped => Gc::Stopped,
@@ -197,37 +197,75 @@ fn git(process_env: &GitWireProcessEnv, repo_dir: &Path) -> Result<std::process:
     Ok(command)
 }
 
-/// Runs `command` as the leader of its own process group, so ending it ends
-/// every git it started, for at most [`SERVED_REPOSITORY_GC_TIMEOUT`].
-fn run(mut command: std::process::Command, give_way: &impl Fn() -> bool) -> Result<Run> {
+/// Runs `command` on `repo_dir` as the leader of its own process group, so
+/// ending it ends every git it started, for at most
+/// [`SERVED_REPOSITORY_GC_TIMEOUT`].
+fn run(
+    mut command: std::process::Command,
+    repo_dir: &Path,
+    give_way: &impl Fn() -> bool,
+) -> Result<Run> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
+    let since = SystemTime::now();
     let mut child = command.spawn()?;
     let deadline = Instant::now() + SERVED_REPOSITORY_GC_TIMEOUT;
+    let ended = |child: &mut Child| {
+        if end(child) {
+            remove_locks_since(repo_dir, since);
+        }
+    };
     loop {
         if give_way() {
-            end(&mut child);
+            ended(&mut child);
             return Ok(Run::Stopped);
         }
         if let Some(status) = child.try_wait()? {
             return Ok(Run::Exited(status));
         }
         if Instant::now() >= deadline {
-            end(&mut child);
+            ended(&mut child);
             return Ok(Run::TimedOut);
         }
         std::thread::sleep(POLL);
     }
 }
 
+/// Removes the lock files a killed run left behind: those under `dir` made
+/// since `since`. No one else can have made one meanwhile: the run held the
+/// repository's coordinator throughout, and every writer takes it.
+fn remove_locks_since(dir: &Path, since: SystemTime) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_dir() {
+            remove_locks_since(&path, since);
+        } else if kind.is_file()
+            && path.extension().is_some_and(|ext| ext == "lock")
+            && entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .is_ok_and(|made| made >= since)
+        {
+            let _ = fs::remove_file(&path);
+        }
+    }
+}
+
 /// Ends the run and every git it started: a terminate first, on which git
 /// removes its own lock and temporary files, then a kill for whatever is
 /// still there after [`END_GRACE`]. Returns once the leader is reaped and no
-/// process of its group is left, or a kill's grace has passed too.
-fn end(child: &mut Child) {
+/// process of its group is left, or a kill's grace has passed too; `true`
+/// when it took a kill, which leaves git no chance to clean up.
+fn end(child: &mut Child) -> bool {
     #[cfg(unix)]
     if let Ok(group) = libc::pid_t::try_from(child.id()) {
         for signal in [libc::SIGTERM, libc::SIGKILL] {
@@ -237,12 +275,13 @@ fn end(child: &mut Child) {
                 libc::kill(-group, signal);
             }
             if group_ended(child, group) {
-                return;
+                return signal == libc::SIGKILL;
             }
         }
     }
     let _ = child.kill();
     let _ = child.wait();
+    true
 }
 
 /// Waits up to [`END_GRACE`] for the leader to be reaped and its process

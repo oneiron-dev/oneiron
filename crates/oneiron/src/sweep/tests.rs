@@ -157,6 +157,62 @@ fn a_run_with_no_due_obligation_leaves_every_window_as_it_was() {
     assert_eq!(sync_rows(&vault), before, "no window was rewritten");
 }
 
+/// Astra F4 (#1456): a window opened while the sweep compacts it cannot
+/// register the history the sweep is dropping, only to keep it resident and
+/// servable after the obligation is finalized. The open waits for the
+/// compaction, then reads the compacted window.
+#[cfg(feature = "sync")]
+#[test]
+fn a_window_opened_during_its_compaction_reads_the_compacted_window() {
+    use crate::sync::bridge::Materializer;
+    use crate::sync::manager::WindowManager;
+    use crate::sync::types::WindowKey;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
+    let id = EntityId::now();
+    let learned_at = 1_771_027_200;
+    put_entity(&vault, &id, learned_at, b"reopened-window-body");
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "reopen-sweep-test",
+    ));
+    let key = WindowKey::from_timestamp(learned_at);
+    drop(manager.open_window(&key).unwrap());
+    assert!(manager.unload_window(&key).unwrap(), "the window is closed");
+    vault
+        .delete_entity_with_reason(&id, DeleteReason::GdprDelete)
+        .unwrap();
+
+    // Between the sweep's read of the window and its compaction write, a
+    // peer asks for the window.
+    let (opened, shallow) = std::sync::mpsc::channel();
+    let opener = Arc::clone(&manager);
+    let open_key = key.clone();
+    BEFORE_COMPACT_WRITE.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            std::thread::spawn(move || {
+                let window = opener.open_window(&open_key).unwrap();
+                let _ = opened.send(window.doc.is_shallow());
+            });
+            // Every chance for the open to land before the write.
+            std::thread::sleep(Duration::from_millis(300));
+        }));
+    });
+    let run = run_hard_erase_sweep(&vault).unwrap();
+
+    assert!(run.windows_compacted >= 1);
+    assert!(
+        shallow
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the open ends"),
+        "the window opened during its compaction holds the dropped history"
+    );
+}
+
 /// Per-job independence (ONE-1087 retry semantics): a job whose
 /// `next_attempt_at` is in the future is skipped — byte-identical row,
 /// no retry_state consumption — while a due job in the same run

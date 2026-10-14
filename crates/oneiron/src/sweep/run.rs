@@ -88,6 +88,14 @@ thread_local! {
         const { std::cell::Cell::new(RaceInjection::None) };
 }
 
+// Test-only: runs once between a window's read phase and its compaction
+// write, so a test can act on the window from another thread at that moment.
+#[cfg(all(feature = "sync", test))]
+thread_local! {
+    pub(super) static BEFORE_COMPACT_WRITE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Benign, sentinel-free payload the race injection plants — distinctive so
 /// a test can prove the externally-written snapshot was NOT clobbered.
 #[cfg(all(feature = "sync", test))]

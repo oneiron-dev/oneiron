@@ -325,28 +325,37 @@ impl WindowManager {
         Some(window)
     }
 
-    /// Sweep live-window probe (ONE-1162): fail closed if this manager cannot
-    /// prove `key` has no registered doc and no orphaned external handle.
+    /// Sweep live-window probe (ONE-1162): runs `f` with `key` closed and
+    /// kept closed, or fails closed, returning `None` without running it,
+    /// unless this manager can prove `key` has no registered doc and no
+    /// orphaned external handle.
     ///
     /// `discard_window` can remove the registry entry while caller-held
     /// `Arc<LoadedWindow>` clones keep the doc and observers alive. Those
     /// retained handles can still call `persist_state`, so the sweep must
     /// treat them exactly like a registered live window and defer compaction.
-    pub(crate) fn window_live_for_sweep(&self, key: &WindowKey) -> bool {
-        let registry = match self.windows.lock() {
-            Ok(registry) => registry,
-            Err(_) => return true,
-        };
+    /// The registry lock is held across `f`, so an open of the window waits
+    /// for it and then reads what `f` wrote, rather than registering the
+    /// history `f` drops (lock order registry → LMDB, as in `open_window`).
+    pub(crate) fn while_window_closed<T>(
+        &self,
+        key: &WindowKey,
+        f: impl FnOnce() -> T,
+    ) -> Option<T> {
+        let registry = self.windows.lock().ok()?;
         if registry.contains_key(key) {
-            return true;
+            return None;
         }
-        drop(registry);
-
-        let mut issued = match self.issued_handles.lock() {
-            Ok(issued) => issued,
-            Err(_) => return true,
+        let retained = {
+            let mut issued = self.issued_handles.lock().ok()?;
+            Self::prune_issued_handles_locked(&mut issued, key)
         };
-        Self::prune_issued_handles_locked(&mut issued, key)
+        if retained {
+            return None;
+        }
+        let result = f();
+        drop(registry);
+        Some(result)
     }
 
     /// Returns the keys of all currently loaded windows.
