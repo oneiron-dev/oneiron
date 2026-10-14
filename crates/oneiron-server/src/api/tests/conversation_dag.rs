@@ -1283,3 +1283,117 @@ async fn a_second_canonical_summary_never_reads_the_first_summarys_reply() {
     );
     host.shutdown().await;
 }
+
+/// Gate 3 (map gap 12): the Dreamer's extraction and narrative roles routed
+/// to two providers. Each role's calls go to its own provider under its own
+/// run, and every call there is admitted, dispatched and settled on its own
+/// receipts. Before, the narrative went out on the extraction backend.
+#[tokio::test]
+async fn the_dreamers_extraction_and_narrative_roles_call_their_own_providers_under_their_own_runs()
+{
+    use oneiron::llm::run_admission::{MemoryReceipts, RunEvent};
+    let extractor = FakeLlm::start(
+        vec![],
+        Some(Reply::text(json!({"candidates": []}).to_string())),
+    )
+    .await;
+    let narrator = FakeLlm::start(vec![], Some(Reply::text("thread summary"))).await;
+    let (_dir, vault) = rooted_vault();
+    route_extraction(&vault);
+    let models = crate::ai_host::test_support::models_toml(&format!(
+        r#"
+default = "extractor:extract"
+extraction_egress = true
+[providers.extractor]
+kind = "local-openai-compat"
+base_url = "{}"
+[providers.narrator]
+kind = "local-openai-compat"
+base_url = "{}"
+[roles.extraction_teacher]
+rungs = [{{ model = "extractor:extract" }}]
+[roles.dreamer_current]
+rungs = [{{ model = "narrator:narrate" }}]
+[dreamer]
+summary_prompt = "Summarize these records."
+"#,
+        extractor.base_url, narrator.base_url
+    ));
+    let receipts = Arc::new(MemoryReceipts::default());
+    let host =
+        AiHost::start_receipted(Arc::clone(&vault), Some(&models), true, receipts.clone()).await;
+    let config = SyncServerConfig {
+        allow_unauthenticated: true,
+        ..Default::default()
+    };
+    let server = Arc::new(
+        SyncServer::new(vault, config)
+            .expect("sync server")
+            .with_ai(host.handle()),
+    );
+    let actor = author(&server);
+    let conversation = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let path = format!(
+        "/v1/core/conversations/{}",
+        conversation["id"].as_str().unwrap()
+    );
+    let root = post(
+        &server,
+        &format!("{path}/records"),
+        json!({"advance": true, "body": {"txt": "my sister Hana moved to Osaka", "spkr": "user"}, "actor": actor}),
+    )
+    .await;
+    let thread_path = format!("{path}/records/{}/thread", root["id"].as_str().unwrap());
+    post(
+        &server,
+        &thread_path,
+        json!({"advance": false, "body": {"txt": "reply"}, "actor": actor}),
+    )
+    .await;
+    declare(
+        &server,
+        &format!("{thread_path}/summary"),
+        json!({"actor": actor}),
+    )
+    .await;
+    let (summary, _) = dreamt_summary(&server, &root["id"]).await;
+    assert_dreamer_body(&server, &summary, "thread summary");
+    assert!(
+        eventually(Duration::from_secs(30), || read_by_a_round(
+            &extractor, "Osaka"
+        ))
+        .await,
+        "no Micro round read the turn"
+    );
+    host.shutdown().await;
+
+    let extraction = |seen: &crate::fake_llm::Seen| {
+        seen.body["messages"][0]["content"]
+            .as_str()
+            .is_some_and(|text| text.starts_with("Extract durable memory claims"))
+    };
+    assert!(extractor.seen().iter().all(extraction));
+    assert!(!narrator.seen().is_empty());
+    assert!(!narrator.seen().iter().any(extraction));
+    let rows = receipts.rows();
+    for (run, fake) in [
+        ("dreamer-pass/extraction_teacher", &extractor),
+        ("dreamer-pass/dreamer_current", &narrator),
+    ] {
+        let count = |event: fn(&RunEvent) -> bool| {
+            rows.iter()
+                .filter(|row| row.run == run && event(&row.event))
+                .count()
+        };
+        let calls = fake.seen().len();
+        assert_eq!(
+            [
+                count(|event| matches!(event, RunEvent::Admitted(_))),
+                count(|event| matches!(event, RunEvent::Dispatched { .. })),
+                count(|event| matches!(event, RunEvent::Settled { .. })),
+            ],
+            [calls; 3],
+            "{run}: {rows:?}"
+        );
+    }
+}

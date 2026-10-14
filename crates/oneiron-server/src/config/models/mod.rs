@@ -27,7 +27,7 @@ mod tests;
 
 pub use compaction::CompactionSettings;
 pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
-pub use provider::{OutputLimitField, ProviderConfig, ProviderKind};
+pub use provider::{OutputLimitField, ProviderConfig, ProviderKind, ResponseFormatWire};
 
 use levels::{RoleFile, Shorthand};
 use provider::ProviderFile;
