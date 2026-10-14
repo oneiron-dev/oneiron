@@ -51,12 +51,32 @@ impl ScopedRead<'_> {
         Ok(self.vault.store.env.read_txn()?)
     }
 
+    /// Whether this read's relationship gate binds in `txn`. A narrower
+    /// credential of the owner's is exempt only while its holder still exists
+    /// and is the vault's owner in this snapshot (Astra #1413-003, Sol
+    /// R5-007).
+    pub(super) fn relationship_gated_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        if !self.actor_key.enforce_access_grants {
+            return Ok(false);
+        }
+        let Some(owner) = self.actor_key.owner_exemption else {
+            return Ok(true);
+        };
+        crate::memory::owner_exemption_holds_in_txn(self.vault, txn, owner)
+            .map(|owner| !owner)
+            .map_err(|refusal| {
+                crate::error::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(
+                    Box::new(refusal),
+                ))
+            })
+    }
+
     pub(super) fn relationship_claim_allowed_in(
         &self,
         txn: &heed::RoTxn<'_>,
         body: &ClaimBody,
     ) -> Result<bool> {
-        if !self.actor_key.enforce_access_grants {
+        if !self.relationship_gated_in(txn)? {
             return Ok(true);
         }
         let context = AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?;
@@ -69,7 +89,7 @@ impl ScopedRead<'_> {
         id: &EntityId,
         raw: &[u8],
     ) -> Result<bool> {
-        if !self.actor_key.enforce_access_grants {
+        if !self.relationship_gated_in(txn)? {
             return Ok(true);
         }
         let read = relationship_read_keyed(

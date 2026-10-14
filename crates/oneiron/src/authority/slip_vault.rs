@@ -677,6 +677,29 @@ impl Vault {
         self.put_authority_log_entries(&[(bind, at, now)])?;
         Ok(())
     }
+
+    /// Revokes the actor the host root binds, as unbinding the owner does;
+    /// the host root and the slips it minted stay live.
+    #[cfg(test)]
+    pub(crate) fn revoke_host_actor_for_test(&self, issuer: &HostSlipIssuer) -> Result<()> {
+        let fold = self.authority_fold()?;
+        let now = self.now_recorded_at();
+        let revoke = next_entry(
+            issuer,
+            &fold,
+            AuthorityOp::RevokeActor {
+                authority_key: issuer.public_key(),
+                epoch: 1,
+            },
+            now,
+        )?;
+        let at = TimeRange {
+            start: now,
+            end: now,
+        };
+        self.put_authority_log_entries(&[(revoke, at, now)])?;
+        Ok(())
+    }
 }
 pub(super) fn require_host(fold: &AuthorityFold, issuer: &HostSlipIssuer) -> Result<()> {
     if fold.vault_id.is_none()
