@@ -729,7 +729,7 @@ impl PartialServeConfig {
             resolved.max_entity_blob = value;
         }
         if let Some(value) = self.max_lfs_object_bytes {
-            resolved.max_lfs_object_bytes = Some(value);
+            resolved.max_lfs_object_bytes = value;
         }
         if let Some(value) = self.max_bulk_decompressed {
             resolved.max_bulk_decompressed = value;

@@ -77,8 +77,10 @@ pub struct SyncServerConfig {
     pub max_ephemeral_snapshot_bytes: usize,
     /// Maximum entity blob size in bytes (M5/M6 bulk + materialization paths).
     pub max_entity_blob: usize,
-    /// Optional per-object LFS upload cap in bytes; unset imposes no limit.
-    pub max_lfs_object_bytes: Option<u64>,
+    /// Per-object LFS upload cap in bytes, `LFS_DEFAULT_OBJECT_CAP` unless
+    /// set. Always finite: an upload past it is refused mid-stream, and one
+    /// that declares a larger size is refused before it starts.
+    pub max_lfs_object_bytes: u64,
     /// Maximum decompressed BulkTransfer chunk in bytes (M5 Phase-3).
     pub max_bulk_decompressed: usize,
     /// The bounds on work a remote caller can start: git and LFS transfers.
@@ -110,7 +112,7 @@ impl Default for SyncServerConfig {
             max_ephemeral_payload_bytes: 64 * 1024,   // 64 KB
             max_ephemeral_snapshot_bytes: 256 * 1024, // 256 KB
             max_entity_blob: 64 * 1024,               // 64 KB
-            max_lfs_object_bytes: None,
+            max_lfs_object_bytes: oneiron::origin::lfs::LFS_DEFAULT_OBJECT_CAP,
             max_bulk_decompressed: 8 * 1024 * 1024, // 8 MB
             limits: LimitsConfig::default(),
             runtime: RuntimeConfig::default(),
@@ -223,8 +225,10 @@ pub struct ServeConfig {
     pub max_ephemeral_payload_bytes: usize,
     pub max_ephemeral_snapshot_bytes: usize,
     pub max_entity_blob: usize,
-    /// Optional per-object LFS upload cap in bytes; unset imposes no limit.
-    pub max_lfs_object_bytes: Option<u64>,
+    /// Per-object LFS upload cap in bytes, `LFS_DEFAULT_OBJECT_CAP` unless
+    /// set. Always finite: an upload past it is refused mid-stream, and one
+    /// that declares a larger size is refused before it starts.
+    pub max_lfs_object_bytes: u64,
     pub max_bulk_decompressed: usize,
     pub runtime: RuntimeConfig,
     /// The `[embedder]` section, absent until some layer names a key in it.

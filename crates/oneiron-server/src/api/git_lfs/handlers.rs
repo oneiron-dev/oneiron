@@ -3,7 +3,7 @@
 use super::gate::{LfsAccess, authorize, require_lfs_write};
 use super::support::{
     LFS_BATCH_NOT_FOUND, LFS_BATCH_UNPROCESSABLE, LFS_OBJECT_MEDIA_TYPE, declared_size, href_base,
-    lfs_engine_error, lfs_json_response, now_secs,
+    lfs_engine_error, lfs_json_response, lfs_refusal, lfs_saturated, now_secs,
 };
 use super::wire::{
     LfsAction, LfsBatchObject, LfsBatchOperation, LfsBatchRequest, LfsBatchResponse,
@@ -133,22 +133,48 @@ fn batch_entry(
 }
 
 /// `PUT|POST /git/{repo}/info/lfs/objects/{oid}` — exact body upload.
+///
+/// Admission comes before a byte is spooled: a declared size over the object
+/// cap is refused outright, then the upload takes a transfer permit and
+/// reserves its declared size (or the cap, when it declares none) against the
+/// vault's LFS quota. Its worker holds both until it ends.
 pub(crate) async fn lfs_upload(
     State(server): State<Arc<SyncServer>>,
     Path((_repo, oid)): Path<(String, String)>,
     headers: HeaderMap,
     body: Body,
 ) -> Result<Response, EnvelopedApiError> {
-    authorize(&headers, &server, LfsAccess::Write).map_err(EnvelopedApiError::from)?;
+    let auth = authorize(&headers, &server, LfsAccess::Write).map_err(EnvelopedApiError::from)?;
     let oid = LfsOid::parse_hex(&oid)
         .map_err(|error| lfs_engine_error("lfs oid is not a 64-character sha256", &error))?;
+    let cap = server.config.max_lfs_object_bytes;
+    let declared = declared_size(&headers);
+    if let Some(size) = declared.filter(|size| *size > cap) {
+        let bytes = |value: u64| usize::try_from(value).unwrap_or(usize::MAX);
+        return Err(ApiError::payload_too_large("lfs object", bytes(cap), bytes(size)).into());
+    }
+    let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()) else {
+        return Ok(lfs_saturated());
+    };
+    let Some(reservation) = server
+        .transfers
+        .reserve_lfs(&server.vault, declared.unwrap_or(cap))
+        .map_err(|error| lfs_engine_error("lfs quota could not be read", &error))?
+    else {
+        return Ok(lfs_refusal(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "lfs storage quota is full; delete objects or raise limits.lfs_quota_bytes",
+        ));
+    };
     let outcome = super::streaming::upload(
         Arc::clone(&server.vault),
         oid,
-        declared_size(&headers),
-        server.config.max_lfs_object_bytes,
+        declared,
+        cap,
         body,
         now_secs()?,
+        (permit, reservation),
+        server.transfers.idle,
     )
     .await?;
     lfs_json_response(
@@ -166,7 +192,7 @@ pub(crate) async fn lfs_download(
     Path((_repo, oid)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Response, EnvelopedApiError> {
-    authorize(&headers, &server, LfsAccess::Read).map_err(EnvelopedApiError::from)?;
+    let auth = authorize(&headers, &server, LfsAccess::Read).map_err(EnvelopedApiError::from)?;
     let oid = LfsOid::parse_hex(&oid)
         .map_err(|error| lfs_engine_error("lfs oid is not a 64-character sha256", &error))?;
     let Some(record) = server
@@ -182,16 +208,29 @@ pub(crate) async fn lfs_download(
     // Preflight in the blocking pool preserves the old fail-before-200 contract
     // without ever buffering the object. The stream verifies each chunk again;
     // a deletion/corruption racing preflight terminates the HTTP body with error.
+    //
+    // One permit covers the preflight and the stream: each worker holds it in
+    // turn, so a client that hangs up mid-preflight frees nothing early.
+    let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()) else {
+        return Ok(lfs_saturated());
+    };
     let vault = Arc::clone(&server.vault);
-    let verified =
-        tokio::task::spawn_blocking(move || vault.verify_lfs_object(oid, record.size_bytes))
-            .await
-            .map_err(|_| ApiError::internal_server_error("lfs verify worker failed"))?
-            .map_err(|error| lfs_engine_error("lfs object read failed", &error))?;
+    let (verified, permit) = tokio::task::spawn_blocking(move || {
+        (vault.verify_lfs_object(oid, record.size_bytes), permit)
+    })
+    .await
+    .map_err(|_| ApiError::internal_server_error("lfs verify worker failed"))?;
+    let verified = verified.map_err(|error| lfs_engine_error("lfs object read failed", &error))?;
     if !verified {
         return Err(ApiError::not_found("lfs object", Some(&oid.to_hex())).into());
     }
-    let mut response = super::streaming::download(Arc::clone(&server.vault), oid).into_response();
+    let mut response = super::streaming::download(
+        Arc::clone(&server.vault),
+        oid,
+        permit,
+        server.transfers.idle,
+    )
+    .into_response();
     response.headers_mut().insert(
         CONTENT_TYPE,
         LFS_OBJECT_MEDIA_TYPE.parse().expect("static media type"),
@@ -209,7 +248,7 @@ pub(crate) async fn lfs_verify(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, EnvelopedApiError> {
-    authorize(&headers, &server, LfsAccess::Write).map_err(EnvelopedApiError::from)?;
+    let auth = authorize(&headers, &server, LfsAccess::Write).map_err(EnvelopedApiError::from)?;
     let request: LfsVerifyRequest = serde_json::from_slice(&body)
         .map_err(|_| ApiError::bad_request("lfs verify body is not {oid, size}", None))?;
     let oid = LfsOid::parse_hex(&request.oid)
@@ -223,12 +262,18 @@ pub(crate) async fn lfs_verify(
         )
         .into());
     }
+    let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()) else {
+        return Ok(lfs_saturated());
+    };
     let vault = Arc::clone(&server.vault);
     let size = request.size;
-    let ok = tokio::task::spawn_blocking(move || vault.verify_lfs_object(oid, size))
-        .await
-        .map_err(|_| ApiError::internal_server_error("lfs verify worker failed"))?
-        .map_err(|error| lfs_engine_error("lfs object verification failed", &error))?;
+    let ok = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        vault.verify_lfs_object(oid, size)
+    })
+    .await
+    .map_err(|_| ApiError::internal_server_error("lfs verify worker failed"))?
+    .map_err(|error| lfs_engine_error("lfs object verification failed", &error))?;
     lfs_json_response(
         StatusCode::OK,
         &LfsVerifyResponse {

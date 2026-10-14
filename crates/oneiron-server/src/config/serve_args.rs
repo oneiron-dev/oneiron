@@ -204,7 +204,7 @@ pub struct ServeArgs {
     #[arg(long)]
     pub max_entity_blob: Option<usize>,
 
-    /// Optional maximum bytes per LFS upload object.
+    /// Maximum bytes per LFS upload object (default 2 GiB).
     #[arg(long)]
     pub max_lfs_object_bytes: Option<u64>,
 

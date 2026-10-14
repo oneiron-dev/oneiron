@@ -9,6 +9,7 @@
 //! transfer that keeps moving, however slowly, is never cut.
 
 use std::io::{self, Read};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use axum::body::{Body, Bytes};
@@ -24,6 +25,12 @@ use crate::config::LimitsConfig;
 pub(crate) struct Transfers {
     /// One `git http-backend` exchange each.
     git: Admission<String>,
+    /// One LFS upload or download worker each.
+    lfs: Admission<String>,
+    /// Bytes LFS uploads may bring the vault's objects to.
+    lfs_quota: u64,
+    /// Bytes uploads in flight have reserved against `lfs_quota`.
+    lfs_reserved: Arc<Mutex<u64>>,
     pub(crate) idle: Duration,
 }
 
@@ -31,6 +38,9 @@ impl Transfers {
     pub(crate) fn new(limits: &LimitsConfig) -> Self {
         Self {
             git: Admission::new(limits.git_exchanges, limits.git_exchanges_per_principal),
+            lfs: Admission::new(limits.lfs_transfers, limits.lfs_transfers_per_principal),
+            lfs_quota: limits.lfs_quota_bytes,
+            lfs_reserved: Arc::default(),
             idle: Duration::from_millis(limits.transfer_idle_timeout_ms),
         }
     }
@@ -39,6 +49,50 @@ impl Transfers {
     /// one key.
     pub(super) fn admit_git(&self, principal: Option<&str>) -> Result<Permit<String>, Saturated> {
         self.git.try_admit(principal.unwrap_or_default().to_owned())
+    }
+
+    /// An LFS transfer's permit, keyed as [`Self::admit_git`] is.
+    pub(super) fn admit_lfs(&self, principal: Option<&str>) -> Result<Permit<String>, Saturated> {
+        self.lfs.try_admit(principal.unwrap_or_default().to_owned())
+    }
+
+    /// Reserves `bytes` of the LFS quota for one upload, judged against what
+    /// the vault's objects hold now and what other uploads have reserved;
+    /// `None` when it does not fit. The upload's worker holds the reservation
+    /// until it ends, by which time a stored object counts in its own right.
+    pub(super) fn reserve_lfs(
+        &self,
+        vault: &oneiron::Vault,
+        bytes: u64,
+    ) -> oneiron::Result<Option<Reservation>> {
+        // Held across the read: an upload that publishes and then returns
+        // its reservation is counted once or twice meanwhile, never not at all.
+        let mut reserved = self
+            .lfs_reserved
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let stored = vault.lfs_object_bytes()?;
+        if stored.saturating_add(*reserved).saturating_add(bytes) > self.lfs_quota {
+            return Ok(None);
+        }
+        *reserved += bytes;
+        Ok(Some(Reservation {
+            reserved: Arc::clone(&self.lfs_reserved),
+            bytes,
+        }))
+    }
+}
+
+/// Room an upload in flight holds against the LFS quota.
+pub(super) struct Reservation {
+    reserved: Arc<Mutex<u64>>,
+    bytes: u64,
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        let mut reserved = self.reserved.lock().unwrap_or_else(PoisonError::into_inner);
+        *reserved = reserved.saturating_sub(self.bytes);
     }
 }
 

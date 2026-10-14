@@ -248,7 +248,7 @@ async fn lfs_over_cap_upload_refuses_without_waiting_for_body_eof() {
     use std::time::Duration;
 
     let config = SyncServerConfig {
-        max_lfs_object_bytes: Some(1024),
+        max_lfs_object_bytes: 1024,
         ..secret_config()
     };
     let (_dir, server) = test_server(config);
@@ -719,4 +719,201 @@ async fn a_chunk_reply_built_before_its_world_turns_device_only_is_not_released(
     let (status, _, body) = route(&server, exchange()).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(!carries(&body));
+}
+
+// -- storage admission (C6): finite by default, held by the worker ---------
+
+/// Far past every idle limit these tests set.
+const PATIENCE: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// A body that sends `head`, then never another byte nor its end.
+fn stalled_body(head: Vec<u8>) -> Body {
+    use futures_util::StreamExt;
+    Body::from_stream(
+        futures_util::stream::once(async move {
+            Ok::<_, std::io::Error>(axum::body::Bytes::from(head))
+        })
+        .chain(futures_util::stream::pending()),
+    )
+}
+
+/// An upload that declares its size, as a stock LFS client's does.
+fn sized_put(oid: &LfsOid, token: &str, declared: u64, body: Body) -> Request<Body> {
+    let mut request = request("PUT", &object_uri(&oid.to_hex()), Some(token), body);
+    request
+        .headers_mut()
+        .insert(CONTENT_LENGTH, HeaderValue::from(declared));
+    request
+}
+
+async fn put(server: &Arc<SyncServer>, token: &str, bytes: &[u8]) -> StatusCode {
+    let oid = LfsOid::digest(bytes);
+    let body = Body::from(bytes.to_vec());
+    route(server, sized_put(&oid, token, bytes.len() as u64, body))
+        .await
+        .0
+}
+
+/// Starts an upload whose body stalls after a few bytes; it holds its permit
+/// and its reservation until the task is aborted.
+async fn hold_upload(
+    server: &Arc<SyncServer>,
+    token: &str,
+    declared: u64,
+) -> tokio::task::JoinHandle<StatusCode> {
+    let server = Arc::clone(server);
+    let request = sized_put(
+        &LfsOid::digest(b"an upload that never finishes"),
+        token,
+        declared,
+        stalled_body(vec![b'x'; 16]),
+    );
+    let held = tokio::spawn(async move { route(&server, request).await.0 });
+    // Admission runs before the handler's first wait, so this is ample.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    held
+}
+
+/// Retries `call` while it answers `busy`: a worker returns what it held when
+/// it ends, a moment after its client is gone.
+async fn once_freed<F>(busy: StatusCode, mut call: impl FnMut() -> F) -> StatusCode
+where
+    F: std::future::Future<Output = StatusCode>,
+{
+    tokio::time::timeout(PATIENCE, async {
+        loop {
+            match call().await {
+                status if status == busy => {
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+                status => break status,
+            }
+        }
+    })
+    .await
+    .expect("what a cancelled upload held comes back")
+}
+
+#[tokio::test]
+async fn lfs_upload_declaring_more_than_the_default_cap_is_refused_before_a_byte_is_read() {
+    let (_dir, server) = test_server(secret_config());
+    let cap = SyncServerConfig::default().max_lfs_object_bytes;
+    let oid = LfsOid::digest(b"an object too large to take");
+    let never = Body::from_stream(futures_util::stream::pending::<
+        Result<axum::body::Bytes, std::io::Error>,
+    >());
+    let (status, _, body) = tokio::time::timeout(
+        PATIENCE,
+        route(&server, sized_put(&oid, &writer_token(), cap + 1, never)),
+    )
+    .await
+    .expect("refused on its declaration, without reading the body");
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(json_body(&body)["error"]["code"], "PAYLOAD_TOO_LARGE");
+    assert_eq!(server.vault.lfs_object(oid).expect("record read"), None);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn lfs_uploads_past_a_principals_share_are_refused_while_one_is_held() {
+    let config = SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            lfs_transfers: 2,
+            lfs_transfers_per_principal: 1,
+            ..Default::default()
+        },
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let token = writer_token();
+    let held = hold_upload(&server, &token, 4_096).await;
+
+    let (status, headers, _) = route(
+        &server,
+        sized_put(
+            &LfsOid::digest(b"second"),
+            &token,
+            6,
+            Body::from(b"second".to_vec()),
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "refused, not queued"
+    );
+    assert_eq!(headers["retry-after"], "1");
+    assert_eq!(
+        put(&server, &writer_token(), b"another principal").await,
+        StatusCode::OK
+    );
+
+    held.abort();
+    let _ = held.await;
+    let freed = once_freed(StatusCode::SERVICE_UNAVAILABLE, || {
+        put(&server, &token, b"second")
+    })
+    .await;
+    assert_eq!(freed, StatusCode::OK);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn lfs_quota_counts_stored_objects_and_uploads_in_flight() {
+    let config = SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            lfs_quota_bytes: 3_000,
+            ..Default::default()
+        },
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let token = writer_token();
+    let first = vec![b'a'; 1_500];
+
+    // An upload in flight holds its declared size against the quota.
+    let held = hold_upload(&server, &token, 2_000).await;
+    assert_eq!(
+        put(&server, &token, &first).await,
+        StatusCode::INSUFFICIENT_STORAGE
+    );
+    held.abort();
+    let _ = held.await;
+    let freed = once_freed(StatusCode::INSUFFICIENT_STORAGE, || {
+        put(&server, &token, &first)
+    })
+    .await;
+    assert_eq!(freed, StatusCode::OK);
+
+    // A stored object counts in its own right.
+    assert_eq!(
+        put(&server, &token, &[b'b'; 2_000]).await,
+        StatusCode::INSUFFICIENT_STORAGE
+    );
+    assert_eq!(put(&server, &token, &[b'c'; 1_000]).await, StatusCode::OK);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stalled_lfs_upload_ends_at_the_idle_limit_and_frees_its_permit() {
+    let config = SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            lfs_transfers: 1,
+            transfer_idle_timeout_ms: 300,
+            ..Default::default()
+        },
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let token = writer_token();
+    let held = hold_upload(&server, &token, 4_096).await;
+
+    let status = tokio::time::timeout(PATIENCE, held)
+        .await
+        .expect("a body that stops arriving ends its upload")
+        .unwrap();
+    assert_ne!(status, StatusCode::OK);
+    let freed = once_freed(StatusCode::SERVICE_UNAVAILABLE, || {
+        put(&server, &token, b"after the stall")
+    })
+    .await;
+    assert_eq!(freed, StatusCode::OK);
 }
