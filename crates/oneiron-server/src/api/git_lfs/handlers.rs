@@ -156,10 +156,19 @@ pub(crate) async fn lfs_upload(
     let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()) else {
         return Ok(lfs_saturated());
     };
-    let Some(reservation) = server
-        .transfers
-        .reserve_lfs(&server.vault, declared.unwrap_or(cap))
-        .map_err(|error| lfs_engine_error("lfs quota could not be read", &error))?
+    // The quota reads every stored object, so it runs in the blocking pool
+    // under the permit just taken: at most as many reads as transfers, and
+    // none on the runtime.
+    let reserving = Arc::clone(&server);
+    let (reserved, permit) = tokio::task::spawn_blocking(move || {
+        let size = declared.unwrap_or(cap);
+        let reserved = reserving.transfers.reserve_lfs(&reserving.vault, size);
+        (reserved, permit)
+    })
+    .await
+    .map_err(|_| ApiError::internal_server_error("lfs quota worker failed"))?;
+    let Some(reservation) =
+        reserved.map_err(|error| lfs_engine_error("lfs quota could not be read", &error))?
     else {
         return Ok(lfs_refusal(
             StatusCode::INSUFFICIENT_STORAGE,

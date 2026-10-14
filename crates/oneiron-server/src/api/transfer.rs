@@ -60,6 +60,9 @@ impl Transfers {
     /// the vault's objects hold now and what other uploads have reserved;
     /// `None` when it does not fit. The upload's worker holds the reservation
     /// until it ends, by which time a stored object counts in its own right.
+    ///
+    /// It reads every stored object, so it blocks: call it from the blocking
+    /// pool, holding the upload's transfer permit.
     pub(super) fn reserve_lfs(
         &self,
         vault: &oneiron::Vault,
