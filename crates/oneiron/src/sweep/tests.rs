@@ -195,7 +195,7 @@ fn a_window_opened_during_its_compaction_reads_the_compacted_window() {
     let other_went_through = Arc::new(AtomicBool::new(false));
     let went_through = Arc::clone(&other_went_through);
     let opener = Arc::clone(&manager);
-    let open_key = key.clone();
+    let open_key = key;
     BEFORE_COMPACT_WRITE.with(|hook| {
         *hook.borrow_mut() = Some(Box::new(move || {
             let other_opener = Arc::clone(&opener);

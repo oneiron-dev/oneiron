@@ -45,8 +45,9 @@ fn past_its_threshold(source: &Path, repo: &Path) {
     assert_eq!(packs(repo), 2);
 }
 
-fn permit() -> Option<Box<dyn Send>> {
-    Some(Box::new(()))
+/// A host gate that always has a permit to give.
+fn permit() -> impl FnMut() -> Option<Box<dyn Send>> {
+    || Some(Box::new(()))
 }
 
 #[test]
@@ -55,7 +56,7 @@ fn maintenance_packs_a_served_repository_past_its_threshold() {
     let (source, repo, _, _) = served_repo(&vault);
     past_its_threshold(&source.path().canonicalize().expect("source"), &repo);
 
-    let run = maintain_served_repositories(&vault, permit, || false).expect("maintain");
+    let run = maintain_served_repositories(&vault, permit(), || false).expect("maintain");
     assert_eq!(
         run,
         ServedRepositoryMaintenance {
@@ -83,7 +84,7 @@ fn maintenance_leaves_a_repository_a_push_holds_or_no_permit_is_free_for() {
     let _push = lock_repository(&repo_common_dir(&repo).expect("common dir")).expect("lock");
     let run = std::thread::scope(|scope| {
         scope
-            .spawn(|| maintain_served_repositories(&vault, permit, || false))
+            .spawn(|| maintain_served_repositories(&vault, permit(), || false))
             .join()
             .expect("maintenance thread")
     })
@@ -153,7 +154,7 @@ fn a_push_during_maintenance_lands_and_the_maintenance_gives_way() {
     let pushing = Mutex::new(None);
     let common_dir = repo_common_dir(&repo).expect("common dir");
 
-    let run = maintain_served_repositories(&vault, permit, || {
+    let run = maintain_served_repositories(&vault, permit(), || {
         // Once the maintenance holds the repository, the push comes, and the
         // maintenance's git runs on until the push has asked for it.
         let (held, _) = repository_hold_for_test(&common_dir);
@@ -243,7 +244,7 @@ fn maintenance_that_gives_way_while_git_holds_a_lock_leaves_none_behind() {
     let lock = repo.join("packed-refs.lock");
     let gave_way = Cell::new(false);
 
-    let run = maintain_served_repositories(&vault, permit, || {
+    let run = maintain_served_repositories(&vault, permit(), || {
         if lock.exists() {
             gave_way.set(true);
         }
@@ -271,7 +272,7 @@ fn maintenance_runs_no_command_a_repository_configuration_names() {
     let command = format!("touch {}", marker.to_str().expect("utf-8 marker"));
     git(&repo, &["config", "gc.recentObjectsHook", command.as_str()]);
 
-    let run = maintain_served_repositories(&vault, permit, || false).expect("maintain");
+    let run = maintain_served_repositories(&vault, permit(), || false).expect("maintain");
 
     assert!(!marker.exists(), "the configured command ran");
     assert_eq!(
