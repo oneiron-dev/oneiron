@@ -10353,7 +10353,7 @@
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 10,
       "mod": 1,
@@ -10441,7 +10441,7 @@
      "path": "src/compaction/gate.rs",
      "purpose": "The deterministic pre-swap gate (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "enum": 3,
       "fn": 8,
       "struct": 4
@@ -16846,7 +16846,7 @@
      "path": "src/engine_executor/compaction.rs",
      "purpose": "The compaction host in the executor (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 4,
       "struct": 2,
