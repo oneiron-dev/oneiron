@@ -193,7 +193,7 @@ fn rule_b_every_door_settles_what_it_hands_out_in_its_last_transaction() -> Resu
                     _tmp: tmp,
                     vault,
                     reached,
-                    handed: handed,
+                    handed,
                 });
             }
             SettlingDoor::DualPlane => {
@@ -301,7 +301,7 @@ fn rule_b_every_door_settles_what_it_hands_out_in_its_last_transaction() -> Resu
                     _tmp: tmp,
                     vault,
                     reached,
-                    handed: handed,
+                    handed,
                 });
             }
         }
@@ -319,7 +319,7 @@ fn rule_b_every_door_settles_what_it_hands_out_in_its_last_transaction() -> Resu
             );
             match handed {
                 Handed::Verdict(verdict) => {
-                    assert_owner_in_force(&vault, door, &request, &verdict)?
+                    assert_owner_in_force(&vault, door, &request, &verdict)?;
                 }
                 Handed::Relay(pass) => assert_relay_halted(door, &pass),
                 Handed::Dual(pass) => {

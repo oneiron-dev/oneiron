@@ -201,12 +201,16 @@ settling_doors! {
     AnonymousChat,
 }
 
+/// A hook a test runs at a settling point.
+#[cfg(test)]
+pub(super) type SettlingHook = Box<dyn FnMut(SettlingDoor)>;
+
 #[cfg(test)]
 thread_local! {
     /// Runs as a door reaches the transactions that settle what it hands
     /// out: the window between a pinned pass and the door's last
     /// transaction.
-    pub(super) static BEFORE_SETTLING: std::cell::RefCell<Option<Box<dyn FnMut(SettlingDoor)>>> =
+    pub(super) static BEFORE_SETTLING: std::cell::RefCell<Option<SettlingHook>> =
         const { std::cell::RefCell::new(None) };
 }
 
