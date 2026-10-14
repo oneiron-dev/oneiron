@@ -174,6 +174,26 @@ fn a_deleted_artifact_takes_its_version_bytes_off_every_replica() {
         !holds(&a, &unique),
         "the lagging carrier passed on to A resurrected the deleted bytes"
     );
+    // The export doors take that carrier out again. Each scrub pins its window history-free, so
+    // both vaults exchange the scrubs before B's window closes: a peer behind a history-free
+    // window needs a full re-bootstrap, which plain updates cannot give it.
+    for node in [&a, &b] {
+        window::export_window_updates_since(
+            &node.vault,
+            &key,
+            node.doc(WINDOW),
+            &VersionVector::default().encode(),
+        )
+        .unwrap();
+    }
+    exchange(&a, &b, WINDOW);
+    for node in [&a, &b] {
+        assert!(
+            !carries(node, &unique),
+            "{}: the window still carries the lagging peer's copy",
+            node.name
+        );
+    }
 
     // The last artifact holding the shared bytes goes on B: they leave both vaults.
     delete_artifact(&mut b, &own);
