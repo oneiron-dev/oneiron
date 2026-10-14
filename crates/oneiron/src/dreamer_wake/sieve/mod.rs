@@ -27,6 +27,9 @@
 //! turn waits. A grant written later moves the grant epoch on, and a sweep
 //! that keeps its place across passes reads the waiting turns again on what
 //! a pass has left after new words, so a grant never holds new words back.
+//! The queue serves a span only while the Dreamer may read its source: a
+//! span of a MESSAGE whose grant is revoked after the read stays queued,
+//! unserved, until a grant lets the Dreamer read it again.
 //!
 //! One pass reads at most the policy row's bytes of text. A longer turn is
 //! read a segment at a time (see [`rules`]) and keeps its place: the next
@@ -43,11 +46,12 @@ mod tests;
 mod words;
 
 use std::cell::Cell;
+use std::collections::{HashMap, hash_map::Entry};
 use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
-use chunks::ChunkRef;
+use chunks::{Admission, ChunkRef};
 pub use policy::SievePolicy;
 pub use rules::RuleClass;
 
@@ -230,6 +234,28 @@ pub struct SieveSpan {
     pub queued_at: u64,
 }
 
+/// What the interest queue serves. A span's words are the Dreamer's to
+/// read only while its source is: a span whose MESSAGE the Dreamer may no
+/// longer read, or that left its turn, stays queued but is not served, and
+/// a later grant serves it again with no new read.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SieveQueue {
+    /// The spans served, highest score first.
+    pub spans: Vec<SieveSpan>,
+    pub skipped: SieveSkipped,
+}
+
+/// The queued spans a readout passed over, by why.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SieveSkipped {
+    /// The Dreamer's gate refuses the source now: a private row, or a
+    /// relationship row whose grant is revoked or expired.
+    pub unreadable: usize,
+    /// The source is no longer part of its turn, or it or its turn is
+    /// archived or gone.
+    pub detached: usize,
+}
+
 /// What one pass did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SievePass {
@@ -248,14 +274,40 @@ impl Vault {
         self.with_write_txn(|txn| sieve_pass_in_txn(self, txn, now))
     }
 
-    /// The first `limit` spans of the interest queue, highest score first.
-    pub fn sieve_queue(&self, limit: usize) -> Result<Vec<SieveSpan>> {
-        let txn = self.store.env.read_txn()?;
-        QUEUE
-            .iter_from(&self.store, &txn, &[])?
-            .take(limit)
-            .map(|row| row.map(|(_, span)| span))
-            .collect()
+    /// The first `limit` spans of the interest queue whose source the
+    /// Dreamer may read now, highest score first, each source admitted
+    /// under the Dreamer's current read in one transaction, and the spans
+    /// passed over on the way.
+    pub fn sieve_queue(&self, limit: usize) -> Result<SieveQueue> {
+        self.with_write_txn(|txn| {
+            // A grant is judged at a persisted clock floor, as a pass
+            // judges it.
+            crate::ports::observe_clock_floor_in_txn(&self.store, txn)?;
+            let txn = &*txn;
+            let mut queue = SieveQueue::default();
+            let mut admitted = HashMap::new();
+            for row in QUEUE.iter_from(&self.store, txn, &[])? {
+                if queue.spans.len() >= limit {
+                    break;
+                }
+                let (_, span) = row?;
+                let admission = match admitted.entry((span.turn, span.source)) {
+                    Entry::Occupied(seen) => *seen.get(),
+                    Entry::Vacant(slot) => *slot.insert(chunks::admission_in_txn(
+                        self,
+                        txn,
+                        &span.turn,
+                        &span.source,
+                    )?),
+                };
+                match admission {
+                    Admission::Readable => queue.spans.push(span),
+                    Admission::Unreadable => queue.skipped.unreadable += 1,
+                    Admission::Detached => queue.skipped.detached += 1,
+                }
+            }
+            Ok(queue)
+        })
     }
 }
 

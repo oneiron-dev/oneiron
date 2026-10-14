@@ -441,6 +441,7 @@ fn a_turn_whose_text_lives_in_its_document_is_sieved_and_planned() -> Result<()>
     assert_eq!(micro_rounds(&vault)?, vec![vec![turn]]);
     let kinds: Vec<_> = vault
         .sieve_queue(16)?
+        .spans
         .into_iter()
         .filter(|span| span.turn == turn)
         .map(|span| span.kind)
@@ -530,6 +531,7 @@ fn a_turn_rewritten_under_its_own_key_unbinds_its_round_and_is_sieved_again() ->
     assert!(
         vault
             .sieve_queue(64)?
+            .spans
             .iter()
             .any(|span| span.turn == turn && kyoto(span))
     );
@@ -551,6 +553,7 @@ fn a_turn_rewritten_under_its_own_key_unbinds_its_round_and_is_sieved_again() ->
     assert!(
         !vault
             .sieve_queue(64)?
+            .spans
             .iter()
             .any(|span| span.turn == turn && kyoto(span))
     );

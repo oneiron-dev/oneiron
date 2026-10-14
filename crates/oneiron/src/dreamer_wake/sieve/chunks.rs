@@ -107,6 +107,49 @@ pub(crate) fn turn_chunks_in_txn(
     Ok(Some(TurnChunks { chunks, withheld }))
 }
 
+/// Whether the Dreamer may read `source` as a chunk of `turn` now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Admission {
+    Readable,
+    /// The Dreamer's gate refuses the MESSAGE: a private row, or a
+    /// relationship row whose grant is revoked, expired or never written.
+    Unreadable,
+    /// The turn is gone or archived, or the source is no longer part of it
+    /// or is archived.
+    Detached,
+}
+
+/// Whether the Dreamer may read `source` as a chunk of `turn` now, as
+/// [`turn_chunks_in_txn`] admits a chunk, without reading its text.
+pub(crate) fn admission_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    source: &EntityId,
+) -> Result<Admission> {
+    let live = match live_entity_row_in_txn(&vault.store, txn, turn)? {
+        LiveEntityRow::Live { entity_type, .. } => entity_type == ENTITY_TYPE_TURN,
+        _ => false,
+    };
+    if !live || vault.archive_tombstone_in_txn(txn, turn)?.is_some() {
+        return Ok(Admission::Detached);
+    }
+    if source == turn {
+        return Ok(Admission::Readable);
+    }
+    let part_of = vault
+        .store
+        .port_edge_get(txn, source, crate::edge::EdgeKind::PartOf, turn)?;
+    if part_of.is_none() || vault.archive_tombstone_in_txn(txn, source)?.is_some() {
+        return Ok(Admission::Detached);
+    }
+    Ok(if readable_in(vault, txn, &[*source])? == [true] {
+        Admission::Readable
+    } else {
+        Admission::Unreadable
+    })
+}
+
 /// The text of one chunk of `turn`, read as [`turn_chunks_in_txn`] reads it,
 /// for a read that goes on in it: `None` when the turn or the source no
 /// longer reads, the source is no longer part of the turn, or the Dreamer
@@ -117,28 +160,15 @@ pub(crate) fn chunk_text_in_txn(
     turn: &EntityId,
     source: &EntityId,
 ) -> Result<Option<String>> {
-    let live = match live_entity_row_in_txn(&vault.store, txn, turn)? {
-        LiveEntityRow::Live { entity_type, .. } => entity_type == ENTITY_TYPE_TURN,
-        _ => false,
-    };
-    if !live || vault.archive_tombstone_in_txn(txn, turn)?.is_some() {
-        return Ok(None);
-    }
-    if source == turn {
-        let body = crate::ports::safe_read_text(vault, txn, turn)?;
-        return Ok(body.and_then(|body| decode_turn_body(&body).text));
-    }
-    let part_of = vault
-        .store
-        .port_edge_get(txn, source, crate::edge::EdgeKind::PartOf, turn)?;
-    if part_of.is_none()
-        || vault.archive_tombstone_in_txn(txn, source)?.is_some()
-        || readable_in(vault, txn, &[*source])? != [true]
-    {
+    if admission_in_txn(vault, txn, turn, source)? != Admission::Readable {
         return Ok(None);
     }
     let body = crate::ports::safe_read_text(vault, txn, source)?;
-    Ok(body.and_then(|body| crate::tagging::shown_message_text(&body)))
+    Ok(if source == turn {
+        body.and_then(|body| decode_turn_body(&body).text)
+    } else {
+        body.and_then(|body| crate::tagging::shown_message_text(&body))
+    })
 }
 
 /// Whether `turn` still holds each of `sources`, chunks a read of it has

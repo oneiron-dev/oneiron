@@ -187,6 +187,7 @@ fn flags(vault: &Vault, turn: &EntityId, text: &str) -> Vec<(SpanKind, String, &
     let mut spans: Vec<_> = vault
         .sieve_queue(usize::MAX)
         .expect("queue")
+        .spans
         .into_iter()
         .filter(|span| span.turn == *turn)
         .collect();
@@ -223,7 +224,7 @@ fn a_turn_with_a_date_and_a_name_queues_both_by_score_and_a_restart_reads_nothin
             (SpanKind::Date, "October 12, 2026".to_owned(), "rule"),
         ]
     );
-    let queue = vault.sieve_queue(usize::MAX).expect("queue");
+    let queue = vault.sieve_queue(usize::MAX).expect("queue").spans;
     assert_eq!(queue[0].kind, SpanKind::Date, "the surer date leads");
     assert!(queue.windows(2).all(|pair| pair[0].score >= pair[1].score));
     // No model rung has run: every span waits on the novelty question.
@@ -235,12 +236,12 @@ fn a_turn_with_a_date_and_a_name_queues_both_by_score_and_a_restart_reads_nothin
 
     drop(vault);
     let vault = open(dir.path(), false);
-    assert_eq!(vault.sieve_queue(usize::MAX).expect("queue"), queue);
+    assert_eq!(vault.sieve_queue(usize::MAX).expect("queue").spans, queue);
     assert_eq!(
         vault.sieve_pass(NOW + 1).expect("pass"),
         SievePass::default()
     );
-    assert_eq!(vault.sieve_queue(usize::MAX).expect("queue"), queue);
+    assert_eq!(vault.sieve_queue(usize::MAX).expect("queue").spans, queue);
 
     // The cursor stood: a new turn is the only thing the next pass reads.
     let next = "Ken joins next week.";
@@ -257,12 +258,13 @@ fn a_turn_with_a_date_and_a_name_queues_both_by_score_and_a_restart_reads_nothin
     let uncertain = vault
         .sieve_queue(usize::MAX)
         .expect("queue")
+        .spans
         .into_iter()
         .find(|span| span.turn == later && span.kind == SpanKind::Name)
         .expect("the opening name");
     assert_eq!(uncertain.band, SpanBand::Uncertain);
     assert_eq!(uncertain.owed, vec![SieveRung::Novelty, SieveRung::Typing]);
-    assert_eq!(vault.sieve_queue(usize::MAX).expect("queue").len(), 4);
+    assert_eq!(vault.sieve_queue(usize::MAX).expect("queue").spans.len(), 4);
 }
 
 #[test]
@@ -398,6 +400,7 @@ fn a_flood_is_read_pass_after_pass_within_the_bound() {
         let mut spans: Vec<_> = vault
             .sieve_queue(usize::MAX)
             .expect("queue")
+            .spans
             .into_iter()
             .filter(|span| span.turn == turn)
             .map(|span| (span.start, span.end))
@@ -472,6 +475,7 @@ fn a_message_withheld_beside_unchanged_words_is_read_once_a_grant_lets_it() {
         vault
             .sieve_queue(usize::MAX)
             .expect("queue")
+            .spans
             .into_iter()
             .filter(|span| span.turn == turn && span.source == second)
             .count()
@@ -577,6 +581,7 @@ fn a_long_text_is_cut_where_no_span_runs_across() {
     let name = vault
         .sieve_queue(usize::MAX)
         .expect("queue")
+        .spans
         .into_iter()
         .find(|span| span.turn == turns[1])
         .expect("the name");
@@ -631,6 +636,7 @@ fn a_grant_that_opens_a_long_turn_keeps_the_pass_going() {
         vault
             .sieve_queue(usize::MAX)
             .expect("queue")
+            .spans
             .into_iter()
             .filter(|span| span.turn == turn)
             .count()
@@ -727,6 +733,7 @@ fn a_grant_revoked_behind_a_read_takes_back_what_the_read_passed() {
     let sources: Vec<EntityId> = vault
         .sieve_queue(usize::MAX)
         .expect("queue")
+        .spans
         .into_iter()
         .filter(|span| span.turn == turn)
         .map(|span| span.source)
@@ -736,6 +743,56 @@ fn a_grant_revoked_behind_a_read_takes_back_what_the_read_passed() {
         vec![second],
         "only Bob, from the message it may read"
     );
+}
+
+/// Astra-1418b (P2): a turn read whole kept serving the spans of a MESSAGE
+/// after the grant that let the Dreamer read it was revoked: the retry
+/// sweep walks only withheld turns, and the queue served what it held. The
+/// queue serves a span only while the Dreamer may read its source; the span
+/// stays queued, and a later grant serves it again with no new read.
+#[test]
+fn a_revoked_grant_takes_its_spans_out_of_what_the_queue_serves() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), false);
+    let space = EntityId::from_bytes([0x66; 16]).expect("space id");
+    grant_messages_read(&vault, 0x62, space);
+    let id = "6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e";
+    let text = "Alice arrives tomorrow.";
+    let turn = witness_messages(
+        &vault,
+        "6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d",
+        NOW,
+        vec![message(
+            id,
+            text,
+            0,
+            Some(serde_json::json!({"rel": space.to_hex()})),
+        )],
+    );
+    let mut now = NOW + drain(&vault, NOW) + 1;
+    let served = |vault: &Vault| -> Vec<SieveSpan> {
+        vault
+            .sieve_queue(usize::MAX)
+            .expect("queue")
+            .spans
+            .into_iter()
+            .filter(|span| span.turn == turn)
+            .collect()
+    };
+    let read = served(&vault);
+    assert_eq!(read.len(), 2, "Alice and tomorrow");
+
+    vault
+        .revoke_access_grant(&EntityId::from_bytes([0x62; 16]).expect("grant id"), NOW)
+        .expect("revoke");
+    now += drain(&vault, now) + 1;
+    assert!(served(&vault).is_empty(), "no span, ref, range or digest");
+    let queue = vault.sieve_queue(usize::MAX).expect("queue");
+    assert_eq!(queue.skipped.unreadable, 2);
+
+    grant_messages_read(&vault, 0x63, space);
+    assert_eq!(vault.sieve_pass(now).expect("pass").turns_read, 0);
+    assert_eq!(served(&vault), read, "served again, not read again");
 }
 
 /// Sol R11 and R12 (P2): the owner's grant that gives the Dreamer back its
@@ -933,6 +990,6 @@ fn grants_written_while_turns_wait_never_hold_a_new_turn_back() {
         );
     }
     drain(&vault, now);
-    let queue = vault.sieve_queue(usize::MAX).expect("queue");
+    let queue = vault.sieve_queue(usize::MAX).expect("queue").spans;
     assert!(queue.iter().all(|span| span.turn == turn));
 }
