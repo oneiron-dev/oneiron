@@ -223,3 +223,183 @@ fn fork_parent_gate() -> Result<()> {
     assert_eq!(vault.get_agent_definition(&wide_fork)?, Some(wide));
     Ok(())
 }
+
+/// Asks for an `Auto` claim written by `actor`, and asserts the ordinary gate
+/// holds it as `pending`: the actor's own row bounds it at Proposed.
+fn auto_write_is_held(vault: &Vault, actor: EntityId, claim_seed: u8, at: u64) -> Result<()> {
+    let subject = crate::test_util::entity(0x2F);
+    if vault.get_raw(&subject)?.is_none() {
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, test_time_range(1, 1), 1, b"s")?;
+    }
+    let claim = crate::test_util::entity(claim_seed);
+    let err = vault
+        .batch()
+        .claim_candidate(
+            &claim,
+            ClaimCandidate::new(
+                "profile.preference",
+                ClaimSubject::Entity(subject),
+                Value::from("genmaicha"),
+                0.9,
+            ),
+            &agent_envelope(actor, ClaimApprovalStatus::Auto)?,
+            test_time_range(at, at),
+            at + 1,
+        )
+        .commit()
+        .expect_err("a Proposed-ceiling actor must be held, not auto-written");
+    assert!(
+        matches!(err, Error::Gate(GateError::GateWriteRejected { outcome, .. }) if outcome == "pending"),
+        "expected the ordinary gate rejection, got {err:?}"
+    );
+    assert!(vault.get_claim(&claim)?.is_none());
+    Ok(())
+}
+
+fn refused_as_body(result: Result<()>, road: &str) {
+    let err = result.expect_err(road);
+    assert_eq!(
+        err.kind(),
+        ErrorKind::InvalidAgentDefBody,
+        "{road}: {err:?}"
+    );
+}
+
+/// H215 (security scan, W2-T7): the agent a seeded ceiling binds may hold
+/// `core:write`, and the gate reads its bound off its own row. An update that
+/// widens that row is refused, typed, on the raw batch door, the typed door
+/// and the replicated road, and the gate keeps holding the agent's `Auto`
+/// writes. Narrowing still lands, and a narrowed row cannot widen back even
+/// within its seed.
+#[test]
+fn an_update_never_widens_an_agent_ceiling() -> Result<()> {
+    use crate::agent_def::{AgentCeiling, encode_agent_definition};
+
+    let (_dir, vault) = open_test_vault();
+    put_actor_ceiling_manifest(&vault, 0x2E, vec![agent_class_auto_row()])?;
+    let (herald_id, herald) = seeded_row(&vault, "sys.herald");
+    assert_eq!(herald.ceiling, AgentCeiling::Proposed);
+    auto_write_is_held(&vault, herald_id, 0x40, 10)?;
+
+    let mut widened = herald.clone();
+    widened.version = "2".to_owned();
+    widened.ceiling = AgentCeiling::Auto;
+    let widened_body = encode_agent_definition(&widened)?;
+    refused_as_body(
+        vault
+            .batch()
+            .put(
+                &herald_id,
+                ENTITY_TYPE_AGENT_DEF,
+                test_time_range(2, 2),
+                2,
+                &widened_body,
+            )
+            .commit(),
+        "raw batch update",
+    );
+    refused_as_body(
+        vault.update_agent_definition(&herald_id, &widened, test_time_range(2, 2), 2),
+        "typed update",
+    );
+    refused_as_body(
+        vault
+            .batch()
+            .put_replicated(
+                &herald_id,
+                ENTITY_TYPE_AGENT_DEF,
+                test_time_range(3, 3),
+                3,
+                &widened_body,
+            )
+            .commit(),
+        "replicated update",
+    );
+    assert_eq!(vault.get_agent_definition(&herald_id)?, Some(herald));
+    auto_write_is_held(&vault, herald_id, 0x41, 12)?;
+
+    // Control: the same edit at the stored ceiling lands, so the ceiling is
+    // what the three roads refused.
+    let mut edited = widened;
+    edited.ceiling = AgentCeiling::Proposed;
+    vault
+        .batch()
+        .put(
+            &herald_id,
+            ENTITY_TYPE_AGENT_DEF,
+            test_time_range(4, 4),
+            4,
+            &encode_agent_definition(&edited)?,
+        )
+        .commit()?;
+    assert_eq!(vault.get_agent_definition(&herald_id)?, Some(edited));
+
+    // Narrowing still lands, and the gate reads the narrowed row at once.
+    let (scout_id, scout) = seeded_row(&vault, "sys.scout");
+    assert_eq!(scout.ceiling, AgentCeiling::Auto);
+    let mut narrowed = scout;
+    narrowed.version = "2".to_owned();
+    narrowed.ceiling = AgentCeiling::Proposed;
+    vault.update_agent_definition(&scout_id, &narrowed, test_time_range(5, 5), 5)?;
+    auto_write_is_held(&vault, scout_id, 0x42, 14)?;
+    // Its seed allows Auto, but the row it is now does not: no widening back.
+    let mut rewidened = narrowed.clone();
+    rewidened.version = "3".to_owned();
+    rewidened.ceiling = AgentCeiling::Auto;
+    refused_as_body(
+        vault
+            .batch()
+            .put(
+                &scout_id,
+                ENTITY_TYPE_AGENT_DEF,
+                test_time_range(6, 6),
+                6,
+                &encode_agent_definition(&rewidened)?,
+            )
+            .commit(),
+        "widening a narrowed row back",
+    );
+    assert_eq!(vault.get_agent_definition(&scout_id)?, Some(narrowed));
+    auto_write_is_held(&vault, scout_id, 0x43, 16)?;
+    Ok(())
+}
+
+/// H215 (W2-T7), its second road: a delete ends the row, so a create at the
+/// pinned row id has no prior to compare with. The seed is the bound there:
+/// a create wider than the seed is refused, typed, and one at the seed's
+/// ceiling lands.
+#[test]
+fn a_create_at_a_seeded_row_id_never_widens_beyond_its_seed() -> Result<()> {
+    use crate::agent_def::AgentCeiling;
+
+    let (_dir, vault) = open_test_vault();
+    put_actor_ceiling_manifest(&vault, 0x2E, vec![agent_class_auto_row()])?;
+    let (herald_id, herald) = seeded_row(&vault, "sys.herald");
+    vault.batch().delete(&herald_id).commit()?;
+    assert_eq!(vault.get_agent_definition(&herald_id)?, None);
+
+    let mut widened = herald.clone();
+    widened.version = "2".to_owned();
+    widened.ceiling = AgentCeiling::Auto;
+    refused_as_body(
+        vault.put_agent_definition(&herald_id, &widened, test_time_range(2, 2), 2),
+        "create at the pinned row id",
+    );
+    // Without the reserved logical id, the row id alone still pins it.
+    widened.logical_id = None;
+    widened.display_name = None;
+    refused_as_body(
+        vault.put_agent_definition(&herald_id, &widened, test_time_range(2, 2), 2),
+        "create at the pinned row id without its logical id",
+    );
+    assert_eq!(vault.get_agent_definition(&herald_id)?, None);
+    auto_write_is_held(&vault, herald_id, 0x44, 10)?;
+
+    // Control: a create at the seed's ceiling lands.
+    let mut restored = herald;
+    restored.version = "2".to_owned();
+    vault.put_agent_definition(&herald_id, &restored, test_time_range(3, 3), 3)?;
+    assert_eq!(vault.get_agent_definition(&herald_id)?, Some(restored));
+    auto_write_is_held(&vault, herald_id, 0x45, 12)?;
+    Ok(())
+}

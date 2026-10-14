@@ -304,10 +304,11 @@ pub(in crate::batch) fn apply_put(
         new_skill_record = Some(decoded);
     } else if entity_type == ENTITY_TYPE_AGENT_DEF {
         let decoded = crate::agent_def::decode_agent_definition(data)?;
-        // ONE-1890 `sys.*` reservation, at the one arm that holds both the
-        // decoded body and its destination row id — ALL puts, mirroring
-        // SKILL's decode-site capture of `new_skill_record`.
+        // ONE-1890 `sys.*` reservation and the seeded-ceiling pin, at the one
+        // arm that holds both the decoded body and its destination row id —
+        // ALL puts, mirroring SKILL's decode-site capture of `new_skill_record`.
         crate::agent_def::validate_reserved_logical_id(&id, &decoded)?;
+        crate::agent_def::validate_seeded_ceiling(&id, &decoded)?;
         new_agent_definition = Some(decoded);
     } else if entity_type == crate::registry::ENTITY_TYPE_WORKFLOW {
         crate::agent_def::workflow::validate_workflow_put(store, wtxn, &id, data, replicated)?;

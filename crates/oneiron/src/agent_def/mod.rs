@@ -33,6 +33,7 @@ pub(crate) use self::codec::{
 };
 pub(crate) use self::manifest::{
     seed_system_agent_definitions, system_export_identity, validate_reserved_logical_id,
+    validate_seeded_ceiling,
 };
 pub(crate) use self::types::forked_from_row_ref;
 

@@ -343,6 +343,30 @@ pub(crate) fn validate_reserved_logical_id(id: &EntityId, def: &AgentDefinition)
     )))
 }
 
+/// The seeded-ceiling pin, enforced beside the `sys.*` reservation at the
+/// same put-decode chokepoint: a seeded row id never holds a ceiling wider
+/// than its seed's, on any road (create, update, replicated). The update
+/// arm's no-widen alone would not hold it, because a delete ends the row and
+/// a create at the pinned id has no prior to compare against.
+pub(crate) fn validate_seeded_ceiling(id: &EntityId, def: &AgentDefinition) -> Result<()> {
+    let Some(seed) = system_agent_manifest()?
+        .definitions
+        .iter()
+        .find(|seed| seed.entity_id.0 == *id)
+    else {
+        return Ok(());
+    };
+    let seeded = AgentCeiling::parse(&seed.definition.ceiling).ok_or(Error::Artifact(
+        ArtifactError::InvalidAgentDefBody("manifest ceiling must be one of auto|proposed"),
+    ))?;
+    if def.ceiling.widens_beyond(seeded) {
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "a seeded agent ceiling cannot widen beyond its seed",
+        )));
+    }
+    Ok(())
+}
+
 /// Seeds/reconciles the canonical roster inside the caller's write
 /// transaction. Takes the open-path input quartet rather than a `&Vault`,
 /// because it runs before any handle exists.
