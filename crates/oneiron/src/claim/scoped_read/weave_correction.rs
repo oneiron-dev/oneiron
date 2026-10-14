@@ -65,15 +65,16 @@ impl ScopedRead<'_> {
             .ok_or(Error::InvalidConfig(
                 "weave correction policy unavailable".into(),
             ))?;
-        // Writers enforce the reader's bound in this SAME serialized txn.
-        // Refuse a tap before it can make all prior labels unreadable.
-        let mut count = 0;
-        for row in LABELS.iter_raw_from(&self.vault.store, &txn, &link.encode())? {
-            row?;
-            count += 1;
-            if count >= limit {
-                return Err(Error::IndexOverflow("weave correction labels"));
-            }
+        // Writers enforce the reader's bound in this SAME serialized txn. The
+        // bound is the reader's own: another reader's labels never spend it.
+        let own = self
+            .vault
+            .weave_link_correction_labels_in_txn(&txn, link)?
+            .iter()
+            .filter(|label| label.actor == auth.actor())
+            .count();
+        if own >= limit {
+            return Err(Error::IndexOverflow("weave correction labels"));
         }
         let correction = WeaveLinkCorrection {
             id: EntityId::now(),
@@ -228,6 +229,50 @@ mod tests {
             vault
                 .weave_link_correction_labels_in_txn(&vault.store.env.read_txn()?, link)?
                 .is_empty()
+        );
+        Ok(())
+    }
+
+    // H420: one reader's labels on a link never spend another reader's
+    // allowance there; each reader's own allowance still bounds it.
+    #[test]
+    fn a_readers_correction_allowance_is_its_own() -> Result<()> {
+        use rmpv::Value;
+        let (_tmp, vault, person, link) = fixture()?;
+        let peer = link.target;
+        crate::test_util::authorize_readers_with(
+            &vault,
+            &[&person.to_hex(), &peer.to_hex()],
+            vec![(
+                Value::from("weave_correction_policy"),
+                Value::Map(vec![
+                    (Value::from("vault_max"), Value::from(1)),
+                    (Value::from("default"), Value::from(1)),
+                    (Value::from("holders"), Value::Map(Vec::new())),
+                    (
+                        Value::from("precedence"),
+                        Value::from("holder_then_default"),
+                    ),
+                ]),
+            )],
+        );
+        let file = |reader: EntityId| {
+            let auth = vault.authenticate_owner(
+                reader,
+                &reader.to_hex(),
+                true,
+                crate::store::GateDecisionId::now(),
+            )?;
+            vault
+                .scoped_read(ScopedReadActorKey::new(reader.to_hex()).unwrap())
+                .report_wrong_link(&auth, WeaveReader::Person(reader), link)
+        };
+        assert_eq!(file(person)?.actor, person);
+        assert!(matches!(file(person), Err(Error::IndexOverflow(_))));
+        let other = file(peer);
+        assert!(
+            matches!(&other, Ok(label) if label.actor == peer),
+            "H420: another reader's label spent this reader's allowance ({other:?})"
         );
         Ok(())
     }
