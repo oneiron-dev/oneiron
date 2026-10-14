@@ -367,7 +367,9 @@ fn close_fences(
 pub(super) fn anchor_signed(entry: &AuthorityLogEntry, anchor: impl Fn(&[u8; 32]) -> bool) -> bool {
     entry.cosigns.is_empty()
         && match (&entry.op, &entry.signer.public_key) {
-            (AuthorityOp::OwnerRoot(_), _) => true,
+            (AuthorityOp::OwnerRoot(record), AuthorityKey::Ed25519(key)) => {
+                *key == record.anchor_key
+            }
             (AuthorityOp::MachineProfile(_), AuthorityKey::Ed25519(key)) => anchor(key),
             _ => false,
         }
@@ -431,7 +433,9 @@ impl AuthorityFold {
     ///
     /// An owner anchor's row is none (`anchor_signed`): its anchor names a
     /// root this fold holds or one arriving beneath it, so a root and its marks
-    /// pass together on their first arrival.
+    /// pass together on their first arrival. A held root counts on any branch:
+    /// a mark parented beside it passes here, and the fold routes it through
+    /// the roster and fences it there, so it stays inert (Wonder W2-F1).
     pub(crate) fn stands_on_retired_key(
         &self,
         hash: &AuthorityEntryHash,

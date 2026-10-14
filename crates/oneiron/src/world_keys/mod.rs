@@ -163,7 +163,10 @@ fn commitment(id: &WorldKeyId, key: &[u8; 32]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_derive_key("oneiron/world-key-commitment/v1");
     hasher.update(&id.envelope_key_id());
     hasher.update(key);
-    *hasher.finalize().as_bytes()
+    let commitment = *hasher.finalize().as_bytes();
+    // The hasher's block buffer still holds the key's bytes (Wonder W2-F2).
+    zeroize::Zeroize::zeroize(&mut hasher);
+    commitment
 }
 
 /// The reserved base-reality scope. It is never private and has no key.

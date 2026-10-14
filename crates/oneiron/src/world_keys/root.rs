@@ -97,9 +97,14 @@ impl RecoveryRootSeed {
     /// The owner anchor's signing key.
     #[must_use]
     pub fn anchor(&self) -> ed25519_dalek::SigningKey {
-        let mut bytes = Zeroizing::new(blake3::derive_key(ANCHOR_CONTEXT, &self.bytes[..]));
-        let key = ed25519_dalek::SigningKey::from_bytes(&bytes);
-        zeroize::Zeroize::zeroize(&mut *bytes);
+        let mut hasher = blake3::Hasher::new_derive_key(ANCHOR_CONTEXT);
+        hasher.update(&self.bytes[..]);
+        let mut digest = hasher.finalize();
+        let key = ed25519_dalek::SigningKey::from_bytes(digest.as_bytes());
+        // The hasher's block buffer still holds the seed, and the digest is the
+        // anchor's secret (Wonder W2-F2).
+        zeroize::Zeroize::zeroize(&mut hasher);
+        zeroize::Zeroize::zeroize(&mut digest);
         key
     }
 
