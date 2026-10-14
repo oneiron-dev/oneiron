@@ -5178,11 +5178,12 @@ fn a_peer_carrier_naming_a_missing_actor_never_parks_a_sealed_merge() {
             crate::identity_topology::EntityLifecycleState::Merged
         );
         let human = |id| crate::write_envelope::WriteActor::new(id, EdgeActorClass::Human);
-        let rtxn = vault.store.env.read_txn().unwrap();
-        assert_eq!(
-            crate::identity_topology::admitted_author_in_txn(&vault.store, &rtxn, event).unwrap(),
-            stamped.then_some(human(own))
-        );
+        // One read txn per thread: it ends before the public read opens its own.
+        let admitted = {
+            let rtxn = vault.store.env.read_txn().unwrap();
+            crate::identity_topology::admitted_author_in_txn(&vault.store, &rtxn, event).unwrap()
+        };
+        assert_eq!(admitted, stamped.then_some(human(own)));
         assert_eq!(
             vault
                 .identity_topology_event(&event)
