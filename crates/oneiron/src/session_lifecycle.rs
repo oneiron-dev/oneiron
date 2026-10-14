@@ -481,9 +481,9 @@ impl Vault {
     ///   `(learned_at, id)` order, GATE-10 role admissibility, the compound
     ///   watermark lower bound and the Meso round cap, all shared with the
     ///   snapshot fence in [`Self::end_session_with_wake_and_hint_in_txn`];
-    /// * an edge-less turn truncates the round at its `learned_at`, TIES
-    ///   INCLUDED (`learned_at < cut`), so the watermark never settles past
-    ///   work that was not planned;
+    /// * an edge-less turn is left out of the plans and parked on the shared
+    ///   re-dirty carrier by the round's settlement, so it stops no later
+    ///   turn and is planned under its own conversation once its edge lands;
     /// * roles decode through the shared turn-body decoder, never a bespoke
     ///   alias preference;
     /// * partitions come from [`plan_partitions_in_txn`], which keeps the
@@ -498,25 +498,16 @@ impl Vault {
         let dirty_ids =
             collect_dirty_turn_ids_in_txn(self, wtxn, scope, watermark.last_learned_at, u64::MAX)?;
 
-        let scanned = read_partition_turns_in_txn(self, wtxn, scope, &dirty_ids)?;
+        let dirty = read_partition_turns_in_txn(self, wtxn, scope, &dirty_ids)?;
 
-        // The driver's exact cut rule: the first turn without its structural
-        // CONVERSATION edge truncates the round at its second, dropping the
-        // same-second ties with it.
-        let dirty = if let Some(cut_learned_at) = scanned
+        // The driver's exact rule: a turn without its structural CONVERSATION
+        // edge is not planned, and the settlement parks it.
+        let edged: Vec<_> = dirty
             .iter()
-            .find(|turn| turn.conversation.is_none())
-            .map(|turn| turn.learned_at)
-        {
-            scanned
-                .into_iter()
-                .take_while(|turn| turn.learned_at < cut_learned_at)
-                .collect()
-        } else {
-            scanned
-        };
-
-        let plans = plan_partitions_in_txn(self, scope, wtxn, &dirty, &watermark)?;
+            .filter(|turn| turn.conversation.is_some())
+            .copied()
+            .collect();
+        let plans = plan_partitions_in_txn(self, scope, wtxn, &edged, &watermark)?;
         Ok(SessionEndWake {
             plans,
             planned_watermark: watermark.last_learned_at,

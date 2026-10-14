@@ -389,8 +389,8 @@ impl<'v> SessionLifecycleDriver<'v> {
     /// the Meso watermark become partition attempts with the executor-decodable
     /// payload and the production dedupe key. No dirty turns → no attempt — a
     /// zero-turn sitting has nothing to dream about.
-    /// An edge-less turn truncates the round at its timestamp, including
-    /// ties, so the watermark never advances past work that was not planned.
+    /// An edge-less turn is not planned: the round's settlement parks it on
+    /// the shared re-dirty carrier, so it stops no later turn.
     fn end_session(
         &self,
         expected: &EntityId,
@@ -401,28 +401,20 @@ impl<'v> SessionLifecycleDriver<'v> {
         let scope = DreamerConsolidationScope::Meso;
         let watermark = read_watermark(self.vault, scope)?;
         let dirty = scan_dirty_turns(self.vault, scope, &watermark, usize::MAX)?;
-        let dirty = if let Some(cut_learned_at) = dirty
+        let edged: Vec<_> = dirty
             .iter()
-            .find(|turn| turn.conversation.is_none())
-            .map(|turn| turn.learned_at)
-        {
-            let scanned_count = dirty.len();
-            let prefix: Vec<_> = dirty
-                .into_iter()
-                .take_while(|turn| turn.learned_at < cut_learned_at)
-                .collect();
-            tracing::warn!(
-                deferred_count = scanned_count - prefix.len(),
-                cut_learned_at,
-                "meso round truncated at first turn without a conversation edge"
+            .filter(|turn| turn.conversation.is_some())
+            .copied()
+            .collect();
+        if edged.len() < dirty.len() {
+            tracing::info!(
+                parked = dirty.len() - edged.len(),
+                "meso round parks turns without a conversation edge"
             );
-            prefix
-        } else {
-            dirty
-        };
+        }
         let advance_watermark_to = dirty.iter().map(|turn| turn.learned_at).max();
         let planned_turn_ids = dirty.iter().map(|turn| turn.turn_id).collect();
-        let plans = plan_partitions(self.vault, scope, &dirty, &watermark)?;
+        let plans = plan_partitions(self.vault, scope, &edged, &watermark)?;
         let wake = SessionEndWake {
             plans,
             planned_watermark: watermark.last_learned_at,

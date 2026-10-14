@@ -17,7 +17,7 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
-use super::input::{TurnInput, turn_text_in_txn};
+use super::input::{TurnInput, turn_input_in_txn, turn_text_in_txn};
 use super::provisional;
 use crate::affect::Vad;
 use crate::edge::EdgeKind;
@@ -306,7 +306,9 @@ impl Vault {
     }
 }
 
-pub(super) fn tag_set_in_txn(
+/// The tag set saved for `turn` as it is stored: whether it still indexes
+/// the turn's words is the caller's to know.
+pub(crate) fn tag_set_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
@@ -332,6 +334,51 @@ pub(super) fn readable_in_txn(
         }
     }
     Ok(Some(tags))
+}
+
+/// The tags saved for `turn` while they index its words as they read now,
+/// and the bytes of text hashed to tell: the envelope names the input a
+/// tagger would read from the turn today, with or without its live window.
+/// The sieve takes its name spans through this door; the tag set stays the
+/// one copy.
+pub(crate) fn current_tags_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<(Option<TurnTags>, usize)> {
+    let Some(tags) = readable_in_txn(&vault.store, txn, turn)? else {
+        return Ok((None, 0));
+    };
+    let TurnInput::Ready {
+        input,
+        hash,
+        text_hash,
+    } = turn_input_in_txn(vault, txn, turn)?
+    else {
+        return Ok((None, 0));
+    };
+    let text: usize = input
+        .messages
+        .iter()
+        .map(|message| message.text.len())
+        .sum();
+    let window: usize = input
+        .context
+        .iter()
+        .flat_map(|turn| &turn.messages)
+        .map(|message| message.text.len())
+        .sum();
+    // The text is hashed alone, and once more with a live window.
+    let hashed = if input.context.is_empty() {
+        text
+    } else {
+        2 * text + window
+    };
+    let read = &tags.envelope.content_hash;
+    Ok((
+        (*read == hash || *read == text_hash).then_some(tags),
+        hashed,
+    ))
 }
 
 /// Whether the provisional entity `entity` reads: its origin turn's tag set
@@ -438,7 +485,8 @@ pub(super) fn replace_in_txn(
     for entity in before.union(&after) {
         provisional::settle_in_txn(vault, txn, entity)?;
     }
-    Ok(())
+    // The sieve reads a turn's names from its tag set: a new set is a new read.
+    crate::dreamer_wake::owe_sieve_read_in_txn(&vault.store, txn, turn)
 }
 
 /// Removes `entity` from every tag set that names it: a link left naming

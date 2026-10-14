@@ -223,7 +223,76 @@ pub(super) fn collect_in(
     turn_body: &[u8],
     withheld: &mut usize,
 ) -> Result<TurnText> {
-    let vault = read.vault();
+    collect_with(read.vault(), txn, turn, turn_body, withheld, |ids| {
+        message_reader(read)?.get_entities_parts_in_txn(txn, ids)
+    })
+}
+
+/// The text a consolidation branch reads of one stored TURN, by the same
+/// projection, in the caller's transaction: the projector's material
+/// ([`crate::dreamer_wake`]). The TURN and its MESSAGE rows are read as the
+/// Dreamer reads them, whatever the caller checked: a TURN the Dreamer may
+/// not read, a private row, or a relationship row without the Dreamer's
+/// live grant fails the turn as it fails a branch. A branch reads all of
+/// these words or refuses the turn, so no reader sees fewer. `None` when the
+/// TURN is gone or has no text.
+pub(crate) fn projected_turn_text_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<Option<String>> {
+    use crate::ports::EntityStore;
+    // The logical body: a document-backed `txt` reads as its document.
+    let Some(row) = vault.port_entity_get(txn, turn)? else {
+        return Ok(None);
+    };
+    if row.entity_type != ENTITY_TYPE_TURN {
+        return Ok(None);
+    }
+    let read = dreamer_read(vault)?;
+    if read.entities_readable_in_txn(txn, std::slice::from_ref(turn))? != [true] {
+        return Err(invalid_consolidation("turn is not readable"));
+    }
+    let text = collect_with(vault, txn, turn, &row.body, &mut 0, |ids| {
+        message_reader(&read)?.get_entities_parts_in_txn(txn, ids)
+    })?;
+    Ok(text.into_text())
+}
+
+/// Which of `messages` the Dreamer may read in the caller's transaction,
+/// through the gate a branch reads MESSAGE rows by: a private row, or a
+/// relationship row without the Dreamer's live grant, is withheld. It asks
+/// the gate only, and takes no body out.
+pub(crate) fn dreamer_may_read_messages_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    messages: &[EntityId],
+) -> Result<Vec<bool>> {
+    let read = dreamer_read(vault)?;
+    message_reader(&read)?.entities_readable_in_txn(txn, messages)
+}
+
+/// Which of `turns` the Dreamer may read in the caller's transaction,
+/// through the gate a branch reads its TURN by. It asks the gate only, and
+/// takes no body out.
+pub(crate) fn dreamer_may_read_turns_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turns: &[EntityId],
+) -> Result<Vec<bool>> {
+    dreamer_read(vault)?.entities_readable_in_txn(txn, turns)
+}
+
+/// [`collect_in`] over any reader of the MESSAGE rows: `read_rows` returns
+/// each id's `(type, learned_at, logical body)`, `None` where it is withheld.
+fn collect_with(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    turn_body: &[u8],
+    withheld: &mut usize,
+    read_rows: impl FnOnce(&[EntityId]) -> Result<Vec<Option<SourceRow>>>,
+) -> Result<TurnText> {
     let facts = decode_turn_body(turn_body);
     if facts.text.is_some() {
         return Ok(TurnText {
@@ -277,7 +346,7 @@ pub(super) fn collect_in(
     }
     ids.sort_unstable();
     ids.dedup();
-    let rows = message_reader(read)?.get_entities_parts_in_txn(txn, &ids)?;
+    let rows = read_rows(&ids)?;
     let unreadable = rows.iter().filter(|row| row.is_none()).count();
     if unreadable != 0 {
         *withheld += unreadable;

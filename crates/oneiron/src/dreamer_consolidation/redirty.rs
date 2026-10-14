@@ -24,13 +24,24 @@
 //!
 //! One latest row per TURN: a newer change replaces it, pending for every
 //! scope again. Like stream finality, the row is local to this vault.
+//!
+//! The same carrier is the one shared carrier for a TURN without its
+//! conversation edge (ARCH-0026, the #1353 follow-up). A cursor passing such
+//! a TURN parks it here instead of stopping at it, and selection leaves a
+//! carried TURN out until its edge lands, so one missing edge never holds
+//! back later turns, and the parked TURN keeps its own scope: it is planned
+//! under its own conversation once it has one.
 use crate::Vault;
 use crate::dreamer_runner::DreamerConsolidationScope;
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::ports::{EntityStoreRead, EntityTime, PortRows, TombstoneStoreRead};
+use crate::ports::{
+    EdgeDirection, EdgeStoreRead, EntityStoreRead, EntityTime, PortRows, TombstoneStoreRead,
+};
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::Store;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::iter::Peekable;
@@ -94,26 +105,98 @@ pub(crate) fn redirty_turn_in_txn(
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
 ) -> Result<()> {
-    let row = vault
+    put_carrier_in_txn(&vault.store, txn, turn)?;
+    // Changed words are new work for the sieve too, and end their hold.
+    crate::dreamer_wake::words_changed_in_txn(&vault.store, txn, turn)
+}
+
+/// Parks an edge-less TURN a scope cursor is passing on the same carrier: its
+/// words did not change, so the sieve owes it nothing. Selection leaves a
+/// carried TURN out while it has no conversation edge, so it stops no later
+/// turn, and takes it like any re-dirtied TURN once its edge lands.
+pub(super) fn park_turn_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    turn: &EntityId,
+) -> Result<()> {
+    put_carrier_in_txn(&vault.store, txn, turn)
+}
+
+/// Puts a TURN whose words did not change back on the carrier, pending for
+/// every scope, because what a round read of it is gone: the projector's
+/// riders and queued batch-mates of a source since erased. An id that no
+/// longer names a live TURN is left alone.
+pub(crate) fn requeue_turn_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    turn: &EntityId,
+) -> Result<()> {
+    if store
+        .port_entity_record(txn, turn)?
+        .is_none_or(|row| row.entity_type != ENTITY_TYPE_TURN)
+    {
+        return Ok(());
+    }
+    put_carrier_in_txn(store, txn, turn)
+}
+
+/// Parks each TURN of `passed`, the temporal keys a cursor is settling past,
+/// that has no conversation edge.
+pub(super) fn park_edgeless_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    passed: impl IntoIterator<Item = EntityId>,
+) -> Result<()> {
+    for turn in passed {
+        if conversation_in_txn(vault, txn, &turn)?.is_none() {
+            park_turn_in_txn(vault, txn, &turn)?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn conversation_of(vault: &Vault, turn_id: &EntityId) -> Result<Option<EntityId>> {
+    Ok(vault
+        .edges_out(turn_id)?
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::ChildOf)
+        .map(|edge| edge.target))
+}
+
+/// A TURN's structural conversation: the target of its `ChildOf` edge.
+pub(super) fn conversation_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<Option<EntityId>> {
+    Ok(vault
         .store
+        .port_edges(txn, turn, EdgeDirection::Out, Some(EdgeKind::ChildOf), None)?
+        .next()
+        .transpose()?
+        .map(|edge| edge.target))
+}
+
+fn put_carrier_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &EntityId) -> Result<()> {
+    let row = store
         .port_entity_record(txn, turn)?
         .ok_or(Error::EntityNotFound)?;
     if row.entity_type != ENTITY_TYPE_TURN {
         return Err(Error::CorruptedIndex("re-dirtied row is not a TURN"));
     }
-    if !is_live(vault, txn, turn)? {
+    if !is_live(store, txn, turn)? {
         return Ok(());
     }
     // Drawn before the clock read, which persists the id floor in this commit.
-    let order = vault.store.clock.entity_id()?;
-    let position = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    let order = store.clock.entity_id()?;
+    let position = crate::ports::recorded_at_in_txn(store, txn)?;
     let carrier = Carrier {
         position,
         order,
         consumed: 0,
         read_at: [0; 3],
     };
-    REDIRTY.put(&vault.store, txn, turn, &carrier)
+    REDIRTY.put(store, txn, turn, &carrier)
 }
 
 /// Marks the carriers a settled round of `scope` selected, each `(turn,
@@ -206,11 +289,11 @@ fn leading_carrier(
     let Some(carrier) = carrier.filter(|carrier| carrier.leads(scope, stored)) else {
         return Ok(None);
     };
-    Ok(is_live(vault, txn, turn)?.then_some((carrier.position, carrier.order)))
+    Ok(is_live(&vault.store, txn, turn)?.then_some((carrier.position, carrier.order)))
 }
 
-fn is_live(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    let state = vault.store.port_deletion_state(txn, id)?;
+fn is_live(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    let state = store.port_deletion_state(txn, id)?;
     Ok(!(state.deleted || state.stale))
 }
 

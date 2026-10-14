@@ -478,8 +478,12 @@ fn a_completed_wake_attempt_is_never_recreated_by_a_later_close_attempt() {
     assert_eq!(attempts[0].state, AttemptState::Completed);
 }
 
+/// ARCH-0026 (#1353 follow-up): an orphan turn no longer stops the round.
+/// The first close plans both edged turns and parks the orphan on the shared
+/// carrier; once its late edge lands, the next close plans it alone, and the
+/// watermark, which names temporal keys only, stays where the first put it.
 #[test]
-fn session_close_watermark_stops_at_the_first_unplanned_turn() {
+fn session_close_parks_an_orphan_and_plans_it_once_its_edge_lands() {
     let (_dir, vault) = open_vault();
     let (_now, clock) = manual_clock(1_000_000_000);
     let lifecycle = driver(&vault, SessionLifecycleConfig::new(FLOOR, CEILING), clock);
@@ -501,7 +505,7 @@ fn session_close_watermark_stops_at_the_first_unplanned_turn() {
         read_watermark(&vault, DreamerConsolidationScope::Meso)
             .expect("first watermark")
             .last_learned_at,
-        999_990
+        999_999
     );
 
     vault

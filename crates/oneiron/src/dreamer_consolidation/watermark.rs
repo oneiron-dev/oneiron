@@ -15,11 +15,12 @@ use crate::dreamer_runner::{
     DreamerConsolidationScope, DreamerTurnRole, dreamer_extraction_role_admissible,
     dreamer_turn_role,
 };
-use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::side_table::{self, Raw, SideTable};
+
+pub(super) use super::redirty::conversation_of;
 
 /// Per-scope consolidation watermark row. Key: u8 (the scope byte).
 const WATERMARK: SideTable<[u8; 1], ConsolidationWatermark, Raw> =
@@ -268,13 +269,15 @@ pub(crate) fn advance_watermark_in_txn(
 /// order: the cursor moves to the round's last TEMPORAL key, so it only ever
 /// names a TURN's own key, and each TURN taken at a re-dirty carrier consumes
 /// that carrier instead. A round of carriers alone leaves the cursor where it
-/// is.
+/// is. A passed TURN without its conversation edge is parked on a carrier.
 fn settle_round_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     scope: DreamerConsolidationScope,
     round: &[AdmissibleTurnRow],
 ) -> Result<()> {
+    let passed = round.iter().filter(|row| !row.carried);
+    super::redirty::park_edgeless_in_txn(vault, wtxn, passed.map(|row| row.turn_id))?;
     if let Some(last) = round.iter().rev().find(|row| !row.carried) {
         write_watermark_position_in_txn(vault, wtxn, scope, last.learned_at, Some(last.turn_id))?;
     }
@@ -566,7 +569,11 @@ fn enumerate_admissible_turns(
             body.speaker.as_deref(),
             &vault.config.assistant_display_names,
         );
-        if !dreamer_extraction_role_admissible(role) {
+        // A parked TURN waits on its carrier until its conversation edge lands.
+        if !dreamer_extraction_role_admissible(role)
+            || (candidate.carried
+                && super::redirty::conversation_in_txn(vault, txn, &turn_id)?.is_none())
+        {
             continue;
         }
         admissible.push(AdmissibleTurnRow {
@@ -727,14 +734,6 @@ pub fn entity_ref_from_value(value: &Value) -> Option<EntityId> {
     };
     let raw: [u8; 16] = bytes.as_slice().try_into().ok()?;
     EntityId::from_bytes(raw).ok()
-}
-
-pub(super) fn conversation_of(vault: &Vault, turn_id: &EntityId) -> Result<Option<EntityId>> {
-    Ok(vault
-        .edges_out(turn_id)?
-        .into_iter()
-        .find(|edge| edge.kind == EdgeKind::ChildOf)
-        .map(|edge| edge.target))
 }
 
 pub(super) fn read_turn_facts(vault: &Vault, id: &EntityId) -> Result<TurnBodyFacts> {

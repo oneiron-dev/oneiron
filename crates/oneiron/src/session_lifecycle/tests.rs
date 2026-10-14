@@ -457,8 +457,23 @@ fn seed_edgeless_dirty_turn(vault: &Vault, learned_at: u64) -> EntityId {
     turn
 }
 
+/// The Meso dirty scan from the persisted watermark, as turn ids.
+fn meso_remaining(vault: &Vault) -> Vec<EntityId> {
+    let scope = DreamerConsolidationScope::Meso;
+    let watermark = read_watermark(vault, scope).expect("persisted watermark");
+    scan_dirty_turns(vault, scope, &watermark, usize::MAX)
+        .expect("scan remaining turns")
+        .iter()
+        .map(|turn| turn.turn_id)
+        .collect()
+}
+
+/// ARCH-0026 (#1353 follow-up): a turn without its conversation edge used to
+/// stop the round at its second, so every later turn waited on it. It is now
+/// parked on the shared carrier: the round plans the rest, and the parked
+/// turn comes back, under its own conversation, once its edge lands.
 #[test]
-fn in_txn_planner_truncates_at_the_first_edgeless_turn_including_same_second_ties() {
+fn in_txn_planner_parks_an_edgeless_turn_and_plans_every_other_turn() {
     let (_dir, vault) = open_vault();
     let conversation = seed_conversation(&vault, 0x60);
     let a = seed_dirty_turn(&vault, &conversation, 900);
@@ -478,23 +493,22 @@ fn in_txn_planner_truncates_at_the_first_edgeless_turn_including_same_second_tie
     let payloads = meso_partition_payloads(&vault);
     assert_eq!(payloads.len(), 1);
     let (_, turns, _) = decode_partition_payload(&payloads[0].input).expect("decode partition");
-    assert_eq!(turns, vec![a]);
+    assert_eq!(turns, vec![a, tie, after]);
+    assert!(
+        meso_remaining(&vault).is_empty(),
+        "the edge-less turn waits parked"
+    );
 
-    let scope = DreamerConsolidationScope::Meso;
-    let watermark = read_watermark(&vault, scope).expect("persisted watermark");
-    let remaining = scan_dirty_turns(&vault, scope, &watermark, usize::MAX)
-        .expect("scan remaining turns")
-        .iter()
-        .map(|turn| turn.turn_id)
-        .collect::<Vec<_>>();
-    let mut expected = vec![tie, edgeless];
-    expected.sort();
-    expected.push(after);
-    assert_eq!(remaining, expected);
+    vault
+        .batch()
+        .edge(&edgeless, EdgeKind::ChildOf, &conversation, 1.0)
+        .commit()
+        .expect("late ChildOf edge");
+    assert_eq!(meso_remaining(&vault), vec![edgeless]);
 }
 
 #[test]
-fn in_txn_planner_drops_an_admissible_turn_sharing_the_cut_second() {
+fn in_txn_planner_plans_an_admissible_turn_sharing_an_edgeless_turns_second() {
     let (_dir, vault) = open_vault();
     let conversation = seed_conversation(&vault, 0x61);
     let a = seed_dirty_turn(&vault, &conversation, 900);
@@ -507,29 +521,25 @@ fn in_txn_planner_drops_an_admissible_turn_sharing_the_cut_second() {
         .expect("close session")
         .expect("session ended");
     assert_eq!(ended.session, session);
-    assert!(vault.open_session().expect("open session").is_none());
-    assert_eq!(meso_attempt_count(&vault), 0);
+    assert_eq!(meso_attempt_count(&vault), 1);
+    let payloads = meso_partition_payloads(&vault);
+    let (_, turns, _) = decode_partition_payload(&payloads[0].input).expect("decode partition");
+    assert_eq!(turns, vec![a]);
+    assert!(meso_remaining(&vault).is_empty());
 
-    let scope = DreamerConsolidationScope::Meso;
-    let watermark = read_watermark(&vault, scope).expect("persisted watermark");
-    let remaining = scan_dirty_turns(&vault, scope, &watermark, usize::MAX)
-        .expect("scan retained turns")
-        .iter()
-        .map(|turn| turn.turn_id)
-        .collect::<Vec<_>>();
-    let mut expected = vec![a, edgeless];
-    expected.sort();
-    assert_eq!(remaining, expected);
-
-    // A newly indexed earlier turn must also remain eligible: the empty
-    // round must not move the persisted bootstrap watermark forward.
-    let earlier = seed_dirty_turn(&vault, &conversation, 899);
-    let watermark = read_watermark(&vault, scope).expect("persisted watermark");
-    let remaining = scan_dirty_turns(&vault, scope, &watermark, usize::MAX)
-        .expect("scan from unchanged watermark")
-        .iter()
-        .map(|turn| turn.turn_id)
-        .collect::<Vec<_>>();
-    expected.insert(0, earlier);
-    assert_eq!(remaining, expected);
+    // A second close with nothing new plans nothing: the parked turn stays
+    // out of every round until its edge lands.
+    let session = minted(vault.mint_session(1_002).expect("mint session"));
+    let wake = vault.plan_session_end_wake().expect("plan");
+    vault
+        .end_session_with_wake(&session, SessionClosePredicate::Explicit, 1_003, &wake)
+        .expect("close session")
+        .expect("session ended");
+    assert_eq!(meso_attempt_count(&vault), 1);
+    vault
+        .batch()
+        .edge(&edgeless, EdgeKind::ChildOf, &conversation, 1.0)
+        .commit()
+        .expect("late ChildOf edge");
+    assert_eq!(meso_remaining(&vault), vec![edgeless]);
 }

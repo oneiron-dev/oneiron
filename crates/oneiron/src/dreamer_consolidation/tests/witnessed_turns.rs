@@ -184,7 +184,7 @@ fn run_context(
 /// The shipped policy (its Dreamer read grant included) plus the one permit
 /// for engine-voice `system` rows: an owner-authored `auto` ceiling bound to
 /// `writer`.
-fn allow_system_rows(vault: &Vault, writer: EntityId) -> Result<()> {
+pub(super) fn allow_system_rows(vault: &Vault, writer: EntityId) -> Result<()> {
     let Value::Map(mut entries) =
         rmpv::decode::read_value(&mut crate::gate::default_policy_manifest()?.as_slice())
             .expect("default policy map")
@@ -1113,7 +1113,7 @@ fn stored_citation_of_equal_words_names_the_sibling_it_was_taken_from() -> Resul
 
 /// One user MESSAGE written through the stream doors into a fresh turn and
 /// ended by `ending`: (turn, conversation, message, the stream's input).
-fn stream_turn(
+pub(super) fn stream_turn(
     vault: &Vault,
     seed: u8,
     text: &str,
@@ -1143,7 +1143,13 @@ fn stream_turn(
 
 /// Opens a stream on `input`'s MESSAGE as `writer` (a continuation once the
 /// MESSAGE exists), appends `text` and ends it by `ending`.
-fn end_stream(vault: &Vault, writer: EntityId, input: &WitnessTurn, text: &str, ending: &str) {
+pub(super) fn end_stream(
+    vault: &Vault,
+    writer: EntityId,
+    input: &WitnessTurn,
+    text: &str,
+    ending: &str,
+) {
     let memory = vault.memory(writer, EdgeActorClass::Human);
     let handle = memory
         .begin_message_stream(input, Some(crate::memory::MessageWriteMode::Atomic))

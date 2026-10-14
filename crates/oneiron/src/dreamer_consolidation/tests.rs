@@ -32,6 +32,7 @@ mod prior_heads;
 mod scope_enforcement;
 mod scope_summaries;
 mod support;
+mod turn_wake;
 mod weave_grant;
 mod witnessed_turns;
 use support::ExpiringBackend;

@@ -3,6 +3,8 @@
 //! `TemporalAnchorMode` stays in `oneiron::temporal`: retrieval scoring matches it
 //! exhaustively, and `#[non_exhaustive]` only allows that inside the defining crate.
 
+use std::cell::Cell;
+
 use serde::{Deserialize, Serialize};
 
 /// Bi-temporal interval represented as UNIX timestamps.
@@ -130,7 +132,7 @@ impl TemporalExpression {
         if tokens.is_empty() {
             return Err(TemporalExpressionParseError::Empty);
         }
-        match hint_at(&tokens, 0) {
+        match hint_at(&Tokens::new(&tokens), 0) {
             Some((end, Some(expression))) if end == tokens.len() => Ok(expression),
             _ => Err(TemporalExpressionParseError::Unsupported {
                 expression: tokens.join(" "),
@@ -280,14 +282,14 @@ pub struct QueryTemporalHints {
 #[must_use]
 pub fn temporal_hints_from_query(query: &str, now: u64) -> QueryTemporalHints {
     let tokens = temporal_query_tokens(query);
+    let words = Tokens::new(&tokens);
     let mut out = QueryTemporalHints::default();
     let mut index = 0;
     while index < tokens.len() {
-        let Some((end, expression)) = hint_at(&tokens, index) else {
+        let Some((end, expression)) = hint_at(&words, index) else {
             // Never restart inside a count that read as no time: `half a
             // year` must not become `a year`.
-            index =
-                quantity_at(&tokens, index).map_or(index + 1, |(_, after)| after.max(index + 1));
+            index = quantity_at(&words, index).map_or(index + 1, |(_, after)| after.max(index + 1));
             continue;
         };
         let resolved = expression
@@ -322,9 +324,9 @@ pub fn temporal_hints_from_query(query: &str, now: u64) -> QueryTemporalHints {
 
 /// The temporal phrase starting at `tokens[index]`: where it ends (exclusive)
 /// and its expression, `None` when it reads as a time but cannot resolve.
-fn hint_at(tokens: &[String], index: usize) -> Option<(usize, Option<TemporalExpression>)> {
+fn hint_at(tokens: &Tokens<'_>, index: usize) -> Option<(usize, Option<TemporalExpression>)> {
     let one = |expression| Some((index + 1, Some(expression)));
-    match tokens[index].as_str() {
+    match tokens.get(index)? {
         "recent" => one(TemporalExpression::Recent),
         "yesterday" => one(TemporalExpression::Yesterday),
         "today" | "tonight" => one(TemporalExpression::Calendar {
@@ -341,9 +343,9 @@ fn hint_at(tokens: &[String], index: usize) -> Option<(usize, Option<TemporalExp
 }
 
 /// `last|past|this|next` followed by a unit, a weekday, or a count of units.
-fn anchored_hint(tokens: &[String], index: usize) -> Option<(usize, Option<TemporalExpression>)> {
-    let anchor = tokens[index].as_str();
-    let next = tokens.get(index + 1)?.as_str();
+fn anchored_hint(tokens: &Tokens<'_>, index: usize) -> Option<(usize, Option<TemporalExpression>)> {
+    let anchor = tokens.get(index)?;
+    let next = tokens.get(index + 1)?;
     let two = |expression| Some((index + 2, Some(expression)));
     match (anchor, next) {
         ("last", "night") => return two(TemporalExpression::Yesterday),
@@ -406,10 +408,10 @@ fn anchored_hint(tokens: &[String], index: usize) -> Option<(usize, Option<Tempo
 }
 
 /// `<count> <unit> ago`.
-fn ago_hint(tokens: &[String], index: usize) -> Option<(usize, Option<TemporalExpression>)> {
+fn ago_hint(tokens: &Tokens<'_>, index: usize) -> Option<(usize, Option<TemporalExpression>)> {
     let (quantity, after) = quantity_at(tokens, index)?;
     let unit = TemporalUnit::from_token(tokens.get(after)?)?;
-    if tokens.get(after + 1).map(String::as_str) != Some("ago") {
+    if tokens.get(after + 1) != Some("ago") {
         return None;
     }
     let expression = match quantity {
@@ -438,15 +440,10 @@ enum Quantity {
 /// A count at `tokens[index]` and the index after it, past a trailing `of`
 /// (`couple of`). Digits, number words (`twenty four`), `a`/`an`, `couple`,
 /// `few` and `dozen` resolve; `several`, `many` and `half` are vague.
-fn quantity_at(tokens: &[String], index: usize) -> Option<(Quantity, usize)> {
+fn quantity_at(tokens: &Tokens<'_>, index: usize) -> Option<(Quantity, usize)> {
     let mut index = index;
-    let token = tokens.get(index)?.as_str();
-    if token.starts_with(|ch: char| ch.is_ascii_digit() || ch == '.')
-        && token.bytes().any(|byte| byte.is_ascii_digit())
-        && token
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || byte == b',' || byte == b'.')
-    {
+    let token = tokens.get(index)?;
+    if is_numeral(token) {
         // A fraction is a count the parser will not round.
         if token.contains('.') {
             return Some((Quantity::Vague, skip_of(tokens, index + 1)));
@@ -458,12 +455,12 @@ fn quantity_at(tokens: &[String], index: usize) -> Option<(Quantity, usize)> {
         return Some((Quantity::Count(count), skip_of(tokens, index + 1)));
     }
     if matches!(token, "a" | "an") {
-        match tokens.get(index + 1).map(String::as_str) {
+        match tokens.get(index + 1) {
             Some("couple" | "few" | "dozen" | "half") => index += 1,
             _ => return Some((Quantity::Count(1), index + 1)),
         }
     }
-    let quantity = match tokens[index].as_str() {
+    let quantity = match tokens.get(index)? {
         "couple" => Quantity::Count(2),
         "few" => Quantity::Count(3),
         "dozen" => Quantity::Count(12),
@@ -471,7 +468,7 @@ fn quantity_at(tokens: &[String], index: usize) -> Option<(Quantity, usize)> {
         // `half a year`, `half of an hour`: the article belongs to the count.
         "half" => {
             let after = skip_of(tokens, index + 1);
-            let after = match tokens.get(after).map(String::as_str) {
+            let after = match tokens.get(after) {
                 Some("a" | "an") => after + 1,
                 _ => after,
             };
@@ -485,8 +482,8 @@ fn quantity_at(tokens: &[String], index: usize) -> Option<(Quantity, usize)> {
     Some((quantity, skip_of(tokens, index + 1)))
 }
 
-fn skip_of(tokens: &[String], index: usize) -> usize {
-    if tokens.get(index).map(String::as_str) == Some("of") {
+fn skip_of(tokens: &Tokens<'_>, index: usize) -> usize {
+    if tokens.get(index) == Some("of") {
         index + 1
     } else {
         index
@@ -496,11 +493,11 @@ fn skip_of(tokens: &[String], index: usize) -> usize {
 /// Spelled-out numbers, added word by word (`twenty four` is 24), with
 /// `hundred` and `thousand` multiplying what came before and `and` joining
 /// them (`one hundred and two`).
-fn number_words_at(tokens: &[String], index: usize) -> Option<(u32, usize)> {
+fn number_words_at(tokens: &Tokens<'_>, index: usize) -> Option<(u32, usize)> {
     let mut total: u64 = 0;
     let mut current: u64 = 0;
     let mut end = index;
-    while let Some(token) = tokens.get(end).map(String::as_str) {
+    while let Some(token) = tokens.get(end) {
         match (number_word(token), token) {
             (Some(value), _) => current += u64::from(value),
             (None, "hundred") if end > index => current *= 100,
@@ -561,29 +558,295 @@ fn number_word(token: &str) -> Option<u32> {
     })
 }
 
+/// The tokens the grammar reads: the words an open phrase holds, then the
+/// text's. It keeps how far the grammar looked, so a reader holding only
+/// some of the text's tokens knows when the rest would count.
+struct Tokens<'a> {
+    held: &'a [String],
+    words: &'a [String],
+    looked: Cell<usize>,
+}
+
+impl<'a> Tokens<'a> {
+    fn new(words: &'a [String]) -> Self {
+        Self::after(&[], words)
+    }
+
+    fn after(held: &'a [String], words: &'a [String]) -> Self {
+        Self {
+            held,
+            words,
+            looked: Cell::new(0),
+        }
+    }
+
+    fn get(&self, index: usize) -> Option<&'a str> {
+        self.looked.set(self.looked.get().max(index + 1));
+        match index.checked_sub(self.held.len()) {
+            None => self.held.get(index),
+            Some(at) => self.words.get(at),
+        }
+        .map(String::as_str)
+    }
+
+    fn len(&self) -> usize {
+        self.held.len() + self.words.len()
+    }
+
+    /// How many tokens from the first the grammar looked at.
+    fn looked(&self) -> usize {
+        self.looked.get()
+    }
+
+    fn words(&self) -> Vec<&'a str> {
+        self.held
+            .iter()
+            .chain(self.words)
+            .map(String::as_str)
+            .collect()
+    }
+}
+
+/// A count in digits: `3`, `1,000`, `.5`.
+fn is_numeral(token: &str) -> bool {
+    token.starts_with(|ch: char| ch.is_ascii_digit() || ch == '.')
+        && token.bytes().any(|byte| byte.is_ascii_digit())
+        && token
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b',' || byte == b'.')
+}
+
 /// Lowercased alphanumeric runs. A `.` or `,` between two digits, or a `.`
 /// opening a number, stays in it (`0.5`, `.5`, `1,000`), so a decimal never
 /// splits into a different count.
 fn temporal_query_tokens(value: &str) -> Vec<String> {
-    let chars: Vec<char> = value.chars().collect();
+    temporal_tokens(value).0
+}
+
+/// The query tokens of `value` with each one's byte range in `value`.
+fn temporal_tokens(value: &str) -> (Vec<String>, Vec<(usize, usize)>) {
+    let chars: Vec<(usize, char)> = value.char_indices().collect();
     let mut tokens = Vec::new();
+    let mut ranges = Vec::new();
     let mut current = String::new();
-    for (index, &ch) in chars.iter().enumerate() {
-        let before = index.checked_sub(1).map(|before| chars[before]);
+    let mut start = 0;
+    for (index, &(at, ch)) in chars.iter().enumerate() {
+        let before = index.checked_sub(1).map(|before| chars[before].1);
         let in_number = matches!(ch, '.' | ',')
-            && chars.get(index + 1).is_some_and(char::is_ascii_digit)
+            && chars
+                .get(index + 1)
+                .is_some_and(|(_, next)| next.is_ascii_digit())
             && (before.is_some_and(|before| before.is_ascii_digit())
                 || (ch == '.' && !before.is_some_and(char::is_alphanumeric)));
         if ch.is_ascii_alphanumeric() || in_number {
+            if current.is_empty() {
+                start = at;
+            }
             current.push(ch.to_ascii_lowercase());
         } else if !current.is_empty() {
             tokens.push(std::mem::take(&mut current));
+            ranges.push((start, at));
         }
     }
     if !current.is_empty() {
         tokens.push(current);
+        ranges.push((start, value.len()));
     }
-    tokens
+    (tokens, ranges)
+}
+
+/// One temporal phrase found in running text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TemporalPhraseSpan {
+    /// Byte offset of the phrase's first character.
+    pub start: usize,
+    /// Byte offset just past its last character.
+    pub end: usize,
+    /// `false` for a phrase that reads as a time the parser cannot resolve
+    /// (`last several weeks`).
+    pub resolved: bool,
+}
+
+/// Every temporal phrase [`temporal_hints_from_query`] would read in `text`,
+/// with its byte range in `text`, in reading order.
+#[must_use]
+pub fn temporal_phrase_spans(text: &str) -> Vec<TemporalPhraseSpan> {
+    temporal_phrase_steps(text, 0, usize::MAX, OpenPhrase::default(), true)
+        .into_iter()
+        .filter_map(|step| {
+            step.phrase.map(|resolved| TemporalPhraseSpan {
+                start: step.start,
+                end: step.end,
+                resolved,
+            })
+        })
+        .collect()
+}
+
+/// One step the phrase reader takes through running text: a temporal
+/// phrase, a count it reads past, one token it skips, or a part of a phrase
+/// longer than a step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TemporalPhraseStep {
+    /// Byte offset of the step's first character.
+    pub start: usize,
+    /// Byte offset just past its last character.
+    pub end: usize,
+    /// For a phrase, whether the parser resolves it; `None` for a count, a
+    /// token or a part of a longer phrase.
+    pub phrase: Option<bool>,
+    /// The phrase the step leaves open: one that runs on past it.
+    pub open: OpenPhrase,
+}
+
+/// A phrase the reader is inside when a step ends, because it runs past
+/// the bytes one step reads. It holds the words read of it so far, as few
+/// as the grammar reads the same way: each by a word in `HELD_WORDS`, and
+/// the number words of a count as one. A phrase that runs past a step is
+/// longer than any phrase the bounded reading reports, so it reports none
+/// of it; the reader holds it only to go on past it where a reading of the
+/// whole text does, and never restart inside it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenPhrase([u8; OPEN_WORDS]);
+
+/// The most words an open phrase holds: an anchor, an article, `half`,
+/// `of`, an article.
+const OPEN_WORDS: usize = 6;
+
+/// The words an open phrase is held by. Each stands for every word the
+/// grammar reads the same way where it stands: `a` for `an`, `couple` for
+/// `few` and `dozen`, `several` for `many`, `one` for a count's number
+/// words, `5` for a numeral and `day` for a unit.
+const HELD_WORDS: [&str; 13] = [
+    "last", "past", "this", "next", "a", "couple", "several", "half", "of", "one", "and", "5",
+    "day",
+];
+
+impl OpenPhrase {
+    fn words(self) -> Vec<String> {
+        self.0
+            .iter()
+            .take_while(|&&code| code != 0)
+            .filter_map(|&code| Some((*HELD_WORDS.get(usize::from(code) - 1)?).to_owned()))
+            .collect()
+    }
+
+    /// `words`, read so far of a phrase the grammar has not settled, held
+    /// by the few that tell it the same. `None` for words no open phrase
+    /// holds.
+    fn hold(words: &[&str]) -> Option<Self> {
+        let mut held = Vec::with_capacity(OPEN_WORDS);
+        // While in a count's number words: whether the last is `and`, still
+        // waiting on the word after it.
+        let mut count: Option<bool> = None;
+        for &word in words {
+            let counting = count.is_some() && matches!(word, "hundred" | "thousand" | "and");
+            if number_word(word).is_some() || counting {
+                if count.is_none() {
+                    held.push("one");
+                }
+                count = Some(word == "and");
+                continue;
+            }
+            if count.take() == Some(true) {
+                held.push("and");
+            }
+            held.push(match word {
+                "an" => "a",
+                "few" | "dozen" => "couple",
+                "many" => "several",
+                word if TemporalUnit::from_token(word).is_some() => "day",
+                word if is_numeral(word) => "5",
+                word => word,
+            });
+        }
+        if count == Some(true) {
+            held.push("and");
+        }
+        let mut codes = [0; OPEN_WORDS];
+        for (slot, word) in held.into_iter().enumerate() {
+            let code = HELD_WORDS.iter().position(|&known| known == word)?;
+            *codes.get_mut(slot)? = u8::try_from(code + 1).ok()?;
+        }
+        Some(Self(codes))
+    }
+}
+
+/// The steps [`temporal_phrase_spans`] takes through `text`, from its first
+/// token that starts at or after `from`, inside `open` when a step before
+/// left it open. Each step reads only the tokens that end within
+/// `max_bytes` of its own start (one token at least), so it never runs
+/// longer unless it is one longer token. A phrase that runs past what a
+/// step reads (one whose grammar would look at a token past them) stays
+/// open across as many steps as it takes, reported as no phrase, and the
+/// reading goes on past it where a reading of the whole text does. `ends`
+/// says `text` ends the text: where it does not, a token past it is as
+/// unread as one past a step's bound. A reading that starts where a step
+/// ends, inside the phrase it leaves open, reads on as one from the start
+/// would.
+#[must_use]
+pub fn temporal_phrase_steps(
+    text: &str,
+    from: usize,
+    max_bytes: usize,
+    open: OpenPhrase,
+    ends: bool,
+) -> Vec<TemporalPhraseStep> {
+    let (tokens, ranges) = temporal_tokens(text);
+    let mut steps = Vec::new();
+    let mut index = ranges.partition_point(|&(start, _)| start < from);
+    let mut held = open.words();
+    let mut reach = index;
+    while index < tokens.len() {
+        let start = ranges[index].0;
+        reach = reach.max(index);
+        while reach < tokens.len() && ranges[reach].1 - start <= max_bytes {
+            reach += 1;
+        }
+        let last = reach.max(index + 1);
+        let read = Tokens::after(&held, &tokens[index..last]);
+        let found = hint_at(&read, 0);
+        let step = |end: usize, phrase, open| TemporalPhraseStep {
+            start,
+            end: ranges[end - 1].1,
+            phrase,
+            open,
+        };
+        let unread = last < tokens.len() || !ends;
+        if read.looked() > read.len()
+            && unread
+            && let Some(open) = OpenPhrase::hold(&read.words())
+        {
+            steps.push(step(last, None, open));
+            held = open.words();
+            index = last;
+            continue;
+        }
+        if held.is_empty() {
+            let (end, phrase) = match found {
+                Some((end, expression)) => (end, Some(expression.is_some())),
+                None => (
+                    quantity_at(&read, 0).map_or(1, |(_, after)| after.max(1)),
+                    None,
+                ),
+            };
+            steps.push(step(index + end, phrase, OpenPhrase::default()));
+            index += end;
+        } else {
+            // The open phrase ends after its last word, or, where it reads
+            // as no phrase, at the word that told: the reading of the whole
+            // text restarts there too, with no phrase in between.
+            let end = found
+                .map_or(read.looked().saturating_sub(1), |(end, _)| end)
+                .saturating_sub(held.len());
+            if end > 0 {
+                steps.push(step(index + end, None, OpenPhrase::default()));
+            }
+            index += end;
+            held.clear();
+        }
+    }
+    steps
 }
 
 fn weekday_index(token: &str) -> Option<u8> {
