@@ -254,9 +254,15 @@ fn a_restored_claim_is_served_at_the_words_scored() -> Result<()> {
 /// words at all, so another row keeps the stage, and the restore, running.
 #[test]
 fn a_restored_claim_with_no_live_support_is_not_served() -> Result<()> {
-    // Bound, the pin; unbound (Sol R13), the live row, which the restore
-    // made the pinned bytes again while the gate's cache holds newer words.
-    for unbound in [false, true] {
+    // Bound, now set aside, and unbound (Sol R13), read live: the live row,
+    // which the restore made the pinned bytes again while the gate's cache
+    // holds newer words. Unbound and read at its pin (Sol R25): the pinned
+    // words are surfaceable and held to their live support alone.
+    for (unbound, read_mode) in [
+        (false, ReadMode::Live),
+        (true, ReadMode::Live),
+        (true, ReadMode::Indexed),
+    ] {
         let (_dir, vault) = open_test_vault();
         let id = entity_id(0x6D);
         let seed = entity_id(0x6F);
@@ -278,13 +284,13 @@ fn a_restored_claim_with_no_live_support_is_not_served() -> Result<()> {
             id,
             cited_body(entity_id(0x7D), "old-words"),
             unbound,
-            ReadMode::Live,
+            read_mode,
         )?;
 
         assert!(
             pack.results.iter().any(|row| row.id == seed)
                 && pack.results.iter().all(|row| row.id != id),
-            "unbound {unbound}: {:?}",
+            "unbound {unbound} at {read_mode:?}: {:?}",
             pack.results
         );
     }
