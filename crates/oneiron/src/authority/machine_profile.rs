@@ -396,6 +396,16 @@ impl AuthorityFold {
         self.machines.get(&machine)
     }
 
+    /// The machine mine under this install's pin whose trusted identity
+    /// signs with `machine_key`.
+    #[must_use]
+    pub fn mine_machine_by_key(&self, machine_key: &[u8; 32]) -> Option<EntityId> {
+        self.machines.keys().copied().find(|machine| {
+            self.trusted_machine(*machine)
+                .is_some_and(|trusted| &trusted.profile.machine_key == machine_key)
+        })
+    }
+
     /// One machine's trusted identity under this install's pin.
     #[must_use]
     pub fn trusted_machine(&self, machine: EntityId) -> Option<TrustedMachine<'_>> {
