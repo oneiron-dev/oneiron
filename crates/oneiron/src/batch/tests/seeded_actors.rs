@@ -224,15 +224,13 @@ fn fork_parent_gate() -> Result<()> {
     Ok(())
 }
 
-/// Asks for an `Auto` claim written by `actor`, and asserts the ordinary gate
-/// holds it as `pending`: the actor's own row bounds it at Proposed.
-fn auto_write_is_held(vault: &Vault, actor: EntityId, claim_seed: u8, at: u64) -> Result<()> {
+/// Asks for an `Auto` claim written by `actor`.
+fn auto_write(vault: &Vault, actor: EntityId, claim: EntityId, at: u64) -> Result<()> {
     let subject = crate::test_util::entity(0x2F);
     if vault.get_raw(&subject)?.is_none() {
         vault.put_entity(&subject, ENTITY_TYPE_PERSON, test_time_range(1, 1), 1, b"s")?;
     }
-    let claim = crate::test_util::entity(claim_seed);
-    let err = vault
+    vault
         .batch()
         .claim_candidate(
             &claim,
@@ -247,6 +245,13 @@ fn auto_write_is_held(vault: &Vault, actor: EntityId, claim_seed: u8, at: u64) -
             at + 1,
         )
         .commit()
+}
+
+/// Asks for an `Auto` claim written by `actor`, and asserts the ordinary gate
+/// holds it as `pending`: the actor's own row bounds it at Proposed.
+fn auto_write_is_held(vault: &Vault, actor: EntityId, claim_seed: u8, at: u64) -> Result<()> {
+    let claim = crate::test_util::entity(claim_seed);
+    let err = auto_write(vault, actor, claim, at)
         .expect_err("a Proposed-ceiling actor must be held, not auto-written");
     assert!(
         matches!(err, Error::Gate(GateError::GateWriteRejected { outcome, .. }) if outcome == "pending"),
@@ -369,6 +374,16 @@ fn custom_agent(
     vault: &Vault,
     ceiling: crate::agent_def::AgentCeiling,
 ) -> Result<(EntityId, crate::agent_def::AgentDefinition)> {
+    let id = EntityId::now();
+    Ok((id, custom_agent_at(vault, id, ceiling)?))
+}
+
+/// [`custom_agent`], born at `id`.
+fn custom_agent_at(
+    vault: &Vault,
+    id: EntityId,
+    ceiling: crate::agent_def::AgentCeiling,
+) -> Result<crate::agent_def::AgentDefinition> {
     let (_, herald) = seeded_row(vault, "sys.herald");
     let mut custom = herald;
     custom.agent_id = "oneiron.agent.custom".to_owned();
@@ -377,9 +392,8 @@ fn custom_agent(
     custom.display_name = None;
     custom.source = ClaimSource::UserStated;
     custom.ceiling = ceiling;
-    let id = EntityId::now();
     vault.put_agent_definition(&id, &custom, test_time_range(1, 1), 1)?;
-    Ok((id, custom))
+    Ok(custom)
 }
 
 /// H215 (W2-T7), its second road: a delete ends the row, so a put at the same
@@ -492,5 +506,239 @@ fn a_deleted_agent_id_cannot_come_back_as_another_type() -> Result<()> {
     // Control: an id that was never an agent takes a PERSON as before.
     let person = crate::test_util::entity(0x46);
     vault.put_entity(&person, ENTITY_TYPE_PERSON, test_time_range(2, 2), 2, b"p")?;
+    Ok(())
+}
+
+/// H215 keeps the owner's capability: the one door that widens an agent's
+/// ceiling is the owner's, and it rechecks the owner's proof. It widens a
+/// seeded row and an owner's own agent, the gate reads the wider bound, and
+/// the id's pin follows, so a later put at that ceiling lands on the generic
+/// road, across a delete too. A generic put of the same widening, on every
+/// road, is still refused, and a proof whose actor does not own the vault
+/// widens nothing.
+#[test]
+fn only_the_owners_door_widens_an_agent_and_the_pin_follows() -> Result<()> {
+    use crate::agent_def::{AgentCeiling, encode_agent_definition};
+    use crate::store::GateDecisionId;
+
+    let (_dir, vault) = open_test_vault();
+    put_actor_ceiling_manifest(&vault, 0x2E, vec![agent_class_auto_row()])?;
+    let actor = vault.ensure_embedded_owner_actor().expect("owner actor");
+    let owner = vault.authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())?;
+    let stranger = crate::test_util::entity(0x47);
+    vault.put_entity(
+        &stranger,
+        ENTITY_TYPE_PERSON,
+        test_time_range(1, 1),
+        1,
+        b"stranger",
+    )?;
+    let stranger =
+        vault.authenticate_owner(stranger, &stranger.to_hex(), true, GateDecisionId::now())?;
+
+    let (herald_id, herald) = seeded_row(&vault, "sys.herald");
+    let mut widened = herald.clone();
+    widened.version = "2".to_owned();
+    widened.ceiling = AgentCeiling::Auto;
+    let err = vault
+        .update_agent_definition_as(&stranger, &herald_id, &widened, test_time_range(2, 2), 2)
+        .expect_err("a proof whose actor does not own the vault");
+    assert_eq!(
+        err.kind(),
+        ErrorKind::ConsentOwnerNotAuthenticated,
+        "{err:?}"
+    );
+    assert_eq!(vault.get_agent_definition(&herald_id)?, Some(herald));
+    auto_write_is_held(&vault, herald_id, 0x48, 10)?;
+
+    vault.update_agent_definition_as(&owner, &herald_id, &widened, test_time_range(2, 2), 2)?;
+    assert_eq!(
+        vault.get_agent_definition(&herald_id)?,
+        Some(widened.clone())
+    );
+    auto_write(&vault, herald_id, crate::test_util::entity(0x49), 12)?;
+    // The pin follows the owner: an edit at the widened ceiling lands on the
+    // raw batch door, and so does a recreate at it after a delete.
+    let mut edited = widened;
+    edited.version = "3".to_owned();
+    vault
+        .batch()
+        .put(
+            &herald_id,
+            ENTITY_TYPE_AGENT_DEF,
+            test_time_range(3, 3),
+            3,
+            &encode_agent_definition(&edited)?,
+        )
+        .commit()?;
+    vault.batch().delete(&herald_id).commit()?;
+    edited.version = "4".to_owned();
+    vault.put_agent_definition(&herald_id, &edited, test_time_range(4, 4), 4)?;
+    assert_eq!(vault.get_agent_definition(&herald_id)?, Some(edited));
+
+    // The same widening of an agent the owner did not widen is refused on
+    // every generic road; the owner's door widens it.
+    let (custom_id, custom) = custom_agent(&vault, AgentCeiling::Proposed)?;
+    let mut wider = custom.clone();
+    wider.version = "2".to_owned();
+    wider.ceiling = AgentCeiling::Auto;
+    let wider_body = encode_agent_definition(&wider)?;
+    refused_as_body(
+        vault.update_agent_definition(&custom_id, &wider, test_time_range(5, 5), 5),
+        "typed update",
+    );
+    refused_as_body(
+        vault
+            .batch()
+            .put(
+                &custom_id,
+                ENTITY_TYPE_AGENT_DEF,
+                test_time_range(5, 5),
+                5,
+                &wider_body,
+            )
+            .commit(),
+        "raw batch update",
+    );
+    refused_as_body(
+        vault
+            .batch()
+            .put_replicated(
+                &custom_id,
+                ENTITY_TYPE_AGENT_DEF,
+                test_time_range(5, 5),
+                5,
+                &wider_body,
+            )
+            .commit(),
+        "replicated update",
+    );
+    assert_eq!(vault.get_agent_definition(&custom_id)?, Some(custom));
+    auto_write_is_held(&vault, custom_id, 0x4A, 14)?;
+    vault.update_agent_definition_as(&owner, &custom_id, &wider, test_time_range(6, 6), 6)?;
+    auto_write(&vault, custom_id, crate::test_util::entity(0x4B), 16)?;
+    Ok(())
+}
+
+/// H215, round 2: a retained soft-delete shell a sync window carries is
+/// installed header-only, never through a put. A shell of another type at an
+/// agent id is refused there too, and whatever row another writer leaves at
+/// an agent id, the gate holds the agent there at `Proposed`.
+#[test]
+fn a_retained_shell_cannot_retype_an_agent_id() -> Result<()> {
+    use crate::deletion::{TombstoneReason, TombstoneValueV2};
+
+    let (_dir, vault) = open_test_vault();
+    put_actor_ceiling_manifest(&vault, 0x2E, vec![agent_class_auto_row()])?;
+    let (custom_id, _) = custom_agent(&vault, crate::agent_def::AgentCeiling::Proposed)?;
+    vault.batch().delete(&custom_id).commit()?;
+    let header = |entity_type: u8| {
+        let mut row = vec![entity_type];
+        for stamp in [2_u64, 2, 2] {
+            row.extend_from_slice(&stamp.to_be_bytes());
+        }
+        row
+    };
+    let tombstone = TombstoneValueV2 {
+        reason: TombstoneReason::UserDelete,
+        deleted_at: 2,
+        request_id: [7; 16],
+    }
+    .encode();
+    let err = vault
+        .with_write_txn(|txn| {
+            crate::batch::restore_recovery_shell_in_txn(
+                &vault,
+                txn,
+                &custom_id,
+                &header(ENTITY_TYPE_PERSON),
+                &tombstone,
+            )
+        })
+        .expect_err("a PERSON shell at an agent id");
+    assert_eq!(err.kind(), ErrorKind::EntityTypeImmutable, "{err:?}");
+    assert!(vault.get_raw(&custom_id)?.is_none());
+    auto_write_is_held(&vault, custom_id, 0x4C, 10)?;
+
+    // The gate's own floor, for a writer no door knows of yet.
+    let mut person = header(ENTITY_TYPE_PERSON);
+    person.extend_from_slice(b"planted");
+    vault.with_write_txn(|txn| {
+        vault
+            .store
+            .entities
+            .put(txn, custom_id.as_bytes(), &person)?;
+        Ok(())
+    })?;
+    auto_write_is_held(&vault, custom_id, 0x4D, 12)?;
+    Ok(())
+}
+
+/// H215, round 2: a PERSON's substrate FACET lands at an id derived from the
+/// PERSON's, which a caller can compute and give an agent first. With that
+/// agent deleted, the PERSON's put is refused rather than install a FACET at
+/// the agent's id. A PERSON elsewhere still takes its substrate.
+#[test]
+fn a_person_substrate_cannot_land_on_an_agent_id() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    put_actor_ceiling_manifest(&vault, 0x2E, vec![agent_class_auto_row()])?;
+    let person = crate::test_util::entity(0x4E);
+    let facet = crate::claim::substrate_facet_id(person)?;
+    custom_agent_at(&vault, facet, crate::agent_def::AgentCeiling::Proposed)?;
+    vault.batch().delete(&facet).commit()?;
+    let err = vault
+        .put_entity(&person, ENTITY_TYPE_PERSON, test_time_range(2, 2), 2, b"p")
+        .expect_err("a PERSON whose substrate id is an agent's");
+    assert_eq!(err.kind(), ErrorKind::EntityTypeImmutable, "{err:?}");
+    assert!(vault.get_raw(&facet)?.is_none());
+    assert!(vault.get_raw(&person)?.is_none());
+    auto_write_is_held(&vault, facet, 0x4F, 10)?;
+
+    let other = crate::test_util::entity(0x50);
+    vault.put_entity(&other, ENTITY_TYPE_PERSON, test_time_range(2, 2), 2, b"p")?;
+    assert!(
+        vault
+            .get_raw(&crate::claim::substrate_facet_id(other)?)?
+            .is_some()
+    );
+    Ok(())
+}
+
+/// H215, round 2: an agent id's pin is live authority, so a restore that
+/// keeps authority keeps it. An agent born and deleted since the backup
+/// leaves its id pinned in the restored vault: a wider recreate or a PERSON
+/// there is refused as in the live vault, and one within the pin lands.
+#[test]
+fn a_restore_keeps_every_agent_id_pin() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100)?;
+    let (custom_id, custom) = custom_agent(&vault, crate::agent_def::AgentCeiling::Proposed)?;
+    vault.batch().delete(&custom_id).commit()?;
+    let (restored, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("restored"),
+        vault.config.clone(),
+        &vault,
+        1_000,
+    )?;
+    let mut wider = custom.clone();
+    wider.ceiling = crate::agent_def::AgentCeiling::Auto;
+    refused_as_body(
+        restored.put_agent_definition(&custom_id, &wider, test_time_range(3, 3), 3),
+        "wider recreate after the restore",
+    );
+    let err = restored
+        .put_entity(
+            &custom_id,
+            ENTITY_TYPE_PERSON,
+            test_time_range(3, 3),
+            3,
+            b"p",
+        )
+        .expect_err("a PERSON at the agent id after the restore");
+    assert_eq!(err.kind(), ErrorKind::EntityTypeImmutable, "{err:?}");
+    restored.put_agent_definition(&custom_id, &custom, test_time_range(4, 4), 4)?;
     Ok(())
 }

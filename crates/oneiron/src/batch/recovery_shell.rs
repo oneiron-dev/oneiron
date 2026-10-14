@@ -30,6 +30,8 @@ pub(crate) fn restore_recovery_shell_in_txn(
     vault
         .store
         .validate_public_entity_type(header.entity_type)?;
+    // An id that has been an agent stays one, on this door too (H215).
+    crate::agent_def::refuse_agent_id_retype_in_txn(&vault.store, txn, id, header.entity_type)?;
     reject_overlay_member_base_write(&vault.store, id, BaseWriteOrigin::Ordinary)?;
     crate::claim::validate_claim_write_target_in_txn(&vault.store, txn, id, false)?;
     if vault.local_hard_delete_marker_exists_in_txn(txn, id)? {

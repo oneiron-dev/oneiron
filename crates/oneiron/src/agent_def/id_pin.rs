@@ -1,18 +1,22 @@
-//! The pin an agent id keeps across a delete (H215): the narrowest ceiling a
-//! row at the id has held, and the fork lineage it was born with.
+//! The pin an agent id keeps (H215): the widest ceiling a row at the id may
+//! hold, and the fork lineage it was born with.
 //!
 //! The gate reads an agent's bound off the row stored AT its id, so the id is
-//! what a ceiling binds. An update cannot widen the row it replaces
-//! (`validate_agent_definition_update`), but a delete ends the row, and a put
-//! at the same id afterwards has no prior to compare with. Recreated wider,
-//! without the parent that clamped it, or as another entity type the gate
-//! reads no bound off, it would hand the agent at that id more than it ever
-//! held. The pin survives the delete, so every later put at the id answers to
-//! it, on every road (typed, raw batch, replicated, the seeder's).
+//! what a ceiling binds, and the agent there may hold `core:write` over its
+//! own row. Updated wider, deleted and recreated wider or without the parent
+//! that clamped it, or recreated as another entity type the gate reads no
+//! bound off, the row would hand that agent more than it was given. So the
+//! id holds a pin that survives the delete: a put's ceiling becomes the pin,
+//! and every later put at the id, on every road (typed, raw batch,
+//! replicated, the seeder's), is no wider and keeps the lineage. A row older
+//! than the pin answers to itself, and a seeded id to its seed. Only the
+//! owner's door (`Vault::update_agent_definition_as`) moves a pin wider.
 
+use super::codec::decode_agent_definition;
 use super::types::{AgentCeiling, AgentDefinition};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, RegistryError, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable, StagedRow};
 use crate::store::Store;
@@ -20,7 +24,8 @@ use crate::store::Store;
 /// What an agent id answers to on every later put.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct AgentIdPin {
-    /// The narrowest ceiling a row at this id has held.
+    /// The widest ceiling a row at this id may hold: the last put's, which
+    /// was no wider than the one before, unless the owner widened it.
     ceiling: AgentCeiling,
     /// The parent row the id was born forked from, if any.
     forked_from: Option<EntityId>,
@@ -69,10 +74,43 @@ fn seeded_pin(id: &EntityId) -> Result<Option<AgentIdPin>> {
     )
 }
 
-/// Checks a put of `def` at `id` against the id's pin, and returns the pin row
-/// the put stages with its body, or `None` when the stored pin already says
-/// it. A first put pins the id at its own ceiling and lineage; a later one may
-/// narrow the ceiling, never widen it, and keeps the lineage.
+/// What a put at `id` answers to: its stored pin; before one is stored, the
+/// narrower of its seed and the row it holds now, when either is there.
+fn bound_in_txn(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Option<AgentIdPin>> {
+    if let Some(pin) = PIN.get(store, txn, id)? {
+        return Ok(Some(pin));
+    }
+    Ok(match (seeded_pin(id)?, stored_row_pin(store, txn, id)?) {
+        (Some(seed), Some(row)) if seed.ceiling.widens_beyond(row.ceiling) => Some(AgentIdPin {
+            ceiling: row.ceiling,
+            forked_from: seed.forked_from,
+        }),
+        (seed, row) => seed.or(row),
+    })
+}
+
+/// The ceiling and lineage of the definition stored at `id`. A row of another
+/// type, or one that does not decode, bounds nothing here: the type check and
+/// the update arm refuse a put over it.
+fn stored_row_pin(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<AgentIdPin>> {
+    Ok(store
+        .port_entity_record(txn, id)?
+        .filter(|row| row.entity_type == ENTITY_TYPE_AGENT_DEF)
+        .and_then(|row| decode_agent_definition(&row.body).ok())
+        .map(|def| AgentIdPin {
+            ceiling: def.ceiling,
+            forked_from: def.forked_from,
+        }))
+}
+
+/// Checks a put of `def` at `id` against what the id answers to, and returns
+/// the pin row the put stages with its body, or `None` when the stored pin
+/// already says it. A first put pins the id at its own ceiling and lineage; a
+/// later one may narrow the ceiling, never widen it, and keeps the lineage.
 ///
 /// # Errors
 ///
@@ -84,12 +122,7 @@ pub(crate) fn agent_id_pin_for_put_in_txn(
     id: &EntityId,
     def: &AgentDefinition,
 ) -> Result<Option<StagedRow>> {
-    let stored = PIN.get(store, txn, id)?;
-    let bound = match stored {
-        Some(pin) => Some(pin),
-        None => seeded_pin(id)?,
-    };
-    let next = match bound {
+    let next = match bound_in_txn(store, txn, id)? {
         None => AgentIdPin {
             ceiling: def.ceiling,
             forked_from: def.forked_from,
@@ -102,10 +135,33 @@ pub(crate) fn agent_id_pin_for_put_in_txn(
             }
         }
     };
-    if stored == Some(next) {
+    if PIN.get(store, txn, id)? == Some(next) {
         return Ok(None);
     }
     PIN.stage(id, &next).map(Some)
+}
+
+/// Moves the pin at `id` to `def`'s ceiling, wider or not, keeping the
+/// lineage the id answers to. The owner's door
+/// (`Vault::update_agent_definition_as`) calls it in the transaction that
+/// writes `def`, after rechecking the owner's proof, and nothing else does.
+///
+/// # Errors
+///
+/// [`ArtifactError::InvalidAgentDefBody`] when `def` names another parent.
+pub(super) fn move_pin_for_owner_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    def: &AgentDefinition,
+) -> Result<()> {
+    let pin = AgentIdPin {
+        ceiling: def.ceiling,
+        forked_from: bound_in_txn(store, wtxn, id)?.map_or(def.forked_from, |pin| pin.forked_from),
+    };
+    // The ceiling is the owner's to move; the lineage is not.
+    answer_to_pin(pin, def)?;
+    PIN.put(store, wtxn, id, &pin)
 }
 
 /// Refuses `def` when it widens beyond `pin` or names another parent.
@@ -126,7 +182,9 @@ fn answer_to_pin(pin: AgentIdPin, def: &AgentDefinition) -> Result<()> {
 /// The stateless half of the pin, for a door that reads no transaction (the
 /// federation admission prefilter): a seeded row id holds only an AGENT_DEF,
 /// no wider than its seed and on its seed's lineage. `def` is the decoded
-/// body when `entity_type` is AGENT_DEF.
+/// body when `entity_type` is AGENT_DEF. Where this vault's owner widened a
+/// seeded row, it refuses a foreign row materialization would take at that
+/// ceiling: fail-closed, as no foreign row carries this owner's widening.
 ///
 /// # Errors
 ///
@@ -175,9 +233,7 @@ pub(crate) fn refuse_agent_id_retype_in_txn(
     id: &EntityId,
     entity_type: u8,
 ) -> Result<()> {
-    if entity_type == ENTITY_TYPE_AGENT_DEF
-        || !(PIN.contains(store, txn, id)? || seeded_pin(id)?.is_some())
-    {
+    if entity_type == ENTITY_TYPE_AGENT_DEF || !is_agent_id_in_txn(store, txn, id)? {
         return Ok(());
     }
     Err(Error::Registry(RegistryError::EntityTypeImmutable {
@@ -185,4 +241,55 @@ pub(crate) fn refuse_agent_id_retype_in_txn(
         existing: ENTITY_TYPE_AGENT_DEF,
         attempted: entity_type,
     }))
+}
+
+/// Whether `id` is an agent id: pinned, or a seeded row's.
+pub(crate) fn is_agent_id_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(PIN.contains(store, txn, id)? || seeded_pin(id)?.is_some())
+}
+
+/// Every agent id: each pinned one, and each seeded row's.
+pub(crate) fn agent_ids_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<std::collections::BTreeSet<EntityId>> {
+    let mut ids: std::collections::BTreeSet<EntityId> =
+        PIN.scan_keys(store, txn, &[])?.into_iter().collect();
+    ids.extend(
+        super::manifest::system_agent_manifest()?
+            .definitions
+            .iter()
+            .map(|seed| seed.entity_id.0),
+    );
+    Ok(ids)
+}
+
+/// Whether the row at agent id `id` answers to the id's pin: absent, or a
+/// definition no wider than the pin, on its lineage. A restore writes rows
+/// without a put, so it asks this of every row it brings back to an agent id.
+/// A definition that does not decode is within: the gate holds it at
+/// `Proposed`.
+pub(crate) fn row_within_pin_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let pin = match PIN.get(store, txn, id)? {
+        Some(pin) => pin,
+        None => match seeded_pin(id)? {
+            Some(seed) => seed,
+            None => return Ok(true),
+        },
+    };
+    Ok(match store.port_entity_record(txn, id)? {
+        None => true,
+        Some(row) if row.entity_type != ENTITY_TYPE_AGENT_DEF => false,
+        Some(row) => decode_agent_definition(&row.body)
+            .ok()
+            .is_none_or(|def| answer_to_pin(pin, &def).is_ok()),
+    })
 }

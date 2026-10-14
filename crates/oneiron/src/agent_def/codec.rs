@@ -194,15 +194,8 @@ pub(crate) fn validate_agent_definition_update(
             "source cannot change on update",
         )));
     }
-    // An update may narrow a ceiling, never widen it: the agent a ceiling
-    // binds may hold `core:write`, and the gate reads its bound off this very
-    // row, so a widening write would lift the agent's own consent requirement.
-    // Every update road (typed, raw batch, replicated) meets this check.
-    if updated.ceiling.widens_beyond(prior.ceiling) {
-        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-            "ceiling cannot widen on update",
-        )));
-    }
+    // How far the ceiling may go is the id pin's to say (`id_pin`), on every
+    // put road: an update may narrow it, and only the owner's door widens it.
     if prior.version == updated.version {
         return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "version must change when updating agent definition body",
