@@ -270,7 +270,8 @@ pub(in crate::batch) fn apply_put(
         // H72: every store door, local or replicated, keeps the log inside
         // the fold bounds; a row that only restricts always lands.
         if crate::authority::door_refuses_past_budget(store, wtxn, posture, &entry, &entry_hash)? {
-            return Err(Error::Record(RecordError::AuthorityLogFull { id }));
+            let signer = crate::authority::authority_signer_label(entry.signer_key());
+            return Err(Error::Record(RecordError::AuthorityLogFull { id, signer }));
         }
         authority_entry_hash_pin = Some(entry_hash);
         authority_entry_observation = Some(entry);

@@ -3,32 +3,36 @@
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Each entry's whole claimed ancestry, or `None` once the index would hold
-/// more than [`MAX_AUTHORITY_ANCESTOR_EDGES`] pairs (H72): the fold then
-/// refuses the log rather than build the rest.
-///
-/// [`MAX_AUTHORITY_ANCESTOR_EDGES`]: super::log_budget::MAX_AUTHORITY_ANCESTOR_EDGES
+/// Each entry's whole claimed ancestry, or, once the counted pairs pass
+/// the bound (H72), the signer of the row that took them there: the fold
+/// then refuses the log rather than build the rest. A pair counts unless
+/// either end is a slip op of the slip issuer, which no bound counts.
 pub(in crate::authority) fn entry_ancestor_index(
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-) -> Option<BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>> {
+) -> Result<BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>, AuthorityKey> {
+    let uncounted = super::log_budget::uncounted_rows(by_hash);
+    let bound = super::log_budget::ancestor_edges_bound();
     let mut index = BTreeMap::new();
     let mut edges = 0_usize;
-    for hash in by_hash.keys().copied() {
+    for (hash, entry) in by_hash {
+        let counted = !uncounted.contains(hash);
         let mut ancestors = BTreeSet::new();
-        let mut stack = by_hash[&hash].parent_hashes.clone();
+        let mut stack = entry.parent_hashes.clone();
         while let Some(parent) = stack.pop() {
             if !ancestors.insert(parent) {
                 continue;
             }
-            edges += 1;
-            if edges > super::log_budget::MAX_AUTHORITY_ANCESTOR_EDGES {
-                return None;
+            if counted && !uncounted.contains(&parent) {
+                edges += 1;
+                if edges > bound {
+                    return Err(entry.signer_key().clone());
+                }
             }
             if let Some(parent_entry) = by_hash.get(&parent) {
                 stack.extend(parent_entry.parent_hashes.iter().copied());
             }
         }
-        index.insert(hash, ancestors);
+        index.insert(*hash, ancestors);
     }
-    Some(index)
+    Ok(index)
 }

@@ -1,7 +1,9 @@
 //! Authority-fold work stays bounded, and the store doors keep a log inside
 //! the bounds (H72, W2-T3).
+use super::machine_identity::{host, request_for};
 use super::support::*;
 use super::*;
+use crate::authority::log_budget::{authority_signer_label, with_rows_per_signer_for_test};
 
 fn confirm_op(n: usize) -> AuthorityOp {
     let mut confirm_id = [0xC0; 32];
@@ -138,91 +140,259 @@ fn a_signers_full_bound_still_folds() {
 }
 
 /// Substrate invariant: the store door refuses a signer's row past its bound
-/// with a typed error and writes nothing. A row that only restricts still
-/// lands for that signer, and another signer still writes.
+/// with a typed error naming the signer, and writes nothing. A row that only
+/// restricts still lands for that signer, and another signer still writes.
 #[test]
 fn a_signer_at_its_bound_is_refused_but_restrictions_and_other_signers_land() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    let genesis = genesis_entry(64, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-    let mut chain = confirm_chain(&genesis, 64, MAX_AUTHORITY_ROWS_PER_SIGNER, |_| vec![]);
-    let over = chain.pop().unwrap();
-    let at = TimeRange { start: 1, end: 1 };
-    let mut rows = vec![(genesis.clone(), at, 1)];
-    rows.extend(chain.iter().map(|entry| (entry.clone(), at, 1)));
-    vault.put_authority_log_entries(&rows).unwrap();
-    let stored = vault
-        .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-        .unwrap();
-    assert_eq!(stored, MAX_AUTHORITY_ROWS_PER_SIGNER as u64);
-
-    let err = vault.put_authority_log_entry(&over, at, 1).unwrap_err();
-    assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
-    assert_eq!(
-        vault
+    const BOUND: usize = 16;
+    with_rows_per_signer_for_test(BOUND, || {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+        let genesis = genesis_entry(64, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+        let mut chain = confirm_chain(&genesis, 64, BOUND, |_| vec![]);
+        let over = chain.pop().unwrap();
+        let at = TimeRange { start: 1, end: 1 };
+        let mut rows = vec![(genesis.clone(), at, 1)];
+        rows.extend(chain.iter().map(|entry| (entry.clone(), at, 1)));
+        vault.put_authority_log_entries(&rows).unwrap();
+        let stored = vault
             .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-            .unwrap(),
-        stored
-    );
+            .unwrap();
+        assert_eq!(stored, BOUND as u64);
 
-    let owner = ed_key(64);
-    let vault_id = genesis_vault_id(&genesis).unwrap();
-    let head = authority_entry_hash(chain.last().unwrap()).unwrap();
-    let revoke = sign_ed(
-        unsigned_entry(
-            Some(vault_id),
-            MAX_AUTHORITY_ROWS_PER_SIGNER as u64 + 1,
-            vec![head],
-            AuthorityOp::SlipRevoke { slip_id: [9; 32] },
-            authority_key_from_ed(&owner),
-            3,
-        ),
-        &owner,
-    );
-    vault.put_authority_log_entry(&revoke, at, 1).unwrap();
-    let other = confirm_chain(&genesis, 65, 1, |_| vec![head]);
-    vault.put_authority_log_entry(&other[0], at, 1).unwrap();
-    assert_eq!(
-        vault
-            .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-            .unwrap(),
-        stored + 2
-    );
+        let err = vault.put_authority_log_entry(&over, at, 1).unwrap_err();
+        assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
+        let owner = ed_key(64);
+        let label = authority_signer_label(&authority_key_from_ed(&owner));
+        assert!(err.to_string().contains(&label), "{err}");
+        assert_eq!(
+            vault
+                .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
+                .unwrap(),
+            stored
+        );
+
+        let vault_id = genesis_vault_id(&genesis).unwrap();
+        let head = authority_entry_hash(chain.last().unwrap()).unwrap();
+        let revoke = sign_ed(
+            unsigned_entry(
+                Some(vault_id),
+                BOUND as u64 + 1,
+                vec![head],
+                AuthorityOp::SlipRevoke { slip_id: [9; 32] },
+                authority_key_from_ed(&owner),
+                3,
+            ),
+            &owner,
+        );
+        vault.put_authority_log_entry(&revoke, at, 1).unwrap();
+        let other = confirm_chain(&genesis, 65, 1, |_| vec![head]);
+        vault.put_authority_log_entry(&other[0], at, 1).unwrap();
+        assert_eq!(
+            vault
+                .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
+                .unwrap(),
+            stored + 2
+        );
+    });
 }
 
+fn claims_numbered(template: &SlipClaims, n: usize) -> SlipClaims {
+    let mut claims = template.clone();
+    claims.slip_id = [0x5A; 32];
+    claims.slip_id[..8].copy_from_slice(&(n as u64).to_be_bytes());
+    claims.holder_ref = "oauth-holder".to_owned();
+    claims
+}
+
+/// Bug repro (the OAuth bound): every OAuth exchange mints one slip row
+/// signed by the host root. Past its per-signer bound and the fold's row
+/// bound, exchanges still mint and the owner's machine stays theirs: the
+/// slip issuer's slip rows count toward no bound.
 #[test]
-fn fold_scale_probe() {
-    for len in [512, 1024, 2048, 4096] {
-        let genesis = genesis_entry(62, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-        let mut entries = vec![genesis.clone()];
-        entries.extend(confirm_chain(&genesis, 62, len - 1, |_| vec![]));
-        let started = Instant::now();
-        let fold = fold_authority_log(&entries);
-        eprintln!(
-            "PROBE legit {len}: {:?} valid {} past_bound {}",
-            started.elapsed(),
-            fold.valid_entries.len(),
-            fold.authority_log_past_bound()
+fn oauth_exchanges_past_every_bound_still_mint_and_the_machines_stay_mine() {
+    const BOUND: usize = 4;
+    let host = host();
+    let machine = request_for(host.vault_id, EntityId::now(), &ed_key(71));
+    host.vault
+        .enroll_machine(
+            &host.issuer,
+            &host.owner,
+            &machine,
+            MachineRole::Owned(MachineOwnership::Yours),
+        )
+        .unwrap();
+    with_rows_per_signer_for_test(BOUND, || {
+        let root = host.vault.ensure_host_root_slip(&host.issuer).unwrap();
+        // Ten times the fold's row bound, all signed by the host root.
+        for n in 0..40 * BOUND {
+            host.vault
+                .mint_oauth_capability_slip(
+                    &host.issuer,
+                    claims_numbered(&root.claims, n),
+                    3600,
+                    None,
+                )
+                .unwrap();
+        }
+        let fold = host.vault.authority_fold().unwrap();
+        assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
+        assert!(fold.slips.mints.len() > 40 * BOUND);
+        assert!(
+            fold.machine(machine.machine)
+                .is_some_and(FoldedMachine::is_mine)
         );
-    }
+    });
+}
+
+/// The slip issuer's chain of slip rows, minted on top of `root`.
+fn issuer_slip_chain(
+    signer: &HostSlipIssuer,
+    root: &CapabilitySlip,
+    parent: AuthorityEntryHash,
+    first_seq: u64,
+    len: usize,
+) -> Vec<AuthorityLogEntry> {
+    let mut parent = parent;
+    (0..len)
+        .map(|n| {
+            let entry = signer
+                .sign_entry(
+                    Some(root.claims.vault_id),
+                    first_seq + n as u64,
+                    vec![parent],
+                    AuthorityOp::SlipMint(SlipMintAction {
+                        claims: claims_numbered(&root.claims, n),
+                    }),
+                    root.claims.issued_at,
+                )
+                .unwrap();
+            parent = authority_entry_hash(&entry).unwrap();
+            entry
+        })
+        .collect()
+}
+
+/// Structural: the slip issuer's slip rows count toward neither the fold's
+/// row bound nor its ancestor-pair bound, however many there are, even under
+/// rows that do count. The same rows signed by a key no owner admitted count
+/// in full and fold closed.
+#[test]
+fn the_slip_issuers_slip_rows_count_toward_no_fold_bound() {
+    const BOUND: usize = 4;
     let dir = tempfile::tempdir().unwrap();
-    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
-    let genesis = genesis_entry(66, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-    let at = TimeRange { start: 1, end: 1 };
-    let mut rows = vec![(genesis.clone(), at, 1)];
-    rows.extend(
-        confirm_chain(&genesis, 66, 2047, |_| vec![])
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    let issuer = crate::test_support::test_host_issuer();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let base: Vec<_> = {
+        let txn = vault.store.env.read_txn().unwrap();
+        authority_log_rows_in_txn(&vault.store, &txn)
+            .unwrap()
             .into_iter()
-            .map(|entry| (entry, at, 1)),
-    );
-    let started = Instant::now();
-    vault.put_authority_log_entries(&rows).unwrap();
-    eprintln!("PROBE put 2048 rows: {:?}", started.elapsed());
-    let started = Instant::now();
-    let fold = vault.authority_fold().unwrap();
-    eprintln!(
-        "PROBE vault fold 2048: {:?} valid {}",
-        started.elapsed(),
-        fold.valid_entries.len()
-    );
+            .map(|(_, body)| decode_authority_log_entry_body(&body).unwrap())
+            .collect()
+    };
+    let base_fold = fold_authority_log(&base);
+    let head = *base_fold.append_heads.iter().next().unwrap();
+    let next_seq = base_fold.append_sequences[&issuer.public_key()] + 1;
+    let slips = issuer_slip_chain(&issuer, &root, head, next_seq, 64 * BOUND);
+    let mut entries = base.clone();
+    entries.extend(slips.iter().cloned());
+    // Counted rows on top of the slip chain: each one's ancestry holds every
+    // slip row, which would pass the pair bound many times over.
+    let mut parent = authority_entry_hash(slips.last().unwrap()).unwrap();
+    for n in 0..BOUND {
+        let entry = issuer
+            .sign_entry(
+                Some(root.claims.vault_id),
+                next_seq + (64 * BOUND + n) as u64,
+                vec![parent],
+                confirm_op(n),
+                root.claims.issued_at,
+            )
+            .unwrap();
+        parent = authority_entry_hash(&entry).unwrap();
+        entries.push(entry);
+    }
+    with_rows_per_signer_for_test(BOUND, || {
+        let fold = fold_authority_log(&entries);
+        assert!(!fold.authority_log_past_bound(), "{:?}", fold.issues);
+        assert_eq!(fold.valid_entries.len(), entries.len());
+        let by_hash: BTreeMap<_, _> = entries
+            .iter()
+            .map(|entry| (authority_entry_hash(entry).unwrap(), entry.clone()))
+            .collect();
+        let uncounted = crate::authority::log_budget::uncounted_rows(&by_hash);
+        assert_eq!(uncounted.len(), slips.len() + 1, "the root mint too");
+
+        let stranger = HostSlipIssuer::from_secret(b"stranger placeholder words").unwrap();
+        let mut foreign = base.clone();
+        foreign.extend(issuer_slip_chain(&stranger, &root, head, 1, 64 * BOUND));
+        let fold = fold_authority_log(&foreign);
+        assert_eq!(
+            fold.authority_log_bound_signer(),
+            Some(&stranger.public_key())
+        );
+        assert_folds_closed(&fold);
+    });
+}
+
+/// Substrate invariant: slip ops by a signer that is not the slip issuer
+/// count toward that signer's bound, as any other row does. Its revocation
+/// still lands past the bound.
+#[test]
+fn a_non_issuer_signers_slip_ops_count_toward_its_bound() {
+    const BOUND: usize = 4;
+    let host = host();
+    let agent = ed_key(72);
+    let agent_key = authority_key_from_ed(&agent);
+    let at = TimeRange { start: 1, end: 1 };
+    let fold = host.vault.authority_fold().unwrap();
+    let enroll = crate::authority::slip_vault::next_entry(
+        &host.issuer,
+        &fold,
+        AuthorityOp::EnrollDevice {
+            device: device(agent_key.clone(), ROLE_AGENT, AuthorityTier::Software),
+        },
+        host.vault.now_recorded_at(),
+    )
+    .unwrap();
+    host.vault.put_authority_log_entry(&enroll, at, 1).unwrap();
+    let root = host.vault.ensure_host_root_slip(&host.issuer).unwrap();
+    let agent_row = |seq: u64, op| {
+        let heads = host.vault.authority_fold().unwrap().append_heads;
+        sign_ed(
+            unsigned_entry(
+                Some(host.vault_id),
+                seq,
+                heads.into_iter().collect(),
+                op,
+                agent_key.clone(),
+                1,
+            ),
+            &agent,
+        )
+    };
+    with_rows_per_signer_for_test(BOUND, || {
+        for n in 0..BOUND {
+            let mint = AuthorityOp::SlipMint(SlipMintAction {
+                claims: claims_numbered(&root.claims, n),
+            });
+            host.vault
+                .put_authority_log_entry(&agent_row(n as u64 + 1, mint), at, 1)
+                .unwrap();
+        }
+        let over = AuthorityOp::SlipMint(SlipMintAction {
+            claims: claims_numbered(&root.claims, BOUND),
+        });
+        let err = host
+            .vault
+            .put_authority_log_entry(&agent_row(BOUND as u64 + 1, over), at, 1)
+            .unwrap_err();
+        assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
+        let revoke = AuthorityOp::SlipRevoke { slip_id: [3; 32] };
+        host.vault
+            .put_authority_log_entry(&agent_row(BOUND as u64 + 2, revoke), at, 1)
+            .unwrap();
+    });
 }

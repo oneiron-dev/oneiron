@@ -496,8 +496,9 @@ fn fold_authority_log_once(
             Err(_) => issues.push(AuthorityFoldIssue::InvalidEntry([0; 32])),
         }
     }
-    let Some(entry_ancestors) = entry_ancestor_index(&by_hash) else {
-        return super::log_budget::over_budget_fold();
+    let entry_ancestors = match entry_ancestor_index(&by_hash) {
+        Ok(index) => index,
+        Err(signer) => return super::log_budget::over_budget_fold(signer),
     };
     let causal_floors =
         super::sequence_ancestry::causal_sequence_floors(&by_hash, &entry_ancestors, context);
@@ -510,105 +511,7 @@ fn fold_authority_log_once(
     // Restrictive facts are proved independently of the surviving roster.
     let mut revoke_facts =
         super::revoke_proof::derive_revoke_facts(&by_hash, &entry_ancestors, context);
-    let mut states = BTreeMap::<AuthorityEntryHash, FoldState>::new();
-    let mut rejected_retired = BTreeSet::new();
-    let mut pending: BTreeSet<AuthorityEntryHash> = by_hash.keys().copied().collect();
-    let mut progressed = true;
-    while progressed {
-        progressed = false;
-        let mut hashes: Vec<_> = pending.iter().copied().collect();
-        hashes.sort_by_key(|hash| {
-            (
-                !matches!(
-                    by_hash[hash].op,
-                    AuthorityOp::RevokeActor { .. } | AuthorityOp::RevokeDevice { .. }
-                ),
-                *hash,
-            )
-        });
-        for hash in hashes {
-            // Restart selection after one successful transition. A revoke
-            // whose parent just landed is considered before any ready grant.
-            if progressed {
-                break;
-            }
-            let entry = &by_hash[&hash];
-            match super::ancestry_evaluator::evaluate_entry(
-                entry,
-                hash,
-                &by_hash,
-                &states,
-                context,
-                super::ancestry_evaluator::EvaluationPhase::Normal,
-            ) {
-                EntryFold::Ready(state) => {
-                    states.insert(hash, state);
-                    pending.remove(&hash);
-                    progressed = true;
-                }
-                EntryFold::Invalid(issue) => {
-                    // Only the retired client-key door may be crossed as a
-                    // valid folded revoke. Other rejected grants keep the
-                    // separate, restriction-only proof path: their children
-                    // do not become ordinary valid entries.
-                    if matches!(entry.op, AuthorityOp::EnrollDevice { .. })
-                        && entry_is_retired(entry, hash, context)
-                    {
-                        rejected_retired.insert(hash);
-                    }
-                    issues.push(issue);
-                    pending.remove(&hash);
-                    progressed = true;
-                }
-                EntryFold::Waiting => {}
-            }
-        }
-        if !progressed && !rejected_retired.is_empty() {
-            // The round made no progress, so every hash still pending is stuck
-            // for good. Only here may a signed withdrawal resolve against the
-            // ancestry above a retired client enrollment it descends from.
-            // Retiring a client-key op does not erase a withdrawal its old
-            // root authorized: the rejected row must still fold under the
-            // historical rule (signature, signer, quorum, ancestry), but its
-            // granted key is never installed.
-            let crossable: BTreeSet<_> = rejected_retired
-                .iter()
-                .copied()
-                .filter(|hash| {
-                    matches!(
-                        fold_entry_state(
-                            &by_hash[hash],
-                            *hash,
-                            &states,
-                            FoldContext {
-                                pre_handoff_entries: None,
-                                ..context
-                            },
-                        ),
-                        EntryFold::Ready(_)
-                    )
-                })
-                .collect();
-            let stalled: Vec<_> = pending.iter().copied().collect();
-            for hash in stalled {
-                if let EntryFold::Ready(state) = super::ancestry_evaluator::evaluate_entry(
-                    &by_hash[&hash],
-                    hash,
-                    &by_hash,
-                    &states,
-                    context,
-                    super::ancestry_evaluator::EvaluationPhase::Stalled(&crossable),
-                ) {
-                    states.insert(hash, state);
-                    pending.remove(&hash);
-                    progressed = true;
-                }
-            }
-        }
-    }
-    for hash in pending {
-        issues.push(AuthorityFoldIssue::InvalidAncestry(hash));
-    }
+    let mut states = super::fold_schedule::fold_entry_states(&by_hash, context, &mut issues);
 
     // A handoff's predecessor stays retired on every branch, not only its own.
     // Fences close before concurrent floors and confirmations contend, so a

@@ -161,10 +161,13 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
         }
         MemoryError::from(err)
     })?;
-    if fold.authority_log_past_bound() {
+    if let Some(signer) = fold.authority_log_bound_signer() {
         return Err(MemoryError::new(
             MEMORY_CODE_INVALID_STATE,
-            "authority log is past its fold bound; owner verbs are suspended".to_owned(),
+            format!(
+                "authority log at its bound for signer {}; owner verbs are suspended",
+                crate::authority::authority_signer_label(signer)
+            ),
             &[
                 "The log holds more rows than one fold may read; no binding authorizes until it is back inside the bound.",
             ],

@@ -18,8 +18,9 @@
 //! | `fold_state` | folded-state data model and the two-state merge |
 //! | `first_seen_clock` | first-seen sidecar keys and the per-vault clock |
 //! | `fold_engine` | top-level fold orchestration |
+//! | `fold_schedule` | the per-entry scheduler: the next entry that does not wait |
 //! | `ancestor_index` / `ancestry_bypass` | fold ancestry and revocation bypass |
-//! | `log_budget` | pinned fold-work bounds and the store doors' per-signer bound |
+//! | `log_budget` | pinned fold-work bounds, the slip issuer, and the store doors' per-signer bound |
 //! | `entry_transition` | per-entry transition and consent/quorum predicates |
 //! | `op_apply` | applies one op to a fold state |
 //! | `wire_encode` / `wire_decode` | the `rmpv` codec, edited in lockstep |
@@ -36,6 +37,7 @@ mod engine_machine;
 mod entry_transition;
 mod first_seen_clock;
 mod fold_engine;
+mod fold_schedule;
 mod fold_state;
 mod handoff_equivocation;
 mod history_transfer;
@@ -139,7 +141,9 @@ pub(crate) use claim_write::{
 };
 pub(crate) use first_seen_clock::*;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
-pub(crate) use log_budget::{door_refuses_past_budget, signer_has_standing};
+pub(crate) use log_budget::{
+    authority_signer_label, door_refuses_past_budget, signer_has_standing,
+};
 pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
 use readonly_fold::authority_view_readonly_for_store_in_txn;

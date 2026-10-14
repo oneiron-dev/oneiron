@@ -206,9 +206,13 @@ pub enum RecordError {
     AuthorityLogSignerPending { id: EntityId },
     /// Storing this AUTHORITY_LOG row would take its signer, or the log's
     /// handoffs, past the pinned fold bound (H72). Nothing was written; rows
-    /// that only restrict authority are never refused this way.
-    #[error("authority log row {} is past its signer's bound", id.to_hex())]
-    AuthorityLogFull { id: EntityId },
+    /// that only restrict authority, and the slip issuer's slip ops, are
+    /// never refused this way.
+    #[error(
+        "authority log at its bound for signer {signer}; row {} not stored",
+        id.to_hex()
+    )]
+    AuthorityLogFull { id: EntityId, signer: String },
     #[error("MESSAGE stream already active: {}", message.to_hex())]
     StreamAlreadyActive { message: EntityId },
     #[error("MESSAGE stream handle is not active: {}", message.to_hex())]

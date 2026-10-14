@@ -67,7 +67,10 @@ pub enum AuthorityFoldIssue {
     },
     /// The log holds more rows, handoffs or ancestor pairs than one fold may
     /// read (H72). The fold refused all of it and holds no root.
-    FoldBudgetExceeded,
+    FoldBudgetExceeded {
+        /// The signer whose rows took the log past the bound.
+        signer: AuthorityKey,
+    },
 }
 
 /// Why the fold refused an actor-binding op.
@@ -202,7 +205,7 @@ impl AuthorityFold {
                 matches!(
                     issue,
                     AuthorityFoldIssue::ConflictingVaultRoot { .. }
-                        | AuthorityFoldIssue::FoldBudgetExceeded
+                        | AuthorityFoldIssue::FoldBudgetExceeded { .. }
                 )
             })
     }
