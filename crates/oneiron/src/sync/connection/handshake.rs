@@ -200,7 +200,11 @@ impl SyncConnection {
             .map_err(|e| format!("WS connect failed: {e}"))?;
         if let Some(credential) = &self.config.client_config.transport_credential {
             credential
-                .sign_upgrade(self.manager.vault().store.clock.wall_now(), &mut request)
+                .sign_upgrade(
+                    self.manager.vault(),
+                    self.manager.vault().store.clock.wall_now(),
+                    &mut request,
+                )
                 .map_err(str::to_owned)?;
         } else if !self.config.client_config.auth_token.is_empty() {
             let header_value = format!("Bearer {}", self.config.client_config.auth_token)

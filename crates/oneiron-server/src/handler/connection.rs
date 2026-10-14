@@ -52,11 +52,14 @@ async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
     crate::auth::Locality(locality): crate::auth::Locality,
+    machine: Option<axum::Extension<oneiron::authority::PeerMachine>>,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<impl IntoResponse, StatusCode> {
     let auth = require_owner_auth(&headers, &server.config, server.vault().as_ref())
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
     let session_jti = auth.jti().map(str::to_owned);
+    // The binding door proved the machine with the upgrade's own slip proof.
+    let machine = machine.map_or(oneiron::authority::PeerMachine::Unknown, |m| m.0);
 
     let conn_id = server.alloc_conn_id();
     tracing::info!(conn_id, "new WebSocket connection");
@@ -72,7 +75,7 @@ async fn ws_upgrade_handler(
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
         .on_upgrade(move |socket| {
-            handle_connection(socket, server, conn_id, session_jti, locality)
+            handle_connection(socket, server, conn_id, session_jti, locality, machine)
         }))
 }
 
@@ -121,6 +124,7 @@ async fn handle_connection(
     conn_id: u32,
     session_jti: Option<String>,
     locality: oneiron::claim::CallerLocality,
+    machine: oneiron::authority::PeerMachine,
 ) {
     // Every frame this connection ever writes goes through here, and each one
     // re-consults the revocation registry first. The hello close below is the
@@ -188,8 +192,13 @@ async fn handle_connection(
 
     // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
-    let mut conn_state = ConnState::new(protocol_version);
+    let mut conn_state = ConnState::new(protocol_version).with_peer_machine(machine);
     conn_state.locality = locality;
+    tracing::debug!(
+        conn_id,
+        machine = ?conn_state.peer_machine(server.vault()),
+        "socket machine"
+    );
 
     let mut app_connection = crate::livequery::connection::Connection::new(
         crate::livequery::connection::Hub::for_server(&server),

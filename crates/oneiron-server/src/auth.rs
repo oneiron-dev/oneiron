@@ -19,6 +19,7 @@ use crate::server::SyncServer;
 
 mod binding_admission;
 mod locality;
+mod machine_proof;
 mod slips;
 pub(crate) use binding_admission::admit_http_binding;
 pub(crate) use locality::{Locality, caller_locality};

@@ -120,6 +120,7 @@ pub fn host_re_root(args: HostReRootArgs) -> anyhow::Result<()> {
     let report = json!({
         "vault_id": hex(&moved.vault_id),
         "engine_writers_enrolled": moved.writers_enrolled,
+        "machines_carried": moved.machines_carried,
         "machine_histories_carried": moved.histories_carried,
         "machine_histories_left": moved.histories_left,
         "retired_credentials": moved

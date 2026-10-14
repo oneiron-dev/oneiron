@@ -4,6 +4,7 @@ use crate::server::SyncServer;
 use axum::extract::{Request, State};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use oneiron::authority::PeerMachine;
 use std::sync::Arc;
 
 pub(crate) async fn admit_http_binding(
@@ -25,19 +26,33 @@ pub(crate) async fn admit_http_binding(
         .flatten();
     // MCP's credential header has the same precedence at admission and use.
     // It cannot sidestep nonce consumption with an unrelated Bearer header.
+    let mut machine = PeerMachine::Unknown;
     if let Some(token) = mcp_credential.or_else(|| bearer_token(request.headers()).ok().flatten())
         && token.starts_with("v2.slip.")
     {
         let accepted = BindingProof::from_headers(request.headers()).and_then(|proof| {
-            CoreAuth::bind_transport_once(token, &proof, server.vault().as_ref())
+            CoreAuth::bind_transport_once(token, &proof, server.vault().as_ref()).map(|_| proof)
         });
-        if let Err(error) = accepted {
-            // Keep the /v1 envelope when the transport door refuses first.
-            if request.uri().path().starts_with("/v1/") {
-                return crate::error::EnvelopedApiError::from(error).into_response();
+        match accepted {
+            Ok(proof) => {
+                machine = super::machine_proof::peer_machine(
+                    request.headers(),
+                    token,
+                    &proof,
+                    server.vault(),
+                );
             }
-            return error.into_response();
+            Err(error) => {
+                // Keep the /v1 envelope when the transport door refuses first.
+                if request.uri().path().starts_with("/v1/") {
+                    return crate::error::EnvelopedApiError::from(error).into_response();
+                }
+                return error.into_response();
+            }
         }
     }
+    // Every admitted request carries the machine it proved, or Unknown.
+    let mut request = request;
+    request.extensions_mut().insert(machine);
     next.run(request).await
 }
