@@ -39,9 +39,10 @@ impl ScopedRead<'_> {
         reader: WeaveReader<'_>,
         link: EdgeRef,
     ) -> Result<WeaveLinkCorrection> {
+        let auth_actor = auth.revalidate(self.vault)?;
         let bound = match &reader {
-            WeaveReader::Person(id) => *id == auth.actor(),
-            WeaveReader::Owner(owner) => owner.actor() == auth.actor() && *owner == auth,
+            WeaveReader::Person(id) => *id == auth_actor,
+            WeaveReader::Owner(owner) => *owner == auth,
             WeaveReader::Agent(_) => false,
         };
         if !bound {
@@ -78,7 +79,7 @@ impl ScopedRead<'_> {
         let correction = WeaveLinkCorrection {
             id: EntityId::now(),
             link,
-            actor: actor,
+            actor,
             recorded_at: now,
         };
         LABELS.put(
