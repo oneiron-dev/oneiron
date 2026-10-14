@@ -25,6 +25,7 @@ mod admission;
 mod device_only;
 mod egress;
 mod forward;
+mod project_history;
 mod reverse;
 #[cfg(any(test, feature = "test-hooks"))]
 #[doc(hidden)]

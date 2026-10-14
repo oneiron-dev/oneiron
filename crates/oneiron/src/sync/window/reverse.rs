@@ -475,6 +475,10 @@ pub(in crate::sync) fn reverse_rematerialize_with(
         wrote_any |= crate::sync::note::refresh(vault, doc, window_key)?;
     }
 
+    // A carrier the window kept past its row's learned month still takes
+    // every revision learned since (Astra #1434 F2).
+    wrote_any |= super::project_history::carry_project_history(vault, doc)?;
+
     // Commit all bridge writes with origin tag
     if wrote_any {
         let origin = bridge::origin_for_mirrors(&mirror_sources)?;

@@ -406,6 +406,11 @@ pub fn export_window_updates_since(
     let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
     let authors_scrubbed = scrub_redacted_attribution_carriers(vault, key, doc)?;
     let withdrawn_scrubbed = scrub_withdrawn_delete_carriers(vault, key, doc)?;
+    // A resident window ships every held revision of each PROJECT row it
+    // carries, whatever month it was learned in (Astra #1434 F2).
+    if super::project_history::carry_project_history(vault, doc)? {
+        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    }
     let scrubbed = secret_scrubbed || claims_scrubbed || authors_scrubbed || withdrawn_scrubbed;
     if scrubbed
         || history_free_window_required(vault, key)?
