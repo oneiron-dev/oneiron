@@ -46,7 +46,7 @@ fn companion(id: EntityId, row: &ProjectRecord) -> Result<EntityId> {
 }
 
 /// `row` over `base` under `slip_wire` with a signature `sign` makes.
-fn forged_over(
+pub(super) fn forged_over(
     id: EntityId,
     base: &ProjectRecord,
     mut row: ProjectRecord,

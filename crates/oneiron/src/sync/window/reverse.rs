@@ -676,19 +676,27 @@ fn remove_inadmissible_revision_carriers(
         vault.privacy_posture(),
         &rtxn,
     )?;
-    let mut removed = false;
+    let mut inadmissible = Vec::new();
+    let mut unheld = Vec::new();
     for (key, blob) in carriers {
         let Ok(id) = EntityId::from_hex(&key) else {
             continue;
         };
-        let inadmissible = if vault.get_raw_in(&rtxn, &id)?.is_some() {
-            crate::workspace_roster::forged_revision_in_txn(&vault.store, &rtxn, id)?
-        } else {
-            !crate::workspace_roster::revision_carrier_admissible(&fold, id, &blob)
-        };
-        if inadmissible {
-            removed |= remove_entity_crdt_carriers(entities_map, edges_map, &id)?;
+        if vault.get_raw_in(&rtxn, &id)?.is_none() {
+            unheld.push((id, blob));
+        } else if crate::workspace_roster::forged_revision_in_txn(&vault.store, &rtxn, id)? {
+            inadmissible.push(id);
         }
+    }
+    inadmissible.extend(crate::workspace_roster::inadmissible_revision_carriers(
+        &vault.store,
+        &rtxn,
+        &fold,
+        &unheld,
+    )?);
+    let mut removed = false;
+    for id in inadmissible {
+        removed |= remove_entity_crdt_carriers(entities_map, edges_map, &id)?;
     }
     Ok(removed)
 }

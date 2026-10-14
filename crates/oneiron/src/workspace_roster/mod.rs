@@ -149,7 +149,7 @@ pub(crate) use project::{
 #[cfg(feature = "sync")]
 pub(crate) use project::{
     decode_revision, exportable_revisions_in_txn, forged_revision_in_txn,
-    revision_carrier_admissible,
+    inadmissible_revision_carriers,
 };
 
 mod rooms;

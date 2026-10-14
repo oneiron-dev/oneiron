@@ -3,7 +3,8 @@
 //! a squatter or a poisoned carrier never hides one, and delete or restore
 //! never drops one.
 use super::super::revision::{
-    PROJECT_REVISION_BACKFILL, project_revision_type, revision_entity_id,
+    PROJECT_REVISION_BACKFILL, ProjectRevision, project_revision_type, revision_entity_id,
+    revisions_of_row,
 };
 use super::super::*;
 use super::authority::{
@@ -12,9 +13,10 @@ use super::authority::{
 use super::history::{
     board_signed_s0, copy_of, head_of, ids, open, seats_of, signed_over, without,
 };
+use super::history_budget::forged_over;
 use super::history_resolution::put_companion;
 use crate::sync::bridge::Materializer;
-use crate::sync::loro_support::map_insert_bytes;
+use crate::sync::loro_support::{map_get_bytes, map_insert_bytes};
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
 use crate::sync::window::{forward_rematerialize, reverse_rematerialize};
@@ -141,6 +143,44 @@ fn a_squatter_or_poisoned_carrier_never_hides_the_signed_removal() -> Result<()>
     let late = Arc::new(late);
     materialize(&late, &poisoned, &key)?;
     assert_eq!(seats_of(&late, id), ids(&[leader]));
+
+    // At an id it does not hold, a carrier whose origin fails here, its
+    // chain and mint held, is removed on export; one that verifies stays
+    // (Wonder r2 N2).
+    let mut deeper = s1.clone();
+    deeper.depth_remaining -= 1;
+    let s1_wire = s1
+        .write_proof
+        .as_ref()
+        .ok_or_else(invalid)?
+        .slip_wire
+        .clone();
+    let forged = forged_over(id, &s1, deeper, s1_wire, |_, _| Ok(vec![9; 64]))?;
+    let valid = signed_over(&vault, id, &s1, project.board, |row| {
+        row.depth_remaining -= 1;
+    })?;
+    let valid = revisions_of_row(id, &valid)?
+        .pop()
+        .map(|(_, revision)| revision)
+        .ok_or_else(invalid)?;
+    let carried = create_window_doc("carried", &key);
+    for revision in [&forged, &valid] {
+        map_insert_bytes(
+            &carried.get_map("entities"),
+            &revision_entity_id(revision.hash()?)?.to_hex(),
+            &blob(kind, 7, &revision.canonical_bytes()?),
+        )?;
+    }
+    reverse_rematerialize(&vault, &carried, &key)?;
+    let carries = |revision: &ProjectRevision| -> Result<bool> {
+        Ok(map_get_bytes(
+            &carried.get_map("entities"),
+            &revision_entity_id(revision.hash()?)?.to_hex(),
+        )
+        .is_some())
+    };
+    assert!(!carries(&forged)?);
+    assert!(carries(&valid)?);
 
     // An ordinary put, a generic delete and a peer tombstone all leave it.
     assert!(
@@ -284,7 +324,7 @@ fn a_deleted_or_restored_project_keeps_its_history() -> Result<()> {
     vault.seal_project(
         &owner,
         id,
-        authority,
+        authority.clone(),
         head_of(id, &birth)?,
         slip.to_token()?,
         |challenge| issuer.binding_proof(&slip, challenge),
@@ -296,6 +336,31 @@ fn a_deleted_or_restored_project_keeps_its_history() -> Result<()> {
         Some(ProjectDisposition::Settled)
     ));
     assert_eq!(seats_of(&vault, id), ids(&[second]));
+    // Nor does one whose new state verifies but whose seal does not: the
+    // state alone would install, the seal would not (Sol r2 S2).
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let head = vault
+        .project_frontier(id)?
+        .and_then(|frontier| frontier.witness)
+        .map(|witness| witness.head)
+        .ok_or(Error::EntityNotFound)?;
+    let calls = std::cell::Cell::new(0);
+    let sealed = vault.seal_project(&owner, id, authority, head, slip.to_token()?, |challenge| {
+        calls.set(calls.get() + 1);
+        if calls.get() == 1 {
+            issuer.binding_proof(&slip, challenge)
+        } else {
+            Ok(vec![9; 64])
+        }
+    });
+    assert_eq!(calls.get(), 2);
+    assert!(
+        sealed
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("does not install")),
+        "{:?}",
+        sealed.map(drop)
+    );
     Ok(())
 }
 

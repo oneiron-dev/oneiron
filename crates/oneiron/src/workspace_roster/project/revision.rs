@@ -19,12 +19,6 @@ pub(crate) const PROJECT_REVISION_SHORT_ID_PREFIX: &str = "pv";
 /// slip, challenge, resolution and seal domain.
 const REVISION_HASH_DOMAIN: &[u8] = b"oneiron/project-revision/v1/";
 
-/// Largest revision body admitted: above the largest single state the PROJECT
-/// body gate admits for its id lists (three of 4,096 entries) plus the largest slip
-/// wire, so capture never refuses a row the projection took. It bounds decode
-/// work on an untrusted carrier.
-const MAX_REVISION_BYTES: usize = 1024 * 1024;
-
 /// blake3(REVISION_HASH_DOMAIN || canonical body). Serde: a MessagePack bin of
 /// exactly 32 bytes; another length or an array form is refused.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -170,15 +164,14 @@ pub(crate) fn revision_entity_id(hash: ProjectRevisionHash) -> Result<EntityId> 
 
 /// Pure: refuses a body that is not its own canonical re-encoding, whose hash
 /// does not derive `id`, or whose envelope lists are not sorted and unique.
-/// No vault context.
+/// No vault context. No size cap of its own: the projection admits a PROJECT
+/// state of any slice size, so a cap here would refuse capturing one; an
+/// untrusted carrier is bounded by its transport, as any row is.
 pub(crate) fn decode_revision(
     id: EntityId,
     body: &[u8],
 ) -> Result<(ProjectRevisionHash, ProjectRevision)> {
     let refused = || Error::from(RecordError::InvalidProjectBody("invalid project revision"));
-    if body.len() > MAX_REVISION_BYTES {
-        return Err(refused());
-    }
     let revision: ProjectRevision = decode(body).map_err(|_| refused())?;
     if revision.canonical_bytes()? != body {
         return Err(refused());

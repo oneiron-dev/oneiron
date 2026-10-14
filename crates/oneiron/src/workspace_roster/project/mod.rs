@@ -29,7 +29,7 @@ pub(crate) use capture::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use capture::{
-    exportable_revisions_in_txn, forged_revision_in_txn, revision_carrier_admissible,
+    exportable_revisions_in_txn, forged_revision_in_txn, inadmissible_revision_carriers,
 };
 pub(crate) use deletion::deindex_project_room;
 pub(crate) use edges::{

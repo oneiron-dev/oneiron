@@ -371,17 +371,52 @@ pub(crate) fn forged_revision_in_txn(
         .is_some_and(|(_, origin)| origin == RevisionOrigin::Forged))
 }
 
-/// Whether a transported carrier is a revision this vault's admission arm
-/// would take at `id`: canonical, hash-derived and bound to this vault.
+/// The transported carriers, at revision ids this vault does not hold, that
+/// its admission arm refuses (section 9): not canonical, not hash-derived,
+/// bound to another vault, or forged once their chain and mint are held
+/// here. Every carrier joins its project's held set before any is judged, so
+/// a carrier's parent may be another carrier.
 #[cfg(feature = "sync")]
-pub(crate) fn revision_carrier_admissible(
+pub(crate) fn inadmissible_revision_carriers(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
     fold: &crate::authority::AuthorityFold,
-    id: EntityId,
-    blob: &[u8],
-) -> bool {
-    EntityMetadataHeader::parse(blob)
-        .is_some_and(|header| header.occurred_start <= header.occurred_end)
-        && blob
-            .get(ENTITY_METADATA_HEADER_LEN..)
-            .is_some_and(|body| admissible_revision(Some(fold), id, body).is_ok())
+    carriers: &[(EntityId, Vec<u8>)],
+) -> Result<Vec<EntityId>> {
+    let mut refused = Vec::new();
+    let mut admitted = Vec::new();
+    for (id, blob) in carriers {
+        let body = EntityMetadataHeader::parse(blob)
+            .is_some_and(|header| header.occurred_start <= header.occurred_end)
+            .then(|| blob.get(ENTITY_METADATA_HEADER_LEN..))
+            .flatten();
+        match body.and_then(|body| admissible_revision(Some(fold), *id, body).ok()) {
+            Some((hash, revision)) => admitted.push((*id, hash, revision)),
+            None => refused.push(*id),
+        }
+    }
+    let Some(kind) = project_type(store) else {
+        return Ok(refused);
+    };
+    let mut held = std::collections::BTreeMap::new();
+    for (_, hash, revision) in &admitted {
+        let project = revision.project();
+        if !held.contains_key(&project) {
+            held.insert(
+                project,
+                super::revision::held_in_txn(store, txn, project, kind)?,
+            );
+        }
+        if let Some(set) = held.get_mut(&project) {
+            set.insert(*hash, revision.clone(), RevisionOrigin::AwaitingParent);
+        }
+    }
+    for (id, hash, revision) in &admitted {
+        if held.get(&revision.project()).is_some_and(|set| {
+            super::revision::authenticate(set, fold, *hash) == RevisionOrigin::Forged
+        }) {
+            refused.push(*id);
+        }
+    }
+    Ok(refused)
 }

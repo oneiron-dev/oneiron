@@ -247,14 +247,19 @@ impl Vault {
                 .apply(txn)?;
             // The owner's act commits only a seal the fold installs: a
             // signature or slip it refuses fails here, not on a later read.
+            // The new state can install without its seal, so both must.
             let reader = ProjectReader::new(&self.store, txn, self.privacy_posture())?
                 .ok_or_else(invalid)?;
-            let installed = reader.frontier(id)?.is_some_and(|frontier| {
-                frontier.disposition == ProjectDisposition::Settled
-                    && frontier
-                        .witness
-                        .is_some_and(|witness| witness.head == next_hash)
-            });
+            let held = held_in_txn(&self.store, txn, id, kind)?;
+            let sealed = FoldCx::new(&reader, id, &held).seal_tips()?
+                == std::collections::BTreeSet::from([envelope_hash]);
+            let installed = sealed
+                && reader.frontier(id)?.is_some_and(|frontier| {
+                    frontier.disposition == ProjectDisposition::Settled
+                        && frontier
+                            .witness
+                            .is_some_and(|witness| witness.head == next_hash)
+                });
             if !installed {
                 return Err(unresolved(id, "the seal does not install"));
             }
