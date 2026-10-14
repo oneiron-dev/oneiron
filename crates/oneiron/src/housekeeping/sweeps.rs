@@ -6,9 +6,9 @@
 //! cache eviction walk their tables a page at a time from a durable cursor and
 //! stop between pages at the deadline; a signing page that fails is retried a
 //! document at a time, so one document that fails cannot hold the others. The
-//! rest scan their own table in one call: leases, prints and symbol holds are
-//! small by construction, and the erasure sweep runs daily, hourly while an
-//! obligation waits.
+//! rest scan their own table in one call: the lease and print sweeps when a
+//! deadline a door noted comes due and hourly besides, symbol holds every five
+//! minutes, and the erasure sweep daily, hourly while an obligation waits.
 
 use super::{Deadline, HardEraseWork, HousekeepingSweep, SweepWork};
 use crate::error::{Error, Result};
@@ -121,20 +121,29 @@ fn count(n: usize) -> u64 {
     u64::try_from(n).unwrap_or(u64::MAX)
 }
 
-/// Pages through the pending critical confirms until the expiry cursor wraps
-/// or the deadline passes. The cursor is durable, so an unfinished walk goes
-/// on from where it stopped.
+/// Pages through the pending critical confirms until a whole walk that began
+/// after this run started has ended, or the deadline passes. The expiry cursor
+/// is durable and shared with the confirm listing, so a run that finds a walk
+/// already in progress finishes it and then walks again from the head: only a
+/// walk that began after the run started has seen every confirm due by then.
 fn critical_confirms(vault: &Vault, deadline: &Deadline) -> Result<Run> {
+    let expiry_cursor = || -> Result<Option<u64>> {
+        let txn = vault.store.env.read_txn()?;
+        Ok(vault
+            .store
+            .critical_confirm_expiry_sweep_state_in_txn(&txn)?
+            .0)
+    };
+    let mut walks_to_end = if expiry_cursor()?.is_none() { 1 } else { 2 };
     let mut demoted = 0;
     let mut pages = 0;
     loop {
         demoted += count(vault.expire_critical_write_confirms()?);
         pages += 1;
-        let txn = vault.store.env.read_txn()?;
-        let (cursor, _) = vault
-            .store
-            .critical_confirm_expiry_sweep_state_in_txn(&txn)?;
-        let complete = cursor.is_none();
+        if expiry_cursor()?.is_none() {
+            walks_to_end -= 1;
+        }
+        let complete = walks_to_end == 0;
         if complete || deadline.passed() {
             return Ok(Run {
                 work: SweepWork::CriticalConfirms { demoted, pages },

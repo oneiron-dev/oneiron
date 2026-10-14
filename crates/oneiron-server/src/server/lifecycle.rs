@@ -1,9 +1,9 @@
 //! Periodic lifecycle jobs: lease expiry, reassert-drain with debounce, and
 //! the engine's housekeeping pass.
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, PoisonError};
-use std::time::Duration;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::time::{Duration, Instant};
 
 use loro::{ExportMode, VersionVector};
 use oneiron::SyncEngineContext;
@@ -12,7 +12,7 @@ use oneiron::sync::{self, WindowKey};
 use tokio::task::JoinHandle;
 
 use super::core::{SyncServer, unix_seconds_now};
-use super::housekeeping::HousekeepingAdmission;
+use super::housekeeping::{HousekeepingAdmission, SERVED_REPOSITORY_MAINTENANCE_EVERY};
 use super::leases::SERVER_LEASE_VAULT_ID;
 use super::windows::SERVER_USER_ID;
 
@@ -65,26 +65,17 @@ pub(super) enum LifecycleJobKind {
 /// stops the loop; [`Self::stop`] also waits out the pass.
 pub(crate) struct LifecycleScheduler {
     tick: JoinHandle<()>,
-    pass: Arc<std::sync::Mutex<Option<JoinHandle<()>>>>,
-    stop: Arc<AtomicBool>,
+    server: Arc<SyncServer>,
 }
 
 impl LifecycleScheduler {
-    /// Stops the loop, asks a pass in flight to start no further sweep or
-    /// page, and waits for it to end, so nothing it writes lands after this
-    /// returns.
+    /// Stops the loop, then asks every housekeeping pass in flight, the
+    /// owner's included, to start no further sweep or page, and waits for
+    /// each, so nothing a pass writes lands after this returns.
     pub(crate) async fn stop(mut self) {
         self.tick.abort();
         let _ = (&mut self.tick).await;
-        self.stop.store(true, Ordering::Release);
-        let pass = self
-            .pass
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-        if let Some(pass) = pass {
-            let _ = pass.await;
-        }
+        self.server.housekeeping_passes.stop().await;
     }
 }
 
@@ -120,28 +111,27 @@ impl SyncServer {
         admit: HousekeepingAdmission,
     ) -> LifecycleScheduler {
         let server = Arc::clone(self);
-        let pass: Arc<std::sync::Mutex<Option<JoinHandle<()>>>> = Arc::default();
-        let stop = Arc::new(AtomicBool::new(false));
-        let tick = tokio::spawn({
-            let pass = Arc::clone(&pass);
-            let stop = Arc::clone(&stop);
-            async move {
-                let mut interval = tokio::time::interval(tick);
-                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                loop {
-                    interval.tick().await;
-                    server.run_scheduled_lifecycle_tick().await;
-                    // The pass runs on a task of its own, so a long sweep never
-                    // holds back the next tick's lease expiry. Its handle is
-                    // stored before this task can yield again, so a stop
-                    // never misses it.
-                    if let Some(started) = server.start_housekeeping_pass(&admit, &stop).await {
-                        *pass.lock().unwrap_or_else(PoisonError::into_inner) = Some(started);
-                    }
+        let tick = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tick);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            // The served repositories' maintenance runs with the first pass
+            // and then once an interval.
+            let mut repositories_due = Instant::now();
+            loop {
+                interval.tick().await;
+                server.run_scheduled_lifecycle_tick().await;
+                // The pass runs on a task of its own, so a long sweep never
+                // holds back the next tick's lease expiry.
+                let repositories = Instant::now() >= repositories_due;
+                if server.start_housekeeping_pass(&admit, repositories).await && repositories {
+                    repositories_due = Instant::now() + SERVED_REPOSITORY_MAINTENANCE_EVERY;
                 }
             }
         });
-        LifecycleScheduler { tick, pass, stop }
+        LifecycleScheduler {
+            tick,
+            server: Arc::clone(self),
+        }
     }
 
     async fn run_scheduled_lifecycle_tick(&self) {

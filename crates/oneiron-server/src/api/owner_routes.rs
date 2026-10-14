@@ -22,7 +22,7 @@ use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::housekeeping::{HousekeepingBudget, HousekeepingReport};
+use oneiron::housekeeping::HousekeepingReport;
 use oneiron::run_tree::GateConsentBundleAction;
 use oneiron::store::GateDecisionId;
 use serde::Deserialize;
@@ -262,10 +262,12 @@ async fn run_housekeeping(
     State(server): State<Arc<SyncServer>>,
 ) -> OwnerReply<HousekeepingReport> {
     owner(&auth, &server)?;
-    let budget = HousekeepingBudget::within(std::time::Duration::from_secs(60));
-    Ok(Json(
-        blocking(move || Ok(server.vault().housekeeping_all(budget)?)).await?,
-    ))
+    let report = server
+        .housekeeping_now()
+        .await
+        .ok_or_else(|| ApiError::internal_server_error("owner action task failed"))?
+        .map_err(|error| owner_error(error.into()))?;
+    Ok(Json(report))
 }
 
 #[derive(Debug, Default, Deserialize)]

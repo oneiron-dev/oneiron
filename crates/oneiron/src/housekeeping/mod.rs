@@ -161,9 +161,11 @@ impl HousekeepingSweep {
         }
     }
 
-    /// Cadences: the code's own stated duty where canon is silent.
-    /// Secret files and the 300-second confirm window are checked every
-    /// minute; the seal backstop every fifteen minutes (ARCH-0064 SGN-04); the
+    /// Cadences: the code's own stated duty where canon is silent. A secret
+    /// lease's expiry, a print's retention deadline and a confirm's 300-second
+    /// window make their sweep due at that moment (the doors note them), so
+    /// those sweeps run then and hourly besides, for a deadline no door noted.
+    /// The seal backstop runs every fifteen minutes (ARCH-0064 SGN-04); the
     /// erasure sweep daily, hourly while an obligation waits (ARCH-0038's
     /// deadline is 30 days); the graph-walk cache daily.
     const fn runner(self) -> Runner {
@@ -174,12 +176,13 @@ impl HousekeepingSweep {
             }
         }
         match self {
-            Self::SecretLeaseExpiry | Self::CriticalConfirmExpiry => engine(MINUTE),
+            Self::SecretLeaseExpiry | Self::CriticalConfirmExpiry | Self::VoicePrintRetention => {
+                engine(HOUR)
+            }
             Self::SymbolLeaseExpiry => engine(5 * MINUTE),
-            Self::VoicePrintRetention
-            | Self::EsignExpiry
-            | Self::EsignSealBackstop
-            | Self::CommitmentLapse => engine(15 * MINUTE),
+            Self::EsignExpiry | Self::EsignSealBackstop | Self::CommitmentLapse => {
+                engine(15 * MINUTE)
+            }
             Self::GateDecisionRetention => Runner::Engine {
                 every: HOUR,
                 at_open: true,
@@ -653,9 +656,9 @@ impl Vault {
             Ok(Ok(run)) => {
                 let items_failed = run.work.items_failed() > 0;
                 if run.complete && !items_failed {
-                    // A row the clear leaves behind costs one wake that finds
+                    // A row the clear leaves behind costs one run that finds
                     // nothing.
-                    let _ = wake::clear(self, sweep, &covered);
+                    let _ = wake::clear(self, &covered);
                 }
                 let finished = running.ran(end, every, run.cursor, run.complete, items_failed);
                 (

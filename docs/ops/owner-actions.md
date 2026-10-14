@@ -221,10 +221,10 @@ bound; a pass stops starting sweeps after 20 seconds and the rest run on the nex
 
 | sweep | every | what it retires |
 |---|---|---|
-| `secret_lease_expiry` | minute | secret leases past their expiry, and their registered files |
-| `critical_confirm_expiry` | minute | critical-write confirms still open 300 s after the write: the claim goes back to Proposed |
+| `secret_lease_expiry` | at each expiry; hourly | secret leases past their expiry, and their registered files |
+| `critical_confirm_expiry` | at each window's end; hourly | critical-write confirms still open 300 s after the write: the claim goes back to Proposed |
 | `symbol_lease_expiry` | 5 min | symbol-lease holds past their expiry |
-| `voice_print_retention` | 15 min | voice prints past their retention deadline (a print past it already matches no one) |
+| `voice_print_retention` | at each deadline; hourly | voice prints past their retention deadline (a print past it already matches no one) |
 | `esign_expiry`, `esign_seal_backstop` | 15 min | signing windows that ran out; seals whose trigger was missed |
 | `commitment_lapse` | 15 min | open commitments past their due time |
 | `gate_decision_retention` | hour, and at start | gate decisions past the horizon you set |
@@ -237,6 +237,10 @@ records, is logged by kind and retried within the hour; it never stops the other
 keeps each sweep's schedule, so a restart neither repeats a sweep early nor drops one. Before an
 erasure runs, the server writes down and closes the sync windows no client is using, so their
 history can be compacted; a window in use waits for the next run.
+
+Every hour the server also runs `git gc --auto` on each repository it serves, one at a time and
+like a push: under the repository's lock and a git exchange permit, never waiting for either, so a
+repository a push holds waits for the next hour. A push itself starts no maintenance.
 
 A managed vault that is stopped between uses tells its supervisor when to wake it: a
 `housekeeping` entry in its wake ledger carries the next secret-lease expiry, voice-print

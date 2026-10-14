@@ -72,6 +72,8 @@ pub struct SyncServer {
     pub(super) lifecycle_session_id: u64,
     /// In-flight lifecycle jobs keyed by `(kind, vault_id, session_id)`.
     pub(super) lifecycle_in_flight: Mutex<HashSet<LifecycleJobKey>>,
+    /// Housekeeping passes in flight, scheduled or asked for by the owner.
+    pub(crate) housekeeping_passes: super::housekeeping::HousekeepingPasses,
     /// Server configuration.
     pub(crate) config: SyncServerConfig,
     /// Permits for git and LFS transfers, sized by `config.limits`.
@@ -251,6 +253,7 @@ impl SyncServer {
             _reactive_tee: reactive_tee,
             lifecycle_session_id: NEXT_LIFECYCLE_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             lifecycle_in_flight: Mutex::new(HashSet::new()),
+            housekeeping_passes: Default::default(),
             standing_block_cache: Mutex::new(
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
             ),

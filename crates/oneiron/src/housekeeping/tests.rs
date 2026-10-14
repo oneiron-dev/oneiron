@@ -148,7 +148,7 @@ fn a_restart_in_the_middle_of_a_pass_resumes_the_unfinished_sweeps_and_reruns_no
     assert_eq!(
         outcome(&report, HousekeepingSweep::VoicePrintRetention),
         &SweepOutcome::NotDue {
-            due_at: T0 + 60 + 15 * 60
+            due_at: T0 + 60 + 60 * 60
         }
     );
 }

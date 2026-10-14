@@ -48,13 +48,17 @@ pub(super) struct SweepState {
     /// Where an unfinished paged walk goes on from; opaque to the schedule.
     #[serde(default)]
     pub(super) cursor: Option<Vec<u8>>,
+    /// An earlier run of the walk in progress left items it could not finish.
+    #[serde(default)]
+    cycle_failed: bool,
 }
 
 impl SweepState {
-    /// The row of a run that ended. A run that finished its walk is due a
-    /// cadence later; one that stopped at its bound is due again now and keeps
-    /// its cursor. Items the run could not finish count as a failure, so they
-    /// are retried after the backoff rather than a whole cadence later.
+    /// The row of a run that ended. A run that stopped at its bound is due
+    /// again now and keeps its cursor and any failure its walk met so far. A
+    /// walk that finished is due a cadence later, unless some run of it left
+    /// items it could not finish: that counts as a failure, so the next walk,
+    /// which retries them, comes after the backoff.
     pub(super) fn ran(
         self,
         end: u64,
@@ -63,17 +67,18 @@ impl SweepState {
         complete: bool,
         items_failed: bool,
     ) -> Self {
-        let failures = if items_failed {
-            self.failures.saturating_add(1)
+        let cycle_failed = self.cycle_failed || items_failed;
+        let (next_due_at, failures, cycle_failed) = if !complete {
+            (end, self.failures, cycle_failed)
+        } else if cycle_failed {
+            let failures = self.failures.saturating_add(1);
+            (
+                end.saturating_add(retry_after(failures, every)),
+                failures,
+                false,
+            )
         } else {
-            0
-        };
-        let next_due_at = if !complete {
-            end
-        } else if items_failed {
-            end.saturating_add(retry_after(failures, every))
-        } else {
-            end.saturating_add(every)
+            (end.saturating_add(every), 0, false)
         };
         Self {
             next_due_at,
@@ -82,6 +87,7 @@ impl SweepState {
             failures,
             requested_at: None,
             cursor,
+            cycle_failed,
         }
     }
 
@@ -148,7 +154,8 @@ pub(super) fn read_states(vault: &Vault) -> Result<BTreeMap<HousekeepingSweep, S
 }
 
 /// When `sweep` is next due: now for one that never ran, after the backoff for
-/// one whose run was interrupted, else its stored due time; never later than
+/// one whose run was interrupted or failed, else its stored due time or the
+/// earliest deadline a door noted for it, whichever is first; never later than
 /// a run the owner asked for.
 pub(super) fn due_at(
     vault: &Vault,
@@ -173,6 +180,13 @@ fn scheduled_due_at(
 ) -> Result<u64> {
     if let Some(started) = state.started_at {
         return Ok(started.saturating_add(retry_after(state.failures.saturating_add(1), every)));
+    }
+    // A noted deadline makes the sweep due then, unless it is backing off.
+    if state.failures == 0 {
+        let txn = vault.store.env.read_txn()?;
+        if let Some(noted) = super::wake::earliest_in_txn(&vault.store, &txn, sweep)? {
+            return Ok(noted.min(state.next_due_at));
+        }
     }
     let busy_due = state.finished_at.saturating_add(HARD_ERASE_BUSY_EVERY);
     if sweep == HousekeepingSweep::HardEraseSweep
