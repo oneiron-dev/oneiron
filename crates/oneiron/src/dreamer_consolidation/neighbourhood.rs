@@ -457,7 +457,12 @@ fn newest_claims(
         }
         // A head awaiting its owner's confirmation is no prior for anyone.
         if let Some(row) = row
-            && crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &id)?
+            && crate::gate::claim_consolidation_eligible_in_txn(
+                &vault.store,
+                txn,
+                &id,
+                crate::gate::ConsolidationReader::NewestClaims,
+            )?
             && let Some(known) = listable(subject, id, &row, axes, bound, &device_only)
         {
             claims.push((known, (id, row)));

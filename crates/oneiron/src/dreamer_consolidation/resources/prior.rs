@@ -77,6 +77,13 @@ impl BranchResources<'_> {
             if kind != ENTITY_TYPE_CLAIM || !self.scope.allows_read(&resource) {
                 return Err(invalid_consolidation("prior head exact read refused"));
             }
+            // A head awaiting its owner's confirmation is no prior for anyone.
+            if !self.read.vault().claim_consolidation_eligible(
+                &id,
+                crate::gate::ConsolidationReader::ExplicitPrior,
+            )? {
+                continue;
+            }
             let prior = PriorHead {
                 claim_id: id,
                 body: decode_claim_body(&bytes, true)?,

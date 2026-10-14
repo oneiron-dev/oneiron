@@ -43,10 +43,10 @@ use crate::write_envelope::{SourceLineage, WriteEnvelope};
 const CHECKER_PARTIAL_VIEW_RECEIPT_REASON: &str = "checker_partial_view";
 
 /// Whether this write only closes the stored row: the row's own value, now
-/// closed, under a verified in-place transition, and too long for the
-/// checker's preview. It admits nothing new, so the partial-view hold never
-/// refuses it: a restriction always lands.
-fn closes_stored_value_beyond_preview(
+/// closed, under a verified in-place transition. It admits nothing new, so no
+/// checker is consulted and none is required, whatever the value's length: a
+/// restriction always lands.
+fn closes_stored_value(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
@@ -54,7 +54,6 @@ fn closes_stored_value_beyond_preview(
     transition: Option<&VerifiedClaimTransition>,
 ) -> bool {
     body.lifecycle != ClaimLifecycleStatus::Active
-        && auto_check_value_preview(&body.value).is_none()
         && transition.is_some_and(|proof| {
             proof.predecessor().is_none()
                 && proof.matches_body(store, txn, id, body).unwrap_or(false)
@@ -387,7 +386,7 @@ fn check_claim_policy_for_write_with_record_inner(
                 source.requires_explicit_auto_permit()
                     || lineage.is_some_and(SourceLineage::requires_explicit_auto_permit)
             })
-            && !closes_stored_value_beyond_preview(store, &*wtxn, id, body, transition)
+            && !closes_stored_value(store, &*wtxn, id, body, transition)
         {
             // A value the preview cannot hold whole is never sent: the
             // checker would answer for a prefix while the write stores the

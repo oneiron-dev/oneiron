@@ -102,10 +102,11 @@ pub(super) fn verify(
                     "generated claim cannot corroborate",
                 ));
             }
-            if !crate::gate::claim_critical_confirm_settled_in_txn(
+            if !crate::gate::claim_consolidation_eligible_in_txn(
                 &vault.store,
                 txn,
                 &subject.source,
+                crate::gate::ConsolidationReader::DerivedSupport,
             )? {
                 return Err(Error::InvalidClaimBody(
                     "a claim awaiting its owner's confirmation cannot corroborate",

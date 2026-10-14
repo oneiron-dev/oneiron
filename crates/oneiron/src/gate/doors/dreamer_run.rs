@@ -138,7 +138,12 @@ pub(super) fn dreamer_precommit_denial(
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_CLAIM,
                 ..
-            } => crate::gate::claim_critical_confirm_settled_in_txn(store, txn, id)?,
+            } => crate::gate::claim_consolidation_eligible_in_txn(
+                store,
+                txn,
+                id,
+                crate::gate::ConsolidationReader::PrecommitEvidence,
+            )?,
             LiveEntityRow::Live { .. } => true,
         })
     };

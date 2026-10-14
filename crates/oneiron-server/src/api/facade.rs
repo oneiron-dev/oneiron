@@ -150,6 +150,56 @@ fn facade_room_turn(headers: &HeaderMap) -> Result<Option<EntityId>, FacadeApiEr
         })
 }
 
+/// The proof a write carries when the vault's owner makes it in person, on the
+/// owner's own undelegated full slip: owner-authored writes carry their own
+/// confirmation. `None` for any other credential, which writes as itself. A
+/// credential that is the owner's own but no longer holds is refused, never
+/// downgraded to an ordinary write.
+pub(super) fn owner_authorship(
+    auth: &CoreAuth,
+    server: &SyncServer,
+) -> Result<Option<oneiron::consent::AuthenticatedOwner>, ApiError> {
+    let Some((principal, actor)) = auth
+        .principal_ref()
+        .and_then(|principal| Some((principal, oneiron::EntityId::from_hex(principal).ok()?)))
+    else {
+        return Ok(None);
+    };
+    let Some(slip) = auth.verified_slip().filter(|slip| {
+        let claims = slip.claims();
+        slip.is_full_vault_owner_grade()
+            && claims.parent_id.is_none()
+            && claims.holder_ref == actor.to_hex()
+            && claims.actor_class.as_deref() == Some("human")
+    }) else {
+        return Ok(None);
+    };
+    if server.managed_issuer.is_some() || !auth.is_owner_grade() {
+        return Ok(None);
+    }
+    let Ok(owner) = server.vault().authenticate_owner(
+        actor,
+        principal,
+        true,
+        oneiron::store::GateDecisionId::now(),
+    ) else {
+        return Ok(None);
+    };
+    let refused = || ApiError::forbidden_scope("owner");
+    if !server
+        .vault()
+        .is_live_vault_owner(&owner)
+        .map_err(|_| refused())?
+    {
+        return Ok(None);
+    }
+    server
+        .vault()
+        .bind_owner_credential(owner, slip.clone())
+        .map(Some)
+        .map_err(|_| refused())
+}
+
 /// Runs one SDK verb as the caller's credential reads, inside the named room
 /// turn when the request names one.
 fn facade_invoke(
@@ -167,10 +217,10 @@ fn facade_invoke(
         None => {
             // The owner's own request on the owner's own full credential:
             // owner-authored writes carry their own confirmation. Any other
-            // caller is refused by the owner door and writes as itself.
-            let owner = super::owner_routes::owner(auth, server).ok();
-            let memory = match &owner {
-                Some(owner) => memory.with_owner_authorship(owner),
+            // caller writes as itself; the owner's credential that no longer
+            // holds is refused.
+            let memory = match owner_authorship(auth, server)? {
+                Some(owner) => memory.with_owner_authorship(&owner),
                 None => memory,
             };
             oneiron::task_verb::sdk::invoke(&memory, verb, value)?

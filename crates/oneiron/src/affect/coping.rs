@@ -488,10 +488,11 @@ impl Vault {
             }));
         }
         if !claim_consolidatable(&prior_body)
-            || !crate::gate::claim_critical_confirm_settled_in_txn(
+            || !crate::gate::claim_consolidation_eligible_in_txn(
                 &self.store,
                 &wtxn,
                 prior_claim_id,
+                crate::gate::ConsolidationReader::CopingOutcome,
             )?
         {
             return Err(Error::InvalidClaimBody("claim is not consolidatable"));
