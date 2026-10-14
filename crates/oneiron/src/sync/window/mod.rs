@@ -58,6 +58,7 @@ pub use self::forward::forward_rematerialize;
 pub(in crate::sync) use self::reverse::is_delegated_channel_identity_carrier;
 pub use self::reverse::reverse_rematerialize;
 pub(in crate::sync) use self::reverse::reverse_rematerialize_with;
+pub(in crate::sync) use self::tombstones::apply_tombstone_to_indexed_window_doc;
 pub(crate) use self::tombstones::{DeleteBearingUpdate, export_tombstone_commit_delta};
 pub use self::tombstones::{
     apply_tombstone_to_window_doc, rebuild_window_from_updates, replay_pending_tombstones,
@@ -423,6 +424,8 @@ pub fn apply_pending_window_updates(vault: &Vault, doc: &LoroDoc, key: &WindowKe
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tombstone_index_tests;
 
 // The flat window.rs module used to provide these names to the sibling test
 // module through `use super::*`: its own private crate/std import header, and
