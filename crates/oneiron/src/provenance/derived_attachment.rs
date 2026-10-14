@@ -102,6 +102,15 @@ pub(super) fn verify(
                     "generated claim cannot corroborate",
                 ));
             }
+            if !crate::gate::claim_critical_confirm_settled_in_txn(
+                &vault.store,
+                txn,
+                &subject.source,
+            )? {
+                return Err(Error::InvalidClaimBody(
+                    "a claim awaiting its owner's confirmation cannot corroborate",
+                ));
+            }
             let source = claim.source.unwrap_or(ClaimSource::Imported);
             source_meet(source, claim_evidence_taint(&claim).unwrap_or(source))
         }

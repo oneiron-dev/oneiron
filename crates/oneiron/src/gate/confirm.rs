@@ -503,6 +503,30 @@ pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
     Ok(true)
 }
 
+/// Whether a claim may lend authority beyond being read: no owner confirmation
+/// of a critical write is outstanding on it (ARCH-0026 §G3).
+///
+/// A critical write commits `Auto` with an attached confirmation and stays
+/// retrieval-visible, but nothing consolidates it or acts on it until its
+/// owner clears it. The attachment is the claim's pending-consent row with a
+/// critical-confirm reason, and only settlement removes it. A timed-out row
+/// keeps the claim ineligible, so expiry follows the sweep: a row past its
+/// deadline that the sweep has not reached yet still counts. Retrieval
+/// ([`crate::claim::claim_surfaceable`]) never asks this.
+pub(crate) fn claim_critical_confirm_settled_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    claim_id: &EntityId,
+) -> Result<bool> {
+    Ok(!store
+        .pending_gate_consent_in_txn(txn, claim_id)?
+        .is_some_and(|row| {
+            row.reason_codes
+                .iter()
+                .any(|reason| reason.contains("critical_confirm"))
+        }))
+}
+
 pub(crate) fn critical_write_confirm_binding(
     pending: &PendingGateConsentRecord,
 ) -> Result<CriticalWriteConfirmBinding> {

@@ -1,6 +1,7 @@
 //! On-demand docs NER: only a named trigger crosses the thin-star boundary.
 use super::{DocsDerivationEnvelope, DocsSegment, docs_semantic_segments};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::ClaimApprovalStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
@@ -366,11 +367,13 @@ impl Vault {
                 value: claim.value,
             });
         }
-        // Follow the import-batch Gate door, Proposed only. The stored bulk act
+        // Follow the import-batch Gate door, Proposed first. The stored bulk act
         // approved reading this source revision and deriving from it; it never
-        // saw what the extractor would say, so each derived claim waits in the
-        // owner's tray for its own review.
-        let mut builder = self.batch_in();
+        // saw what the extractor would say, so it approves no derived claim.
+        // A claim the Gate pends waits in the owner's tray for its own review.
+        // One the Gate admits with no tray row is written again as `Auto`
+        // through the same Gate, so only a policy that allows `Auto` lands it.
+        let mut writes = Vec::new();
         for claim in &claims {
             let admission = super::ImportedEvidenceAdmission::proposed(
                 super::DOCS_EXPORT_SOURCE_ID,
@@ -407,20 +410,42 @@ impl Vault {
                     (v("approval_digest"), v(approval_digest.as_str())),
                 ]),
             ));
+            let candidate = candidate
+                .with_scope(rmpv::Value::Map(vec![(
+                    v("scopeProjectId"),
+                    rmpv::Value::Binary(project_id.as_bytes().to_vec()),
+                )]))
+                .with_evidence(rmpv::Value::Map(evidence));
+            writes.push((claim.id, candidate, envelope, admission));
+        }
+        let mut builder = self.batch_in();
+        for (id, candidate, envelope, admission) in &writes {
             builder = builder.claim_candidate(
-                &claim.id,
-                candidate
-                    .with_scope(rmpv::Value::Map(vec![(
-                        v("scopeProjectId"),
-                        rmpv::Value::Binary(project_id.as_bytes().to_vec()),
-                    )]))
-                    .with_evidence(rmpv::Value::Map(evidence)),
-                &envelope,
+                id,
+                candidate.clone(),
+                envelope,
                 admission.occurred,
                 admission.learned_at,
             );
         }
         builder.apply(&mut txn)?;
+        let mut admitted = self.batch_in();
+        let mut any_admitted = false;
+        for (id, candidate, envelope, admission) in &writes {
+            if self.store.pending_gate_consent_in_txn(&txn, id)?.is_none() {
+                any_admitted = true;
+                admitted = admitted.claim_candidate(
+                    id,
+                    candidate.clone(),
+                    &envelope.clone().with_approval(ClaimApprovalStatus::Auto),
+                    admission.occurred,
+                    admission.learned_at,
+                );
+            }
+        }
+        if any_admitted {
+            admitted.apply(&mut txn)?;
+        }
         for claim in &claims {
             crate::ports::record_derived_edge_in_txn(
                 &self.store,

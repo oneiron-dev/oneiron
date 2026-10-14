@@ -289,6 +289,58 @@ pub(super) fn put_critical_auto_claim(
     })
 }
 
+/// Security pack 2, F14 H244 (narrowed): a critical write commits `Auto` with
+/// its owner confirmation attached and stays retrieval-visible, but nothing
+/// consolidates it until the owner clears it (ARCH-0026 §G3). After expiry it
+/// follows the sweep, which demotes it.
+#[test]
+fn an_unconfirmed_critical_claim_is_read_but_never_consolidated() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim = test_id(0x8c);
+    let pending = put_critical_auto_claim(&vault, claim)?;
+    let body = stored_claim_body(&vault, &claim)?;
+    assert_eq!(body.approval, ClaimApprovalStatus::Auto);
+    assert!(
+        crate::claim::claim_surfaceable(&body),
+        "retrieval still sees it"
+    );
+    assert!(
+        vault.consolidate_claim_vad_now(&claim, 10).is_err(),
+        "FAILBEFORE H244 narrowed: an unconfirmed critical claim was consolidated"
+    );
+
+    // The owner clears it, and only then does it consolidate.
+    let binding = critical_write_confirm_binding(&pending)?;
+    let (genesis, clear) = critical_confirm_owner_entry(
+        &pending,
+        crate::authority::CriticalWriteConfirmDisposition::Clear,
+        0x8c,
+    );
+    vault.put_authority_log_entries(&[(genesis, test_time(1), 1), (clear, test_time(2), 2)])?;
+    assert_eq!(
+        vault.settle_critical_write_confirm(binding.confirm_id)?,
+        CriticalWriteConfirmResolution::Cleared
+    );
+    vault.consolidate_claim_vad_now(&claim, 11)?;
+
+    // One its owner never answers times out: the sweep demotes it, and it is
+    // still never consolidated.
+    let (_tmp, vault) = temp_vault();
+    let claim = test_id(0x8d);
+    let pending = put_critical_auto_claim(&vault, claim)?;
+    vault.expire_critical_write_confirms_at(
+        pending
+            .created_at
+            .saturating_add(CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS),
+    )?;
+    assert_eq!(
+        stored_claim_body(&vault, &claim)?.approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert!(vault.consolidate_claim_vad_now(&claim, 12).is_err());
+    Ok(())
+}
+
 #[test]
 fn critical_auto_batch_write_attaches_pending_confirm_and_allow_receipt() -> Result<()> {
     let (_tmp, vault) = temp_vault();

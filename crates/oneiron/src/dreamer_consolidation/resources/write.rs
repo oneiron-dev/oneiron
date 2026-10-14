@@ -276,6 +276,13 @@ impl ConsolidationFence {
             if !lane.is_entity_readable_with_policy_in(txn, &policy, id)? {
                 return Err(invalid_consolidation("pinned source read revoked"));
             }
+            if closed_at.is_none()
+                && !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, id)?
+            {
+                return Err(invalid_consolidation(
+                    "pinned source awaits its owner's confirmation",
+                ));
+            }
             let stored = RowRevision::read_in(vault, txn, id)?
                 .ok_or_else(|| invalid_consolidation("pinned source missing"))?;
             let expected = closed_at
@@ -293,6 +300,7 @@ impl ConsolidationFence {
         for (id, revision) in &standing {
             if !read.is_entity_readable_with_policy_in(txn, &policy, id)?
                 || RowRevision::read_in(vault, txn, id)?.as_ref() != Some(revision)
+                || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, id)?
             {
                 return Err(invalid_consolidation("a replacement no longer stands"));
             }

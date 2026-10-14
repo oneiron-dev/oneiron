@@ -487,7 +487,13 @@ impl Vault {
                 status: prior_body.lifecycle,
             }));
         }
-        if !claim_consolidatable(&prior_body) {
+        if !claim_consolidatable(&prior_body)
+            || !crate::gate::claim_critical_confirm_settled_in_txn(
+                &self.store,
+                &wtxn,
+                prior_claim_id,
+            )?
+        {
             return Err(Error::InvalidClaimBody("claim is not consolidatable"));
         }
         let prior_value = decode_coping_outcome_claim(&prior_body)?

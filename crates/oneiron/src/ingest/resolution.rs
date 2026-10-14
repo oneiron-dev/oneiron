@@ -151,7 +151,13 @@ pub(super) fn evaluate_entity_resolution_waterfall_in_txn(
                 ));
             }
             crate::provider_confidence::validate_provider_enrichment_claim_structure(&body)?;
-            if !crate::claim::claim_consolidatable(&body) {
+            if !crate::claim::claim_consolidatable(&body)
+                || !crate::gate::claim_critical_confirm_settled_in_txn(
+                    &vault.store,
+                    &*wtxn,
+                    &candidate.confidence_claim_ref,
+                )?
+            {
                 claims_suppressed += 1;
                 continue;
             }

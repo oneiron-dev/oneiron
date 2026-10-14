@@ -583,15 +583,22 @@ fn verify_landed(
 
 /// True when the evidence ref may corroborate: a TURN passes; a type-0 CLAIM
 /// must pass `claim_evidence_admissible` (GATE-11 — Generated-origin claims
-/// contribute zero); every other type, and an unresolvable ref, is dropped
-/// fail-closed. The same two kinds the sealed path verifies: a PERSON or a
+/// contribute zero) and have no owner confirmation outstanding; every other
+/// type, and an unresolvable ref, is dropped fail-closed. The same two kinds the sealed path verifies: a PERSON or a
 /// SESSION is not something a person said.
 fn evidence_ref_admissible(vault: &Vault, entry: &EntityId) -> Result<bool> {
     match vault.get_entity_type(entry)? {
         Some(ENTITY_TYPE_TURN) => Ok(true),
-        Some(ENTITY_TYPE_CLAIM) => Ok(vault
-            .get_claim(entry)?
-            .is_some_and(|body| claim_evidence_admissible(&body))),
+        Some(ENTITY_TYPE_CLAIM) => {
+            if !vault
+                .get_claim(entry)?
+                .is_some_and(|body| claim_evidence_admissible(&body))
+            {
+                return Ok(false);
+            }
+            let txn = vault.store.env.read_txn()?;
+            crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, &txn, entry)
+        }
         _ => Ok(false),
     }
 }

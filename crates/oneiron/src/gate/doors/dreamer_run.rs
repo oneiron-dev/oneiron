@@ -119,9 +119,10 @@ fn dreamer_run_id_from_provenance(value: &Value) -> Option<String> {
 ///
 /// A live ref counts only when it is something a person said: a TURN, or a
 /// CLAIM that [`claim_evidence_admissible`] admits (GATE-11: a Generated-origin
-/// claim contributes nothing). A PERSON or a SESSION resolves but is not
-/// evidence, and an unreadable claim body is not either. Promotion reads the
-/// same rule, so every Dreamer door holds one floor.
+/// claim contributes nothing) and whose owner confirmation, if it is critical,
+/// is settled. A PERSON or a SESSION resolves but is not evidence, and an
+/// unreadable claim body is not either. Promotion reads the same rule, so every
+/// Dreamer door holds one floor.
 pub(super) fn dreamer_precommit_denial(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -138,6 +139,7 @@ pub(super) fn dreamer_precommit_denial(
                 body,
             } => {
                 decode_claim_body(&body, true).is_ok_and(|claim| claim_evidence_admissible(&claim))
+                    && crate::gate::claim_critical_confirm_settled_in_txn(store, txn, id)?
             }
             LiveEntityRow::Live { .. } | LiveEntityRow::Absent | LiveEntityRow::DeletedShell => {
                 false

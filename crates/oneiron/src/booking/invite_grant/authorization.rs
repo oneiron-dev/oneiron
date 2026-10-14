@@ -188,9 +188,12 @@ fn confirmed_booking_binding_in_txn(
             continue;
         };
         // Only the engine's surfaceable record binds a recipient: a pending
-        // proposal must not name a new booker before anyone approves it.
+        // proposal must not name a new booker before anyone approves it, and
+        // neither may a critical write its owner has not confirmed yet.
         if !crate::claim::claim_surfaceable(&body)
             || body.subject != ClaimSubject::Entity(*booking_ref)
+            || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, &claim_id)
+                .map_err(|error| engine_failure("booking claim confirm", error))?
         {
             continue;
         }

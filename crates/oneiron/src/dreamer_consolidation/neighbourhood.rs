@@ -455,7 +455,9 @@ fn newest_claims(
         if claims.len() == CLAIMS_PER_ENTITY {
             break;
         }
+        // A head awaiting its owner's confirmation is no prior for anyone.
         if let Some(row) = row
+            && crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &id)?
             && let Some(known) = listable(subject, id, &row, axes, bound, &device_only)
         {
             claims.push((known, (id, row)));
