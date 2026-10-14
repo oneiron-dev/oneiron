@@ -55,6 +55,11 @@ pub enum ManagedError {
     InvalidListenFd { env: &'static str, value: String },
 
     #[error(
+        "{env} names file descriptor {fd}, which is not a unix socket: managed mode serves only the supervisor's unix listener"
+    )]
+    ListenFdNotUnix { env: &'static str, fd: RawFd },
+
+    #[error(
         "{first} and {second} both name file descriptor {fd}: managed mode adopts each delivered descriptor with unique ownership, so an alias would close one owner's descriptor under the other or write the ready byte into a reused number"
     )]
     AliasedFd {
@@ -416,6 +421,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Refused(NO_AUTH_LAYER_REASON),
     ),
     (
+        "trusted-proxies",
+        |args| args.trusted_proxies.is_some(),
+        ArgvUse::Refused(NO_AUTH_LAYER_REASON),
+    ),
+    (
         "failure-signal-export",
         |args| args.failure_signal_export.is_some(),
         ArgvUse::Refused(NO_TUNING_LAYER_REASON),
@@ -647,6 +657,7 @@ fn reject_unmanaged_layers(args: &ServeArgs) -> Result<(), ManagedError> {
         "ONEIRON_CONFIG",
         "ONEIRON_FAILURE_SIGNAL_EXPORT",
         "ONEIRON_FAILURE_SIGNAL_TRAINING",
+        "ONEIRON_TRUSTED_PROXIES",
     ] {
         if std::env::var_os(env).is_some() {
             return Err(ManagedError::ConflictingEnvironment {

@@ -139,6 +139,11 @@ pub struct ServeArgs {
     )]
     pub allowed_origins: Option<Vec<String>>,
 
+    /// Comma-separated reverse proxies (`ip` or `ip/prefix`) whose
+    /// `X-Forwarded-For` the server believes when it keys a caller by address.
+    #[arg(long = "trusted-proxies", value_delimiter = ',', num_args = 1..)]
+    pub trusted_proxies: Option<Vec<String>>,
+
     /// Numeric vault scope for lease registration and revocation.
     #[arg(long)]
     pub lease_vault_id: Option<u64>,
@@ -307,6 +312,7 @@ impl fmt::Debug for ServeArgs {
                 &self.insecure_allow_unauthenticated,
             )
             .field("allowed_origins", &self.allowed_origins)
+            .field("trusted_proxies", &self.trusted_proxies)
             .field("dimensions", &self.dimensions)
             .field("map_size", &self.map_size)
             .field("log_level", &self.log_level)
