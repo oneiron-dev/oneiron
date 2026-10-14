@@ -525,9 +525,17 @@ fn a_save_copies_nothing_of_a_message_hard_deleted_since() {
     );
 }
 
-/// A live slip of `class` for `holder`, minted under the test host root,
-/// which the first one roots.
-fn slip(vault: &Vault, holder: EntityId, class: &str, id: u8) -> crate::authority::VerifiedSlip {
+/// The challenge a holder signs to prove a slip in these checks.
+const BINDING: &[u8] = b"room-save";
+
+/// A slip of `class` for `holder`, minted under the test host root, which
+/// the first one roots.
+fn minted(
+    vault: &Vault,
+    holder: EntityId,
+    class: &str,
+    id: u8,
+) -> crate::authority::CapabilitySlip {
     let issuer = crate::test_support::test_host_issuer();
     let mut claims = vault
         .ensure_host_root_slip(&issuer)
@@ -536,15 +544,20 @@ fn slip(vault: &Vault, holder: EntityId, class: &str, id: u8) -> crate::authorit
     claims.slip_id = [id; 32];
     claims.holder_ref = holder.to_hex();
     claims.actor_class = Some(class.to_owned());
-    let minted = vault
+    vault
         .mint_capability_slip(&issuer, claims)
-        .expect("mint the slip");
-    let binding = b"room-save";
+        .expect("mint the slip")
+}
+
+/// [`minted`], as the vault verifies it for the host that holds it.
+fn slip(vault: &Vault, holder: EntityId, class: &str, id: u8) -> crate::authority::VerifiedSlip {
+    let issuer = crate::test_support::test_host_issuer();
+    let minted = minted(vault, holder, class, id);
     let signature = issuer
-        .binding_proof(&minted, binding)
+        .binding_proof(&minted, BINDING)
         .expect("binding proof");
     vault
-        .verify_capability_slip(&issuer.public_key(), &minted, binding, &signature)
+        .verify_capability_slip(&issuer.public_key(), &minted, BINDING, &signature)
         .expect("a verified slip")
 }
 
@@ -638,4 +651,66 @@ fn a_later_save_names_its_saver_in_each_copy() {
         copied.initiator_kind,
         crate::off_record::PROMOTE_INITIATOR_ROOM_OWNER
     );
+}
+
+/// H203 (Sol and Astra R2 F1, F4): a slip the owner narrowed and handed on
+/// to another key still names them, but it is not their act. Narrowed to
+/// reading, or to nothing at all, it saves nothing and the room hears
+/// nothing: the save takes only the slip this vault minted, as minted.
+#[test]
+fn a_room_save_refuses_a_slip_the_owner_handed_on() {
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let (_dir, vault) = open_test_vault();
+    let (room, session) = room_off_record(&vault);
+    let run = bind_run(&session, &room);
+    run.dispatch(said(0, "the lighthouse key is under the blue stone"))
+        .expect("the run speaks");
+    let issuer = crate::test_support::test_host_issuer();
+    let helper = SigningKey::from_bytes(&[0x5C; 32]);
+    let mut reading = crate::federation::Scope::top();
+    reading.verbs = crate::federation::ScopeAxis::Some(["read".to_owned()].into());
+    let narrowed = crate::authority::SlipCaveat {
+        scope: Some(reading),
+        ..Default::default()
+    };
+    let handed_on = crate::authority::SlipCaveat {
+        ttl_secs: Some(30),
+        ..Default::default()
+    };
+    for (id, caveat) in [(0xB1, narrowed), (0xB2, handed_on)] {
+        let mut handed = minted(&vault, room.owner, "human", id);
+        issuer
+            .attenuate_to(&mut handed, caveat, helper.verifying_key().to_bytes())
+            .expect("hand the slip on");
+        let signature = helper
+            .sign(&handed.binding_transcript(BINDING).expect("transcript"))
+            .to_bytes();
+        let verified = vault
+            .verify_capability_slip(&issuer.public_key(), &handed, BINDING, &signature)
+            .expect("the helper's verified slip");
+        let refused = session.save_talk_by(room.owner, &verified).err();
+        assert!(
+            matches!(
+                &refused,
+                Some(Error::OffRecord(
+                    crate::error::OffRecordError::OffRecordPromoteUnauthenticated { .. }
+                ))
+            ),
+            "a slip handed on saved the room: {refused:?}"
+        );
+    }
+    assert!(vault.get_raw(&message(0)).expect("read").is_none());
+    let heard = session
+        .record_for(room.owner)
+        .expect("the record")
+        .notices
+        .iter()
+        .filter(|notice| notice.act == OffRecordNoticeAct::SavedTalk)
+        .count();
+    assert_eq!(heard, 0, "the room heard a refused save");
+    let own = slip(&vault, room.owner, "human", 0xB3);
+    session
+        .save_talk_by(room.owner, &own)
+        .expect("the owner's own slip saves");
 }

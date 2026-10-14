@@ -211,6 +211,12 @@ impl<'vault> OffRecordSession<'vault> {
         if route.target() != RouteTarget::Base {
             return Ok(None);
         }
+        // A closed stretch saves nothing more, whoever still holds a route.
+        if state.record.closing || state.gone {
+            return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
+                session_ref: self.session_ref.clone(),
+            }));
+        }
         let saver = state.saver.clone().ok_or(Error::InvariantViolation(
             "a stretch on record has no saver",
         ))?;

@@ -36,6 +36,29 @@ use super::types::{
     OffRecordTalk, OffRecordTalkMessage, OffRecordTalkTurn,
 };
 
+/// Whether this vault's authority log minted `credential` as it shows
+/// itself, holder key and bounds alike. A slip narrowed or handed on to
+/// another key since shows other claims than its mint; and a proof verified
+/// against a snapshot other than this vault's may name a live slip id, but
+/// not the claims this vault minted under it.
+fn minted_as_shown(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    credential: &VerifiedSlip,
+) -> Result<bool> {
+    let shown = credential.claims();
+    let fold = vault.authority_view_readonly_in_txn(txn)?;
+    Ok(fold.slips.mints.get(&shown.slip_id).is_some_and(|mint| {
+        // Verification trims the lifetime left to the moment it ran.
+        let minted = &mint.action.claims;
+        *minted
+            == crate::authority::SlipClaims {
+                ttl_secs: minted.ttl_secs,
+                ..shown.clone()
+            }
+    }))
+}
+
 /// The most notices a room's timeline holds; past it the oldest drop, so a
 /// member repeating an act cannot grow the room without bound.
 const MAX_ROOM_NOTICES: usize = 1024;
@@ -263,10 +286,12 @@ impl OffRecordSession<'_> {
 
     /// Saves the whole talk so far into this vault for `person`, who is in the
     /// room and a live owner of this vault, so the vault is theirs, on
-    /// `credential`, their own person's slip. Every turn they could see that
-    /// nobody saved yet lands in ONE transaction, which checks again that
-    /// they own the vault, that `credential` is live, that they are in the
-    /// room and that their membership shows each turn. The room hears a
+    /// `credential`: their own person's slip, as this vault minted it (not
+    /// narrowed or handed on), able to write with no record bound. Every turn
+    /// they could see that nobody saved yet lands in ONE transaction, which
+    /// checks again that they own the vault, that `credential` is live and
+    /// the slip this vault's authority log minted, that they are in the room
+    /// and that their membership shows each turn. The room hears a
     /// `saved_talk` notice. A person this vault does not belong to is refused
     /// and nothing is written; they keep their copy with
     /// [`Self::export_talk_by`].
@@ -283,8 +308,8 @@ impl OffRecordSession<'_> {
     /// # Errors
     ///
     /// [`OffRecordError::OffRecordPromoteUnauthenticated`] when `credential`
-    /// is not a person's slip naming `person`, when `person` owns no part of
-    /// this vault or when `credential` was revoked or expired,
+    /// is not such a slip of `person`'s, when `person` owns no part of this
+    /// vault or when `credential` was revoked or expired,
     /// [`OffRecordError::OffRecordNotInRoom`] when they are not in the room or
     /// their membership stopped showing a turn; otherwise as
     /// [`Self::promote_turn_as`].
@@ -297,16 +322,24 @@ impl OffRecordSession<'_> {
             })
         };
         // The save names `person` in its receipts, so it runs only on their
-        // own slip: someone else's, or an agent's, saves nothing.
+        // own slip: someone else's, or an agent's, saves nothing. It keeps
+        // the whole talk, so a slip bounded to some records keeps none of it.
         let claims = credential.claims();
+        let mut whole = crate::federation::Scope::top();
+        whole.verbs = credential.scope().verbs.clone();
         if EntityId::from_hex(&claims.holder_ref).ok() != Some(person)
             || claims.actor_class.as_deref() != Some("human")
+            || !credential.allows_verb("write")
+            || !claims.records.is_empty()
+            || !claims.channels.is_empty()
+            || !whole.is_narrowing_of(credential.scope())
         {
             return Err(refused());
         }
         let authority = |vault: &Vault, txn: &heed::RoTxn<'_>| {
             if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &person)?
                 || !vault.capability_slip_is_live_in_txn(txn, credential)?
+                || !minted_as_shown(vault, txn, credential)?
             {
                 return Err(refused());
             }

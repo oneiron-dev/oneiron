@@ -211,6 +211,9 @@ impl SessionOverlay {
         match lifecycle.state {
             OverlayLifecycleState::Live | OverlayLifecycleState::Sealed => {
                 lifecycle.state = OverlayLifecycleState::Closing;
+                // Every route minted before the close is stale from here: a
+                // base write holding one lands nothing once the room closes.
+                lifecycle.mode_generation = next_mode_generation(lifecycle.mode_generation)?;
                 // Wake every installer parked on the segment permit so each re-checks the
                 // terminal lifecycle state and returns the closed error instead of sleeping;
                 // release_segment_writer's notify_one only ever wakes a single waiter.
