@@ -213,3 +213,29 @@ fn an_own_server_gets_the_level_in_its_template_with_the_budget_and_a_hosted_api
         }
     }
 }
+
+/// A reply that names no finish is not a finished one. The decoder used to
+/// fill in `Stop`, which every caller that demands a finished answer (the
+/// policy classifier among them) then read as one.
+#[test]
+fn a_reply_that_names_no_finish_is_not_a_stop() {
+    let answer = json!({ "role": "assistant", "content": "{\"violation\":0}" });
+    for choice in [
+        json!({ "message": answer }),
+        json!({ "message": answer, "finish_reason": null }),
+        json!({ "message": answer, "finish_reason": 7 }),
+    ] {
+        let response = super::parse_openai_chat_response(&json!({ "choices": [choice] }))
+            .expect("the reply decodes");
+        assert_ne!(
+            response.finish_reason,
+            oneiron::FinishReason::Stop,
+            "{choice}"
+        );
+    }
+    let stopped = super::parse_openai_chat_response(&json!({
+        "choices": [{ "message": answer, "finish_reason": "stop" }]
+    }))
+    .expect("the reply decodes");
+    assert_eq!(stopped.finish_reason, oneiron::FinishReason::Stop);
+}

@@ -288,8 +288,11 @@ fn a_reported_skip_never_rides_an_allow() -> Result<()> {
 /// H122, receipt reuse: a hosted pass that halted because the manifest kept
 /// moving left nothing to reuse. A vault-side runner attesting it under
 /// `ProceedReceipted` used to give a later cloud relay a trusted Allow and
-/// no hosted pass; an availability skip under the same posture is still
-/// reusable, the control.
+/// no hosted pass. So did an outage that halted under `Halt` (the runner
+/// supplied the posture), and passes that never ran a hosted policy at all:
+/// BYO, a trusted replay, and a pass with no hosted policy in play. A real
+/// outage the host tolerated under `ProceedReceipted` is still reusable, the
+/// control.
 #[test]
 fn a_halted_hosted_pass_is_never_a_reusable_attestation() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -351,9 +354,111 @@ fn a_halted_hosted_pass_is_never_a_reusable_attestation() -> Result<()> {
     );
     assert_eq!(backend.calls(), 1, "the reuse runs its own hosted pass");
 
+    let outage_under_halt = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &registry,
+        &PolicyModelConfig::default(),
+        Some(tier(&FailingPolicyBackend, &budget)),
+    )?;
+    assert_eq!(
+        outage_under_halt.degraded(),
+        Some(RelayBoundaryDegrade::SafeguardModelUnavailable)
+    );
+    assert!(outage_under_halt.must_halt_relay());
+    let no_hosted_policy = RelayBoundaryPass::classified(
+        PolicyClassifyVerdict::clean_allow(binding, &proceed, PolicyPlane::HostedLegal),
+        None,
+        false,
+        RelayResolution::NoPolicyInPlay,
+    );
+    for (leg, pass) in [
+        ("an outage that halted under Halt", &outage_under_halt),
+        ("a BYO path", &RelayBoundaryPass::NotRelayedByUs),
+        ("a trusted replay", &RelayBoundaryPass::TrustedVaultSide),
+        ("a pass with no hosted policy", &no_hosted_policy),
+    ] {
+        let backend = CountingPolicyBackend::clean();
+        assert_ne!(
+            reuse(pass, &backend)?,
+            RelayBoundaryPass::TrustedVaultSide,
+            "H122: {leg} was attested as a hosted pass"
+        );
+        assert_eq!(
+            backend.calls(),
+            1,
+            "{leg}: the reuse runs its own hosted pass"
+        );
+    }
+
+    let tolerated = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &registry,
+        &proceed,
+        Some(tier(&FailingPolicyBackend, &budget)),
+    )?;
+    assert_eq!(
+        tolerated.degraded(),
+        Some(RelayBoundaryDegrade::SafeguardModelUnavailable)
+    );
+    assert!(!tolerated.must_halt_relay());
     let backend = CountingPolicyBackend::clean();
-    let tolerated = reuse(&degraded_pass(), &backend)?;
-    assert_eq!(tolerated, RelayBoundaryPass::TrustedVaultSide);
+    assert_eq!(
+        reuse(&tolerated, &backend)?,
+        RelayBoundaryPass::TrustedVaultSide
+    );
     assert_eq!(backend.calls(), 0);
+    Ok(())
+}
+
+/// H121, the bare door: the owner tightens a row while the model is
+/// answering, and the model's clean answer is about the policy it replaced.
+/// The bare classify door used to return that `Allow` and receipt it against
+/// the new frontier. Derived again it answers the policy in force; a manifest
+/// that will not settle is `Skipped(PolicyMoving)`, never the old Allow.
+#[test]
+fn a_bare_classify_never_answers_with_a_replaced_policys_allow() -> Result<()> {
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let config = PolicyModelConfig::default();
+    for keep_moving in [true, false] {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
+        let backend = ManifestMovingBackend {
+            vault: &vault,
+            manifest: spoilers_manifest("block"),
+            body: r#"{"violation":0,"policy_category":null}"#,
+            keep_moving,
+            calls: AtomicUsize::new(0),
+        };
+        let verdict = block_on(vault.classify_policy_model_with_backend(
+            request.clone(),
+            &config,
+            &backend,
+            &lease("bare-moving"),
+        ))?;
+        assert_eq!(
+            backend.calls.load(Ordering::SeqCst),
+            2,
+            "derived again, once"
+        );
+        if keep_moving {
+            assert_eq!(
+                verdict.decision,
+                PolicyClassifyDecision::Skipped(PolicySkipReason::PolicyMoving),
+                "H121: a moving manifest answered with the replaced policy's Allow"
+            );
+            let receipts = gate_receipts(&vault)?;
+            assert_eq!(receipts.len(), 1, "the fail-open is receipted");
+        } else {
+            // The control: the second pass read the policy in force, and the
+            // model's clean answer about it is a real Allow.
+            assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+        }
+        assert!(
+            !vault.policy_model_verdict_is_stale_with_config(&verdict, &request, &config)?,
+            "the answer is bound to the frontier in force"
+        );
+    }
     Ok(())
 }

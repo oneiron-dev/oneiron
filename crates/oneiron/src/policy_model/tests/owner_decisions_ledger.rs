@@ -293,18 +293,17 @@ fn an_answer_past_the_byte_bound_is_unreadable_rather_than_deserialized() {
 /// The owner plane re-checks its frontier in the receipt transaction, and
 /// FAILS OPEN when it moved.
 ///
-/// Same window F107 closed on the relay: the verdict binds a frontier and the
-/// row is written later. The answer differs by plane. The hosted plane is
-/// fail-closed, so it degrades and halts. This plane is sovereign — the caller
-/// already has its verdict and has acted on it — so a concurrent manifest edit
-/// must not retroactively overturn it. The row is written either way; it just
-/// carries the frontier it can actually reproduce, and says the frontier moved.
+/// Same window F107 closed on the relay: the verdict binds a frontier, and
+/// the manifest can move before the door hands it out. The bare door does
+/// what the enforcement door does: it derives a stale verdict again, once, so
+/// the answer and its row are the policy in force, not the one the owner just
+/// replaced. (F14 H121: an answer to a replaced policy is no verdict.)
 ///
 /// The manifest moves DURING the model call, which is the window an owner
 /// editing a row lands in. The seed uses the id the moving backend rewrites,
 /// so the frontier moves rather than a second manifest appearing beside it.
 #[test]
-fn a_bare_classify_row_records_a_frontier_that_moved_without_degrading() -> Result<()> {
+fn a_bare_classify_answers_the_manifest_in_force_after_a_mid_call_edit() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("block"))?;
     let backend = ManifestMovingBackend {
@@ -323,15 +322,20 @@ fn a_bare_classify_row_records_a_frontier_that_moved_without_degrading() -> Resu
         &budget,
     ))?;
 
-    // FAIL OPEN: the caller keeps the answer its own policy gave. A manifest
-    // edit landing mid-call does not retroactively overturn it.
-    assert_ne!(verdict.decision, PolicyClassifyDecision::Allow);
+    // The row now says `warn`; the pass that read `block` was derived again.
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Warn);
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
+    assert!(!vault.policy_model_verdict_is_stale_with_config(
+        &verdict,
+        &PolicyClassifyRequest::outbound_content(CLEAN_CONTENT),
+        &PolicyModelConfig::default(),
+    )?);
 
     let receipts = gate_receipts(&vault)?;
     assert_eq!(receipts.len(), 1);
     assert!(
-        has_trace(&receipts[0], "gate.policy_model.owner_plane_frontier_moved"),
-        "the row says the frontier moved rather than asserting a dead one: {:?}",
+        !has_trace(&receipts[0], "gate.policy_model.owner_plane_frontier_moved"),
+        "the row is the re-derived answer, bound to the frontier in force: {:?}",
         receipts[0]
     );
     Ok(())

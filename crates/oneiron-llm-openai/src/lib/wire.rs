@@ -142,10 +142,12 @@ pub fn parse_openai_chat_response(body: &JsonValue) -> LlmResult<LlmResponse> {
         .get("message")
         .and_then(JsonValue::as_object)
         .ok_or(FatalLlmError::EmptyResponse)?;
+    // `Stop` is a claim the provider makes about the reply. A body that names
+    // no finish made none, so it must not read as a finished answer.
     let finish_reason = choice
         .get("finish_reason")
         .and_then(JsonValue::as_str)
-        .map_or(FinishReason::Stop, openai_finish_reason);
+        .map_or_else(unreported_finish_reason, openai_finish_reason);
 
     let mut content = Vec::new();
     if let Some(text) = message.get("content").and_then(JsonValue::as_str)
@@ -327,6 +329,13 @@ pub(crate) fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
             reasoning: reasoning_tokens,
         },
         raw_provider: usage.clone(),
+    }
+}
+
+/// The finish of a reply whose provider reported none.
+fn unreported_finish_reason() -> FinishReason {
+    FinishReason::Other {
+        name: "unreported".to_owned(),
     }
 }
 

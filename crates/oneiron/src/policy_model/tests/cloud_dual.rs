@@ -551,7 +551,7 @@ fn an_attestation_is_evidence_only_under_the_posture_that_made_it() {
     // (the halt lives on the pass), so trusting it would convert a stopped
     // pass into one whose `must_halt_relay` is false.
     let halted = PolicyClassifyVerdict::clean_allow(binding, &halt, PolicyPlane::HostedLegal)
-        .attesting_hosted_plane(&policy, &halt, &degraded_pass());
+        .attesting_hosted_plane(&policy, &halt, &halted_degraded_pass());
     assert!(
         !halted.attests_hosted_plane(&policy, &halt),
         "a degrade under Halt halted the relay; there is no allow to reuse"

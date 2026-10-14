@@ -386,7 +386,8 @@ impl PolicyClassifyVerdict {
 
     /// Marks this verdict as having been decided with `policy`'s hosted legal
     /// plane in play. The vault-side runner calls this so a relay can verify
-    /// the hosted question was asked; nothing else may.
+    /// the hosted question was asked; nothing else may. A `pass` that did not
+    /// ask it, or whose answer halted, leaves the verdict unattested.
     #[must_use]
     pub fn attesting_hosted_plane(
         mut self,
@@ -394,15 +395,20 @@ impl PolicyClassifyVerdict {
         config: &PolicyModelConfig,
         pass: &super::relay::RelayBoundaryPass,
     ) -> Self {
-        // A degrade that halts the relay under either posture (the manifest
-        // moved, no output contract) left no verdict anyone may reuse. The
-        // attestation records only THAT the pass degraded, so minting one
-        // would let a `ProceedReceipted` reuse wave through what this pass
-        // stopped. Unattested, a reuse runs its own hosted pass.
-        if pass
-            .degraded()
-            .is_some_and(|degrade| !degrade.is_model_availability())
-        {
+        // Evidence comes only from a pass that ran the hosted plane over a
+        // hosted policy. A BYO path, a trusted replay and a pass with no
+        // hosted policy in play ran nothing a relay could skip on their word.
+        let super::relay::RelayBoundaryPass::Classified(ran) = pass else {
+            self.hosted_attestation = None;
+            return self;
+        };
+        // A degrade that HALTED the pass left no verdict anyone may reuse:
+        // the manifest moved, no output contract, or an outage under `Halt`.
+        // The attestation records only THAT the pass degraded, so minting one
+        // would let a reuse wave through what this pass stopped. The halt is
+        // read from the pass, where it was resolved, never from the posture
+        // the caller hands in now. Unattested, a reuse runs its own pass.
+        if !ran.hosted_policy_in_play || (ran.degraded.is_some() && ran.degrade_halts) {
             self.hosted_attestation = None;
             return self;
         }
@@ -411,7 +417,14 @@ impl PolicyClassifyVerdict {
             policy_version: policy.version.clone(),
             policy_hash: policy.policy_hash.clone(),
             classifier_mode: Some(config.classifier_mode(PolicyPlane::HostedLegal)),
-            outage_policy: Some(config.hosted_outage_policy),
+            // A degraded pass that did not halt proceeded through an outage,
+            // which only `ProceedReceipted` tolerates; the posture it records
+            // is the one the pass ran under.
+            outage_policy: Some(if ran.degraded.is_some() {
+                super::request::HostedOutagePolicy::ProceedReceipted
+            } else {
+                config.hosted_outage_policy
+            }),
             // DERIVED from the pass, never asserted by the caller. The first
             // version of this took a `bool`, which let a runner mark a
             // degraded pass as model-answered — by mistake or by losing the

@@ -148,7 +148,7 @@ impl Vault {
     ) -> Result<DualPlanePass> {
         let owner_safeguard = safeguard.map(|tier| (tier.backend, tier.lease));
         let (owner, relay) = join2(
-            self.owner_plane_pass(&request, config, owner_safeguard),
+            self.owner_plane_pass_pinned(&request, config, owner_safeguard),
             self.relay_boundary_pass(
                 request.clone(),
                 domain,
