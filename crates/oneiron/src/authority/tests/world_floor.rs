@@ -21,9 +21,15 @@ fn replica_storing(host: &Host, rows: &[&AuthorityLogEntry]) -> (tempfile::TempD
         .import_signed_authority_history(&host.vault.export_signed_authority_history().unwrap())
         .unwrap();
     for row in rows {
-        replica
-            .put_authority_log_entry(row, TimeRange { start: 3, end: 3 }, 3)
-            .unwrap();
+        let put = || replica.put_authority_log_entry(row, TimeRange { start: 3, end: 3 }, 3);
+        match put() {
+            // No door stores a row no admitter signed (H72), such as a
+            // false handoff; the fold's reading of it is the subject here.
+            Err(err) if err.kind() == crate::error::ErrorKind::AuthorityLogSignerPending => {
+                crate::authority::log_budget::with_authority_doors_open_for_test(put).unwrap();
+            }
+            stored => stored.unwrap(),
+        }
     }
     (dir, replica)
 }

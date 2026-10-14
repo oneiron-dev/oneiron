@@ -553,7 +553,6 @@ fn no_agent_writer_root_or_borrowed_key_signs_a_settings_edit() {
         // A key that is no machine's at all.
         edit_by(&host, mine, &ed_key(66), world, widen.clone()),
     ];
-    land(&host, &forged);
     // The host root is the owner's roster key, not a machine.
     let fold = host.vault.authority_fold().unwrap();
     let root_edit = host
@@ -571,7 +570,27 @@ fn no_agent_writer_root_or_borrowed_key_signs_a_settings_edit() {
             2,
         )
         .unwrap();
-    land(&host, std::slice::from_ref(&root_edit));
+    // The door holds each edit no install key of the machine it names
+    // signed (H72). The work machine's own edit names that machine, so it
+    // lands, and only the fold refuses it.
+    for entry in [&forged[0], &forged[2], &root_edit] {
+        let err = host
+            .vault
+            .put_authority_log_entries(&[(entry.clone(), TimeRange { start: 2, end: 2 }, 2)])
+            .unwrap_err();
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::AuthorityLogSignerPending
+        );
+    }
+    land(&host, std::slice::from_ref(&forged[1]));
+    // The fold refuses the held edits too, wherever they are stored.
+    crate::authority::log_budget::with_authority_doors_open_for_test(|| {
+        land(
+            &host,
+            &[forged[0].clone(), forged[2].clone(), root_edit.clone()],
+        );
+    });
 
     let fold = host.vault.authority_fold().unwrap();
     for entry in forged.iter().chain([&root_edit]) {

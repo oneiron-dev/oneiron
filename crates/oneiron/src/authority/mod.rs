@@ -21,6 +21,7 @@
 //! | `fold_schedule` | the per-entry scheduler: the next entry that does not wait |
 //! | `ancestor_index` / `ancestry_bypass` | fold ancestry and revocation bypass |
 //! | `log_budget` | pinned fold-work bounds, the slip issuer, and the store doors' per-signer bound |
+//! | `import_order` | the order an import stages a signed history in for the store doors |
 //! | `entry_transition` | per-entry transition and consent/quorum predicates |
 //! | `op_apply` | applies one op to a fold state |
 //! | `wire_encode` / `wire_decode` | the `rmpv` codec, edited in lockstep |
@@ -42,6 +43,7 @@ mod fold_state;
 mod handoff_equivocation;
 mod history_transfer;
 mod host_re_root;
+mod import_order;
 mod ingest_observation;
 mod install_fold;
 mod log_budget;

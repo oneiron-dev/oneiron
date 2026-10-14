@@ -117,7 +117,7 @@ fn is_handoff(entry: &AuthorityLogEntry) -> bool {
     matches!(entry.op, AuthorityOp::ReRoot { .. })
 }
 
-fn admits_device(op: &AuthorityOp) -> Option<&DeviceAuthority> {
+pub(super) fn admits_device(op: &AuthorityOp) -> Option<&DeviceAuthority> {
     match op {
         AuthorityOp::EnrollDevice { device }
         | AuthorityOp::RotateKey {
@@ -152,7 +152,7 @@ fn signed_by(entry: &AuthorityLogEntry, keys: &BTreeSet<AuthorityKey>) -> bool {
         .any(|signature| keys.contains(&signature.public_key))
 }
 
-fn is_consent_device(device: &DeviceAuthority) -> bool {
+pub(super) fn is_consent_device(device: &DeviceAuthority) -> bool {
     device.roles & (ROLE_OWNER | ROLE_ADMIN) != 0
 }
 
@@ -167,67 +167,118 @@ fn is_consent_device(device: &DeviceAuthority) -> bool {
 pub(super) fn authority_structure<'a>(
     entries: impl Iterator<Item = &'a AuthorityLogEntry>,
 ) -> AuthorityStructure {
-    let mut structure = AuthorityStructure::default();
-    let mut root_roles = 0;
-    let mut admissions: Vec<&'a AuthorityLogEntry> = Vec::new();
-    let mut profiles = Vec::new();
+    let mut builder = StructureBuilder::default();
     for entry in entries {
+        builder.push(entry);
+    }
+    builder.settle();
+    builder.structure
+}
+
+/// [`authority_structure`] grown a row at a time, as an import stages its
+/// rows: the same structure for the same rows, in any order.
+#[derive(Debug, Default)]
+pub(super) struct StructureBuilder<'a> {
+    pub(super) structure: AuthorityStructure,
+    root_roles: u16,
+    /// Owner and admin admissions no admitter has signed yet.
+    admissions: Vec<&'a AuthorityLogEntry>,
+    /// Machine revisions no slip issuer has signed yet.
+    profiles: Vec<&'a AuthorityLogEntry>,
+    /// The admitters and install keys [`Self::settle`] added since the
+    /// caller last took them.
+    pub(super) grown: Vec<Grant>,
+}
+
+/// A key [`StructureBuilder::settle`] let vouch.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Grant {
+    Admitter(AuthorityKey),
+    InstallKey(crate::EntityId, AuthorityKey),
+}
+
+impl<'a> StructureBuilder<'a> {
+    /// Adds `entry` unsettled.
+    pub(super) fn push(&mut self, entry: &'a AuthorityLogEntry) {
         match &entry.op {
             AuthorityOp::Genesis { device, .. } => {
                 if device.key == *entry.signer_key()
                     && is_consent_device(device)
                     && verify_entry_signatures(entry).is_ok()
                 {
-                    structure.roots.insert(device.key.clone());
-                    root_roles |= device.roles;
+                    self.structure.roots.insert(device.key.clone());
+                    self.root_roles |= device.roles;
                 }
             }
-            AuthorityOp::MachineProfile(profile) => profiles.push((entry, profile)),
+            AuthorityOp::MachineProfile(_) => self.profiles.push(entry),
             op => {
                 if admits_device(op).is_some_and(is_consent_device) {
-                    admissions.push(entry);
+                    self.admissions.push(entry);
                 }
             }
         }
     }
-    let Some(root) = structure
-        .roots
-        .first()
-        .filter(|_| structure.roots.len() == 1)
-    else {
-        return structure;
-    };
-    structure.admitters.insert(root.clone());
-    if root_roles & ROLE_OWNER != 0 {
-        structure.issuers.insert(root.clone());
-    }
-    let mut grew = true;
-    while grew {
-        grew = false;
-        admissions.retain(|entry| {
-            if !signed_by(entry, &structure.admitters) {
+
+    /// Admits what the rows pushed so far admit. A log with more than one
+    /// root admits nothing.
+    pub(super) fn settle(&mut self) {
+        let structure = &mut self.structure;
+        let Some(root) = structure
+            .roots
+            .first()
+            .filter(|_| structure.roots.len() == 1)
+            .cloned()
+        else {
+            structure.admitters.clear();
+            structure.issuers.clear();
+            structure.machine_keys.clear();
+            return;
+        };
+        if self.root_roles & ROLE_OWNER != 0 {
+            structure.issuers.insert(root.clone());
+        }
+        if structure.admitters.insert(root.clone()) {
+            self.grown.push(Grant::Admitter(root));
+        }
+        let mut grew = true;
+        while grew {
+            grew = false;
+            self.admissions.retain(|entry| {
+                if !signed_by(entry, &structure.admitters) {
+                    return true;
+                }
+                if verify_entry_signatures(entry).is_ok()
+                    && let Some(device) = admits_device(&entry.op)
+                {
+                    if device.roles & ROLE_OWNER != 0 {
+                        structure.issuers.insert(device.key.clone());
+                    }
+                    if structure.admitters.insert(device.key.clone()) {
+                        self.grown.push(Grant::Admitter(device.key.clone()));
+                        grew = true;
+                    }
+                }
+                false
+            });
+        }
+        self.profiles.retain(|entry| {
+            if !structure.issuers.contains(entry.signer_key()) {
                 return true;
             }
-            if verify_entry_signatures(entry).is_ok()
-                && let Some(device) = admits_device(&entry.op)
+            if let AuthorityOp::MachineProfile(profile) = &entry.op
+                && verify_entry_signatures(entry).is_ok()
             {
-                if device.roles & ROLE_OWNER != 0 {
-                    structure.issuers.insert(device.key.clone());
+                let key = AuthorityKey::Ed25519(profile.machine_key);
+                if structure
+                    .machine_keys
+                    .insert((profile.machine, key.clone()))
+                {
+                    self.grown.push(Grant::InstallKey(profile.machine, key));
                 }
-                grew |= structure.admitters.insert(device.key.clone());
             }
             false
         });
     }
-    for (entry, profile) in profiles {
-        if structure.issuers.contains(entry.signer_key()) && verify_entry_signatures(entry).is_ok()
-        {
-            structure
-                .machine_keys
-                .insert((profile.machine, AuthorityKey::Ed25519(profile.machine_key)));
-        }
-    }
-    structure
 }
 
 impl AuthorityStructure {
@@ -235,7 +286,7 @@ impl AuthorityStructure {
     /// admitter, or, for a world edit, the install key of the machine it
     /// names, as its primary signer. A genesis vouches for itself when it is
     /// this log's only root. The caller verifies the signatures.
-    fn vouches_for(&self, entry: &AuthorityLogEntry) -> bool {
+    pub(super) fn vouches_for(&self, entry: &AuthorityLogEntry) -> bool {
         match &entry.op {
             AuthorityOp::Genesis { device, .. } => {
                 device.key == *entry.signer_key()
@@ -388,83 +439,6 @@ pub(crate) fn signer_has_standing(
         return Ok(true);
     }
     Ok(door_view(store, txn)?.structure.stands(signer))
-}
-
-/// A row the consent structure rests on: a genesis, an owner or admin
-/// admission, or a machine revision.
-fn is_structural(op: &AuthorityOp) -> bool {
-    matches!(
-        op,
-        AuthorityOp::Genesis { .. } | AuthorityOp::MachineProfile(_)
-    ) || admits_device(op).is_some_and(is_consent_device)
-}
-
-/// `rows` (hash, body, entry), each after every row among them it names as
-/// a parent. A store door reads a row's slip issuers from the rows already
-/// staged, so an import stages first the rows the consent structure rests
-/// on, then their other ancestors, then the rest: every row outside that
-/// closure is judged under the whole history's structure, whatever order
-/// the caller gave. Ties keep the order given.
-pub(super) fn parents_first(
-    rows: Vec<(AuthorityEntryHash, Vec<u8>, AuthorityLogEntry)>,
-) -> Vec<(AuthorityEntryHash, Vec<u8>, AuthorityLogEntry)> {
-    let at: BTreeMap<_, _> = rows
-        .iter()
-        .enumerate()
-        .map(|(index, (hash, ..))| (*hash, index))
-        .collect();
-    let parents = |index: usize| {
-        rows[index]
-            .2
-            .parent_hashes
-            .iter()
-            .filter_map(|parent| at.get(parent).copied())
-    };
-    let mut rank = vec![2_u8; rows.len()];
-    let mut stack: Vec<_> = (0..rows.len())
-        .filter(|index| is_structural(&rows[*index].2.op))
-        .collect();
-    for index in &stack {
-        rank[*index] = 0;
-    }
-    while let Some(index) = stack.pop() {
-        for parent in parents(index) {
-            if rank[parent] == 2 {
-                rank[parent] = 1;
-                stack.push(parent);
-            }
-        }
-    }
-    let mut waiting = vec![0_usize; rows.len()];
-    let mut children = vec![Vec::new(); rows.len()];
-    for (index, waiting) in waiting.iter_mut().enumerate() {
-        for parent in parents(index) {
-            *waiting += 1;
-            children[parent].push(index);
-        }
-    }
-    let mut ready: BTreeSet<_> = (0..rows.len())
-        .filter(|index| waiting[*index] == 0)
-        .map(|index| (rank[index], index))
-        .collect();
-    let mut order = Vec::with_capacity(rows.len());
-    while let Some((_, index)) = ready.pop_first() {
-        order.push(index);
-        for child in &children[index] {
-            waiting[*child] -= 1;
-            if waiting[*child] == 0 {
-                ready.insert((rank[*child], *child));
-            }
-        }
-    }
-    // Content addressing leaves no cycle; this only guards the invariant.
-    let placed: BTreeSet<_> = order.iter().copied().collect();
-    order.extend((0..rows.len()).filter(|index| !placed.contains(index)));
-    let mut rows: Vec<_> = rows.into_iter().map(Some).collect();
-    order
-        .into_iter()
-        .filter_map(|index| rows[index].take())
-        .collect()
 }
 
 /// A row that only takes authority away: a revocation, a burn, or a machine

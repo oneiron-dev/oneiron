@@ -624,9 +624,11 @@ fn conflicting_authority_roots_suspend_embedded_export() {
     let (_dir, vault, actor) = owner_vault();
     let (a, _) = authority_root(0x76);
     let (b, _) = authority_root(0x77);
-    vault
-        .put_authority_log_entries(&[(a, test_time(1), 1), (b, test_time(2), 2)])
-        .unwrap();
+    // No door stores a rival genesis (H72); build the conflicted log here.
+    crate::authority::log_budget::with_authority_doors_open_for_test(|| {
+        vault.put_authority_log_entries(&[(a, test_time(1), 1), (b, test_time(2), 2)])
+    })
+    .unwrap();
     assert!(vault.authority_fold().unwrap().vault_root_is_conflicted());
     assert_eq!(
         facade_for(&vault, actor)

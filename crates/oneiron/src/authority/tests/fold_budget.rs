@@ -875,6 +875,182 @@ fn a_history_whose_issuer_admission_is_a_sibling_imports_in_any_order() {
     assert!(!target.authority_fold().unwrap().authority_log_past_bound());
 }
 
+/// Imports `history` into a fresh vault and folds it.
+fn imported(history: &[Vec<u8>]) -> AuthorityFold {
+    let dir = tempfile::tempdir().unwrap();
+    let target = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    target.import_signed_authority_history(history).unwrap();
+    target.authority_fold().unwrap()
+}
+
+/// Bug repro (review round 3, Astra F1): a structural row signed by a key
+/// whose admission is only its sibling, given before that admission, was
+/// held at the import's own door, and the import aborted. A row now waits
+/// for the rows that let a key vouch for it, so every order imports to the
+/// fold the parents-first order gives.
+#[test]
+fn a_revision_whose_signers_admission_is_a_sibling_imports_in_any_order() {
+    let [owner, next] = [128, 129].map(ed_key);
+    let genesis = genesis_entry(128, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let root = authority_entry_hash(&genesis).unwrap();
+    let handoff = sign_ed(
+        unsigned_entry(
+            Some(id),
+            1,
+            vec![root],
+            AuthorityOp::ReRoot {
+                new_device: device(
+                    authority_key_from_ed(&next),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            authority_key_from_ed(&owner),
+            2,
+        ),
+        &owner,
+    );
+    let machine = EntityId::now();
+    let request = request_for(id, machine, &ed_key(130));
+    let profile = sign_ed(
+        unsigned_entry(
+            Some(id),
+            1,
+            vec![root],
+            AuthorityOp::MachineProfile(MachineProfile {
+                machine,
+                owner: EntityId::now(),
+                machine_key: request.machine_key,
+                encryption_key: request.encryption_key,
+                role: MachineRole::Owned(MachineOwnership::Yours),
+                revision: 1,
+                machine_proof: request.machine_proof,
+                seen_world_edits: BTreeSet::new(),
+            }),
+            authority_key_from_ed(&next),
+            3,
+        ),
+        &next,
+    );
+    let folds: Vec<_> = [
+        [&genesis, &handoff, &profile],
+        [&genesis, &profile, &handoff],
+        [&profile, &handoff, &genesis],
+    ]
+    .iter()
+    .map(|order| {
+        let history: Vec<_> = order
+            .iter()
+            .map(|entry| encode_authority_log_entry_body(entry).unwrap())
+            .collect();
+        imported(&history)
+    })
+    .collect();
+    for fold in &folds {
+        assert_eq!(fold.valid_entries, folds[0].valid_entries);
+        assert_eq!(fold.roster, folds[0].roster);
+        assert_eq!(fold.machines, folds[0].machines);
+    }
+}
+
+/// Bug repro (review round 3, Astra F4): an import staged every structural
+/// row ahead of the rest. A machine revision at sequence n + 2 so staged
+/// before its signer's binding at n + 1, its sibling, and the binding was
+/// first observed below that floor: it folded as a rollback
+/// (`NonMonotonicSeq`) and was lost without an error. Each signer's rows
+/// now stage by sequence, so every order imports to the fold the
+/// parents-first order gives, the binding in it.
+#[test]
+fn a_lower_sequence_sibling_of_a_revision_imports_in_any_order() {
+    use super::machine_fold::{host_entry, profile_op};
+    let host = host();
+    let agent = ed_key(93);
+    let fold = host.vault.authority_fold().unwrap();
+    let seq = fold.append_sequences[&host.issuer.public_key()] + 1;
+    let enroll = host_entry(
+        &host,
+        seq,
+        &fold.append_heads,
+        AuthorityOp::EnrollDevice {
+            device: device(
+                authority_key_from_ed(&agent),
+                ROLE_AGENT,
+                AuthorityTier::Software,
+            ),
+        },
+        None,
+    );
+    let parents = BTreeSet::from([authority_entry_hash(&enroll).unwrap()]);
+    let bind = host_entry(
+        &host,
+        seq + 1,
+        &parents,
+        AuthorityOp::BindActor {
+            authority_key: authority_key_from_ed(&agent),
+            actor_ref: EntityId::from_bytes([0x71; 16]).unwrap(),
+            actor_class: "system".into(),
+            epoch: 1,
+        },
+        Some(&agent),
+    );
+    let profile = host_entry(
+        &host,
+        seq + 2,
+        &parents,
+        profile_op(&host, EntityId::now(), &ed_key(94)),
+        None,
+    );
+    let at = TimeRange { start: 2, end: 2 };
+    host.vault
+        .put_authority_log_entries(&[
+            (enroll, at, 2),
+            (bind.clone(), at, 2),
+            (profile.clone(), at, 2),
+        ])
+        .unwrap();
+    let bound = authority_entry_hash(&bind).unwrap();
+    assert!(
+        host.vault
+            .authority_fold()
+            .unwrap()
+            .valid_entries
+            .contains(&bound)
+    );
+
+    let hash_of = |row: &Vec<u8>| {
+        authority_entry_hash(&decode_authority_log_entry_body(row).unwrap()).unwrap()
+    };
+    let [bind_row, profile_row] =
+        [&bind, &profile].map(|entry| encode_authority_log_entry_body(entry).unwrap());
+    let mut parents_first: Vec<_> = host
+        .vault
+        .export_signed_authority_history()
+        .unwrap()
+        .into_iter()
+        .filter(|row| ![bound, authority_entry_hash(&profile).unwrap()].contains(&hash_of(row)))
+        .collect();
+    let mut profile_first = parents_first.clone();
+    parents_first.extend([bind_row.clone(), profile_row.clone()]);
+    profile_first.extend([profile_row, bind_row]);
+    let mut reversed = parents_first.clone();
+    reversed.reverse();
+    let folds = [parents_first, profile_first, reversed].map(|history| imported(&history));
+    for fold in &folds {
+        assert!(
+            fold.valid_entries.contains(&bound),
+            "the binding folded as a rollback: {:?}",
+            fold.issues
+        );
+        assert!(
+            fold.actor_bindings
+                .contains_key(&authority_key_from_ed(&agent))
+        );
+        assert_eq!(fold.valid_entries, folds[0].valid_entries);
+        assert_eq!(fold.machines, folds[0].machines);
+    }
+}
+
 /// Bug repro (review rounds 2 and 3): two replicas at the owner's bound
 /// each demote one machine from the same head, and one of them then
 /// removes it. The door judged the second demotion against the machine as
