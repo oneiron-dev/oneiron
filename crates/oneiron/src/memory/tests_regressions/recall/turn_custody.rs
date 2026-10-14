@@ -31,7 +31,7 @@ fn a_turn_gives_no_words_of_a_message_the_write_door_refuses() {
         )
         .expect("scan off");
     let facade = facade_for(&vault, owner);
-    let turn = witness_turn(&facade, 0xD7, &[PHRASE, KEPT], 1_900);
+    let turn = witness_turn(&facade, 0xD9, &[PHRASE, KEPT], 1_900);
     fill_turn(&vault, &turn, &MEANING);
     let messages = {
         let rtxn = vault.store.env.read_txn().expect("read txn");

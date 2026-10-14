@@ -556,12 +556,17 @@ mod tests {
         }
         // The context writers read what hydration hands them: of a body the
         // write door refuses, nothing, though a map gives it a field to
-        // hydrate (Wonder R1). A body it accepts still hydrates.
+        // hydrate (Wonder R1). The key ends in a stop, so the words after it
+        // still stand alone in the raw bytes. A body it accepts still
+        // hydrates.
         for value in values {
             let mut body = Vec::new();
-            rmpv::encode::write_value(&mut body, &rmpv::Value::Map(vec![("notes".into(), value)]))
-                .unwrap();
-            assert!(crate::batch::secret_scan::scan_write_payload(&body).is_err());
+            let field = rmpv::Value::Map(vec![("notes:".into(), value)]);
+            rmpv::encode::write_value(&mut body, &field).unwrap();
+            assert!(
+                crate::batch::secret_scan::scan_write_payload(&body).is_err(),
+                "{field}"
+            );
             put_asset(&vault, &body)?;
         }
         let mut kept = Vec::new();
