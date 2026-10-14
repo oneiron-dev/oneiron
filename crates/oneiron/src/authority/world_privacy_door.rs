@@ -149,18 +149,10 @@ impl Vault {
         // whether its contenders or named machines still stand may rest on
         // any main-log row (a shared key, custody), and an edit stuck on a
         // replica leaves the world unreadable there (Sol P2 round 5, F2, F3).
-        // A holder tries its own rows in a savepoint first and names the
-        // main-log heads when the fold does not keep the edit on them alone: a
-        // hold may rest on a row they do not carry, such as another machine's
-        // acknowledged edit (Sol P2 round 6, F5).
         let target = match settings.read {
             ReadLocation::OneMachine(target) => Some(target),
             ReadLocation::MyMachines | ReadLocation::Everywhere => None,
         };
-        let holder_rows: BTreeSet<AuthorityEntryHash> = std::iter::once(machine)
-            .chain(target)
-            .filter_map(|id| fold.machine(id).map(|folded| folded.entry))
-            .collect();
         // The edit replaces the live edits it names; a refused edit replaces
         // nothing and is never named. More than one entry may name are
         // replaced a share at a time, each share's edit picking this machine
@@ -174,19 +166,48 @@ impl Vault {
         let picks_this_machine =
             !matches!(settings.read, ReadLocation::OneMachine(only) if only != machine);
         let mut live = Vec::new();
+        let mut authors = BTreeSet::new();
         for hash in fold
             .worlds
             .get(&world)
             .into_iter()
             .flat_map(|folded| folded.live.keys())
         {
-            let picks_this = stored_authority_row(&self.store, txn, hash)?.is_some_and(|row| {
-                matches!(row.op, AuthorityOp::WorldPrivacy(edit)
-                    if edit.settings.read == ReadLocation::OneMachine(machine))
-            });
+            let edit = match stored_authority_row(&self.store, txn, hash)?.map(|row| row.op) {
+                Some(AuthorityOp::WorldPrivacy(edit)) => Some(edit),
+                _ => None,
+            };
+            let picks_this = edit
+                .as_ref()
+                .is_some_and(|edit| edit.settings.read == ReadLocation::OneMachine(machine));
+            authors.extend(edit.map(|edit| edit.machine));
             live.push((!picks_this, *hash));
         }
         live.sort_unstable();
+        // A holder also names the head revisions of the machines whose live
+        // edits its hold reads, while they stay few: whether such an edit
+        // counts may rest on a later revision of its machine (Sol P2 round 6,
+        // F5). It never falls back to the main-log heads, which would carry an
+        // unrelated fenced row into a narrowing of a readable world (Wonder P2
+        // round 4, W3); a hold resting on rows none of these carry refuses,
+        // and the owner marks this machine again.
+        let head = |id: EntityId| fold.machine(id).map(|folded| folded.entry);
+        let standing_rows: BTreeSet<AuthorityEntryHash> = match standing {
+            WorldEditStanding::Holds => {
+                let mut rows: BTreeSet<_> = std::iter::once(machine)
+                    .chain(target)
+                    .filter_map(&head)
+                    .collect();
+                let authors: BTreeSet<_> = authors.into_iter().filter_map(&head).collect();
+                if rows.len() + authors.len() <= MAX_PARENTS / 2 {
+                    rows.extend(authors);
+                }
+                rows
+            }
+            WorldEditStanding::Contends | WorldEditStanding::RepicksOrphan => {
+                fold.append_heads.clone()
+            }
+        };
         let author = |standing_rows: &BTreeSet<AuthorityEntryHash>| {
             let mut live = live.iter().map(|(_, hash)| *hash);
             let mut seq = seq;
@@ -235,27 +256,10 @@ impl Vault {
         } else {
             BTreeSet::new()
         };
-        let held = if standing == WorldEditStanding::Holds {
-            let (rows, entry_hash) = author(&holder_rows)?;
-            let mut savepoint = self.store.env.nested_write_txn(txn)?;
-            let after = self.land_world_edit_in_txn(&mut savepoint, &rows, world, &entry_hash)?;
-            if after.is_some() {
-                savepoint.commit()?;
-            }
-            after.map(|after| (entry_hash, after))
-        } else {
-            None
-        };
-        let (entry_hash, after) = match held {
-            Some(held) => held,
-            None => {
-                let (rows, entry_hash) = author(&fold.append_heads)?;
-                let after = self
-                    .land_world_edit_in_txn(txn, &rows, world, &entry_hash)?
-                    .ok_or_else(invalid_authority)?;
-                (entry_hash, after)
-            }
-        };
+        let (rows, entry_hash) = author(&standing_rows)?;
+        let after = self
+            .land_world_edit_in_txn(txn, &rows, world, &entry_hash)?
+            .ok_or_else(invalid_authority)?;
         Ok(WorldPrivacyChange {
             machine,
             entry_hash,
