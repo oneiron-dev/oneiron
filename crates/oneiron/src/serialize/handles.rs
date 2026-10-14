@@ -1,5 +1,5 @@
 //! Pack-local first-mention rendering. Citation IDs remain revision-qualified metadata.
-use super::pack_entry::PreparedPack;
+use super::pack_entry::{PreparedEntity, PreparedPack};
 use crate::context_pack::ContextPack;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 /// An alias's entity: its short id, its name, and its source id.
 type Handle = (String, String, [u8; 16]);
 
+#[derive(Default)]
 pub(super) struct Handles {
     aliases: HashMap<String, Handle>,
     seen: HashSet<String>,
@@ -104,6 +105,20 @@ impl Handles {
     /// Text outside every row: no alias in it is any entity's own.
     pub(super) fn value(&mut self, value: &mut Value) {
         self.walk(value, None);
+    }
+    /// The rows JSON and TOON build from `entities`, one each, in the order
+    /// they are emitted, each read as its prepared row's own: a serialized
+    /// row's `id` can be a body field's. `id` and `stats` stay as they are.
+    pub(super) fn emitted_rows(&mut self, entities: &[PreparedEntity], rows: &mut [Value]) {
+        for (entity, row) in entities.iter().zip(rows) {
+            if let Value::Object(map) = row {
+                for (key, value) in map {
+                    if key != "stats" && key != "id" {
+                        self.walk(value, Some((entity.source_id, key.as_str())));
+                    }
+                }
+            }
+        }
     }
     pub(super) fn rows(&mut self, groups: &mut super::pack_entry::PreparedGroups, table: bool) {
         for (_, rows) in groups {

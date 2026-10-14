@@ -198,21 +198,17 @@ pub(super) fn serialize_prepared_pack(
         prepared.results.is_empty() && prepared.neighbors.is_empty() && prepared.l2_base.is_none();
     let l2_base = prepared.l2_base.clone();
     let mut handles = super::handles::Handles::new(pack, &mut prepared);
-    // Rows render before any format builds them, each with its own source
-    // id: a serialized row's `id` can be a body field's.
-    let table = !matches!(
-        config.format,
-        PackFormat::Json | PackFormat::Toon | PackFormat::Yaml
-    );
-    handles.rows(&mut prepared.results, table);
-    handles.rows(&mut prepared.neighbors, table);
+    if !matches!(config.format, PackFormat::Json | PackFormat::Toon) {
+        handles.rows(&mut prepared.results, config.format != PackFormat::Yaml);
+        handles.rows(&mut prepared.neighbors, config.format != PackFormat::Yaml);
+    }
     let bytes = match config.format {
         PackFormat::OpenaiCompat | PackFormat::AnthropicMessages | PackFormat::Gemini => {
             super::provider_codecs::serialize_provider(config.format, prepared)
         }
         PackFormat::Json => serialize_json(pack, config, prepared, &mut handles),
         PackFormat::Yaml => serialize_yaml(config, prepared).into_bytes(),
-        PackFormat::Toon => serialize_toon(config, prepared).into_bytes(),
+        PackFormat::Toon => serialize_toon(config, prepared, &mut handles).into_bytes(),
         PackFormat::Markdown => serialize_markdown(config, prepared).into_bytes(),
         PackFormat::Plaintext => serialize_plaintext(config, prepared).into_bytes(),
     };
@@ -311,19 +307,18 @@ fn serialize_json(
             if entities.is_empty() {
                 continue;
             }
-            root.insert(
-                group_key(kind).to_owned(),
-                Value::Array(json_rows(&entities, true)),
-            );
+            let mut rows = json_rows(&entities, true);
+            handles.emitted_rows(&entities, &mut rows);
+            root.insert(group_key(kind).to_owned(), Value::Array(rows));
         }
     } else {
         root.insert(
             "results".to_owned(),
-            Value::Object(section_object(&prepared.results, true)),
+            Value::Object(section_object(&prepared.results, true, handles)),
         );
         root.insert(
             "neighbors".to_owned(),
-            Value::Object(section_object(&prepared.neighbors, true)),
+            Value::Object(section_object(&prepared.neighbors, true, handles)),
         );
     }
 
@@ -340,13 +335,17 @@ fn serialize_json(
     serde_json::to_vec(&Value::Object(root)).unwrap_or_else(|_| b"{}".to_vec())
 }
 
-fn serialize_toon(config: &SerializeConfig, prepared: PreparedPack) -> String {
+fn serialize_toon(
+    config: &SerializeConfig,
+    prepared: PreparedPack,
+    handles: &mut super::handles::Handles,
+) -> String {
     let mut out = String::new();
     if prepared.merged {
-        out.push_str(&encode_toon_section(&prepared.results));
+        out.push_str(&encode_toon_section(&prepared.results, handles));
     } else {
-        let results = encode_toon_section(&prepared.results);
-        let neighbors = encode_toon_section(&prepared.neighbors);
+        let results = encode_toon_section(&prepared.results, handles);
+        let neighbors = encode_toon_section(&prepared.neighbors, handles);
 
         if !results.is_empty() {
             out.push_str(&results);

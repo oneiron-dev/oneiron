@@ -709,6 +709,76 @@ fn an_entitys_own_id_under_a_body_id_or_name_key_never_becomes_its_name() {
 }
 
 #[test]
+fn json_and_toon_name_an_entity_at_the_first_mention_they_emit() {
+    // Sol R7: JSON and TOON read a row's fields in the order they emit them,
+    // so an entity's first emitted mention carries its name: past a body
+    // field `id` or `stats`, which stays as it is, and where a body `score`
+    // takes the place JSON gives the row's score.
+    let person = EntityId::from_bytes_unchecked([0x9a; 16]);
+    let hex = person.to_hex();
+    let entity = |id: EntityId, short_id: &str, entity_type: u8, fields: &Value| ContextEntity {
+        source_revision_ref: None,
+        critical: false,
+        id,
+        short_id: short_id.to_owned(),
+        content_hash: 0x01,
+        entity_type,
+        score: 0.5,
+        fields: fields
+            .as_object()
+            .map(|map| map.clone().into_iter().collect()),
+        edges: None,
+        vector: None,
+    };
+    // The body, and whether the person's id stands in it as it is.
+    for (fields, verbatim) in [
+        (
+            serde_json::json!({ "id": hex, "ztext": format!("zebra {hex}") }),
+            true,
+        ),
+        (
+            serde_json::json!({ "stats": hex, "ztext": format!("zebra {hex}") }),
+            true,
+        ),
+        (
+            serde_json::json!({ "about": format!("yak {hex}"), "score": format!("zebra {hex}") }),
+            false,
+        ),
+    ] {
+        let pack = ContextPack {
+            capabilities: Vec::new(),
+            l2_base: None,
+            retrieval_quality: Default::default(),
+            results: vec![entity(
+                EntityId::from_bytes_unchecked([0x99; 16]),
+                "as01",
+                crate::registry::ENTITY_TYPE_ASSET,
+                &fields,
+            )],
+            neighbors: vec![entity(
+                person,
+                "pe01",
+                crate::registry::ENTITY_TYPE_PERSON,
+                &serde_json::json!({ "name": "Alice" }),
+            )],
+            stats: empty_stats(),
+            empty: None,
+        };
+        for format in [PackFormat::Json, PackFormat::Toon] {
+            let config = SerializeConfig {
+                merge_neighbors: false,
+                ..savings_config(format, FieldProfile::Full)
+            };
+            let text = String::from_utf8_lossy(&serialize_pack(&pack, &config)).into_owned();
+            let case = format!("{fields} {format:?}: {text}");
+            let first = text.find("pe01").expect(&case);
+            assert!(text[..first].ends_with("Alice ("), "{case}");
+            assert_eq!(text.contains(&hex), verbatim, "{case}");
+        }
+    }
+}
+
+#[test]
 fn another_entitys_identity_key_holding_a_short_id_still_becomes_its_name() {
     // Sol R2: the own-alias rule kept every identity key that holds a short
     // id out of the aliases, another entity's too; Sol R4: or its own.
