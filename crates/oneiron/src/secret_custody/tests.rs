@@ -937,7 +937,7 @@ fn a_peer_replay_cannot_rewrite_a_custody_record() -> crate::Result<()> {
     rolled_back.value_bytes = b"owner-first".to_vec();
     let mut revived = stored(&dead)?;
     revived.status = SecretCustodyStatus::Active;
-    let mut renamed = current.clone();
+    let mut renamed = current;
     renamed.name = "renamed".to_owned();
     let squatter = record("rotated", CustodyClass::CustodyPortable, b"peer", vec![]);
     let cases = [
@@ -949,9 +949,11 @@ fn a_peer_replay_cannot_rewrite_a_custody_record() -> crate::Result<()> {
         ("live name under a new id", EntityId::now(), squatter),
     ];
     let ts = TimeRange { start: 1, end: 1 };
+    // Every case runs, so a failure names each rewrite the door let through.
+    let mut admitted = Vec::new();
     for (case, id, incoming) in cases {
         let before = vault.get_raw_unsealed(&id)?;
-        let err = vault
+        let result = vault
             .batch()
             .put_replicated(
                 &id,
@@ -960,14 +962,16 @@ fn a_peer_replay_cannot_rewrite_a_custody_record() -> crate::Result<()> {
                 1,
                 &encode_secret_custody_body(&incoming)?,
             )
-            .commit()
-            .expect_err(case);
-        assert!(
-            matches!(err, Error::Secret(SecretError::InvalidSecretCustodyBody(_))),
-            "{case}: {err:?}"
-        );
-        assert_eq!(vault.get_raw_unsealed(&id)?, before, "{case}");
+            .commit();
+        if !matches!(
+            result,
+            Err(Error::Secret(SecretError::InvalidSecretCustodyBody(_)))
+        ) || vault.get_raw_unsealed(&id)? != before
+        {
+            admitted.push(format!("{case}: {result:?}"));
+        }
     }
+    assert!(admitted.is_empty(), "{admitted:#?}");
     assert_eq!(vault.resolve_secret_ref("rotated")?, Some(live));
     assert_eq!(vault.resolve_secret_ref("renamed")?, None);
     let txn = vault.store.env.write_txn()?;

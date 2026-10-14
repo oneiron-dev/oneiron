@@ -105,6 +105,8 @@ pub(super) fn validate_put_type(
     if !(allow_maintenance && allow_reserved_predicate) {
         crate::sync::residence::require_promoted_for_cached_id(store, wtxn, id)?;
     }
+    #[cfg(not(feature = "sync"))]
+    let _ = id;
     Ok(entity_type)
 }
 

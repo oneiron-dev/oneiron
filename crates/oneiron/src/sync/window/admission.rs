@@ -18,7 +18,8 @@ use crate::{Error, Result};
 ///
 /// Inspect the incoming operation range, not just final map state: a put
 /// followed by a delete still carries the refused body in wire history.
-/// A snapshot also carries live state outside its retained operation range.
+/// A snapshot also carries live state, and a shallow one its root state,
+/// outside its retained operation range.
 /// Missing causal dependencies are refused rather than relaying uninspected
 /// pending operations; a peer can negotiate the missing prefix and retry.
 pub fn validate_window_update_locality(doc: &LoroDoc, update: &[u8]) -> Result<()> {
@@ -159,6 +160,23 @@ fn validate_window_update(
         });
         if let Some(error) = refused {
             return Err(error);
+        }
+        // A shallow snapshot also carries the state at its root, where a
+        // carrier deleted after the root survives outside the retained ops.
+        if candidate.is_shallow() {
+            candidate
+                .checkout(&candidate.shallow_since_frontiers())
+                .map_err(decode_error)?;
+            let mut at_root = None;
+            map_for_each_value_bytes(&candidate.get_map("entities"), |_, blob| {
+                if at_root.is_none() {
+                    at_root = blob.and_then(local_only);
+                }
+            });
+            candidate.checkout_to_latest();
+            if let Some(error) = at_root {
+                return Err(error);
+            }
         }
         if misplaced {
             return Err(Error::InvalidConfig(

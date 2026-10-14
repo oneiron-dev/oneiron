@@ -3887,10 +3887,22 @@ fn local_only_update_admission_is_side_effect_free_and_checks_hidden_history() -
             ))
             .unwrap();
         assert!(refused(validate_window_update_locality(&doc, &shallow)));
+        map_insert_bytes(&source.get_map("entities"), "after-carrier", b"ordinary")?;
+        source.commit();
+        let root = source.oplog_frontiers();
         map_delete(&source.get_map("entities"), raw_key)?;
         source.commit();
         let hidden = source.export(loro::ExportMode::updates(&before)).unwrap();
         assert!(refused(validate_window_update_locality(&doc, &hidden)));
+        // Rooted between the insert and the delete, a shallow snapshot keeps
+        // the carrier only in its root state.
+        let rooted = source
+            .export(loro::ExportMode::shallow_snapshot(&root))
+            .unwrap();
+        assert!(refused(validate_window_update_locality(&doc, &rooted)));
+        // So does a full snapshot, in its history.
+        let full = source.export(loro::ExportMode::Snapshot).unwrap();
+        assert!(refused(validate_window_update_locality(&doc, &full)));
         assert_eq!(doc.oplog_vv(), before);
         assert!(map_get_bytes(&doc.get_map("entities"), raw_key).is_none());
     }
