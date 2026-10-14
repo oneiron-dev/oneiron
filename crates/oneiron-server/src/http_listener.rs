@@ -23,7 +23,7 @@ use std::time::Duration;
 use axum::body::{Body, Bytes};
 use axum::extract::ConnectInfo;
 use axum::{BoxError, Router};
-use hyper::body::{Body as _, Frame, Incoming, SizeHint};
+use hyper::body::{Frame, Incoming, SizeHint};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::service::TowerToHyperService;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
