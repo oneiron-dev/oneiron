@@ -136,10 +136,23 @@ impl EngineNativeExecutor<'_> {
         let session = crate::code_run::executor_compaction_session_id(run_ref, run_id)?;
         let turn_id = crate::code_run::executor_speech_turn_id_for_run(run_ref, run_id)?;
         let budget = driver.summary_token_budget();
-        let limit = driver.backend().window_token_limit(budget);
+        // The backend reads the rendered input: each step's JSON frame,
+        // escapes included, beside the pins. That, not the steps' raw text,
+        // sizes the window.
+        let room = driver.backend().input_token_limit(budget);
+        let oversized = || {
+            crate::Error::InvalidConfig(
+                "the compaction backend cannot take the next step's output whole".into(),
+            )
+        };
         let mut window = Vec::new();
         let mut pins: Vec<String> = Vec::new();
-        let mut sealed = 0_u64;
+        // Two counts kept by parts, each part counted once: the pins as the
+        // summary holds them, a line each, and the rendered input. Parts run
+        // a token or so over their joined whole, so a count past its bound is
+        // counted whole before it turns a step away, and goes on from there.
+        let mut pin_lines = 0_u64;
+        let mut input = None;
         for seq in start..=watermark {
             let message = super::compaction::window_message(
                 super::compaction::step_message_id(run_id, seq),
@@ -148,26 +161,62 @@ impl EngineNativeExecutor<'_> {
                 load_utf8_output(&self.storage, record, &script_output_path(seq))?,
                 load_utf8_output(&self.storage, record, &observation_output_path(seq))?,
             );
-            sealed = sealed.saturating_add(message.tokens);
-            let pin = super::compaction::failure_pin(&message.content);
+            // A line several steps fail with is one pin, kept once.
+            let pin =
+                super::compaction::failure_pin(&message.content).filter(|pin| !pins.contains(pin));
+            let mut added = crate::compaction::compaction_step_input_tokens(&message);
+            if let Some(pin) = &pin {
+                pin_lines = pin_lines.saturating_add(count_context_pack_tokens(pin) as u64 + 1);
+                added = added.saturating_add(crate::compaction::compaction_pin_input_tokens(pin));
+            }
+            let pinned = pin.is_some();
+            pins.extend(pin);
+            window.push(message);
             // The summary holds every pin whole, inside its budget.
-            let unpinnable = pin.is_some() && {
-                let held = pins.iter().chain(&pin).map(String::as_str);
-                count_context_pack_tokens(&held.collect::<Vec<_>>().join("\n")) as u64 > budget
-            };
-            if limit.is_some_and(|limit| sealed > limit) || unpinnable {
+            if pinned && pin_lines > budget {
+                pin_lines = count_context_pack_tokens(&pins.join("\n")) as u64;
+            }
+            let unpinnable = pinned && pin_lines > budget;
+            let mut fits = !unpinnable;
+            if fits && let Some(room) = room {
+                let whole =
+                    || crate::compaction::compaction_input_tokens(start, &window, &pins, budget);
+                let counted = match input.map(|counted: u64| counted.saturating_add(added)) {
+                    Some(counted) if counted <= room => counted,
+                    _ => whole(),
+                };
+                fits = counted <= room;
+                input = Some(counted);
+            }
+            if !fits {
+                window.pop();
+                if pinned {
+                    pins.pop();
+                }
                 if window.is_empty() {
-                    return Err(crate::Error::InvalidConfig(if unpinnable {
-                        "the next step's failure line does not fit a summary".into()
+                    return Err(if unpinnable {
+                        crate::Error::InvalidConfig(
+                            "the next step's failure line does not fit a summary".into(),
+                        )
                     } else {
-                        "the compaction backend cannot take the next step's output whole".into()
-                    })
+                        oversized()
+                    }
                     .into());
                 }
                 break;
             }
-            pins.extend(pin);
-            window.push(message);
+        }
+        // The backend takes the joined input whole or not at all: it is
+        // counted whole once more, and a step it does not hold waits for the
+        // next pass.
+        while let Some(room) = room
+            && crate::compaction::compaction_input_tokens(start, &window, &pins, budget) > room
+        {
+            window.pop();
+            if window.is_empty() {
+                return Err(oversized().into());
+            }
+            pins = super::compaction::window_pins(&window);
         }
         // The host's own words: the run's speech, and every epoch its
         // requests rendered (each prior epoch of the run).
