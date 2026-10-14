@@ -11,10 +11,10 @@ use rmpv::Value;
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimBody, ClaimSubject};
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
-use crate::side_table::{self, HexId, Raw, SideTable};
+use crate::side_table::{self, HexId, Raw, SideKey, SideTable};
 use crate::store::Store;
 
 use super::provenance::BLOB_VERSION_CLAIM_PREDICATE;
@@ -28,6 +28,11 @@ type ContentHash = [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN];
 /// replicated claims alike, and removed with the claim.
 const VERSION_CLAIM: SideTable<(ContentHash, EntityId), EntityId, Raw> =
     SideTable::new(&side_table::BLOB_ARTIFACT_VERSION_CLAIM);
+
+/// The same rows keyed by artifact, so an artifact's delete reads its own bytes without a scan.
+/// Key: id16 (artifact) + bytes32 + id16 (claim).
+const CLAIMED_HASH: SideTable<(EntityId, ContentHash, EntityId), (), Raw> =
+    SideTable::new(&side_table::BLOB_ARTIFACT_CLAIMED_HASH);
 
 /// The artifact and content hash `body` names, when it is a `blob.version` claim.
 fn version_claim_reference(body: &ClaimBody) -> Option<(EntityId, ContentHash)> {
@@ -50,18 +55,22 @@ fn version_claim_reference(body: &ClaimBody) -> Option<(EntityId, ContentHash)> 
         })
 }
 
-/// Projects one claim put. Returns the key written, for the claim's projection reverse index.
+/// Projects one claim put. Returns the keys written, for the claim's projection reverse index.
 pub(crate) fn project_version_claim(
     store: &Store,
     txn: &mut RwTxn<'_>,
     claim: EntityId,
     body: &ClaimBody,
-) -> Result<Option<Vec<u8>>> {
+) -> Result<Vec<Vec<u8>>> {
     let Some((artifact, hash)) = version_claim_reference(body) else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     VERSION_CLAIM.put(store, txn, &(hash, claim), &artifact)?;
-    Ok(Some(VERSION_CLAIM.key_bytes(&(hash, claim))))
+    CLAIMED_HASH.put(store, txn, &(artifact, hash, claim), &())?;
+    Ok(vec![
+        VERSION_CLAIM.key_bytes(&(hash, claim)),
+        CLAIMED_HASH.key_bytes(&(artifact, hash, claim)),
+    ])
 }
 
 /// Removes the row at `key` from a claim's projection reverse index. `false` when the key
@@ -72,20 +81,25 @@ pub(crate) fn remove_version_claim_projection(
     claim: EntityId,
     key: &[u8],
 ) -> Result<bool> {
-    let Some(tail) = key.strip_prefix(VERSION_CLAIM.decl().prefix) else {
-        return Ok(false);
-    };
     let corrupt = || Error::CorruptedIndex("claim projection reverse key");
-    let (hash, tail_id) = tail
-        .split_at_checked(BLOB_ARTIFACT_CONTENT_HASH_LEN)
-        .ok_or_else(corrupt)?;
-    let tail_id: [u8; ENTITY_ID_LEN] = tail_id.try_into().map_err(|_| corrupt())?;
-    if EntityId::from_bytes(tail_id)? != claim {
-        return Err(corrupt());
+    if let Some(tail) = key.strip_prefix(VERSION_CLAIM.decl().prefix) {
+        let (hash, named) = <(ContentHash, EntityId)>::decode_key(tail).ok_or_else(corrupt)?;
+        if named != claim {
+            return Err(corrupt());
+        }
+        VERSION_CLAIM.delete(store, txn, &(hash, claim))?;
+        return Ok(true);
     }
-    let hash = ContentHash::try_from(hash).map_err(|_| corrupt())?;
-    VERSION_CLAIM.delete(store, txn, &(hash, claim))?;
-    Ok(true)
+    if let Some(tail) = key.strip_prefix(CLAIMED_HASH.decl().prefix) {
+        let (artifact, hash, named) =
+            <(EntityId, ContentHash, EntityId)>::decode_key(tail).ok_or_else(corrupt)?;
+        if named != claim {
+            return Err(corrupt());
+        }
+        CLAIMED_HASH.delete(store, txn, &(artifact, hash, claim))?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 /// The content hashes the `blob.version` claims here name for `artifact`.
@@ -95,9 +109,9 @@ pub(super) fn claimed_hashes(
     artifact: &EntityId,
 ) -> Result<Vec<ContentHash>> {
     let mut hashes = Vec::new();
-    for row in VERSION_CLAIM.iter_from(store, txn, &[])? {
-        let ((hash, _), named) = row?;
-        if named == *artifact && !hashes.contains(&hash) {
+    for row in CLAIMED_HASH.iter_from(store, txn, artifact.as_bytes())? {
+        let ((_, hash, _), ()) = row?;
+        if !hashes.contains(&hash) {
             hashes.push(hash);
         }
     }
@@ -149,6 +163,7 @@ pub(super) fn fence_released_asset(
 /// Lifts the fence on a replicated artifact ASSET whose bytes an artifact live here holds again:
 /// the same bytes uploaded anew, or a version claim that arrived after its artifact's delete.
 /// The caller has checked that no tombstone names the ASSET. A hard-delete marker stays final.
+#[cfg(feature = "sync")]
 pub(crate) fn readmit_held_asset_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -167,7 +182,8 @@ pub(crate) fn readmit_held_asset_in_txn(
     {
         return Ok(());
     }
-    crate::deletion::ROW_DELETION_FENCE.delete(store, txn, &key)
+    crate::deletion::ROW_DELETION_FENCE.delete(store, txn, &key)?;
+    Ok(())
 }
 
 #[cfg(test)]

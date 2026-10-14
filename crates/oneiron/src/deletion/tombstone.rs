@@ -377,7 +377,10 @@ pub(crate) const IDENTITY_SOFT_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
 /// local apply failed. Only a local recreation lifts it, in the transaction
 /// that writes the new row. A peer's put never lifts it and is refused while
 /// it stands, so delete wins whatever a window's mutable tombstone map or the
-/// payload length later say. Presence-only, empty value.
+/// payload length later say. The one exception is a blob artifact's version
+/// bytes: their id is the hash of the bytes, and a peer's copy is admitted
+/// again once an artifact live here holds them
+/// (`blob_artifact::readmit_held_asset_in_txn`). Presence-only, empty value.
 pub(crate) const ROW_DELETION_FENCE: SideTable<HexId, Vec<u8>, Raw> =
     SideTable::new(&side_table::DELETION_ROW_FENCE);
 

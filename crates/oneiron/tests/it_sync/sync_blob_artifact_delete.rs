@@ -3,7 +3,7 @@
 
 #![allow(clippy::unwrap_used)]
 
-use loro::VersionVector;
+use loro::{ExportMode, LoroDoc, VersionVector};
 use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use oneiron::edge::EdgeActorClass;
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
@@ -11,7 +11,9 @@ use oneiron::sync::types::WindowKey;
 use oneiron::sync::window;
 use oneiron::{DeleteReason, EntityId, Vault, WriteActor};
 
-use crate::sync_harness::{T0, TestNode, WINDOW, exchange, time_range, vault_pair};
+use crate::sync_harness::{
+    T0, TestNode, WINDOW, exchange, map_get_bytes, map_insert_bytes, time_range, vault_pair,
+};
 
 const UNIQUE: &[u8] = b"H125 bytes only the deleted artifact held";
 const SHARED: &[u8] = b"H125 bytes two artifacts hold";
@@ -83,8 +85,9 @@ fn carries(node: &TestNode, asset: &EntityId) -> bool {
 
 /// Bug repro (H125) and done-means: B holds A's artifact as a replica, with no version chain of
 /// its own. Deleting the artifact on A must take the bytes only it held off B as well, and no
-/// rematerialization may bring them back; bytes another live artifact holds stay on both vaults
-/// until that artifact goes too. Uploading the same bytes again afterwards still reaches B.
+/// stale carrier may bring them back, whether a rematerialization reads it from the window or a
+/// lagging peer puts it back; bytes another live artifact holds stay on both vaults until that
+/// artifact goes too. Uploading the same bytes again afterwards still reaches B.
 #[test]
 fn a_deleted_artifact_takes_its_version_bytes_off_every_replica() {
     let (mut a, mut b) = vault_pair();
@@ -97,6 +100,8 @@ fn a_deleted_artifact_takes_its_version_bytes_off_every_replica() {
         holds(&b, &unique) && holds(&b, &shared),
         "the version bytes reach B"
     );
+    let stale = map_get_bytes(&a.doc(WINDOW).get_map("entities"), &unique.to_hex())
+        .expect("A's window carries the unique bytes");
     let own = upload(&mut b, T0 + 10, &[SHARED]);
     exchange(&a, &b, WINDOW);
 
@@ -115,8 +120,20 @@ fn a_deleted_artifact_takes_its_version_bytes_off_every_replica() {
         );
     }
 
-    // The export door takes the dropped carrier out of each live document, and no
-    // rematerialization brings the bytes back.
+    // Each window still carries the dropped bytes until its export door runs: rematerializing
+    // from that stale carrier does not bring them back.
+    for node in [&a, &b] {
+        assert!(carries(node, &unique), "{}: the stale carrier", node.name);
+        window::forward_rematerialize(&node.vault, node.doc(WINDOW), &node.materializer, &key)
+            .unwrap();
+        assert!(
+            !holds(node, &unique),
+            "{}: rematerialization resurrected the deleted bytes",
+            node.name
+        );
+    }
+
+    // The export door takes the dropped carrier out of each live document.
     for node in [&a, &b] {
         window::export_window_updates_since(
             &node.vault,
@@ -133,14 +150,25 @@ fn a_deleted_artifact_takes_its_version_bytes_off_every_replica() {
             "{}: the window still carries the deleted bytes",
             node.name
         );
-        window::forward_rematerialize(&node.vault, node.doc(WINDOW), &node.materializer, &key)
-            .unwrap();
-        assert!(
-            !holds(node, &unique),
-            "{}: rematerialization resurrected the deleted bytes",
-            node.name
-        );
     }
+
+    // A lagging peer that never saw the delete puts the carrier back: B still refuses it.
+    let lagging = LoroDoc::new();
+    lagging.set_peer_id(3).unwrap();
+    lagging
+        .import(&b.doc(WINDOW).export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    map_insert_bytes(&lagging.get_map("entities"), &unique.to_hex(), &stale);
+    lagging.commit();
+    let behind = b.doc(WINDOW).oplog_vv();
+    b.doc(WINDOW)
+        .import(&lagging.export(ExportMode::updates(&behind)).unwrap())
+        .unwrap();
+    assert!(carries(&b, &unique), "the lagging peer's carrier reached B");
+    assert!(
+        !holds(&b, &unique),
+        "a lagging peer's stale carrier resurrected the deleted bytes"
+    );
 
     // The last artifact holding the shared bytes goes on B: they leave both vaults.
     delete_artifact(&mut b, &own);

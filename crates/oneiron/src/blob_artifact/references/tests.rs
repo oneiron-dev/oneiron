@@ -2,6 +2,7 @@ use super::*;
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+use crate::deletion::DeleteReason;
 use crate::edge::EdgeActorClass;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use crate::temporal::TimeRange;
@@ -12,11 +13,18 @@ fn at(t: u64) -> TimeRange {
     TimeRange { start: t, end: t }
 }
 
-type Row = ((ContentHash, EntityId), EntityId);
+/// Both keyings of the projection: by content hash, and by artifact.
+type Rows = (
+    Vec<((ContentHash, EntityId), EntityId)>,
+    Vec<(EntityId, ContentHash, EntityId)>,
+);
 
-fn projection(vault: &Vault) -> Result<Vec<Row>> {
+fn projection(vault: &Vault) -> Result<Rows> {
     let txn = vault.store.env.read_txn()?;
-    VERSION_CLAIM.iter_from(&vault.store, &txn, &[])?.collect()
+    Ok((
+        VERSION_CLAIM.scan(&vault.store, &txn)?,
+        CLAIMED_HASH.scan_keys(&vault.store, &txn, &[])?,
+    ))
 }
 
 /// Copies `id`'s stored row to `target` through the replicated put door.
@@ -74,8 +82,10 @@ fn the_version_claim_projection_rebuilds_from_the_claim_rows() -> Result<()> {
         claims.push(version.claim_id);
     }
     let rows = projection(&origin)?;
-    assert_eq!(rows.len(), 2, "one row per version claim");
-    assert!(rows.iter().all(|(_, named)| *named == artifact));
+    assert_eq!(rows.0.len(), 2, "one row per version claim");
+    assert_eq!(rows.1.len(), 2, "one row per version claim");
+    assert!(rows.0.iter().all(|(_, named)| *named == artifact));
+    assert!(rows.1.iter().all(|(named, _, _)| *named == artifact));
 
     let (_replica_dir, replica) = open_test_vault_with(embedding_test_config());
     replicate(&origin, &replica, &[person, artifact])?;
@@ -86,5 +96,13 @@ fn the_version_claim_projection_rebuilds_from_the_claim_rows() -> Result<()> {
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CLAIM))
     );
     assert_eq!(projection(&replica)?, rows);
+
+    // A claim's delete takes its rows out of both keyings.
+    replica.delete_entity_with_reason(&claims[0], DeleteReason::UserHardDelete)?;
+    let (by_hash, by_artifact) = projection(&replica)?;
+    assert_eq!(by_hash.len(), 1);
+    assert_eq!(by_artifact.len(), 1);
+    assert_eq!(by_hash[0].0.1, claims[1]);
+    assert_eq!(by_artifact[0].2, claims[1]);
     Ok(())
 }
