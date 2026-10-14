@@ -79,6 +79,8 @@ fn mint(
                 kind,
                 actor_ref: actor,
                 assigned_ref: None,
+                actor_generation: None,
+                assigned_generation: None,
                 occurred_at: 10,
             },
         )

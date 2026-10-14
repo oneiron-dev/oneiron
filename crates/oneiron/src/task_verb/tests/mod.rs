@@ -59,6 +59,8 @@ mod cancel;
 mod consult_fanout;
 mod consult_ladder;
 mod consult_lifecycle;
+mod consult_party;
+mod consult_party_migration;
 mod create_admission;
 mod magistrate_route_result;
 mod presence_scan;

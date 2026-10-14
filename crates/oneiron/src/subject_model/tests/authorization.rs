@@ -97,6 +97,36 @@ pub(crate) fn root_owner(vault: &Vault, owner: WriteActor, seed: u8) -> Result<A
     Ok(revoke)
 }
 
+/// The signed regrant of `owner`'s binding after [`root_owner`]'s `revoke`:
+/// the same key binds it again at the next epoch.
+pub(crate) fn regrant_after(
+    revoke: &AuthorityLogEntry,
+    owner: WriteActor,
+    seed: u8,
+) -> Result<AuthorityLogEntry> {
+    let signing = SigningKey::from_bytes(&[seed; 32]);
+    let mut regrant = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: revoke.vault_id,
+        seq: 3,
+        parent_hashes: vec![authority_entry_hash(revoke)?],
+        op: AuthorityOp::BindActor {
+            authority_key: AuthorityKey::Ed25519(signing.verifying_key().to_bytes()),
+            actor_ref: owner.entity_ref(),
+            actor_class: owner.actor_class().gate_actor_class().to_owned(),
+            epoch: 2,
+        },
+        signer: revoke.signer.clone(),
+        cosigns: Vec::new(),
+        ts: 103,
+    };
+    regrant.signer.signature = signing
+        .sign(&authority_transcript(&regrant)?)
+        .to_bytes()
+        .to_vec();
+    Ok(regrant)
+}
+
 #[test]
 fn unauthorized_initial_anchor_and_non_actor_targets_are_rejected() -> Result<()> {
     let (_dir, vault) = test_vault();

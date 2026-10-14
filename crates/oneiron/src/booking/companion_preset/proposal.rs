@@ -292,10 +292,12 @@ pub fn create_companion_proposal(
                 "the creating companion is not a live actor of this vault",
             ));
         }
+        // A fresh local write, so the companion's own observed frontier: one
+        // regranted after a revocation still creates.
         vault
-            .verify_write_actor_in_txn(
+            .observed_write_actor_in_txn(
                 wtxn,
-                &crate::WriteActor::new(companion_ref, companion.actor_class()),
+                crate::WriteActor::new(companion_ref, companion.actor_class()),
             )
             .map_err(|_| refused("the creating companion holds no live authority in this vault"))?;
         surface(PROPOSAL.put(&vault.store, wtxn, &id.0, &row))

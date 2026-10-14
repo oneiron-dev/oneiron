@@ -26,6 +26,7 @@ use crate::ports::EdgeStoreRead;
 use rmpv::Value;
 
 use crate::Vault;
+use crate::authority::AuthorityEntryHash;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -50,9 +51,13 @@ const BODY_KEY_TASK_REF: &str = "task_ref";
 const BODY_KEY_KIND: &str = "kind";
 const BODY_KEY_ACTOR_REF: &str = "actor_ref";
 const BODY_KEY_ASSIGNED_REF: &str = "assigned_ref";
+const BODY_KEY_ACTOR_GENERATION: &str = "actor_generation";
+const BODY_KEY_ASSIGNED_GENERATION: &str = "assigned_generation";
 const BODY_KEY_OCCURRED_AT: &str = "occurred_at";
 
-/// Base v1 key count. HumanAssigned carries one additional assigned_ref.
+/// Base v1 key count. HumanAssigned carries one additional assigned_ref;
+/// ConsultAssignee carries each of assigned_ref and the two generations when
+/// it has one.
 const FACT_BODY_KEY_COUNT: usize = 7;
 
 /// Contract stored-weight prior for `scoped_to` edges (contracts.ts
@@ -69,8 +74,11 @@ const SCOPED_TO_DEFAULT_WEIGHT: f32 = match EdgeKind::ScopedTo.default_weight() 
 /// Owner proves who may act directly; cancellation and acknowledgement are
 /// events. HumanAssigned records a separate authenticated assignment door,
 /// never inferred from a caller-selected Owner id. ConsultAssignee records
-/// the party a consult was addressed to when it was minted, so the body's
-/// mutable `assignee` field is display and never admission.
+/// a consult's parties when it was minted (its asker, the party it was
+/// addressed to, and the binding generation each held), so the body's
+/// mutable `assignee` field is display and never admission. ConsentRequired
+/// records that an interruption asked for a human verdict, so the body's
+/// mutable `consent_required` flag is display and never a waiver.
 /// None of them is ever rewritten or deleted, so the set only grows.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -80,6 +88,7 @@ pub enum TaskAuthorityFactKind {
     Acked = 3,
     HumanAssigned = 4,
     ConsultAssignee = 5,
+    ConsentRequired = 6,
 }
 
 impl TaskAuthorityFactKind {
@@ -91,6 +100,7 @@ impl TaskAuthorityFactKind {
             Self::Acked => 3,
             Self::HumanAssigned => 4,
             Self::ConsultAssignee => 5,
+            Self::ConsentRequired => 6,
         }
     }
 
@@ -102,6 +112,7 @@ impl TaskAuthorityFactKind {
             3 => Some(Self::Acked),
             4 => Some(Self::HumanAssigned),
             5 => Some(Self::ConsultAssignee),
+            6 => Some(Self::ConsentRequired),
             _ => None,
         }
     }
@@ -114,11 +125,19 @@ pub struct TaskAuthorityFact {
     /// read through, or the fact is refused.
     pub task_ref: EntityId,
     pub kind: TaskAuthorityFactKind,
-    /// Owner facts name the owner; Cancelled/Acked facts name who acted;
-    /// ConsultAssignee facts name the party the consult is addressed to.
+    /// Owner facts name the owner; Cancelled/Acked/ConsentRequired facts
+    /// name who acted; ConsultAssignee facts name the consult's asker.
     pub actor_ref: EntityId,
-    /// Present only for HumanAssigned: the immutable agent H assigned.
+    /// HumanAssigned: the immutable agent H assigned. ConsultAssignee: the
+    /// party the consult was addressed to, absent for one addressed to the
+    /// Dreamer. Absent on every other kind.
     pub assigned_ref: Option<EntityId>,
+    /// ConsultAssignee only: the binding generation (an authority frontier
+    /// at which its binding was live) `actor_ref` held when the consult was
+    /// minted, absent when it held no binding.
+    pub actor_generation: Option<AuthorityEntryHash>,
+    /// ConsultAssignee only: the same for `assigned_ref`.
+    pub assigned_generation: Option<AuthorityEntryHash>,
     pub occurred_at: u64,
 }
 
@@ -146,7 +165,54 @@ pub(crate) struct TaskAuthorityFacts {
     pub(crate) cancelled: bool,
     pub(crate) acked: bool,
     pub(crate) human_assigner: Option<(EntityId, EntityId)>,
-    pub(crate) consult_assignee: Option<EntityId>,
+    pub(crate) consult_parties: ConsultParties,
+    /// Set once any interruption of the consult asked for a human verdict.
+    pub(crate) consent_required: bool,
+}
+
+/// The parties a consult's ConsultAssignee facts name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum ConsultParties {
+    /// No fact: nobody holds party standing. Only the consult's minting door
+    /// writes one.
+    #[default]
+    Unminted,
+    Minted(ConsultPartyFact),
+    /// Facts naming different parties: nobody holds party standing, rather
+    /// than one fact winning.
+    Forked,
+}
+
+/// One consult's parties and the binding generation each held when it was
+/// minted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ConsultPartyFact {
+    asker: EntityId,
+    asker_generation: Option<AuthorityEntryHash>,
+    assignee: Option<EntityId>,
+    assignee_generation: Option<AuthorityEntryHash>,
+}
+
+impl ConsultPartyFact {
+    /// Two replicas minting the same consult name the same parties but may
+    /// have observed different frontiers of the same binding. They converge
+    /// on the strictest generation, none, rather than either replica's.
+    fn meet(self, other: Self) -> Self {
+        let meet =
+            |held: Option<AuthorityEntryHash>, seen| (held == seen).then_some(held).flatten();
+        Self {
+            asker_generation: meet(self.asker_generation, other.asker_generation),
+            assignee_generation: meet(self.assignee_generation, other.assignee_generation),
+            ..self
+        }
+    }
+}
+
+/// An actor's standing as one of a consult's parties: the binding generation
+/// it held when the consult was minted, which its binding must still be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ConsultStanding {
+    pub(crate) generation: Option<AuthorityEntryHash>,
 }
 
 impl TaskAuthorityFacts {
@@ -185,14 +251,52 @@ impl TaskAuthorityFacts {
                     _ => self.human_assigner = Some((fact.actor_ref, assigned)),
                 }
             }
-            TaskAuthorityFactKind::ConsultAssignee => match self.consult_assignee {
-                Some(assignee) if assignee != fact.actor_ref => {
-                    return Err(Error::InvariantViolation("task consult assignee fork"));
-                }
-                _ => self.consult_assignee = Some(fact.actor_ref),
-            },
+            TaskAuthorityFactKind::ConsultAssignee => {
+                let minted = ConsultPartyFact {
+                    asker: fact.actor_ref,
+                    asker_generation: fact.actor_generation,
+                    assignee: fact.assigned_ref,
+                    assignee_generation: fact.assigned_generation,
+                };
+                // A fork fails closed for the consult's parties alone: the
+                // owner's own cancellation still reads, as a restriction must.
+                self.consult_parties = match self.consult_parties {
+                    ConsultParties::Unminted => ConsultParties::Minted(minted),
+                    ConsultParties::Minted(held)
+                        if held.asker == minted.asker && held.assignee == minted.assignee =>
+                    {
+                        ConsultParties::Minted(held.meet(minted))
+                    }
+                    ConsultParties::Minted(_) | ConsultParties::Forked => ConsultParties::Forked,
+                };
+            }
+            TaskAuthorityFactKind::ConsentRequired => self.consent_required = true,
         }
         Ok(())
+    }
+
+    /// `actor`'s standing as one of the consult's parties: its asker or the
+    /// party it was addressed to, as its one ConsultAssignee fact names them.
+    /// A consult with no fact, a forked fact, or a fact whose asker is not
+    /// the task's proven owner gives nobody standing.
+    pub(crate) fn consult_standing(&self, actor: EntityId) -> Option<ConsultStanding> {
+        let ConsultParties::Minted(parties) = self.consult_parties else {
+            return None;
+        };
+        if self.owner_ref != Some(parties.asker) {
+            return None;
+        }
+        if parties.asker == actor {
+            Some(ConsultStanding {
+                generation: parties.asker_generation,
+            })
+        } else if parties.assignee == Some(actor) {
+            Some(ConsultStanding {
+                generation: parties.assignee_generation,
+            })
+        } else {
+            None
+        }
     }
 }
 
@@ -266,6 +370,14 @@ pub(crate) fn encode_task_authority_fact_body(fact: &TaskAuthorityFact) -> Vec<u
             Value::from(assigned.to_hex()),
         ));
     }
+    for (key, generation) in [
+        (BODY_KEY_ACTOR_GENERATION, fact.actor_generation),
+        (BODY_KEY_ASSIGNED_GENERATION, fact.assigned_generation),
+    ] {
+        if let Some(generation) = generation {
+            entries.push((Value::from(key), Value::Binary(generation.to_vec())));
+        }
+    }
     let value = Value::Map(entries);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &value)
@@ -293,10 +405,10 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
         .ok_or(Error::Record(RecordError::InvalidTaskBody(
             "task authority fact body",
         )))?;
-    // The key set is EXACT: a base fact has seven keys and HumanAssigned
-    // carries exactly one additional agent id,
-    // so no unread field can ride along in a body two decoders would disagree
-    // about.
+    // The key set is EXACT: a base fact has seven keys, HumanAssigned
+    // carries exactly one additional agent id, and ConsultAssignee carries
+    // exactly the optional party and generation keys it has, so no unread
+    // field can ride along in a body two decoders would disagree about.
     let byte = |key| {
         fact_body_field(entries, key)?
             .as_u64()
@@ -332,26 +444,68 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
     let kind = TaskAuthorityFactKind::from_byte(byte(BODY_KEY_KIND)?).ok_or(Error::Record(
         RecordError::InvalidTaskBody("task authority fact kind"),
     ))?;
-    let assigned_ref = if kind == TaskAuthorityFactKind::HumanAssigned {
-        if entries.len() != FACT_BODY_KEY_COUNT + 1 {
-            return Err(Error::Record(RecordError::InvalidTaskBody(
-                "task human assignment key set",
-            )));
+    // Binary only: `Value::as_slice` would also read a string's bytes.
+    let generation = |key| {
+        optional_fact_body_field(entries, key)?
+            .map(|value| match value {
+                Value::Binary(bytes) => AuthorityEntryHash::try_from(bytes.as_slice()).ok(),
+                _ => None,
+            })
+            .map(|generation| {
+                generation.ok_or(Error::Record(RecordError::InvalidTaskBody(
+                    "task authority fact generation",
+                )))
+            })
+            .transpose()
+    };
+    let (assigned_ref, actor_generation, assigned_generation) = match kind {
+        TaskAuthorityFactKind::HumanAssigned => {
+            if entries.len() != FACT_BODY_KEY_COUNT + 1 {
+                return Err(Error::Record(RecordError::InvalidTaskBody(
+                    "task human assignment key set",
+                )));
+            }
+            (Some(entity_ref(BODY_KEY_ASSIGNED_REF)?), None, None)
         }
-        Some(entity_ref(BODY_KEY_ASSIGNED_REF)?)
-    } else {
-        if entries.len() != FACT_BODY_KEY_COUNT {
-            return Err(Error::Record(RecordError::InvalidTaskBody(
-                "task authority fact key set",
-            )));
+        TaskAuthorityFactKind::ConsultAssignee => {
+            let assigned_ref = optional_fact_body_field(entries, BODY_KEY_ASSIGNED_REF)?
+                .map(|_| entity_ref(BODY_KEY_ASSIGNED_REF))
+                .transpose()?;
+            let actor_generation = generation(BODY_KEY_ACTOR_GENERATION)?;
+            let assigned_generation = generation(BODY_KEY_ASSIGNED_GENERATION)?;
+            let present = [
+                assigned_ref.is_some(),
+                actor_generation.is_some(),
+                assigned_generation.is_some(),
+            ];
+            if entries.len() != FACT_BODY_KEY_COUNT + present.iter().filter(|key| **key).count()
+                || (assigned_generation.is_some() && assigned_ref.is_none())
+            {
+                return Err(Error::Record(RecordError::InvalidTaskBody(
+                    "task consult party key set",
+                )));
+            }
+            (assigned_ref, actor_generation, assigned_generation)
         }
-        None
+        TaskAuthorityFactKind::Owner
+        | TaskAuthorityFactKind::Cancelled
+        | TaskAuthorityFactKind::Acked
+        | TaskAuthorityFactKind::ConsentRequired => {
+            if entries.len() != FACT_BODY_KEY_COUNT {
+                return Err(Error::Record(RecordError::InvalidTaskBody(
+                    "task authority fact key set",
+                )));
+            }
+            (None, None, None)
+        }
     };
     Ok(TaskAuthorityFact {
         task_ref: entity_ref(BODY_KEY_TASK_REF)?,
         kind,
         actor_ref: entity_ref(BODY_KEY_ACTOR_REF)?,
         assigned_ref,
+        actor_generation,
+        assigned_generation,
         occurred_at: fact_body_field(entries, BODY_KEY_OCCURRED_AT)?
             .as_u64()
             .ok_or(Error::Record(RecordError::InvalidTaskBody(
@@ -363,15 +517,21 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
 /// The single value stored under `name`, refusing a duplicated key — the same
 /// exact-field read `task_verb::wire_decode` uses for the primary TASK body.
 fn fact_body_field<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<&'a Value> {
+    optional_fact_body_field(entries, name)?.ok_or(Error::Record(RecordError::InvalidTaskBody(
+        "task authority fact key set",
+    )))
+}
+
+/// [`fact_body_field`] for a key a fact may omit.
+fn optional_fact_body_field<'a>(
+    entries: &'a [(Value, Value)],
+    name: &str,
+) -> Result<Option<&'a Value>> {
     let mut values = entries
         .iter()
         .filter(|(key, _)| key.as_str() == Some(name))
         .map(|(_, value)| value);
-    let value = values
-        .next()
-        .ok_or(Error::Record(RecordError::InvalidTaskBody(
-            "task authority fact key set",
-        )))?;
+    let value = values.next();
     if values.next().is_some() {
         return Err(Error::Record(RecordError::InvalidTaskBody(
             "task authority fact duplicate key",

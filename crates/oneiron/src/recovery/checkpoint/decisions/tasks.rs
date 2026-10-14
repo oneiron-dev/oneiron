@@ -9,18 +9,18 @@ use crate::consent::{
 };
 use crate::gate::PolicyApprovalCeiling;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_TASK};
-use crate::task_authority::TaskAuthorityFacts;
+use crate::task_authority::{ConsultParties, TaskAuthorityFacts};
 use crate::task_verb::{AskStanding, TaskAskResult};
 use crate::{EdgeActorClass, EntityId, Result, Vault, WriteActor};
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
-/// Who owns a task, whether it is cancelled, and whom its owner assigned it
-/// to, as the task's authority facts prove them: the fold of every fact a
-/// `ScopedTo` edge reaches the task from (`Vault::task_authority_facts_in`),
-/// which the owner-proof lens, the board's cancellation and the human
-/// assignment witness all read. An acknowledgement only takes a task off the
-/// board.
+/// Who owns a task, whether it is cancelled, whom its owner assigned it
+/// to, and a consult's parties and consent, as the task's authority facts
+/// prove them: the fold of every fact a `ScopedTo` edge reaches the task from
+/// (`Vault::task_authority_facts_in`), which the owner-proof lens, the
+/// board's cancellation, the human assignment witness and the consult door
+/// all read. An acknowledgement only takes a task off the board.
 pub(super) struct TaskAuthority;
 
 impl Decision for TaskAuthority {
@@ -42,10 +42,16 @@ impl Decision for TaskAuthority {
             .collect())
     }
 
+    /// A consult's parties loosen when the restore would bring back parties
+    /// the live facts no longer prove (an edge-removed or forked fact), and
+    /// its consent loosens when a requirement the live vault holds is gone.
     fn loosens(live: &TaskAuthorityFacts, restored: &TaskAuthorityFacts) -> bool {
         (restored.owner_ref.is_some() && restored.owner_ref != live.owner_ref)
             || (live.cancelled && !restored.cancelled)
             || (restored.human_assigner.is_some() && restored.human_assigner != live.human_assigner)
+            || (matches!(restored.consult_parties, ConsultParties::Minted(_))
+                && restored.consult_parties != live.consult_parties)
+            || (live.consent_required && !restored.consent_required)
     }
 }
 
