@@ -299,6 +299,7 @@ pub(crate) use document::materialize_recovery_notes_in_txn;
 
 mod privacy_kit;
 pub use privacy_kit::{
-    BackupShareLocation, PrivacyBackupError, PrivacyBackupShare, RestoredVaultKey,
-    issue_privacy_backup_kit, restore_privacy_backup_kit,
+    CodeKeeping, IssuedKit, KitCoverage, KitError, KitId, KitIssue, KitMachine, KitManifest,
+    KitPassphrase, KitPiece, KitSecretKind, PassphraseCost, PieceExport, PieceHome, RecoveryCode,
+    RestoredKitSecret, issue_recovery_root_kit, issue_vault_key_kit, restore_kit,
 };

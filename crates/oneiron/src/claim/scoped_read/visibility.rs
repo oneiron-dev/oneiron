@@ -2,18 +2,12 @@ use super::access_gate::HeldAuthority;
 use super::*;
 
 impl<'v> ScopedRead<'v> {
+    /// Whether this lane reads `id` now, an owner lane's standing rechecked
+    /// in the snapshot it reads (see `Self::live_policy_manifest_in`).
     pub fn is_entity_readable(&self, id: &EntityId) -> Result<bool> {
         let rtxn = self.grant_read_txn()?;
-        self.is_entity_readable_in(&rtxn, id)
-    }
-
-    /// [`Self::is_entity_readable`], with an owner lane's standing rechecked
-    /// in the snapshot it reads, as every point read does: a lane kept past
-    /// its owner's revocation refuses.
-    pub(crate) fn is_entity_readable_now(&self, id: &EntityId) -> Result<bool> {
-        let rtxn = self.grant_read_txn()?;
-        self.owner_live_in(&rtxn)?;
-        self.is_entity_readable_in(&rtxn, id)
+        let policy = self.live_policy_manifest_in(&rtxn)?;
+        self.is_entity_readable_with_policy_in(&rtxn, &policy, id)
     }
 
     pub(crate) fn is_entity_readable_in(
@@ -314,6 +308,18 @@ impl<'v> ScopedRead<'v> {
         rtxn: &heed::RoTxn<'_>,
     ) -> Result<PolicyManifestResolution> {
         crate::gate::resolve_policy_manifest(&self.vault.store, rtxn)
+    }
+
+    /// The policy in `rtxn` for a door that opens its own snapshot and judges
+    /// rows under it, with an owner lane's standing rechecked in that
+    /// snapshot, as every point read does: a lane kept past its owner's
+    /// revocation refuses.
+    pub(crate) fn live_policy_manifest_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+    ) -> Result<PolicyManifestResolution> {
+        self.owner_live_in(rtxn)?;
+        self.policy_manifest_in(rtxn)
     }
 }
 

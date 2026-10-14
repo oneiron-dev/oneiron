@@ -646,7 +646,7 @@ fn message_reader<'v>(read: &ScopedRead<'v>) -> Result<ScopedRead<'v>> {
         .map_err(|_| invalid_consolidation("turn text reader is not an entity"))?;
     Ok(read
         .vault()
-        .scoped_read(key.clone().require_relationship_grants(principal)))
+        .scoped_read(key.clone().require_relationship_grants(Some(principal))))
 }
 
 fn reader_key(reader: WriteActor) -> Result<ScopedReadActorKey> {
