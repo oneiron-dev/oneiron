@@ -78,9 +78,12 @@ pub(super) fn restrictive_withdrawal(op: &AuthorityOp) -> bool {
         AuthorityOp::RevokeActor { .. }
         | AuthorityOp::SlipRevoke { .. }
         | AuthorityOp::SlipConsume { .. } => true,
-        AuthorityOp::MachineProfile(profile) => profile.role == MachineRole::Removed,
-        _ => false,
+        op => removes_machine(op),
     }
+}
+
+fn removes_machine(op: &AuthorityOp) -> bool {
+    matches!(op, AuthorityOp::MachineProfile(profile) if profile.role == MachineRole::Removed)
 }
 
 /// Every candidate comes from the already signature-filtered entry graph.
@@ -93,36 +96,26 @@ pub(super) fn derive_revoke_facts(
     context: FoldContext<'_>,
 ) -> RevokeFacts {
     let mut facts = RevokeFacts::default();
+    let mut removal_floors = None;
     for (hash, entry) in entries {
-        let mut exempt = None;
-        match &entry.op {
-            AuthorityOp::RevokeActor { .. } => {}
-            AuthorityOp::MachineProfile(profile) if profile.role == MachineRole::Removed => {
-                // A removal is terminal on every replica. A local floor only
-                // records which of the signer's rows arrived first, so a
-                // sibling seen earlier never refuses the removal itself; its
-                // ancestry keeps every floor.
-                exempt = context
-                    .sequence_floors
-                    .filter(|floors| floors.contains_key(hash))
-                    .map(|floors| {
-                        let mut floors = floors.clone();
-                        floors.remove(hash);
-                        floors
-                    });
-            }
+        let removal = match &entry.op {
+            AuthorityOp::RevokeActor { .. } => false,
+            op if removes_machine(op) => true,
             _ => continue,
-        }
-        let context = FoldContext {
-            sequence_floors: exempt.as_ref().or(context.sequence_floors),
-            ..context
         };
         // A removal's ancestry is the ancestry the fold accepted, siblings at
-        // one sequence included (Astra #1423b).
-        let refuse_equal_sequences = matches!(entry.op, AuthorityOp::RevokeActor { .. });
-        let Some(state) =
-            verify_signed_branch(*hash, entries, ancestors, context, refuse_equal_sequences)
-        else {
+        // one sequence and removals that arrived late included (Astra
+        // #1423b, Sol #1423 r8).
+        let context = match context.sequence_floors {
+            Some(floors) if removal => FoldContext {
+                sequence_floors: Some(
+                    removal_floors.get_or_insert_with(|| floors_without_removals(entries, floors)),
+                ),
+                ..context
+            },
+            _ => context,
+        };
+        let Some(state) = verify_signed_branch(*hash, entries, ancestors, context, !removal) else {
             continue;
         };
         let kind = match &entry.op {
@@ -235,6 +228,25 @@ impl RevokeFacts {
                 })
         });
     }
+}
+
+/// The local sequence floors less every machine removal's. A removal is
+/// terminal on every replica, and a floor only records which of its signer's
+/// rows arrived first, so a sibling seen earlier never refuses a removal; every
+/// other row keeps its floor.
+fn floors_without_removals(
+    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    floors: &BTreeMap<AuthorityEntryHash, u64>,
+) -> BTreeMap<AuthorityEntryHash, u64> {
+    floors
+        .iter()
+        .filter(|(hash, _)| {
+            !entries
+                .get(*hash)
+                .is_some_and(|entry| removes_machine(&entry.op))
+        })
+        .map(|(hash, floor)| (*hash, *floor))
+        .collect()
 }
 
 /// The target's own folded state, proved over its signed ancestry alone.

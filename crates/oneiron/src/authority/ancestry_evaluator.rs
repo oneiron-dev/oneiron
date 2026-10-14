@@ -48,6 +48,12 @@ pub(super) fn skippable_permissive(op: &AuthorityOp) -> bool {
         | AuthorityOp::RebindActor { .. }
         | AuthorityOp::EnrollDevice { .. }
         | AuthorityOp::FederationLifecycle(_) => true,
+        // Grants that change neither the roster nor a machine's standing, so
+        // a removal is judged without them as with them; a withdrawal that
+        // needs one fails closed without it (Wonder #1423 r2 W2).
+        AuthorityOp::SlipMint(_)
+        | AuthorityOp::FederationConfirm(_)
+        | AuthorityOp::CriticalWriteConfirm(_) => true,
         // A profile grants standing; a removal withdraws it and never is.
         AuthorityOp::MachineProfile(profile) => profile.role != MachineRole::Removed,
         _ => false,

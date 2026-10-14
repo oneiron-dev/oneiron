@@ -375,49 +375,64 @@ fn entries_of(host: &Host) -> Vec<AuthorityLogEntry> {
 }
 
 /// A removal signed after a mark that one fold refuses still removes there:
-/// a refused grant never shields a withdrawal.
+/// a refused grant never shields a withdrawal, nor does a slip minted on top
+/// of it (Wonder #1423 r2 W2).
 #[test]
 fn a_removal_crosses_a_refused_mark() {
-    let host = host();
-    let node = request_for(host.vault_id, EntityId::now(), &ed_key(92));
-    let yours = request_for(host.vault_id, EntityId::now(), &ed_key(93));
-    host.vault
-        .enroll_machine(&host.issuer, &host.owner, &node, MachineRole::ExecutionNode)
-        .unwrap();
-    // A hosted fold refuses this mark: there the host's root never answers
-    // "yours". The removal below names it as a parent.
-    host.vault
-        .enroll_machine(
-            &host.issuer,
-            &host.owner,
-            &yours,
-            MachineRole::Owned(MachineOwnership::Yours),
-        )
-        .unwrap();
-    host.vault
-        .set_machine_role(
-            &host.issuer,
-            &host.owner,
-            node.machine,
-            MachineRole::Removed,
-        )
-        .unwrap();
-    let entries = entries_of(&host);
-    for posture in [
-        crate::HostingPrivacyPosture::SelfHostLocal,
-        crate::HostingPrivacyPosture::Hosted,
-    ] {
-        let fold = fold_authority_log_for_posture(
-            &entries,
-            &BTreeMap::new(),
-            10,
-            &BTreeMap::new(),
-            posture,
-        );
-        assert!(
-            fold.machine(node.machine)
-                .is_some_and(|folded| folded.removed && !folded.is_live())
-        );
+    for interposed in [false, true] {
+        let host = host();
+        let node = request_for(host.vault_id, EntityId::now(), &ed_key(92));
+        let yours = request_for(host.vault_id, EntityId::now(), &ed_key(93));
+        host.vault
+            .enroll_machine(&host.issuer, &host.owner, &node, MachineRole::ExecutionNode)
+            .unwrap();
+        // A hosted fold refuses this mark: there the host's root never answers
+        // "yours". The removal below descends from it.
+        host.vault
+            .enroll_machine(
+                &host.issuer,
+                &host.owner,
+                &yours,
+                MachineRole::Owned(MachineOwnership::Yours),
+            )
+            .unwrap();
+        if interposed {
+            let root = host.vault.ensure_host_root_slip(&host.issuer).unwrap();
+            let mut claims = root.claims.clone();
+            claims.slip_id = [96; 32];
+            claims.parent_id = Some(root.claims.slip_id);
+            claims.ttl_secs = 60;
+            claims.expires_at = claims.issued_at + 60;
+            host.vault
+                .mint_capability_slip(&host.issuer, claims)
+                .unwrap();
+        }
+        host.vault
+            .set_machine_role(
+                &host.issuer,
+                &host.owner,
+                node.machine,
+                MachineRole::Removed,
+            )
+            .unwrap();
+        let entries = entries_of(&host);
+        for posture in [
+            crate::HostingPrivacyPosture::SelfHostLocal,
+            crate::HostingPrivacyPosture::Hosted,
+        ] {
+            let fold = fold_authority_log_for_posture(
+                &entries,
+                &BTreeMap::new(),
+                10,
+                &BTreeMap::new(),
+                posture,
+            );
+            assert!(
+                fold.machine(node.machine)
+                    .is_some_and(|folded| folded.removed && !folded.is_live()),
+                "interposed: {interposed}, {posture:?}"
+            );
+        }
     }
 }
 
@@ -872,6 +887,81 @@ fn a_removal_holds_whichever_sibling_arrived_first() {
                 "merged: {merged}"
             );
             assert!(fold.machine(node).is_some_and(FoldedMachine::is_live));
+        }
+    }
+}
+
+/// A removal over another removal of the same signer stands on every replica
+/// too: both arriving under a later sibling's floor leaves each removing its
+/// machine, the later one proved over the earlier (Sol #1423 r8).
+#[test]
+fn a_removal_holds_over_a_removal_that_arrived_late() {
+    let host = host();
+    let [yours, node] =
+        [112, 113].map(|key| request_for(host.vault_id, EntityId::now(), &ed_key(key)));
+    for (request, role) in [
+        (&yours, MachineRole::Owned(MachineOwnership::Yours)),
+        (&node, MachineRole::HostedNode),
+    ] {
+        host.vault
+            .enroll_machine(&host.issuer, &host.owner, request, role)
+            .unwrap();
+    }
+    let before = host.vault.authority_fold().unwrap();
+    let seq = before.append_sequences[&host.issuer.public_key()];
+    let removal = |seq, parents: &BTreeSet<AuthorityEntryHash>, machine| {
+        host_entry(
+            &host,
+            seq,
+            parents,
+            AuthorityOp::MachineProfile(MachineProfile {
+                role: MachineRole::Removed,
+                revision: 2,
+                ..before.machine(machine).unwrap().profile.clone()
+            }),
+            None,
+        )
+    };
+    let first = removal(seq + 1, &before.append_heads, node.machine);
+    let second = removal(
+        seq + 2,
+        &BTreeSet::from([authority_entry_hash(&first).unwrap()]),
+        yours.machine,
+    );
+    let AuthorityOp::MachineProfile(profile) = profile_op(&host, EntityId::now(), &ed_key(114))
+    else {
+        unreachable!()
+    };
+    let sibling = host_entry(
+        &host,
+        seq + 3,
+        &before.append_heads,
+        AuthorityOp::MachineProfile(MachineProfile {
+            role: MachineRole::HostedNode,
+            ..profile
+        }),
+        None,
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let replica = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    replica
+        .import_signed_authority_history(&host.vault.export_signed_authority_history().unwrap())
+        .unwrap();
+    for (vault, order) in [
+        (&host.vault, [&first, &second, &sibling]),
+        (&replica, [&sibling, &first, &second]),
+    ] {
+        for entry in order {
+            vault
+                .put_authority_log_entries(&[((*entry).clone(), TimeRange { start: 3, end: 3 }, 3)])
+                .unwrap();
+        }
+        let fold = vault.authority_fold().unwrap();
+        for machine in [yours.machine, node.machine] {
+            assert!(
+                fold.machine(machine)
+                    .is_some_and(|folded| folded.removed && !folded.is_live())
+            );
         }
     }
 }
