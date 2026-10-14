@@ -73,6 +73,9 @@ side_tables! {
     AUTHORITY_CHECKPOINT_ROW: VaultMeta b"authority.checkpoint.v1." Raw;
     /// Asset refcount marker. Key: bytes32 + id16.
     BLOB_ARTIFACT_ASSET_REF: VaultMeta b"blob_artifact:asset_ref:v1:" Raw;
+    /// `BLOB_ARTIFACT_VERSION_CLAIM` keyed by artifact, so an artifact's delete reads its own
+    /// bytes without a scan. Key: id16 (artifact) + bytes32.
+    BLOB_ARTIFACT_CLAIMED_HASH: VaultMeta b"blob_artifact:claimed_hash:v1:" Raw;
     /// Blob artifact head version. Key: id16.
     BLOB_ARTIFACT_HEAD: VaultMeta b"blob_artifact:head:v1:" Raw;
     /// Monotonic last version, retained after deletion. Key: id16; value: u64be.
@@ -81,6 +84,10 @@ side_tables! {
     EDIT_SETTLE_RECORD: VaultMeta b"blob_artifact:settlement:v1:" Raw;
     /// Blob artifact version record. Key: id16 + u64be.
     BLOB_ARTIFACT_VERSION: VaultMeta b"blob_artifact:version:v1:" Raw;
+    /// Which artifacts hold which bytes: one row per artifact and content hash a `blob.version`
+    /// claim named here, replicated claims included, kept until the artifact's delete. Key:
+    /// bytes32 + id16 (artifact).
+    BLOB_ARTIFACT_VERSION_CLAIM: VaultMeta b"blob_artifact:version_claim:v1:" Raw;
     /// Revision-ref frontier (16 bytes) a board-selection CLAIM was written under, authenticated on
     /// every read. Key: id16.
     BOARD_HISTORY_CLAIM_FRONTIER: VaultMeta b"board_history:claim_frontier:" Raw;
