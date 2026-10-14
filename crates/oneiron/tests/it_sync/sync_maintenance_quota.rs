@@ -446,6 +446,125 @@ fn a_row_by_a_not_yet_enrolled_signer_lands_after_its_enrollment() {
     );
 }
 
+/// H72: a peer frame that carries a whole valid log, keyed by entity id as
+/// the CRDT map holds it, lands every row, and folds as the same log
+/// delivered parents first, one row a frame, does. The owner enrolls four
+/// agents as siblings at sequences 1 to 4, which entity-id order shuffles,
+/// and binds each one on its enrollment at 5 to 8. One more row, by the
+/// second agent on the first agent's binding, revokes that binding: its
+/// signer stands only through a sibling enrollment.
+#[test]
+fn a_frame_carrying_a_whole_log_in_entity_id_order_lands_every_row() {
+    let (owner_key, genesis, vault_id) = genesis_entry(0x4f);
+    let root = authority_entry_hash(&genesis).unwrap();
+    let agents: Vec<_> = (1..=4_u8)
+        .map(|n| SigningKey::from_bytes(&[0x70 + n; 32]))
+        .collect();
+    let mut log = Vec::new();
+    for (n, agent) in (1_u8..).zip(&agents) {
+        let seq = u64::from(n);
+        let enroll = enroll_entry(vault_id, root, &owner_key, agent, seq);
+        let bind = AuthorityOp::BindActor {
+            authority_key: authority_key_from_ed(agent),
+            actor_ref: EntityId::from_bytes([0x60 + n; 16]).unwrap(),
+            actor_class: "system".into(),
+            epoch: 1,
+        };
+        log.push(cosign_entry(
+            unsigned_entry(
+                Some(vault_id),
+                4 + seq,
+                vec![authority_entry_hash(&enroll).unwrap()],
+                bind,
+                authority_key_from_ed(&owner_key),
+                LEARNED_AT + 4 + seq,
+            ),
+            &owner_key,
+            agent,
+        ));
+        log.push(enroll);
+    }
+    let across = cosign_entry(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![
+                authority_entry_hash(&log[0]).unwrap(),
+                authority_entry_hash(&log[3]).unwrap(),
+            ],
+            AuthorityOp::RevokeActor {
+                authority_key: authority_key_from_ed(&agents[0]),
+                epoch: 1,
+            },
+            authority_key_from_ed(&agents[1]),
+            LEARNED_AT + 9,
+        ),
+        &agents[1],
+        &owner_key,
+    );
+    log.push(across);
+
+    let receive = |frames: Vec<Vec<&AuthorityLogEntry>>| {
+        let (_dir, vault) = test_vault();
+        let vault = Arc::new(vault);
+        let window_key = WindowKey::new(WINDOW);
+        let doc = create_window_doc("user", &window_key);
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+        seed_local_genesis(&vault, 0x4f);
+        for frame in frames {
+            for entry in frame {
+                insert_authority_entry(&doc, entry);
+            }
+            doc.commit();
+        }
+        forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+        let stored = vault.entities_by_type(ENTITY_TYPE_AUTHORITY_LOG).unwrap();
+        (stored, vault.authority_fold().unwrap())
+    };
+    let mut parents_first: Vec<_> = log.iter().collect();
+    parents_first.sort_by_key(|entry| {
+        (
+            *entry.signer_key() != authority_key_from_ed(&owner_key),
+            entry.seq,
+        )
+    });
+    let (one_by_one, expected) = receive(parents_first.into_iter().map(|row| vec![row]).collect());
+    let (whole, fold) = receive(vec![log.iter().collect()]);
+
+    for entry in &log {
+        let id = oneiron::authority::authority_log_entity_id(entry).unwrap();
+        assert!(
+            one_by_one.contains(&id) && whole.contains(&id),
+            "a row never landed"
+        );
+    }
+    let rows: Vec<_> = log
+        .iter()
+        .map(|entry| {
+            let hash = authority_entry_hash(entry).unwrap();
+            let op = format!("{:?}", entry.op);
+            (
+                entry.seq,
+                op.split([' ', '(', '{']).next().unwrap_or("").to_owned(),
+                hash[0],
+                expected.valid_entries.contains(&hash),
+            )
+        })
+        .collect();
+    let issues: Vec<_> = expected
+        .issues
+        .iter()
+        .map(|issue| format!("{issue:?}").chars().take(24).collect::<String>())
+        .collect();
+    assert!(
+        rows.iter().all(|row| row.3),
+        "the parents-first delivery folds every row: {rows:?} {issues:?}"
+    );
+    assert_eq!(fold.valid_entries, expected.valid_entries);
+    assert_eq!(fold.roster, expected.roster);
+}
+
 /// Invalid envelopes retain the existing occupant; valid retries displace it.
 /// Neither outcome consumes an authority ingest quota.
 

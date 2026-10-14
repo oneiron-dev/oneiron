@@ -336,18 +336,21 @@ fn a_forged_mark_never_makes_a_machine_mine() {
     );
     assert!(!is_mine(&host.vault, machine));
 
-    // The local door holds well-shaped entries no admitter signed (H72), as
-    // the fold refuses them: a signer outside the roster, the machine's own
-    // key (a self-asserted mark), and an engine writer's agent key.
+    // The local door holds well-shaped entries no admitter signed (H72): a
+    // signer outside the roster, the machine's own key (a self-asserted
+    // mark), and an engine writer's agent key. The fold refuses each one
+    // too, wherever it is stored.
     let held = |entry: AuthorityLogEntry| {
-        let err = host
-            .vault
-            .put_authority_log_entries(&[(entry, at, 1)])
-            .unwrap_err();
+        let rows = [(entry, at, 1)];
+        let err = host.vault.put_authority_log_entries(&rows).unwrap_err();
         assert_eq!(
             err.kind(),
             crate::error::ErrorKind::AuthorityLogSignerPending
         );
+        crate::authority::with_authority_doors_open_for_test(|| {
+            host.vault.put_authority_log_entries(&rows)
+        })
+        .unwrap();
     };
     held(forge(&ed_key(53)));
     held(forge(&machine_key));

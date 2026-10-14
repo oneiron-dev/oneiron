@@ -309,7 +309,7 @@ fn conflicted_roots_never_restore_local_creator_or_initial_role_powers() {
         .id;
     let saved = vault.get(&record).unwrap();
     // No door stores a rival genesis (H72); build the conflicted log here.
-    crate::authority::log_budget::with_authority_doors_open_for_test(|| {
+    crate::authority::with_authority_doors_open_for_test(|| {
         vault.put_authority_log_entries(&[
             (independent_root(0x74), TimeRange { start: 1, end: 1 }, 1),
             (independent_root(0x75), TimeRange { start: 2, end: 2 }, 2),

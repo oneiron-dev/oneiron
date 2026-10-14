@@ -585,7 +585,7 @@ fn no_agent_writer_root_or_borrowed_key_signs_a_settings_edit() {
     }
     land(&host, std::slice::from_ref(&forged[1]));
     // The fold refuses the held edits too, wherever they are stored.
-    crate::authority::log_budget::with_authority_doors_open_for_test(|| {
+    crate::authority::with_authority_doors_open_for_test(|| {
         land(
             &host,
             &[forged[0].clone(), forged[2].clone(), root_edit.clone()],
@@ -1044,7 +1044,7 @@ fn a_conflicted_root_never_lets_a_private_world_go() {
 
     // No door stores a rival genesis (H72); build the conflicted log here.
     let rival = genesis_entry(78, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-    crate::authority::log_budget::with_authority_doors_open_for_test(|| {
+    crate::authority::with_authority_doors_open_for_test(|| {
         host.vault
             .put_authority_log_entry(&rival, TimeRange { start: 3, end: 3 }, 3)
     })

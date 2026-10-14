@@ -552,7 +552,7 @@ fn conflicted_vault_root_fails_closed() -> Result<()> {
     let (_dir, vault, owner, other, _admin) = fixture(SharedVaultPreset::Team);
     let act = vault.start_authority_act(&owner, 42, "erase", vec![], 100)?;
     // No door stores a rival genesis (H72); build the conflicted log here.
-    crate::authority::log_budget::with_authority_doors_open_for_test(|| {
+    crate::authority::with_authority_doors_open_for_test(|| {
         vault.put_authority_log_entry(&genesis(0x76), TimeRange { start: 1, end: 1 }, 1)?;
         vault.put_authority_log_entry(&genesis(0x77), TimeRange { start: 2, end: 2 }, 2)
     })?;

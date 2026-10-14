@@ -140,7 +140,7 @@ pub(crate) struct AuthorityStructure {
     /// consent rule.
     admitters: BTreeSet<AuthorityKey>,
     /// The slip issuers: the admitters that hold the owner role.
-    issuers: BTreeSet<AuthorityKey>,
+    pub(super) issuers: BTreeSet<AuthorityKey>,
     /// Each machine and the install keys a slip issuer's revisions of it
     /// named. Such a key signs that machine's world edits.
     machine_keys: BTreeSet<(crate::EntityId, AuthorityKey)>,
@@ -167,7 +167,7 @@ pub(super) fn is_consent_device(device: &DeviceAuthority) -> bool {
 pub(super) fn authority_structure<'a>(
     entries: impl Iterator<Item = &'a AuthorityLogEntry>,
 ) -> AuthorityStructure {
-    let mut builder = StructureBuilder::default();
+    let mut builder: StructureBuilder<'a> = StructureBuilder::default();
     for entry in entries {
         builder.push(entry);
     }
@@ -176,24 +176,30 @@ pub(super) fn authority_structure<'a>(
 }
 
 /// [`authority_structure`] grown a row at a time, as an import stages its
-/// rows: the same structure for the same rows, in any order.
+/// rows: the same structure for the same rows, in any order. A row that
+/// waits for a grant is filed under each key that could give it, so a
+/// settle visits only the rows its new grants wake.
 #[derive(Debug, Default)]
 pub(super) struct StructureBuilder<'a> {
     pub(super) structure: AuthorityStructure,
     root_roles: u16,
-    /// Owner and admin admissions no admitter has signed yet.
-    admissions: Vec<&'a AuthorityLogEntry>,
-    /// Machine revisions no slip issuer has signed yet.
-    profiles: Vec<&'a AuthorityLogEntry>,
-    /// The admitters and install keys [`Self::settle`] added since the
-    /// caller last took them.
+    /// Admissions and machine revisions pushed since the last settle.
+    fresh: Vec<&'a AuthorityLogEntry>,
+    /// Owner and admin admissions no admitter has signed yet, under each
+    /// key that signed them.
+    admissions: BTreeMap<AuthorityKey, Vec<&'a AuthorityLogEntry>>,
+    /// Machine revisions whose primary signer is no slip issuer yet, under
+    /// that signer.
+    profiles: BTreeMap<AuthorityKey, Vec<&'a AuthorityLogEntry>>,
+    /// The grants [`Self::settle`] made since the caller last took them.
     pub(super) grown: Vec<Grant>,
 }
 
-/// A key [`StructureBuilder::settle`] let vouch.
+/// What [`StructureBuilder::settle`] granted a key.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Grant {
     Admitter(AuthorityKey),
+    Issuer(AuthorityKey),
     InstallKey(crate::EntityId, AuthorityKey),
 }
 
@@ -210,10 +216,10 @@ impl<'a> StructureBuilder<'a> {
                     self.root_roles |= device.roles;
                 }
             }
-            AuthorityOp::MachineProfile(_) => self.profiles.push(entry),
+            AuthorityOp::MachineProfile(_) => self.fresh.push(entry),
             op => {
                 if admits_device(op).is_some_and(is_consent_device) {
-                    self.admissions.push(entry);
+                    self.fresh.push(entry);
                 }
             }
         }
@@ -222,62 +228,97 @@ impl<'a> StructureBuilder<'a> {
     /// Admits what the rows pushed so far admit. A log with more than one
     /// root admits nothing.
     pub(super) fn settle(&mut self) {
-        let structure = &mut self.structure;
-        let Some(root) = structure
+        let Some(root) = self
+            .structure
             .roots
             .first()
-            .filter(|_| structure.roots.len() == 1)
+            .filter(|_| self.structure.roots.len() == 1)
             .cloned()
         else {
-            structure.admitters.clear();
-            structure.issuers.clear();
-            structure.machine_keys.clear();
+            self.structure.admitters.clear();
+            self.structure.issuers.clear();
+            self.structure.machine_keys.clear();
             return;
         };
-        if self.root_roles & ROLE_OWNER != 0 {
-            structure.issuers.insert(root.clone());
+        let (mut admitted, mut issued) = (Vec::new(), Vec::new());
+        if self.root_roles & ROLE_OWNER != 0 && self.structure.issuers.insert(root.clone()) {
+            issued.push(root.clone());
         }
-        if structure.admitters.insert(root.clone()) {
-            self.grown.push(Grant::Admitter(root));
+        if self.structure.admitters.insert(root.clone()) {
+            admitted.push(root);
         }
-        let mut grew = true;
-        while grew {
-            grew = false;
-            self.admissions.retain(|entry| {
-                if !signed_by(entry, &structure.admitters) {
-                    return true;
+        for entry in std::mem::take(&mut self.fresh) {
+            if matches!(entry.op, AuthorityOp::MachineProfile(_)) {
+                self.file_profile(entry);
+            } else if signed_by(entry, &self.structure.admitters) {
+                self.admit(entry, &mut admitted, &mut issued);
+            } else {
+                for signature in std::iter::once(&entry.signer).chain(&entry.cosigns) {
+                    self.admissions
+                        .entry(signature.public_key.clone())
+                        .or_default()
+                        .push(entry);
                 }
-                if verify_entry_signatures(entry).is_ok()
-                    && let Some(device) = admits_device(&entry.op)
-                {
-                    if device.roles & ROLE_OWNER != 0 {
-                        structure.issuers.insert(device.key.clone());
-                    }
-                    if structure.admitters.insert(device.key.clone()) {
-                        self.grown.push(Grant::Admitter(device.key.clone()));
-                        grew = true;
-                    }
-                }
-                false
-            });
-        }
-        self.profiles.retain(|entry| {
-            if !structure.issuers.contains(entry.signer_key()) {
-                return true;
             }
-            if let AuthorityOp::MachineProfile(profile) = &entry.op
-                && verify_entry_signatures(entry).is_ok()
+        }
+        loop {
+            if let Some(key) = admitted.pop() {
+                for entry in self.admissions.remove(&key).unwrap_or_default() {
+                    self.admit(entry, &mut admitted, &mut issued);
+                }
+                self.grown.push(Grant::Admitter(key));
+            } else if let Some(key) = issued.pop() {
+                for entry in self.profiles.remove(&key).unwrap_or_default() {
+                    self.file_profile(entry);
+                }
+                self.grown.push(Grant::Issuer(key));
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Admits the key an admission an admitter signed names.
+    fn admit(
+        &mut self,
+        entry: &AuthorityLogEntry,
+        admitted: &mut Vec<AuthorityKey>,
+        issued: &mut Vec<AuthorityKey>,
+    ) {
+        let Some(device) = admits_device(&entry.op) else {
+            return;
+        };
+        if verify_entry_signatures(entry).is_err() {
+            return;
+        }
+        if device.roles & ROLE_OWNER != 0 && self.structure.issuers.insert(device.key.clone()) {
+            issued.push(device.key.clone());
+        }
+        if self.structure.admitters.insert(device.key.clone()) {
+            admitted.push(device.key.clone());
+        }
+    }
+
+    /// Takes a machine revision's install key when a slip issuer signed it,
+    /// or files it under its signer.
+    fn file_profile(&mut self, entry: &'a AuthorityLogEntry) {
+        let signer = entry.signer_key();
+        if !self.structure.issuers.contains(signer) {
+            self.profiles.entry(signer.clone()).or_default().push(entry);
+            return;
+        }
+        if let AuthorityOp::MachineProfile(profile) = &entry.op
+            && verify_entry_signatures(entry).is_ok()
+        {
+            let key = AuthorityKey::Ed25519(profile.machine_key);
+            if self
+                .structure
+                .machine_keys
+                .insert((profile.machine, key.clone()))
             {
-                let key = AuthorityKey::Ed25519(profile.machine_key);
-                if structure
-                    .machine_keys
-                    .insert((profile.machine, key.clone()))
-                {
-                    self.grown.push(Grant::InstallKey(profile.machine, key));
-                }
+                self.grown.push(Grant::InstallKey(profile.machine, key));
             }
-            false
-        });
+        }
     }
 }
 
@@ -449,12 +490,13 @@ fn only_restricts(op: &AuthorityOp) -> bool {
 }
 
 /// A machine revision that only restricts, judged against the machine the
-/// local fold holds under the same keys: the demotion of a "yours" head
-/// that is not conflicted, as the next revision, or an owned but not
-/// "yours" revision no newer than the head. Such a sibling or older
-/// revision never wins the merge, so concurrent demotions land in any
-/// order, a removal included. A newer one could clear a conflict and
-/// widen a world, so it counts.
+/// local fold holds under the same keys: as the next revision, the
+/// demotion of a head this install holds as live and "yours" (not
+/// conflicted, floor-held, stale or unsettled), or an owned but not "yours"
+/// revision no newer than the head. Such a sibling or older revision never
+/// wins the merge, so concurrent demotions land in any order, a removal
+/// included. Any other newer one could clear a conflict or a floor hold,
+/// and its acknowledgements widen a world, so it counts.
 fn restricts_machine(fold: &AuthorityFold, op: &AuthorityOp) -> bool {
     let AuthorityOp::MachineProfile(profile) = op else {
         return false;
@@ -466,8 +508,7 @@ fn restricts_machine(fold: &AuthorityFold, op: &AuthorityOp) -> bool {
             known.profile.machine_key == profile.machine_key
                 && known.profile.encryption_key == profile.encryption_key
                 && (profile.revision <= known.profile.revision
-                    || (known.profile.role == yours
-                        && !known.conflicted
+                    || (known.is_mine()
                         && Some(profile.revision) == known.profile.revision.checked_add(1)))
         })
 }

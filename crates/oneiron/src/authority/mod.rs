@@ -21,7 +21,7 @@
 //! | `fold_schedule` | the per-entry scheduler: the next entry that does not wait |
 //! | `ancestor_index` / `ancestry_bypass` | fold ancestry and revocation bypass |
 //! | `log_budget` | pinned fold-work bounds, the slip issuer, and the store doors' per-signer bound |
-//! | `import_order` | the order an import stages a signed history in for the store doors |
+//! | `import_order` | the order an import or a sync pass hands the store doors several rows in |
 //! | `entry_transition` | per-entry transition and consent/quorum predicates |
 //! | `op_apply` | applies one op to a fold state |
 //! | `wire_encode` / `wire_decode` | the `rmpv` codec, edited in lockstep |
@@ -149,6 +149,9 @@ pub(crate) use claim_write::{
 };
 pub(crate) use first_seen_clock::*;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
+pub(crate) use import_order::authority_stage_order;
+#[cfg(test)]
+pub(crate) use log_budget::with_authority_doors_open_for_test;
 pub(crate) use log_budget::{
     AuthorityDoor, AuthorityDoorView, authority_door, authority_signer_label, signer_has_standing,
 };

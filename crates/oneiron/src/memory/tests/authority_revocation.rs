@@ -1359,10 +1359,8 @@ fn conflicting_vault_roots_fail_owner_verbs_closed() {
         vault.put_authority_log_entries(&rows).unwrap_err().kind(),
         crate::error::ErrorKind::AuthorityLogSignerPending
     );
-    crate::authority::log_budget::with_authority_doors_open_for_test(|| {
-        vault.put_authority_log_entries(&rows)
-    })
-    .expect("two independent roots are individually valid rows");
+    crate::authority::with_authority_doors_open_for_test(|| vault.put_authority_log_entries(&rows))
+        .expect("two independent roots are individually valid rows");
 
     let fold = vault.authority_fold().expect("fold");
     assert!(

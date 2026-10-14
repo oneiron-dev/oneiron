@@ -752,6 +752,74 @@ fn a_window_holding_an_authority_row_over_a_planted_fence_snapshots_and_recovers
     Ok(())
 }
 
+/// H72 (the Engine's census): canonical-window recovery's preflight walked
+/// a window's rows in entity-id order, so a row could come before the
+/// enrollment in the same window that admits its signer. The door held it,
+/// and the preflight refused the whole recovery, with no retry. Authority
+/// rows now go first, parents first, as the forward pass lands them.
+#[cfg(feature = "sync")]
+#[test]
+fn a_window_whose_rows_sort_before_their_enrollments_recovers() -> Result<()> {
+    let source = test_vault();
+    let owner = authority_test_key(66);
+    let genesis = authority_genesis_fixture(66);
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    source.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let mut pairs = Vec::new();
+    for n in 1..=6_u8 {
+        let enroll = authority_enroll_fixture(vault_id, &genesis, &owner, 0x70 + n, u64::from(n));
+        let child = authority_bind_owner_fixture(
+            vault_id,
+            &enroll,
+            &authority_test_key(0x70 + n),
+            EntityId::from_bytes_unchecked([0x70 + n; 16]),
+            1,
+        );
+        pairs.push((enroll, child));
+    }
+    let at = TimeRange { start: 2, end: 2 };
+    let mut ids = Vec::new();
+    for (enroll, child) in &pairs {
+        source.put_authority_log_entries(&[(enroll.clone(), at, 2), (child.clone(), at, 2)])?;
+        let [enroll_id, child_id] = [enroll, child].map(crate::authority::authority_log_entity_id);
+        ids.push((enroll_id?, child_id?));
+    }
+    assert!(
+        ids.iter().any(|(enroll, child)| child < enroll),
+        "some row sorts before the enrollment that admits its signer"
+    );
+
+    let window = crate::deletion::window_label_from_timestamp(2);
+    let doc = LoroDoc::new();
+    let genesis_id = crate::authority::authority_log_entity_id(&genesis)?;
+    let all: Vec<_> = std::iter::once(genesis_id)
+        .chain(ids.iter().flat_map(|(enroll, child)| [*enroll, *child]))
+        .collect();
+    for entity in &all {
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &entity.to_hex(),
+            &source.get_raw_unsealed(entity)?.unwrap(),
+        )?;
+    }
+    doc.commit();
+    let snapshot = crate::recovery::capture_canonical_window(&source, &window, &doc)?;
+    let target = test_vault();
+    target.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let dir = tempfile::tempdir()?;
+    crate::recovery::recover_vault_window(
+        &target,
+        &Materializer::new(),
+        dir.path().join("manifest"),
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    for entity in &all {
+        assert!(target.live_entity_row(entity)?.is_live());
+    }
+    Ok(())
+}
+
 /// Bug repro (Astra access follow-ups finding 5): a peer's cleanup-archive
 /// tombstone for a live authority record is refused, and while it stays
 /// published in the record's snapshot-backed window the record still reads

@@ -1051,6 +1051,385 @@ fn a_lower_sequence_sibling_of_a_revision_imports_in_any_order() {
     }
 }
 
+/// Bug repro (review round 4, Sol F2 and Astra F3): where a row's parent
+/// and its signer's sequences disagreed, the import broke the sequence edge
+/// at the row given first. A misordered slip revoke beside a binding so
+/// staged the owner's machine revision ahead of the binding, which then
+/// folded as a rollback. The import breaks a parent edge first: the door
+/// never needs a row's parents stored, but a row first observed below its
+/// signer's sequence is lost.
+#[test]
+fn a_binding_beside_a_misordered_sibling_imports_in_any_order() {
+    use super::machine_fold::{host_entry, profile_op};
+    let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
+    let host = host();
+    let agent = ed_key(95);
+    let fold = host.vault.authority_fold().unwrap();
+    let (seq, heads) = (
+        fold.append_sequences[&host.issuer.public_key()],
+        fold.append_heads.clone(),
+    );
+    let enroll = host_entry(
+        &host,
+        seq + 1,
+        &heads,
+        AuthorityOp::EnrollDevice {
+            device: device(
+                authority_key_from_ed(&agent),
+                ROLE_AGENT,
+                AuthorityTier::Software,
+            ),
+        },
+        None,
+    );
+    let enrolled = BTreeSet::from([hash(&enroll)]);
+    let bind = host_entry(
+        &host,
+        seq + 2,
+        &enrolled,
+        AuthorityOp::BindActor {
+            authority_key: authority_key_from_ed(&agent),
+            actor_ref: EntityId::from_bytes([0x72; 16]).unwrap(),
+            actor_class: "system".into(),
+            epoch: 1,
+        },
+        Some(&agent),
+    );
+    let revoke = |seq, parents: &BTreeSet<_>, byte| {
+        host_entry(
+            &host,
+            seq,
+            parents,
+            AuthorityOp::SlipRevoke {
+                slip_id: [byte; 32],
+            },
+            None,
+        )
+    };
+    let later = revoke(seq + 3, &heads, 0x5b);
+    let misordered = revoke(seq + 1, &BTreeSet::from([hash(&later)]), 0x5c);
+    let profile = host_entry(
+        &host,
+        seq + 4,
+        &enrolled,
+        profile_op(&host, EntityId::now(), &ed_key(96)),
+        None,
+    );
+    let at = TimeRange { start: 2, end: 2 };
+    let new_rows = [&enroll, &bind, &later, &misordered, &profile];
+    for entry in new_rows {
+        host.vault
+            .put_authority_log_entries(&[(entry.clone(), at, 2)])
+            .unwrap();
+    }
+    assert!(
+        host.vault
+            .authority_fold()
+            .unwrap()
+            .valid_entries
+            .contains(&hash(&bind))
+    );
+
+    let added: BTreeSet<_> = new_rows.iter().copied().map(hash).collect();
+    let rest: Vec<_> = host
+        .vault
+        .export_signed_authority_history()
+        .unwrap()
+        .into_iter()
+        .filter(|row| !added.contains(&hash(&decode_authority_log_entry_body(row).unwrap())))
+        .collect();
+    let body = |entry: &&AuthorityLogEntry| encode_authority_log_entry_body(entry).unwrap();
+    let mut parents_first = rest.clone();
+    parents_first.extend(new_rows.iter().map(body));
+    let mut profile_first = rest;
+    profile_first.extend(new_rows.iter().rev().map(body));
+    let mut reversed = profile_first.clone();
+    reversed.reverse();
+    let folds = [parents_first, profile_first, reversed].map(|history| imported(&history));
+    for fold in &folds {
+        assert!(
+            fold.valid_entries.contains(&hash(&bind)),
+            "the binding folded as a rollback: {:?}",
+            fold.issues
+        );
+        assert_eq!(fold.valid_entries, folds[0].valid_entries);
+    }
+}
+
+/// H72 (the Engine's census): the public batch door staged rows in the
+/// caller's order, so a batch that gave a row before the enrollment that
+/// admits its signer, or before its genesis, was held whole. It stages them
+/// parents first and each signer's by sequence, and returns the ids in the
+/// caller's order.
+#[test]
+fn a_batch_given_children_first_lands_whole() {
+    let [owner, admin] = [134, 135].map(ed_key);
+    let genesis = genesis_entry(134, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let admission = sign_ed(
+        unsigned_entry(
+            Some(id),
+            1,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            AuthorityOp::EnrollDevice {
+                device: device(
+                    authority_key_from_ed(&admin),
+                    ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            authority_key_from_ed(&owner),
+            2,
+        ),
+        &owner,
+    );
+    let child = sign_ed(
+        unsigned_entry(
+            Some(id),
+            1,
+            vec![authority_entry_hash(&admission).unwrap()],
+            AuthorityOp::SlipRevoke {
+                slip_id: [0x5d; 32],
+            },
+            authority_key_from_ed(&admin),
+            3,
+        ),
+        &admin,
+    );
+    let rows = [child, admission, genesis];
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    let at = TimeRange { start: 1, end: 1 };
+    let batch: Vec<_> = rows.iter().map(|entry| (entry.clone(), at, 1)).collect();
+    let ids = vault.put_authority_log_entries(&batch).unwrap();
+    let expected: Vec<_> = rows
+        .iter()
+        .map(|entry| authority_log_entity_id(entry).unwrap())
+        .collect();
+    assert_eq!(ids, expected);
+    assert_eq!(
+        vault
+            .entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+/// Bug repro (review round 4, Astra F2): a handoff cosigned by the owner
+/// was staged as soon as the cosign vouched for it, before the admission
+/// that makes its signer a slip issuer, and the door refused it as a
+/// non-issuer's handoff, aborting the import. A handoff now also waits for
+/// its signer's issuer grant.
+#[test]
+fn a_cosigned_handoff_imports_after_its_signers_admission() {
+    let [owner, candidate, successor] = [131, 132, 133].map(ed_key);
+    let genesis = genesis_entry(131, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let root = authority_entry_hash(&genesis).unwrap();
+    let admission = sign_ed(
+        unsigned_entry(
+            Some(id),
+            1,
+            vec![root],
+            AuthorityOp::EnrollDevice {
+                device: device(
+                    authority_key_from_ed(&candidate),
+                    ROLE_OWNER,
+                    AuthorityTier::Software,
+                ),
+            },
+            authority_key_from_ed(&owner),
+            2,
+        ),
+        &owner,
+    );
+    let mut handoff = unsigned_entry(
+        Some(id),
+        1,
+        vec![root],
+        AuthorityOp::ReRoot {
+            new_device: device(
+                authority_key_from_ed(&successor),
+                ROLE_OWNER | ROLE_ADMIN,
+                AuthorityTier::Software,
+            ),
+        },
+        authority_key_from_ed(&candidate),
+        3,
+    );
+    handoff.cosigns = vec![AuthoritySignature {
+        suite: AuthoritySignatureSuite::Ed25519,
+        public_key: authority_key_from_ed(&owner),
+        signature: vec![0; 64],
+    }];
+    let transcript = authority_transcript(&handoff).unwrap();
+    handoff.signer.signature = candidate.sign(&transcript).to_bytes().to_vec();
+    handoff.cosigns[0].signature = owner.sign(&transcript).to_bytes().to_vec();
+    let folds = [
+        [&genesis, &admission, &handoff],
+        [&genesis, &handoff, &admission],
+        [&handoff, &admission, &genesis],
+    ]
+    .map(|order| {
+        let history: Vec<_> = order
+            .iter()
+            .map(|entry| encode_authority_log_entry_body(entry).unwrap())
+            .collect();
+        imported(&history)
+    });
+    for fold in &folds {
+        assert_eq!(fold.valid_entries, folds[0].valid_entries);
+        assert_eq!(fold.roster, folds[0].roster);
+    }
+}
+
+/// Bug repro (review round 4, Astra F1): at the owner's bound, a demotion
+/// and a counted row of the same sequence imported demotion first, as the
+/// import put every machine revision ahead. The demotion took the last
+/// slot, the counted row met the bound, and the import aborted. A revision
+/// that may restrict past the bound now stages last among its equals.
+#[test]
+fn a_demotion_and_its_counted_sibling_import_at_the_bound() {
+    const BOUND: usize = 16;
+    let host = host();
+    let request = request_for(host.vault_id, EntityId::now(), &ed_key(76));
+    host.vault
+        .enroll_machine(
+            &host.issuer,
+            &host.owner,
+            &request,
+            MachineRole::Owned(MachineOwnership::Yours),
+        )
+        .unwrap();
+    let at = TimeRange { start: 1, end: 1 };
+    let fold = || host.vault.authority_fold().unwrap();
+    let next = |op| {
+        crate::authority::slip_vault::next_entry(
+            &host.issuer,
+            &fold(),
+            op,
+            host.vault.now_recorded_at(),
+        )
+        .unwrap()
+    };
+    with_rows_per_signer_for_test(BOUND, || {
+        let current = fold().machine(request.machine).unwrap().profile.clone();
+        let demote = AuthorityOp::MachineProfile(MachineProfile {
+            role: MachineRole::Owned(MachineOwnership::WorkSchool),
+            revision: current.revision + 1,
+            ..current
+        });
+        let mut sibling = None;
+        for n in 0.. {
+            let (confirm, demotion) = (next(confirm_op(n)), next(demote.clone()));
+            match host.vault.put_authority_log_entry(&confirm, at, 1) {
+                Ok(_) => sibling = Some(demotion),
+                Err(err) => {
+                    assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
+                    break;
+                }
+            }
+        }
+        let demotion = sibling.expect("the owner's bound left room for a row");
+        host.vault
+            .put_authority_log_entry(&demotion, at, 1)
+            .unwrap();
+        let history = host.vault.export_signed_authority_history().unwrap();
+        let mut reversed = history.clone();
+        reversed.reverse();
+        for history in [history, reversed] {
+            let fold = imported(&history);
+            assert!(!fold.authority_log_past_bound());
+            assert_eq!(
+                fold.machine(request.machine).unwrap().profile.role,
+                MachineRole::Owned(MachineOwnership::WorkSchool)
+            );
+        }
+    });
+}
+
+/// Bug repro (review round 4, Sol F4): past the bound, the door took the
+/// next revision of any "yours" head that was not conflicted as a pure
+/// demotion. A head this install holds back at its signer's sequence floor
+/// is not live, and a demotion over it lifts the hold, so its
+/// acknowledgements could widen a world the hold kept narrow. Only a
+/// demotion of a live "yours" head lands past the bound.
+#[test]
+fn a_demotion_past_the_bound_never_lifts_a_floor_hold() {
+    const BOUND: usize = 16;
+    let host = host();
+    let request = request_for(host.vault_id, EntityId::now(), &ed_key(77));
+    host.vault
+        .enroll_machine(
+            &host.issuer,
+            &host.owner,
+            &request,
+            MachineRole::Owned(MachineOwnership::Yours),
+        )
+        .unwrap();
+    let at = TimeRange { start: 1, end: 1 };
+    let fold = || host.vault.authority_fold().unwrap();
+    let current = fold().machine(request.machine).unwrap().profile.clone();
+    let revision = |class, revision| {
+        AuthorityOp::MachineProfile(MachineProfile {
+            role: MachineRole::Owned(class),
+            revision,
+            ..current.clone()
+        })
+    };
+    // A later row of the owner lands first, so the next "yours" revision
+    // reaches this install past its floor and is held.
+    let (seq, heads) = {
+        let fold = fold();
+        (
+            fold.append_sequences[&host.issuer.public_key()],
+            fold.append_heads.iter().copied().collect::<Vec<_>>(),
+        )
+    };
+    let signed = |seq, op| {
+        host.issuer
+            .sign_entry(Some(host.vault_id), seq, heads.clone(), op, 2)
+            .unwrap()
+    };
+    let later = signed(seq + 2, confirm_op(900));
+    let held = signed(
+        seq + 1,
+        revision(MachineOwnership::Yours, current.revision + 1),
+    );
+    host.vault.put_authority_log_entry(&later, at, 1).unwrap();
+    host.vault.put_authority_log_entry(&held, at, 1).unwrap();
+    let head = fold().machine(request.machine).cloned().unwrap();
+    assert!(head.floor_held && head.profile.revision == current.revision + 1);
+
+    with_rows_per_signer_for_test(BOUND, || {
+        let next = |op| {
+            crate::authority::slip_vault::next_entry(
+                &host.issuer,
+                &fold(),
+                op,
+                host.vault.now_recorded_at(),
+            )
+            .unwrap()
+        };
+        for n in 0.. {
+            if let Err(err) = host
+                .vault
+                .put_authority_log_entry(&next(confirm_op(n)), at, 1)
+            {
+                assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
+                break;
+            }
+        }
+        let demotion = next(revision(MachineOwnership::WorkSchool, current.revision + 2));
+        let err = host
+            .vault
+            .put_authority_log_entry(&demotion, at, 1)
+            .unwrap_err();
+        assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
+    });
+}
+
 /// Bug repro (review rounds 2 and 3): two replicas at the owner's bound
 /// each demote one machine from the same head, and one of them then
 /// removes it. The door judged the second demotion against the machine as

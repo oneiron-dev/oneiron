@@ -1,16 +1,21 @@
-//! The order an import stages a signed history in (H72).
+//! The order a store door is handed several AUTHORITY_LOG rows in (H72).
 //!
-//! An import is one write, and a store door judges each row against the rows
-//! already stored: it holds a row no key that may vouch for it signed, which
-//! aborts the import, and a row first observed below a sequence its signer
-//! already showed in the same scope folds as a rollback. So each row is
-//! staged after every row among them it names as a parent, after the rows
-//! that let a key vouch for it, and after its signer's rows of lower
-//! sequence in the same scope. The sequence order gives way only where the
-//! parents contradict it, in a malformed history. Among the rows ready, the
-//! rows the consent structure rests on, and every row they wait for, go
-//! first, so each other row is judged under as much of the history's
-//! structure as it can be; then the order given.
+//! A store door judges each row against the rows already stored: it holds a
+//! row no key that may vouch for it signed, and a row first observed below a
+//! sequence its signer already showed in the same scope folds as a rollback.
+//! It never needs a row's parents stored. So each signer's rows in one scope
+//! stage by sequence, and each row after the rows among them it names as
+//! parents, unless only a parent edge stands in the way: then the parent
+//! edge gives way first, and a sequence edge only after it, lowest sequence
+//! first. Among the rows ready, the consent structure's rows (genesis, owner
+//! and admin admissions) and every row they wait for go first, and owned but
+//! not "yours" machine revisions, which may land past their signer's bound
+//! as restrictions, go last; then the order given.
+//!
+//! An import is one write that aborts on the first held row, so it also
+//! stages each row after the rows that let a key vouch for it, and a handoff
+//! after the row that makes its signer a slip issuer. A sync pass holds such
+//! a row as pending and retries it, so it orders without consent.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -19,16 +24,26 @@ use super::*;
 
 type Row = (AuthorityEntryHash, Vec<u8>, AuthorityLogEntry);
 
-/// A row the consent structure rests on: a genesis, an owner or admin
-/// admission, or a machine revision.
-fn is_structural(op: &AuthorityOp) -> bool {
-    matches!(
-        op,
-        AuthorityOp::Genesis { .. } | AuthorityOp::MachineProfile(_)
-    ) || admits_device(op).is_some_and(is_consent_device)
+/// A row the consent structure rests on: a genesis, or an owner or admin
+/// admission.
+fn is_consent_row(op: &AuthorityOp) -> bool {
+    matches!(op, AuthorityOp::Genesis { .. }) || admits_device(op).is_some_and(is_consent_device)
 }
 
-/// The grants any one of which lets a key vouch for `entry`. A genesis the
+/// A row the door's structure reads: a consent row or a machine revision.
+fn is_structural(op: &AuthorityOp) -> bool {
+    is_consent_row(op) || matches!(op, AuthorityOp::MachineProfile(_))
+}
+
+/// An owned but not "yours" machine revision.
+fn may_restrict(op: &AuthorityOp) -> bool {
+    matches!(op, AuthorityOp::MachineProfile(profile)
+        if matches!(profile.role, MachineRole::Owned(_))
+            && profile.role != MachineRole::Owned(MachineOwnership::Yours))
+}
+
+/// The grants any one of which lets a key vouch for `entry`, and for a
+/// handoff the grant that makes its signer a slip issuer. A genesis the
 /// stored log does not take as its root waits for nothing: no row admits it.
 fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
     match &entry.op {
@@ -36,9 +51,13 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
         AuthorityOp::WorldPrivacy(edit) => {
             vec![Grant::InstallKey(edit.machine, entry.signer_key().clone())]
         }
-        _ => std::iter::once(&entry.signer)
+        op => std::iter::once(&entry.signer)
             .chain(&entry.cosigns)
             .map(|signature| Grant::Admitter(signature.public_key.clone()))
+            .chain(
+                matches!(op, AuthorityOp::ReRoot { .. })
+                    .then(|| Grant::Issuer(entry.signer_key().clone())),
+            )
             .collect(),
     }
 }
@@ -51,28 +70,16 @@ pub(super) fn import_order<'a>(
     resident: &BTreeSet<AuthorityEntryHash>,
     rows: Vec<Row>,
 ) -> Vec<Row> {
+    let stored: Vec<&'a AuthorityLogEntry> = stored.collect();
     let order = {
-        let mut stager = Stager::new(&rows, resident);
+        let entries: Vec<_> = rows.iter().map(|(hash, _, entry)| (*hash, entry)).collect();
+        let mut builder = StructureBuilder::default();
         for entry in stored {
-            stager.builder.push(entry);
+            builder.push(entry);
         }
-        stager.builder.settle();
-        stager.builder.grown.clear();
-        for index in 0..rows.len() {
-            if stager.waiting[index] == 0 {
-                stager.offer(index);
-            }
-        }
-        while let Some((_, index)) = stager
-            .ready
-            .pop_first()
-            .or_else(|| stager.out_of_turn.pop_first())
-        {
-            stager.place(index);
-        }
-        let mut order = stager.order;
-        order.extend((0..rows.len()).filter(|index| !stager.placed[*index]));
-        order
+        builder.settle();
+        builder.grown.clear();
+        stage_order(&entries, Some((builder, resident)))
     };
     let mut rows: Vec<_> = rows.into_iter().map(Some).collect();
     order
@@ -81,16 +88,55 @@ pub(super) fn import_order<'a>(
         .collect()
 }
 
-/// A ready row's place in the queue: the structure's rows and what they
-/// wait for first, then the order given.
-type Turn = (bool, usize);
+/// Indices of `entries` (hash, row) in the order a sync pass hands them to
+/// the store door: parents first, each signer's rows by sequence, the
+/// structure's rows first, then the order given.
+pub(crate) fn authority_stage_order(
+    entries: &[(AuthorityEntryHash, &AuthorityLogEntry)],
+) -> Vec<usize> {
+    stage_order(entries, None)
+}
+
+/// The consent structure of the stored rows and the rows staged so far, and
+/// the hashes of the stored rows.
+type Consent<'r> = (StructureBuilder<'r>, &'r BTreeSet<AuthorityEntryHash>);
+
+fn stage_order<'r>(
+    entries: &'r [(AuthorityEntryHash, &'r AuthorityLogEntry)],
+    consent: Option<Consent<'r>>,
+) -> Vec<usize> {
+    let mut stager = Stager::new(entries, consent);
+    for index in 0..entries.len() {
+        stager.offer(index);
+    }
+    while let Some(index) = stager.next() {
+        stager.place(index);
+    }
+    let mut order = stager.order;
+    order.extend((0..entries.len()).filter(|index| !stager.placed[*index]));
+    order
+}
+
+/// A queued row's place: its tier (the consent structure's rows and what
+/// they wait for, then the rest; rows that may restrict past the bound last
+/// in each), then the order given.
+type Turn = (u8, usize);
+
+/// Which of its edges still hold a row a key vouches for back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Held {
+    Ready,
+    ByParent,
+    BySequence,
+    ByBoth,
+}
 
 struct Stager<'r> {
-    rows: &'r [Row],
-    resident: &'r BTreeSet<AuthorityEntryHash>,
-    /// The consent structure of the stored rows and the rows staged so far.
-    builder: StructureBuilder<'r>,
-    /// Per row: its parents among `rows` not yet staged, and its children.
+    entries: &'r [(AuthorityEntryHash, &'r AuthorityLogEntry)],
+    consent: Option<Consent<'r>>,
+    /// Hashes already pushed into the consent structure.
+    pushed: BTreeSet<AuthorityEntryHash>,
+    /// Per row: its parents among `entries` not yet staged, and its children.
     waiting: Vec<usize>,
     children: Vec<Vec<usize>>,
     /// Each signer's rows in one sequence scope, one level per sequence,
@@ -101,29 +147,33 @@ struct Stager<'r> {
     next_level: Vec<Option<usize>>,
     open: Vec<bool>,
     unstaged: Vec<usize>,
-    structure_first: Vec<bool>,
+    tier: Vec<u8>,
     placed: Vec<bool>,
-    /// Rows whose parents are staged and that a key vouches for: in turn,
-    /// or with a lower-sequence row of their signer still unstaged.
+    held: Vec<Option<Held>>,
     ready: BTreeSet<Turn>,
-    out_of_turn: BTreeSet<Turn>,
-    /// Rows whose parents are staged and that no key vouches for yet.
+    by_parent: BTreeSet<Turn>,
+    by_sequence: BTreeSet<(u64, Turn)>,
+    by_both: BTreeSet<(u64, Turn)>,
+    /// Rows no key vouches for yet, under the grants that would wake them.
     deferred: BTreeMap<Grant, Vec<usize>>,
     is_deferred: Vec<bool>,
     order: Vec<usize>,
 }
 
 impl<'r> Stager<'r> {
-    fn new(rows: &'r [Row], resident: &'r BTreeSet<AuthorityEntryHash>) -> Self {
-        let count = rows.len();
-        let at: BTreeMap<_, _> = rows
+    fn new(
+        entries: &'r [(AuthorityEntryHash, &'r AuthorityLogEntry)],
+        consent: Option<Consent<'r>>,
+    ) -> Self {
+        let count = entries.len();
+        let at: BTreeMap<_, _> = entries
             .iter()
             .enumerate()
-            .map(|(index, (hash, ..))| (*hash, index))
+            .map(|(index, (hash, _))| (*hash, index))
             .collect();
         let parents = |index: usize| {
-            rows[index]
-                .2
+            entries[index]
+                .1
                 .parent_hashes
                 .iter()
                 .filter_map(|parent| at.get(parent).copied())
@@ -137,7 +187,7 @@ impl<'r> Stager<'r> {
             }
         }
         let mut scopes: BTreeMap<_, BTreeMap<u64, Vec<usize>>> = BTreeMap::new();
-        for (index, (_, _, entry)) in rows.iter().enumerate() {
+        for (index, (_, entry)) in entries.iter().enumerate() {
             let scope = (
                 entry.signer_key(),
                 super::world_privacy::side_world(&entry.op),
@@ -168,17 +218,22 @@ impl<'r> Stager<'r> {
                 below = Some(level);
             }
         }
-        // The rows the structure rests on, and every row they wait for, by
-        // parent or by sequence.
-        let mut structure_first = vec![false; count];
+        // The consent structure's rows, and every row they wait for, by
+        // parent or by sequence, go first; in each tier, the rows that may
+        // restrict past the bound go last.
+        let mut tier: Vec<u8> = entries
+            .iter()
+            .map(|(_, entry)| 2 + u8::from(may_restrict(&entry.op)))
+            .collect();
         let mut expanded = vec![false; levels.len()];
         let mut stack: Vec<_> = (0..count)
-            .filter(|index| is_structural(&rows[*index].2.op))
+            .filter(|index| is_consent_row(&entries[*index].1.op))
             .collect();
         while let Some(index) = stack.pop() {
-            if std::mem::replace(&mut structure_first[index], true) {
+            if tier[index] < 2 {
                 continue;
             }
+            tier[index] -= 2;
             stack.extend(parents(index));
             if let Some(below) = previous_level[level_of[index]]
                 && !std::mem::replace(&mut expanded[below], true)
@@ -187,9 +242,9 @@ impl<'r> Stager<'r> {
             }
         }
         Self {
-            rows,
-            resident,
-            builder: StructureBuilder::default(),
+            entries,
+            consent,
+            pushed: BTreeSet::new(),
             waiting,
             children,
             level_of,
@@ -197,59 +252,104 @@ impl<'r> Stager<'r> {
             levels,
             next_level,
             open,
-            structure_first,
+            tier,
             placed: vec![false; count],
+            held: vec![None; count],
             ready: BTreeSet::new(),
-            out_of_turn: BTreeSet::new(),
+            by_parent: BTreeSet::new(),
+            by_sequence: BTreeSet::new(),
+            by_both: BTreeSet::new(),
             deferred: BTreeMap::new(),
             is_deferred: vec![false; count],
             order: Vec::with_capacity(count),
         }
     }
 
-    fn turn(&self, index: usize) -> Turn {
-        (!self.structure_first[index], index)
+    /// The next row to stage: a ready one, else one only a parent edge
+    /// holds back, else the lowest sequence a sequence edge holds back.
+    fn next(&mut self) -> Option<usize> {
+        let index = self
+            .ready
+            .pop_first()
+            .or_else(|| self.by_parent.pop_first())
+            .or_else(|| self.by_sequence.pop_first().map(|(_, turn)| turn))
+            .or_else(|| self.by_both.pop_first().map(|(_, turn)| turn))
+            .map(|(_, index)| index)?;
+        self.held[index] = None;
+        Some(index)
     }
 
-    /// Queues `index`, whose parents are all staged.
+    /// Defers `index` until a key may vouch for it, or queues it.
     fn offer(&mut self, index: usize) {
-        let (hash, _, entry) = &self.rows[index];
-        if !self.resident.contains(hash) && !self.builder.structure.vouches_for(entry) {
+        let (hash, entry) = self.entries[index];
+        let vouched = self.consent.as_ref().is_none_or(|(builder, resident)| {
+            resident.contains(&hash)
+                || (builder.structure.vouches_for(entry)
+                    && (!matches!(entry.op, AuthorityOp::ReRoot { .. })
+                        || builder.structure.issuers.contains(entry.signer_key())))
+        });
+        if !vouched {
             self.is_deferred[index] = true;
             for grant in wanted(entry) {
                 self.deferred.entry(grant).or_default().push(index);
             }
             return;
         }
-        let turn = self.turn(index);
-        if self.open[self.level_of[index]] {
-            self.ready.insert(turn);
-        } else {
-            self.out_of_turn.insert(turn);
+        self.requeue(index);
+    }
+
+    /// Moves `index` to the queue its edges put it in.
+    fn requeue(&mut self, index: usize) {
+        if self.placed[index] || self.is_deferred[index] {
+            return;
         }
+        let (turn, seq) = ((self.tier[index], index), self.entries[index].1.seq);
+        match self.held[index] {
+            Some(Held::Ready) => self.ready.remove(&turn),
+            Some(Held::ByParent) => self.by_parent.remove(&turn),
+            Some(Held::BySequence) => self.by_sequence.remove(&(seq, turn)),
+            Some(Held::ByBoth) => self.by_both.remove(&(seq, turn)),
+            None => false,
+        };
+        let held = match (self.waiting[index] == 0, self.open[self.level_of[index]]) {
+            (true, true) => Held::Ready,
+            (false, true) => Held::ByParent,
+            (true, false) => Held::BySequence,
+            (false, false) => Held::ByBoth,
+        };
+        match held {
+            Held::Ready => self.ready.insert(turn),
+            Held::ByParent => self.by_parent.insert(turn),
+            Held::BySequence => self.by_sequence.insert((seq, turn)),
+            Held::ByBoth => self.by_both.insert((seq, turn)),
+        };
+        self.held[index] = Some(held);
     }
 
     fn place(&mut self, index: usize) {
         self.placed[index] = true;
         self.order.push(index);
-        let rows = self.rows;
-        let (hash, _, entry) = &rows[index];
-        if is_structural(&entry.op) && !self.resident.contains(hash) {
-            self.builder.push(entry);
-            self.builder.settle();
-            for grant in std::mem::take(&mut self.builder.grown) {
-                for waiter in self.deferred.remove(&grant).unwrap_or_default() {
-                    if std::mem::replace(&mut self.is_deferred[waiter], false) {
-                        self.offer(waiter);
-                    }
+        let (hash, entry) = self.entries[index];
+        let mut grants = Vec::new();
+        if let Some((builder, resident)) = &mut self.consent
+            && is_structural(&entry.op)
+            && !resident.contains(&hash)
+            && self.pushed.insert(hash)
+        {
+            builder.push(entry);
+            builder.settle();
+            grants = std::mem::take(&mut builder.grown);
+        }
+        for grant in grants {
+            for waiter in self.deferred.remove(&grant).unwrap_or_default() {
+                if std::mem::replace(&mut self.is_deferred[waiter], false) {
+                    self.offer(waiter);
                 }
             }
         }
         for child in std::mem::take(&mut self.children[index]) {
             self.waiting[child] -= 1;
-            if self.waiting[child] == 0 {
-                self.offer(child);
-            }
+            self.requeue(child);
         }
         let mut level = self.level_of[index];
         self.unstaged[level] -= 1;
@@ -260,10 +360,7 @@ impl<'r> Stager<'r> {
         {
             self.open[next] = true;
             for row in std::mem::take(&mut self.levels[next]) {
-                let turn = self.turn(row);
-                if self.out_of_turn.remove(&turn) {
-                    self.ready.insert(turn);
-                }
+                self.requeue(row);
             }
             level = next;
         }
