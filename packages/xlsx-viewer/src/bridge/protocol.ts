@@ -8,7 +8,7 @@
  * lifetime and frees them on `dispose`.
  */
 import type { IWorkbookData, IWorksheetData } from "@univerjs/core";
-import type { PreviewBudget } from "./budget";
+import type { BudgetLine, PreviewBudget } from "./budget";
 import type { ParseOptions } from "./parse";
 
 /** Seed a session with the workbook bytes; response is the outline. */
@@ -55,6 +55,8 @@ export interface ErrorResponse {
   readonly kind: "error";
   readonly id: number;
   readonly message: string;
+  /** Set when a budget refused the workbook, so the caller gets a `WorkbookBudgetError` back. */
+  readonly budget?: { readonly line: BudgetLine; readonly reason: string };
 }
 
 export type ParseResponse = InitResponse | SheetResponse | ErrorResponse;

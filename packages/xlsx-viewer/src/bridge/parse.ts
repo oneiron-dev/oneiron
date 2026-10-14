@@ -209,6 +209,7 @@ export function readSheet(
     sheets: [sheetName],
     ...sheetReadOptions(includeFormula),
   });
+  checkSheetCount(wb.SheetNames.length, budget);
   return sheetOf(wb, sheetName, includeFormula, budget);
 }
 

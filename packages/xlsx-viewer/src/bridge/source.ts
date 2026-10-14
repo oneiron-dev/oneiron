@@ -5,7 +5,7 @@
  * and loads the rest on demand, so a >25MB workbook never sits fully parsed in
  * memory.
  */
-import { preflightPackage } from "./budget";
+import { preflightPackage, WorkbookBudgetError } from "./budget";
 import { ParseSessionStore } from "./handler";
 import { readSheet, readWorkbookOutline } from "./parse";
 import type { ParseOptions } from "./parse";
@@ -106,7 +106,7 @@ export function createWorkerWorkbookSource(
     }
     pending.delete(res.id);
     if (res.kind === "error") {
-      entry.reject(new Error(res.message));
+      entry.reject(res.budget ? new WorkbookBudgetError(res.budget.line, res.budget.reason) : new Error(res.message));
     } else {
       entry.resolve(res);
     }

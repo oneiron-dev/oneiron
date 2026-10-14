@@ -337,9 +337,30 @@ describe("preview budgets: a package is refused from its ZIP records, before She
       name: `xl/worksheets/s${i}.xml`,
       body: deflated(text(SHEET_XML)),
     }));
+    const types = { name: "[Content_Types].xml", body: text("<Types/>") };
     const budget = { ...PREVIEW_BUDGET, copyBytes: MIB };
-    refusedWith("copyBytes", () => preflightPackage(zip([...small, large]), budget));
-    expect(() => preflightPackage(zip([large, ...small]), budget)).not.toThrow();
+    refusedWith("copyBytes", () => preflightPackage(zip([types, ...small, large]), budget));
+    expect(() => preflightPackage(zip([types, large, ...small]), budget)).not.toThrow();
+  });
+
+  it("refuses a package SheetJS would read as something other than a workbook package", () => {
+    // Round 2: without [Content_Types].xml SheetJS reads a stored Index.zip
+    // as a whole new package, which this preflight never saw.
+    const inner = workbook(zeros(Math.ceil((PREVIEW_BUDGET.entryBytes + 1) / 258)));
+    refusedWith("entryBytes", () => preflightPackage(inner));
+    refusedWith("structure", () => readWorkbookOutline(zip([{ name: "Index.zip", body: inner }])));
+    // OpenDocument, Numbers and the like are read before [Content_Types].xml.
+    const types = { name: "[Content_Types].xml", body: text("<Types/>") };
+    for (const other of ["META-INF/manifest.xml", "Root Entry/objectdata.xml", "Index/Document.iwa"]) {
+      refusedWith("structure", () => preflightPackage(zip([types, { name: other, body: text("<x/>") }])));
+    }
+    // Part names follow the engine's OPC rules, and SheetJS looks parts up
+    // without case, so two names it would confuse are refused.
+    for (const name of ["XL/workbook.xml", "../workbook.xml", "xl//workbook.xml", "xl\\workbook.xml"]) {
+      const parts = [types, { name: "xl/workbook.xml", body: text("<w/>") }, { name, body: text("<w/>") }];
+      refusedWith("structure", () => preflightPackage(zip(parts)));
+    }
+    expect(() => preflightPackage(zip([types, { name: "xl/workbook.xml", body: text("<w/>") }]))).not.toThrow();
   });
 
   it("previews a streamed package, which leaves its local sizes at zero, from its declared sizes", () => {
@@ -359,14 +380,17 @@ describe("preview budgets: sheets, cells and text", () => {
     refusedWith("inputBytes", () => readWorkbookOutline(bytes, "w", { ...PREVIEW_BUDGET, inputBytes: 100 }));
     refusedWith("sheets", () => readWorkbookOutline(bytes, "w", { ...PREVIEW_BUDGET, sheets: 2 }));
     refusedWith("sheets", () => readWorkbook(bytes, { budget: { ...PREVIEW_BUDGET, sheets: 2 } }));
+    refusedWith("sheets", () => readSheet(bytes, "S1", { budget: { ...PREVIEW_BUDGET, sheets: 2 } }));
     refusedWith("sheetCells", () => readSheet(bytes, "S1", { budget: { ...PREVIEW_BUDGET, sheetCells: 15 } }));
     refusedWith("sheetTextChars", () =>
       readSheet(bytes, "S1", { budget: { ...PREVIEW_BUDGET, sheetTextChars: 10 } }),
     );
-    // In the worker the sheet is refused there and the refusal comes back.
+    // In the worker the sheet is refused there and the typed refusal comes back.
     const budget = { ...PREVIEW_BUDGET, sheetCells: 15 };
     const source = createWorkerWorkbookSource(bytes, recordingWorker, { budget });
-    await expect(source.sheet("S1")).rejects.toThrow(/\(sheetCells\)/);
+    const refusal = await source.sheet("S1").catch((err: unknown) => err);
+    expect(refusal).toBeInstanceOf(WorkbookBudgetError);
+    expect((refusal as WorkbookBudgetError).line).toBe("sheetCells");
     source.dispose();
   });
 

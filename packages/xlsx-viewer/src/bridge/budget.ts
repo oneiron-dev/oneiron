@@ -17,6 +17,11 @@
  * Each entry's local record (header, data, descriptor) must stand apart from
  * every other one, so every byte SheetJS reads per entry is a distinct byte of
  * the package and the budgets count each once.
+ *
+ * The package must also be one SheetJS reads as a workbook package: part names
+ * follow the engine's OPC rules, `[Content_Types].xml` is present, and no part
+ * would send SheetJS to another format's reader first (OpenDocument, Numbers),
+ * nor to the nested `Index.zip` it reads without this preflight.
  */
 
 /** The lines one preview stays within. */
@@ -32,8 +37,8 @@ export interface PreviewBudget {
   /** Declared expanded bytes per compressed byte of an entry over 1 MiB. */
   readonly compressionRatio: number;
   /**
-   * Bytes SheetJS copies to inflate the deflated entries: it copies from each
-   * one's data to the end of the package.
+   * Bytes SheetJS copies to inflate the deflated entries: each one's data, and
+   * then from its data to the end of the package.
    */
   readonly copyBytes: number;
   /** Sheets the workbook lists. */
@@ -52,8 +57,10 @@ const MIB = 1024 * 1024;
  * sheets than it has entries. The engine reads at most 1,000,000 XML nodes
  * from one part, and a cell is at least one node. A sheet's text stays within
  * one entry's bytes. Deflate compresses real sheet XML 10 to 20 times; 200 is
- * a tripwire for a crafted entry, not a size line. A real package of 512 MiB
- * holds a few dozen deflated entries, about 16 GiB of copying at most.
+ * a tripwire for a crafted entry, not a size line. Copying grows with the
+ * deflated entries that precede large ones: a real workbook of 100 sheets
+ * before 200 MiB of media copies about 20 GiB, so the line sits well above
+ * that and far below the terabytes 10,000 entries could ask for.
  */
 export const PREVIEW_BUDGET: PreviewBudget = Object.freeze({
   inputBytes: 512 * MIB,
@@ -61,7 +68,7 @@ export const PREVIEW_BUDGET: PreviewBudget = Object.freeze({
   entryBytes: 64 * MIB,
   expandedBytes: 512 * MIB,
   compressionRatio: 200,
-  copyBytes: 16 * 1024 * MIB,
+  copyBytes: 64 * 1024 * MIB,
   sheets: 10_000,
   sheetCells: 1_000_000,
   sheetTextChars: 64 * MIB,
@@ -76,11 +83,13 @@ export type BudgetLine = keyof PreviewBudget | "structure";
 /** A workbook refused before it was parsed further. The message names no workbook content. */
 export class WorkbookBudgetError extends Error {
   readonly line: BudgetLine;
+  readonly reason: string;
 
   constructor(line: BudgetLine, reason: string) {
     super(`workbook preview refused (${line}): ${reason}`);
     this.name = "WorkbookBudgetError";
     this.line = line;
+    this.reason = reason;
   }
 }
 
@@ -146,6 +155,29 @@ function sameBytes(bytes: Uint8Array, a: number, b: number, length: number): boo
   return true;
 }
 
+/** A part name as SheetJS holds it: one character per byte. */
+function latin1(bytes: Uint8Array, start: number, length: number): string {
+  if (start + length > bytes.length) {
+    throw structure("truncated ZIP record");
+  }
+  let text = "";
+  for (let i = start; i < start + length; i += 1) {
+    text += String.fromCharCode(bytes[i]!);
+  }
+  return text;
+}
+
+/**
+ * The name SheetJS looks a part up by: lower case, without the `Root Entry/`
+ * prefix its container gives every path.
+ */
+function lookupName(path: string): string {
+  return path.toLowerCase().replace(/^root entry\//, "");
+}
+
+/** Parts SheetJS reads as another format before it looks for `[Content_Types].xml`. */
+const OTHER_FORMATS = ["meta-inf/manifest.xml", "objectdata.xml", "index/document.iwa"];
+
 /** SheetJS takes the last end-of-central-directory signature in the file. */
 function findEndRecord(bytes: Uint8Array): number {
   for (let at = bytes.length - 4; at >= 0; at -= 1) {
@@ -197,6 +229,7 @@ export function preflightPackage(bytes: Uint8Array, budget: PreviewBudget = PREV
   const records: [start: number, end: number, centralName: number, nameLength: number, extra: number][] = [];
   let expandedTotal = 0;
   let copyTotal = 0;
+  const names = new Set<string>();
   let at = directory;
   for (let index = 0; index < count; index += 1) {
     if (u32(bytes, at) !== CENTRAL) {
@@ -215,6 +248,22 @@ export function preflightPackage(bytes: Uint8Array, budget: PreviewBudget = PREV
     if (at > end) {
       throw structure("central directory overruns its end record");
     }
+    // The engine's OPC part-name rules: a directory entry is empty, and no
+    // two parts share a name however SheetJS looks it up.
+    const entryName = latin1(bytes, name, nameLength);
+    const path = entryName.endsWith("/") ? entryName.slice(0, -1) : entryName;
+    if (
+      (path !== entryName && expanded !== 0) ||
+      path === "" ||
+      path.startsWith("/") ||
+      path.includes("\\") ||
+      path.includes("\0") ||
+      path.split("/").some((segment) => segment === "" || segment === "." || segment === "..") ||
+      names.has(lookupName(path))
+    ) {
+      throw structure("unsafe or duplicate part name");
+    }
+    names.add(lookupName(path));
     if (flags & ENCRYPTED) {
       throw structure("encrypted entry");
     }
@@ -278,7 +327,7 @@ export function preflightPackage(bytes: Uint8Array, budget: PreviewBudget = PREV
       throw new WorkbookBudgetError("compressionRatio", "an entry compresses past the ratio budget");
     }
     if (method === DEFLATE) {
-      copyTotal += bytes.length - data;
+      copyTotal += compressed + (bytes.length - data);
       if (copyTotal > budget.copyBytes) {
         throw new WorkbookBudgetError("copyBytes", "inflating the entries copies past the copy budget");
       }
@@ -286,6 +335,12 @@ export function preflightPackage(bytes: Uint8Array, budget: PreviewBudget = PREV
   }
   if (at !== end) {
     throw structure("central directory size disagrees with its entries");
+  }
+  if (!names.has("[content_types].xml")) {
+    throw structure("not a workbook package: no [Content_Types].xml");
+  }
+  if (OTHER_FORMATS.some((other) => names.has(other))) {
+    throw structure("a part SheetJS reads as another format");
   }
   // Apart, the local names and extra fields together stay within the package,
   // however many central entries name one record.
