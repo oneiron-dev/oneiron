@@ -186,6 +186,7 @@ fn receive_pack_hook_requires_durable_intent_before_releasing_the_backend() {
         )
         .expect("request");
         fs::write(hooks.blobs_path(), b"").expect("empty added-blob stream");
+        fs::write(hooks.history_path(), b"").expect("empty history stream");
         let report = serve_door_window(
             &vault,
             &repo,
