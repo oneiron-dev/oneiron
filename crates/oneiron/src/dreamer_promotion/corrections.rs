@@ -26,7 +26,7 @@ pub(super) fn grant_allowed_replacement(
     let prior = match vault.pending_claim_supersession(&replacement) {
         Ok(prior) => prior?,
         Err(error) => {
-            tracing::warn!(%error, replacement = %replacement.to_hex(), "a staged replacement could not be read");
+            tracing::warn!(kind = ?error.kind(), replacement = %replacement.to_hex(), "a staged replacement could not be read");
             return None;
         }
     };
@@ -50,12 +50,12 @@ pub(super) fn grant_allowed_replacement(
             Some(prior)
         }
         // The policy protects it; the owner's run review holds it.
-        Err(Error::Gate(error)) => {
-            tracing::info!(target: "oneiron::dreamer", %error, replacement = %replacement.to_hex(), "a staged replacement is held for the owner");
+        Err(error @ Error::Gate(_)) => {
+            tracing::info!(target: "oneiron::dreamer", kind = ?error.kind(), replacement = %replacement.to_hex(), "a staged replacement is held for the owner");
             None
         }
         Err(error) => {
-            tracing::warn!(%error, replacement = %replacement.to_hex(), "a staged replacement was not granted; it stays in the owner's review");
+            tracing::warn!(kind = ?error.kind(), replacement = %replacement.to_hex(), "a staged replacement was not granted; it stays in the owner's review");
             None
         }
     }
@@ -157,6 +157,7 @@ pub(super) fn close_conflicts_naming(
     for marker in open.into_iter().filter(|marker| !resolved.contains(marker)) {
         // A marker this close cannot land stays open, and in the owner's
         // view; the correction itself has landed.
+        // Logged by a closed name: a refusal's text can quote the vault.
         let reason = match conflict_close_candidate(
             vault,
             run,
@@ -166,13 +167,13 @@ pub(super) fn close_conflicts_naming(
         ) {
             Ok(close) => match promote_one(vault, run, close, None, Some(fence), None) {
                 Ok(ClaimApprovalStatus::Auto | ClaimApprovalStatus::Proposed) => None,
-                Ok(other) => Some(format!("the close was {}", other.as_str())),
-                Err(reason) => Some(reason),
+                Ok(other) => Some(other.as_str()),
+                Err(_) => Some("promotion_refused"),
             },
-            Err(error) => Some(error.to_string()),
+            Err(_) => Some("no_close_candidate"),
         };
         if let Some(reason) = reason {
-            tracing::warn!(%reason, marker = %marker.to_hex(), "an open conflict the correction answered stayed open");
+            tracing::warn!(reason, marker = %marker.to_hex(), "an open conflict the correction answered stayed open");
         }
     }
     // The handoff's later writes do not stand on it.

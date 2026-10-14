@@ -590,7 +590,7 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
     let embedded = match embedded {
         Ok(Ok(embedded)) => embedded,
         Ok(Err(error)) => {
-            tracing::warn!(?error, "endpoint embedding failed");
+            tracing::warn!(kind = ?error.kind(), "endpoint embedding failed");
             return refuse(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "server_error",
@@ -598,7 +598,10 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
             );
         }
         Err(error) => {
-            tracing::warn!(?error, "endpoint embedding task failed");
+            tracing::warn!(
+                panicked = error.is_panic(),
+                "endpoint embedding task failed"
+            );
             return refuse(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "server_error",

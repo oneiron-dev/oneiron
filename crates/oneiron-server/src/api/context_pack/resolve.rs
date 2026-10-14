@@ -174,7 +174,7 @@ pub(crate) async fn run_context_pack(
     let candidate_limit = scoped_read
         .search_candidate_limit(req.limit, query.is_some(), req.query_vector.is_some())
         .map_err(|error| {
-            tracing::error!(error = %error, "core context-pack scoped read setup failed");
+            tracing::error!(kind = ?error.kind(), "core context-pack scoped read setup failed");
             core_engine_error("core context-pack scoped read setup failed", error)
         })?;
     // OF-365 ILD-2: one DisclosureContext value feeds builder, board, and

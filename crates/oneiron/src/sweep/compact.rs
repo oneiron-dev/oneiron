@@ -192,7 +192,7 @@ pub(super) fn compact_all_windows(
             Err(err) => {
                 tracing::error!(
                     window = %label,
-                    error = %err,
+                    kind = ?err.kind(),
                     "sweep: window compaction FAILED — obligation kept for retry"
                 );
                 if !matches!(state, WindowSweepState::Failed(_)) {

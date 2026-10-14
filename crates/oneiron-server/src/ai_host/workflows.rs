@@ -156,7 +156,7 @@ fn pump_once(
                 Ok(WorkflowProgress::Advanced(_)) => continue,
                 Ok(_) => break,
                 Err(error) => {
-                    tracing::warn!(%error, ?root, "workflow step did not complete");
+                    tracing::warn!(kind = ?error.kind(), ?root, "workflow step did not complete");
                     // The claim may have committed before the step's context
                     // failed to resolve: then the callback never ran, and the
                     // lease is found by owner. Nothing else runs on this pump.
@@ -181,7 +181,7 @@ fn pump_once(
                                 tracing::warn!(?root, "a workflow step ended; its workflow stops");
                             }
                             Err(settlement) => {
-                                tracing::error!(%settlement, leaf = ?step.leaf, "failed step was not settled");
+                                tracing::error!(kind = ?settlement.kind(), leaf = ?step.leaf, "failed step was not settled");
                                 released = false;
                             }
                         }

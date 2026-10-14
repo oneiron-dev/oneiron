@@ -299,7 +299,6 @@ fn diagnostic_event_reads_keep_their_receipt() -> Result<()> {
             checkpoint_ref: None,
         },
         evidence_refs: vec![],
-        untrusted_detail: None,
         valid_from: 1,
         valid_to: None,
     };

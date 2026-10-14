@@ -136,7 +136,7 @@ fn feedback_host(
     })
 }
 
-fn owner_error(error: OwnerError) -> ApiError {
+pub(super) fn owner_error(error: OwnerError) -> ApiError {
     match error {
         OwnerError::Invalid(message) => ApiError::bad_request(message, None),
         OwnerError::Changed(message) => ApiError::new(
@@ -184,7 +184,10 @@ fn owner_error(error: OwnerError) -> ApiError {
             _ => core_engine_error("owner action failed", *error),
         },
         OwnerError::Host(error) => {
-            tracing::error!(error = %format!("{error:#}"), "owner action failed");
+            tracing::error!(
+                kind = ?crate::logging::engine_kind(&error),
+                "owner action failed"
+            );
             ApiError::internal_server_error("owner action failed")
         }
     }

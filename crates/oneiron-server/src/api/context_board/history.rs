@@ -165,7 +165,7 @@ fn release_board_replay(
     let unreadable = || ApiError::internal_server_error("board replay is unreadable");
     if crate::device_local::withholds_retained(&server.vault, auth.locality(), rows, cached)
         .map_err(|error| {
-            tracing::error!(error = %error, "board replay device-local check failed");
+            tracing::error!(kind = ?error.kind(), "board replay device-local check failed");
             ApiError::internal_server_error("board history failed")
         })?
     {
@@ -189,8 +189,11 @@ fn release_board_replay(
     let admitted = server
         .vault
         .board_documents_admitted(&documents, &read, disclosure.as_ref())
-        .map_err(|error| {
-            tracing::error!(error = %error, "board replay check failed");
+        .map_err(|_| {
+            tracing::error!(
+                reason = "board_replay_check_failed",
+                "board replay check failed"
+            );
             ApiError::internal_server_error("board history failed")
         })?;
     if !admitted {
