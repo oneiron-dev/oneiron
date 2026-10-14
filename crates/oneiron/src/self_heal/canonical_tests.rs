@@ -3,8 +3,9 @@
 use super::*;
 
 /// Owner ruling 2026-10-14 (fix 6): a diagnostic never carries world text.
-/// Every leaf that could hold a row's words is refused at both doors: the
-/// draft encoder and the decode/write door a replicated body arrives through.
+/// Every leaf that could hold a row's words is refused at both write doors:
+/// the draft encoder and the write door a replicated body arrives through. A
+/// body stored before the ruling decodes with that text dropped.
 #[test]
 fn a_diagnostic_carries_no_row_text() {
     const ROW: &str = "sentinel-row-text-9d02: my sister's diagnosis";
@@ -24,7 +25,8 @@ fn a_diagnostic_carries_no_row_text() {
         let mut entries = body_entries(&canonical);
         set_key(&mut entries, key, hostile.clone());
         let bytes = encode_entries(entries);
-        assert_rejected(&bytes, key);
+        let read = decode_diagnostic_event_body(&bytes).expect("a stored body reads");
+        assert!(!format!("{read:?}").contains("sentinel"), "{key}");
         assert!(
             validate_diagnostic_event_body_bytes(&bytes).is_err(),
             "{key}"

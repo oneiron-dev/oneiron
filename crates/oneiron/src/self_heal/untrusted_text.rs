@@ -2,7 +2,8 @@
 //!
 //! A code run's blocked receipt is the one carrier of an escaped detail leaf.
 //! Diagnostics carry none: their invariant inputs are numbers and their
-//! `untrusted_detail` key is always nil.
+//! `untrusted_detail` key is always nil. A diagnostic stored before the owner
+//! ruling of 2026-10-14 may hold a leaf; decode checks it here and drops it.
 
 use super::event::{MAX_UNTRUSTED_DETAIL_LEN, invalid_diagnostic};
 use crate::error::Result;

@@ -10,7 +10,8 @@ use super::event::{
     DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticReplayCoordinate,
     DiagnosticSourceKind, MAX_EVIDENCE_REFS, MAX_REF_LEN, MAX_TOKEN_LEN, invalid_diagnostic,
 };
-use super::invariant_canonical::{canonical_invariant_field, canonical_invariant_value};
+use super::invariant_canonical::{canonical_invariant_value, stored_invariant_field};
+use super::untrusted_text::{is_forbidden_text_scalar, validate_untrusted_detail};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 
@@ -78,9 +79,29 @@ pub fn encode_diagnostic_event_body(event: &DiagnosticEvent) -> Result<Vec<u8>> 
 ///
 /// Fails closed on an unknown, missing or duplicate key, trailing bytes, an
 /// invalid enum string, a malformed ref or content hash, non-monotonic
-/// validity, a non-canonical or textual invariant value, a non-canonical
-/// evidence-ref order, and any `untrusted_detail` other than nil.
+/// validity, a non-canonical invariant value, and a non-canonical
+/// evidence-ref order.
+///
+/// A body stored before the owner ruling of 2026-10-14 (fix 6) may carry text
+/// where its grammar allowed it: the `untrusted_detail` leaf, a string or
+/// string-keyed map in `expected` / `actual` / `delta`, a replay ref that is
+/// not an id. Decode checks that text against the grammar it was written
+/// under and drops it (a text invariant reads as nil, a prose ref as none),
+/// so an owner's stored diagnostics keep reading and no decoded event carries
+/// text. The body and its id stay as stored. The write door refuses any such
+/// body.
 pub fn decode_diagnostic_event_body(bytes: &[u8]) -> Result<DiagnosticEvent> {
+    decode_body(bytes).map(|decoded| decoded.event)
+}
+
+/// One decoded body, and whether decode dropped text a body stored before
+/// the owner ruling of 2026-10-14 carried.
+struct DecodedBody {
+    event: DiagnosticEvent,
+    dropped_text: bool,
+}
+
+fn decode_body(bytes: &[u8]) -> Result<DecodedBody> {
     let mut cursor = Cursor::new(bytes);
     let Ok(value) = rmpv::decode::read_value(&mut cursor) else {
         return Err(invalid_diagnostic("body is not MessagePack"));
@@ -117,28 +138,43 @@ pub fn decode_diagnostic_event_body(bytes: &[u8]) -> Result<DiagnosticEvent> {
     };
     validate_validity(valid_from, valid_to)?;
 
-    if !required(entries, "untrusted_detail")?.is_nil() {
-        return Err(invalid_diagnostic("a diagnostic carries no free text"));
-    }
+    let mut dropped_text = match required(entries, "untrusted_detail")? {
+        Value::Nil => false,
+        stored => {
+            validate_untrusted_detail(decode_str(stored, "untrusted_detail must be a string")?)?;
+            true
+        }
+    };
+    let expected = decode_stored_invariant(required(entries, "expected")?, &mut dropped_text)?;
+    let actual = decode_stored_invariant(required(entries, "actual")?, &mut dropped_text)?;
+    let delta = decode_stored_invariant(required(entries, "delta")?, &mut dropped_text)?;
+    let run_ref = decode_stored_ref(required(entries, "replay_run_ref")?, &mut dropped_text)?;
+    let checkpoint_ref = decode_stored_ref(
+        required(entries, "replay_checkpoint_ref")?,
+        &mut dropped_text,
+    )?;
 
-    Ok(DiagnosticEvent {
-        detector_id: detector_id.to_owned(),
-        event_class,
-        actor_class,
-        actor_ref: decode_optional_entity_ref(required(entries, "actor_ref")?)?,
-        source,
-        criticality,
-        expected: canonical_invariant_field(required(entries, "expected")?)?,
-        actual: canonical_invariant_field(required(entries, "actual")?)?,
-        delta: canonical_invariant_field(required(entries, "delta")?)?,
-        replay: DiagnosticReplayCoordinate {
-            content_hash: decode_content_hash(required(entries, "replay_content_hash")?)?,
-            run_ref: decode_optional_ref(required(entries, "replay_run_ref")?)?,
-            checkpoint_ref: decode_optional_ref(required(entries, "replay_checkpoint_ref")?)?,
+    Ok(DecodedBody {
+        event: DiagnosticEvent {
+            detector_id: detector_id.to_owned(),
+            event_class,
+            actor_class,
+            actor_ref: decode_optional_entity_ref(required(entries, "actor_ref")?)?,
+            source,
+            criticality,
+            expected,
+            actual,
+            delta,
+            replay: DiagnosticReplayCoordinate {
+                content_hash: decode_content_hash(required(entries, "replay_content_hash")?)?,
+                run_ref,
+                checkpoint_ref,
+            },
+            evidence_refs: decode_evidence_refs(required(entries, "evidence_refs")?)?,
+            valid_from,
+            valid_to,
         },
-        evidence_refs: decode_evidence_refs(required(entries, "evidence_refs")?)?,
-        valid_from,
-        valid_to,
+        dropped_text,
     })
 }
 
@@ -155,9 +191,31 @@ pub fn decode_diagnostic_event_body(bytes: &[u8]) -> Result<DiagnosticEvent> {
 /// Failing closed here is what keeps `(detector_id, canonical body)` a real
 /// address: no writer, local or replicated, can store two byte strings that
 /// carry one event, and no stored byte string can be one an honest re-encode
-/// would not have produced.
+/// would not have produced. A body carrying the text decode drops (see
+/// [`decode_diagnostic_event_body`]) is refused here: no new row carries text.
 pub(super) fn validate_diagnostic_event_body_bytes(bytes: &[u8]) -> Result<DiagnosticEvent> {
-    let event = decode_diagnostic_event_body(bytes)?;
+    let decoded = decode_body(bytes)?;
+    if decoded.dropped_text {
+        return Err(invalid_diagnostic("a diagnostic carries no free text"));
+    }
+    canonical_bytes(decoded.event, bytes)
+}
+
+/// The same check for a body already stored, which a reader re-validates.
+///
+/// A body stored before the owner ruling of 2026-10-14 reads with its text
+/// dropped, so it cannot re-encode to its own bytes; the write door of its
+/// day admitted those bytes, and the id still binds them (see
+/// `stored_diagnostic_event`). Any other body must re-encode exactly.
+pub(super) fn validate_stored_diagnostic_event_body_bytes(bytes: &[u8]) -> Result<DiagnosticEvent> {
+    let decoded = decode_body(bytes)?;
+    if decoded.dropped_text {
+        return Ok(decoded.event);
+    }
+    canonical_bytes(decoded.event, bytes)
+}
+
+fn canonical_bytes(event: DiagnosticEvent, bytes: &[u8]) -> Result<DiagnosticEvent> {
     if encode_diagnostic_event_body(&event)?.as_slice() != bytes {
         return Err(invalid_diagnostic("body is not canonically encoded"));
     }
@@ -277,14 +335,33 @@ fn hex_nibble(byte: u8) -> Option<u8> {
     }
 }
 
-fn decode_optional_ref(value: &Value) -> Result<Option<String>> {
-    match value {
-        Value::Nil => Ok(None),
-        other => {
-            let text = decode_str(other, "replay ref must be a string")?;
-            validate_ref(text)?;
-            Ok(Some(text.to_owned()))
+/// A stored invariant value; text a body stored before the owner ruling of
+/// 2026-10-14 carried reads as nil, and sets `dropped_text`.
+fn decode_stored_invariant(value: &Value, dropped_text: &mut bool) -> Result<Value> {
+    let stored = stored_invariant_field(value)?;
+    *dropped_text |= stored.is_none();
+    Ok(stored.unwrap_or(Value::Nil))
+}
+
+/// A stored replay ref. A body stored before the owner ruling of 2026-10-14
+/// may hold prose here, since that grammar took any bounded text without
+/// control data; prose reads as no ref, and sets `dropped_text`.
+fn decode_stored_ref(value: &Value, dropped_text: &mut bool) -> Result<Option<String>> {
+    if value.is_nil() {
+        return Ok(None);
+    }
+    let text = decode_str(value, "replay ref must be a string")?;
+    match validate_ref(text) {
+        Ok(()) => Ok(Some(text.to_owned())),
+        Err(_)
+            if !text.is_empty()
+                && text.len() <= MAX_REF_LEN
+                && !text.chars().any(is_forbidden_text_scalar) =>
+        {
+            *dropped_text = true;
+            Ok(None)
         }
+        Err(error) => Err(error),
     }
 }
 
@@ -321,7 +398,7 @@ fn canonical_optional_ref(value: Option<&str>) -> Result<Value> {
 /// A ref is an id, never prose (owner ruling 2026-10-14, fix 6): ASCII
 /// letters, digits and `.` `_` `-` `:` `/` `@`. Both codec doors check it, so
 /// a DIAGNOSTIC body with a sentence in a replay coordinate neither encodes
-/// nor decodes.
+/// nor passes the write door, and a stored one reads without it.
 pub(super) fn validate_ref(text: &str) -> Result<()> {
     if text.is_empty() || text.len() > MAX_REF_LEN {
         return Err(invalid_diagnostic("replay ref is empty or too long"));
