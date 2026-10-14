@@ -203,7 +203,7 @@ pub(super) fn load_record_in_txn(
     // A body that names another row is no saved query at this id: every write
     // stores at the body's `query_ref`, so reading it here would let authority
     // over this row overwrite that one.
-    Ok(decode_record(&raw[ENTITY_METADATA_HEADER_LEN..])?
+    Ok(Some(decode_record(&raw[ENTITY_METADATA_HEADER_LEN..])?)
         .filter(|record| record.query_ref == query_ref))
 }
 
