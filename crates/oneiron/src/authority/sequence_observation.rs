@@ -47,21 +47,21 @@ impl RawValue for SequenceReceipt {
 
 pub(super) struct AuthorityLocalObservations {
     pub(super) sequence_floors: BTreeMap<AuthorityEntryHash, u64>,
+    /// Rows a handoff vouches for: no floor refuses them.
+    pub(super) vouched: BTreeSet<AuthorityEntryHash>,
     pub(super) policy: AuthorityObservationPolicy,
 }
 
 impl AuthorityLocalObservations {
-    /// The same observations with no sequence floor on `line`, a handoff's
-    /// line: the handoff vouches for it, so its settlement does not turn on
-    /// which sibling this vault happened to see first.
-    pub(super) fn without_floors_on(&self, line: &BTreeSet<AuthorityEntryHash>) -> Self {
+    /// The same observations with `line`, a handoff's line, vouched for: no
+    /// floor refuses a row of it, so its settlement does not turn on which
+    /// sibling this vault happened to see first. A row of it past its floor
+    /// still lands restriction only, so the handoff grants nothing this
+    /// install held back (Astra #1430b).
+    pub(super) fn vouching(&self, line: &BTreeSet<AuthorityEntryHash>) -> Self {
         Self {
-            sequence_floors: self
-                .sequence_floors
-                .iter()
-                .filter(|(hash, _)| !line.contains(*hash))
-                .map(|(hash, floor)| (*hash, *floor))
-                .collect(),
+            sequence_floors: self.sequence_floors.clone(),
+            vouched: self.vouched.union(line).copied().collect(),
             policy: self.policy,
         }
     }
@@ -152,6 +152,7 @@ pub(super) fn authority_local_observations_in_txn(
     }
     Ok(AuthorityLocalObservations {
         sequence_floors,
+        vouched: BTreeSet::new(),
         policy: authority_observation_policy_in_txn(store, txn)?,
     })
 }

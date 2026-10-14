@@ -646,3 +646,119 @@ fn a_rekey_past_the_floor_leaves_both_keys_unknown() {
         }
     }
 }
+
+/// Astra #1430b, F1: a removal past the floor stays terminal but
+/// acknowledges nothing here. The owner removes a machine that narrowed and
+/// then widened a world, listing the widening, and a later owner row for
+/// another machine reaches one replica first. There the widening keeps no
+/// full strength; where the removal arrived first it acknowledges the
+/// widening as usual, a fail-closed difference between the orders.
+#[test]
+fn a_removal_past_the_floor_acknowledges_nothing_here() {
+    let Held {
+        host,
+        world,
+        laptop: (laptop, laptop_key),
+        desk: (desk, _),
+        ..
+    } = held(106);
+    let widening = edit_by(
+        &host,
+        laptop,
+        &laptop_key,
+        world,
+        settings(ReadLocation::Everywhere),
+    );
+    land(&host, std::slice::from_ref(&widening));
+    let fold = host.vault.authority_fold().unwrap();
+    let seq = fold.append_sequences[&host.issuer.public_key()];
+    let removal = revision(
+        &host,
+        &fold,
+        seq + 1,
+        MachineProfile {
+            role: MachineRole::Removed,
+            revision: 2,
+            seen_world_edits: BTreeSet::from([authority_entry_hash(&widening).unwrap()]),
+            ..fold.machine(laptop).unwrap().profile.clone()
+        },
+    );
+    let other = revision(
+        &host,
+        &fold,
+        seq + 2,
+        MachineProfile {
+            revision: 2,
+            ..fold.machine(desk).unwrap().profile.clone()
+        },
+    );
+    let (_dir, replica) = replica_storing(&host, &[&other, &removal]);
+    assert!(replica.authority_fold().unwrap().machines[&laptop].removed);
+    assert_eq!(
+        judged(&replica, world),
+        (EffectiveRead::OneMachine(laptop), false)
+    );
+    let (_dir, replica) = replica_storing(&host, &[&removal, &other]);
+    assert_eq!(judged(&replica, world), (EffectiveRead::Everywhere, true));
+}
+
+/// Astra #1430b, F2: a handoff vouches for its line but grants nothing this
+/// install held back. A machine marked "yours" past the floor widens a world
+/// it holds by the roster rule, and this install reads only the narrowing.
+/// An ordinary re-root takes the held mark into its line and carries no
+/// revision for the held machine, so the world still reads the narrowing.
+#[test]
+fn a_re_root_keeps_a_floor_held_mark_held() {
+    let host = host();
+    let world = world_row(&host);
+    let (laptop, laptop_key) =
+        other_machine(&host, 108, MachineRole::Owned(MachineOwnership::WorkSchool));
+    let (desk, desk_key) = other_machine(&host, 109, MachineRole::Owned(MachineOwnership::Yours));
+    let mine = edit_by(
+        &host,
+        desk,
+        &desk_key,
+        world,
+        settings(ReadLocation::MyMachines),
+    );
+    land(&host, std::slice::from_ref(&mine));
+    let fold = host.vault.authority_fold().unwrap();
+    let seq = fold.append_sequences[&host.issuer.public_key()];
+    let marked = revision(
+        &host,
+        &fold,
+        seq + 1,
+        MachineProfile {
+            role: MachineRole::Owned(MachineOwnership::Yours),
+            revision: 2,
+            ..fold.machine(laptop).unwrap().profile.clone()
+        },
+    );
+    let other = revision(
+        &host,
+        &fold,
+        seq + 2,
+        MachineProfile {
+            revision: 2,
+            ..fold.machine(desk).unwrap().profile.clone()
+        },
+    );
+    let widening = edit_on(
+        &host,
+        (laptop, &laptop_key),
+        world,
+        1,
+        vec![
+            authority_entry_hash(&marked).unwrap(),
+            authority_entry_hash(&mine).unwrap(),
+        ],
+        ReadLocation::Everywhere,
+    );
+    let (_dir, replica) = replica_storing(&host, &[&other, &marked, &widening]);
+    let held = (EffectiveRead::MyMachines, false);
+    assert_eq!(judged(&replica, world), held);
+    let next = HostSlipIssuer::from_secret(b"world floor successor root").unwrap();
+    replica.re_root_host(&host.issuer, &next).unwrap();
+    assert!(!replica.authority_fold().unwrap().machines[&laptop].is_live());
+    assert_eq!(judged(&replica, world), held);
+}

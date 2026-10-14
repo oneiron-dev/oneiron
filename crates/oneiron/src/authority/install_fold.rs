@@ -28,6 +28,7 @@ pub(super) fn fold_as_install(
         .unwrap_or(&super::world_privacy::every_admitted_machine);
     let context = FoldContext {
         sequence_floors,
+        floor_vouched: local.observations.map(|observations| &observations.vouched),
         entry_ancestors: None,
         peer_consent_roots,
         consent_arm,

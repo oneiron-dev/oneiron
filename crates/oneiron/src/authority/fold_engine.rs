@@ -15,6 +15,9 @@ use super::*;
 #[derive(Clone, Copy)]
 pub(super) struct FoldContext<'a> {
     pub(super) sequence_floors: Option<&'a BTreeMap<AuthorityEntryHash, u64>>,
+    /// Rows no floor refuses (a handoff's line, a removal's own branch); one
+    /// past its floor still lands restriction only.
+    pub(super) floor_vouched: Option<&'a BTreeSet<AuthorityEntryHash>>,
     pub(super) entry_ancestors:
         Option<&'a BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>>,
     /// Consent roots of every ADMITTED PEER roster, keyed by peer vault id.
@@ -283,7 +286,7 @@ pub(super) fn fold_authority_log_inner(
             let lines: BTreeSet<_> = candidates.values().flatten().copied().collect();
             let observations = local
                 .observations
-                .map(|observations| observations.without_floors_on(&lines));
+                .map(|observations| observations.vouching(&lines));
             let result = fold_authority_log_inner(
                 entries,
                 first_seen_at_secs,
@@ -371,7 +374,7 @@ fn verified_handoff_candidates(
             .collect();
         let observations = local
             .observations
-            .map(|observations| observations.without_floors_on(&closure));
+            .map(|observations| observations.vouching(&closure));
         let probe = fold_authority_log_inner(
             &scoped,
             first_seen_at_secs,

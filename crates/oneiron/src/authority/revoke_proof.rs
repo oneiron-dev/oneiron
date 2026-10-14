@@ -107,10 +107,23 @@ pub(super) fn derive_revoke_facts(
         // records which of a signer's rows this vault saw first, so the proof
         // applies none inside the branch and accepts what the fold accepts
         // when the branch arrives on its own, siblings at one sequence
-        // included (Astra #1423b, Sol #1423 r8 and r9).
+        // included (Astra #1423b, Sol #1423 r8 and r9). A row of it past its
+        // floor still lands restriction only: the proof's copy acknowledges
+        // nothing the ordinary fold's copy does not (Astra #1430b).
+        let branch: BTreeSet<_> = if removal {
+            ancestors
+                .get(hash)
+                .into_iter()
+                .flatten()
+                .chain([hash])
+                .copied()
+                .collect()
+        } else {
+            BTreeSet::new()
+        };
         let context = if removal {
             FoldContext {
-                sequence_floors: None,
+                floor_vouched: Some(&branch),
                 ..context
             }
         } else {

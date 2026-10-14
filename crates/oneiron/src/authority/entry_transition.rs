@@ -41,20 +41,24 @@ pub(super) fn fold_entry_state(
 
     // A strictly older observed sequence is rollback. Equal-sequence siblings
     // have separate hashes and fold under their own ancestry, not a fork alarm.
-    // A machine removal is terminal on every replica: a sibling that arrived
-    // first never refuses it, so it stands in the log, where a later edit
-    // finds it among its parents (Sol P2 round 3, F3). A restriction still
-    // lands (Astra #1430): a revision that leaves a known machine not the
-    // owner's, and a world edit, keep their restrictive effect when a later
-    // row of their signer arrived first, as restriction only.
-    let floor_refused = context
+    // A restriction still lands (Astra #1430): a machine revision and a world
+    // edit keep their restrictive effect when a later row of their signer
+    // arrived first, as restriction only. A machine removal so stays terminal
+    // on every replica and in the log, where a later edit finds it among its
+    // parents (Sol P2 round 3, F3), but acknowledges nothing here (Astra
+    // #1430b). A row a handoff or a removal vouches for is never refused, and
+    // still lands restriction only.
+    let past_floor = context
         .sequence_floors
         .and_then(|floors| floors.get(&hash))
         .is_some_and(|floor| entry.seq < *floor);
-    let restriction_only = floor_refused && !super::revoke_proof::removes_machine(&entry.op);
-    if restriction_only && !lands_restriction_only(&entry.op) {
+    let vouched = context
+        .floor_vouched
+        .is_some_and(|vouched| vouched.contains(&hash));
+    if past_floor && !vouched && !lands_restriction_only(&entry.op) {
         return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
+    let restriction_only = past_floor && lands_restriction_only(&entry.op);
 
     // Wire validation is posture-blind. Cloud owner roles are only lawful
     // under the explicitly selected managed/peer root arm.

@@ -329,6 +329,7 @@ impl LocalFoldContext {
     pub(super) fn context(&self) -> FoldContext<'_> {
         FoldContext {
             sequence_floors: None,
+            floor_vouched: None,
             entry_ancestors: None,
             peer_consent_roots: &self.peer_consent_roots,
             consent_arm: folded_device_can_authority_consent,
