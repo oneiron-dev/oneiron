@@ -511,3 +511,51 @@ fn consult_task_syncs_and_no_attempt_row_follows_it() {
         0
     );
 }
+
+/// F11 / H218: a consult answer landed with the caller's `completed_at` and no
+/// deadline check, so a peer could answer after the deadline (the sweep had
+/// not run yet) by reporting an earlier time, or report a far-future time
+/// that outranks an expiry when terminal records converge. The engine's
+/// clock decides: a completion later than it is refused, and so is any
+/// answer once the clock is past the deadline.
+#[test]
+fn a_consult_answer_lands_only_inside_its_deadline_on_the_engine_clock() {
+    let clock = crate::ports::ManualClock::new(CONSULT_NOW + 10);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(
+        dir.path(),
+        VaultConfig {
+            store_clock: clock.bundle(),
+            ..VaultConfig::default()
+        },
+    )
+    .expect("open vault");
+    let (task_ref, peer, question) = open_consult(&vault);
+    let result_ref = consult_turn(&vault, 0x80).entity_ref();
+    let peer_facade = vault.memory(peer, EdgeActorClass::Agent);
+
+    let mut far_future = answer_input(result_ref, question);
+    far_future.completed_at = u64::MAX;
+    peer_facade
+        .land_consult_result(task_ref, &far_future)
+        .expect_err("a completion later than the engine clock is refused");
+
+    // Past the deadline, before any sweep: a backdated answer is refused.
+    clock.set(CONSULT_DEADLINE + 1);
+    let late = peer_facade
+        .land_consult_result(task_ref, &answer_input(result_ref, question))
+        .expect_err("the consult's deadline has passed");
+    assert_eq!(late.code, crate::memory::MEMORY_CODE_INVALID_STATE);
+    let stored = task_verb_body(&vault, task_ref)
+        .expect("decode body")
+        .expect("typed body");
+    assert!(stored.terminal().is_none(), "nothing settled the consult");
+
+    // On time, the same answer lands.
+    clock.set(CONSULT_NOW + 10);
+    assert!(
+        peer_facade
+            .land_consult_result(task_ref, &answer_input(result_ref, question))
+            .is_ok()
+    );
+}
