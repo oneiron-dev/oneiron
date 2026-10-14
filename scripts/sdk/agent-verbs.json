@@ -368,7 +368,7 @@
       "output": "Option<crate::memory::KeyValueItem>",
       "call": "memory.key_value_get(&input)?",
       "scope": "Read",
-      "admission": {},
+      "admission": {"unrestricted_record_scope": true},
       "section": false,
       "binding": {
         "wire": "json",
@@ -449,7 +449,7 @@
       "output": "Vec<crate::memory::KeyValueItem>",
       "call": "memory.key_value_search(&input)?",
       "scope": "Read",
-      "admission": {},
+      "admission": {"unrestricted_record_scope": true},
       "section": false,
       "binding": {
         "wire": "json",
@@ -478,7 +478,7 @@
       "output": "Vec<Vec<String>>",
       "call": "memory.key_value_namespaces(&input)?",
       "scope": "Read",
-      "admission": {},
+      "admission": {"unrestricted_record_scope": true},
       "section": false,
       "binding": {
         "wire": "json",
@@ -504,6 +504,7 @@
       "output": "crate::task_verb::TaskAskPreflight",
       "call": "memory.tasks_can_ask(&input.ask)?",
       "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
       "section": false,
       "binding": {
         "wire": "json",
@@ -526,6 +527,7 @@
       "output": "Vec<crate::task_verb::TaskAskPersonEvidence>",
       "call": "memory.tasks_ask_peek(input)?",
       "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
       "section": false,
       "binding": {
         "wire": "json",
@@ -584,6 +586,7 @@
       "output": "Vec<crate::llm::decision::questions::CalibrationPair>",
       "call": "memory.tasks_ask_outcomes(&input)?",
       "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
       "mcp_fields": {
         "spec": "$"
       },

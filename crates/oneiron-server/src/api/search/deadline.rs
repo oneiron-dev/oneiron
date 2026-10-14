@@ -2,6 +2,7 @@
 //! on the blocking pool, and the door answers when the deadline comes due.
 
 use super::*;
+use crate::auth::CoreAuth;
 use std::time::Duration;
 
 /// The request's hard deadline, refused out of range with the field named.
@@ -18,6 +19,8 @@ pub(super) struct SearchPage {
     pub(super) view: View,
     pub(super) count_mode: CountMode,
     pub(super) page_limit: usize,
+    /// The credential the door admitted; the page reads under its key.
+    pub(super) auth: CoreAuth,
 }
 
 /// Reads and projects one page under the request's deep-retrieval
@@ -28,7 +31,7 @@ pub(super) fn search_page(
     admission: Option<&DeepAdmission>,
     deadline: Option<&RetrievalDeadline>,
 ) -> Result<ScopedSearchResponse, ApiError> {
-    let scoped_read = scoped_read_for_legacy_api(server)?;
+    let scoped_read = scoped_read_for_legacy_api(server, &page.auth)?;
     let results = run_depth_search(
         &scoped_read,
         page.probe,
@@ -51,8 +54,12 @@ pub(super) fn search_page(
 
 /// The page a search answers with when its deadline came due before its read
 /// finished: no hits, `meta.partial`, under the reader's receipt.
-fn cut_page(server: &SyncServer, count_mode: CountMode) -> Result<ScopedSearchResponse, ApiError> {
-    let receipt = scoped_read_for_legacy_api(server)?
+fn cut_page(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    count_mode: CountMode,
+) -> Result<ScopedSearchResponse, ApiError> {
+    let receipt = scoped_read_for_legacy_api(server, auth)?
         .read_receipt(None, 0)
         .map_err(|_| ApiError::internal_server_error("read receipt failed"))?;
     let mut page = unread_page(count_mode);
@@ -84,11 +91,13 @@ pub(super) async fn search_page_by_deadline(
         None => search_page(&server, page, admission.as_ref(), None),
         Some(budget) => {
             let count_mode = page.count_mode;
+            let auth = page.auth.clone();
             read_by_deadline(
                 server,
                 arrived,
                 budget,
                 count_mode,
+                auth,
                 move |server, deadline| {
                     search_page(server, page, admission.as_ref(), Some(deadline))
                 },
@@ -112,6 +121,7 @@ pub(super) async fn read_by_deadline(
     arrived: Instant,
     budget: Duration,
     count_mode: CountMode,
+    auth: CoreAuth,
     read: impl FnOnce(&SyncServer, &RetrievalDeadline) -> Result<ScopedSearchResponse, ApiError>
     + Send
     + 'static,
@@ -120,7 +130,7 @@ pub(super) async fn read_by_deadline(
     let task = tokio::task::spawn_blocking(move || {
         let deadline = RetrievalDeadline::hard(arrived, budget);
         // The door reads at most one; a closed slot is moot.
-        let _ = publish.try_send(cut_page(&server, count_mode)?);
+        let _ = publish.try_send(cut_page(&server, &auth, count_mode)?);
         read(&server, &deadline)
     });
     let due = tokio::time::Instant::from_std(arrived + budget);

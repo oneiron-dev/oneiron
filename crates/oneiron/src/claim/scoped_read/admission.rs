@@ -305,7 +305,7 @@ impl<'a> ScopedRead<'a> {
             })
     }
 
-    pub(super) fn proof_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    pub(crate) fn proof_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
         let Some(proof) = &self.actor_key.proof else {
             return Ok(true);
         };
@@ -321,6 +321,34 @@ impl<'a> ScopedRead<'a> {
             return Ok(false);
         }
         Ok(fold.slip_is_live(&claims.slip_id))
+    }
+
+    /// Whether `judge` holds for this read and for each peer it conjoins
+    /// ([`Self::with_peer_reads`]), each lane judged as itself in `txn`. A
+    /// peer read as the owner that is no longer the owner there fails, as it
+    /// keeps every row out of a point read.
+    pub(crate) fn every_lane_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        mut judge: impl FnMut(&ScopedRead<'a>) -> Result<bool>,
+    ) -> Result<bool> {
+        if !judge(self)? {
+            return Ok(false);
+        }
+        for peer in &self.peer_reads {
+            let peer = self.vault.scoped_read(peer.clone());
+            match peer.owner_live_in(txn) {
+                Ok(()) => {}
+                Err(Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(_))) => {
+                    return Ok(false);
+                }
+                Err(error) => return Err(error),
+            }
+            if !judge(&peer)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     #[must_use]
@@ -459,6 +487,34 @@ impl ScopedRead<'_> {
         } else {
             Ok(ReadAdmission::OpaqueAbsent)
         }
+    }
+
+    /// Whether this read's credential is live in `txn` and the worlds the
+    /// read asked for and its Scope both admit `world` (`None` is base
+    /// reality): the world ceilings every row it serves lies under, before
+    /// any manifest's say.
+    pub(crate) fn world_readable_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        world: Option<EntityId>,
+    ) -> Result<bool> {
+        if self
+            .actor_key
+            .worlds
+            .as_ref()
+            .is_some_and(|worlds| !worlds.admits(world))
+        {
+            return Ok(false);
+        }
+        let id = crate::federation::ScopeId(world.unwrap_or_else(crate::claim::base_world_id));
+        if !self
+            .actor_key
+            .authority_scope()
+            .is_none_or(|scope| scope.worlds.contains(&id))
+        {
+            return Ok(false);
+        }
+        self.proof_live_in(txn)
     }
 
     fn outside_asked_worlds_in(

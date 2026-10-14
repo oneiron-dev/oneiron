@@ -207,3 +207,143 @@ async fn quickjs_a_revoked_slip_ends_its_runs_own_reads() {
         Some("mcp_auth_required")
     );
 }
+
+/// One MESSAGE `speaker` says on its own turn, through the MCP `witness` tool.
+async fn witness_on_turn(
+    server: &Arc<SyncServer>,
+    credential: &str,
+    speaker: oneiron::EntityId,
+    (turn, message): (oneiron::EntityId, oneiron::EntityId),
+    text: &str,
+    metadata: Value,
+) {
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(speaker, "write_memory"),
+        json!({"arguments": {"spec": {
+            "conversation_ref": "41414141414141414141414141414141",
+            "turn_ref": turn.to_hex(),
+            "occurred_at": 1_767_225_600,
+            "messages": [{"id": message.to_hex(), "author": "user", "message_type": "text",
+                "content": text, "metadata": metadata, "is_visible": true, "order": 0}],
+        }}}),
+    );
+    let (_, body) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(MCP_TOOL_FIRST_PATH, credential, "witness", "witness", args),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+}
+
+/// #1413 on #1405's door: a run's own search built its read key straight
+/// from the connector's slip, so an agent's run read a relationship's words
+/// with no grant, where `recall` and every `/v1` door read through the one
+/// credential builder. The run's search reads under that builder's key now:
+/// the agent's run finds the unscoped words and nothing of the relationship's.
+#[tokio::test]
+async fn quickjs_a_runs_search_reads_under_the_credential_builders_key() {
+    let search = "await self.memory.search({query: 'heron lantern'}); finish('');";
+    let mode = code_mode_server(vec![search.to_owned()]);
+    let (speaker, agent) = (
+        seeded_test_entity_id(0x0024_65c1),
+        seeded_test_entity_id(0x0024_65c2),
+    );
+    register_mcp_actor(
+        &mode.server,
+        "quickjs-key-speaker",
+        speaker,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    register_mcp_actor(
+        &mode.server,
+        "quickjs-key-agent",
+        agent,
+        oneiron::EdgeActorClass::Agent,
+    )
+    .await;
+    // A connector agent needs its own ceiling: the shipped manifest names
+    // only the first-party one.
+    let owner = mode.vault.ensure_embedded_owner_actor().unwrap();
+    oneiron::conversation_dag::test_support::put_test_policy_manifest(
+        &mode.vault,
+        oneiron::write_envelope::WriteActor::new(owner, oneiron::edge::EdgeActorClass::Human),
+        seeded_test_entity_id(0x0024_65c8),
+        &json!({
+            "schema_version": "1.2", "pack_id": "agent-run-search", "pack_version": "v1",
+            "min_engine_version": "0.0.0",
+            "defaults": { "criticality": "normal", "sensitivity": "normal" },
+            "rules": [],
+            "actor_ceilings": [
+                { "actor_class": "human", "ceiling": "auto" },
+                { "actor_class": "agent", "actor_ref": agent.to_hex(), "ceiling": "auto" },
+            ],
+        }),
+    )
+    .unwrap();
+    let space = seeded_test_entity_id(0x0024_65c3);
+    let spaced = (
+        seeded_test_entity_id(0x0024_65c4),
+        seeded_test_entity_id(0x0024_65c5),
+    );
+    let unscoped = (
+        seeded_test_entity_id(0x0024_65c6),
+        seeded_test_entity_id(0x0024_65c7),
+    );
+    witness_on_turn(
+        &mode.server,
+        "quickjs-key-speaker",
+        speaker,
+        spaced,
+        "The heron lantern hangs in the relationship's room.",
+        json!({"rel": space.to_hex()}),
+    )
+    .await;
+    witness_on_turn(
+        &mode.server,
+        "quickjs-key-speaker",
+        speaker,
+        unscoped,
+        "The heron lantern hangs by the north gate.",
+        Value::Null,
+    )
+    .await;
+
+    // The agent's run names it as an agent: `run_request` asserts a human.
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(agent, "write_memory"),
+        json!({
+            "actor": mcp_actor_json(agent, "agent"),
+            "run_ref": "quickjs-key-agent",
+            "task": "search the vault",
+        }),
+    );
+    let (_, body) = route_json(
+        mode.server.clone(),
+        mcp_endpoint_call_request(
+            "/mcp",
+            "quickjs-key-agent",
+            "quickjs-key-agent",
+            "execute_code",
+            args,
+        ),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+    let searched = row_outcome(&body, "self.memory.search");
+    assert_eq!(searched["kind"], "memory_search", "{body}");
+    let found: Vec<&str> = searched["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|hit| hit["id"].as_str())
+        .collect();
+    let any_of = |(turn, message): (oneiron::EntityId, oneiron::EntityId)| {
+        found.contains(&turn.to_hex().as_str()) || found.contains(&message.to_hex().as_str())
+    };
+    assert!(any_of(unscoped), "the run reads the unscoped words: {body}");
+    assert!(
+        !any_of(spaced),
+        "no grant reads the relationship's words: {body}"
+    );
+}

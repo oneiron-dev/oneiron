@@ -1,4 +1,8 @@
 //! HTTP adapters for transactional conversation DAG and summary doors.
+//!
+//! The DAG ledger is read raw, under no credential key, so every read here
+//! refuses a credential narrowed to some records: its records cannot bound
+//! the ids that come back.
 
 mod types;
 use super::{
@@ -108,6 +112,7 @@ pub(crate) async fn get_core_dag(
     query: Result<Query<DagPageQuery>, QueryRejection>,
 ) -> Result<Json<DagPageResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let req = query_params(query)?;
     if req
@@ -199,6 +204,7 @@ pub(crate) async fn resolve_core_scope(
     payload: Result<Json<DagScopeRequest>, JsonRejection>,
 ) -> Result<Json<DagRecordsResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let scope = json_payload(payload)?.parse(conversation)?;
     let resolved = server
@@ -257,6 +263,7 @@ pub(crate) async fn list_core_sub_sessions(
     Path(turn_id): Path<String>,
 ) -> Result<Json<DagSessionsResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let turn = parse_entity_id_param(&turn_id, "turn_id")?;
     let sessions = server
         .vault
@@ -328,6 +335,7 @@ pub(crate) async fn get_core_summary_covers(
     Path(summary_id): Path<String>,
 ) -> Result<Json<DagCoversResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let summary = parse_entity_id_param(&summary_id, "summary_id")?;
     let covers = server
         .vault
@@ -347,6 +355,7 @@ pub(crate) async fn drill_core_header(
     Path(claim_id): Path<String>,
 ) -> Result<Json<DagRecordsResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let claim = parse_entity_id_param(&claim_id, "claim_id")?;
     let records = server
         .vault
@@ -393,6 +402,7 @@ pub(crate) async fn get_thread(
     Path((conversation_id, record)): Path<(String, String)>,
 ) -> Result<Json<DagThreadResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let record = parse_entity_id_param(&record, "record")?;
     let thread = server
@@ -451,6 +461,7 @@ pub(crate) async fn get_canonical(
     Path(conversation_id): Path<String>,
 ) -> Result<Json<DagRecordsResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let resolved = server
         .vault
@@ -475,7 +486,6 @@ fn reaction_records(
     main_line: &[EntityId],
     viewer: &str,
 ) -> Result<(Vec<DagReactionRecord>, &'static str), EnvelopedApiError> {
-    auth.require_unrestricted_record_scope()?;
     if !auth.is_owner_grade() && auth.principal_ref() != Some(viewer) {
         return Err(ApiError::forbidden_scope("viewer").into());
     }
@@ -496,10 +506,14 @@ fn reaction_records(
         }
     }
     let targets: Vec<EntityId> = pairs.iter().map(|(_, target, _)| *target).collect();
-    let pills = server
-        .vault
-        .reaction_pills(&targets, viewer)
-        .map_err(|e| core_engine_error("reaction listing failed", e))?;
+    // A credential reads each reaction under its own key, as it reads the
+    // record; the server's own secret reads them all.
+    let pills = match auth.verified_slip() {
+        Some(_) => crate::api::scoped_read_for_core_auth(&server.vault, auth)?
+            .reaction_pills(&targets, viewer),
+        None => server.vault.reaction_pills(&targets, viewer),
+    }
+    .map_err(|e| core_engine_error("reaction listing failed", e))?;
     let records = pairs
         .into_iter()
         .filter_map(|(turn, target, groups_children)| {

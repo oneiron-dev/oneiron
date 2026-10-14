@@ -700,10 +700,10 @@ async fn read_graph_fs(
 ) -> OwnerReply<graph_fs::GraphFsReply> {
     owner(&auth, &server)?;
     // The owner's own scoped read: the tree is what the owner's slip reads.
-    let reader = auth
+    let proof = auth
         .verified_slip()
-        .and_then(oneiron::claim::ScopedReadActorKey::from_verified_slip)
         .ok_or_else(|| ApiError::forbidden_scope("owner"))?;
+    let reader = super::credential_read_key(server.vault(), proof)?;
     let query = query_params(query)?;
     let reply = blocking(move || graph_fs::run(server.vault(), reader, &query)).await?;
     Ok(Json(reply))

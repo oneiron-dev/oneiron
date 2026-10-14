@@ -314,7 +314,7 @@ impl ScopedRead<'_> {
         let revealed = hydrated.deletion.is_some()
             && self.audience_readable_in(txn, &hydrated.id)?
             && hydrated.entity_type != crate::registry::ENTITY_TYPE_NOTE
-            && !(self.actor_key.enforce_access_grants
+            && !(self.relationship_gated_in(txn)?
                 && matches!(
                     hydrated.entity_type,
                     crate::registry::ENTITY_TYPE_CLAIM

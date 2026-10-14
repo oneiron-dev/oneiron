@@ -65,8 +65,15 @@ pub(super) async fn standing_prefix(
         None if blocks.len() == 1 => &blocks[0],
         None => return Err(bad()),
     };
-    let reader =
-        oneiron::claim::ScopedReadActorKey::with_actor_class(actor_ref, "agent").ok_or_else(bad)?;
+    // A credential reads its own standing block as it reads anything else,
+    // through the one credential key: a relationship claim needs a live grant.
+    // A caller with no credential reads under its grants, as the facade does.
+    let reader = match auth.verified_slip() {
+        Some(proof) => crate::api::credential_read_key(server.vault(), proof)?,
+        None => oneiron::claim::ScopedReadActorKey::with_actor_class(actor_ref, "agent")
+            .ok_or_else(bad)?
+            .require_access_grants(Some(actor)),
+    };
     let mut cache = server.standing_block_cache.lock().await;
     let pinned = server
         .vault

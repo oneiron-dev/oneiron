@@ -252,18 +252,22 @@ pub(crate) fn mcp_scoped_read<'a>(
     vault: &'a oneiron::Vault,
     actor: &McpResolvedActor,
 ) -> Result<oneiron::claim::ScopedRead<'a>, McpGatewayError> {
-    let key = actor
+    let refused = || {
+        McpGatewayError::new(
+            -32001,
+            "mcp_auth_required",
+            "scoped reads require the authenticated connector proof",
+        )
+    };
+    let proof = actor
         .auth
         .as_ref()
         .and_then(crate::auth::CoreAuth::verified_slip)
-        .and_then(oneiron::claim::ScopedReadActorKey::from_verified_slip)
-        .ok_or_else(|| {
-            McpGatewayError::new(
-                -32001,
-                "mcp_auth_required",
-                "scoped reads require the authenticated connector proof",
-            )
-        })?;
+        .ok_or_else(refused)?;
+    let key = vault
+        .credential_read_key(proof)
+        .map_err(|error| McpGatewayError::new(-32603, "engine_error", error.to_string()))?
+        .ok_or_else(refused)?;
     Ok(vault.scoped_read(key))
 }
 
@@ -816,10 +820,13 @@ pub(crate) async fn execute_agent_verb_input(
         ));
     }
     // A narrowed connector's TASKs are born in its own world and facet.
-    let memory = server
-        .vault
-        .memory(actor.actor_ref, actor.actor_class)
-        .with_birth_position(actor.scope.birth_position());
+    let memory = crate::api::credential_memory(
+        &server.vault,
+        actor.auth.as_ref(),
+        actor.actor_ref,
+        actor.actor_class,
+    )
+    .with_birth_position(actor.scope.birth_position());
     let memory = match origin {
         Some(origin) => memory.with_host_origin(origin),
         None => memory,

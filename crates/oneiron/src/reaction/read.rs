@@ -199,22 +199,34 @@ impl Vault {
         viewer: EntityId,
     ) -> Result<BTreeMap<EntityId, Vec<ReactionPill>>> {
         let txn = self.store.env.read_txn()?;
-        let fold = admission_in(self, &txn)?;
+        self.reaction_pills_in(&txn, messages, viewer, |_| Ok(true))
+    }
+
+    /// [`Self::reaction_pills`] in `txn`, counting only the reactions `admit`
+    /// lets through as well.
+    pub(crate) fn reaction_pills_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        messages: &[EntityId],
+        viewer: EntityId,
+        mut admit: impl FnMut(&StoredReaction) -> Result<bool>,
+    ) -> Result<BTreeMap<EntityId, Vec<ReactionPill>>> {
+        let fold = admission_in(self, txn)?;
         let mut reactors = AudienceCache::default();
         let mut viewers = AudienceCache::default();
         let mut result = BTreeMap::new();
         for &message in messages {
-            if !viewers.readable(self, &txn, message, &[viewer])? {
+            if !viewers.readable(self, txn, message, &[viewer])? {
                 continue;
             }
             let pills = pills_in(
                 self,
-                &txn,
+                txn,
                 &fold,
                 message,
                 Some(viewer),
                 &mut reactors,
-                |row| viewers.readable(self, &txn, row.id, &[viewer]),
+                |row| Ok(viewers.readable(self, txn, row.id, &[viewer])? && admit(row)?),
             )?;
             result.insert(message, pills);
         }

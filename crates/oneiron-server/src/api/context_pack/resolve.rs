@@ -619,12 +619,17 @@ fn read_reaction_signals(
         .vault
         .reactions_since(person, since)
         .map_err(|e| core_engine_error("reaction signal read failed", e))?;
-    // An owner-grade feed of one person's messages keeps the owner's reach;
-    // a delegated, room-scoped or interlocutor-scoped read is filtered by
-    // the same scoped read and disclosure clamp as the pack. Paging follows
-    // the filter, so a cursor never names a signal this caller was not shown.
-    let scoped =
-        !auth.is_owner_grade() || req.conversation_id.is_some() || req.interlocutors.is_some();
+    // A credential reads each signal under its own key, as the pack does, so
+    // a full-scope slip that is not the owner's hears of nothing its key
+    // withholds. Only an owner-grade caller with no slip keeps the raw feed
+    // of one person's messages; a delegated, room-scoped or
+    // interlocutor-scoped read is filtered by the same scoped read and
+    // disclosure clamp as the pack. Paging follows the filter, so a cursor
+    // never names a signal this caller was not shown.
+    let scoped = auth.verified_slip().is_some()
+        || !auth.is_owner_grade()
+        || req.conversation_id.is_some()
+        || req.interlocutors.is_some();
     let mut kept = Vec::new();
     for signal in signals {
         if scoped

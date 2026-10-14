@@ -46,8 +46,6 @@ pub(crate) async fn list_personas(
     query: Result<Query<PersonaListQuery>, QueryRejection>,
 ) -> Result<Json<PersonasListResponse>, EnvelopedApiError> {
     require_companion_profile_read(&auth)?;
-    // A stored profile grant cannot widen this request's credential caveats.
-    auth.require_unrestricted_record_scope()?;
     let req = query_params(query)?;
     let principal = companion_profile_principal_ref(
         &auth,

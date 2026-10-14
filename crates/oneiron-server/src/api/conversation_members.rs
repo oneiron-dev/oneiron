@@ -110,6 +110,9 @@ pub(super) async fn read_members(
     query: Result<Query<MemberQuery>, QueryRejection>,
 ) -> Result<Json<Value>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    // The ledger read is unkeyed: a credential narrowed to some records
+    // cannot bound it.
+    auth.require_unrestricted_record_scope()?;
     let room = parse_entity_id_param(&room, "conversation_id")?;
     let req = query_params(query)?;
     let members = server
