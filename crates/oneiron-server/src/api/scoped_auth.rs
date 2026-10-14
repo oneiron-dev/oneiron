@@ -5,6 +5,7 @@ use crate::auth::require_owner_auth;
 use crate::error::ApiError;
 use crate::server::SyncServer;
 use axum::http::HeaderMap;
+use oneiron::claim::CallerLocality;
 
 /// Gates the legacy `/api/*` routes on an owner-grade bearer.
 ///
@@ -53,12 +54,14 @@ pub(crate) fn credential_memory<'a>(
     }
 }
 
+/// The read `auth` makes, where its connection sits: a caller off this
+/// device reads no device-local world (DEC-0005).
 pub(crate) fn scoped_read_for_core_auth<'a>(
     vault: &'a oneiron::Vault,
     auth: &CoreAuth,
 ) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {
     if let Some(proof) = auth.verified_slip() {
-        return Ok(vault.scoped_read(credential_read_key(vault, proof)?));
+        return Ok(vault.scoped_read(credential_read_key(vault, proof)?.at(auth.locality())));
     }
     let actor_ref = auth.principal_ref().unwrap_or(auth.principal());
     let mut key = oneiron::claim::ScopedReadActorKey::new(actor_ref)
@@ -69,34 +72,37 @@ pub(crate) fn scoped_read_for_core_auth<'a>(
                 .and_then(|id| oneiron::EntityId::from_hex(id).ok()),
         );
     }
-    Ok(vault.scoped_read(key))
+    Ok(vault.scoped_read(key.at(auth.locality())))
 }
 
-/// The legacy read lane for the credential [`check_api_auth`] admitted. A
-/// verified slip reads under its own key, through the one builder, so an
-/// agent's full-scope slip reads a relationship's rows here only on a grant,
-/// as on `/v1`, and every read checks that slip's liveness. A credential that
-/// verifies no slip is the server's own secret and reads as the host root.
+/// The legacy read lane for the credential [`check_api_auth`] admitted, where
+/// its connection sits. A verified slip reads under its own key, through the
+/// one builder, so an agent's full-scope slip reads a relationship's rows here
+/// only on a grant, as on `/v1`, and every read checks that slip's liveness.
+/// A credential that verifies no slip is the server's own secret and reads as
+/// the host root.
 pub(super) fn scoped_read_for_legacy_api<'a>(
     server: &'a SyncServer,
     auth: &CoreAuth,
 ) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {
     if let Some(proof) = auth.verified_slip() {
         let vault = server.vault().as_ref();
-        return Ok(vault.scoped_read(credential_read_key(vault, proof)?));
+        return Ok(vault.scoped_read(credential_read_key(vault, proof)?.at(auth.locality())));
     }
-    scoped_read_for_host_root(server)
+    scoped_read_for_host_root(server, auth.locality())
 }
 
+/// The host root's read, for a caller whose connection sits at `locality`.
 pub(super) fn scoped_read_for_host_root(
     server: &SyncServer,
+    locality: CallerLocality,
 ) -> Result<oneiron::claim::ScopedRead<'_>, ApiError> {
     let vault = server.vault().as_ref();
     if let Some(issuer) = server.managed_issuer.as_ref() {
         let proof = vault
             .verified_host_root_slip(issuer)
             .map_err(|_| ApiError::unauthorized())?;
-        return Ok(vault.scoped_read(credential_read_key(vault, &proof)?));
+        return Ok(vault.scoped_read(credential_read_key(vault, &proof)?.at(locality)));
     }
     if let Some(secret) = server.config.auth_secret.as_deref() {
         let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())
@@ -104,17 +110,10 @@ pub(super) fn scoped_read_for_host_root(
         let proof = vault
             .verified_host_root_slip(&issuer)
             .map_err(|_| ApiError::unauthorized())?;
-        return Ok(vault.scoped_read(credential_read_key(vault, &proof)?));
+        return Ok(vault.scoped_read(credential_read_key(vault, &proof)?.at(locality)));
     }
     // Explicit dev mode is not a production root-slip factory.
-    scoped_read_for_actor_ref(vault, LEGACY_SCOPED_READ_ACTOR_REF)
-}
-
-pub(super) fn scoped_read_for_actor_ref<'a>(
-    vault: &'a oneiron::Vault,
-    actor_ref: &str,
-) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {
-    let actor_key = oneiron::claim::ScopedReadActorKey::new(actor_ref)
+    let actor_key = oneiron::claim::ScopedReadActorKey::new(LEGACY_SCOPED_READ_ACTOR_REF)
         .ok_or_else(|| ApiError::internal_server_error("scoped read actor key is empty"))?;
-    Ok(vault.scoped_read(actor_key))
+    Ok(vault.scoped_read(actor_key.at(locality)))
 }

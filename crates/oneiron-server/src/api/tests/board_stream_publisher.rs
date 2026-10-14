@@ -628,6 +628,61 @@ async fn a_narrowed_connection_never_carries_an_erased_or_unreadable_task() {
     assert!(!names_any(&rows, &hidden), "{rows:?}");
 }
 
+/// Sol R4 F6: a TASK's delta rides its owner's next tool result. Off this
+/// device, one born in a world that turns device-local while that result
+/// waits on its rider does not ride it; while the world is portable it does.
+#[tokio::test]
+async fn a_task_delta_off_this_device_rides_no_result_once_its_world_is_device_local() {
+    let (_dir, server) = auth_test_server();
+    let _publisher = server.spawn_board_publisher();
+    let (actor, _) = stream_actor(&server, 0xb0a1_00f6, "carrier-device-local").await;
+    let (witness, witness_connection) =
+        stream_actor(&server, 0xb0a1_00f7, "carrier-device-local-witness").await;
+    let world = seeded_test_entity_id(0xb0a1_00f8);
+    server
+        .vault()
+        .put_entity(
+            &world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .expect("world");
+    let done_in_world = |seed: u128| {
+        let task = server
+            .vault()
+            .memory(actor, oneiron::EdgeActorClass::Human)
+            .with_birth_position(oneiron::federation::record_scope::BirthPosition {
+                world: Some(world),
+                facet: None,
+            })
+            .tasks_create(&oneiron::task_verb::TaskCreateSpec::new(
+                rmpv::Value::from(format!("orchid errand {seed}")),
+                None,
+                None,
+                None,
+            ))
+            .expect("create")
+            .task_ref
+            .expect("task ref");
+        complete_next_realization(&server);
+        task
+    };
+    let envelope = mcp_endpoint_envelope(actor, "read_tasks");
+
+    let portable = done_in_world(1);
+    publisher_passed(&server, witness, &witness_connection, 0xb0a1_00f9).await;
+    let rows = delivered_rows(&server, "carrier-device-local", envelope.clone()).await;
+    assert!(names_any(&rows, &[portable]), "{rows:?}");
+
+    let kept = done_in_world(2);
+    publisher_passed(&server, witness, &witness_connection, 0xb0a1_00fa).await;
+    crate::api::mcp_gateway::release_hook::arm(world);
+    let rows = delivered_rows(&server, "carrier-device-local", envelope).await;
+    assert!(!names_any(&rows, &[kept]), "{rows:?}");
+}
+
 /// Claims the next queued realization and completes it: the TASK it realizes
 /// folds to `done`.
 fn complete_next_realization(server: &SyncServer) {

@@ -161,7 +161,7 @@ fn facade_invoke(
     verb: &str,
     value: serde_json::Value,
 ) -> Result<serde_json::Value, FacadeApiError> {
-    let memory = credential_memory(&server.vault, Some(auth), actor, class);
+    let memory = credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality());
     Ok(match facade_room_turn(headers)? {
         Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
         None => oneiron::task_verb::sdk::invoke(&memory, verb, value)?,

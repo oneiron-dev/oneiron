@@ -316,9 +316,11 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
         model: executor.model.clone(),
         locality: crate::ModelLocality::OwnServer,
     };
+    // A candidate citing a turn outside the attempt is not written. Since
+    // Bugbot on #1427 decode skips it rather than failing the attempt.
     assert!(matches!(
-        block_on_ready(executor.execute(&attempt, &mut ctx)),
-        Err(Error::InvalidClaimBody(_))
+        block_on_ready(executor.execute(&attempt, &mut ctx))?,
+        DreamerAttemptExecution::Completed { .. }
     ));
     drop(executor);
     assert_eq!(sink.accepted.len(), 1);
@@ -551,7 +553,7 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             vault.put_vector(&output.claim_id, &vec![1.0; vault.config.dimensions])?;
             items.push(
                 serde_json::json!({"subject": subject.to_hex(), "predicate": predicate,
-            "value": "same text", "evidence_refs": [{"source_id":turns[0].to_hex(), "byte_range":[0,1]}]}),
+            "value": "same text", "confidence": 0.5, "evidence_refs": [{"source_id":turns[0].to_hex(), "byte_range":[0,1]}]}),
             );
         }
         let judge = text_response(match resolution {
@@ -1183,7 +1185,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
             text_response(
                 serde_json::json!({"candidates":[{
                     "subject":subject.to_hex(),"predicate":"profile.name","value":"supported",
-                    "evidence_refs":ids.iter().map(|id| serde_json::json!({"source_id":id.to_hex(), "byte_range":[0,1]})).collect::<Vec<_>>()
+                    "confidence": 0.5, "evidence_refs":ids.iter().map(|id| serde_json::json!({"source_id":id.to_hex(), "byte_range":[0,1]})).collect::<Vec<_>>()
                 }]})
                 .to_string(),
             )
@@ -1283,8 +1285,13 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
         drop(executor);
         if caller_bounded {
             // A new worker supplies no caller scope, but the prior attenuation is
-            // durable. A model cannot import the newly arrived, ungranted turn.
-            assert!(outcome.is_err());
+            // durable. A model cannot import the newly arrived, ungranted turn:
+            // the candidate citing it is not written (decode skips it, Bugbot on
+            // #1427), and the attempt does not fail over it.
+            assert!(matches!(
+                outcome?,
+                DreamerAttemptExecution::Completed { .. }
+            ));
             assert!(sink.accepted.is_empty());
         } else {
             assert!(matches!(

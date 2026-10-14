@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use oneiron::llm::ReasoningEffort;
+use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort};
 use oneiron::{
     ContentPart, FatalLlmError, FinishReason, ImageContent, LlmError, LlmInputUsage, LlmMessage,
     LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmToolSpec, LlmUsage,
@@ -45,7 +45,14 @@ pub fn build_anthropic_messages_request(
             None => JsonMap::new(),
         };
         output_config.remove("effort");
-        for key in ["reasoning_effort", "reasoning", "thinking"] {
+        // A thinking budget param is an own server's field; this wire has
+        // no per-request equivalent beside the effort.
+        for key in [
+            "reasoning_effort",
+            "reasoning",
+            "thinking",
+            REASONING_BUDGET_PARAM,
+        ] {
             body.remove(key);
         }
         if effort != ReasoningEffort::None {

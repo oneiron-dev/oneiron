@@ -11,7 +11,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 
 /// The worlds whose words a record carries. `unknown` where one of them
 /// cannot be named, which keeps the record home while any world is flagged.
@@ -75,9 +75,13 @@ impl CarriedWorlds {
 /// carries the words of every record it was written from, so it stays too
 /// when a flagged world keeps any of them, through any nested epoch, or one
 /// its withdrawal recorded, and while any world is flagged when it cannot
-/// prove where it was born. Nothing is read while no world is flagged.
+/// prove where it was born. Any other record sits where the shared resolver
+/// (`record_scope::record_world_in`) places it, a TASK where its birth stamp
+/// settled it, and one it cannot place is kept. Nothing is read while no
+/// world is flagged. `store` is the target the row is read from: a room's
+/// overlay ∪ base judges the rows the room stages as well.
 pub(crate) fn device_only_withholds(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     flagged: &BTreeSet<EntityId>,
     id: &EntityId,
@@ -85,10 +89,27 @@ pub(crate) fn device_only_withholds(
     if flagged.is_empty() {
         return Ok(false);
     }
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?;
+    device_only_withholds_raw(store, txn, flagged, id, raw.as_deref())
+}
+
+/// [`device_only_withholds`] judged on `raw`, the revision of `id` a door
+/// serves (`None` when no row is stored): a CLAIM by the world that revision
+/// names.
+pub(crate) fn device_only_withholds_raw(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    flagged: &BTreeSet<EntityId>,
+    id: &EntityId,
+    raw: Option<&[u8]>,
+) -> Result<bool> {
+    if flagged.is_empty() {
+        return Ok(false);
+    }
     if flagged.contains(id) {
         return Ok(true);
     }
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+    let Some(raw) = raw else {
         // A purged row's words stay in window history until the historical
         // sweep runs; a purged epoch summary's record says where they sat.
         let mut gone = CarriedWorlds {
@@ -101,7 +122,7 @@ pub(crate) fn device_only_withholds(
         return Ok(gone.kept_by(flagged));
     };
     let mut sources = Vec::new();
-    let mut carried = row_worlds(store, txn, id, &raw, &mut sources)?;
+    let mut carried = row_worlds(store, txn, id, raw, &mut sources)?;
     carried.absorb(&sources_worlds(store, txn, BTreeSet::from([*id]), sources)?);
     Ok(carried.kept_by(flagged))
 }
@@ -146,7 +167,7 @@ pub(crate) fn minted_worlds_in(
 /// leaves) makes them unknown; a deleted world CLAIM sits where the world
 /// window address its deletion kept says.
 fn sources_worlds(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     mut seen: BTreeSet<EntityId>,
     mut pending: Vec<EntityId>,
@@ -177,7 +198,7 @@ fn sources_worlds(
 /// place, never base) and in every world its withdrawal recorded. An epoch
 /// SUMMARY's `DerivedFrom` sources go to `sources`.
 fn row_worlds(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
     raw: &[u8],
@@ -235,7 +256,15 @@ fn row_worlds(
                 carried.absorb(&withdrawn);
             }
         }
-        _ => {}
+        // Any other record sits where the shared resolver places it: a TASK
+        // where its birth stamp settled it. One it cannot place is kept.
+        kind => {
+            let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+            match crate::federation::record_scope::record_world_in(store, txn, *id, kind, body)? {
+                Some(world) => carried.worlds.extend(world),
+                None => carried.unknown = true,
+            }
+        }
     }
     Ok(carried)
 }
@@ -246,7 +275,7 @@ fn row_worlds(
 /// header on a row not fenced as deleted, is an error, never portability: the
 /// world is unknown.
 fn claim_world(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
     raw: Option<&[u8]>,
@@ -268,9 +297,13 @@ fn claim_world(
 /// The world a deleted world CLAIM sat in, by the window address its deletion
 /// kept (`m:dw:`, `<month>@<world>`); `None` where no deletion kept one. An
 /// address that is not a world window's is an error: the world is unknown.
-fn deletion_world(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
+fn deletion_world(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<EntityId>> {
     let Some(label) = store
-        .sync_state
+        .sync_state()
         .get(txn, &format!("m:dw:{}", id.to_hex()))?
     else {
         return Ok(None);

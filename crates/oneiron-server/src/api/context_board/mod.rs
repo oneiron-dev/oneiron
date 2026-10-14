@@ -203,7 +203,13 @@ pub(crate) async fn context_board_hydrate(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<ContextBoardRequest>, JsonRejection>,
-) -> Result<Json<ContextBoardResponse>, EnvelopedApiError> {
+) -> Result<
+    (
+        axum::Extension<crate::idempotency::ServedRows>,
+        Json<ContextBoardResponse>,
+    ),
+    EnvelopedApiError,
+> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let mut req = json_payload(payload)?;
@@ -225,7 +231,7 @@ pub(crate) async fn context_board_hydrate(
     // same key the MEMORIES cursor store already uses.
     let caller = auth.principal_ref().unwrap_or(auth.principal()).trim();
 
-    let session = session_prefix(&server).await?;
+    let session = session_prefix(&server, auth.locality()).await?;
     let notifications = pending_notifications(&server, caller)?;
     let unprocessed = pending_unprocessed_items(&server, caller);
     let budget = standing.as_ref().map_or_else(
@@ -286,7 +292,7 @@ pub(crate) async fn context_board_hydrate(
             );
             changed.rows.extend(installs.rows);
             changed.overflow += installs.overflow;
-            reads.fold_own_changes(&server.vault, own, &mut changed, 16)?;
+            reads.fold_own_changes(&server.vault, own, auth.locality(), &mut changed, 16)?;
             Ok::<_, oneiron::Error>(changed)
         })
         .transpose()
@@ -428,7 +434,26 @@ pub(crate) async fn context_board_hydrate(
             reads.acknowledge(&changed_line);
         }
     }
-    Ok(Json(response))
+    // The rows this board was derived from, kept beside a keyed replay of it.
+    let mut served: Vec<_> = crate::device_local::changed_line_rows(&changed_line).collect();
+    if let Some(pack) = &response.pack {
+        served.extend(
+            pack.served_rows()
+                .map_err(|error| super::core_engine_error("board rows failed", error))?,
+        );
+    }
+    let memories = response.memories.iter().flat_map(|memories| &memories.rows);
+    let standing = response.standing.iter().map(|prefix| &prefix.world_ref);
+    served.extend(
+        memories
+            .map(|row| &row.id)
+            .chain(standing)
+            .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
+    );
+    Ok((
+        axum::Extension(crate::idempotency::ServedRows(served)),
+        Json(response),
+    ))
 }
 
 /// A standing session's response must fit its whole token budget.
