@@ -6,7 +6,7 @@
 //! valid. Roots are never capped: a host can always add bulk, so the view
 //! pages and counts, and no root ever drops out of admission.
 
-use std::collections::{BTreeMap, btree_map::Entry};
+use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 
 use ed25519_dalek::{Signer, SigningKey};
 
