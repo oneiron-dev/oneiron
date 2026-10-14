@@ -508,8 +508,8 @@ fn rule_a_an_attestation_comes_only_from_a_seam_pass_over_what_it_names() -> Res
         };
         let carrier_binding = vault.relay_verify_binding(&request, &config)?;
         let mut passes = vec![
-            (RelayBoundaryPass::TrustedVaultSide, false),
-            (RelayBoundaryPass::NotRelayedByUs, false),
+            (RelayBoundaryPass::TrustedVaultSide, false, Evidence::None),
+            (RelayBoundaryPass::NotRelayedByUs, false, Evidence::None),
         ];
         for resolution in RelayResolution::ALL {
             for ending in ENDINGS {
@@ -522,10 +522,13 @@ fn rule_a_an_attestation_comes_only_from_a_seam_pass_over_what_it_names() -> Res
                             Ending::Answered(decision) => decision == PolicyClassifyDecision::Block,
                             Ending::Degraded { halts } => halts,
                         };
+                        // A pass under another dial is still evidence of
+                        // what it ran: it attests, naming its own dial, and
+                        // no door reuses it under the dial in force now.
                         let may_attest = ran_on_the_hosted_seam(resolution)
                             && in_play
                             && !halts
-                            && evidence == Evidence::Exact;
+                            && matches!(evidence, Evidence::Exact | Evidence::OtherDial);
                         let pass = synthetic_pass(
                             &policy,
                             carrier_binding,
@@ -535,12 +538,13 @@ fn rule_a_an_attestation_comes_only_from_a_seam_pass_over_what_it_names() -> Res
                             evidence,
                             in_play,
                         );
-                        passes.push((pass, may_attest));
+                        passes.push((pass, may_attest, evidence));
                     }
                 }
             }
         }
-        for (pass, may_attest) in passes {
+        for (pass, may_attest, evidence) in passes {
+            let may_trust = may_attest && evidence == Evidence::Exact;
             for decision in [PolicyClassifyDecision::Allow, PolicyClassifyDecision::Warn] {
                 let mut carrier = PolicyClassifyVerdict::clean_allow(
                     carrier_binding,
@@ -554,6 +558,17 @@ fn rule_a_an_attestation_comes_only_from_a_seam_pass_over_what_it_names() -> Res
                     may_attest || !attested,
                     "H122: attested from {pass:?} under {outage:?}"
                 );
+                if attested {
+                    let dial = carrier
+                        .hosted_attestation
+                        .as_ref()
+                        .and_then(|attestation| attestation.classifier_mode);
+                    assert_eq!(
+                        dial,
+                        pass_dial(&pass),
+                        "the attestation names the dial the pass ran under"
+                    );
+                }
                 let source = StaticVaultSideVerdicts {
                     verdict: carrier.clone(),
                     requested_hash: Mutex::new(None),
@@ -569,7 +584,7 @@ fn rule_a_an_attestation_comes_only_from_a_seam_pass_over_what_it_names() -> Res
                 ))?;
                 let trusted = reused(&standalone);
                 assert!(
-                    may_attest || !trusted,
+                    may_trust || !trusted,
                     "H122: the CloudVault door trusted a carrier minted from {pass:?}"
                 );
                 if !trusted {
@@ -604,7 +619,7 @@ fn rule_a_an_attestation_comes_only_from_a_seam_pass_over_what_it_names() -> Res
                 }
                 // The control: a pass the model answered without halting, over
                 // exactly what it names, is reusable.
-                if may_attest && pass.degraded().is_none() {
+                if may_trust && pass.degraded().is_none() {
                     assert!(attested && trusted, "the control is attested and trusted");
                 }
             }
@@ -612,6 +627,13 @@ fn rule_a_an_attestation_comes_only_from_a_seam_pass_over_what_it_names() -> Res
     }
     assert!(attested_and_trusted > 0);
     Ok(())
+}
+
+fn pass_dial(pass: &RelayBoundaryPass) -> Option<RelayClassifierMode> {
+    match pass {
+        RelayBoundaryPass::Classified(ran) => ran.verdict.classifier_mode,
+        RelayBoundaryPass::TrustedVaultSide | RelayBoundaryPass::NotRelayedByUs => None,
+    }
 }
 
 fn reused(pass: &RelayBoundaryPass) -> bool {
