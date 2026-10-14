@@ -141,9 +141,9 @@ pub(crate) struct AuthorityStructure {
     admitters: BTreeSet<AuthorityKey>,
     /// The slip issuers: the admitters that hold the owner role.
     issuers: BTreeSet<AuthorityKey>,
-    /// The install keys a slip issuer's machine revision named. Each signs
-    /// its machine's world edits.
-    machine_keys: BTreeSet<AuthorityKey>,
+    /// Each machine and the install keys a slip issuer's revisions of it
+    /// named. Such a key signs that machine's world edits.
+    machine_keys: BTreeSet<(crate::EntityId, AuthorityKey)>,
 }
 
 fn signed_by(entry: &AuthorityLogEntry, keys: &BTreeSet<AuthorityKey>) -> bool {
@@ -224,7 +224,7 @@ pub(super) fn authority_structure<'a>(
         {
             structure
                 .machine_keys
-                .insert(AuthorityKey::Ed25519(profile.machine_key));
+                .insert((profile.machine, AuthorityKey::Ed25519(profile.machine_key)));
         }
     }
     structure
@@ -232,9 +232,9 @@ pub(super) fn authority_structure<'a>(
 
 impl AuthorityStructure {
     /// Whether a key that may vouch for `entry` signed or cosigned it: an
-    /// admitter, or, for a world edit, an install key. A genesis vouches
-    /// for itself when it is this log's only root. The caller verifies the
-    /// signatures.
+    /// admitter, or, for a world edit, the install key of the machine it
+    /// names, as its primary signer. A genesis vouches for itself when it is
+    /// this log's only root. The caller verifies the signatures.
     fn vouches_for(&self, entry: &AuthorityLogEntry) -> bool {
         match &entry.op {
             AuthorityOp::Genesis { device, .. } => {
@@ -242,9 +242,9 @@ impl AuthorityStructure {
                     && is_consent_device(device)
                     && self.roots.iter().all(|root| *root == device.key)
             }
-            AuthorityOp::WorldPrivacy(_) => {
-                self.machine_keys.contains(entry.signer_key()) || signed_by(entry, &self.admitters)
-            }
+            AuthorityOp::WorldPrivacy(edit) => self
+                .machine_keys
+                .contains(&(edit.machine, entry.signer_key().clone())),
             _ => signed_by(entry, &self.admitters),
         }
     }
@@ -252,7 +252,11 @@ impl AuthorityStructure {
     /// Whether `key` signs rows the fold may come to admit: an admitter, or
     /// an install key, though the local fold may not hold it yet.
     fn stands(&self, key: &AuthorityKey) -> bool {
-        self.admitters.contains(key) || self.machine_keys.contains(key)
+        self.admitters.contains(key)
+            || self
+                .machine_keys
+                .iter()
+                .any(|(_, machine_key)| machine_key == key)
     }
 }
 
@@ -312,6 +316,21 @@ pub(crate) struct AuthorityDoorView {
 #[cfg(test)]
 thread_local! {
     static DOOR_VIEW_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+thread_local! {
+    static DOOR_OPEN_FOR_TEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `body` with this thread's authority doors open, so a test can build
+/// a log no door stores, such as one with a rival genesis.
+#[cfg(test)]
+pub(crate) fn with_authority_doors_open_for_test<T>(body: impl FnOnce() -> T) -> T {
+    DOOR_OPEN_FOR_TEST.with(|open| open.set(true));
+    let result = body();
+    DOOR_OPEN_FOR_TEST.with(|open| open.set(false));
+    result
 }
 
 /// How many door views this thread has built.
@@ -455,20 +474,27 @@ fn only_restricts(op: &AuthorityOp) -> bool {
         || super::revoke_proof::restrictive_withdrawal(op)
 }
 
-/// A machine revision that leaves a machine the local fold holds as owned
-/// owned, but not "yours", under the keys the fold holds: a demotion, or a
-/// revision beside a concurrent demotion this vault already holds. It only
-/// restricts whatever order the revisions arrive in.
+/// A machine revision that only restricts, judged against the machine the
+/// local fold holds under the same keys: the demotion of a "yours" head
+/// that is not conflicted, as the next revision, or an owned but not
+/// "yours" revision no newer than the head. Such a sibling or older
+/// revision never wins the merge, so concurrent demotions land in any
+/// order, a removal included. A newer one could clear a conflict and
+/// widen a world, so it counts.
 fn restricts_machine(fold: &AuthorityFold, op: &AuthorityOp) -> bool {
     let AuthorityOp::MachineProfile(profile) = op else {
         return false;
     };
+    let yours = MachineRole::Owned(MachineOwnership::Yours);
     matches!(profile.role, MachineRole::Owned(_))
-        && profile.role != MachineRole::Owned(MachineOwnership::Yours)
+        && profile.role != yours
         && fold.machines.get(&profile.machine).is_some_and(|known| {
-            matches!(known.profile.role, MachineRole::Owned(_))
-                && known.profile.machine_key == profile.machine_key
+            known.profile.machine_key == profile.machine_key
                 && known.profile.encryption_key == profile.encryption_key
+                && (profile.revision <= known.profile.revision
+                    || (known.profile.role == yours
+                        && !known.conflicted
+                        && Some(profile.revision) == known.profile.revision.checked_add(1)))
         })
 }
 
@@ -500,6 +526,10 @@ pub(crate) fn authority_door(
     posture: crate::HostingPrivacyPosture,
     entry: &AuthorityLogEntry,
 ) -> crate::error::Result<AuthorityDoor> {
+    #[cfg(test)]
+    if DOOR_OPEN_FOR_TEST.with(std::cell::Cell::get) {
+        return Ok(AuthorityDoor::Lands);
+    }
     if authority_row_resident(store, txn, entry)? {
         return Ok(AuthorityDoor::Lands);
     }

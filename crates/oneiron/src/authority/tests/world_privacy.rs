@@ -1023,10 +1023,13 @@ fn a_conflicted_root_never_lets_a_private_world_go() {
     };
     assert!(withheld(&host.vault).unwrap().contains(&world));
 
+    // No door stores a rival genesis (H72); build the conflicted log here.
     let rival = genesis_entry(78, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-    host.vault
-        .put_authority_log_entry(&rival, TimeRange { start: 3, end: 3 }, 3)
-        .unwrap();
+    crate::authority::log_budget::with_authority_doors_open_for_test(|| {
+        host.vault
+            .put_authority_log_entry(&rival, TimeRange { start: 3, end: 3 }, 3)
+    })
+    .unwrap();
     let fold = host.vault.authority_fold().unwrap();
     assert!(fold.vault_root_is_conflicted());
     for destination in [Destination::Unknown, Destination::Machine(here)] {

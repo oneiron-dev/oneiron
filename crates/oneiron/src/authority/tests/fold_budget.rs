@@ -875,12 +875,15 @@ fn a_history_whose_issuer_admission_is_a_sibling_imports_in_any_order() {
     assert!(!target.authority_fold().unwrap().authority_log_past_bound());
 }
 
-/// Bug repro (review round 2, Astra F3): two replicas at the owner's bound
-/// each demote one machine from the same head. The door judged the second
-/// against the machine as this vault already held it, demoted, so refused
-/// it as full, and a later removal on that line was stranded. A revision
-/// that leaves an owned machine owned but not "yours" lands past the bound
-/// in either order, and the removal follows.
+/// Bug repro (review rounds 2 and 3): two replicas at the owner's bound
+/// each demote one machine from the same head, and one of them then
+/// removes it. The door judged the second demotion against the machine as
+/// this vault already held it, demoted or removed, so refused it as full,
+/// and a later removal on its line was stranded. Then it took any owned,
+/// not "yours" revision past the bound, so a newer one could clear the
+/// demotions' conflict and widen a world. A demotion of the head and a
+/// sibling or older revision land past the bound, in either order; a newer
+/// revision counts.
 #[test]
 fn concurrent_demotions_of_one_machine_land_past_the_bound() {
     const BOUND: usize = 8;
@@ -924,18 +927,23 @@ fn concurrent_demotions_of_one_machine_land_past_the_bound() {
             .unwrap()
             .profile
             .clone();
-        let revision = |class| {
+        let revision = |class, revision| {
             AuthorityOp::MachineProfile(MachineProfile {
                 role: MachineRole::Owned(class),
-                revision: current.revision + 1,
+                revision,
                 ..current.clone()
             })
         };
-        let first = next(revision(MachineOwnership::WorkSchool));
-        let second = next(revision(MachineOwnership::Rented));
+        let first = next(revision(MachineOwnership::WorkSchool, current.revision + 1));
+        let second = next(revision(MachineOwnership::Rented, current.revision + 1));
         assert_eq!(first.parent_hashes, second.parent_hashes);
         host.vault.put_authority_log_entry(&first, at, 1).unwrap();
-        host.vault.put_authority_log_entry(&second, at, 1).unwrap();
+        let newer = next(revision(MachineOwnership::Rented, current.revision + 2));
+        let err = host
+            .vault
+            .put_authority_log_entry(&newer, at, 1)
+            .unwrap_err();
+        assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
         host.vault
             .set_machine_role(
                 &host.issuer,
@@ -944,6 +952,7 @@ fn concurrent_demotions_of_one_machine_land_past_the_bound() {
                 MachineRole::Removed,
             )
             .unwrap();
+        host.vault.put_authority_log_entry(&second, at, 1).unwrap();
         let fold = host.vault.authority_fold().unwrap();
         assert!(!fold.authority_log_past_bound());
         assert!(
@@ -1004,4 +1013,63 @@ fn held_rows_read_the_stored_log_once_per_generation() {
         );
     }
     assert!(crate::authority::log_budget::door_view_builds_for_test() - builds <= 1);
+}
+
+/// Bug repro (review round 3, F1): an install key vouched for any world
+/// edit, whatever machine it named, and an admitter's signature vouched for
+/// one too, though the fold applies a world edit only from the install key
+/// of the machine it names. Such rows are held; the machine's own edit
+/// lands.
+#[test]
+fn a_world_edit_lands_only_from_its_own_machines_install_key() {
+    let host = host();
+    let [first, second] = [76, 77].map(|seed| {
+        let request = request_for(host.vault_id, EntityId::now(), &ed_key(seed));
+        host.vault
+            .enroll_machine(
+                &host.issuer,
+                &host.owner,
+                &request,
+                MachineRole::Owned(MachineOwnership::Yours),
+            )
+            .unwrap();
+        request.machine
+    });
+    let install = ed_key(76);
+    let edit = |machine| {
+        let fold = host.vault.authority_fold().unwrap();
+        let key = authority_key_from_ed(&install);
+        let seq = fold.append_sequences.get(&key).map_or(1, |seq| seq + 1);
+        let entry = unsigned_entry(
+            fold.vault_id,
+            seq,
+            fold.append_heads.iter().copied().collect(),
+            AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
+                world: EntityId::now(),
+                owner: host.owner.actor(),
+                machine,
+                settings: WorldPrivacy::default(),
+            }),
+            key,
+            3,
+        );
+        (
+            sign_ed(entry.clone(), &install),
+            host_cosigned(entry, &install, &host.issuer),
+        )
+    };
+    let at = TimeRange { start: 1, end: 1 };
+    for entry in [edit(second).0, edit(second).1] {
+        let err = host
+            .vault
+            .put_authority_log_entry(&entry, at, 1)
+            .unwrap_err();
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::AuthorityLogSignerPending
+        );
+    }
+    host.vault
+        .put_authority_log_entry(&edit(first).0, at, 1)
+        .unwrap();
 }
