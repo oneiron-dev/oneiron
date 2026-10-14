@@ -31,6 +31,10 @@ pub(super) struct FoldContext<'a> {
     /// [`folded_peer_device_is_consent_root`] only inside
     /// [`fold_peer_authority_log`].
     pub(super) consent_arm: fn(&FoldedDevice) -> bool,
+    /// The vault folds under the hosted posture, where the host's own root is
+    /// the provider's key. Never inferred from the consent arm: a peer fold's
+    /// arm admits cloud roots without saying whose root a key is.
+    pub(super) hosted: bool,
     /// Only verified pre-handoff ancestry can use retired device-key ops.
     /// None is the legacy-only reference fold, never the posture-aware vault door.
     pub(super) pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
@@ -47,6 +51,7 @@ struct FoldLocalInputs<'a> {
     observations: Option<&'a AuthorityLocalObservations>,
     retire_device_ops: bool,
     pre_handoff_entries: Option<&'a BTreeSet<AuthorityEntryHash>>,
+    hosted: bool,
     /// The handoffs valid on their own rows; only these settle. None settles
     /// every handoff the fold holds.
     handoff_candidates: Option<&'a BTreeSet<AuthorityEntryHash>>,
@@ -57,6 +62,7 @@ impl FoldLocalInputs<'_> {
         observations: None,
         retire_device_ops: true,
         pre_handoff_entries: None,
+        hosted: false,
         handoff_candidates: None,
     };
 }
@@ -184,7 +190,10 @@ pub fn fold_authority_log_for_posture(
         Some(now_secs),
         peer_consent_roots,
         consent,
-        FoldLocalInputs::VAULT_DOOR,
+        FoldLocalInputs {
+            hosted: posture == crate::HostingPrivacyPosture::Hosted,
+            ..FoldLocalInputs::VAULT_DOOR
+        },
     )
 }
 
@@ -234,6 +243,7 @@ pub(super) fn fold_authority_log_with_local_observations_and_posture(
         consent,
         FoldLocalInputs {
             observations: Some(observations),
+            hosted: posture == crate::HostingPrivacyPosture::Hosted,
             ..FoldLocalInputs::VAULT_DOOR
         },
     )
@@ -279,6 +289,7 @@ fn fold_authority_log_inner(
                     observations: observations.as_ref(),
                     retire_device_ops: false,
                     pre_handoff_entries: Some(&allowed),
+                    hosted: local.hosted,
                     handoff_candidates: Some(&handoffs),
                 },
             );
@@ -308,6 +319,7 @@ fn fold_authority_log_inner(
             entry_ancestors: None,
             peer_consent_roots,
             consent_arm,
+            hosted: local.hosted,
             pre_handoff_entries: local.pre_handoff_entries,
         },
         local.handoff_candidates,
@@ -650,6 +662,7 @@ fn fold_authority_log_once(
             conflicted_critical_write_confirms: BTreeSet::new(),
             federation_grant_bindings: BTreeMap::new(),
             actor_bindings: BTreeMap::new(),
+            machines: BTreeMap::new(),
             issues,
         };
     }
@@ -743,6 +756,9 @@ fn fold_authority_log_once(
             state.federation_grant_bindings.clone()
         }),
         actor_bindings,
+        machines: merged.as_ref().map_or_else(BTreeMap::new, |state| {
+            super::machine_profile::folded_machines(state, retirements.unsettled())
+        }),
         issues,
     }
 }
