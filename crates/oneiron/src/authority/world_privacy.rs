@@ -382,6 +382,10 @@ pub(super) struct FrontierEdit {
     /// A later row of its signer reached this replica first, so it landed as
     /// restriction only: it never counts at full strength (Astra #1430).
     restriction_only: bool,
+    /// Two copies of it disagreed on its mark, past or what it replaced: it
+    /// never counts at full strength, and it meets the default as well (Sol
+    /// P2 round 11).
+    disputed: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -397,7 +401,7 @@ impl FrontierEdit {
     /// One edit folded twice (past a floor on one replica's pass, or crossed
     /// on another) keeps what both copies grant: either copy's restriction,
     /// what either replaced, the past both saw, and no full strength when
-    /// they disagree on its mark. Order-free (Sol P2 round 10, F2).
+    /// they disagree on anything else. Order-free (Sol P2 rounds 10-11).
     fn meet(left: &Arc<Self>, right: &Arc<Self>) -> Arc<Self> {
         if Arc::ptr_eq(left, right) || left == right {
             return Arc::clone(left);
@@ -409,9 +413,12 @@ impl FrontierEdit {
             narrow_only: left.narrow_only || right.narrow_only,
             mark: left.mark.min(right.mark),
             prior: Arc::new(left.prior.intersection(&right.prior).copied().collect()),
-            restriction_only: left.restriction_only
-                || right.restriction_only
-                || left.mark != right.mark,
+            restriction_only: left.restriction_only || right.restriction_only,
+            disputed: left.disputed
+                || right.disputed
+                || left.mark != right.mark
+                || left.prior != right.prior
+                || left.replaced != right.replaced,
         })
     }
 }
@@ -476,7 +483,8 @@ fn full_strength(
     counting: Counting,
 ) -> bool {
     let roster = counting == Counting::Roster;
-    (roster || !(edit.narrow_only || edit.restriction_only))
+    !edit.disputed
+        && (roster || !(edit.narrow_only || edit.restriction_only))
         && derived_machine(state, edit.machine).is_some_and(|folded| {
             folded.is_mine()
                 || (!folded.conflicted
@@ -505,7 +513,7 @@ fn contribution(
     let mut visited = BTreeSet::from([hash]);
     let mut pending = vec![edit];
     while let Some(next) = pending.pop() {
-        if next.replaced.is_empty() {
+        if next.replaced.is_empty() || next.disputed {
             meet = meet.meet(&PrivacyMeet::of(&WorldPrivacy::default()));
         }
         for replaced in &next.replaced {
@@ -607,6 +615,7 @@ pub(super) fn apply_world_privacy(
             mark,
             prior,
             restriction_only,
+            disputed: false,
         }),
     );
     Ok(())
