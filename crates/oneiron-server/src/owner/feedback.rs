@@ -91,7 +91,7 @@ pub(crate) fn preview(
         digest: preview.digest().to_owned(),
         approval: preview.approval_component_id(
             &FeedbackApprovalScope::Send(host.config.route()),
-            owner.principal_ref(),
+            owner.principal_ref_for_read(vault)?,
         ),
         previewed_at: vault.now_recorded_at(),
         bundle: serde_json::from_str(&preview.display_json().map_err(feedback_error)?)
@@ -106,7 +106,7 @@ pub(crate) fn send(
     owner: &AuthenticatedOwner,
     request: &SendRequest,
 ) -> OwnerResult<Sent> {
-    vault.recheck_owner(owner)?;
+    let principal_ref = owner.revalidate_principal_ref(vault)?;
     let preview = bundle_preview(&FeedbackRequest {
         category: request.category,
         note: request.note.clone(),
@@ -119,7 +119,7 @@ pub(crate) fn send(
     let scope = FeedbackApprovalScope::Send(host.config.route());
     // The approval names the owner who previewed it, so two owners' sends of
     // one bundle are two sends, and neither can send on the other's preview.
-    if preview.approval_component_id(&scope, owner.principal_ref()) != request.approval {
+    if preview.approval_component_id(&scope, principal_ref) != request.approval {
         return Err(OwnerError::Changed(
             "this preview was for another destination or another owner; preview it again"
                 .to_owned(),
@@ -134,13 +134,8 @@ pub(crate) fn send(
         ));
     }
     // The owner's send is the answer; the card's prompt names where it goes.
-    let card = feedback_approval_card(
-        &preview,
-        owner.principal_ref(),
-        &host.config.endpoint,
-        &scope,
-    )
-    .map_err(feedback_error)?;
+    let card = feedback_approval_card(&preview, principal_ref, &host.config.endpoint, &scope)
+        .map_err(feedback_error)?;
     // The approval is timed at the preview, so a repeated request names the
     // same approval receipt and the outbound ledger answers it as the one send.
     let approval = ConsentActionRequest::new(
@@ -148,7 +143,7 @@ pub(crate) fn send(
         FEEDBACK_APPROVE_ONCE_ACTION,
         ConsentActionKind::Approve,
         ConsentActorIdentity::SurfaceActor {
-            actor_ref: owner.principal_ref().to_owned(),
+            actor_ref: principal_ref.to_owned(),
         },
         ConsentSurface::Dashboard,
         request.previewed_at,

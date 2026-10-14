@@ -79,6 +79,13 @@ impl AuthenticatedOwner {
         Ok(&self.principal_ref)
     }
 
+    /// [`Self::revalidate`] for a door that names its actor by principal
+    /// reference and has no transaction of its own.
+    pub fn revalidate_principal_ref(&self, vault: &Vault) -> Result<&str> {
+        self.revalidate(vault)?;
+        Ok(&self.principal_ref)
+    }
+
     /// Whether this proof was authenticated for `principal_ref`. A
     /// comparison for a card with no vault at hand, never authority: the act
     /// the card leads to revalidates the proof.
@@ -122,7 +129,7 @@ impl AuthenticatedOwner {
     /// checks its owner before it opens its writer. A door never rebuilds a
     /// proof from its public fields instead: a proof another vault
     /// authenticated for the same PERSON id would pass that.
-    pub(crate) fn revalidate(&self, vault: &Vault) -> Result<EntityId> {
+    pub fn revalidate(&self, vault: &Vault) -> Result<EntityId> {
         let txn = vault.store.env.read_txn()?;
         self.revalidate_in_txn(vault, &txn)
     }

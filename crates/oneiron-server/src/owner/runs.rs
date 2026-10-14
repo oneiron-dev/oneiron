@@ -179,7 +179,7 @@ fn visible_bundle(
     run_id: &str,
     locality: CallerLocality,
 ) -> OwnerResult<(GateConsentBundle, Vec<ClaimBody>)> {
-    let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
+    let actor = WriteActor::new(owner.actor_for_read(vault)?, EdgeActorClass::Human);
     let (bundle, bodies) = vault.review_gate_consent_bundle_with_bodies(&actor, run_id)?;
     let members = bundle
         .members
