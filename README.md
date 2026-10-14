@@ -106,8 +106,9 @@ oneiron-server serve --config ./oneiron-server.toml --host 127.0.0.1 \
 ```
 
 This assumes no `ONEIRON_*` overrides. Existing vaults need matching storage,
-analyzer, and vector settings. Do not use unauthenticated mode for a shared or
-network-facing vault. For authenticated setup, start with
+analyzer, and vector settings. Serve refuses unauthenticated mode on any host
+but loopback; a shared or network-facing vault sets an auth secret. For
+authenticated setup, start with
 `oneiron-server token bootstrap --help` and the
 [authentication reference](./oneiron.skills.md#authentication).
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for service templates.
