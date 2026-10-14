@@ -111,14 +111,22 @@ fn live_exact_claim_preserves_search_text_limit() -> Result<()> {
     let live_prefix = entity_id(0x32);
 
     put_claim_text(&vault, live_exact, "livegateprefix", None)?;
-    put_text(&vault, lower_ranked_exact_doc, "livegateprefix")?;
+    put_text(
+        &vault,
+        lower_ranked_exact_doc,
+        "livegateprefix in a longer note",
+    )?;
     put_claim_text(&vault, live_prefix, "livegateprefixalpha", None)?;
 
     // EMBED-PACK: the text channel fetches its fusion list length whatever it
-    // is asked for, so the pack's limit is what caps the results.
+    // is asked for, so all three are candidates and the pack's limit caps the
+    // results. The doc ranks below the claim on its words, and the claims
+    // are read undecayed, as a doc is, so the words decide.
+    let undecayed = std::collections::HashMap::from([(live_exact, 1.0), (live_prefix, 1.0)]);
     let results = vault
         .query()
         .search_text("livegateprefix", 1)
+        .with_access_factor_overrides(&undecayed)
         .limit(1)
         .run()?;
 

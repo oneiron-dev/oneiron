@@ -71,7 +71,7 @@ fn a_list_is_scaled_by_its_top_rows_however_many_follow() {
     let rows: Vec<ScoredEntity> = (1..=200_u8)
         .map(|rank| scored([rank; 16], 1.0 / f32::from(rank)))
         .collect();
-    let long = retrieval_candidates_from_ranked_lists(&[rows.clone()], &[]);
+    let long = retrieval_candidates_from_ranked_lists(std::slice::from_ref(&rows), &[]);
     let short = retrieval_candidates_from_ranked_lists(&[rows[..FUSION_LIST_LENGTH].to_vec()], &[]);
     for rank in 1..=10_u8 {
         assert_eq!(
@@ -80,4 +80,21 @@ fn a_list_is_scaled_by_its_top_rows_however_many_follow() {
             "rank {rank}"
         );
     }
+}
+
+/// Sol R1 on this branch: a window whose top rows all score the same has no
+/// spread, and every row, the weaker ones past it too, took z 0; a weaker
+/// row then tied the window and could win the id order. The window's rows
+/// keep z 0 and a weaker row past it falls below them.
+#[test]
+fn a_flat_window_keeps_weaker_rows_past_it_below() {
+    let weaker = [0; 16];
+    let mut rows: Vec<ScoredEntity> = (1..=FUSION_LIST_LENGTH)
+        .map(|rank| scored([u8::try_from(rank).unwrap(); 16], 1.0))
+        .collect();
+    rows.push(scored(weaker, 0.0));
+    let inputs = retrieval_candidates_from_ranked_lists(&[rows], &[]);
+
+    assert_eq!(relevance_of(&inputs, [1; 16]), 0.0);
+    assert!(relevance_of(&inputs, weaker) < 0.0, "{inputs:?}");
 }

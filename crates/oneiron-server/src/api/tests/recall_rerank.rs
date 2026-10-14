@@ -558,6 +558,83 @@ async fn a_payload_past_the_line_is_refused_unsent() {
     );
 }
 
+/// A loopback `/v1/rerank` that reads each request and fails it, as a
+/// provider that went down after it took the words. Counts what it took.
+async fn failing_reranker() -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+    let taken = Arc::new(AtomicUsize::new(0));
+    let app = axum::Router::new()
+        .route(
+            "/v1/rerank",
+            axum::routing::post(
+                |State(taken): State<Arc<AtomicUsize>>, Json(_): Json<Value>| async move {
+                    taken.fetch_add(1, Ordering::SeqCst);
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                },
+            ),
+        )
+        .with_state(Arc::clone(&taken));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (format!("http://{addr}"), taken, task)
+}
+
+/// Wonder R1 on this branch (W1-2): a call was priced once, but each rung it
+/// reached sent the whole payload, and a rung that failed after it went out
+/// was charged the line's flat reservation alone, so the fallback rung went
+/// out on a line that no longer covered it. Each rung reserves the payload's
+/// price: the first rung fails, the line cannot cover a second send, and the
+/// recall is refused as `budget_spent` with the fallback unsent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_fallback_rung_goes_out_only_while_the_line_covers_its_payload() {
+    let (down_url, taken, down) = failing_reranker().await;
+    let fake = FakeReranker::start(prefers_known(), no_hook(), 10).await;
+    // A block of 16 to 30 clipped memories (about 530 units each) costs more
+    // than the flat reservation (8000) and less than this line, which the
+    // flat reservation covers twice and the payload's price once.
+    let models = models_toml(&format!(
+        r#"
+[providers.down]
+kind = "local-openai-compat"
+base_url = "{down_url}"
+[providers.rerank]
+kind = "local-openai-compat"
+base_url = "{}"
+[roles.reranker]
+rungs = [{{ model = "down:fake-reranker" }}, {{ model = "rerank:fake-reranker" }}]
+[dreamer]
+enabled = false
+[recall]
+rerank_budget_units = 16500
+"#,
+        fake.base_url
+    ));
+    let (_dir, server, _host, _) = served(Some(&models)).await;
+    let actor = reader(&server, "rerank-fallback").await;
+    for entry in 0..25 {
+        let words = "the wick was trimmed and the glass was wiped clean ".repeat(12);
+        remember(
+            server.vault(),
+            actor,
+            &format!("lantern repair log {entry}: {words}"),
+        );
+    }
+
+    let refusal = recall(&server, "rerank-fallback", actor, "high")
+        .await
+        .expect_err("the line cannot cover a second send");
+
+    assert_eq!(
+        refusal["error"]["data"]["error_code"], "budget_spent",
+        "{refusal}"
+    );
+    assert_eq!(taken.load(Ordering::SeqCst), 1, "the first rung went out");
+    assert_eq!(fake.calls(), 0, "the fallback rung was not sent");
+    down.abort();
+}
+
 /// #1419 Wonder W1-3: the pack repeats the name the endpoint says answered
 /// only when it is a model name: at most 200 printable characters. A name
 /// past that is dropped, as though the endpoint named none.
@@ -581,7 +658,9 @@ async fn a_served_model_name_past_its_bound_is_not_repeated() {
 /// thread. On a current-thread runtime that is a plain thread with no
 /// runtime, and the rerank door refused a configured reranker there as
 /// `model_unavailable`. A host serving from a current-thread runtime reranks
-/// a high recall over the sync RPC.
+/// a high recall over the sync RPC, with a deadline (Sol R1 on this branch:
+/// the deadline's timer was made on the caller's thread, which has no
+/// runtime, and panicked) and without.
 #[test]
 fn high_recall_over_the_sync_rpc_reranks_on_a_current_thread_runtime() {
     let io = tokio::runtime::Builder::new_multi_thread()
@@ -595,7 +674,7 @@ fn high_recall_over_the_sync_rpc_reranks_on_a_current_thread_runtime() {
         .enable_all()
         .build()
         .unwrap();
-    let reply = runtime.block_on(async {
+    let replies = runtime.block_on(async {
         let (_dir, server, _host, _) = served(Some(&models)).await;
         let owner = server.vault().ensure_embedded_owner_actor().unwrap();
         for text in OTHERS.iter().chain([&KNOWN]) {
@@ -606,33 +685,45 @@ fn high_recall_over_the_sync_rpc_reranks_on_a_current_thread_runtime() {
             owner.to_hex()
         );
         let auth = crate::test_credentials::authenticate(&server, &recipe);
-        let frames = crate::livequery::bound_rpc(
-            &server,
-            &auth,
-            crate::livequery::RpcRequest {
-                request_id: 7,
-                method: "recall".to_owned(),
-                params: json!({"query": QUERY, "effort": "high", "limit": 10}),
-            },
-        )
-        .unwrap();
-        crate::livequery::test_wire::reply(&frames)
+        [
+            json!({"query": QUERY, "effort": "high", "limit": 10}),
+            json!({"query": QUERY, "effort": "high", "limit": 10, "deadline_ms": 30_000}),
+        ]
+        .into_iter()
+        .map(|params| {
+            let frames = crate::livequery::bound_rpc(
+                &server,
+                &auth,
+                crate::livequery::RpcRequest {
+                    request_id: 7,
+                    method: "recall".to_owned(),
+                    params,
+                },
+            )
+            .unwrap();
+            crate::livequery::test_wire::reply(&frames)
+        })
+        .collect::<Vec<_>>()
     });
     runtime.shutdown_background();
 
-    assert_eq!(
-        reply["result"]["retrieval_meta"]["rerank"]["status"], "applied",
-        "{reply}"
-    );
-    assert_eq!(fake.calls(), 1);
-    assert!(
-        fake.seen()[0]["documents"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|document| document.as_str().unwrap().contains(KNOWN)),
-        "{reply}"
-    );
+    for reply in &replies {
+        assert_eq!(
+            reply["result"]["retrieval_meta"]["rerank"]["status"], "applied",
+            "{reply}"
+        );
+    }
+    assert_eq!(fake.calls(), 2);
+    for seen in fake.seen() {
+        assert!(
+            seen["documents"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|document| document.as_str().unwrap().contains(KNOWN)),
+            "{seen}"
+        );
+    }
     drop(fake);
     io.shutdown_background();
 }

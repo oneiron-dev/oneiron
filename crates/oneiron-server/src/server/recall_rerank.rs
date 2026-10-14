@@ -9,7 +9,10 @@
 //! that cannot cover them refuses the call unsent. A `[models]` rung is
 //! reached over HTTP, never in this process, so this host does not run on
 //! the device (`RecallRerankHost::runs_on_device`): a row a device-only world
-//! keeps is sent to it empty.
+//! keeps is sent to it empty. Each rung a call reaches reserves that price,
+//! so a fallback rung goes out only while the line still covers the whole
+//! payload, and a rung that failed after it went out is charged what it may
+//! have billed.
 //!
 //! A call is driven on its caller's runtime when that runtime is
 //! multi-thread. A synchronous door holds its caller's thread until the
@@ -22,7 +25,6 @@ use std::time::Instant;
 
 use oneiron::llm::BudgetDenied;
 use oneiron::llm::manifest::ModelRole;
-use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{
     Effort, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
     RecallRerank, RecallRerankHost, RerankDocument, RerankScores,
@@ -61,9 +63,12 @@ impl DoorRerank {
 pub(super) struct ServedRerank {
     vault: Arc<Vault>,
     ai: AiHandle,
-    run: RunAdmission,
-    /// The recall's line, which `run` admits and settles every call on.
+    /// The recall's run: each call is admitted and settled under it.
+    run_id: String,
+    /// The recall's line, which the run admits and settles every call on.
     meter: BudgetGuard,
+    /// What a call reserves on the line at least, whatever its payload.
+    reserve_units: u64,
     /// The line's word that it admitted this recall. Every rerank call is
     /// admitted and settled on the same line on its own permit, so this
     /// lease holds no reservation.
@@ -106,10 +111,11 @@ impl SyncServer {
         };
         let run_id = format!("recall-rerank:{:016x}", rand_core::OsRng.next_u64());
         let units = self.ai.rerank_budget_units();
+        let reserve_units = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(units);
         let meter = self.vault.policy_budget_guard(
             run_id.clone(),
             units,
-            oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(units),
+            reserve_units,
             BudgetExhaustionPolicy::Suspend,
             WriteActor::new(actor, class),
         )?;
@@ -123,8 +129,9 @@ impl SyncServer {
         Ok(DoorRerank::Served(ServedRerank {
             vault: Arc::clone(&self.vault),
             ai: self.ai.clone(),
-            run: self.ai.undeclared_run(run_id, meter.clone()),
+            run_id,
             meter,
+            reserve_units,
             lease,
             runtime,
         }))
@@ -143,9 +150,16 @@ impl RecallRerankHost for ServedRerank {
         answer_at: Option<Instant>,
     ) -> MemoryResult<RerankScores> {
         let texts: Vec<&str> = documents.iter().map(|document| document.text).collect();
-        if payload_units(query, &texts) > self.meter.read().remaining_units {
+        let price = payload_units(query, &texts);
+        let line = self.meter.read();
+        if price > line.remaining_units {
             return Err(spent(BudgetDenied::Exhausted));
         }
+        self.meter
+            .revise_line(line.limit_units, price.max(self.reserve_units));
+        let run = self
+            .ai
+            .undeclared_run(self.run_id.clone(), self.meter.clone());
         // The vault's model policy places the call: its manifest's binding
         // for the role when it has one, the role's seat otherwise.
         let call = self
@@ -157,11 +171,13 @@ impl RecallRerankHost for ServedRerank {
             )
             .map_err(|refusal| unavailable(&format!("the reranker call was refused: {refusal}")))?;
         let model = call.request.model.clone();
-        let generate = call.ladder.generate(&self.run, call.request, None);
+        let generate = call.ladder.generate(&run, call.request, None);
+        // The timer is made inside the runtime that drives it: a sync door's
+        // thread has none of its own.
         let answered = match answer_at {
             Some(at) => self
                 .runtime
-                .block_on(tokio::time::timeout_at(at.into(), generate))
+                .block_on(async move { tokio::time::timeout_at(at.into(), generate).await })
                 .map_err(|_| unavailable("the reranker did not answer before the deadline"))?,
             None => self.runtime.block_on(generate),
         };

@@ -316,3 +316,73 @@ fn ffi_batch_put_entities_and_boundary_statuses() {
 
     assert_eq!(oneiron_vault_free(vault), OneironStatus::Ok);
 }
+
+/// The rows a JSON pack holds: every object with an `id`, in any section.
+fn count_rows(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::Object(map) => {
+            usize::from(map.contains_key("id")) + map.values().map(count_rows).sum::<usize>()
+        }
+        serde_json::Value::Array(values) => values.iter().map(count_rows).sum(),
+        _ => 0,
+    }
+}
+
+/// Sol R1 on EMBED-PACK: the channels fetch their fusion list length
+/// whatever they are asked for, and this door passed its limit only to the
+/// channels, so a pack served every row they found. It serves at most
+/// `limit` rows.
+#[test]
+fn ffi_context_pack_serves_at_most_its_limit() {
+    let (_dir, vault) = open_test_vault(4);
+    // The C surface indexes no words, so the rows are written through the
+    // engine the handle holds.
+    // SAFETY: `vault` is the live handle `open_test_vault` returned.
+    let engine = unsafe { &(*vault).vault };
+    for seed in [1, 32, 64] {
+        let entity = oneiron::EntityId::from_bytes(id(seed)).expect("an id");
+        engine
+            .batch()
+            .put(
+                &entity,
+                1,
+                oneiron::TimeRange { start: 10, end: 20 },
+                30,
+                b"ffi-payload",
+            )
+            .text(&entity, &[("body", "brass lantern")])
+            .commit()
+            .expect("an indexed row");
+    }
+    let query = "lantern";
+    let rows = |limit: u32| {
+        let mut pack = OneironBuffer::empty();
+        assert_eq!(
+            oneiron_vault_context_pack(
+                vault,
+                query.as_ptr(),
+                query.len(),
+                ptr::null(),
+                0,
+                limit,
+                1,
+                ptr::null(),
+                0,
+                &mut pack,
+            ),
+            OneironStatus::Ok
+        );
+        // SAFETY: `pack` was returned by this crate and is live until freed.
+        let bytes = unsafe { slice::from_raw_parts(pack.ptr, pack.len) };
+        let json: serde_json::Value = serde_json::from_slice(bytes).expect("a JSON pack");
+        assert_eq!(oneiron_buffer_free(pack), OneironStatus::Ok);
+        (count_rows(&json), json)
+    };
+
+    let (all, pack) = rows(3);
+    assert_eq!(all, 3, "{pack}");
+    let (one, pack) = rows(1);
+    assert_eq!(one, 1, "{pack}");
+
+    assert_eq!(oneiron_vault_free(vault), OneironStatus::Ok);
+}

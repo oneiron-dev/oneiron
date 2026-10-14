@@ -221,9 +221,10 @@ impl<'a> PipelineBuilder<'a> {
     /// Attaches a host-injected top-N reranker for this run (RET-010,
     /// 1186-D2). Presence IS the feature flag: no reranker attached means
     /// rerank is off and the pipeline behaves exactly as before. The block
-    /// size is `options.top_n`; the pipeline never overfetches on rerank's
-    /// behalf — the reranker only sees more than `result_limit` candidates
-    /// when the caller's per-channel limits exceed `result_limit`.
+    /// is the fused list's top `options.top_n`; the pipeline fetches nothing
+    /// more on rerank's behalf. Each channel fetches its fusion list length
+    /// (`FUSION_LIST_LENGTH`, 80), or the caller's limit when
+    /// larger, so the block can hold more candidates than `result_limit`.
     pub fn rerank(mut self, reranker: &'a dyn Reranker, options: RerankOptions) -> Self {
         self.rerank = Some((reranker, options));
         self

@@ -123,13 +123,17 @@ pub fn retrieval_candidates_from_ranked_lists(
                 let floor = by_id.values().copied().fold(f64::INFINITY, f64::min);
                 return (by_id, floor);
             }
-            let mut window: Vec<f64> = ranked
+            let mut scores: Vec<f64> = ranked
                 .iter()
                 .map(|scored| f64::from(scored.score))
                 .collect();
-            window.sort_unstable_by(|left, right| right.total_cmp(left));
-            window.truncate(FUSION_LIST_LENGTH);
-            let scale = spread(&window);
+            scores.sort_unstable_by(|left, right| right.total_cmp(left));
+            let window = &scores[..scores.len().min(FUSION_LIST_LENGTH)];
+            // A window whose scores are all equal carries no scale. Its rows
+            // stay at z 0, as with nothing past them, and weaker rows past it
+            // fall below on the whole list's spread. A list flat throughout
+            // stays neutral.
+            let scale = spread(window).or_else(|| Some((*window.first()?, spread(&scores)?.1)));
             let z = |score: f64| match scale {
                 Some((mean, stddev)) => (score - mean) / stddev,
                 None => 0.0,

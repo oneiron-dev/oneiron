@@ -251,7 +251,9 @@ pub extern "C" fn oneiron_vault_context_pack(
             };
             let format = string_from_optional(format_ptr, format_len)?;
             let pack_format = parse_pack_format(format.as_deref());
-            let mut builder = handle.vault.context_pack().format(pack_format);
+            // The limit caps the pack itself: the channels fetch their
+            // fusion list length whatever they are asked for.
+            let mut builder = handle.vault.context_pack().format(pack_format).limit(limit);
             if let Some(text) = query_text.as_deref() {
                 builder = builder.search_text(text, limit);
             }

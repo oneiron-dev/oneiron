@@ -22,7 +22,7 @@
 //! block at the same revisions: a block or a row that changed in between
 //! takes none of the scores, and the door scores the new block once more
 //! before it refuses.
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -478,17 +478,32 @@ impl Memory<'_> {
     /// or with no revision to read it at, is sent empty and scores last, as
     /// is a text the write door refuses whole; nothing it holds leaves. So is
     /// a row a device-only world keeps (the vault's own flag, whoever reads),
-    /// unless the host's model runs on this device (`on_device`).
+    /// unless the host's model runs on this device (`on_device`). A flag
+    /// commits under the write side of the store's flag lock; this verdict
+    /// reads under the read side, as a sync release's does, so a flag
+    /// committed before it is one it read. It reads only while it holds it.
     fn rerank_documents(
         &self,
         scope: &RecallScope,
         block: &[BlockCandidate],
         on_device: bool,
     ) -> MemoryResult<Vec<String>> {
-        let kept_here: HashSet<EntityId> = if on_device {
-            HashSet::new()
+        let _flags = (!on_device).then(|| {
+            self.vault
+                .store
+                .device_only_flag_lock
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        });
+        let (flagged, kept_here) = if on_device {
+            (BTreeSet::new(), HashSet::new())
         } else {
-            let rtxn = self.vault.store.env.read_txn().map_err(crate::Error::from)?;
+            let rtxn = self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::Error::from)?;
             let flagged = crate::settings::device_only_worlds_in(&self.vault.store, &rtxn)?;
             let mut kept_here = HashSet::new();
             for candidate in block {
@@ -501,7 +516,7 @@ impl Memory<'_> {
                     kept_here.insert(candidate.id);
                 }
             }
-            kept_here
+            (flagged, kept_here)
         };
         let worlds = self.recall_worlds(scope)?;
         let lane = self
@@ -527,6 +542,16 @@ impl Memory<'_> {
                     Err(error) if error.code == MEMORY_CODE_NOT_FOUND => None,
                     Err(error) => return Err(error),
                 };
+            // The live row's world is not the one its pin holds: a claim
+            // moved out of a device-only world is still kept at a revision
+            // that was in it.
+            let item = item.filter(|item| {
+                !item
+                    .world
+                    .as_deref()
+                    .and_then(|world| EntityId::from_hex(world).ok())
+                    .is_some_and(|world| flagged.contains(&world))
+            });
             let text = item.map_or_else(String::new, |item| match item.predicate {
                 Some(predicate) => format!("{predicate}: {}", item.value_text),
                 None => item.value_text,

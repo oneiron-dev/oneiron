@@ -160,7 +160,7 @@ fn a_block_with_no_words_to_send_makes_no_call() {
     let (_dir, vault) = open_embedding_vault();
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let facade = facade_for(&vault, owner);
-    let (world, _, _) = device_only_world(&vault, owner);
+    let (world, _) = kept_world(&vault, owner);
     let host = scripted(&|_: usize, _: &str| 1.0, &|_: usize| {});
 
     let pack = recall_high_in(
@@ -257,10 +257,44 @@ fn a_turn_with_no_words_to_pin_is_sent_nothing() {
     ));
 }
 
-/// A WORLD flagged device-only on this device, a claim it keeps and a
-/// portable one in base reality, both about lanterns: the world, the kept
-/// claim and the portable one.
-fn device_only_world(vault: &crate::Vault, owner: EntityId) -> (EntityId, EntityId, EntityId) {
+/// A claim about `owner` in `world` (base reality for `None`), indexed by
+/// its words.
+fn remember_claim(
+    vault: &crate::Vault,
+    owner: EntityId,
+    id: EntityId,
+    world: Option<EntityId>,
+    text: &str,
+) {
+    let mut claim = crate::claim::ClaimBody::new(
+        "profile.note",
+        crate::claim::ClaimSubject::Entity(owner),
+        rmpv::Value::from(text),
+        1.0,
+        crate::claim::ClaimApprovalStatus::Auto,
+        crate::claim::ClaimLifecycleStatus::Active,
+    )
+    .expect("a claim");
+    claim.source = Some(crate::claim::ClaimSource::UserStated);
+    claim.world = world;
+    vault
+        .put_claim(
+            &id,
+            &claim,
+            crate::temporal::TimeRange { start: 10, end: 10 },
+            10,
+        )
+        .expect("store the claim");
+    vault
+        .batch()
+        .text(&id, &[("body", text)])
+        .commit()
+        .expect("index the claim");
+}
+
+/// A WORLD flagged device-only on this device and a claim about lanterns
+/// it keeps: the world and the kept claim.
+fn kept_world(vault: &crate::Vault, owner: EntityId) -> (EntityId, EntityId) {
     let world = crate::test_util::entity(0x61);
     vault
         .put_entity(
@@ -271,41 +305,26 @@ fn device_only_world(vault: &crate::Vault, owner: EntityId) -> (EntityId, Entity
             b"world",
         )
         .expect("the world");
-    let remember = |id: EntityId, world: Option<EntityId>, text: &str| {
-        let mut claim = crate::claim::ClaimBody::new(
-            "profile.note",
-            crate::claim::ClaimSubject::Entity(owner),
-            rmpv::Value::from(text),
-            1.0,
-            crate::claim::ClaimApprovalStatus::Auto,
-            crate::claim::ClaimLifecycleStatus::Active,
-        )
-        .expect("a claim");
-        claim.source = Some(crate::claim::ClaimSource::UserStated);
-        claim.world = world;
-        vault
-            .put_claim(
-                &id,
-                &claim,
-                crate::temporal::TimeRange { start: 10, end: 10 },
-                10,
-            )
-            .expect("store the claim");
-        vault
-            .batch()
-            .text(&id, &[("body", text)])
-            .commit()
-            .expect("index the claim");
-    };
-    let (kept, portable) = (
-        crate::test_util::entity(0x62),
-        crate::test_util::entity(0x63),
+    let kept = crate::test_util::entity(0x62);
+    remember_claim(
+        vault,
+        owner,
+        kept,
+        Some(world),
+        "the lantern key is under the mat",
     );
-    remember(kept, Some(world), "the lantern key is under the mat");
-    remember(portable, None, "a brass lantern hook");
     vault
         .set_world_device_only(world, true)
         .expect("flag the world");
+    (world, kept)
+}
+
+/// [`kept_world`] and a portable claim about lanterns in base reality: the
+/// world, the kept claim and the portable one.
+fn device_only_world(vault: &crate::Vault, owner: EntityId) -> (EntityId, EntityId, EntityId) {
+    let (world, kept) = kept_world(vault, owner);
+    let portable = crate::test_util::entity(0x63);
+    remember_claim(vault, owner, portable, None, "a brass lantern hook");
     (world, kept, portable)
 }
 
@@ -356,6 +375,72 @@ fn a_device_only_row_reaches_only_a_reranker_on_this_device() {
             "{sent:?}"
         );
     }
+}
+
+/// Sol R1 on this branch: the device-only judgement read a claim's live row,
+/// while the words sent were the revision the block pinned. A claim moved out
+/// of a device-only world, its index not yet caught up, was judged portable
+/// by the world it is in now and sent as it was in the kept one.
+#[test]
+fn a_claim_moved_out_of_a_device_only_world_is_judged_at_its_pin() {
+    let (_dir, vault) = open_embedding_vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let facade = facade_for(&vault, owner);
+    let (world, _, _) = device_only_world(&vault, owner);
+    crate::test_util::publish_seeded_revisions(&vault);
+    let moved = crate::test_util::entity(0x64);
+    for (in_world, words) in [
+        (Some(world), "the lantern shed is painted blue"),
+        (None, "a lantern by the door"),
+    ] {
+        let mut claim = crate::claim::ClaimBody::new(
+            "profile.note",
+            crate::claim::ClaimSubject::Entity(owner),
+            rmpv::Value::from(words),
+            1.0,
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Active,
+        )
+        .expect("a claim");
+        claim.source = Some(crate::claim::ClaimSource::UserStated);
+        claim.world = in_world;
+        vault
+            .batch()
+            .put(
+                &moved,
+                crate::registry::ENTITY_TYPE_CLAIM,
+                crate::temporal::TimeRange { start: 10, end: 10 },
+                10,
+                &crate::claim::encode_claim_body(&claim).expect("encode the claim"),
+            )
+            .text(&moved, &[("body", "a lantern note")])
+            .commit()
+            .expect("store the claim");
+    }
+    let sent = std::sync::Mutex::new(Vec::new());
+    let score = |_: usize, text: &str| {
+        sent.lock().unwrap().push(text.to_owned());
+        1.0
+    };
+    let host = scripted(&score, &|_: usize| {});
+
+    let pack = recall_high_in(
+        &facade,
+        &host,
+        "lantern",
+        Some(crate::memory::RecallScope {
+            world_ref: Some(world.to_hex()),
+            kinds: Some(vec!["CLAIM".to_owned()]),
+            ..Default::default()
+        }),
+    );
+
+    assert!(host.seen.lock().unwrap().contains(&moved), "{pack:?}");
+    let sent = sent.lock().unwrap();
+    assert!(
+        sent.iter().all(|text| !text.contains("painted blue")),
+        "{sent:?}"
+    );
 }
 
 /// A row sent empty was sent nothing to judge, so it scores last, whatever

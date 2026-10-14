@@ -7,7 +7,7 @@
 
 use super::*;
 use crate::config::VectorEvidenceFloors;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
 
 const QUERY: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
 
@@ -158,6 +158,52 @@ fn a_score_is_judged_by_its_own_space_and_kind() -> Result<()> {
             pack.empty
         );
     }
+    Ok(())
+}
+
+/// Sol R1 on this branch: the gap test judged a space by its top score's
+/// kind alone. A row of a kind that sits higher in the space (here judged by
+/// the pair, 0.3/0.5) topped a strong match of a kind keyed lower (0.25 is
+/// strong for it) by a small gap, and the pack abstained. Any score strong
+/// for its own kind passes the space.
+#[test]
+fn a_strong_match_of_one_kind_passes_whatever_another_kind_tops_it_by() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let space = vault.evidence_space().to_owned();
+    vault.set_vector_evidence_for(&space, ENTITY_TYPE_TURN, floors(0.15, 0.25))?;
+    let target = entity_id(0x3F);
+    put_text_and_vector(
+        &vault,
+        target,
+        "the mechanic says the automobile needs new brakes",
+        at(0.29),
+    )?;
+    let higher = entity_id(0x40);
+    vault
+        .batch()
+        .put(
+            &higher,
+            ENTITY_TYPE_ASSET_TEXT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&serde_json::json!({"content": "the garage opens at nine"}))
+                .expect("body"),
+        )
+        .text(&higher, &[("body", "the garage opens at nine")])
+        .vector(&higher, &at(0.31))
+        .commit()?;
+
+    let pack = vault
+        .context_pack()
+        .search_text("who fixes my car", 10)
+        .search_vector(&QUERY, 10)
+        .run()?;
+
+    assert!(
+        pack.results.iter().any(|entity| entity.id == target),
+        "{:?}",
+        pack.empty
+    );
     Ok(())
 }
 

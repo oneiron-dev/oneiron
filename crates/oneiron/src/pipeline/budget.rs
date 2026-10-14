@@ -304,8 +304,8 @@ fn context_pack_text_is_anomalous(text: &str) -> bool {
 /// kinds compete in it together (and HyDE's vectors are in the same space as
 /// the query's). The ratio follows `(top1 - top2) / max(top1, epsilon)`; it
 /// suppresses uniformly mediocre results, not a close cluster of strong
-/// matches. A top at or above its own space and kind's strong score passes
-/// its space. The pack abstains when some space is poor and none passes; a
+/// matches. Any finite score at or above its own space and kind's strong
+/// score passes its space. The pack abstains when some space is poor and none passes; a
 /// space with one score is neither, unless that score is strong.
 fn vector_score_gaps_are_poor(evidence: &mut [VectorEvidence<'_>], floors: &NoMatchFloors) -> bool {
     evidence.sort_unstable_by(|left, right| {
@@ -325,18 +325,22 @@ fn vector_score_gaps_are_poor(evidence: &mut [VectorEvidence<'_>], floors: &NoMa
 }
 
 /// One space's verdict over its scores, best first: `Some(true)` poor,
-/// `Some(false)` passes, `None` too few scores to say.
+/// `Some(false)` passes, `None` too few scores to say. A score at or above
+/// its own kind's strong score passes the space, so one kind's calibration
+/// never discards another's strong match.
 fn vector_score_gap_is_poor(list: &[VectorEvidence<'_>], floors: &NoMatchFloors) -> Option<bool> {
+    let strong = |scored: &VectorEvidence<'_>| {
+        scored.score.is_finite() && scored.score >= floors.resolve(scored.space, scored.kind).strong
+    };
     let top = list.first()?;
-    let strong = floors.resolve(top.space, top.kind).strong;
     let Some(next) = list.get(1) else {
-        return (top.score.is_finite() && top.score >= strong).then_some(false);
+        return strong(top).then_some(false);
     };
     let (top, next) = (top.score, next.score);
     if !top.is_finite() || !next.is_finite() || top <= 0.0 {
         return Some(true);
     }
-    if top >= strong {
+    if list.iter().any(strong) {
         return Some(false);
     }
 
