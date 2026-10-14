@@ -20,7 +20,8 @@ thread_local! {
 type DeviceOnlyRace = Box<dyn FnOnce(&Vault) -> Result<()>>;
 
 /// Flags `world` device-only once, as a raw verdict opens the window it
-/// inspects: a flag committed after the verdict read the flag set.
+/// inspects or a selector export closes its snapshot: a flag committed after
+/// the door read the flag set.
 pub fn arm_device_only_flag_race(world: EntityId) {
     arm_device_only_race(move |vault| vault.keep_world_on_this_machine_for_test(world, true));
 }
@@ -32,7 +33,7 @@ pub fn arm_device_only_race(race: impl FnOnce(&Vault) -> Result<()> + 'static) {
     });
 }
 
-pub(super) fn run_device_only_flag_race(vault: &Vault) -> Result<()> {
+pub(in crate::sync) fn run_device_only_flag_race(vault: &Vault) -> Result<()> {
     match DEVICE_ONLY_RACE.with(|slot| slot.borrow_mut().take()) {
         Some(race) => race(vault),
         None => Ok(()),

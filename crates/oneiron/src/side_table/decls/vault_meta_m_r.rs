@@ -243,6 +243,8 @@ side_tables! {
     PORTS_STALE: VaultMeta b"ports:stale:v1:" Raw;
     /// Deletion-intent tombstone. Key: id16.
     PORTS_TOMBSTONE: VaultMeta b"ports:tombstone:v1:" Raw;
+    /// Worlds a deletion withdrew an epoch summary for: unknown flag + id16s. Key: id16.
+    PORTS_WITHDRAWN: VaultMeta b"ports:withdrawn:v1:" Raw;
     /// Community snapshot rows: meta, node:hex32, members:hex32. Key: string.
     PPR_COMMUNITY_CACHE: VaultMeta b"ppr_community_cache:v0:" Raw;
     /// Local admission marker of one goal claim: `[1]` + body hash32 (sealed), `[2]` + project id16

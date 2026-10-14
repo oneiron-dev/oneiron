@@ -179,22 +179,62 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
     Ok(changed)
 }
 
-/// Copy only complete workflows whose NOTE owners already passed selection.
-/// A partial bundle is an error, not permission to leak its shared explainer.
-pub(crate) fn copy_selected(vault: &Vault, source: &LoroDoc, out: &LoroDoc) -> Result<()> {
+/// The NOTEs among `ids` an export of `source` drops, judged in the export's
+/// own read transaction `txn` against the flags it read there: blocked, or
+/// kept on this device by a device-only world.
+pub(crate) fn dropped_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    flagged: &BTreeSet<EntityId>,
+    source: &LoroDoc,
+    ids: &BTreeSet<EntityId>,
+) -> Result<BTreeSet<EntityId>> {
+    let mut dropped = BTreeSet::new();
+    if !is_native(source) {
+        return Ok(dropped);
+    }
+    let state = codec::read(source)?;
+    for note in ids {
+        if state.cores.contains_key(note)
+            && (blocked(vault, txn, source, note)? || held(vault, txn, flagged, note)?)
+        {
+            dropped.insert(*note);
+        }
+    }
+    Ok(dropped)
+}
+
+/// [`copy_selected`] for a door with no snapshot of its own: the NOTEs in
+/// `out` are judged in a read transaction of their own.
+pub(crate) fn copy_judged(vault: &Vault, source: &LoroDoc, out: &LoroDoc) -> Result<()> {
+    let ids = rows(out, "entities")?
+        .iter()
+        .map(|(key, _)| id(key))
+        .collect::<Result<BTreeSet<_>>>()?;
+    let txn = vault.store.env.read_txn()?;
+    let flagged = crate::settings::device_only_worlds_in(vault, &txn)?;
+    let dropped = dropped_in(vault, &txn, &flagged, source, &ids)?;
+    drop(txn);
+    copy_selected(source, out, &dropped)
+}
+
+/// Copy only complete workflows whose NOTE owners already passed selection:
+/// every NOTE in `out` but those the export judged `dropped`, so nothing is
+/// withheld after the export's own snapshot. A partial bundle is an error,
+/// not permission to leak its shared explainer.
+pub(crate) fn copy_selected(
+    source: &LoroDoc,
+    out: &LoroDoc,
+    dropped: &BTreeSet<EntityId>,
+) -> Result<()> {
     if !is_native(source) {
         return Ok(());
     }
     let mut state = codec::read(source)?;
-    let txn = vault.store.env.read_txn()?;
-    let flagged = crate::settings::device_only_worlds_in(vault, &txn)?;
     let mut keep = BTreeSet::new();
     for (key, _) in rows(out, "entities")? {
         let note = id(&key)?;
-        if state.cores.contains_key(&note)
-            && !blocked(vault, &txn, source, &note)?
-            && !held(vault, &txn, &flagged, &note)?
-        {
+        if state.cores.contains_key(&note) && !dropped.contains(&note) {
             keep.insert(note);
         } else if state.cores.contains_key(&note) {
             map_delete(&out.get_map("entities"), &key)?;

@@ -279,7 +279,8 @@ fn history_inserts_device_only(
 }
 
 /// Whether a flagged world keeps any of `ids` by its stored row: the WORLD
-/// itself, a CLAIM of it (erased or purged ones included) or a NOTE in it.
+/// itself, a CLAIM of it (erased or purged ones included), a NOTE in it, or
+/// an epoch SUMMARY born in it or written from a row it keeps.
 fn stored_withheld_among(
     vault: &Vault,
     flagged: &BTreeSet<EntityId>,

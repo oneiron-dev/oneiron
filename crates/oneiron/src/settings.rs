@@ -6,12 +6,15 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::side_table::{self, Named, Raw, RawValue, SideTable};
 use crate::store::Store;
 
+mod device_only;
 pub mod model_versioning;
 
+pub(crate) use device_only::{
+    CarriedWorlds, carried_worlds_in, device_only_withholds, minted_worlds_in,
+};
 pub use model_versioning::{
     DEFAULT_MODEL_STACK_CURRENT_ID, DEFAULT_MODEL_STACK_V1_ID, ModelStack, ModelStackDeprecation,
     ModelStackDeprecationStage, ModelStackDeprecationStatus, ModelStackDisclosure, ModelStackId,
@@ -587,88 +590,4 @@ pub(crate) fn device_only_worlds_in(
 ) -> Result<std::collections::BTreeSet<EntityId>> {
     crate::authority::WorldPrivacyView::load_in(vault, txn)?
         .withheld_for(crate::authority::Destination::Unknown)
-}
-
-/// Whether a device-only world keeps `id` on this device: the flagged WORLD
-/// row itself, a CLAIM whose `worldId` is flagged (an erased or purged one by
-/// the world address its deletion kept), or a NOTE with a stored `InWorld`
-/// edge to a flagged world.
-pub(crate) fn device_only_withholds(
-    store: &crate::store::Store,
-    txn: &RoTxn<'_>,
-    flagged: &std::collections::BTreeSet<EntityId>,
-    id: &EntityId,
-) -> Result<bool> {
-    if flagged.is_empty() {
-        return Ok(false);
-    }
-    if flagged.contains(id) {
-        return Ok(true);
-    }
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
-        return claim_in_flagged_world(store, txn, flagged, id, None);
-    };
-    let header = crate::batch::EntityMetadataHeader::parse(&raw)
-        .ok_or(Error::CorruptedIndex("entity header"))?;
-    match header.entity_type {
-        crate::registry::ENTITY_TYPE_CLAIM => {
-            claim_in_flagged_world(store, txn, flagged, id, Some(raw.as_slice()))
-        }
-        crate::registry::ENTITY_TYPE_NOTE => {
-            for edge in store.port_edges(
-                txn,
-                id,
-                EdgeDirection::Out,
-                Some(crate::edge::EdgeKind::InWorld),
-                None,
-            )? {
-                if flagged.contains(&edge?.target) {
-                    return Ok(true);
-                }
-            }
-            Ok(false)
-        }
-        _ => Ok(false),
-    }
-}
-
-/// A CLAIM's world from its stored body. An erased claim keeps only its
-/// header (its row fenced as deleted), and a purged one nothing; its deletion
-/// kept the world window's address (`m:dw:`, `<month>@<world>`). A body that
-/// cannot be read, a bare header on a row not fenced as deleted, or an
-/// address that is not a world window's is an error, never portability: the
-/// world is unknown.
-fn claim_in_flagged_world(
-    store: &crate::store::Store,
-    txn: &RoTxn<'_>,
-    flagged: &std::collections::BTreeSet<EntityId>,
-    id: &EntityId,
-    raw: Option<&[u8]>,
-) -> Result<bool> {
-    let unknown = || Error::CorruptedIndex("device-only claim world");
-    if let Some(raw) = raw {
-        let body = raw
-            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-            .unwrap_or_default();
-        if !body.is_empty() {
-            let body = crate::claim::decode_claim_body(body, true).map_err(|_| unknown())?;
-            return Ok(body.world.is_some_and(|world| flagged.contains(&world)));
-        }
-        if !crate::deletion::row_deletion_marked(store, txn, id, Some(raw))? {
-            return Err(unknown());
-        }
-    }
-    let Some(label) = store
-        .sync_state
-        .get(txn, &format!("m:dw:{}", id.to_hex()))?
-    else {
-        return Ok(false);
-    };
-    let world = std::str::from_utf8(&label)
-        .ok()
-        .filter(|label| crate::deletion::parse_window_label(label).is_some())
-        .and_then(|label| label.split_once('@'))
-        .and_then(|(_, world)| EntityId::from_hex(world).ok())
-        .ok_or(Error::CorruptedIndex("deletion window address"))?;
-    Ok(flagged.contains(&world))
 }

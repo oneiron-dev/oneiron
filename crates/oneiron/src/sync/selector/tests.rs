@@ -4832,6 +4832,1955 @@ fn world_selector_keeps_authorized_claim_to_shared_base_edge_across_windows() ->
     Ok(())
 }
 
+/// Astra #1384 P1-2: an epoch summary leaves only with every record it was
+/// written from. A run read a CLAIM in private world W and summarized it: a
+/// peer whose grant takes base-world SUMMARY rows but not W gets neither the
+/// summary nor its words, and no source is sent along. A summary of base
+/// records still leaves beside them. A source only another window carries
+/// cannot be proven from this export (Sol round 10 on #1384), so even a peer
+/// that takes W gets the CLAIM and not its summary. The scoped record export
+/// door judges the same way.
+#[test]
+fn an_epoch_summary_leaves_only_with_every_record_it_was_written_from() -> crate::Result<()> {
+    use crate::compaction::{
+        EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochSummaryBody,
+        encode_epoch_summary_body,
+    };
+    use crate::federation::{Scope, ScopeAxis, ScopeId};
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let world = local_world_id(0x5e);
+    let person = entity_id(0x62);
+    let (claim, private, plain) = (entity_id(0x63), entity_id(0x64), entity_id(0x65));
+    let base_key = WindowKey::new("2026-03");
+    let at = base_key.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &world.entity_id(),
+        ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred, at, b"person")?;
+    let mut body = ClaimBody::new(
+        "selector.private_fact",
+        ClaimSubject::Entity(person),
+        Value::from("the private world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world.entity_id());
+    vault.put_claim(&claim, &body, occurred, at)?;
+    let epoch = |epoch: u64, text: &str| {
+        encode_epoch_summary_body(&EpochSummaryBody {
+            v: EPOCH_SUMMARY_BODY_VERSION,
+            session: entity_id(0x66).to_hex(),
+            epoch,
+            turn_start: epoch * 3,
+            turn_end: epoch * 3 + 2,
+            level: EPOCH_SUMMARY_LEVEL,
+            text: text.into(),
+            actor: entity_id(0x67).to_hex(),
+        })
+    };
+    vault
+        .batch()
+        .put(
+            &private,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch(1, "the run learned the private world fact")?,
+        )
+        .edge(&private, EdgeKind::DerivedFrom, &claim, 1.0)
+        .put(
+            &plain,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch(2, "the run met the person")?,
+        )
+        .edge(&plain, EdgeKind::DerivedFrom, &person, 1.0)
+        .commit()?;
+    let base_doc = create_window_doc("source", &base_key);
+    crate::sync::window::reverse_rematerialize(&vault, &base_doc, &base_key)?;
+    let sent = |world_axis| -> crate::Result<Vec<EntityId>> {
+        let selector = SyncSelector::new(grant_id, member, world_axis, vec![], vec![]);
+        let filtered = filtered_window_doc(
+            &vault,
+            &base_doc,
+            &base_key,
+            test_selector_scope(),
+            &selector,
+        )?;
+        Ok(import_ids(
+            &filtered.export(ExportMode::all_updates()).unwrap(),
+        ))
+    };
+    let base = sent(SyncSelectorWorld::Base)?;
+    assert!(base.contains(&person) && base.contains(&plain));
+    assert!(!base.contains(&private), "the summary stays with its CLAIM");
+    assert!(!base.contains(&claim), "no source is sent along");
+    let all = sent(SyncSelectorWorld::All)?;
+    assert!(
+        all.contains(&plain) && !all.contains(&private),
+        "a summary leaves only beside its sources, and the CLAIM travels in W's window"
+    );
+
+    let mut base_only = Scope::top();
+    base_only.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(
+        crate::claim::base_world_id(),
+    )]));
+    let top = Scope::top();
+    let exported = vault
+        .export_records_in_scope(&base_only, &top, &top)?
+        .into_iter()
+        .map(|record| record.id)
+        .collect::<Vec<_>>();
+    assert!(exported.contains(&plain));
+    assert!(!exported.contains(&private) && !exported.contains(&claim));
+    let read = vault
+        .records_in_scope(
+            &base_only,
+            &top,
+            &top,
+            crate::federation::record_scope::ScopeView::Normal,
+        )?
+        .into_iter()
+        .map(|record| record.id)
+        .collect::<Vec<_>>();
+    assert!(read.contains(&plain) && !read.contains(&private));
+    Ok(())
+}
+
+/// Sol round 5 on #1384: an epoch summary stays where its world or a source
+/// stays. A summary a run settled in world W is not base-world disclosure,
+/// and a world flagged device-only keeps both the summary born in it and
+/// every summary written from its rows on this device.
+#[test]
+fn an_epoch_summary_stays_where_its_world_or_a_source_stays() -> crate::Result<()> {
+    use crate::compaction::{
+        EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochPlacement, EpochSummaryBody,
+        encode_epoch_summary_body,
+    };
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let world = local_world_id(0x5f);
+    let person = entity_id(0x68);
+    let (claim, kept, placed) = (entity_id(0x69), entity_id(0x6a), entity_id(0x6b));
+    let base_key = WindowKey::new("2026-03");
+    let at = base_key.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &world.entity_id(),
+        ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred, at, b"person")?;
+    let mut body = ClaimBody::new(
+        "selector.device_fact",
+        ClaimSubject::Entity(person),
+        Value::from("the device-only world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world.entity_id());
+    vault.put_claim(&claim, &body, occurred, at)?;
+    let epoch = |epoch: u64, text: &str| {
+        encode_epoch_summary_body(&EpochSummaryBody {
+            v: EPOCH_SUMMARY_BODY_VERSION,
+            session: entity_id(0x6c).to_hex(),
+            epoch,
+            turn_start: epoch * 3,
+            turn_end: epoch * 3 + 2,
+            level: EPOCH_SUMMARY_LEVEL,
+            text: text.into(),
+            actor: entity_id(0x6d).to_hex(),
+        })
+    };
+    vault
+        .batch()
+        .put(
+            &kept,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch(1, "the run learned the device-only world fact")?,
+        )
+        .edge(&kept, EdgeKind::DerivedFrom, &claim, 1.0)
+        .put(
+            &placed,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch(2, "the run met the person in its world")?,
+        )
+        .edge(&placed, EdgeKind::DerivedFrom, &person, 1.0)
+        .commit()?;
+    let placement = EpochPlacement {
+        world: Some(world.entity_id()),
+        facet: None,
+    };
+    vault.with_write_txn_grouped(|txn| placement.settle_in(&vault.store, txn, placed))?;
+    let packed = || -> crate::Result<LoroDoc> {
+        let doc = create_window_doc("source", &base_key);
+        crate::sync::window::reverse_rematerialize(&vault, &doc, &base_key)?;
+        Ok(doc)
+    };
+    let sent = |doc: &LoroDoc, world_axis| -> crate::Result<Vec<EntityId>> {
+        let selector = SyncSelector::new(grant_id, member, world_axis, vec![], vec![]);
+        let filtered =
+            filtered_window_doc(&vault, doc, &base_key, test_selector_scope(), &selector)?;
+        Ok(import_ids(
+            &filtered.export(ExportMode::all_updates()).unwrap(),
+        ))
+    };
+    let before = packed()?;
+    let base = sent(&before, SyncSelectorWorld::Base)?;
+    assert!(base.contains(&person));
+    assert!(
+        !base.contains(&placed),
+        "a summary born in W is not base-world disclosure"
+    );
+    let all = sent(&before, SyncSelectorWorld::All)?;
+    assert!(all.contains(&placed), "a summary born in W leaves with W");
+    assert!(
+        !all.contains(&kept),
+        "a summary of W's CLAIM stays home: the CLAIM travels in W's window"
+    );
+
+    vault.keep_world_on_this_machine_for_test(world.entity_id(), true)?;
+    let all = sent(&before, SyncSelectorWorld::All)?;
+    assert!(
+        !all.contains(&kept),
+        "a device-only source keeps its summary home"
+    );
+    assert!(
+        !all.contains(&placed),
+        "a summary born in a device-only world stays home, even out of an older window"
+    );
+    assert!(all.contains(&person) && !all.contains(&claim));
+    let after = sent(&packed()?, SyncSelectorWorld::All)?;
+    assert!(
+        !after.contains(&placed),
+        "a summary born in a device-only world is never packed"
+    );
+    assert!(after.contains(&person) && !after.contains(&kept));
+    Ok(())
+}
+
+/// #1384 beside #1402 (R11133): a world turned device-only keeps the epoch
+/// summaries packed while it was portable, at every export door, until the
+/// flag clears. `placed` was born in W; `told` was born in base reality from
+/// W's CLAIM and carries its words; `lost` was written from a row this device
+/// no longer holds, so the world it sat in is unknown (a raw row delete: every
+/// deletion path takes the edge to the row with it, so this models a store
+/// left inconsistent). The window door withholds each one's base window, the
+/// selector drops `placed` and every edge naming it, and the scoped record
+/// export drops both. A promotion stands: the flag withholds bytes, not the
+/// grant's authority (Sol round 17 on #1384).
+#[test]
+fn a_device_only_world_keeps_epoch_summaries_packed_while_it_was_portable() -> crate::Result<()> {
+    use crate::compaction::EpochPlacement;
+    use crate::federation::Scope;
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let world = local_world_id(0x58).entity_id();
+    let (person, placed) = (entity_id(0x59), entity_id(0x5a));
+    let (fact, told) = (entity_id(0x60), entity_id(0x61));
+    let (gone, lost) = (entity_id(0x62), entity_id(0x63));
+    let (march, april, may) = (
+        WindowKey::new("2026-03"),
+        WindowKey::new("2026-04"),
+        WindowKey::new("2026-05"),
+    );
+    let at = |key: &WindowKey| {
+        let at = key.start_timestamp().unwrap() + 60;
+        (TimeRange { start: at, end: at }, at)
+    };
+    // The WORLD row sits in February's window, so only a summary can make
+    // March's or April's window one the flag keeps.
+    let (occurred, learned) = at(&WindowKey::new("2026-02"));
+    vault.put_entity(&world, ENTITY_TYPE_WORLD, occurred, learned, b"world")?;
+    let (in_march, march_at) = at(&march);
+    let (in_april, april_at) = at(&april);
+    let (in_may, may_at) = at(&may);
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, in_march, march_at, b"person")?;
+    vault.put_entity(&gone, ENTITY_TYPE_PERSON, in_may, may_at, b"gone")?;
+    let mut body = ClaimBody::new(
+        "selector.world_fact",
+        ClaimSubject::Entity(person),
+        Value::from("the world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world);
+    vault.put_claim(&fact, &body, in_april, april_at)?;
+    vault
+        .batch()
+        .put(
+            &placed,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            in_march,
+            march_at,
+            &epoch_summary_bytes(1, "the run met the person in its world")?,
+        )
+        .edge(&placed, EdgeKind::DerivedFrom, &person, 1.0)
+        .put(
+            &told,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            in_april,
+            april_at,
+            &epoch_summary_bytes(2, "the run learned the world fact")?,
+        )
+        .edge(&told, EdgeKind::DerivedFrom, &fact, 1.0)
+        .put(
+            &lost,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            in_may,
+            may_at,
+            &epoch_summary_bytes(3, "the run met someone")?,
+        )
+        .edge(&lost, EdgeKind::DerivedFrom, &gone, 1.0)
+        .commit()?;
+    let in_world = EpochPlacement {
+        world: Some(world),
+        facet: None,
+    };
+    vault.with_write_txn_grouped(|txn| in_world.settle_in(&vault.store, txn, placed))?;
+    vault.with_write_txn_grouped(|txn| {
+        for base in [told, lost] {
+            EpochPlacement::default().settle_in(&vault.store, txn, base)?;
+        }
+        Ok(())
+    })?;
+    let packed = |key: &WindowKey| -> crate::Result<LoroDoc> {
+        let doc = create_window_doc("source", key);
+        crate::sync::window::reverse_rematerialize(&vault, &doc, key)?;
+        Ok(doc)
+    };
+    let (march_doc, april_doc, may_doc) = (packed(&march)?, packed(&april)?, packed(&may)?);
+    vault.with_write_txn(|txn| {
+        vault.store.entities.delete(txn, gone.as_bytes())?;
+        Ok(())
+    })?;
+    let top = Scope::top();
+    let ships = |shipped: bool| -> crate::Result<()> {
+        let window = |key: &WindowKey, doc: &LoroDoc| -> crate::Result<bool> {
+            Ok(!crate::sync::window::export_withheld(
+                &vault,
+                key,
+                doc,
+                &loro::VersionVector::default(),
+            )?)
+        };
+        assert_eq!(
+            window(&march, &march_doc)?,
+            shipped,
+            "the window door, March"
+        );
+        assert_eq!(
+            window(&april, &april_doc)?,
+            shipped,
+            "the window door, April"
+        );
+        assert_eq!(window(&may, &may_doc)?, shipped, "the window door, May");
+        let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+        let selected =
+            filtered_window_doc(&vault, &march_doc, &march, test_selector_scope(), &selector)?;
+        let ids = import_ids(&selected.export(ExportMode::all_updates()).unwrap());
+        let mut edges = Vec::new();
+        map_for_each_value_bytes(&selected.get_map("edges"), |key, _| {
+            edges.push(key.to_owned());
+        });
+        assert!(ids.contains(&person));
+        assert_eq!(ids.contains(&placed), shipped, "the selector, the summary");
+        let promoted = crate::sync::residence::promotion_covers_full_window(
+            &vault,
+            &march_doc,
+            &march,
+            test_selector_scope(),
+            &selector,
+            |_| Ok(true),
+        )?;
+        assert!(promoted, "the promotion stands");
+        assert_eq!(
+            edges.iter().any(|key| key.contains(&placed.to_hex())),
+            shipped,
+            "the selector, an edge naming the summary"
+        );
+        let exported = vault
+            .export_records_in_scope(&top, &top, &top)?
+            .into_iter()
+            .map(|record| record.id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            exported.contains(&placed),
+            shipped,
+            "the scoped export, born in W"
+        );
+        assert_eq!(
+            exported.contains(&told),
+            shipped,
+            "the scoped export, W's words"
+        );
+        Ok(())
+    };
+    ships(true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    ships(false)?;
+    vault.keep_world_on_this_machine_for_test(world, false)?;
+    ships(true)
+}
+
+/// #1384 beside #1402: a deletion that withdraws an epoch summary records
+/// where the words it took sat, read before that source, its stamp and its
+/// edges go, so the summary keeps them home while a world is device-only.
+/// `told` was written from W's CLAIM and `plain` from a base CLAIM, both
+/// purged with their edges; `outer` from `inner`, a summary born in W that a
+/// user delete leaves as a shell with no stamp. `erased`, written from W's
+/// CLAIM, is itself erased first: its words stay in May's packed window.
+#[test]
+fn a_deletion_records_the_worlds_it_withdrew_an_epoch_summary_for() -> crate::Result<()> {
+    use crate::compaction::EpochPlacement;
+    use crate::deletion::DeleteEntityOptions;
+    let (_dir, vault, _) = test_vault_with_grant(entity_id(0x32));
+    let world = local_world_id(0x58).entity_id();
+    let person = entity_id(0x59);
+    let (fact, told) = (entity_id(0x60), entity_id(0x61));
+    let (base_fact, plain) = (entity_id(0x64), entity_id(0x65));
+    let (inner, outer, erased) = (entity_id(0x66), entity_id(0x67), entity_id(0x68));
+    let (may, june, july, august) = (
+        WindowKey::new("2026-05"),
+        WindowKey::new("2026-06"),
+        WindowKey::new("2026-07"),
+        WindowKey::new("2026-08"),
+    );
+    let at = |key: &WindowKey| {
+        let at = key.start_timestamp().unwrap() + 60;
+        (TimeRange { start: at, end: at }, at)
+    };
+    // The sources sit in September, apart from the windows checked.
+    let (sources, sources_at) = at(&WindowKey::new("2026-09"));
+    vault.put_entity(&world, ENTITY_TYPE_WORLD, sources, sources_at, b"world")?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, sources, sources_at, b"person")?;
+    let claim = |world: Option<EntityId>| {
+        let mut body = ClaimBody::new(
+            "selector.fact",
+            ClaimSubject::Entity(person),
+            Value::from("the fact"),
+            1.0,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        body.world = world;
+        body
+    };
+    vault.put_claim(&fact, &claim(Some(world)), sources, sources_at)?;
+    vault.put_claim(&base_fact, &claim(None), sources, sources_at)?;
+    let summary = crate::registry::ENTITY_TYPE_SUMMARY;
+    let ((in_june, june_at), (in_july, july_at)) = (at(&june), at(&july));
+    let ((in_may, may_at), (in_august, august_at)) = (at(&may), at(&august));
+    vault
+        .batch()
+        .put(
+            &erased,
+            summary,
+            in_may,
+            may_at,
+            &epoch_summary_bytes(5, "the world fact")?,
+        )
+        .edge(&erased, EdgeKind::DerivedFrom, &fact, 1.0)
+        .put(
+            &told,
+            summary,
+            in_june,
+            june_at,
+            &epoch_summary_bytes(1, "the world fact")?,
+        )
+        .edge(&told, EdgeKind::DerivedFrom, &fact, 1.0)
+        .put(
+            &plain,
+            summary,
+            in_july,
+            july_at,
+            &epoch_summary_bytes(2, "the fact")?,
+        )
+        .edge(&plain, EdgeKind::DerivedFrom, &base_fact, 1.0)
+        .put(
+            &inner,
+            summary,
+            sources,
+            sources_at,
+            &epoch_summary_bytes(3, "the person")?,
+        )
+        .edge(&inner, EdgeKind::DerivedFrom, &person, 1.0)
+        .put(
+            &outer,
+            summary,
+            in_august,
+            august_at,
+            &epoch_summary_bytes(4, "again")?,
+        )
+        .edge(&outer, EdgeKind::DerivedFrom, &inner, 1.0)
+        .commit()?;
+    let in_world = EpochPlacement {
+        world: Some(world),
+        facet: None,
+    };
+    vault.with_write_txn_grouped(|txn| {
+        in_world.settle_in(&vault.store, txn, inner)?;
+        for base in [told, plain, outer, erased] {
+            EpochPlacement::default().settle_in(&vault.store, txn, base)?;
+        }
+        Ok(())
+    })?;
+    let packed = |key: &WindowKey| -> crate::Result<LoroDoc> {
+        let doc = create_window_doc("source", key);
+        crate::sync::window::reverse_rematerialize(&vault, &doc, key)?;
+        Ok(doc)
+    };
+    let (may_doc, june_doc) = (packed(&may)?, packed(&june)?);
+    let (july_doc, august_doc) = (packed(&july)?, packed(&august)?);
+    // A soft erase leaves the words in May's packed window and in history,
+    // so the shell keeps W (Sol round 21).
+    vault.delete_entity(&erased)?;
+    let purge = DeleteEntityOptions { purge: true };
+    vault.delete_entity_with_options(&fact, purge)?;
+    vault.delete_entity_with_options(&base_fact, purge)?;
+    vault.delete_entity(&inner)?;
+    // A peer that had not seen the purge sends its soft delete late: the
+    // words are gone already, so the summary's record does not change (Sol
+    // round 18).
+    let late = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserDelete,
+        deleted_at: 5,
+        request_id: [7; 16],
+    };
+    vault.apply_replayed_tombstone(&base_fact, &late.encode())?;
+    // `inner`'s shell no longer says where it sat; a summary minted from it
+    // now would copy its words (Sol round 18).
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        crate::settings::minted_worlds_in(&vault.store, &rtxn, &inner)?.unknown,
+        "a deleted summary's shell is unknown to a mint"
+    );
+    drop(rtxn);
+
+    let ships = |portable: bool| -> crate::Result<()> {
+        let window = |key: &WindowKey, doc: &LoroDoc| -> crate::Result<bool> {
+            Ok(!crate::sync::window::export_withheld(
+                &vault,
+                key,
+                doc,
+                &loro::VersionVector::default(),
+            )?)
+        };
+        assert_eq!(
+            window(&may, &may_doc)?,
+            portable,
+            "May, an erased summary of W's CLAIM"
+        );
+        assert_eq!(
+            window(&june, &june_doc)?,
+            portable,
+            "June, W's purged CLAIM"
+        );
+        assert!(window(&july, &july_doc)?, "July, a purged base CLAIM");
+        assert_eq!(
+            window(&august, &august_doc)?,
+            portable,
+            "August, a deleted W summary"
+        );
+        Ok(())
+    };
+    ships(true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    ships(false)?;
+    vault.keep_world_on_this_machine_for_test(world, false)?;
+    ships(true)?;
+
+    // A restore over this vault brings the summary back with them.
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("image");
+    vault.snapshot_checkpoint(&image, 100)?;
+    let (restored, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("restored"),
+        vault.config.clone(),
+        &vault,
+        101,
+    )?;
+    let rtxn = restored.store.env.read_txn()?;
+    assert!(restored.get_raw_in(&rtxn, &told)?.is_some());
+    assert_eq!(
+        crate::ports::withdrawn_worlds_in(&restored.store, &rtxn, &told)?
+            .map(|withdrawn| withdrawn.worlds),
+        Some(std::collections::BTreeSet::from([world])),
+        "a restored summary keeps what it was withdrawn for"
+    );
+    Ok(())
+}
+
+/// Sol round 17 on #1384, and the Engine ruling after it. A NOTE an export
+/// drops is judged in the selection's own snapshot, before the epoch pass, so
+/// a summary written from it never leaves without it, even when a flag lands
+/// as the export closes its snapshot. A device-only flag is policy, not
+/// authority: the view a promotion is judged by keeps a NOTE of the flagged
+/// world (this corrects #1402's authority-mode NOTE drop, which revoked the
+/// promotion), while the export withholds the NOTE and the summary of it.
+#[test]
+fn a_summary_never_leaves_without_a_note_the_export_drops() -> crate::Result<()> {
+    let member = entity_id(0x3F);
+    let (_dir, vault, grant_id) = member_grant_vault(member);
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let note = vault
+        .create_note(
+            "research",
+            "the private research",
+            crate::WriteActor::new(owner, EdgeActorClass::Human),
+        )
+        .unwrap();
+    let world = local_world_id(0x58).entity_id();
+    let at = TimeRange { start: 1, end: 1 };
+    vault.put_entity(&world, ENTITY_TYPE_WORLD, at, 1, b"world")?;
+    vault
+        .put_edge(&note, EdgeKind::InWorld, &world, 1.0)
+        .unwrap();
+    let learned = EntityMetadataHeader::parse(&vault.get_raw(&note)?.unwrap())
+        .unwrap()
+        .learned_at;
+    let key = WindowKey::from_timestamp(learned);
+    let summary = entity_id(0x6B);
+    vault
+        .batch()
+        .put(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            TimeRange {
+                start: learned,
+                end: learned,
+            },
+            learned,
+            &epoch_summary_bytes(1, "the run read the private research")?,
+        )
+        .edge(&summary, EdgeKind::DerivedFrom, &note, 1.0)
+        .commit()?;
+    vault.with_write_txn_grouped(|txn| {
+        crate::compaction::EpochPlacement::default().settle_in(&vault.store, txn, summary)
+    })?;
+    let doc = create_window_doc("source", &key);
+    crate::sync::window::reverse_rematerialize(&vault, &doc, &key)?;
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    // The window also holds the grant's own rows, which no selector ships,
+    // so the check reads the granted view a promotion compares with it.
+    let granted = || -> crate::Result<Vec<EntityId>> {
+        let granted = granted_window_doc(&vault, &doc, &key, test_selector_scope(), &selector)?;
+        Ok(import_ids(
+            &granted.export(ExportMode::all_updates()).unwrap(),
+        ))
+    };
+    let exported = || -> crate::Result<Vec<EntityId>> {
+        let filtered = filtered_window_doc(&vault, &doc, &key, test_selector_scope(), &selector)?;
+        Ok(import_ids(
+            &filtered.export(ExportMode::all_updates()).unwrap(),
+        ))
+    };
+    let portable = granted()?;
+    assert!(portable.contains(&note) && portable.contains(&summary));
+    crate::sync::window::test_hooks::arm_device_only_flag_race(world);
+    let raced = exported()?;
+    assert!(
+        crate::settings::device_only_worlds_in(&vault, &vault.store.env.read_txn()?)?
+            .contains(&world),
+        "the flag landed mid-export"
+    );
+    assert_eq!(
+        raced.contains(&summary),
+        raced.contains(&note),
+        "a summary never leaves without its source"
+    );
+    let promoted = granted()?;
+    assert!(
+        promoted.contains(&note) && promoted.contains(&summary),
+        "the promotion's view keeps a NOTE of a device-only world"
+    );
+    let flagged = exported()?;
+    assert!(!flagged.contains(&note) && !flagged.contains(&summary));
+    Ok(())
+}
+
+/// Astra #1384d F1: an epoch summary that cannot prove where it was born is
+/// unknown, never base, so it stays home while any world is device-only. A
+/// replica reaches device B through a base window without the stamp and the
+/// record that placed it on A, and without its edge to W's CLAIM, which lives
+/// in W's window. A summary written from an unstamped replica stays home with
+/// it, and deleting the replica records the unknown world on that summary. A
+/// stamped base epoch of base records still leaves by every door.
+#[test]
+fn an_unplaced_epoch_summary_stays_home_while_a_world_is_device_only() -> crate::Result<()> {
+    use crate::compaction::EpochPlacement;
+    use crate::deletion::DeleteEntityOptions;
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let b_dir = tempfile::tempdir()?;
+    let device_b = Vault::open(b_dir.path(), crate::VaultConfig::device())?;
+    let world = local_world_id(0x58).entity_id();
+    let (person, fact) = (entity_id(0x59), entity_id(0x60));
+    let (replica, inner) = (entity_id(0x68), entity_id(0x69));
+    let (outer, settled) = (entity_id(0x6a), entity_id(0x6c));
+    let at = |month: &str| {
+        let key = WindowKey::new(month);
+        let at = key.start_timestamp().unwrap() + 60;
+        (key, TimeRange { start: at, end: at }, at)
+    };
+    // W's rows and `inner` sit in September, apart from the windows checked.
+    let (_, sources, sources_at) = at("2026-09");
+    let (october, in_october, october_at) = at("2026-10");
+    let (november, in_november, november_at) = at("2026-11");
+    let (december, in_december, december_at) = at("2026-12");
+    for device in [&vault, &device_b] {
+        device.put_entity(&world, ENTITY_TYPE_WORLD, sources, sources_at, b"world")?;
+    }
+    vault.put_entity(
+        &person,
+        ENTITY_TYPE_PERSON,
+        in_december,
+        december_at,
+        b"person",
+    )?;
+    let mut body = ClaimBody::new(
+        "selector.world_fact",
+        ClaimSubject::Entity(person),
+        Value::from("the world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world);
+    vault.put_claim(&fact, &body, sources, sources_at)?;
+    let summary = crate::registry::ENTITY_TYPE_SUMMARY;
+    vault
+        .batch()
+        .put(
+            &replica,
+            summary,
+            in_october,
+            october_at,
+            &epoch_summary_bytes(1, "the world fact")?,
+        )
+        .edge(&replica, EdgeKind::DerivedFrom, &fact, 1.0)
+        // `inner` arrived through sync ingest's door, unstamped like any
+        // replica; a local write is stamped as it lands.
+        .put_replicated(
+            &inner,
+            summary,
+            sources,
+            sources_at,
+            &epoch_summary_bytes(2, "the person")?,
+        )
+        .edge(&inner, EdgeKind::DerivedFrom, &person, 1.0)
+        .put(
+            &outer,
+            summary,
+            in_november,
+            november_at,
+            &epoch_summary_bytes(3, "the person again")?,
+        )
+        .edge(&outer, EdgeKind::DerivedFrom, &inner, 1.0)
+        .put(
+            &settled,
+            summary,
+            in_december,
+            december_at,
+            &epoch_summary_bytes(4, "the person, settled")?,
+        )
+        .edge(&settled, EdgeKind::DerivedFrom, &person, 1.0)
+        .commit()?;
+    // The local summaries are settled in base.
+    vault.with_write_txn_grouped(|txn| {
+        for base in [replica, outer, settled] {
+            EpochPlacement::default().settle_in(&vault.store, txn, base)?;
+        }
+        Ok(())
+    })?;
+
+    let sent = packed_window(&vault, &october)?;
+    crate::sync::window::forward_rematerialize(
+        &device_b,
+        &sent,
+        &crate::sync::bridge::Materializer::new(),
+        &october,
+    )?;
+    assert!(device_b.get_raw(&replica)?.is_some(), "B holds the replica");
+    let on_b = packed_window(&device_b, &october)?;
+    assert!(owner_window_ships(&device_b, &october, &on_b)?);
+    device_b.keep_world_on_this_machine_for_test(world, true)?;
+    assert!(
+        !owner_window_ships(&device_b, &october, &on_b)?,
+        "B's window door, a replica"
+    );
+
+    let (november_doc, december_doc) = (
+        packed_window(&vault, &november)?,
+        packed_window(&vault, &december)?,
+    );
+    assert!(owner_window_ships(&vault, &november, &november_doc)?);
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "the window door, a summary of an unplaced epoch"
+    );
+    assert!(
+        owner_window_ships(&vault, &december, &december_doc)?,
+        "the window door, a stamped base epoch of base records"
+    );
+    let (selected, scoped) =
+        selected_and_scoped(&vault, grant_id, member, &december, &december_doc)?;
+    assert!(
+        selected.contains(&settled) && scoped.contains(&settled),
+        "a stamped base epoch of base records leaves"
+    );
+    vault.delete_entity_with_options(&inner, DeleteEntityOptions { purge: true })?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &outer)?,
+        Some(crate::settings::CarriedWorlds {
+            worlds: std::collections::BTreeSet::new(),
+            unknown: true,
+        }),
+        "the deletion of an unplaced epoch"
+    );
+    drop(rtxn);
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "the window door, withdrawn by an unplaced epoch"
+    );
+    vault.keep_world_on_this_machine_for_test(world, false)?;
+    assert!(owner_window_ships(&vault, &november, &november_doc)?);
+    Ok(())
+}
+
+/// Astra #1384d F2: removing an epoch summary's `DerivedFrom` edge withdraws
+/// it as deleting the source would, at the batch door, at the sync bridge's
+/// edge-map removal and in a purge's edge sweep alike. W's CLAIM stays live
+/// in W while the summary's body keeps its words: the summary is stale, its
+/// record holds W, and with W flagged no door ships it.
+#[test]
+fn a_lost_source_edge_withdraws_an_epoch_summary() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let vault = Arc::new(vault);
+    let (batched, bridged) = (entity_id(0x6d), entity_id(0x6e));
+    let (october, november) = (WindowKey::new("2026-10"), WindowKey::new("2026-11"));
+    let (world, fact) =
+        summaries_of_a_world_fact(&vault, &[(batched, &october), (bridged, &november)])?;
+    let (october_doc, november_doc) = (
+        packed_window(&vault, &october)?,
+        packed_window(&vault, &november)?,
+    );
+    // A purge's lexical-hint cascade deletes a hint CLAIM with no
+    // invalidation of its own; the sweep of its edges withdraws a summary
+    // written from it.
+    let (person, hinted, claim) = (entity_id(0x59), entity_id(0x71), entity_id(0x72));
+    let before = vault.entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?;
+    vault
+        .batch()
+        .claim_candidate_with_lexical_hints(
+            &claim,
+            crate::write_envelope::ClaimCandidate::new(
+                "profile.preference",
+                ClaimSubject::Entity(person),
+                Value::from("sencha"),
+                0.9,
+            ),
+            &crate::write_envelope::WriteEnvelope::new(
+                crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human),
+                crate::claim::ClaimSource::UserStated,
+                crate::write_envelope::WriteProvenance::new(Value::from("fixture"))?,
+                ClaimApprovalStatus::Approved,
+            ),
+            TimeRange { start: 10, end: 10 },
+            11,
+            &["hintedwords"],
+        )
+        .commit()?;
+    let hint = vault
+        .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+        .into_iter()
+        .find(|id| *id != claim && !before.contains(id))
+        .expect("the hint CLAIM");
+    let (during, learned) = {
+        let at = WindowKey::new("2026-12").start_timestamp().unwrap() + 60;
+        (TimeRange { start: at, end: at }, at)
+    };
+    vault
+        .batch()
+        .put(
+            &hinted,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            during,
+            learned,
+            &epoch_summary_bytes(9, "sencha")?,
+        )
+        .edge(&hinted, EdgeKind::DerivedFrom, &hint, 1.0)
+        .commit()?;
+    vault.with_write_txn_grouped(|txn| {
+        crate::compaction::EpochPlacement::default().settle_in(&vault.store, txn, hinted)
+    })?;
+    vault
+        .delete_entity_with_options(&claim, crate::deletion::DeleteEntityOptions { purge: true })?;
+    assert!(vault.get_raw(&hint)?.is_none(), "the cascade took the hint");
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        crate::ports::stale_in_txn(&vault.store, &rtxn, &hinted)?,
+        "the purge's edge sweep: the summary is withdrawn"
+    );
+    drop(rtxn);
+    vault
+        .batch()
+        .delete_edge(&batched, EdgeKind::DerivedFrom, &fact)
+        .commit()?;
+    // A base summary's edge to W's CLAIM lives in W's window; a peer's
+    // removal there reaches this vault through the bridge.
+    let learned = EntityMetadataHeader::parse(&vault.get_raw(&fact)?.unwrap())
+        .unwrap()
+        .learned_at;
+    let in_world = WindowKey::for_world(learned, world);
+    let world_doc = packed_window(&vault, &in_world)?;
+    let edge = crate::sync::bridge::format_edge_key(&bridged, EdgeKind::DerivedFrom, &fact);
+    assert!(map_get_bytes(&world_doc.get_map("edges"), &edge).is_some());
+    let materializer = Arc::new(crate::sync::bridge::Materializer::new());
+    let _observer = crate::sync::bridge::register_observer_b(
+        &world_doc,
+        &vault,
+        &materializer,
+        in_world.as_str(),
+    );
+    crate::sync::loro_support::map_delete(&world_doc.get_map("edges"), &edge)?;
+    world_doc.commit();
+    assert!(
+        !vault.edge_exists(&bridged, EdgeKind::DerivedFrom, &fact)?,
+        "the bridge applied the peer's removal"
+    );
+    let rtxn = vault.store.env.read_txn()?;
+    for (summary, door) in [(batched, "the batch door"), (bridged, "the sync bridge")] {
+        assert!(
+            crate::ports::stale_in_txn(&vault.store, &rtxn, &summary)?,
+            "{door}: the summary is withdrawn"
+        );
+        assert_eq!(
+            crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &summary)?
+                .map(|withdrawn| withdrawn.worlds),
+            Some(std::collections::BTreeSet::from([world])),
+            "{door}: its record holds W"
+        );
+    }
+    drop(rtxn);
+    // A regeneration from W's CLAIM completes only once the summary's edges
+    // name it again: export doors read those (Sol round 19).
+    let regenerate = |summary: EntityId, source: EntityId, at: u64| -> crate::Result<bool> {
+        let source_at = EntityMetadataHeader::parse(&vault.get_raw(&source)?.unwrap())
+            .unwrap()
+            .learned_at;
+        vault
+            .batch()
+            .put(
+                &summary,
+                crate::registry::ENTITY_TYPE_SUMMARY,
+                TimeRange { start: at, end: at },
+                at,
+                &epoch_summary_bytes(1, "the fact, again")?,
+            )
+            .commit()?;
+        vault.with_write_txn(|txn| {
+            crate::ports::DependencyIndex::port_dependency_complete_regeneration(
+                &*vault,
+                txn,
+                &summary,
+                at,
+                &[crate::ports::SourceSpan {
+                    document: source,
+                    frontier: source_at,
+                }],
+            )
+        })
+    };
+    let rewritten = october.start_timestamp().unwrap() + 120;
+    assert!(
+        !regenerate(batched, fact, rewritten)?,
+        "a regeneration the graph does not name ends nothing"
+    );
+    // An edge the regeneration does not declare would lose the dependency
+    // row that withdraws the summary when that source is erased (Sol round
+    // 20); it goes through the batch door first.
+    vault
+        .batch()
+        .edge(&batched, EdgeKind::DerivedFrom, &fact, 1.0)
+        .edge(&batched, EdgeKind::DerivedFrom, &person, 1.0)
+        .commit()?;
+    assert!(
+        !regenerate(batched, fact, rewritten + 60)?,
+        "a regeneration that leaves a named source undeclared ends nothing"
+    );
+    vault
+        .batch()
+        .delete_edge(&batched, EdgeKind::DerivedFrom, &person)
+        .commit()?;
+    assert!(regenerate(batched, fact, rewritten + 120)?);
+    // A regeneration from a base PERSON alone still keeps W: the summary's
+    // old words sit in the November snapshot packed before any of this,
+    // which a door judges by the current row (Sol round 20).
+    vault
+        .batch()
+        .edge(&bridged, EdgeKind::DerivedFrom, &person, 1.0)
+        .commit()?;
+    assert!(regenerate(
+        bridged,
+        person,
+        november.start_timestamp().unwrap() + 120
+    )?);
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(!crate::ports::stale_in_txn(&vault.store, &rtxn, &bridged)?);
+    assert_eq!(
+        crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &bridged)?
+            .map(|withdrawn| withdrawn.worlds),
+        Some(std::collections::BTreeSet::from([world])),
+        "a regeneration keeps what the summary was withdrawn for"
+    );
+    drop(rtxn);
+    let ships = |shipped: bool| -> crate::Result<()> {
+        assert_eq!(
+            owner_window_ships(&vault, &october, &october_doc)?,
+            shipped,
+            "the window door, the batch removal"
+        );
+        assert_eq!(
+            owner_window_ships(&vault, &november, &november_doc)?,
+            shipped,
+            "the window door, the bridge removal"
+        );
+        Ok(())
+    };
+    ships(true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    ships(false)?;
+    let (selected, scoped) = selected_and_scoped(&vault, grant_id, member, &october, &october_doc)?;
+    assert!(!selected.contains(&batched), "the selector");
+    assert!(
+        !scoped.contains(&batched) && !scoped.contains(&bridged),
+        "the scoped export"
+    );
+    // A soft erase leaves the regenerated summary's old words in November's
+    // packed window; its shell keeps W (Sol round 21).
+    vault.delete_entity(&bridged)?;
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "a soft erase keeps a regenerated summary's old words home"
+    );
+    Ok(())
+}
+
+/// Sol round 21: an epoch summary rewritten in place into a SUMMARY body that
+/// is no epoch stops every walk at it, while a summary written from it still
+/// holds W's words. The rewrite records the worlds the old body carried, so
+/// the nested summary stays home while W is flagged.
+#[test]
+fn a_summary_of_a_summary_rewritten_as_no_epoch_keeps_its_world() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let (source, nested) = (entity_id(0x73), entity_id(0x74));
+    let (october, november) = (WindowKey::new("2026-10"), WindowKey::new("2026-11"));
+    let world = summary_of_a_summary(&vault, source, &october, nested, &november)?;
+    let november_doc = packed_window(&vault, &november)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    assert!(!owner_window_ships(&vault, &november, &november_doc)?);
+    let rewritten = october.start_timestamp().unwrap() + 120;
+    vault
+        .batch()
+        .put(
+            &source,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            TimeRange {
+                start: rewritten,
+                end: rewritten,
+            },
+            rewritten,
+            b"a summary written by hand",
+        )
+        .commit()?;
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "the window door, a summary of a summary rewritten as no epoch"
+    );
+    let (selected, scoped) =
+        selected_and_scoped(&vault, grant_id, member, &november, &november_doc)?;
+    assert!(
+        !selected.contains(&nested) && !scoped.contains(&nested),
+        "the selector and the scoped export"
+    );
+    Ok(())
+}
+
+/// Wonder P2-1: an epoch summary rewritten in place into a SUMMARY body that
+/// is no epoch no longer says what a summary written from it copied. That
+/// summary is withdrawn, so a base-only read, the scoped export and a Base
+/// selector take it no more than they took it before the rewrite.
+#[test]
+fn a_summary_of_a_summary_rewritten_as_no_epoch_is_withdrawn() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let (source, nested) = (entity_id(0x7b), entity_id(0x7c));
+    let (october, november) = (WindowKey::new("2026-10"), WindowKey::new("2026-11"));
+    summary_of_a_summary(&vault, source, &october, nested, &november)?;
+    let rewritten = october.start_timestamp().unwrap() + 120;
+    vault
+        .batch()
+        .put(
+            &source,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            TimeRange {
+                start: rewritten,
+                end: rewritten,
+            },
+            rewritten,
+            b"a summary written by hand",
+        )
+        .commit()?;
+    let mut base_only = crate::federation::Scope::top();
+    base_only.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(
+        crate::claim::base_world_id(),
+    )]));
+    let top = crate::federation::Scope::top();
+    let exported = vault.export_records_in_scope(&base_only, &top, &top)?;
+    assert!(
+        !exported.iter().any(|record| record.id == nested),
+        "the scoped export, a summary of a summary rewritten as no epoch"
+    );
+    let read = vault.records_in_scope(
+        &base_only,
+        &top,
+        &top,
+        crate::federation::record_scope::ScopeView::Normal,
+    )?;
+    assert!(
+        !read.iter().any(|record| record.id == nested),
+        "a base-only read, a summary of a summary rewritten as no epoch"
+    );
+    let november_doc = packed_window(&vault, &november)?;
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::Base, vec![], vec![]);
+    let selected = filtered_window_doc(
+        &vault,
+        &november_doc,
+        &november,
+        test_selector_scope(),
+        &selector,
+    )?;
+    assert!(
+        !import_ids(&selected.export(ExportMode::all_updates()).unwrap()).contains(&nested),
+        "a Base selector, a summary of a summary rewritten as no epoch"
+    );
+    Ok(())
+}
+
+/// Sol round 23: an owner's move of an epoch summary's text to the document
+/// plane leaves a pointer body. The summary is still an epoch to every reader
+/// (Astra 1384e), and the move records the worlds the old body carried, so a
+/// summary written from it stays home while W is flagged. Without that record
+/// (a move made before it existed) its sources still hold it.
+#[test]
+fn a_summary_of_a_summary_moved_to_the_text_plane_keeps_its_world() -> crate::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open_owned(dir.path(), crate::VaultConfig::device())?;
+    let (source, nested) = (entity_id(0x75), entity_id(0x76));
+    let (october, november) = (WindowKey::new("2026-10"), WindowKey::new("2026-11"));
+    let world = summary_of_a_summary(&vault, source, &october, nested, &november)?;
+    let november_doc = packed_window(&vault, &november)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    assert!(!owner_window_ships(&vault, &november, &november_doc)?);
+    move_text_to_document_plane(&vault, &source)?;
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "the window door, a summary of a summary moved to the text plane"
+    );
+    vault
+        .with_write_txn(|txn| crate::ports::retire_withdrawn_in_txn(&vault.store, txn, &source))?;
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "the window door, the sources of a summary on the text plane"
+    );
+    Ok(())
+}
+
+/// Astra 1384e: an epoch summary whose text moved to the document plane
+/// reaches a vault that never held it through canonical recovery, as a
+/// pointer with no birth stamp and no record of what it carried. A summary
+/// minted there from it ships while no world is flagged. Once W is, the
+/// window door holds it in a window packed before, packing leaves it out,
+/// and the door still holds it once no head stands for the pointer.
+#[test]
+fn a_summary_of_a_recovered_summary_on_the_text_plane_stays_home() -> crate::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let source = entity_id(0x77);
+    let (restored, world, _) = recovered_summary_on_the_text_plane(dir.path(), source)?;
+    let (nested, november) = (entity_id(0x78), WindowKey::new("2026-11"));
+    nested_summary(&restored, source, nested, &november)?;
+    let november_doc = packed_window(&restored, &november)?;
+    assert!(
+        owner_window_ships(&restored, &november, &november_doc)?,
+        "no world flagged: a summary of a recovered summary ships"
+    );
+    restored.keep_world_on_this_machine_for_test(world, true)?;
+    assert!(
+        !owner_window_ships(&restored, &november, &november_doc)?,
+        "the window door, a summary of a recovered summary on the text plane"
+    );
+    let fresh = packed_window(&restored, &november)?;
+    assert!(
+        map_get_bytes(&fresh.get_map("entities"), &nested.to_hex()).is_none(),
+        "packing, a summary of a recovered summary on the text plane"
+    );
+    restored
+        .with_write_txn(|txn| crate::entity_doc::erase_in_txn(&restored.store, txn, &source))?;
+    assert!(
+        !owner_window_ships(&restored, &november, &november_doc)?,
+        "the window door, a summary of a pointer no head stands for"
+    );
+    Ok(())
+}
+
+/// Astra 1384f: a pointer row decides an epoch's shape and its head only
+/// completes it. A second recovery that names another field for the
+/// recovered summary's document leaves the row as it was, and a summary
+/// minted from it afterwards still stays home while W is flagged.
+#[test]
+fn a_recovered_summary_stays_an_epoch_whatever_field_its_head_names() -> crate::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let source = entity_id(0x79);
+    let (restored, world, snapshot) = recovered_summary_on_the_text_plane(dir.path(), source)?;
+    let mut retitled = snapshot;
+    retitled
+        .entity_documents
+        .iter_mut()
+        .find(|document| document.entity_id == *source.as_bytes())
+        .expect("the summary's document")
+        .field = Some("title".into());
+    crate::recovery::recover_vault_window(
+        &restored,
+        &crate::sync::bridge::Materializer::new(),
+        dir.path().join("manifest-retitled"),
+        &retitled,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    let (nested, november) = (entity_id(0x7a), WindowKey::new("2026-11"));
+    nested_summary(&restored, source, nested, &november)?;
+    let november_doc = packed_window(&restored, &november)?;
+    restored.keep_world_on_this_machine_for_test(world, true)?;
+    assert!(
+        !owner_window_ships(&restored, &november, &november_doc)?,
+        "the window door, a summary of a recovered summary its head names as titled"
+    );
+    let fresh = packed_window(&restored, &november)?;
+    assert!(
+        map_get_bytes(&fresh.get_map("entities"), &nested.to_hex()).is_none(),
+        "packing, a summary of a recovered summary its head names as titled"
+    );
+    Ok(())
+}
+
+/// A vault at `dir` that never held epoch summary `source` of W's CLAIM,
+/// holding W's WORLD row and `source` recovered from a canonical October
+/// window captured after its text moved to the document plane. Returns it,
+/// W and that snapshot.
+fn recovered_summary_on_the_text_plane(
+    dir: &std::path::Path,
+    source: EntityId,
+) -> crate::Result<(Vault, EntityId, crate::recovery::CanonicalSnapshot)> {
+    let origin_dir = tempfile::tempdir()?;
+    let origin = Vault::open_owned(origin_dir.path(), crate::VaultConfig::device())?;
+    let october = WindowKey::new("2026-10");
+    let (world, _) = summaries_of_a_world_fact(&origin, &[(source, &october)])?;
+    move_text_to_document_plane(&origin, &source)?;
+    let snapshot = crate::recovery::capture_canonical_window(
+        &origin,
+        "2026-10",
+        &packed_window(&origin, &october)?,
+    )?;
+    let restored = Vault::open_owned(dir, crate::VaultConfig::device())?;
+    let at = WindowKey::new("2026-09").start_timestamp().unwrap() + 60;
+    let during = TimeRange { start: at, end: at };
+    restored.put_entity(&world, ENTITY_TYPE_WORLD, during, at, b"world")?;
+    crate::recovery::recover_vault_window(
+        &restored,
+        &crate::sync::bridge::Materializer::new(),
+        dir.join("manifest"),
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    assert_eq!(restored.entity_text(&source)?, "the world fact");
+    Ok((restored, world, snapshot))
+}
+
+/// The owner moves the text of `id` to the document plane.
+fn move_text_to_document_plane(vault: &Vault, id: &EntityId) -> crate::Result<()> {
+    use crate::entity_doc::{DocAuthorization, TextField};
+    let owner = vault.ensure_embedded_owner_actor().expect("the owner");
+    let authority = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.migrate_entity_text(
+        id,
+        &TextField::MapField("text".into()),
+        crate::write_envelope::WriteActor::new(owner, EdgeActorClass::Human),
+        &DocAuthorization::Owner(&authority),
+    )
+}
+
+/// An epoch summary `source` of W's CLAIM settled in base in `at`, and an
+/// epoch summary `nested` written from it settled in base in `nested_at`;
+/// returns W.
+fn summary_of_a_summary(
+    vault: &Vault,
+    source: EntityId,
+    at: &WindowKey,
+    nested: EntityId,
+    nested_at: &WindowKey,
+) -> crate::Result<EntityId> {
+    let (world, _) = summaries_of_a_world_fact(vault, &[(source, at)])?;
+    nested_summary(vault, source, nested, nested_at)?;
+    Ok(world)
+}
+
+/// An epoch summary `nested` written from `source`, settled in base in `at`.
+fn nested_summary(
+    vault: &Vault,
+    source: EntityId,
+    nested: EntityId,
+    at: &WindowKey,
+) -> crate::Result<()> {
+    let learned = at.start_timestamp().unwrap() + 60;
+    vault
+        .batch()
+        .put(
+            &nested,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            TimeRange {
+                start: learned,
+                end: learned,
+            },
+            learned,
+            &epoch_summary_bytes(2, "the world fact, again")?,
+        )
+        .edge(&nested, EdgeKind::DerivedFrom, &source, 1.0)
+        .commit()?;
+    vault.with_write_txn_grouped(|txn| {
+        crate::compaction::EpochPlacement::default().settle_in(&vault.store, txn, nested)
+    })
+}
+
+/// Astra #1384d F3: what an epoch summary was withdrawn for lives as long as
+/// its words. A standalone tombstone invalidates the summary and keeps the
+/// body, so the record stays and the summary stays home while W is flagged.
+/// A purge leaves the words in window history, so the record stays until the
+/// historical sweep has rewritten it (Sol round 21).
+#[test]
+fn a_tombstone_that_keeps_a_summary_body_keeps_its_withdrawal_record() -> crate::Result<()> {
+    use crate::deletion::DeleteEntityOptions;
+    let (_dir, vault, _) = test_vault_with_grant(entity_id(0x32));
+    let (kept, purged) = (entity_id(0x6f), entity_id(0x70));
+    let (october, november) = (WindowKey::new("2026-10"), WindowKey::new("2026-11"));
+    let (world, fact) =
+        summaries_of_a_world_fact(&vault, &[(kept, &october), (purged, &november)])?;
+    let (october_doc, november_doc) = (
+        packed_window(&vault, &october)?,
+        packed_window(&vault, &november)?,
+    );
+    let purge = DeleteEntityOptions { purge: true };
+    vault.delete_entity_with_options(&fact, purge)?;
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserDelete,
+        deleted_at: 5,
+        request_id: [7; 16],
+    };
+    vault.with_write_txn(|txn| {
+        crate::ports::TombstoneStore::port_tombstone_create(&vault, txn, &kept, tombstone)
+    })?;
+    vault.delete_entity_with_options(&purged, purge)?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(vault.get_raw_in(&rtxn, &kept)?.is_some());
+    assert_eq!(
+        crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &kept)?
+            .map(|withdrawn| withdrawn.worlds),
+        Some(std::collections::BTreeSet::from([world])),
+        "a tombstone that keeps the body keeps the record"
+    );
+    assert!(vault.get_raw_in(&rtxn, &purged)?.is_none());
+    assert_eq!(
+        crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &purged)?
+            .map(|withdrawn| withdrawn.worlds),
+        Some(std::collections::BTreeSet::from([world])),
+        "a purge keeps the record while its words sit in window history"
+    );
+    drop(rtxn);
+    assert!(owner_window_ships(&vault, &october, &october_doc)?);
+    assert!(owner_window_ships(&vault, &november, &november_doc)?);
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    assert!(
+        !owner_window_ships(&vault, &october, &october_doc)?,
+        "the window door, a tombstoned summary"
+    );
+    assert!(
+        !owner_window_ships(&vault, &november, &november_doc)?,
+        "the window door, a purged summary's words in history"
+    );
+    crate::sweep::run_hard_erase_sweep(&vault)?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &purged)?,
+        None,
+        "the historical sweep retires the record with the words"
+    );
+    Ok(())
+}
+
+/// Sol round 19: a first deletion reads where a row's words sat whatever its
+/// body holds, since its marker is written before the purge. A WORLD with an
+/// empty body still carries its own world: purging it records that world on
+/// a summary written from it, and a window packed after the purge, which no
+/// longer names the WORLD, never ships the summary while it is flagged.
+#[test]
+fn a_first_purge_of_an_empty_world_records_it_on_its_summary() -> crate::Result<()> {
+    use crate::deletion::DeleteEntityOptions;
+    let (_dir, vault, _) = test_vault_with_grant(entity_id(0x32));
+    let world = local_world_id(0x5b).entity_id();
+    let summary = entity_id(0x73);
+    let at = |key: &WindowKey| {
+        let at = key.start_timestamp().unwrap() + 60;
+        (TimeRange { start: at, end: at }, at)
+    };
+    let october = WindowKey::new("2026-10");
+    let (sources, sources_at) = at(&WindowKey::new("2026-09"));
+    let (during, learned) = at(&october);
+    vault.put_entity(&world, ENTITY_TYPE_WORLD, sources, sources_at, b"")?;
+    vault
+        .batch()
+        .put(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            during,
+            learned,
+            &epoch_summary_bytes(1, "the world")?,
+        )
+        .edge(&summary, EdgeKind::DerivedFrom, &world, 1.0)
+        .commit()?;
+    vault.with_write_txn_grouped(|txn| {
+        crate::compaction::EpochPlacement::default().settle_in(&vault.store, txn, summary)
+    })?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    vault.delete_entity_with_options(&world, DeleteEntityOptions { purge: true })?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        crate::ports::withdrawn_worlds_in(&vault.store, &rtxn, &summary)?
+            .map(|withdrawn| withdrawn.worlds),
+        Some(std::collections::BTreeSet::from([world])),
+        "a first purge of an empty WORLD"
+    );
+    drop(rtxn);
+    // Packing leaves out what a flag keeps, so a window packed now never
+    // ships the summary, carried or not.
+    let fresh = packed_window(&vault, &october)?;
+    let carried = map_get_bytes(&fresh.get_map("entities"), &summary.to_hex()).is_some();
+    assert!(
+        !carried || !owner_window_ships(&vault, &october, &fresh)?,
+        "a window packed after the purge never ships the summary"
+    );
+    Ok(())
+}
+
+/// W's CLAIM about a PERSON, beside the WORLD row in September, apart from
+/// the windows checked, and one epoch summary of it settled in base in each
+/// given window. Returns W and the CLAIM.
+fn summaries_of_a_world_fact(
+    vault: &Vault,
+    summaries: &[(EntityId, &WindowKey)],
+) -> crate::Result<(EntityId, EntityId)> {
+    let world = local_world_id(0x58).entity_id();
+    let (person, fact) = (entity_id(0x59), entity_id(0x60));
+    let at = |key: &WindowKey| {
+        let at = key.start_timestamp().unwrap() + 60;
+        (TimeRange { start: at, end: at }, at)
+    };
+    let (sources, sources_at) = at(&WindowKey::new("2026-09"));
+    vault.put_entity(&world, ENTITY_TYPE_WORLD, sources, sources_at, b"world")?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, sources, sources_at, b"person")?;
+    let mut body = ClaimBody::new(
+        "selector.world_fact",
+        ClaimSubject::Entity(person),
+        Value::from("the world fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world);
+    vault.put_claim(&fact, &body, sources, sources_at)?;
+    for (epoch, &(summary, key)) in (1..).zip(summaries) {
+        let (during, learned) = at(key);
+        vault
+            .batch()
+            .put(
+                &summary,
+                crate::registry::ENTITY_TYPE_SUMMARY,
+                during,
+                learned,
+                &epoch_summary_bytes(epoch, "the world fact")?,
+            )
+            .edge(&summary, EdgeKind::DerivedFrom, &fact, 1.0)
+            .commit()?;
+        vault.with_write_txn_grouped(|txn| {
+            crate::compaction::EpochPlacement::default().settle_in(&vault.store, txn, summary)
+        })?;
+    }
+    Ok((world, fact))
+}
+
+fn packed_window(vault: &Vault, key: &WindowKey) -> crate::Result<LoroDoc> {
+    let doc = create_window_doc("source", key);
+    crate::sync::window::reverse_rematerialize(vault, &doc, key)?;
+    Ok(doc)
+}
+
+fn owner_window_ships(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> crate::Result<bool> {
+    Ok(!crate::sync::window::export_withheld(
+        vault,
+        key,
+        doc,
+        &loro::VersionVector::default(),
+    )?)
+}
+
+/// The ids an all-world selector ships from `doc`, and the ids the scoped
+/// record export ships.
+fn selected_and_scoped(
+    vault: &Vault,
+    grant: EntityId,
+    member: EntityId,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> crate::Result<(Vec<EntityId>, Vec<EntityId>)> {
+    let selector = SyncSelector::new(grant, member, SyncSelectorWorld::All, vec![], vec![]);
+    let selected = filtered_window_doc(vault, doc, key, test_selector_scope(), &selector)?;
+    let top = crate::federation::Scope::top();
+    Ok((
+        import_ids(&selected.export(ExportMode::all_updates()).unwrap()),
+        vault
+            .export_records_in_scope(&top, &top, &top)?
+            .into_iter()
+            .map(|record| record.id)
+            .collect(),
+    ))
+}
+
+fn epoch_summary_bytes(epoch: u64, text: &str) -> crate::Result<Vec<u8>> {
+    use crate::compaction::{
+        EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochSummaryBody,
+        encode_epoch_summary_body,
+    };
+    encode_epoch_summary_body(&EpochSummaryBody {
+        v: EPOCH_SUMMARY_BODY_VERSION,
+        session: entity_id(0x7e).to_hex(),
+        epoch,
+        turn_start: epoch * 3,
+        turn_end: epoch * 3 + 2,
+        level: EPOCH_SUMMARY_LEVEL,
+        text: text.into(),
+        actor: entity_id(0x7f).to_hex(),
+    })
+}
+
+/// Astra #1384b P2-1: a summary's settled facet binds the export. A
+/// vault-wide run summarized a step faceted F; the summary is born under
+/// the vault's default facet. A peer whose pact ceiling is F gets the step,
+/// never the summary riding its `DerivedFrom` edge to it.
+#[test]
+fn an_epoch_summary_leaves_only_where_its_settled_facet_is_selected() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let shared = entity_id(0x76);
+    let (step, summary) = (entity_id(0x77), entity_id(0x78));
+    let key = WindowKey::new("2026-03");
+    let at = key.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(&shared, ENTITY_TYPE_FACET, occurred, at, b"shared")?;
+    vault
+        .batch()
+        .put(&step, ENTITY_TYPE_EVENT, occurred, at, b"the shared step")
+        .put(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(1, "the run took the shared step")?,
+        )
+        .edge(&summary, EdgeKind::DerivedFrom, &step, 1.0)
+        .commit()?;
+    vault
+        .batch()
+        .edge(&step, EdgeKind::FacetOf, &shared, 1.0)
+        .commit()?;
+    // A vault-wide run's summary: base reality, the vault's default facet.
+    let placement = crate::compaction::EpochPlacement::default();
+    vault.with_write_txn_grouped(|txn| placement.settle_in(&vault.store, txn, summary))?;
+    assert_ne!(vault.default_facet()?, shared);
+    seed_scoped_pacts_for_grant(
+        &vault,
+        grant_id,
+        &[FederationDirectionScope {
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::from_iter([ScopeId(shared)]),
+            bands: ScopeAxis::All,
+        }],
+    );
+    let doc = create_window_doc("source", &key);
+    crate::sync::window::reverse_rematerialize(&vault, &doc, &key)?;
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::Base, vec![], vec![]);
+    let sent = import_ids(
+        &filtered_window_doc(&vault, &doc, &key, test_selector_scope(), &selector)?
+            .export(ExportMode::all_updates())
+            .unwrap(),
+    );
+    assert!(sent.contains(&step), "the faceted step is selected");
+    assert!(
+        !sent.contains(&summary),
+        "a summary born under another facet stays out of the pact ceiling"
+    );
+    Ok(())
+}
+
+/// Astra #1384b P2-2: the fence judges a source by the export that carries
+/// it. Person R, learned in January, is selected only through February's
+/// faceted event, which January's window does not hold, so no window
+/// exports R. The February summary written from R stays home with it.
+#[test]
+fn an_epoch_summary_stays_home_when_no_window_exports_its_source() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let facet = entity_id(0x79);
+    let (person, event, summary) = (entity_id(0x7a), entity_id(0x7b), entity_id(0x7c));
+    let (january, february) = (WindowKey::new("2026-01"), WindowKey::new("2026-02"));
+    let jan = january.start_timestamp().unwrap() + 60;
+    let feb = february.start_timestamp().unwrap() + 60;
+    let at = |second| TimeRange {
+        start: second,
+        end: second,
+    };
+    vault.put_entity(&facet, ENTITY_TYPE_FACET, at(jan), jan, b"facet")?;
+    vault.put_entity(
+        &person,
+        ENTITY_TYPE_PERSON,
+        at(jan),
+        jan,
+        b"the private sentence",
+    )?;
+    vault
+        .batch()
+        .put(
+            &event,
+            ENTITY_TYPE_EVENT,
+            at(feb),
+            feb,
+            b"the faceted event",
+        )
+        .put(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            at(feb),
+            feb,
+            &epoch_summary_bytes(1, "the run read the private sentence")?,
+        )
+        .edge(&summary, EdgeKind::DerivedFrom, &person, 1.0)
+        .edge(&summary, EdgeKind::DerivedFrom, &event, 1.0)
+        .commit()?;
+    vault
+        .batch()
+        .edge(&event, EdgeKind::FacetOf, &facet, 1.0)
+        .edge(&person, EdgeKind::Mentions, &event, 1.0)
+        .commit()?;
+    // Born under the requested facet: its own position is selected.
+    let placement = crate::compaction::EpochPlacement {
+        world: None,
+        facet: Some(facet),
+    };
+    vault.with_write_txn_grouped(|txn| placement.settle_in(&vault.store, txn, summary))?;
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::Base,
+        vec![facet],
+        vec![],
+    );
+    let mut sent = Vec::new();
+    for key in [&january, &february] {
+        let doc = create_window_doc("source", key);
+        crate::sync::window::reverse_rematerialize(&vault, &doc, key)?;
+        sent.extend(import_ids(
+            &filtered_window_doc(&vault, &doc, key, test_selector_scope(), &selector)?
+                .export(ExportMode::all_updates())
+                .unwrap(),
+        ));
+    }
+    assert!(sent.contains(&event), "the faceted event is selected");
+    assert!(!sent.contains(&person), "no window exports the person");
+    assert!(
+        !sent.contains(&summary),
+        "the summary stays home with a source no window exports"
+    );
+    Ok(())
+}
+
+/// Sol round 8 on #1384: a machine CLAIM leaves only with its whole signed
+/// history in its own window. A claim learned in January and retracted in
+/// February has history rows in both months, so neither window exports it,
+/// and the February summary written from it stays home too.
+#[test]
+fn an_epoch_summary_stays_home_when_its_source_history_spans_windows() -> crate::Result<()> {
+    use crate::write_envelope::{
+        ClaimCandidate, MachineWriteSignature, WriteActor, WriteEnvelope, WriteProvenance,
+    };
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let (machine, claim, summary) = (entity_id(0xc1), entity_id(0xc2), entity_id(0xc3));
+    let person = entity_id(0xc4);
+    let (january, february) = (WindowKey::new("2026-01"), WindowKey::new("2026-02"));
+    let jan = january.start_timestamp().unwrap() + 60;
+    let feb = february.start_timestamp().unwrap() + 60;
+    let at = |second| TimeRange {
+        start: second,
+        end: second,
+    };
+    vault.put_entity(
+        &machine,
+        crate::registry::ENTITY_TYPE_MACHINE,
+        at(jan),
+        jan,
+        b"machine",
+    )?;
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"selector machine root").unwrap();
+    vault.ensure_host_root_slip(&issuer)?;
+    let signing = SigningKey::from_bytes(&[0xc1; 32]);
+    vault.enroll_machine_identity(
+        &issuer,
+        machine,
+        signing.verifying_key().to_bytes(),
+        [8; 32],
+        |transcript| Ok(signing.sign(transcript).to_bytes()),
+    )?;
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(machine, EdgeActorClass::System),
+        ClaimSource::Observed,
+        WriteProvenance::new(Value::from("machine")).unwrap(),
+        ClaimApprovalStatus::Proposed,
+    );
+    let candidate = ClaimCandidate::new(
+        "selector.machine",
+        ClaimSubject::Entity(machine),
+        Value::from("the machine's private fact"),
+        1.0,
+    );
+    let transcript = vault.machine_claim_transcript(&claim, &candidate, &envelope)?;
+    let signed = envelope.with_machine_signature(MachineWriteSignature {
+        public_key: signing.verifying_key().to_bytes(),
+        signature: signing.sign(&transcript).to_bytes(),
+    });
+    vault
+        .batch()
+        .claim_candidate(&claim, candidate, &signed, at(jan), jan)
+        .commit()?;
+    vault
+        .batch()
+        .put(
+            &summary,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            at(feb),
+            feb,
+            &epoch_summary_bytes(1, "the run read the machine's private fact")?,
+        )
+        .edge(&summary, EdgeKind::DerivedFrom, &claim, 1.0)
+        .commit()?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, at(feb), feb, b"person")?;
+    // The retraction's signed transition and handoff are February's rows.
+    vault.retract_claim(&claim, feb)?;
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::Base, vec![], vec![]);
+    let mut sent = Vec::new();
+    for key in [&january, &february] {
+        let doc = create_window_doc("source", key);
+        crate::sync::window::reverse_rematerialize(&vault, &doc, key)?;
+        sent.extend(import_ids(
+            &filtered_window_doc(&vault, &doc, key, test_selector_scope(), &selector)?
+                .export(ExportMode::all_updates())
+                .unwrap(),
+        ));
+    }
+    assert!(sent.contains(&person), "the selector exports");
+    assert!(
+        !sent.contains(&claim),
+        "no window carries the claim's history whole"
+    );
+    assert!(
+        !sent.contains(&summary),
+        "the summary stays home with a source whose history no window carries"
+    );
+    Ok(())
+}
+
+/// Sol rounds 10 to 12 on #1384: a summary leaves only beside the records
+/// it was written from, not beside what a peer put at their ids. In one base
+/// window a peer's CLAIM wins the carrier of a nested epoch whose source is a
+/// CLAIM in private world W, of a nested epoch born in W, and of a CLAIM in W
+/// itself, and a peer's garbled copy wins the carrier of a summary of a CLAIM
+/// in W. The vault refused each write, so the stored records stand, and no
+/// summary written from them leaves through a Base export.
+#[test]
+fn an_epoch_summary_stays_home_when_a_peer_rewrote_a_source_carrier() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let world = local_world_id(0x5d);
+    let (person, claim, moved) = (entity_id(0xd1), entity_id(0xd2), entity_id(0xd9));
+    let (nested, outer) = (entity_id(0xd3), entity_id(0xd4));
+    let (born_in_w, over) = (entity_id(0xd5), entity_id(0xd6));
+    let (from_moved, garbled) = (entity_id(0xd8), entity_id(0xda));
+    let key = WindowKey::new("2026-03");
+    let at = key.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &world.entity_id(),
+        ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred, at, b"person")?;
+    for (id, fact) in [
+        (claim, "the private world fact"),
+        (moved, "the other private world fact"),
+    ] {
+        let mut body = ClaimBody::new(
+            "selector.private_fact",
+            ClaimSubject::Entity(person),
+            Value::from(fact),
+            1.0,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        body.world = Some(world.entity_id());
+        vault.put_claim(&id, &body, occurred, at)?;
+    }
+    vault
+        .batch()
+        .put(
+            &nested,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(1, "the run learned the private world fact")?,
+        )
+        .edge(&nested, EdgeKind::DerivedFrom, &claim, 1.0)
+        .put(
+            &outer,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(2, "the run repeated what it learned")?,
+        )
+        .edge(&outer, EdgeKind::DerivedFrom, &nested, 1.0)
+        .put(
+            &born_in_w,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(3, "the run met the person in its world")?,
+        )
+        .edge(&born_in_w, EdgeKind::DerivedFrom, &person, 1.0)
+        .put(
+            &over,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(4, "the run recalled its world")?,
+        )
+        .edge(&over, EdgeKind::DerivedFrom, &born_in_w, 1.0)
+        .put(
+            &from_moved,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(5, "the run learned the other private world fact")?,
+        )
+        .edge(&from_moved, EdgeKind::DerivedFrom, &moved, 1.0)
+        .put(
+            &garbled,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            occurred,
+            at,
+            &epoch_summary_bytes(6, "the run repeated the private world fact")?,
+        )
+        .edge(&garbled, EdgeKind::DerivedFrom, &claim, 1.0)
+        .commit()?;
+    let placement = crate::compaction::EpochPlacement {
+        world: Some(world.entity_id()),
+        facet: None,
+    };
+    vault.with_write_txn_grouped(|txn| placement.settle_in(&vault.store, txn, born_in_w))?;
+    let doc = create_window_doc("source", &key);
+    crate::sync::window::reverse_rematerialize(&vault, &doc, &key)?;
+    for id in [nested, born_in_w, moved] {
+        insert_blob(&doc, id, &claim_blob(None));
+    }
+    // The summary's own bytes with one trailing byte: no longer an epoch body,
+    // still its words.
+    let mut copy = vault.get_raw_unsealed(&garbled)?.expect("a stored summary");
+    copy.push(0xc0);
+    insert_blob(&doc, garbled, &copy);
+    doc.commit();
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::Base, vec![], vec![]);
+    let sent = import_ids(
+        &filtered_window_doc(&vault, &doc, &key, test_selector_scope(), &selector)?
+            .export(ExportMode::all_updates())
+            .unwrap(),
+    );
+    assert!(sent.contains(&person), "the selector exports");
+    let left = [
+        (outer, "outer"),
+        (over, "over"),
+        (from_moved, "from_moved"),
+        (garbled, "garbled"),
+    ]
+    .into_iter()
+    .filter(|(id, _)| sent.contains(id))
+    .map(|(_, name)| name)
+    .collect::<Vec<_>>();
+    assert!(
+        left.is_empty(),
+        "summaries left beside a peer's carrier, not their sources: {left:?}"
+    );
+    Ok(())
+}
+
 /// A TASK a writer creates through the host-bound `Memory` door, born in
 /// `world` when one is bound.
 fn mint_board_task(vault: &Vault, world: Option<EntityId>) -> EntityId {

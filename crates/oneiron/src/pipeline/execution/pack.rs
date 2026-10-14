@@ -395,10 +395,25 @@ impl PipelineBuilder<'_> {
             telemetry_signals.retain(|signal| *signal != RetrievalSignal::Ppr);
         }
         let retrieval_quality = classify_retrieval_quality(&diagnostics);
-        let capture = self.vault.store.retrieval_telemetry_capture_enabled();
+        // A run that read a room staging anything of its own may name its
+        // rows, or score by them, in its results, scores and trace. Base holds no reference to a live
+        // overlay row (ARCH-0052: the taint guard covers references), so such
+        // a run keeps its run row in the room alone: none once the room is on
+        // record, and none without a room to route it. On record its saver
+        // must still hold, as for the row it keeps out.
+        let capture_enabled = self.vault.store.retrieval_telemetry_capture_enabled();
+        let withheld = self
+            .session
+            .is_none_or(crate::off_record::SessionRetrievalTelemetry::writes_to_base)
+            && self.read.holds_room_rows();
+        let capture = capture_enabled && !withheld;
         let telemetry_run_id = if !capture {
             if let Some(session) = self.session {
-                session.revalidate_without_capture()?;
+                if capture_enabled {
+                    session.admit_withheld_write()?;
+                } else {
+                    session.revalidate_without_capture()?;
+                }
             }
             None
         } else {
