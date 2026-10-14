@@ -9,6 +9,35 @@ pub(super) fn causal_sequence_floors(
     context: FoldContext<'_>,
 ) -> Option<BTreeMap<AuthorityEntryHash, u64>> {
     let original = context.sequence_floors?;
+    let mut floors = repaired_floors(by_hash, ancestors, context, original);
+    // A handoff vouches for its line to settle it, never to clear this
+    // install's floor-held marks: a machine revision or a world edit keeps
+    // every floor the repair keeps with no vouch at all, however the vouched
+    // repair got there (Wonder P2 rounds 9 and 10, W1).
+    if context.floor_vouched.is_some() {
+        let unaided = FoldContext {
+            floor_vouched: None,
+            ..context
+        };
+        floors.extend(
+            repaired_floors(by_hash, ancestors, unaided, original)
+                .into_iter()
+                .filter(|(hash, _)| {
+                    by_hash
+                        .get(hash)
+                        .is_some_and(|entry| lands_restriction_only(&entry.op))
+                }),
+        );
+    }
+    Some(floors)
+}
+
+fn repaired_floors(
+    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    context: FoldContext<'_>,
+    original: &BTreeMap<AuthorityEntryHash, u64>,
+) -> BTreeMap<AuthorityEntryHash, u64> {
     let mut floors = original.clone();
     loop {
         let before = floors.len();
@@ -48,34 +77,11 @@ pub(super) fn causal_sequence_floors(
                     ..context
                 },
             ) {
-                // A handoff vouches for its line to settle it, never to clear
-                // this install's floor-held marks: a machine revision or a
-                // world edit loses its floor only when the tip's ancestry
-                // folds without that vouch (Wonder P2 round 9, W1).
-                let unaided = context.floor_vouched.is_none()
-                    || entry_folds_on_available_ancestry(
-                        *tip_hash,
-                        by_hash,
-                        ancestors,
-                        FoldContext {
-                            sequence_floors: Some(&trial),
-                            floor_vouched: None,
-                            ..context
-                        },
-                    );
-                if !unaided {
-                    trial.extend(
-                        covered
-                            .iter()
-                            .filter(|hash| lands_restriction_only(&by_hash[*hash].op))
-                            .map(|hash| (*hash, floors[hash])),
-                    );
-                }
                 floors = trial;
             }
         }
         if floors.len() == before {
-            return Some(floors);
+            return floors;
         }
     }
 }
