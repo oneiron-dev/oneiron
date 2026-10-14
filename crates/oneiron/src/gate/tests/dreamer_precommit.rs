@@ -208,54 +208,94 @@ fn invalid_dreamer_write_rejected_precommit_evidence_floor() -> Result<()> {
     Ok(())
 }
 
-/// Security pack 2, F14 H153: the generic batch door holds the floor
-/// promotion holds. A live PERSON and a live SESSION both resolve, and neither
-/// is something a person said, so a Dreamer write citing only them is denied.
-/// The same write citing a TURN lands.
+/// Security pack 2, F14 H153 (narrowed, Engine ruling 2026-10-15): the batch
+/// door serves every Dreamer writer, so it refuses only what is no evidence. A
+/// PERSON or a SESSION names who spoke or where, not anything said, and a CLAIM
+/// still awaiting its owner's critical confirmation is not yet the owner's: a
+/// write citing only one of them is denied. The rows the production writers
+/// cite each still count: the extraction pass's TURN, the edit-distance
+/// miner's ASSET record, a commitment wake's settled CLAIM, and a code
+/// review's CODE_ARTIFACT.
 #[test]
-fn a_dreamer_write_cites_a_turn_not_any_live_entity() -> Result<()> {
+fn dreamer_evidence_is_what_was_said_never_who_or_where() -> Result<()> {
     let (_tmp, vault) = precommit_vault()?;
-    let person = test_id(0x55);
-    vault.put_entity(&person, ENTITY_TYPE_PERSON, test_time(1), 1, b"a person")?;
-    let session = test_id(0x56);
-    vault.put_entity(
-        &session,
-        crate::registry::ENTITY_TYPE_SESSION,
-        test_time(1),
-        1,
-        b"a session",
-    )?;
-    for (seed, evidence) in [(0x57_u8, person), (0x58, session)] {
+    let live = |seed: u8, entity_type: u8| -> Result<EntityId> {
+        let id = test_id(seed);
+        vault.put_entity(&id, entity_type, test_time(1), 1, b"a cited row")?;
+        Ok(id)
+    };
+    let claim = |seed: u8, confirm_open: bool| -> Result<EntityId> {
+        let id = test_id(seed);
+        let mut body = source_trust_claim(ClaimSource::UserStated);
+        body.approval = ClaimApprovalStatus::Auto;
+        put_claim_body(&vault, &id, &body)?;
+        if confirm_open {
+            let pending = critical_confirm_pending(id, seed, 1);
+            vault.with_write_txn(|wtxn| {
+                vault.store.put_pending_gate_consent_in_txn(wtxn, &pending)
+            })?;
+        }
+        Ok(id)
+    };
+    // Each write is about its own subject, so none replaces another's head.
+    let write = |seed: u8, cited: EntityId| -> (EntityId, Result<()>) {
         let claim_id = test_id(seed);
-        let body = precommit_body(
+        let mut body = precommit_body(
             Value::from("Ada Lovelace"),
-            Some(precommit_evidence(vec![evidence])),
+            Some(precommit_evidence(vec![cited])),
         );
-        let result = attempt_precommit_write(&vault, &claim_id, &body);
-        assert!(
-            vault.get_raw(&claim_id)?.is_none(),
-            "FAILBEFORE H153 batch door: a Dreamer claim landed on non-TURN evidence"
-        );
+        body.subject = ClaimSubject::Entity(test_id(seed.wrapping_add(0x10)));
+        (claim_id, attempt_precommit_write(&vault, &claim_id, &body))
+    };
+
+    let refused = [
+        ("a PERSON", live(0x55, ENTITY_TYPE_PERSON)?),
+        (
+            "a SESSION",
+            live(0x56, crate::registry::ENTITY_TYPE_SESSION)?,
+        ),
+        ("a CLAIM awaiting its critical confirm", claim(0x57, true)?),
+    ];
+    let mut landed = Vec::new();
+    for (seed, (what, cited)) in (0x60_u8..).zip(refused) {
+        let (claim_id, result) = write(seed, cited);
+        if vault.get_raw(&claim_id)?.is_some() {
+            landed.push(what);
+            continue;
+        }
         assert_precommit_denied(
             &vault,
-            result.expect_err("non-TURN evidence is no evidence"),
+            result.expect_err("a row that says nothing is no evidence"),
             &claim_id,
             "gate.deny.dreamer_precommit.no_evidence",
         )?;
     }
+    assert!(
+        landed.is_empty(),
+        "FAILBEFORE H153 batch door: a Dreamer claim landed citing only {landed:?}"
+    );
 
-    let turn = test_id(0x59);
-    seed_precommit_evidence_entity(&vault, &turn)?;
-    let claim_id = test_id(0x5A);
-    let body = precommit_body(
-        Value::from("Ada Lovelace"),
-        Some(precommit_evidence(vec![person, turn])),
-    );
-    attempt_precommit_write(&vault, &claim_id, &body)?;
-    assert_eq!(
-        stored_claim_body(&vault, &claim_id)?.approval,
-        ClaimApprovalStatus::Auto
-    );
+    let admitted = [
+        ("the extraction pass's TURN", live(0x58, ENTITY_TYPE_TURN)?),
+        (
+            "the edit-distance miner's ASSET record",
+            live(0x59, crate::registry::ENTITY_TYPE_ASSET)?,
+        ),
+        ("a commitment wake's settled CLAIM", claim(0x5A, false)?),
+        (
+            "a code review's CODE_ARTIFACT",
+            live(0x5B, crate::registry::ENTITY_TYPE_CODE_ARTIFACT)?,
+        ),
+    ];
+    for (seed, (what, cited)) in (0x80_u8..).zip(admitted) {
+        let (claim_id, result) = write(seed, cited);
+        result.unwrap_or_else(|error| panic!("{what} is evidence: {error:?}"));
+        assert_eq!(
+            stored_claim_body(&vault, &claim_id)?.approval,
+            ClaimApprovalStatus::Auto,
+            "{what}"
+        );
+    }
     Ok(())
 }
 
