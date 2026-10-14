@@ -527,7 +527,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
     let device_only = {
         let rtxn = vault.store.env.read_txn()?;
         crate::settings::device_local_worlds_at(
-            &vault.store,
+            vault,
             &rtxn,
             crate::claim::CallerLocality::OffDevice,
         )?

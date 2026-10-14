@@ -108,10 +108,10 @@ pub(super) fn persist(
     before: Option<&loro::VersionVector>,
 ) -> Result<()> {
     let store = &vault.store;
-    // On an armed vault a MESSAGE or TURN whose text changes owes its turn a
-    // tag pass (ARCH-0036) and a vector of the new text (ARCH-0004),
-    // committed with the text. A write that leaves the text as it was (a
-    // birth, a migration, a compaction) owes nothing.
+    // A MESSAGE or TURN whose text changes owes its turn a sieve read and,
+    // on an armed vault, a tag pass (ARCH-0036) and a vector of the new text
+    // (ARCH-0004), committed with the text. A write that leaves the text as
+    // it was (a birth, a migration, a compaction) owes nothing.
     let retag = match crate::tagging::text_entity_type_in_txn(vault, txn, entity)? {
         Some(entity_type) => text_changed(store, txn, entity, doc)?.then_some(entity_type),
         None => None,
@@ -162,6 +162,7 @@ pub(super) fn persist(
     if let Some(entity_type) = retag {
         crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
         crate::embed::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
+        crate::dreamer_wake::mark_on_publication_in_txn(store, txn, entity)?;
     }
     Ok(())
 }

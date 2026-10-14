@@ -111,7 +111,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
     let device_only = if withhold_device_only {
         let rtxn = vault.store.env.read_txn()?;
         crate::settings::device_local_worlds_at(
-            &vault.store,
+            vault,
             &rtxn,
             crate::claim::CallerLocality::OffDevice,
         )?
