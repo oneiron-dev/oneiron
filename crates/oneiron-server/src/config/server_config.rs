@@ -81,6 +81,8 @@ pub struct SyncServerConfig {
     pub max_lfs_object_bytes: Option<u64>,
     /// Maximum decompressed BulkTransfer chunk in bytes (M5 Phase-3).
     pub max_bulk_decompressed: usize,
+    /// The bounds on work a remote caller can start: git and LFS transfers.
+    pub limits: LimitsConfig,
     /// Runtime mode and per-role model routing defaults. The single source of
     /// usage-mode truth: `runtime_usage_mode()` derives from `runtime.mode`.
     pub runtime: RuntimeConfig,
@@ -110,6 +112,7 @@ impl Default for SyncServerConfig {
             max_entity_blob: 64 * 1024,               // 64 KB
             max_lfs_object_bytes: None,
             max_bulk_decompressed: 8 * 1024 * 1024, // 8 MB
+            limits: LimitsConfig::default(),
             runtime: RuntimeConfig::default(),
         }
     }
@@ -180,6 +183,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("max_entity_blob", &self.max_entity_blob)
             .field("max_lfs_object_bytes", &self.max_lfs_object_bytes)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
+            .field("limits", &self.limits)
             .field("runtime", &self.runtime)
             .finish()
     }
@@ -392,6 +396,7 @@ impl ServeConfig {
             max_entity_blob: self.max_entity_blob,
             max_lfs_object_bytes: self.max_lfs_object_bytes,
             max_bulk_decompressed: self.max_bulk_decompressed,
+            limits: self.limits.clone(),
             runtime: self.runtime.clone(),
         };
         if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {

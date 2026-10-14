@@ -276,6 +276,7 @@ pub enum ErrorKind {
     GitHttpInvalidRepoName,
     GitHttpRepoNotFound,
     GitHttpServeFailed,
+    GitHttpExchangeIdle,
     ReceivePackDoorRejected,
     ReceivePackLandingRefused,
     VaultCleanupRestoreNotArchived,

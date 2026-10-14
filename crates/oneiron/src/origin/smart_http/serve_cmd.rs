@@ -4,8 +4,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Stdio};
+use std::time::{Duration, Instant};
 
-use super::paths::serve_failed;
+use super::paths::{SERVE_REAP_TIMEOUT, serve_failed};
 use crate::error::Result;
 use crate::git_wire::GitWireProcessEnv;
 
@@ -171,7 +172,10 @@ impl ServeCommand {
         env
     }
 
-    /// Spawns the backend with piped stdio and a cleared environment.
+    /// Spawns the backend with piped stdio and a cleared environment, as the
+    /// leader of its own process group: `git http-backend` runs the service as
+    /// its own child, which holds the same pipes, so ending the exchange ends
+    /// the group.
     pub fn spawn(&self, request: &ServeRequest) -> Result<ServeChild> {
         let mut command = oneiron_spawn::command(&self.argv[0]);
         command
@@ -181,6 +185,11 @@ impl ServeCommand {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
         let mut child = command.spawn()?;
         let stdin = child
             .stdin
@@ -249,14 +258,45 @@ impl ServeChild {
             .ok_or_else(|| serve_failed("git http-backend stderr was already taken"))
     }
 
-    /// Reaps the child and reports whether it exited cleanly.
+    /// Reaps the child and reports whether it exited cleanly. A child whose
+    /// output has ended has [`SERVE_REAP_TIMEOUT`] to exit; past it, it is
+    /// killed and reaped, and the exchange fails.
     pub fn wait(&mut self) -> Result<bool> {
-        Ok(self.child.wait()?.success())
+        let deadline = Instant::now() + SERVE_REAP_TIMEOUT;
+        let mut pause = Duration::from_millis(1);
+        loop {
+            if let Some(status) = self.child.try_wait()? {
+                return Ok(status.success());
+            }
+            if Instant::now() >= deadline {
+                self.kill();
+                return Err(serve_failed(
+                    "git http-backend did not exit after its output ended",
+                ));
+            }
+            std::thread::sleep(pause);
+            pause = (pause * 2).min(Duration::from_millis(50));
+        }
     }
 
     /// Ends a child whose request could not be completed.
     pub fn kill(&mut self) {
-        let _ = self.child.kill();
+        self.end();
         let _ = self.child.wait();
+    }
+
+    /// Kills the child and the service it runs without reaping it, from
+    /// beside an exchange that is still reading their pipes; [`Self::kill`] or
+    /// [`Self::wait`] reaps it.
+    pub(super) fn end(&mut self) {
+        #[cfg(unix)]
+        if let Ok(group) = libc::pid_t::try_from(self.child.id()) {
+            // SAFETY: `spawn` started the child as leader of its own process
+            // group, and it is not reaped yet, so the group id is still its.
+            unsafe {
+                libc::kill(-group, libc::SIGKILL);
+            }
+        }
+        let _ = self.child.kill();
     }
 }

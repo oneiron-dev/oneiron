@@ -6,6 +6,7 @@
 
 use super::gate::text_response;
 use super::status_codec::{concat_chunks, rewrite_receive_pack_status};
+use crate::api::transfer::{self, BodyPiece, BodyReader};
 use crate::server::SyncServer;
 use axum::body::Body;
 use axum::body::Bytes;
@@ -14,16 +15,20 @@ use axum::http::HeaderValue;
 use axum::http::StatusCode;
 use axum::http::header::CONTENT_LENGTH;
 use axum::response::Response;
-use futures_util::StreamExt;
 use oneiron::origin::smart_http;
 use std::io;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
 /// Bounded in-flight chunks in each direction. Backpressure, not buffering:
 /// the producer blocks instead of accumulating a body.
 const GIT_HTTP_STREAM_CHUNKS: usize = 4;
+
+/// The largest request-body piece handed to the backend at once.
+const GIT_HTTP_BODY_PIECE: usize = 64 * 1024;
 
 // Status reports only; fetch packs continue to stream without this bound.
 pub(super) const GIT_HTTP_MAX_HELD_BYTES: usize = 8 * 1024 * 1024;
@@ -34,42 +39,52 @@ pub(super) const GIT_HTTP_MAX_HELD_CHUNKS: usize = 4096;
 /// through bounded channels.
 ///
 /// The worker owns the subprocess; the async side owns the socket. Neither ever
-/// holds a whole body: a chunk moves when the far side has room for it.
+/// holds a whole body: a chunk moves when the far side has room for it, and
+/// neither waits on the other past the transfer idle limit. The exchange's
+/// permit is taken before any child exists and is held by the worker, which
+/// outlives this handler whenever the response streams.
 pub(super) async fn run_serve(
     server: Arc<SyncServer>,
     repo: String,
     request: smart_http::ServeRequest,
     body: Body,
 ) -> Response {
+    let Ok(permit) = server.transfers.admit_git(request.remote_user.as_deref()) else {
+        return saturated();
+    };
     // A push is held until its landing is journaled; everything else streams.
     let held = request.is_receive_pack();
-    let (request_tx, request_rx) = mpsc::channel::<Bytes>(GIT_HTTP_STREAM_CHUNKS);
+    let idle = server.transfers.idle;
+    let (request_tx, request_rx) = mpsc::channel::<BodyPiece>(GIT_HTTP_STREAM_CHUNKS);
     let (head_tx, head_rx) = oneshot::channel::<ResponseHead>();
     let (response_tx, response_rx) = mpsc::channel::<Bytes>(GIT_HTTP_STREAM_CHUNKS);
 
-    tokio::spawn(async move {
-        let mut stream = body.into_data_stream();
-        while let Some(chunk) = stream.next().await {
-            let Ok(chunk) = chunk else {
-                break;
-            };
-            if request_tx.send(chunk).await.is_err() {
-                break;
-            }
-        }
-    });
+    tokio::spawn(transfer::feed_body(
+        body,
+        request_tx,
+        idle,
+        GIT_HTTP_BODY_PIECE,
+    ));
 
+    let runtime = Handle::current();
     let worker = tokio::task::spawn_blocking(move || {
-        let mut reader = ChannelReader::new(request_rx);
-        let mut sink = ChannelSink::new(head_tx, response_tx);
+        let _permit = permit;
+        let mut reader = BodyReader::new(request_rx);
+        let mut sink = ChannelSink {
+            head: Some(head_tx),
+            chunks: response_tx,
+            runtime,
+            idle,
+        };
         // CoreAuth's validated principal_ref travels unchanged. The existing
         // serve path persists landed admission and observed outcome evidence;
         // this bridge supplies neither a claim id nor an alternate credential.
-        smart_http::serve(
+        smart_http::serve_bounded(
             server.vault(),
             &repo,
             &request,
             smart_http::DoorSeam::Landed,
+            idle,
             &mut reader,
             &mut sink,
         )
@@ -177,6 +192,18 @@ pub(super) fn landed_response(
 
 pub(super) type ResponseHead = (u16, Vec<(String, String)>);
 
+/// Every git exchange permit is held: refused now, never queued.
+fn saturated() -> Response {
+    let mut response = text_response(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "git transfers are at their limit; retry later",
+    );
+    response
+        .headers_mut()
+        .insert("retry-after", HeaderValue::from_static("1"));
+    response
+}
+
 pub(super) fn serve_failure(
     joined: Result<oneiron::Result<smart_http::ServeReport>, tokio::task::JoinError>,
 ) -> Response {
@@ -193,6 +220,11 @@ pub(super) fn serve_failure(
         }))) => (
             StatusCode::CONFLICT,
             "git publication refused; ref effects may be partial".to_owned(),
+        ),
+        Ok(Err(oneiron::Error::Code(oneiron::error::CodeError::GitHttpExchangeIdle))) => (
+            StatusCode::REQUEST_TIMEOUT,
+            "git transfer moved no data within its idle limit; ref effects may be partial"
+                .to_owned(),
         ),
         Ok(Err(
             oneiron::Error::ConcurrentWrite(_)
@@ -250,49 +282,12 @@ fn apply_response_head(response: &mut Response, status: u16, headers: Vec<(Strin
     }
 }
 
-/// The request body, as a blocking reader over the async stream.
-struct ChannelReader {
-    chunks: mpsc::Receiver<Bytes>,
-    carry: Bytes,
-}
-
-impl ChannelReader {
-    fn new(chunks: mpsc::Receiver<Bytes>) -> Self {
-        Self {
-            chunks,
-            carry: Bytes::new(),
-        }
-    }
-}
-
-impl io::Read for ChannelReader {
-    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        while self.carry.is_empty() {
-            match self.chunks.blocking_recv() {
-                Some(chunk) => self.carry = chunk,
-                None => return Ok(0),
-            }
-        }
-        let take = self.carry.len().min(out.len());
-        out[..take].copy_from_slice(&self.carry[..take]);
-        self.carry = self.carry.slice(take..);
-        Ok(take)
-    }
-}
-
 /// The response, as a blocking sink onto the async stream.
 struct ChannelSink {
     head: Option<oneshot::Sender<ResponseHead>>,
     chunks: mpsc::Sender<Bytes>,
-}
-
-impl ChannelSink {
-    fn new(head: oneshot::Sender<ResponseHead>, chunks: mpsc::Sender<Bytes>) -> Self {
-        Self {
-            head: Some(head),
-            chunks,
-        }
-    }
+    runtime: Handle,
+    idle: Duration,
 }
 
 impl smart_http::ServeSink for ChannelSink {
@@ -308,8 +303,11 @@ impl smart_http::ServeSink for ChannelSink {
     }
 
     fn write_chunk(&mut self, bytes: &[u8]) -> io::Result<()> {
-        self.chunks
-            .blocking_send(Bytes::copy_from_slice(bytes))
-            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "client went away"))
+        transfer::send_within(
+            &self.runtime,
+            &self.chunks,
+            Bytes::copy_from_slice(bytes),
+            self.idle,
+        )
     }
 }

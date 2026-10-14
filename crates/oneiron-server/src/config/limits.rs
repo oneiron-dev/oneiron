@@ -19,6 +19,13 @@ pub struct LimitsConfig {
     /// How long a request's headers may take to arrive, in milliseconds. It
     /// also bounds how long an idle keep-alive connection stays open.
     pub header_read_timeout_ms: u64,
+    /// `git http-backend` exchanges at once, each one child process.
+    pub git_exchanges: usize,
+    /// Git exchanges one principal may hold at once.
+    pub git_exchanges_per_principal: usize,
+    /// How long a git or LFS transfer may go without moving a byte, in
+    /// milliseconds, before it is ended and its worker and child freed.
+    pub transfer_idle_timeout_ms: u64,
 }
 
 impl Default for LimitsConfig {
@@ -27,6 +34,11 @@ impl Default for LimitsConfig {
             max_connections: 512,
             max_connections_per_peer: 64,
             header_read_timeout_ms: 30_000,
+            git_exchanges: 8,
+            git_exchanges_per_principal: 4,
+            // The door window's family (`DOOR_WINDOW_TIMEOUT`): long enough
+            // for a slow link, short against a held-open socket.
+            transfer_idle_timeout_ms: 300_000,
         }
     }
 }
@@ -46,16 +58,19 @@ impl LimitsConfig {
             max_connections,
             max_connections_per_peer,
             header_read_timeout_ms,
+            git_exchanges,
+            git_exchanges_per_principal,
+            transfer_idle_timeout_ms,
         } = over;
-        if let Some(value) = max_connections {
-            self.max_connections = value;
-        }
-        if let Some(value) = max_connections_per_peer {
-            self.max_connections_per_peer = value;
-        }
-        if let Some(value) = header_read_timeout_ms {
-            self.header_read_timeout_ms = value;
-        }
+        set(&mut self.max_connections, max_connections);
+        set(&mut self.max_connections_per_peer, max_connections_per_peer);
+        set(&mut self.header_read_timeout_ms, header_read_timeout_ms);
+        set(&mut self.git_exchanges, git_exchanges);
+        set(
+            &mut self.git_exchanges_per_principal,
+            git_exchanges_per_principal,
+        );
+        set(&mut self.transfer_idle_timeout_ms, transfer_idle_timeout_ms);
     }
 
     /// A zero bound would refuse every caller, so it is a config error rather
@@ -68,12 +83,24 @@ impl LimitsConfig {
                 self.max_connections_per_peer as u64,
             ),
             ("header_read_timeout_ms", self.header_read_timeout_ms),
+            ("git_exchanges", self.git_exchanges as u64),
+            (
+                "git_exchanges_per_principal",
+                self.git_exchanges_per_principal as u64,
+            ),
+            ("transfer_idle_timeout_ms", self.transfer_idle_timeout_ms),
         ] {
             if value == 0 {
                 anyhow::bail!("limits.{key} must be at least 1");
             }
         }
         Ok(())
+    }
+}
+
+fn set<T>(field: &mut T, value: Option<T>) {
+    if let Some(value) = value {
+        *field = value;
     }
 }
 
@@ -84,4 +111,7 @@ pub(super) struct LimitsConfigOverride {
     pub(super) max_connections: Option<usize>,
     pub(super) max_connections_per_peer: Option<usize>,
     pub(super) header_read_timeout_ms: Option<u64>,
+    pub(super) git_exchanges: Option<usize>,
+    pub(super) git_exchanges_per_principal: Option<usize>,
+    pub(super) transfer_idle_timeout_ms: Option<u64>,
 }

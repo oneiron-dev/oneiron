@@ -61,14 +61,16 @@
 //! effector, because a dial that cannot shut the push door shuts nothing that
 //! matters — it READS that dial and mints nothing from it. It buffers no
 //! request or response body, adds no size cap and no rate cap, and expands no
-//! gix feature. `git_wire.rs` and `credential_door.rs` are consumed read-only;
-//! this module owns neither.
+//! gix feature; an exchange that moves no byte for its idle limit is ended,
+//! never one that is merely slow. `git_wire.rs` and `credential_door.rs` are
+//! consumed read-only; this module owns neither.
 
 mod advertise;
 mod cgi_finish;
 mod door;
 mod door_window;
 mod evidence;
+mod exchange_idle;
 mod hooks;
 mod intent;
 mod landing;
@@ -91,10 +93,12 @@ pub use self::landing::{ReceivePackAttribution, ReceivePackLanding, refs_already
 pub use self::paths::{
     DOOR_PRE_RECEIVE_HOOK_NAME, DOOR_WINDOW_TIMEOUT, ORIGIN_DOOR_ROOT_NAME, ORIGIN_MAX_REF_UPDATES,
     ORIGIN_MAX_REPO_NAME_BYTES, ORIGIN_REFUSED_REF_PREFIX, ORIGIN_REPO_DIR_SUFFIX,
-    ORIGIN_SERVING_ROOT_NAME, SERVE_BASE_ENV_KEYS, SERVE_REQUEST_ENV_KEYS, origin_repo_dir,
-    origin_serving_root, validate_repo_name,
+    ORIGIN_SERVING_ROOT_NAME, SERVE_BASE_ENV_KEYS, SERVE_IDLE_TIMEOUT, SERVE_REQUEST_ENV_KEYS,
+    origin_repo_dir, origin_serving_root, validate_repo_name,
 };
-pub use self::serve::{ServeReport, ServeSink, serve, serve_with_authority, serve_with_provenance};
+pub use self::serve::{
+    ServeReport, ServeSink, serve, serve_bounded, serve_with_authority, serve_with_provenance,
+};
 pub use self::serve_cmd::{ServeChild, ServeCommand, ServeRequest};
 
 #[cfg(test)]

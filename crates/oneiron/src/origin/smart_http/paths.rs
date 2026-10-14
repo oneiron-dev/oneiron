@@ -102,6 +102,15 @@ pub(super) const DOOR_WINDOW_POLL: Duration = Duration::from_millis(2);
 /// closed. A push whose door window cannot complete is refused, never admitted.
 pub const DOOR_WINDOW_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// How long an exchange may move no byte, in either direction, before its
+/// backend is killed: the door window's family. A transfer that keeps moving,
+/// however slowly, is never cut.
+pub const SERVE_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// How long a backend whose output has ended may take to exit before it is
+/// killed and reaped.
+pub(super) const SERVE_REAP_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// The verdict line the vetted hook accepts as an admission.
 pub(super) const DOOR_VERDICT_OK: &str = "ok";
 
@@ -119,6 +128,10 @@ pub(super) fn serve_failed(reason: impl Into<String>) -> Error {
     Error::Code(CodeError::GitHttpServeFailed {
         reason: reason.into(),
     })
+}
+
+pub(super) fn serve_idle() -> Error {
+    Error::Code(CodeError::GitHttpExchangeIdle)
 }
 
 /// Carries a door refusal out through the crate error surface without ever

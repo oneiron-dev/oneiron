@@ -8,19 +8,20 @@ use std::path::{Path, PathBuf};
 use std::process::{ChildStderr, ChildStdin};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::advertise::AdvertisedRefGate;
 use super::cgi_finish::{finish_serve, stream_response};
 use super::door::{DoorAdmissionStamp, DoorHook, DoorSeam, NoopDoorHook};
 use super::door_window::{DoorWindowContext, DoorWindowReport, serve_door_window};
 use super::evidence::{ReceivePackOutcome, receive_pack_provenance_refused};
+use super::exchange_idle::{Progress, ProgressRead, ProgressSink, stall_as_idle, watch};
 use super::hooks::DoorHooksDir;
 use super::intent::ReceivePackRefResult;
 use super::landing::ReceivePackLanding;
 use super::paths::{
-    DOOR_WINDOW_TIMEOUT, SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES, origin_door_root,
-    origin_repo_dir, origin_serving_root, serve_failed,
+    DOOR_WINDOW_TIMEOUT, SERVE_IDLE_TIMEOUT, SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES,
+    origin_door_root, origin_repo_dir, origin_serving_root, serve_failed, serve_idle,
 };
 use super::serve_cmd::{ServeChild, ServeCommand, ServeRequest};
 use crate::Vault;
@@ -93,6 +94,16 @@ pub struct ServeReport {
 ///
 /// Streaming is unchanged: the wait happens before the exchange begins, so no
 /// request is admitted and then stalled mid-body.
+///
+/// # The idle limit
+///
+/// This function owns the child for its whole life. An exchange that moves no
+/// byte in either direction for [`SERVE_IDLE_TIMEOUT`] has its backend killed
+/// and fails with [`CodeError::GitHttpExchangeIdle`], which also releases the
+/// coordinator a push holds; [`serve_bounded`] sets another limit. A child
+/// is always reaped before this returns.
+///
+/// [`CodeError::GitHttpExchangeIdle`]: crate::error::CodeError::GitHttpExchangeIdle
 pub fn serve(
     vault: &Arc<Vault>,
     repo_name: &str,
@@ -102,6 +113,26 @@ pub fn serve(
     sink: &mut dyn ServeSink,
 ) -> Result<ServeReport> {
     serve_with_provenance(vault, repo_name, request, seam, None, body, sink)
+}
+
+/// [`serve`] with its own idle limit in place of [`SERVE_IDLE_TIMEOUT`]. A
+/// transport whose body and sink bound their own waits passes the same limit,
+/// so whichever side sees the stall first ends the exchange the same way.
+pub fn serve_bounded(
+    vault: &Arc<Vault>,
+    repo_name: &str,
+    request: &ServeRequest,
+    seam: DoorSeam,
+    idle: Duration,
+    body: &mut (dyn Read + Send),
+    sink: &mut dyn ServeSink,
+) -> Result<ServeReport> {
+    let terms = ServeTerms {
+        seam,
+        authority: None,
+        idle,
+    };
+    serve_request(vault, repo_name, request, terms, body, sink)
 }
 
 /// Compatibility entry point. A new exchange always produces its own evidence;
@@ -121,7 +152,12 @@ pub fn serve_with_provenance(
             "a new exchange cannot reuse external evidence",
         ));
     }
-    serve_request(vault, repo_name, request, seam, None, body, sink)
+    let terms = ServeTerms {
+        seam,
+        authority: None,
+        idle: SERVE_IDLE_TIMEOUT,
+    };
+    serve_request(vault, repo_name, request, terms, body, sink)
 }
 
 /// Serves using a lease supplied by trusted host configuration, not by the
@@ -136,18 +172,35 @@ pub fn serve_with_authority(
     body: &mut (dyn Read + Send),
     sink: &mut dyn ServeSink,
 ) -> Result<ServeReport> {
-    serve_request(vault, repo_name, request, seam, Some(authority), body, sink)
+    let terms = ServeTerms {
+        seam,
+        authority: Some(authority),
+        idle: SERVE_IDLE_TIMEOUT,
+    };
+    serve_request(vault, repo_name, request, terms, body, sink)
+}
+
+/// What one invocation runs under besides its request: the door seam, a lease
+/// from trusted host configuration, and the exchange's idle limit.
+struct ServeTerms<'a> {
+    seam: DoorSeam,
+    authority: Option<&'a OriginAuthorityLease>,
+    idle: Duration,
 }
 
 fn serve_request(
     vault: &Arc<Vault>,
     repo_name: &str,
     request: &ServeRequest,
-    seam: DoorSeam,
-    authority: Option<&OriginAuthorityLease>,
+    terms: ServeTerms<'_>,
     body: &mut (dyn Read + Send),
     sink: &mut dyn ServeSink,
 ) -> Result<ServeReport> {
+    let ServeTerms {
+        seam,
+        authority,
+        idle,
+    } = terms;
     let repo_dir = origin_repo_dir(vault, repo_name)?;
     let project_root = origin_serving_root(vault)?;
     let mut tickets = request
@@ -196,6 +249,7 @@ fn serve_request(
             },
             repo_dir: &repo_dir,
             hooks: &hooks,
+            idle,
         },
         &mut child,
         body,
@@ -344,14 +398,16 @@ pub(super) struct ServeExchange {
 
 /// The immutable setup one exchange runs against: who is serving, what was
 /// asked, under which door window, out of which repository and hooks
-/// directory. Every field is fixed before the backend is spawned; the live
-/// handles the exchange consumes are the separate parameters beside it.
+/// directory, and how long it may sit idle. Every field is fixed before the
+/// backend is spawned; the live handles the exchange consumes are the
+/// separate parameters beside it.
 struct ExchangeSetup<'a> {
     vault: &'a Arc<Vault>,
     request: &'a ServeRequest,
     context: DoorWindowContext<'a>,
     repo_dir: &'a Path,
     hooks: &'a DoorHooksDir,
+    idle: Duration,
 }
 
 fn run_exchange(
@@ -366,6 +422,7 @@ fn run_exchange(
         context,
         repo_dir,
         hooks,
+        idle,
     } = setup;
     let stdin = child.take_stdin()?;
     let stdout = child.take_stdout()?;
@@ -374,9 +431,24 @@ fn run_exchange(
     let repo = unpinned_repo_ref(repo_dir);
     let deadline = Instant::now() + DOOR_WINDOW_TIMEOUT;
     let receive_pack = request.is_receive_pack();
+    let progress = Progress::new();
+    let mut body = ProgressRead {
+        body,
+        progress: &progress,
+    };
+    let mut sink = ProgressSink {
+        sink,
+        progress: &progress,
+    };
+    let (done, done_watch) = std::sync::mpsc::channel::<()>();
 
     std::thread::scope(|scope| {
-        let pump = scope.spawn(move || pump_request_body(body, stdin));
+        // Closed when this body returns, however it returns, so the
+        // watchdog never outlives the exchange it watches.
+        let done = done;
+        let clock = &progress;
+        let watchdog = scope.spawn(move || watch(clock, idle, &done_watch, child));
+        let pump = scope.spawn(move || pump_request_body(&mut body, stdin));
         let drain = scope.spawn(move || drain_stderr(stderr));
         let door = receive_pack.then(|| {
             scope.spawn(|| serve_door_window(vault, &repo, hooks, &finished, deadline, context))
@@ -385,14 +457,20 @@ fn run_exchange(
         // is rewritten in flight: the gate holds one pkt-line, never the
         // advertisement.
         let streamed = if request.is_ref_advertisement() {
-            let mut gate = AdvertisedRefGate::new(vault, repo_dir, sink);
+            let mut gate = AdvertisedRefGate::new(vault, repo_dir, &mut sink);
             stream_response(stdout, &mut gate)
         } else {
-            stream_response(stdout, sink)
+            stream_response(stdout, &mut sink)
         };
         finished.store(true, Ordering::SeqCst);
-        let (status, response_bytes) = streamed?;
-        let request_bytes = join_thread(pump.join())?;
+        drop(done);
+        // A response cut short by the watchdog's kill reads as an ending; it
+        // is the idle limit's, never a success.
+        if join_thread(watchdog.join().map(Ok))? {
+            return Err(serve_idle());
+        }
+        let (status, response_bytes) = streamed.map_err(stall_as_idle)?;
+        let request_bytes = join_thread(pump.join()).map_err(stall_as_idle)?;
         let stderr = drain.join().unwrap_or_default();
         let door = match door {
             Some(handle) => join_thread(handle.join())?,
