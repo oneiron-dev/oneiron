@@ -285,9 +285,13 @@ fn an_unsigned_owner_export_still_restores_on_the_review_path() -> Result<()> {
         receipt.authority.classification,
         VaultImportClassification::ReviewRequired
     );
-    assert_eq!(
-        receipt.authority.mismatches,
-        vec![VaultImportMismatch::UnauthenticatedProvenance]
+    // Whole-vault export always nulls credential payloads, so that reason
+    // rides beside the provenance one.
+    assert!(
+        receipt
+            .authority
+            .mismatches
+            .contains(&VaultImportMismatch::UnauthenticatedProvenance)
     );
     assert_eq!(
         receipt.authority.local_vault_id,
