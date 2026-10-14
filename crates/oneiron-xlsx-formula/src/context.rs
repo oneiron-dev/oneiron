@@ -17,6 +17,9 @@ const MAX_FORMULA_BYTES: usize = 32 * 1024;
 const MAX_FORMULA_TOKENS: usize = 256;
 const MAX_EVALUATION_DEPTH: usize = 32;
 
+/// Why [`parse_bounded`] refuses a formula over its token bound.
+pub(super) const TOKEN_LIMIT: &str = "formula token limit";
+
 /// What one bounded formula needs from its caller and from the engine.
 pub(super) struct Inspection {
     /// What the formula reads that only the host knows: the file's path, the
@@ -187,7 +190,7 @@ pub(super) fn parse_bounded(formula: &str) -> Result<ASTNode> {
     };
     let tokens = TokenStream::new(&expression).map_err(|_| unsupported("formula tokenization"))?;
     if tokens.len() > MAX_FORMULA_TOKENS {
-        return Err(unsupported("formula token limit"));
+        return Err(unsupported(TOKEN_LIMIT));
     }
     formualizer_parse::parse(expression.as_ref()).map_err(|_| unsupported("formula parsing"))
 }

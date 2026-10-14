@@ -787,6 +787,42 @@ fn a_formula_too_long_to_parse_safely_is_classified_without_deep_recursion() {
     }
 }
 
+#[test]
+fn a_long_local_formula_with_structured_references_stays_editable_beside_a_link() {
+    // C12 (Sol r1): a local formula over the parser's token bound that holds a
+    // `[` (a structured reference) failed closed as an external link, so the
+    // fallback could no longer edit its cell.
+    let sum = |name: &str, args: usize| format!("SUM({})", vec![name; args].join(","));
+    let long = sum("Prices[Price]", 130);
+    let longer = sum("Prices[Price]", 131);
+    let quoted = format!("{long}+LEN(\"[linked.xlsx]S!A1\")");
+    let xml = limits().xml;
+    for formula in [&long, &quoted] {
+        assert!(route_workbook([], [], [formula.as_str()], xml).is_in_process());
+    }
+    // Over the bound, a workbook qualifier in any reference still routes out.
+    for link in ["'[linked.xlsx]S'!A1", "[1]S!A1:B2", "[1]!Rate"] {
+        let formula = format!("{long}+{link}");
+        assert!(!route_workbook([], [], [formula.as_str()], xml).is_in_process());
+    }
+
+    let cells = |a1: &str, b1: &str| {
+        sheet(&format!(
+            r#"<c r="A1"><f>{a1}</f><v>1</v></c><c r="B1"><f>{b1}</f><v>2</v></c>"#
+        ))
+    };
+    let link = "'[linked.xlsx]S'!A1";
+    let base = fixture("", "", false);
+    let input = with_part(&base, OUTPUT, cells(&long, link));
+    let edited = with_part(&base, OUTPUT, cells(&longer, link));
+    assert_eq!(preserve_external_links(&input, &edited, limits()), Ok(()));
+    let unlinked = with_part(&base, OUTPUT, cells(&longer, "1"));
+    assert_eq!(
+        preserve_external_links(&input, &unlinked, limits()),
+        Err("fallback altered or dropped an external formula link")
+    );
+}
+
 /// `fixture` whose `Result!A1` is a dynamic-array formula saved over `extent`.
 fn dynamic_array(extent: &str, members: &str) -> Vec<u8> {
     let cells = format!(

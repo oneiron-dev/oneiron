@@ -10,13 +10,15 @@
 //! - any `xl/externalLinks/*.xml` part, or any `.rels` relationship whose
 //!   `TargetMode` is `External`;
 //! - any formula whose parsed AST contains `ReferenceType::External` (a
-//!   `[book]Sheet!A1` reference, quoted or bracket-pathed);
+//!   `[book]Sheet!A1` reference, quoted or bracket-pathed), or, over the
+//!   parser's token bound, any token that may hold one;
 //! - anything else is local.
 //!
 //! The router only reads; it never rewrites parts and never discards unknown
 //! XML. Detection failures fail closed toward the fallback.
 
 use formualizer_parse::parser::{ASTNodeType, ReferenceType};
+use formualizer_parse::{TokenStream, TokenSubType};
 
 use oneiron_docedit::retained_opc::{Limits, Package, XmlLimits};
 
@@ -127,14 +129,23 @@ fn rels_has_external_target(xml: &[u8], limits: XmlLimits) -> bool {
 /// reference only from a `[book]` sheet prefix, so a formula without `[` is
 /// local unparsed, however long. Any other formula goes through the crate's
 /// bounded parser (byte and token limits, the mandatory leading `=`) and its
-/// AST is walked without recursion: one over the bounds is `Err`, so it fails
-/// closed like any other parse failure, and no chain of operators builds a
-/// deep AST here.
+/// AST is walked without recursion, so no chain of operators builds a deep
+/// AST here. One over the token bound is classified from its tokens
+/// ([`may_name_a_workbook`]); any other parse failure is `Err` and fails
+/// closed.
 fn has_external_reference(formula: &str) -> std::result::Result<bool, ()> {
     if !formula.contains('[') {
         return Ok(false);
     }
-    let ast = crate::context::parse_bounded(formula).map_err(|_| ())?;
+    let ast = match crate::context::parse_bounded(formula) {
+        Ok(ast) => ast,
+        Err(crate::FormulaError::UnsupportedWorkbook(reason))
+            if reason == crate::context::TOKEN_LIMIT =>
+        {
+            return may_name_a_workbook(formula);
+        }
+        Err(_) => return Err(()),
+    };
     let mut pending = vec![&ast];
     while let Some(node) = pending.pop() {
         match &node.node_type {
@@ -158,4 +169,29 @@ fn has_external_reference(formula: &str) -> std::result::Result<bool, ()> {
         }
     }
     Ok(false)
+}
+
+/// Whether a formula too long to parse may name another workbook, from its
+/// tokens alone, so a long local formula (`SUM(Prices[Price],...)` with a
+/// hundred arguments) is not frozen as a link. The parser builds an external
+/// reference only from a sheet qualifier holding a `[book]` token, and a
+/// qualifier is text before a `!` within one token. So any token but a text
+/// literal with a `[` before its last `!` counts, a superset of what the
+/// parser builds. A tokenizer error fails closed.
+fn may_name_a_workbook(formula: &str) -> std::result::Result<bool, ()> {
+    let expression = if formula.starts_with('=') {
+        std::borrow::Cow::Borrowed(formula)
+    } else {
+        std::borrow::Cow::Owned(format!("={formula}"))
+    };
+    let tokens = TokenStream::new(&expression).map_err(|_| ())?;
+    Ok((0..tokens.len()).any(|index| {
+        tokens.get(index).is_none_or(|token| {
+            token.span.subtype != TokenSubType::Text
+                && token
+                    .value
+                    .rfind('!')
+                    .is_some_and(|bang| token.value[..bang].contains('['))
+        })
+    }))
 }
