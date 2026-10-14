@@ -163,8 +163,11 @@ impl Memory<'_> {
     /// roster now. A turn bound to another room refuses.
     fn turn_terms_now(&self, room: EntityId, roster: &[RoomPresence]) -> MemoryResult<RoomTerms> {
         self.refuse_other_room(room)?;
+        let vault = self.vault();
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         let now = RoomTerms {
             worlds: room_worlds(roster)?,
+            facets: room_facets_axis_in(vault, &txn, room)?,
             clearance: room_clearance(roster),
             p7: true,
         };
@@ -441,6 +444,17 @@ pub(crate) fn room_clearance_in(
     Ok(room_clearance(&clearances_in(vault, txn, members)?))
 }
 
+/// The facets `room` limits its reads to as `txn` reads it; `All` is a room
+/// with no facet.
+fn room_facets_axis_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> crate::Result<crate::federation::ScopeAxis<crate::federation::ScopeId>> {
+    Ok(crate::workspace_roster::room_facets_in(vault, txn, room)?
+        .unwrap_or(crate::federation::ScopeAxis::All))
+}
+
 /// One read key per member other than `caller`. A member positively known
 /// as the vault owner reads with the owner's key. Any other member names no
 /// class, so only class-agnostic grants admit it, and its access grants
@@ -517,6 +531,7 @@ pub(crate) fn room_ceiling_in(
         .collect();
     let terms = RoomTerms {
         worlds: room_worlds(&roster)?,
+        facets: room_facets_axis_in(vault, txn, room)?,
         clearance: room_clearance(&roster),
         p7: true,
     };

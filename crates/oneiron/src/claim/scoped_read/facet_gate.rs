@@ -36,7 +36,8 @@ impl ScopedRead<'_> {
     }
 
     /// Whether the row `id`, with header and body `raw`, sits inside the
-    /// credential's facets and those of the room this key reads through. The
+    /// credential's facets and those the room turn this key reads through
+    /// holds. The
     /// owner's key reads every facet, and so does a narrower owner credential
     /// while its exemption holds.
     pub(super) fn facets_allow_in(
@@ -61,10 +62,18 @@ impl ScopedRead<'_> {
             .authority_scope()
             .map(|scope| &scope.facets)
             .filter(|facets| !matches!(facets, ScopeAxis::All));
+        // A turn holds the facets its room had when it opened and meets this
+        // snapshot's into them, so it only narrows.
         let room = match &self.actor_key.room_turn {
-            Some(turn) => crate::workspace_roster::room_facets_in(self.vault, txn, turn.room)?,
+            Some(turn) => Some(
+                turn.terms.meet_facets(
+                    &crate::workspace_roster::room_facets_in(self.vault, txn, turn.room)?
+                        .unwrap_or(ScopeAxis::All),
+                ),
+            ),
             None => None,
-        };
+        }
+        .filter(|facets| !matches!(facets, ScopeAxis::All));
         if (credential.is_none() && room.is_none()) || self.actor_key.vault_owner_ref().is_some() {
             return Ok(true);
         }

@@ -7,7 +7,7 @@ use crate::error::ErrorKind;
 use crate::ports::EntityStoreRead;
 use ed25519_dalek::Signer;
 
-const FIXTURE_HOST: &[u8] = b"project fixture authority";
+pub(super) const FIXTURE_HOST: &[u8] = b"project fixture authority";
 
 fn holder_key(actor: EntityId) -> ed25519_dalek::SigningKey {
     ed25519_dalek::SigningKey::from_bytes(blake3::hash(actor.as_bytes()).as_bytes())

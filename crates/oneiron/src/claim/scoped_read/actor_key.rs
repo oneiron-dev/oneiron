@@ -54,6 +54,10 @@ pub(crate) struct RoomTerms {
     /// The room's world ceiling: every row it reads lies in it, public or
     /// not.
     pub(crate) worlds: crate::federation::Scope,
+    /// The facets the room limits its reads to (owner ruling FACET-READ): its
+    /// project's slice facet, met with what each later snapshot finds there.
+    /// `All` is a room with no facet.
+    pub(crate) facets: crate::federation::ScopeAxis<crate::federation::ScopeId>,
     /// The met clearance of the members that bring one (ILDF2): `None` while
     /// only the owner and the vault's own agents are in the meet.
     pub(crate) clearance: Option<crate::federation::Scope>,
@@ -64,18 +68,22 @@ pub(crate) struct RoomTerms {
 }
 
 impl RoomTerms {
-    /// The room's Scope: the world ceiling met with the clearance.
+    /// The room's Scope: the world ceiling met with the clearance, in the
+    /// room's facets. P7 judges no facet, so they only report the limit.
     pub(crate) fn room_scope(&self) -> crate::federation::Scope {
-        match &self.clearance {
+        let mut scope = match &self.clearance {
             Some(clearance) => self.worlds.meet(clearance),
             None => self.worlds.clone(),
-        }
+        };
+        scope.facets = scope.facets.meet(&self.facets);
+        scope
     }
 
     /// `self` met with `now`; a term `now` lacks never widens it.
     fn meet(&self, now: &Self) -> Self {
         Self {
             worlds: self.worlds.meet(&now.worlds),
+            facets: self.facets.meet(&now.facets),
             clearance: if self.p7 {
                 meet_clearance(self.clearance.as_ref(), now.clearance.as_ref())
             } else {
@@ -150,6 +158,24 @@ impl TurnTerms {
         if met != held.clearance {
             held.clearance = met;
         }
+    }
+
+    /// Meets the facets one snapshot finds on the room into the turn and
+    /// returns what the turn holds after: a project re-signed to another
+    /// facet mid-turn leaves the turn neither.
+    pub(crate) fn meet_facets(
+        &self,
+        facets: &crate::federation::ScopeAxis<crate::federation::ScopeId>,
+    ) -> crate::federation::ScopeAxis<crate::federation::ScopeId> {
+        let mut held = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let met = held.facets.meet(facets);
+        if met != held.facets {
+            held.facets = met.clone();
+        }
+        met
     }
 
     /// Whether the turn holds rows to P7.
