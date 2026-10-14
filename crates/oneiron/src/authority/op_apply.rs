@@ -18,7 +18,7 @@ pub(super) fn apply_op(
     match op {
         AuthorityOp::Genesis { .. } => {}
         AuthorityOp::EnrollDevice { device } => {
-            upsert_device(state, device);
+            upsert_device(state, device, Some(signer));
             if state
                 .roster
                 .values()
@@ -62,7 +62,12 @@ pub(super) fn apply_op(
             new_device,
         } => {
             revoke_key(state, old_key);
-            upsert_device(state, new_device);
+            state
+                .key_admitters
+                .entry(new_device.key.clone())
+                .or_default()
+                .insert(old_key.clone());
+            upsert_device(state, new_device, Some(signer));
         }
         AuthorityOp::SetTierFloor { tier_floor } => {
             record_tier_floor(state, entry_hash, *tier_floor);
@@ -71,7 +76,7 @@ pub(super) fn apply_op(
             for device in state.roster.values_mut() {
                 device.revoked = true;
             }
-            upsert_device(state, new_device);
+            upsert_device(state, new_device, Some(signer));
         }
         // Legacy wire op: `fold_entry_state` rejects it before reaching here.
         AuthorityOp::VetoPendingWiden { .. } => {}
@@ -84,6 +89,8 @@ pub(super) fn apply_op(
         AuthorityOp::BindActor { .. }
         | AuthorityOp::RebindActor { .. }
         | AuthorityOp::RevokeActor { .. } => {}
+        // `fold_entry_state`'s machine-profile arm returns before reaching here.
+        AuthorityOp::MachineProfile(_) => {}
     }
 }
 
@@ -196,6 +203,7 @@ pub(super) fn apply_actor_binding(
             conflicted: false,
         },
     );
+    state.actor_rows.insert(*actor_ref);
     Ok(())
 }
 
@@ -580,7 +588,29 @@ pub(super) fn merge_pact_states(
     merged
 }
 
-pub(super) fn upsert_device(state: &mut FoldState, device: &DeviceAuthority) {
+/// `admitted_by` is the roster key that signed the device in; `None` for a
+/// genesis root. Custody is sticky: a key the host attests as its root and a
+/// key marked for the cloud are the host's, and so is every key such a key
+/// admitted, directly or through others (`key_admitters`), whatever the
+/// successor's own labels say.
+pub(super) fn upsert_device(
+    state: &mut FoldState,
+    device: &DeviceAuthority,
+    admitted_by: Option<&AuthorityKey>,
+) {
+    if device.attestation.kind == super::slip_vault::HOST_ROOT_ATTESTATION
+        || device.roles & ROLE_CLOUD != 0
+        || device.tier == AuthorityTier::CloudCustodial
+    {
+        state.host_custody_keys.insert(device.key.clone());
+    }
+    if let Some(admitter) = admitted_by {
+        state
+            .key_admitters
+            .entry(device.key.clone())
+            .or_default()
+            .insert(admitter.clone());
+    }
     let folded = FoldedDevice {
         key: device.key.clone(),
         tier: device.tier,

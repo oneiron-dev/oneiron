@@ -42,6 +42,8 @@ mod handoff_arrival_order;
 mod handoff_settlement;
 mod history_transfer;
 mod host_re_root;
+mod machine_fold;
+mod machine_identity;
 mod machine_write;
 mod recovery_ceremony;
 mod retired_ceiling;

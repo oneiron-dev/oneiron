@@ -66,7 +66,15 @@ impl Vault {
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
         let key = AuthorityKey::Ed25519(public_key);
-        if fold.roster.contains_key(&key) || fold.actor_bindings.contains_key(&key) {
+        // A physical machine's row or install key never becomes a writer.
+        if fold.roster.contains_key(&key)
+            || fold.actor_bindings.contains_key(&key)
+            || fold.machines.contains_key(&machine)
+            || fold
+                .machines
+                .values()
+                .any(|folded| folded.profile.machine_key == public_key)
+        {
             return Err(denied());
         }
         let seq = fold

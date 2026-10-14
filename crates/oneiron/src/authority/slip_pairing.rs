@@ -57,6 +57,16 @@ struct PairingPending {
     scope: Scope,
     host_key: [u8; 32],
     principal: PairingPrincipal,
+    /// The owner's answer for the machine this link adds; redemption must
+    /// enrol that machine and cannot change the answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    machine: Option<PendingMachine>,
+}
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PendingMachine {
+    owner: crate::EntityId,
+    ownership: MachineOwnership,
 }
 
 /// Crockford base32: no `I`, `L`, `O` or `U`, so a code survives being read
@@ -163,10 +173,52 @@ impl Vault {
         slip_lifetime_secs: u64,
         principal: PairingPrincipal,
     ) -> Result<PairingLink> {
+        self.issue_pairing_link_in(issuer, scope, slip_lifetime_secs, principal, None)
+    }
+    /// The owner adds a machine: the link carries the owner's answer (yours,
+    /// work/school or rented), and redeeming it enrols the machine under that
+    /// answer in the same transaction as its slip.
+    pub fn issue_machine_pairing_link(
+        &self,
+        issuer: &HostSlipIssuer,
+        owner: &crate::consent::AuthenticatedOwner,
+        scope: Scope,
+        slip_lifetime_secs: u64,
+        principal: PairingPrincipal,
+        ownership: MachineOwnership,
+    ) -> Result<PairingLink> {
+        self.issue_pairing_link_in(
+            issuer,
+            scope,
+            slip_lifetime_secs,
+            principal,
+            Some((owner, ownership)),
+        )
+    }
+    fn issue_pairing_link_in(
+        &self,
+        issuer: &HostSlipIssuer,
+        scope: Scope,
+        slip_lifetime_secs: u64,
+        principal: PairingPrincipal,
+        answer: Option<(&crate::consent::AuthenticatedOwner, MachineOwnership)>,
+    ) -> Result<PairingLink> {
         if slip_lifetime_secs == 0 {
             return Err(invalid_authority());
         }
         let mut txn = self.store.env.write_txn()?;
+        // The owner answers for a machine only while their credential is
+        // live, judged in the transaction that stores the answer.
+        let machine = match answer {
+            None => None,
+            Some((owner, ownership)) => {
+                owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+                Some(PendingMachine {
+                    owner: owner.actor(),
+                    ownership,
+                })
+            }
+        };
         require_host(&self.authority_fold_readonly_in_txn(&txn)?, issuer)?;
         let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
         let slip_lifetime_secs = slip_lifetime_secs.min(ceiling.initial_owner_secs);
@@ -191,6 +243,7 @@ impl Vault {
             scope,
             host_key: issuer.binding_key(),
             principal,
+            machine,
         };
         PAIRING_PENDING.put(&self.store, &mut txn, &row_key, &pending)?;
         txn.commit()?;
@@ -199,6 +252,7 @@ impl Vault {
     /// No prior bearer is required. The link is the one-use enrollment grant;
     /// the binding signature proves possession of the receiving connection key.
     /// Consuming the link and appending SlipMint are one LMDB transaction.
+    /// A link that adds a machine is refused here: it must enrol that machine.
     pub fn redeem_pairing_link(
         &self,
         issuer: &HostSlipIssuer,
@@ -207,6 +261,40 @@ impl Vault {
         binding_key: [u8; 32],
         signature: &[u8],
     ) -> Result<CapabilitySlip> {
+        self.redeem_pairing_link_in(issuer, code, holder_ref, binding_key, signature, None)
+            .map(|(slip, _)| slip)
+    }
+    /// Redeems a link that adds a machine: the slip and the owner's profile
+    /// for `request` land in one transaction, under the answer the owner gave
+    /// when making the link.
+    pub fn redeem_machine_pairing_link(
+        &self,
+        issuer: &HostSlipIssuer,
+        code: &str,
+        holder_ref: &str,
+        binding_key: [u8; 32],
+        signature: &[u8],
+        request: &MachineEnrolmentRequest,
+    ) -> Result<(CapabilitySlip, FoldedMachine)> {
+        let (slip, machine) = self.redeem_pairing_link_in(
+            issuer,
+            code,
+            holder_ref,
+            binding_key,
+            signature,
+            Some(request),
+        )?;
+        Ok((slip, machine.ok_or_else(invalid_authority)?))
+    }
+    fn redeem_pairing_link_in(
+        &self,
+        issuer: &HostSlipIssuer,
+        code: &str,
+        holder_ref: &str,
+        binding_key: [u8; 32],
+        signature: &[u8],
+        request: Option<&MachineEnrolmentRequest>,
+    ) -> Result<(CapabilitySlip, Option<FoldedMachine>)> {
         let key = VerifyingKey::from_bytes(&binding_key).map_err(|_| invalid_authority())?;
         let signature = Signature::from_slice(signature).map_err(|_| invalid_authority())?;
         key.verify_strict(
@@ -221,7 +309,10 @@ impl Vault {
             .get(&self.store, &txn, &row_key)
             .map_err(|_| invalid_authority())?
             .ok_or_else(invalid_authority)?;
-        if now >= pending.expires_at || pending.host_key != issuer.binding_key() {
+        if now >= pending.expires_at
+            || pending.host_key != issuer.binding_key()
+            || pending.machine.is_some() != request.is_some()
+        {
             return Err(invalid_authority());
         }
         if pending
@@ -256,9 +347,25 @@ impl Vault {
             org_ref: pending.principal.org_ref,
         };
         let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
+        let machine = match (pending.machine, request) {
+            (Some(answer), Some(request)) => {
+                // The owner who answered must still own the vault at redemption.
+                if !crate::policy_model::is_live_vault_owner_in_txn(self, &txn, &answer.owner)? {
+                    return Err(invalid_authority());
+                }
+                Some(self.enroll_machine_in_txn(
+                    &mut txn,
+                    issuer,
+                    answer.owner,
+                    request,
+                    MachineRole::Owned(answer.ownership),
+                )?)
+            }
+            _ => None,
+        };
         PAIRING_PENDING.delete(&self.store, &mut txn, &row_key)?;
         txn.commit()?;
-        Ok(slip)
+        Ok((slip, machine))
     }
     fn validate_pairing_principal_in_txn(
         &self,

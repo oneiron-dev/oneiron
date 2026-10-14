@@ -123,6 +123,9 @@ pub enum AuthorityOp {
         /// Inclusive revocation watermark.
         epoch: u64,
     },
+    /// One revision of a physical machine's standing: the owner's answer at
+    /// the pairing ceremony, signed by an owner roster key.
+    MachineProfile(MachineProfile),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -428,6 +431,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
             }
             authority_key.validate()
         }
+        AuthorityOp::MachineProfile(profile) => profile.validate(),
     }
 }
 

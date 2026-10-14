@@ -103,11 +103,17 @@ pub(super) fn fold_entry_state(
             actor_binding_revocations: BTreeMap::new(),
             actor_revocation_hashes: BTreeMap::new(),
             seqs: BTreeMap::new(),
+            machines: BTreeMap::new(),
+            machine_keys: BTreeMap::new(),
+            host_custody_keys: BTreeSet::new(),
+            key_admitters: BTreeMap::new(),
+            hosted: context.hosted,
+            actor_rows: BTreeSet::new(),
         };
         if !tier_meets_floor(device.tier, *tier_floor) {
             return EntryFold::Invalid(AuthorityFoldIssue::SignerBelowTierFloor(hash));
         }
-        upsert_device(&mut state, device);
+        upsert_device(&mut state, device, None);
         state.seqs.insert(device.key.clone(), 0);
         return EntryFold::Ready(state);
     }
@@ -216,6 +222,13 @@ pub(super) fn fold_entry_state(
         if !roster_has_live_owner(&state.roster, &signer) || state.slips.apply(entry, hash).is_err()
         {
             return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
+        }
+        state.seqs.insert(signer, entry.seq);
+        return EntryFold::Ready(state);
+    }
+    if let AuthorityOp::MachineProfile(profile) = &entry.op {
+        if let Err(issue) = apply_machine_profile(&mut state, &signer, profile, hash, context) {
+            return EntryFold::Invalid(issue);
         }
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
@@ -347,17 +360,21 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::FederationLifecycle(_)
         | AuthorityOp::BindActor { .. }
         | AuthorityOp::RebindActor { .. }
-        | AuthorityOp::RevokeActor { .. } => false,
+        | AuthorityOp::RevokeActor { .. }
+        | AuthorityOp::MachineProfile(_) => false,
     }
 }
 
 fn entry_requires_peer_cosign(entry: &AuthorityLogEntry) -> bool {
+    // A machine profile is the owner's answer landed through the host, as a
+    // slip is; its own transition requires an owner consent key.
     !matches!(
         entry.op,
         AuthorityOp::Genesis { .. }
             | AuthorityOp::SlipMint(_)
             | AuthorityOp::SlipRevoke { .. }
             | AuthorityOp::SlipConsume { .. }
+            | AuthorityOp::MachineProfile(_)
     )
 }
 

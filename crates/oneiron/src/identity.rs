@@ -55,6 +55,13 @@ const CLIENT_ID: SideTable<(), ClientId, Raw> = SideTable::new(&side_table::IDEN
 const DEVICE_SK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_DEVICE_SK);
 /// Cached Ed25519 verifying key derived from the seed. Key: `()`.
 const DEVICE_PK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_DEVICE_PK);
+/// The MACHINE row this install is (16 B entity id), minted once with
+/// [`MACHINE_SK`]. Not the client id: that is a CRDT peer id. Key: `()`.
+const MACHINE_ID: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_MACHINE_ID);
+/// This install's machine signing-key seed (32 B), minted with [`MACHINE_ID`].
+/// Not the device key: a checkpoint image restored directly drops both
+/// machine rows, so a copy on another install never is this machine. Key: `()`.
+const MACHINE_SK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_MACHINE_SK);
 
 /// [`CLIENT_ID`]'s value: u64 LE, nonzero (ONE-1155 — 0 collides with Loro's
 /// unset peer id). A wrong-length row and an 8-byte zero row are distinct
@@ -186,6 +193,78 @@ pub(crate) fn read_device_verifying_key_in_txn(
                 .map_err(|_| Error::CorruptedIndex("device public key row"))
         })
         .transpose()
+}
+
+/// This install's machine, its MACHINE id and signing key, minted together
+/// once inside the caller's txn. One row without the other is corruption.
+pub(crate) fn load_or_mint_machine_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<(crate::EntityId, SigningKey)> {
+    match (
+        read_machine_id_in_txn(vault, wtxn)?,
+        read_machine_signing_key_in_txn(vault, wtxn)?,
+    ) {
+        (Some(id), Some(key)) => Ok((id, key)),
+        (None, None) => {
+            let id = vault.store.clock.entity_id()?;
+            let key = SigningKey::generate(&mut rand_core::OsRng);
+            MACHINE_ID.put(&vault.store, wtxn, &(), &id.as_bytes().to_vec())?;
+            MACHINE_SK.put(&vault.store, wtxn, &(), &key.as_bytes().to_vec())?;
+            Ok((id, key))
+        }
+        _ => Err(Error::CorruptedIndex("machine identity rows")),
+    }
+}
+
+/// This install's MACHINE id, or `None` before it asked to join a vault.
+pub(crate) fn read_machine_id_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<crate::EntityId>> {
+    MACHINE_ID
+        .get(&vault.store, txn, &())?
+        .map(|raw| {
+            <[u8; 16]>::try_from(raw.as_slice())
+                .ok()
+                .and_then(|bytes| crate::EntityId::from_bytes(bytes).ok())
+                .ok_or(Error::CorruptedIndex("machine id row"))
+        })
+        .transpose()
+}
+
+/// This install's machine signing key, or `None` before it asked to join a
+/// vault. Never mints: a request that only names the machine must not take
+/// the writer.
+pub(crate) fn read_machine_signing_key_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<SigningKey>> {
+    MACHINE_SK
+        .get(&vault.store, txn, &())?
+        .map(|raw| {
+            <[u8; 32]>::try_from(raw.as_slice())
+                .map(|seed| SigningKey::from_bytes(&seed))
+                .map_err(|_| Error::CorruptedIndex("machine signing key row"))
+        })
+        .transpose()
+}
+
+/// A machine identity row: a checkpoint image restored directly, which may
+/// land on any install, leaves these behind.
+pub(crate) fn is_machine_identity_row(key: &[u8]) -> bool {
+    key == side_table::IDENTITY_MACHINE_ID.prefix || key == side_table::IDENTITY_MACHINE_SK.prefix
+}
+
+/// Forgets this install's machine, so the vault joins as a new one: another
+/// live vault keeps the machine it was.
+pub(crate) fn drop_machine_identity_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    MACHINE_ID.delete(store, wtxn, &())?;
+    MACHINE_SK.delete(store, wtxn, &())?;
+    Ok(())
 }
 
 /// Own-txn wrapper around [`ensure_device_identity_in_txn`].
