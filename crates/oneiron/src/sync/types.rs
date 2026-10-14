@@ -187,6 +187,10 @@ pub(crate) fn entity_belongs_to_window(raw: &[u8], key: &WindowKey) -> bool {
 /// Exact retained CLAIM shells carry no body/world field. Only a paired
 /// canonical soft tombstone plus trusted recovery, or this vault's durable
 /// deletion address, can bind the shell to a world window.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the pass's tombstone index rides beside the window's existing inputs"
+)]
 pub(crate) fn retained_world_shell_belongs_to_window(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
