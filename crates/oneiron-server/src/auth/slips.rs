@@ -65,6 +65,9 @@ impl CoreAuth {
         }
         let mut auth = Self::from_verified(verified, slip.caveats.is_empty())?;
         auth.instrument = Some(*blake3::hash(token.as_bytes()).as_bytes());
+        // A credential the server accepts: the connection it came on is no
+        // longer a stranger's.
+        crate::http_listener::authenticated();
         Ok(auth)
     }
     /// Admit a fresh transport binding once. Repeated authorization checks

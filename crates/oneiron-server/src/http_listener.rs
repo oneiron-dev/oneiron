@@ -1,22 +1,33 @@
 //! The TCP accept loop the server and the embedder endpoint serve through.
 //!
-//! Every accepted socket takes a connection permit before hyper reads a byte
-//! of it, and the permit rides inside the socket, so it is held for the whole
-//! life of the connection: across keep-alive requests, and on through a
-//! WebSocket the connection upgraded into. A socket past the bound gets a 503
-//! and is closed at once; it never waits in a queue. Request headers must
-//! arrive within a deadline, which also bounds an idle keep-alive connection,
-//! and a request body that stops arriving while its route waits for it is
-//! ended at an idle limit. All of it runs before any route does, so it holds
-//! for a caller with no credential at all.
+//! Every accepted socket holds a connection permit for the whole life of the
+//! connection: across keep-alive requests, and on through a WebSocket the
+//! connection upgraded into. The permits are the descriptor floor, the one
+//! bound that is the machine's: past it the socket in hand waits for a
+//! connection to close and the loop stops accepting, so the sockets after it
+//! wait in the kernel's backlog. They are queued, never refused.
+//!
+//! A connection from off this device that has not yet presented a credential
+//! the server accepts is a stranger, and one peer address may hold only so
+//! many strangers at once. A socket past that share is the anonymous surface
+//! the rate law lets the server shed: it gets a 503 and is closed. A
+//! connection leaves the share as soon as a request on it authenticates, and
+//! from then on meets only the floor. Loopback meets only the floor.
+//!
+//! Request headers must arrive within a deadline, which also bounds an idle
+//! keep-alive connection, and a request body that stops arriving while its
+//! route waits for it is ended at an idle limit. All of it runs before any
+//! route does, so it holds for a caller with no credential at all.
 //!
 //! The router still sees each request's peer as `ConnectInfo<SocketAddr>`,
 //! which is what the caller-locality rule reads.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::io;
 use std::net::IpAddr;
 use std::pin::{Pin, pin};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -31,16 +42,19 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 
 use crate::admission::{Admission, Permit};
+use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
 /// The listener's bounds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ConnectionLimits {
-    /// Connections open at once, from every peer together.
+    /// Connections open at once, from every peer together: the descriptor
+    /// floor. Past it, new sockets wait in the backlog.
     pub(crate) max_connections: usize,
-    /// Connections one off-device peer address may hold. A loopback peer is
-    /// this device: the owner's own tools, or a reverse proxy whose callers
-    /// all arrive from its one address. Only the total bounds it.
-    pub(crate) max_connections_per_peer: usize,
+    /// Connections one off-device peer address may hold before any of them
+    /// has authenticated. A loopback peer is this device: the owner's own
+    /// tools, or a reverse proxy whose callers all arrive from its one
+    /// address. It has no share to keep.
+    pub(crate) max_unauthenticated_per_peer: usize,
     /// How long a request's headers may take to arrive, counted from when the
     /// connection is ready to read them.
     pub(crate) header_read_timeout: Duration,
@@ -48,43 +62,88 @@ pub(crate) struct ConnectionLimits {
     /// the body fails. A body that keeps arriving, however slowly, is never
     /// cut.
     pub(crate) body_idle_timeout: Duration,
+    /// How long the loop waits for a free permit before it looks again.
+    pub(crate) queue_wait: Duration,
 }
 
-/// What a socket past the bound reads before it is closed.
-const SATURATED_RESPONSE: &[u8] = b"HTTP/1.1 503 Service Unavailable\r\nretry-after: 1\r\nconnection: close\r\ncontent-length: 0\r\n\r\n";
+/// What a stranger past its address's share reads before it is closed.
+const SHED_RESPONSE: &[u8] = b"HTTP/1.1 503 Service Unavailable\r\nretry-after: 1\r\nconnection: close\r\ncontent-length: 0\r\n\r\n";
+
+tokio::task_local! {
+    /// The connection a request in flight arrived on.
+    static CONNECTION: Arc<Connection>;
+}
+
+/// Says that the request in flight presented a credential the server
+/// accepted, so its connection is no longer a stranger. Outside a request
+/// this listener serves, it does nothing.
+pub(crate) fn authenticated() {
+    let _ = CONNECTION.try_with(|connection| {
+        let share = connection
+            .stranger
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        drop(share);
+    });
+}
 
 /// Serves `app` on `listener` until `shutdown` resolves, then stops accepting,
 /// asks every open connection to finish its request in flight, and returns
 /// once they have closed. A WebSocket is not waited for: it ends with the
-/// process.
+/// process. A crossed descriptor floor asks its question in `questions`.
 pub(crate) async fn serve(
     mut listener: TcpListener,
     app: Router,
     limits: ConnectionLimits,
+    questions: Arc<LimitQuestions>,
     shutdown: impl Future<Output = ()>,
 ) {
-    let admission = Admission::new(limits.max_connections, limits.max_connections_per_peer);
+    let floor = Admission::<()>::new(
+        LimitRow::Connections,
+        questions,
+        limits.max_connections,
+        limits.queue_wait,
+    );
+    let strangers = Strangers::new(limits.max_unauthenticated_per_peer);
     let (stopping, stop) = watch::channel(false);
     let (open, open_watch) = watch::channel(());
     let mut shutdown = pin!(shutdown);
-    loop {
+    'serving: loop {
         let (stream, peer) = tokio::select! {
             accepted = axum::serve::Listener::accept(&mut listener) => accepted,
             () = &mut shutdown => break,
         };
-        let admitted = if peer.ip().to_canonical().is_loopback() {
-            admission.try_admit_unkeyed()
+        let address = peer.ip().to_canonical();
+        let stranger = if address.is_loopback() {
+            None
         } else {
-            admission.try_admit(peer.ip().to_canonical())
+            let Some(share) = strangers.take(address) else {
+                tracing::debug!(
+                    reason = "unauthenticated_connections_per_peer",
+                    "connection shed at its address's unauthenticated share"
+                );
+                shed(stream);
+                continue;
+            };
+            Some(share)
         };
-        let Ok(permit) = admitted else {
-            tracing::debug!(
-                reason = "connection_saturated",
-                "connection refused at the listener bound"
-            );
-            shed(stream);
-            continue;
+        // Past the floor this socket waits for a connection to close, and
+        // nothing more is accepted meanwhile: the next sockets wait in the
+        // backlog.
+        let permit = loop {
+            tokio::select! {
+                permit = floor.admit(()) => {
+                    if let Ok(permit) = permit {
+                        break permit;
+                    }
+                }
+                () = &mut shutdown => break 'serving,
+            }
         };
+        let connection = Arc::new(Connection {
+            stranger: Mutex::new(stranger),
+        });
         let io = TokioIo::new(AdmittedStream {
             stream,
             _permit: permit,
@@ -94,7 +153,10 @@ pub(crate) async fn serve(
         let service = hyper::service::service_fn(move |request: hyper::Request<Incoming>| {
             let mut request = request.map(|body| Body::new(IdleBody::new(body, body_idle)));
             request.extensions_mut().insert(ConnectInfo(peer));
-            hyper::service::Service::call(&routes, request)
+            CONNECTION.scope(
+                Arc::clone(&connection),
+                hyper::service::Service::call(&routes, request),
+            )
         });
         let mut stop = stop.clone();
         let open = open_watch.clone();
@@ -123,8 +185,68 @@ pub(crate) async fn serve(
     open.closed().await;
 }
 
-/// Answers a socket past the bound with a 503 and closes it. Best effort and
-/// never a wait: the write goes straight to the socket rather than through
+/// One accepted connection, as its requests see it.
+struct Connection {
+    /// Its place in its address's share while it has not authenticated.
+    stranger: Mutex<Option<StrangerShare>>,
+}
+
+/// How many unauthenticated off-device connections each address holds.
+#[derive(Clone)]
+struct Strangers {
+    held: Arc<Mutex<HashMap<IpAddr, usize>>>,
+    per_peer: usize,
+}
+
+/// One unauthenticated connection's place in its address's share. Dropping
+/// it gives the place back.
+struct StrangerShare {
+    strangers: Strangers,
+    address: IpAddr,
+}
+
+impl Strangers {
+    fn new(per_peer: usize) -> Self {
+        Self {
+            held: Arc::default(),
+            per_peer,
+        }
+    }
+
+    /// A place for one more stranger from `address`, or `None` when it holds
+    /// its whole share. Never a wait: this is the one bound that sheds.
+    fn take(&self, address: IpAddr) -> Option<StrangerShare> {
+        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        let count = held.entry(address).or_default();
+        if *count >= self.per_peer {
+            return None;
+        }
+        *count += 1;
+        Some(StrangerShare {
+            strangers: self.clone(),
+            address,
+        })
+    }
+}
+
+impl Drop for StrangerShare {
+    fn drop(&mut self) {
+        let mut held = self
+            .strangers
+            .held
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(count) = held.get_mut(&self.address) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                held.remove(&self.address);
+            }
+        }
+    }
+}
+
+/// Answers a stranger past its share with a 503 and closes it. Best effort
+/// and never a wait: the write goes straight to the socket rather than through
 /// the reactor, which has not yet seen a socket this fresh as writable, and a
 /// socket whose buffer is full is simply closed. What request bytes have
 /// already arrived are read off first, since closing over unread bytes resets
@@ -132,7 +254,7 @@ pub(crate) async fn serve(
 fn shed(stream: TcpStream) {
     if let Ok(stream) = stream.into_std() {
         let _ = io::Read::read(&mut &stream, &mut [0_u8; 4096]);
-        let _ = io::Write::write(&mut &stream, SATURATED_RESPONSE);
+        let _ = io::Write::write(&mut &stream, SHED_RESPONSE);
     }
 }
 
@@ -197,7 +319,7 @@ impl hyper::body::Body for IdleBody {
 /// goes when the socket does, whoever owns the socket by then.
 struct AdmittedStream {
     stream: TcpStream,
-    _permit: Permit<IpAddr>,
+    _permit: Permit,
 }
 
 impl AsyncRead for AdmittedStream {
@@ -241,4 +363,4 @@ impl AsyncWrite for AdmittedStream {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

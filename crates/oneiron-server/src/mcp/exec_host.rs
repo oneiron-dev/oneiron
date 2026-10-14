@@ -3,6 +3,7 @@
 use super::actors::McpResolvedActor;
 use super::run_seats::RunSeats;
 use crate::admission::Admission;
+use crate::wire_telemetry::{LimitQuestions, LimitRow};
 use oneiron::code_run::GatedActorWrite;
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor,
@@ -16,6 +17,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 /// The ONE place an MCP-derived durable id is minted (ONE-1704 M3).
 ///
@@ -114,8 +116,10 @@ pub enum McpCodeExecutionError {
     HostUnbound,
     #[error("execute_code run is already active; retry the same run_ref")]
     RunBusy,
-    #[error("execute_code is running as many runs as this server admits; retry later")]
-    RunSaturated,
+    #[error(
+        "execute_code waited past limits.queue_wait_timeout_ms for a run's turn; no run was started; retry"
+    )]
+    RunWaitedOut,
     #[error("execute_code run binding failed: {0}")]
     RunBinding(String),
     #[error("execute_code run failed: {0}")]
@@ -129,7 +133,7 @@ impl McpCodeExecutionError {
         match self {
             Self::HostUnbound => super::MCP_CODE_HOST_UNBOUND_CODE,
             Self::RunBusy => "code_run_busy",
-            Self::RunSaturated => "code_run_saturated",
+            Self::RunWaitedOut => "code_run_waited_out",
             Self::RunBinding(_) => "code_run_binding_failed",
             Self::Run(_) => "code_run_failed",
         }
@@ -208,20 +212,38 @@ pub type RunCompactionSeat = Arc<dyn Fn(WriteActor) -> RunCompaction + Send + Sy
 ///
 /// Each run is an OS thread with its own reactor and sandbox runtime, so the
 /// bound is on runs, not calls: a run holds its place until its worker ends,
-/// whether or not its caller is still waiting.
+/// whether or not its caller is still waiting. Past the bound a run waits its
+/// turn, round-robin across credentials; it is never refused for count.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CodeRunLimits {
     /// Runs at once, across every credential.
     pub total: usize,
-    /// Runs at once under one registered credential.
-    pub per_credential: usize,
+    /// How long a run waits for its turn.
+    pub wait: Duration,
+}
+
+/// What one run may come to in memory: its sandbox store's ceiling eight
+/// times over, for the interpreter, the reactor and the run's own state.
+const RUN_MEMORY_BYTES: u64 = 512 * 1024 * 1024;
+
+impl CodeRunLimits {
+    /// The runs this machine has room for: four a core, as runs mostly wait
+    /// on model calls, and no more than its memory holds.
+    #[must_use]
+    pub fn runs_for_this_machine() -> usize {
+        let by_cores = crate::machine::cores().saturating_mul(4);
+        let by_memory = crate::machine::memory_bytes().map_or(by_cores, |bytes| {
+            usize::try_from(bytes / RUN_MEMORY_BYTES).unwrap_or(usize::MAX)
+        });
+        by_cores.min(by_memory).max(1)
+    }
 }
 
 impl Default for CodeRunLimits {
     fn default() -> Self {
         Self {
-            total: 4,
-            per_credential: 2,
+            total: Self::runs_for_this_machine(),
+            wait: crate::config::LimitsConfig::default().queue_wait(),
         }
     }
 }
@@ -244,13 +266,19 @@ impl fmt::Debug for McpEngineNativeCodeHost {
 }
 
 impl McpEngineNativeCodeHost {
+    /// A host running at most `limits.total` runs at once; past it a run
+    /// waits, and the crossing asks in `questions`.
     #[must_use]
-    pub fn new(provider: Arc<dyn McpCodeModeProvider>, limits: CodeRunLimits) -> Self {
+    pub fn new(
+        provider: Arc<dyn McpCodeModeProvider>,
+        limits: CodeRunLimits,
+        questions: Arc<LimitQuestions>,
+    ) -> Self {
         Self {
             provider,
             active: Arc::new(Mutex::new(HashSet::new())),
             seats: Arc::default(),
-            runs: Admission::new(limits.total, limits.per_credential),
+            runs: Admission::new(LimitRow::CodeRuns, questions, limits.total, limits.wait),
         }
     }
 }
@@ -284,12 +312,13 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                 return Err(changed());
             }
             let guard = ActiveRun::acquire(active, request.run_id)?;
-            // Never a wait: past the bound a new run is refused, and the
-            // permit moves into the worker below, so a caller who hangs up
-            // frees nothing its run still holds.
+            // Past the bound the run waits its credential's turn. The permit
+            // moves into the worker below, so a caller who hangs up frees
+            // nothing its run still holds.
             let permit = runs
-                .try_admit(request.actor.stream_connection.0.clone())
-                .map_err(|_| McpCodeExecutionError::RunSaturated)?;
+                .admit(request.actor.stream_connection.0.clone())
+                .await
+                .map_err(|_| McpCodeExecutionError::RunWaitedOut)?;
             // Read under single-flight: what the provider derives from the
             // run's record is not raced by another attempt making it.
             let config = provider

@@ -132,6 +132,7 @@ pub(crate) async fn run(config: EmbedderConfig, listen: Listen) -> anyhow::Resul
         listener,
         router(embedder, listen.aliases, listen.key),
         crate::config::LimitsConfig::default().connections(),
+        Arc::default(),
         async {
             let _ = tokio::signal::ctrl_c().await;
         },
@@ -654,6 +655,7 @@ fn unauthorised(served: &Served, headers: &HeaderMap) -> Option<Response> {
         .and_then(|value| value.strip_prefix("Bearer "))
         .unwrap_or_default();
     if bool::from(presented.as_bytes().ct_eq(key.as_bytes())) {
+        crate::http_listener::authenticated();
         return None;
     }
     Some(refuse(

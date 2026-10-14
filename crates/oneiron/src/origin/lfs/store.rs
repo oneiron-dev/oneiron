@@ -193,6 +193,12 @@ impl Vault {
             .map(|record| record.with_oid(oid)))
     }
 
+    /// The directory the object plane and an upload's spool are written in:
+    /// the disk a free-space floor is judged on.
+    pub fn lfs_storage_dir(&self) -> &std::path::Path {
+        self.store.env.path()
+    }
+
     /// The bytes every recorded LFS object declares, deleted ones still
     /// awaiting reclamation included: what the object plane holds on disk,
     /// before chunk sharing. A storage quota is judged against it.

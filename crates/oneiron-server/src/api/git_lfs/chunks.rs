@@ -1,7 +1,7 @@
 //! Grant-scoped binary have/want endpoint over the standing bearer identity.
 
 use super::gate::{LfsAccess, authorize};
-use super::support::lfs_saturated;
+use super::support::lfs_waited_out;
 use crate::admission::Permit;
 use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
@@ -30,8 +30,8 @@ pub(super) async fn exchange(
     // An LFS transfer like any other: its worker holds the permit until the
     // reply is built, whether or not its caller is still there, and hands it
     // on to the reply.
-    let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()) else {
-        return Ok(lfs_saturated());
+    let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()).await else {
+        return Ok(lfs_waited_out());
     };
     let vault = Arc::clone(&server.vault);
     let scope = crate::handler::selector_grant_scope();
@@ -78,7 +78,7 @@ fn reply(
     vault: Arc<Vault>,
     object: LfsOid,
     bytes: Vec<u8>,
-    permit: Permit<String>,
+    permit: Permit,
     idle: Duration,
 ) -> Body {
     let (pieces, receiver) = mpsc::channel::<Bytes>(2);

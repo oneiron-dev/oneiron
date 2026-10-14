@@ -3,11 +3,14 @@ use oneiron::{Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 const MANIFEST: &str = "manifest:rc42:wire-observation:v1";
 const RECEIPT: &str = "wire:window:v2:";
 const QUESTION: &str = "wire:question:v2:";
+const LIMIT_QUESTION: &str = "wire:limit-question:v1:";
+/// A row asks at most once in this many seconds, however often it is crossed.
+const LIMIT_QUESTION_WINDOW_SECS: u64 = 60;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WireThresholds {
@@ -46,11 +49,113 @@ pub struct WireWindowReceipt {
 #[serde(rename_all = "snake_case")]
 pub enum WireQuestionKind {
     InspectCallVolume,
+    /// Work crossed a `[limits]` row and waited for its turn, or, for a byte
+    /// row, carried on past it.
+    InspectLimitCrossing,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WireQuestion {
     pub kind: WireQuestionKind,
     pub evidence: WireWindowReceipt,
+}
+
+/// A `[limits]` row: a bound on work a remote caller can start, set far above
+/// fleet scale. Crossing one is a question, never a refusal (OF-520).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LimitRow {
+    /// Sockets open at once: the descriptor floor.
+    Connections,
+    /// `git http-backend` exchanges at once.
+    GitExchanges,
+    /// LFS transfer workers at once.
+    LfsTransfers,
+    /// Bytes stored LFS objects and uploads in flight come to.
+    LfsQuota,
+    /// One LFS object's size.
+    LfsObjectSize,
+    /// `execute_code` runs at once.
+    CodeRuns,
+    /// Code-mode compaction passes at once.
+    CompactionPasses,
+}
+impl LimitRow {
+    /// Every row, the list every permit site and byte check is built from.
+    pub const ALL: [Self; 7] = [
+        Self::Connections,
+        Self::GitExchanges,
+        Self::LfsTransfers,
+        Self::LfsQuota,
+        Self::LfsObjectSize,
+        Self::CodeRuns,
+        Self::CompactionPasses,
+    ];
+    /// The config key that sets the row.
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Connections => "limits.max_connections",
+            Self::GitExchanges => "limits.git_exchanges",
+            Self::LfsTransfers => "limits.lfs_transfers",
+            Self::LfsQuota => "limits.lfs_quota_bytes",
+            Self::LfsObjectSize => "max_lfs_object_bytes",
+            Self::CodeRuns => "models.code_mode.max_runs",
+            // As many passes as runs: at most one per run is in flight.
+            Self::CompactionPasses => "models.code_mode.max_runs:compaction",
+        }
+    }
+}
+/// The question a crossed row asks: what it is set to, and what was seen.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WireLimitQuestion {
+    pub kind: WireQuestionKind,
+    pub row: String,
+    pub bound: u64,
+    pub observed: u64,
+    pub raised_at: u64,
+}
+/// Where crossed rows ask. A row asks once a window; the question is logged
+/// at once and kept on this server's vault at the next observation tick, so
+/// asking never waits on storage.
+#[derive(Default)]
+pub struct LimitQuestions {
+    asked: Mutex<BTreeMap<LimitRow, (u64, WireLimitQuestion)>>,
+    unsaved: Mutex<Vec<(u64, WireLimitQuestion)>>,
+}
+impl LimitQuestions {
+    /// `row`, set to `bound`, saw `observed`. Nothing waits on the answer.
+    pub(crate) fn ask(&self, row: LimitRow, bound: u64, observed: u64) {
+        let now = oneiron_vault_contract::now_ts();
+        let window = now / LIMIT_QUESTION_WINDOW_SECS * LIMIT_QUESTION_WINDOW_SECS;
+        let mut asked = lock(&self.asked);
+        if asked.get(&row).is_some_and(|(at, _)| *at == window) {
+            return;
+        }
+        let question = WireLimitQuestion {
+            kind: WireQuestionKind::InspectLimitCrossing,
+            row: row.key().to_owned(),
+            bound,
+            observed,
+            raised_at: now,
+        };
+        asked.insert(row, (window, question.clone()));
+        drop(asked);
+        lock(&self.unsaved).push((window, question));
+        tracing::warn!(
+            kind = "limit_crossed",
+            row = row.key(),
+            bound,
+            observed,
+            "work crossed a limits row and waits its turn; is everything okay?"
+        );
+    }
+    /// The latest question `row` asked on this server, if any.
+    pub fn latest(&self, row: LimitRow) -> Option<WireLimitQuestion> {
+        lock(&self.asked)
+            .get(&row)
+            .map(|(_, question)| question.clone())
+    }
+}
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 #[derive(Default)]
 struct Active {
@@ -63,6 +168,7 @@ pub struct WireTelemetry {
     vault: Arc<Vault>,
     active: Mutex<Active>,
     flusher_started: std::sync::atomic::AtomicBool,
+    limits: Arc<LimitQuestions>,
 }
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| Error::CorruptedIndex("wire observation"))
@@ -76,7 +182,29 @@ impl WireTelemetry {
             vault,
             active: Mutex::new(Active::default()),
             flusher_started: std::sync::atomic::AtomicBool::new(false),
+            limits: Arc::default(),
         }
+    }
+    /// Where this server's `[limits]` rows ask when they are crossed.
+    pub fn limit_questions(&self) -> &Arc<LimitQuestions> {
+        &self.limits
+    }
+    /// The question `row` asked in the window starting `window`, as kept.
+    pub fn limit_question(&self, row: LimitRow, window: u64) -> Result<Option<WireLimitQuestion>> {
+        self.vault
+            .sync_state_get(&format!("{LIMIT_QUESTION}{}:{window:020}", row.key()))?
+            .map(|b| decode(&b))
+            .transpose()
+    }
+    fn save_limit_questions(&self) -> Result<()> {
+        let unsaved = std::mem::take(&mut *lock(&self.limits.unsaved));
+        for (window, question) in unsaved {
+            self.vault.sync_state_put(
+                &format!("{LIMIT_QUESTION}{}:{window:020}", question.row),
+                &encode(&question)?,
+            )?;
+        }
+        Ok(())
     }
     pub fn set_thresholds(&self, thresholds: &WireThresholds) -> Result<()> {
         thresholds.validate()?;
@@ -181,6 +309,7 @@ impl WireTelemetry {
         if active.frozen {
             return Ok(());
         }
+        self.save_limit_questions()?;
         self.flush_active(&mut active)
     }
     pub(crate) fn flush_if_expired(&self, now: u64) -> Result<()> {
@@ -188,7 +317,11 @@ impl WireTelemetry {
             .active
             .lock()
             .map_err(|_| Error::CorruptedIndex("wire counter lock"))?;
-        if active.frozen || active.window.as_ref().is_none_or(|w| now < w.ended_at) {
+        if active.frozen {
+            return Ok(());
+        }
+        self.save_limit_questions()?;
+        if active.window.as_ref().is_none_or(|w| now < w.ended_at) {
             return Ok(());
         }
         self.flush_active(&mut active)

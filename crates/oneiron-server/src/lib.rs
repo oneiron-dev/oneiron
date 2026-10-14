@@ -40,6 +40,7 @@ mod idempotency;
 mod linear_host;
 mod livequery;
 pub mod logging;
+mod machine;
 pub mod managed;
 pub mod mcp;
 pub mod models;

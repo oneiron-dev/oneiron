@@ -84,30 +84,43 @@ lists the host's assistant voice names. Stored turns spoken under one of those
 names count as assistant turns during consolidation, beside the generic
 `assistant`, `agent`, `ai`, and `model` speakers. The default is empty.
 
-`[limits]` bounds the work a caller can start; the connection bounds hold
-before any credential is read. Every bound is finite, and a zero is a config
-error. A caller past a bound is refused at once with a 503 and `retry-after`,
-never queued.
+`[limits]` bounds the work a caller can start. Every bound is finite, and a
+zero is a config error. The count rows sit far above fleet scale (each is at
+least ten times the 200 agents a fleet plans for, many of them on one
+credential and one address). Past a row, work waits its turn in a fair queue,
+round-robin across credentials and in arrival order within one, and the row
+asks whether everything is okay: a typed `inspect_limit_crossing` question
+(OF-520), logged as `limit_crossed` and kept on the vault. It never refuses
+authenticated work for count. A wait ends at `queue_wait_timeout_ms`, a
+request timeout, with a 503 and `retry-after` and nothing started.
 
 ```toml
 [limits]
-max_connections = 512             # sockets open at once, from every peer
-max_connections_per_peer = 64     # sockets one off-device address may hold
+max_connections = 32768           # sockets open at once: the descriptor floor (default: half the open-file limit)
+max_unauthenticated_connections_per_peer = 256  # sockets an off-device address holds before they authenticate
 header_read_timeout_ms = 30000    # headers must arrive within it; also idle keep-alive
 body_idle_timeout_ms = 60000      # a request body may pause this long between pieces
-git_exchanges = 8                 # git smart-HTTP exchanges (one child each)
-git_exchanges_per_principal = 4
-lfs_transfers = 8                 # LFS uploads, downloads and verifies
-lfs_transfers_per_principal = 4
-lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight (507 past it)
+git_exchanges = 2048              # git smart-HTTP exchanges at once (one child each); past it they queue
+lfs_transfers = 2048              # LFS uploads, downloads and verifies at once; past it they queue
+lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; past it the row asks
 transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
+queue_wait_timeout_ms = 300000    # how long queued work waits for its turn
+disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads stop at it (507)
 ```
 
-A loopback peer meets `max_connections` only: it is this device, or a TLS
-proxy whose callers all arrive from its one address. A push to a repository
-another writer holds answers 503 rather than waiting, and an LFS object over
-`--max-lfs-object-bytes` (2 GiB unless set) is refused, by its declared size
-before any byte is read.
+Only the machine's own floors and the anonymous surface hold work back. Past
+`max_connections` the server stops accepting, so new sockets wait in the
+kernel's backlog; raising the open-file limit (`LimitNOFILE=`) raises the
+default. A connection from off this device that has not yet authenticated
+counts toward its address's `max_unauthenticated_connections_per_peer`, and
+one past that share is shed with a 503; it leaves the share as soon as a
+request on it presents a credential the server accepts. A loopback peer meets
+`max_connections` only: it is this device, or a TLS proxy whose callers all
+arrive from its one address. A push to a repository another push holds waits
+its turn behind it. An LFS upload over `--max-lfs-object-bytes` (2 GiB unless
+set) lands and the row asks; an upload that would take the vault's disk below
+`disk_reserve_bytes` is refused with 507, by its declared size before any byte
+is read.
 
 ## CJK Dictionaries
 

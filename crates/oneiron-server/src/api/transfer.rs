@@ -2,13 +2,16 @@
 //! the git smart-HTTP and LFS bridges.
 //!
 //! A transfer takes a permit before its worker starts and the worker holds it
-//! (see [`crate::admission`]), and each side waits on the other for a bounded
-//! idle time only: a request body that stops arriving, or a response nobody
-//! reads, ends the transfer with `TimedOut` rather than pinning the worker,
-//! its child process or its spool for as long as the socket stays open. A
-//! transfer that keeps moving, however slowly, is never cut.
+//! (see [`crate::admission`]): past the bound it waits its turn, and is never
+//! refused for count. Each side waits on the other for a bounded idle time
+//! only: a request body that stops arriving, or a response nobody reads, ends
+//! the transfer with `TimedOut` rather than pinning the worker, its child
+//! process or its spool for as long as the socket stays open. A transfer that
+//! keeps moving, however slowly, is never cut.
 
+use std::collections::HashMap;
 use std::io::{self, Read};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -17,49 +20,105 @@ use futures_util::StreamExt;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
-use crate::admission::{Admission, Permit, Saturated};
+use crate::admission::{Admission, Permit, WaitTimedOut};
 use crate::config::LimitsConfig;
+use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
 /// The permits remotely started transfers take, and how long either side of
 /// one may wait for the other.
 pub(crate) struct Transfers {
-    /// One `git http-backend` exchange each.
+    /// One `git http-backend` exchange each, keyed by principal.
     git: Admission<String>,
-    /// One LFS upload or download worker each.
+    /// Each served repository's pushes, one at a time, keyed by its git
+    /// common directory. A line lives while a push holds or waits for it.
+    pushes: Mutex<HashMap<PathBuf, Arc<Admission<String>>>>,
+    /// One LFS upload or download worker each, keyed by principal.
     lfs: Admission<String>,
-    /// Bytes LFS uploads may bring the vault's objects to.
+    /// Bytes past which LFS storage asks whether everything is okay.
     lfs_quota: u64,
     /// Bytes uploads in flight have reserved against `lfs_quota`.
     lfs_reserved: Arc<Mutex<u64>>,
+    /// Free bytes the vault's disk keeps.
+    pub(crate) disk_reserve: u64,
+    pub(crate) questions: Arc<LimitQuestions>,
     pub(crate) idle: Duration,
+    pub(crate) wait: Duration,
 }
 
 impl Transfers {
-    pub(crate) fn new(limits: &LimitsConfig) -> Self {
+    pub(crate) fn new(limits: &LimitsConfig, questions: Arc<LimitQuestions>) -> Self {
+        let wait = limits.queue_wait();
         Self {
-            git: Admission::new(limits.git_exchanges, limits.git_exchanges_per_principal),
-            lfs: Admission::new(limits.lfs_transfers, limits.lfs_transfers_per_principal),
+            git: Admission::new(
+                LimitRow::GitExchanges,
+                Arc::clone(&questions),
+                limits.git_exchanges,
+                wait,
+            ),
+            pushes: Mutex::default(),
+            lfs: Admission::new(
+                LimitRow::LfsTransfers,
+                Arc::clone(&questions),
+                limits.lfs_transfers,
+                wait,
+            ),
             lfs_quota: limits.lfs_quota_bytes,
             lfs_reserved: Arc::default(),
+            disk_reserve: limits.disk_reserve_bytes,
+            questions,
             idle: Duration::from_millis(limits.transfer_idle_timeout_ms),
+            wait,
         }
     }
 
-    /// A git exchange's permit. Callers without a registered principal share
-    /// one key.
-    pub(super) fn admit_git(&self, principal: Option<&str>) -> Result<Permit<String>, Saturated> {
-        self.git.try_admit(principal.unwrap_or_default().to_owned())
+    /// A git exchange's permit, at its principal's turn. Callers without a
+    /// registered principal share one key.
+    pub(super) async fn admit_git(&self, principal: Option<&str>) -> Result<Permit, WaitTimedOut> {
+        self.git
+            .admit(principal.unwrap_or_default().to_owned())
+            .await
+    }
+
+    /// A git exchange permit for the host's own repository maintenance. It
+    /// waits behind every caller, so it never takes a permit a writer is
+    /// waiting for. Blocking: call it from the maintenance worker.
+    pub(crate) fn admit_git_maintenance(&self) -> Result<Permit, WaitTimedOut> {
+        self.git.admit_background_blocking()
+    }
+
+    /// A push's turn at the repository behind `key`, in its principal's turn
+    /// and, within one principal, in arrival order.
+    pub(super) async fn push_turn(
+        &self,
+        key: PathBuf,
+        principal: Option<&str>,
+    ) -> Result<Permit, WaitTimedOut> {
+        let line = {
+            let mut pushes = self.pushes.lock().unwrap_or_else(PoisonError::into_inner);
+            // A line nobody holds, waits in or is about to join is only this
+            // map's: let it go.
+            pushes.retain(|_, line| Arc::strong_count(line) > 1 || !line.is_idle());
+            Arc::clone(
+                pushes
+                    .entry(key)
+                    .or_insert_with(|| Arc::new(Admission::exclusive(self.wait))),
+            )
+        };
+        line.admit(principal.unwrap_or_default().to_owned()).await
     }
 
     /// An LFS transfer's permit, keyed as [`Self::admit_git`] is.
-    pub(super) fn admit_lfs(&self, principal: Option<&str>) -> Result<Permit<String>, Saturated> {
-        self.lfs.try_admit(principal.unwrap_or_default().to_owned())
+    pub(super) async fn admit_lfs(&self, principal: Option<&str>) -> Result<Permit, WaitTimedOut> {
+        self.lfs
+            .admit(principal.unwrap_or_default().to_owned())
+            .await
     }
 
     /// Reserves `bytes` of the LFS quota for one upload, judged against what
-    /// the vault's objects hold now and what other uploads have reserved;
-    /// `None` when it does not fit. The upload's worker holds the reservation
-    /// until it ends, by which time a stored object counts in its own right.
+    /// the vault's objects hold now and what other uploads have reserved. An
+    /// upload past the quota still lands; the quota row asks. The upload's
+    /// worker holds the reservation until it ends, by which time a stored
+    /// object counts in its own right.
     ///
     /// It reads every stored object, so it blocks: call it from the blocking
     /// pool, holding the upload's transfer permit.
@@ -67,7 +126,7 @@ impl Transfers {
         &self,
         vault: &oneiron::Vault,
         bytes: u64,
-    ) -> oneiron::Result<Option<Reservation>> {
+    ) -> oneiron::Result<Reservation> {
         // Held across the read: an upload that publishes and then returns
         // its reservation is counted once or twice meanwhile, never not at all.
         let mut reserved = self
@@ -75,14 +134,16 @@ impl Transfers {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         let stored = vault.lfs_object_bytes()?;
-        if stored.saturating_add(*reserved).saturating_add(bytes) > self.lfs_quota {
-            return Ok(None);
+        let total = stored.saturating_add(*reserved).saturating_add(bytes);
+        if total > self.lfs_quota {
+            self.questions
+                .ask(LimitRow::LfsQuota, self.lfs_quota, total);
         }
         *reserved += bytes;
-        Ok(Some(Reservation {
+        Ok(Reservation {
             reserved: Arc::clone(&self.lfs_reserved),
             bytes,
-        }))
+        })
     }
 }
 

@@ -93,11 +93,20 @@ pub(super) fn lfs_refusal(status: StatusCode, message: &'static str) -> Response
     response
 }
 
-/// Every LFS transfer permit is held: refused now, never queued.
-pub(super) fn lfs_saturated() -> Response {
+/// The transfer waited its whole deadline for its turn. Nothing was started.
+pub(super) fn lfs_waited_out() -> Response {
     lfs_refusal(
         StatusCode::SERVICE_UNAVAILABLE,
-        "lfs transfers are at their limit; retry later",
+        "lfs transfer waited past limits.queue_wait_timeout_ms for its turn; nothing was started; retry",
+    )
+}
+
+/// The upload would take the vault's disk below its reserve: the disk
+/// floor, the one refusal an upload meets.
+pub(super) fn lfs_disk_floor() -> Response {
+    lfs_refusal(
+        StatusCode::INSUFFICIENT_STORAGE,
+        "the vault's disk is at its free-space reserve (limits.disk_reserve_bytes); nothing was stored",
     )
 }
 

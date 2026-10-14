@@ -238,9 +238,14 @@ impl SyncServer {
             &broadcast_tx,
             &config,
         );
+        let wire_telemetry = crate::wire_telemetry::WireTelemetry::new(vault.clone());
         Ok(Self {
             usage_ledger: UsageLedger::new(vault.clone()),
-            wire_telemetry: crate::wire_telemetry::WireTelemetry::new(vault.clone()),
+            transfers: crate::api::Transfers::new(
+                &config.limits,
+                Arc::clone(wire_telemetry.limit_questions()),
+            ),
+            wire_telemetry,
             vault,
             root_doc,
             ephemeral_store,
@@ -255,7 +260,6 @@ impl SyncServer {
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
             ),
             dreamer_progress: Mutex::new(DreamerAttemptProgressProducer::new()),
-            transfers: crate::api::Transfers::new(&config.limits),
             config,
             managed_issuer: None,
             mcp_registry,
@@ -323,6 +327,7 @@ impl SyncServer {
         self.mcp_code_host = Some(Arc::new(crate::mcp::McpEngineNativeCodeHost::new(
             Arc::new(provider),
             runs,
+            Arc::clone(self.wire_telemetry.limit_questions()),
         )));
         self
     }

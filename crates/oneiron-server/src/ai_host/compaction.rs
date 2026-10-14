@@ -8,7 +8,7 @@
 //! never calls a model.
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use oneiron::compaction::{
     CompactionBackend, CompactionBackendRegistry, CompactionCheck, CompactionDriver,
@@ -32,6 +32,7 @@ use crate::admission::Admission;
 use crate::config::models::{ModelsConfig, Rung, role_key};
 use crate::mcp::McpQuickJsProvider;
 use crate::models::{ModelRuntime, RoleRefusal};
+use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
 /// The registry key a run's memory profile names.
 const BACKEND_KEY: &str = "code-mode-compaction";
@@ -71,6 +72,8 @@ impl CodeModeCompaction {
         models: &ModelsConfig,
         prompt_package: &std::path::Path,
         guard: BudgetGuard,
+        questions: Arc<LimitQuestions>,
+        wait: Duration,
     ) -> Self {
         let settings = models.code_mode.compaction;
         if !settings.enabled {
@@ -147,10 +150,12 @@ impl CodeModeCompaction {
             hot_steps: settings.hot_steps,
             role,
             // At most one pass per run is in flight, so as many as the runs
-            // code mode admits.
+            // code mode works on at once.
             passes: Arc::new(Admission::new(
+                LimitRow::CompactionPasses,
+                questions,
                 models.code_mode.max_runs,
-                models.code_mode.max_runs,
+                wait,
             )),
         }))
     }
@@ -259,27 +264,28 @@ fn input_allowances(models: &ModelsConfig, runtime: &ModelRuntime) -> BTreeMap<M
 }
 
 /// Each pass runs on its own thread; the run never waits for it. The thread
-/// takes a permit before it starts and holds it until it ends, whether or not
-/// the run that started it is still there; past the bound the pass is refused
-/// rather than queued.
+/// takes a permit before the pass starts, waiting its turn past the bound,
+/// and holds it until the pass ends, whether or not the run that started it
+/// is still there.
 struct ThreadSpawn {
     passes: Arc<Admission<()>>,
 }
 
 impl CompactionSpawn for ThreadSpawn {
     fn spawn(&self, pass: Box<dyn FnOnce() + Send + 'static>) {
-        let Ok(permit) = self.passes.try_admit_unkeyed() else {
-            // The pass's sender drops with it, so the run reads a refused pass.
-            tracing::debug!(
-                reason = "compaction_saturated",
-                "a compaction pass was refused at its bound"
-            );
-            return;
-        };
+        let passes = Arc::clone(&self.passes);
         if let Err(error) = std::thread::Builder::new()
             .name("code-mode-compaction".to_owned())
             .spawn(move || {
-                let _permit = permit;
+                let Ok(_permit) = passes.admit_blocking(()) else {
+                    // The pass's sender drops with it, so the run reads a
+                    // pass that never ran.
+                    tracing::debug!(
+                        reason = "compaction_waited_out",
+                        "a compaction pass waited past its deadline for its turn"
+                    );
+                    return;
+                };
                 pass();
             })
         {
@@ -488,4 +494,4 @@ fn refused(suppression: CompactionSuppression, detail: String) -> CompactionRefu
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

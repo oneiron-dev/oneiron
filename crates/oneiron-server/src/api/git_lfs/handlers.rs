@@ -1,9 +1,10 @@
 //! LFS batch, upload, download, and verify handlers.
 
 use super::gate::{LfsAccess, authorize, require_lfs_write};
+use super::streaming::DiskFloor;
 use super::support::{
     LFS_BATCH_NOT_FOUND, LFS_BATCH_UNPROCESSABLE, LFS_OBJECT_MEDIA_TYPE, declared_size, href_base,
-    lfs_engine_error, lfs_json_response, lfs_refusal, lfs_saturated, now_secs,
+    lfs_disk_floor, lfs_engine_error, lfs_json_response, lfs_waited_out, now_secs,
 };
 use super::wire::{
     LfsAction, LfsBatchObject, LfsBatchOperation, LfsBatchRequest, LfsBatchResponse,
@@ -12,6 +13,7 @@ use super::wire::{
 use crate::error::ApiError;
 use crate::error::EnvelopedApiError;
 use crate::server::SyncServer;
+use crate::wire_telemetry::LimitRow;
 use axum::body::{Body, Bytes};
 use axum::extract::Path;
 use axum::extract::State;
@@ -134,10 +136,13 @@ fn batch_entry(
 
 /// `PUT|POST /git/{repo}/info/lfs/objects/{oid}` — exact body upload.
 ///
-/// Admission comes before a byte is spooled: a declared size over the object
-/// cap is refused outright, then the upload takes a transfer permit and
-/// reserves its declared size (or the cap, when it declares none) against the
-/// vault's LFS quota. Its worker holds both until it ends.
+/// The one refusal an upload meets is the disk floor: a declared size that
+/// would take the vault's disk below its reserve is refused before a byte is
+/// spooled, and an upload that gets there while it streams is ended. The
+/// per-object size and the storage quota are rows: an upload past either
+/// still lands, and the row asks whether everything is okay. Past the bound
+/// on transfers the upload waits its turn. Its worker holds the transfer
+/// permit and its quota reservation until it ends.
 pub(crate) async fn lfs_upload(
     State(server): State<Arc<SyncServer>>,
     Path((_repo, oid)): Path<(String, String)>,
@@ -147,45 +152,57 @@ pub(crate) async fn lfs_upload(
     let auth = authorize(&headers, &server, LfsAccess::Write).map_err(EnvelopedApiError::from)?;
     let oid = LfsOid::parse_hex(&oid)
         .map_err(|error| lfs_engine_error("lfs oid is not a 64-character sha256", &error))?;
-    let cap = server.config.max_lfs_object_bytes;
+    let size_row = server.config.max_lfs_object_bytes;
     let declared = declared_size(&headers);
-    if let Some(size) = declared.filter(|size| *size > cap) {
-        let bytes = |value: u64| usize::try_from(value).unwrap_or(usize::MAX);
-        return Err(ApiError::payload_too_large("lfs object", bytes(cap), bytes(size)).into());
+    if let Some(size) = declared.filter(|size| *size > size_row) {
+        server
+            .transfers
+            .questions
+            .ask(LimitRow::LfsObjectSize, size_row, size);
     }
-    let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()) else {
-        return Ok(lfs_saturated());
+    let floor = DiskFloor::new(
+        server.vault.lfs_storage_dir().to_owned(),
+        server.transfers.disk_reserve,
+    );
+    if let Some(size) = declared
+        && !floor.has_room_for(size)
+    {
+        return Ok(lfs_disk_floor());
+    }
+    let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()).await else {
+        return Ok(lfs_waited_out());
     };
     // The quota reads every stored object, so it runs in the blocking pool
     // under the permit just taken: at most as many reads as transfers, and
     // none on the runtime.
     let reserving = Arc::clone(&server);
     let (reserved, permit) = tokio::task::spawn_blocking(move || {
-        let size = declared.unwrap_or(cap);
+        let size = declared.unwrap_or(size_row);
         let reserved = reserving.transfers.reserve_lfs(&reserving.vault, size);
         (reserved, permit)
     })
     .await
     .map_err(|_| ApiError::internal_server_error("lfs quota worker failed"))?;
-    let Some(reservation) =
-        reserved.map_err(|error| lfs_engine_error("lfs quota could not be read", &error))?
-    else {
-        return Ok(lfs_refusal(
-            StatusCode::INSUFFICIENT_STORAGE,
-            "lfs storage quota is full; delete objects or raise limits.lfs_quota_bytes",
-        ));
-    };
+    let reservation =
+        reserved.map_err(|error| lfs_engine_error("lfs quota could not be read", &error))?;
     let outcome = super::streaming::upload(
         Arc::clone(&server.vault),
-        oid,
-        declared,
-        cap,
+        super::streaming::UploadTerms {
+            oid,
+            declared,
+            size_row,
+            floor,
+            questions: Arc::clone(&server.transfers.questions),
+            now: now_secs()?,
+            idle: server.transfers.idle,
+        },
         body,
-        now_secs()?,
         (permit, reservation),
-        server.transfers.idle,
     )
     .await?;
+    let Some(outcome) = outcome else {
+        return Ok(lfs_disk_floor());
+    };
     lfs_json_response(
         StatusCode::OK,
         &LfsUploadResponse {
@@ -220,8 +237,8 @@ pub(crate) async fn lfs_download(
     //
     // One permit covers the preflight and the stream: each worker holds it in
     // turn, so a client that hangs up mid-preflight frees nothing early.
-    let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()) else {
-        return Ok(lfs_saturated());
+    let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()).await else {
+        return Ok(lfs_waited_out());
     };
     let vault = Arc::clone(&server.vault);
     let (verified, permit) = tokio::task::spawn_blocking(move || {
@@ -271,8 +288,8 @@ pub(crate) async fn lfs_verify(
         )
         .into());
     }
-    let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()) else {
-        return Ok(lfs_saturated());
+    let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()).await else {
+        return Ok(lfs_waited_out());
     };
     let vault = Arc::clone(&server.vault);
     let size = request.size;

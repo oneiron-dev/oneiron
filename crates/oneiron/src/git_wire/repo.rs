@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use super::failure::invalid;
 use super::record::{hash_field, hex_lower};
@@ -111,7 +112,7 @@ pub(crate) struct GitWireRepoGuard {
 
 /// Serializes every engine effect on the repository behind `common_dir`.
 pub(crate) fn lock_repository(common_dir: &Path) -> Result<GitWireRepoGuard> {
-    acquire_repository(common_dir, true)?.ok_or(Error::ConcurrentWrite(
+    acquire_repository(common_dir, Until::Granted)?.ok_or(Error::ConcurrentWrite(
         "git wire repository lock not granted",
     ))
 }
@@ -120,10 +121,44 @@ pub(crate) fn lock_repository(common_dir: &Path) -> Result<GitWireRepoGuard> {
 /// another process holds the repository. Re-entrant on the holding thread all
 /// the same.
 pub(crate) fn try_lock_repository(common_dir: &Path) -> Result<Option<GitWireRepoGuard>> {
-    acquire_repository(common_dir, false)
+    acquire_repository(common_dir, Until::Now)
 }
 
-fn acquire_repository(common_dir: &Path, wait: bool) -> Result<Option<GitWireRepoGuard>> {
+/// [`lock_repository`] that waits at most `wait`: `None` while another thread
+/// or another process still holds the repository then.
+pub(crate) fn lock_repository_within(
+    common_dir: &Path,
+    wait: Duration,
+) -> Result<Option<GitWireRepoGuard>> {
+    acquire_repository(common_dir, Until::Deadline(Instant::now() + wait))
+}
+
+/// How long an acquisition waits for a repository another holder has.
+#[derive(Clone, Copy)]
+enum Until {
+    /// Until it is granted.
+    Granted,
+    /// Not at all.
+    Now,
+    /// Until this moment.
+    Deadline(Instant),
+}
+
+impl Until {
+    /// How long is left to wait, or `None` once there is nothing left.
+    fn left(self) -> Option<Option<Duration>> {
+        match self {
+            Self::Granted => Some(None),
+            Self::Now => None,
+            Self::Deadline(deadline) => {
+                let left = deadline.saturating_duration_since(Instant::now());
+                (!left.is_zero()).then_some(Some(left))
+            }
+        }
+    }
+}
+
+fn acquire_repository(common_dir: &Path, until: Until) -> Result<Option<GitWireRepoGuard>> {
     let key = common_dir.as_os_str().as_encoded_bytes().to_vec();
     let depth = held_depth(&key);
     if depth > 0 {
@@ -135,10 +170,10 @@ fn acquire_repository(common_dir: &Path, wait: bool) -> Result<Option<GitWireRep
         }));
     }
     let cell = repo_lock_cell(&key)?;
-    if !acquire_cell(&cell, wait)? {
+    if !acquire_cell(&cell, until)? {
         return Ok(None);
     }
-    let file = match acquire_file_lock(common_dir, wait) {
+    let file = match acquire_file_lock(common_dir, until) {
         Ok(FileLock::Held(file)) => file,
         Ok(FileLock::Busy) => {
             release_cell(&cell);
@@ -201,20 +236,18 @@ fn repo_lock_cell(key: &[u8]) -> Result<Arc<GitWireRepoLockCell>> {
 }
 
 /// Takes the in-process hold, and says whether it did: `false` only when
-/// `wait` is off and another thread holds it.
-fn acquire_cell(cell: &Arc<GitWireRepoLockCell>, wait: bool) -> Result<bool> {
-    let mut held = cell
-        .held
-        .lock()
-        .map_err(|_| Error::ConcurrentWrite("git wire repository lock poisoned"))?;
+/// another thread still holds it once `until` has run out.
+fn acquire_cell(cell: &Arc<GitWireRepoLockCell>, until: Until) -> Result<bool> {
+    fn poisoned<T>(_: std::sync::PoisonError<T>) -> Error {
+        Error::ConcurrentWrite("git wire repository lock poisoned")
+    }
+    let mut held = cell.held.lock().map_err(poisoned)?;
     while *held {
-        if !wait {
-            return Ok(false);
-        }
-        held = cell
-            .released
-            .wait(held)
-            .map_err(|_| Error::ConcurrentWrite("git wire repository lock poisoned"))?;
+        held = match until.left() {
+            None => return Ok(false),
+            Some(None) => cell.released.wait(held).map_err(poisoned)?,
+            Some(Some(left)) => cell.released.wait_timeout(held, left).map_err(poisoned)?.0,
+        };
     }
     *held = true;
     Ok(true)
@@ -237,8 +270,12 @@ enum FileLock {
 }
 
 #[cfg(unix)]
-fn acquire_file_lock(common_dir: &Path, wait: bool) -> Result<FileLock> {
+fn acquire_file_lock(common_dir: &Path, until: Until) -> Result<FileLock> {
     use std::os::fd::AsRawFd;
+
+    /// How often a bounded wait asks the kernel again. Another process
+    /// holding the repository is rare: the door's own pushes queue in process.
+    const RETRY: Duration = Duration::from_millis(25);
 
     let file = fs::OpenOptions::new()
         .read(true)
@@ -246,28 +283,32 @@ fn acquire_file_lock(common_dir: &Path, wait: bool) -> Result<FileLock> {
         .create(true)
         .truncate(false)
         .open(common_dir.join(GIT_WIRE_REPO_LOCK_FILE_NAME))?;
-    let operation = if wait {
+    let operation = if matches!(until, Until::Granted) {
         libc::LOCK_EX
     } else {
         libc::LOCK_EX | libc::LOCK_NB
     };
-    // SAFETY: `file.as_raw_fd()` is valid for the duration of this call and
-    // `flock(LOCK_EX)` blocks until the kernel grants the advisory lock, or
-    // with `LOCK_NB` returns at once.
-    let granted = unsafe { libc::flock(file.as_raw_fd(), operation) };
-    if granted == 0 {
-        return Ok(FileLock::Held(Some(file)));
-    }
-    let error = std::io::Error::last_os_error();
-    if !wait && error.kind() == std::io::ErrorKind::WouldBlock {
-        Ok(FileLock::Busy)
-    } else {
-        Err(error.into())
+    loop {
+        // SAFETY: `file.as_raw_fd()` is valid for the duration of this call
+        // and `flock(LOCK_EX)` blocks until the kernel grants the advisory
+        // lock, or with `LOCK_NB` returns at once.
+        let granted = unsafe { libc::flock(file.as_raw_fd(), operation) };
+        if granted == 0 {
+            return Ok(FileLock::Held(Some(file)));
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::WouldBlock {
+            return Err(error.into());
+        }
+        match until.left() {
+            Some(Some(left)) => std::thread::sleep(left.min(RETRY)),
+            _ => return Ok(FileLock::Busy),
+        }
     }
 }
 
 #[cfg(not(unix))]
-fn acquire_file_lock(_common_dir: &Path, _wait: bool) -> Result<FileLock> {
+fn acquire_file_lock(_common_dir: &Path, _until: Until) -> Result<FileLock> {
     Ok(FileLock::Held(None))
 }
 
