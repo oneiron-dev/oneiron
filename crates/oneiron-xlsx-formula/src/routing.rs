@@ -16,7 +16,7 @@
 //! The router only reads; it never rewrites parts and never discards unknown
 //! XML. Detection failures fail closed toward the fallback.
 
-use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_parse::parser::{ASTNodeType, ReferenceType};
 
 use oneiron_docedit::retained_opc::{Limits, Package, XmlLimits};
 
@@ -76,8 +76,9 @@ pub fn preserve_external_links(
 ///
 /// `part_names` are OPC part paths; `rels_xml` are the bytes of every `.rels`
 /// part, read under `limits`; `formulas` are UI formula strings, parsed here
-/// so a parse failure also fails closed. Pure and deterministic: same inputs,
-/// same decision.
+/// within the crate's formula bounds so a parse failure, or a formula over
+/// the bounds, also fails closed. Pure and deterministic: same inputs, same
+/// decision.
 pub fn route_workbook<'a>(
     part_names: impl IntoIterator<Item = &'a str>,
     rels_xml: impl IntoIterator<Item = &'a [u8]>,
@@ -122,32 +123,39 @@ fn rels_has_external_target(xml: &[u8], limits: XmlLimits) -> bool {
     })
 }
 
-/// Parse a formula with the parser's mandatory leading `=`. Unlike the
-/// workbook setter, `parse` treats unprefixed input as literal text.
+/// Whether a formula names another workbook. The parser builds an external
+/// reference only from a `[book]` sheet prefix, so a formula without `[` is
+/// local unparsed, however long. Any other formula goes through the crate's
+/// bounded parser (byte and token limits, the mandatory leading `=`) and its
+/// AST is walked without recursion: one over the bounds is `Err`, so it fails
+/// closed like any other parse failure, and no chain of operators builds a
+/// deep AST here.
 fn has_external_reference(formula: &str) -> std::result::Result<bool, ()> {
-    let expression = if formula.starts_with('=') {
-        std::borrow::Cow::Borrowed(formula)
-    } else {
-        std::borrow::Cow::Owned(format!("={formula}"))
-    };
-    let ast = formualizer_parse::parse(expression.as_ref()).map_err(|_| ())?;
-    Ok(ast_contains_external(&ast))
-}
-
-fn ast_contains_external(node: &ASTNode) -> bool {
-    match &node.node_type {
-        ASTNodeType::Literal(_) | ASTNodeType::Omitted => false,
-        ASTNodeType::Reference { reference, .. } => {
-            matches!(reference, ReferenceType::External(_))
-        }
-        ASTNodeType::UnaryOp { expr, .. } => ast_contains_external(expr),
-        ASTNodeType::BinaryOp { left, right, .. } => {
-            ast_contains_external(left) || ast_contains_external(right)
-        }
-        ASTNodeType::Function { args, .. } => args.iter().any(ast_contains_external),
-        ASTNodeType::Call { callee, args } => {
-            ast_contains_external(callee) || args.iter().any(ast_contains_external)
-        }
-        ASTNodeType::Array(rows) => rows.iter().flatten().any(ast_contains_external),
+    if !formula.contains('[') {
+        return Ok(false);
     }
+    let ast = crate::context::parse_bounded(formula).map_err(|_| ())?;
+    let mut pending = vec![&ast];
+    while let Some(node) = pending.pop() {
+        match &node.node_type {
+            ASTNodeType::Literal(_) | ASTNodeType::Omitted => {}
+            ASTNodeType::Reference { reference, .. } => {
+                if matches!(reference, ReferenceType::External(_)) {
+                    return Ok(true);
+                }
+            }
+            ASTNodeType::UnaryOp { expr, .. } => pending.push(expr),
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                pending.push(left);
+                pending.push(right);
+            }
+            ASTNodeType::Function { args, .. } => pending.extend(args),
+            ASTNodeType::Call { callee, args } => {
+                pending.push(callee);
+                pending.extend(args);
+            }
+            ASTNodeType::Array(rows) => pending.extend(rows.iter().flatten()),
+        }
+    }
+    Ok(false)
 }

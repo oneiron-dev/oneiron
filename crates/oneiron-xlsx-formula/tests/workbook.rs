@@ -9,7 +9,7 @@ use std::io::{Cursor, Read, Write};
 
 use oneiron_docedit::retained_opc::{Limits, Package, XmlLimits};
 use oneiron_xlsx_formula::engine::FormualizerEngine;
-use oneiron_xlsx_formula::{FormulaError, RecalcClock, preserve_external_links};
+use oneiron_xlsx_formula::{FormulaError, RecalcClock, preserve_external_links, route_workbook};
 
 const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const DOC_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -754,6 +754,37 @@ fn formula_only_external_references_cannot_be_destroyed_by_fallback() {
         sheet(r#"<c r="A1"><f>'[linked.xlsx]S'!A1</f><v>43</v></c>"#),
     );
     assert_eq!(preserve_external_links(&input, &recached, limits()), Ok(()));
+}
+
+#[test]
+fn a_formula_too_long_to_parse_safely_is_classified_without_deep_recursion() {
+    // C12: routing parsed every formula with the raw parser and walked the
+    // AST recursively, so a sheet formula of 100,000 chained additions
+    // overflowed the stack (an abort) wherever an edit checked its links.
+    let chain = |head: &str, terms: usize| format!("{head}{}", "+1".repeat(terms));
+    let local = chain("1", 100_000);
+    let linked = chain("'[linked.xlsx]S'!A1", 100_000);
+    // Under the byte limit, over the token limit.
+    let linked_tokens = chain("'[linked.xlsx]S'!A1", 5_000);
+    let xml = limits().xml;
+    assert!(route_workbook([], [], [local.as_str()], xml).is_in_process());
+    assert!(!route_workbook([], [], [linked.as_str()], xml).is_in_process());
+    assert!(!route_workbook([], [], [linked_tokens.as_str()], xml).is_in_process());
+    // A bracket that names no workbook still parses as local.
+    assert!(route_workbook([], [], ["SUM(Prices[Price])"], xml).is_in_process());
+
+    let cell = |formula: &str| sheet(&format!(r#"<c r="A1"><f>{formula}</f><v>1</v></c>"#));
+    let unlinked = with_part(&fixture("", "", false), OUTPUT, cell("1"));
+    let input = with_part(&unlinked, OUTPUT, cell(&local));
+    assert_eq!(preserve_external_links(&input, &unlinked, limits()), Ok(()));
+    for formula in [&linked, &linked_tokens] {
+        let input = with_part(&unlinked, OUTPUT, cell(formula));
+        assert_eq!(preserve_external_links(&input, &input, limits()), Ok(()));
+        assert_eq!(
+            preserve_external_links(&input, &unlinked, limits()),
+            Err("fallback altered or dropped an external formula link")
+        );
+    }
 }
 
 /// `fixture` whose `Result!A1` is a dynamic-array formula saved over `extent`.

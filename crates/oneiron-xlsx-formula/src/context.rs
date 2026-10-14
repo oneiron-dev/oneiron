@@ -41,19 +41,7 @@ pub(super) struct Inspection {
 
 /// Prove bounded evaluation and report what the formula needs.
 pub(super) fn inspect_formula(formula: &str) -> Result<Inspection> {
-    if formula.len() > MAX_FORMULA_BYTES {
-        return Err(unsupported("formula byte limit"));
-    }
-    let expression = if formula.starts_with('=') {
-        std::borrow::Cow::Borrowed(formula)
-    } else {
-        std::borrow::Cow::Owned(format!("={formula}"))
-    };
-    let tokens = TokenStream::new(&expression).map_err(|_| unsupported("formula tokenization"))?;
-    if tokens.len() > MAX_FORMULA_TOKENS {
-        return Err(unsupported("formula token limit"));
-    }
-    let node = parse_bounded(&expression)?;
+    let node = parse_bounded(formula)?;
     let mut pending: Vec<(&ASTNode, usize)> = vec![(&node, 1)];
     let mut host_context = None;
     let mut lambda = false;
@@ -185,12 +173,22 @@ fn needs_host(name: &str, args: Option<&[ASTNode]>) -> Option<&'static str> {
 
 /// Parse a formula within the bounds `inspect_formula` proves, with the
 /// parser's mandatory leading `=`.
+///
+/// The byte and token bounds are checked here, so every parse in the crate
+/// holds them before a recursive AST (or its Drop) exists, whoever calls.
 pub(super) fn parse_bounded(formula: &str) -> Result<ASTNode> {
+    if formula.len() > MAX_FORMULA_BYTES {
+        return Err(unsupported("formula byte limit"));
+    }
     let expression = if formula.starts_with('=') {
         std::borrow::Cow::Borrowed(formula)
     } else {
         std::borrow::Cow::Owned(format!("={formula}"))
     };
+    let tokens = TokenStream::new(&expression).map_err(|_| unsupported("formula tokenization"))?;
+    if tokens.len() > MAX_FORMULA_TOKENS {
+        return Err(unsupported("formula token limit"));
+    }
     formualizer_parse::parse(expression.as_ref()).map_err(|_| unsupported("formula parsing"))
 }
 
