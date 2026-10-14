@@ -23,8 +23,10 @@ doctest = true
 # module at its old `oneiron::<module>` path.
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
-# World keys (P6b): the OF-570 envelope, and the this-device-only key slot.
+# The OF-570 envelope: world keys (P6b), and the recovery kit's passphrase
+# stretch (P6a).
 oneiron-crypto = { version = "0.1.0", path = "../oneiron-crypto" }
+# World keys (P6b): the this-device-only key slot.
 oneiron-keystore = { version = "0.1.0", path = "../oneiron-keystore" }
 # The OS RNG on the rand_core line oneiron-crypto takes (0.10).
 getrandom = { version = "=0.4.3", features = ["sys_rng"] }
@@ -62,11 +64,15 @@ serde_json = { workspace = true, features = ["raw_value"] }
 jsonschema = { version = "0.33", default-features = false }
 serde_path_to_error = "0.1"
 postcard = { workspace = true, optional = true }
-blake3 = { workspace = true }
+# `zeroize`: the recovery kit wipes the hasher that saw a kit secret.
+blake3 = { workspace = true, features = ["zeroize"] }
 # SECRET-02 (ONE-1920): lease materialization returns the value wrapped in
 # `zeroize::Zeroizing` so the caller's copy is scrubbed on drop. No other
 # deps are added by that ticket.
 zeroize = "1"
+# The recovery kit normalises its passphrase to NFC, so the same words typed on two
+# systems rebuild the same piece. Already resolved transitively.
+unicode-normalization = "0.1"
 # Per-claim hot-value AEAD for erasure-target gate decisions.
 aes-gcm = "0.10"
 p256 = { workspace = true }

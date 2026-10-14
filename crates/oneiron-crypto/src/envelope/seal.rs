@@ -293,7 +293,7 @@ fn copy(bytes: &[u8; 32]) -> Zeroizing<[u8; 32]> {
 
 /// Argon2id v0x13, 32-byte output. The caller has bounded `cost`. The work memory is
 /// allocated here, fallibly, and wiped on drop (the provider frees its own unwiped).
-fn argon2id(
+pub(crate) fn argon2id(
     passphrase: &Passphrase,
     cost: &Argon2Cost,
     salt: &[u8; 32],

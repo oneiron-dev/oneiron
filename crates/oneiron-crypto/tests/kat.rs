@@ -100,6 +100,24 @@ fn argon2id_rfc9106() {
 }
 
 #[test]
+fn stretch_passphrase_matches_reference_argon2id() {
+    let v = vectors();
+    let n = "argon2id_libargon2_stretch";
+    let field = |name: &str| u32::try_from(v[n][name].as_u64().expect("number")).expect("u32");
+    let cost = oneiron_crypto::Argon2Cost {
+        m_kib: field("memory_kib"),
+        t: field("passes"),
+        p: u8::try_from(field("lanes")).expect("u8"),
+    };
+    let passphrase =
+        oneiron_crypto::Passphrase::new(&hex_field(&v, n, "password")).expect("passphrase");
+    let out =
+        oneiron_crypto::stretch_passphrase(&passphrase, &cost, &arr32(&hex_field(&v, n, "salt")))
+            .expect("stretch");
+    assert_eq!(out.to_vec(), hex_field(&v, n, "tag"));
+}
+
+#[test]
 fn xchacha20poly1305_draft_irtf_cfrg_xchacha_03() {
     let v = vectors();
     let n = "xchacha20poly1305_draft03_a3_1";

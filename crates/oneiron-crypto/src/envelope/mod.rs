@@ -13,6 +13,9 @@ use crate::keys::{Argon2Cost, MLKEM1024_CIPHERTEXT_LEN};
 use crate::suite::{Suite, SuiteId, SuiteKind};
 use crate::{MAX_ID_LEN, MAX_PLAINTEXT_LEN, TAG_LEN};
 
+/// Also the stretch behind `crate::stretch_passphrase`.
+pub(crate) use self::seal::argon2id;
+
 const MAGIC: &[u8; 4] = b"ONEV";
 /// The canonical encoding version this build writes and reads.
 const VERSION: u16 = 1;

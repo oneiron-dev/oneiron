@@ -9,6 +9,10 @@ use crate::llm::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest};
 #[cfg(any(test, feature = "test-support"))]
 pub const TEST_PROMPT_PACKAGE_RELATIVE_PATH: &str = "crates/oneiron/tests/fixtures/prompts";
 pub const ENGINE_EXECUTOR_WIRE_PROMPT_RELATIVE_PATH: &str = "blocks/engine-executor-wire.md";
+/// The host prompt an executor run's compaction backend writes summaries
+/// under (agent-runtime-v1 §d7), in the same package as the wire prompt.
+pub const ENGINE_EXECUTOR_COMPACTION_PROMPT_RELATIVE_PATH: &str =
+    "blocks/engine-executor-compaction.md";
 pub const PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION: &str = "oneiron.prompt_recompile.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,6 +85,16 @@ pub fn resolve_engine_executor_wire_prompt(
     let package_root = package_root.as_ref();
     resolve_prompt(
         package_root.join(ENGINE_EXECUTOR_WIRE_PROMPT_RELATIVE_PATH),
+        package_root,
+    )
+}
+
+pub fn resolve_engine_executor_compaction_prompt(
+    package_root: impl AsRef<Path>,
+) -> Result<ResolvedPrompt, io::Error> {
+    let package_root = package_root.as_ref();
+    resolve_prompt(
+        package_root.join(ENGINE_EXECUTOR_COMPACTION_PROMPT_RELATIVE_PATH),
         package_root,
     )
 }

@@ -721,6 +721,11 @@ fn pending_input_in_txn(
     let Some(raw) = vault.store.port_entity_record(wtxn, id)? else {
         return Ok(None);
     };
+    // A stale record's words are withdrawn; whatever marked it, it is
+    // retired, never sent out.
+    if crate::ports::stale_in_txn(&vault.store, wtxn, id)? {
+        return Ok(None);
+    }
     // A TURN embeds its messages' text, read now, and the lease commits to
     // exactly that text: marking it again here makes a fill current only for
     // the words it embedded, even when a door that moved them marked nothing.
