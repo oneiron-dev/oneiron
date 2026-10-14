@@ -298,12 +298,15 @@ impl HybridSecretKey {
     }
 }
 
-/// Stack bytes wiped after a key is built from its seed. Sized from stack painting
-/// (`keys::tests`), one per build, as `record::sign` sizes its signers' wipes.
+/// Stack bytes wiped after a key is built from its seed, one per build, as
+/// `record::sign` sizes its signers' wipes. Stack painting (`keys::tests`, x86_64 Linux,
+/// rustc 1.96, 2026-10-14): the build reached 41,848 bytes below its caller in a release
+/// build and 149,032 in a dev build (this crate at opt-level 0), so about 2.3x and 1.8x
+/// that.
 const SEED_KEY_STACK_WIPE: usize = if cfg!(debug_assertions) {
-    512 * 1024
-} else {
     256 * 1024
+} else {
+    96 * 1024
 };
 
 /// Out of line, so the stack wipe in [`HybridSecretKey::from_seed`] covers its frames:
