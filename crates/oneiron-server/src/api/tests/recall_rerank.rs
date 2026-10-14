@@ -228,27 +228,47 @@ async fn recall(
     recall_spec(server, credential, actor, spec).await
 }
 
-/// One MCP `recall` of `spec`: the pack, or the refusal.
+/// One MCP `recall` of `spec` from a caller on this device (a loopback
+/// peer): the pack, or the refusal.
 async fn recall_spec(
     server: &Arc<SyncServer>,
     credential: &str,
     actor: oneiron::EntityId,
     spec: Value,
 ) -> Result<Value, Value> {
-    let (status, reply) = route_json(
-        server.clone(),
-        mcp_endpoint_call_request(
-            MCP_TOOL_FIRST_PATH,
-            credential,
-            &format!("recall-{}", spec["effort"]),
-            "recall",
-            mcp_merge_args(
-                mcp_endpoint_envelope(actor, "read_memory"),
-                json!({"arguments": {"spec": spec}}),
-            ),
+    recall_spec_from(server, credential, actor, spec, true).await
+}
+
+/// [`recall_spec`] from a loopback peer when `on_device`, else from one off
+/// this device.
+async fn recall_spec_from(
+    server: &Arc<SyncServer>,
+    credential: &str,
+    actor: oneiron::EntityId,
+    spec: Value,
+    on_device: bool,
+) -> Result<Value, Value> {
+    let mut request = mcp_endpoint_call_request(
+        MCP_TOOL_FIRST_PATH,
+        credential,
+        &format!("recall-{}", spec["effort"]),
+        "recall",
+        mcp_merge_args(
+            mcp_endpoint_envelope(actor, "read_memory"),
+            json!({"arguments": {"spec": spec}}),
         ),
-    )
-    .await;
+    );
+    let peer = if on_device {
+        std::net::Ipv4Addr::LOCALHOST
+    } else {
+        std::net::Ipv4Addr::new(192, 0, 2, 7)
+    };
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            peer, 40100,
+        ))));
+    let (status, reply) = route_json(server.clone(), request).await;
     assert_eq!(status, StatusCode::OK, "{reply}");
     match reply.get("error") {
         Some(_) => Err(reply),
@@ -832,25 +852,30 @@ impl RunReceiptSink for FlagOnAdmission {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_world_flagged_while_a_rung_is_admitted_reaches_no_rung() {
     const KEPT: &str = "the lantern key is under the mat";
-    let fake = FakeReranker::start(prefers_known(), no_hook(), 10).await;
-    let models = reranker_models(&fake.base_url, 32_000);
-    let flag = Arc::new(FlagOnAdmission::default());
-    let (_dir, server, _host) = served_with(Some(&models), flag.clone()).await;
-    let actor = reader(&server, "rerank-admitted").await;
-    let world = world_with(server.vault(), actor, KEPT);
-    *flag.0.lock().unwrap() = Some((Arc::clone(server.vault()), world));
+    // Wonder R18 on this branch, after #1425: a caller off this device was
+    // told `device_only` too, a hint that a row it had just matched became
+    // device-local. It reads the skip of a pack with nothing to rerank.
+    for (on_device, reason) in [(true, "device_only"), (false, "no_candidates")] {
+        let fake = FakeReranker::start(prefers_known(), no_hook(), 10).await;
+        let models = reranker_models(&fake.base_url, 32_000);
+        let flag = Arc::new(FlagOnAdmission::default());
+        let (_dir, server, _host) = served_with(Some(&models), flag.clone()).await;
+        let actor = reader(&server, "rerank-admitted").await;
+        let world = world_with(server.vault(), actor, KEPT);
+        *flag.0.lock().unwrap() = Some((Arc::clone(server.vault()), world));
 
-    let pack = recall_spec(&server, "rerank-admitted", actor, high_in(world))
-        .await
-        .unwrap();
+        let pack = recall_spec_from(&server, "rerank-admitted", actor, high_in(world), on_device)
+            .await
+            .unwrap();
 
-    assert!(flag.0.lock().unwrap().is_none(), "the rung was admitted");
-    assert_eq!(fake.calls(), 0, "the rung was not sent");
-    assert_eq!(
-        pack["retrieval_meta"]["rerank"],
-        json!({"status": "skipped", "reason": "device_only"}),
-        "{pack}"
-    );
+        assert!(flag.0.lock().unwrap().is_none(), "the rung was admitted");
+        assert_eq!(fake.calls(), 0, "the rung was not sent");
+        assert_eq!(
+            pack["retrieval_meta"]["rerank"],
+            json!({"status": "skipped", "reason": reason}),
+            "on device {on_device}: {pack}"
+        );
+    }
 }
 
 /// #1419 Wonder W1-3: the pack repeats the name the endpoint says answered

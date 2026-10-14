@@ -195,7 +195,9 @@ pub enum RerankSkip {
     /// The deadline came before the rerank stage.
     Deadline,
     /// A row sent with words became one a device-only world keeps while the
-    /// reranker was called, so nothing more was sent ([`RerankEgress`]).
+    /// reranker was called, so nothing more was sent ([`RerankEgress`]). Only
+    /// a caller on this device reads this reason; one off it reads the skip
+    /// of a pack with nothing to rerank.
     DeviceOnly,
 }
 
@@ -429,7 +431,10 @@ impl Memory<'_> {
                 },
                 Err(_) if egress.refused() => {
                     let mut pack = by_fusion(deadline.as_ref())?;
-                    pack.retrieval_meta.rerank = Some(if pack.retrieval_meta.partial {
+                    // Only a caller on this device is told why: one off it
+                    // reads no hint of a device-local row (DEC-0005).
+                    let told = self.locality() == crate::claim::CallerLocality::OnDevice;
+                    pack.retrieval_meta.rerank = Some(if pack.retrieval_meta.partial || !told {
                         unreranked(&pack)
                     } else {
                         RerankReport::Skipped {

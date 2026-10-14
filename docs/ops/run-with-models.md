@@ -453,7 +453,9 @@ empty scores last. A block with no text to send makes no call and says
 while that device-only verdict, run again, keeps none of the rows it sends
 with words. Once it keeps one (its world was flagged while a rung was out),
 nothing more is sent, and the recall ranks by fusion and says `skipped` with
-`device_only`. The pack repeats the name the endpoint says
+`device_only` to a caller on this device; a caller off it reads
+`no_candidates`, as it reads no hint of a device-local row. The pack repeats
+the name the endpoint says
 answered as `served_model` only when it is at most 200 printable characters.
 The model runs outside every vault transaction, and the scores apply only to
 that same block. A block that changed while it was scored (the vault was

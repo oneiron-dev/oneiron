@@ -756,7 +756,12 @@ impl Memory<'_> {
                     .world(world_scope)
                     .retrieval_effort(effective, &seeds)
                     .authority_filter(plan_filter.clone());
-                pipeline = pipeline.filter_candidates(&admitted);
+                // A caller off this device: no row a device-local world
+                // keeps enters a list, as on the pack route below, or it
+                // would scale the scores of the rows the caller reads.
+                pipeline = pipeline
+                    .filter_candidates(&admitted)
+                    .caller_off_device(lane.off_device());
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     pipeline = pipeline.in_session(telemetry);
                 }
