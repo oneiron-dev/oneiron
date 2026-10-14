@@ -64,6 +64,9 @@ impl PipelineBuilder<'_> {
             state.validate()?;
         }
         let started = Instant::now();
+        // One read of the no-match floors judges the run, keys its fork and
+        // fills its replay inputs, whatever a host sets while it runs.
+        self.no_match_floors = Some(std::sync::Arc::new(self.vault.no_match_floors()));
         let started_at = self.vault.store.clock.now_recorded_at();
         let temporal_now = self.temporal_now.unwrap_or(started_at);
         let (occurred_range, temporal_hints) = self.resolved_occurred_range(temporal_now);
@@ -619,7 +622,7 @@ impl PipelineBuilder<'_> {
         signal_components: &HashMap<EntityId, Vec<crate::store::RetrievalScoreComponent>>,
         hyde_expanded: bool,
     ) -> Result<bool> {
-        let floors = self.vault.no_match_floors();
+        let floors = self.no_match_floors();
         let space = self.vault.evidence_space();
         let rtxn = if floors.keys_space(space) {
             Some(self.vault.store.env.read_txn()?)

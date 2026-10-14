@@ -93,8 +93,8 @@ impl Vault {
         Ok(())
     }
 
-    /// Every floor the no-match check reads, at once, so one run judges,
-    /// keys and records the same ones.
+    /// Every floor the no-match check reads, at once. A run reads them
+    /// once, when it starts, and judges, keys and records by that copy.
     pub(crate) fn no_match_floors(&self) -> NoMatchFloors {
         self.vector_evidence
             .read()

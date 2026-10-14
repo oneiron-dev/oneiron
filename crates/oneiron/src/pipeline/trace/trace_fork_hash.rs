@@ -97,7 +97,7 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     fork_hash_scoring_constants(&mut hasher, builder.vault.config.fast_dims);
     // RET-01 reads the embedding space's own evidence floors, and a folding
     // run returns a matched MESSAGE as its TURN: both change the result.
-    let floors = builder.vault.no_match_floors();
+    let floors = builder.no_match_floors();
     fork_hash_f32(&mut hasher, floors.pair.floor);
     fork_hash_f32(&mut hasher, floors.pair.strong);
     // EMBED-PACK: a kind's own floors in the run's space take the pair's

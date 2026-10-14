@@ -847,7 +847,7 @@ impl PipelineBuilder<'_> {
         if skip_ret01_abstain {
             return Ok(capabilities);
         }
-        let floors = self.vault.no_match_floors();
+        let floors = self.no_match_floors();
         let mut metadata_cache = EntityMetadataCache::default();
         let mut kind_of = |id: &crate::EntityId| -> Result<Option<u8>> {
             Ok(metadata_cache

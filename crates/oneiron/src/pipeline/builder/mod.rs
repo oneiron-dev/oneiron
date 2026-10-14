@@ -5,6 +5,7 @@ mod effort;
 mod terminal;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::Vault;
 use crate::codebase::RepoRef;
@@ -16,6 +17,7 @@ use crate::query_expansion::{GroundingContext, HydeExpander, HydeOptions};
 use crate::rerank::{RerankOptions, Reranker};
 use crate::store::RetrievalAction;
 use crate::temporal::{TemporalAnchorMode, TemporalGranularity, TimeRange};
+use crate::vault::NoMatchFloors;
 
 use super::support::normalize_range;
 use super::types::{
@@ -88,6 +90,9 @@ pub struct PipelineBuilder<'a> {
     pub(super) hyde: Option<(&'a dyn HydeExpander, GroundingContext, HydeOptions)>,
     pub(super) access_factor_overrides: Option<&'a HashMap<EntityId, f32>>,
     pub(super) skip_vector_rescore: bool,
+    /// The no-match floors the run judges, hashes and records by, read once
+    /// when it starts ([`Self::no_match_floors`]).
+    pub(super) no_match_floors: Option<Arc<NoMatchFloors>>,
     /// Additive session routing (ONE-1728 K10). `None` on every canonical
     /// entry, which is therefore behaviorally unchanged; a retrieval issued
     /// inside a room passes the room's registration door so the retrieval-run
@@ -150,8 +155,18 @@ impl<'a> PipelineBuilder<'a> {
             hyde: None,
             access_factor_overrides: None,
             skip_vector_rescore: false,
+            no_match_floors: None,
             session: None,
         }
+    }
+
+    /// The no-match floors this run judges by and records: the vault's
+    /// floors as the run read them when it started, so floors a host sets
+    /// mid-run judge the next run, not part of this one.
+    pub(super) fn no_match_floors(&self) -> Arc<NoMatchFloors> {
+        self.no_match_floors
+            .clone()
+            .unwrap_or_else(|| Arc::new(self.vault.no_match_floors()))
     }
 
     /// Selects the exact executor model@revision for skill reliability ranking.

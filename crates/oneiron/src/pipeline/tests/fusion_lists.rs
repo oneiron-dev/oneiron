@@ -252,3 +252,84 @@ fn a_kind_floor_in_the_runs_space_keys_the_replay() -> Result<()> {
     assert_ne!(keys[0], keys[1], "a kind's floor keys the replay");
     Ok(())
 }
+
+/// Sol R4 on this branch: a run judged its no-match verdict by the floors
+/// in force as it judged, and keyed its fork and filled its replay inputs by
+/// the floors in force as it captured them. Floors a host set in between
+/// (here while it assesses the HyDE evidence) left a pack that the floors
+/// the run recorded refuse. A run reads the floors once, when it starts.
+#[test]
+fn a_run_judges_by_the_floors_it_records() -> Result<()> {
+    struct LoosensFloors<'v> {
+        vault: &'v Vault,
+        space: String,
+    }
+    impl HydeExpander for LoosensFloors<'_> {
+        fn id(&self) -> &str {
+            "test/loosens-floors"
+        }
+        fn expand(&self, _: &HydeRequest) -> Result<HydeExpansion> {
+            Ok(HydeExpansion {
+                grounded_query: "who fixes my car".into(),
+                hypothetical_answer: "a mechanic".into(),
+                embedding: QUERY.to_vec(),
+                subqueries: Vec::new(),
+            })
+        }
+        fn assess_evidence(&self, _: &CompletionRequest) -> Result<EvidenceVerdict> {
+            self.vault.set_vector_evidence_for(
+                &self.space,
+                ENTITY_TYPE_TURN,
+                floors(0.15, 0.25),
+            )?;
+            Ok(EvidenceVerdict::Sufficient)
+        }
+    }
+
+    let (_dir, vault) = open_test_vault();
+    put_text_and_vector(
+        &vault,
+        entity_id(0x3D),
+        "the mechanic says the automobile needs new brakes",
+        at(0.29),
+    )?;
+    let space = vault.evidence_space().to_owned();
+    // Below the floor the run starts with, strong under the one set mid-run.
+    vault.set_vector_evidence_for(&space, ENTITY_TYPE_TURN, floors(0.35, 0.5))?;
+    let host = LoosensFloors {
+        vault: &vault,
+        space,
+    };
+
+    let run = vault
+        .query()
+        .search_text("who fixes my car", 10)
+        .search_vector(&QUERY, 10)
+        .context_pack_budget(crate::context_pack::ContextPackRetrievalBudget::new(
+            10, 10, 10, 10, 10, 0,
+        ))
+        .hyde(
+            &host,
+            GroundingContext::default(),
+            HydeOptions {
+                channel_limit: 10,
+                retry_once: false,
+            },
+        )
+        .capture_retrieval_trace(true)
+        .run_with_telemetry()?;
+    let recorded = run
+        .run_id
+        .map(|id| vault.retrieval_run(id))
+        .transpose()?
+        .flatten()
+        .and_then(|row| row.replay_inputs)
+        .map(|inputs| inputs.config["vector_evidence"].clone());
+
+    assert!(
+        run.value.is_empty(),
+        "kept past the floors the run recorded, {recorded:?}: {:?}",
+        run.value
+    );
+    Ok(())
+}

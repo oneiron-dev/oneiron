@@ -164,7 +164,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
         "list_length": crate::fusion::FUSION_LIST_LENGTH,
         "sparse": ["phonetic"],
     });
-    let floors = builder.vault.no_match_floors();
+    let floors = builder.no_match_floors();
     let space = builder.vault.evidence_space();
     let kinds = floors.keyed.get(space).map(|kinds| {
         kinds
