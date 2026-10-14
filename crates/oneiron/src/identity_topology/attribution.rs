@@ -31,7 +31,8 @@ pub(crate) type AttributionKey = (EntityId, [u8; 32]);
 
 /// The author carriers this vault wrote itself, by carrier row: a digest of
 /// the row's body. Local truth that never replicates, so no peer can make its
-/// own carrier read as this vault's.
+/// own carrier read as this vault's. A restore keeping this vault's authority
+/// takes it from this vault, never from the image (`restore_class`).
 const AUTHORED_HERE: SideTable<HexId, [u8; 32], Raw> =
     SideTable::new(&side_table::IDENTITY_TOPOLOGY_AUTHORED_HERE);
 

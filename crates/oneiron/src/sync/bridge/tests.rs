@@ -5292,6 +5292,77 @@ fn the_generic_sync_state_door_cannot_mark_a_carrier_as_written_here() {
     );
 }
 
+/// A restore keeping this vault's authority takes which carriers this vault
+/// wrote from this vault, never from the image: a checkpoint's checksum is
+/// unkeyed, so whoever hands one in could mark a peer's carrier as written
+/// here or unmark this vault's own.
+#[test]
+fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
+    /// A checkpoint image's wire shape.
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Image {
+        version: u16,
+        created_at: u64,
+        databases: std::collections::BTreeMap<String, Vec<(Vec<u8>, Vec<u8>)>>,
+    }
+    let root = tempfile::tempdir().unwrap();
+    let vault = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    let (loser, survivor, own, other) = (
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+    );
+    for id in [&loser, &survivor, &own, &other] {
+        put_test_person(&vault, id);
+    }
+    let event = merge_here(&vault, loser, survivor, Some(own));
+    let core = vault.identity_topology_event(&event).unwrap().unwrap();
+    let (peer, blob) = (EntityId::now(), peer_author_carrier(event, &core, other));
+    deliver_peer_row(&vault, &peer, &blob);
+    let marks = vault.sync_state_keys_with_prefix("it:authored:").unwrap();
+    let image = root.path().join("image");
+    vault.snapshot_checkpoint(&image, 300).unwrap();
+
+    let bytes = std::fs::read(&image).unwrap();
+    let mut forged: Image = rmp_serde::from_slice(&bytes[41..]).unwrap();
+    let rows = forged.databases.get_mut("sync_state").unwrap();
+    rows.retain(|(key, _)| !key.starts_with(b"it:authored:"));
+    rows.push((
+        format!("it:authored:{}", peer.to_hex()).into_bytes(),
+        blake3::hash(&blob[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+            .as_bytes()
+            .to_vec(),
+    ));
+    rows.sort();
+    let body = rmp_serde::to_vec_named(&forged).unwrap();
+    let mut file = b"ONEIRONC1".to_vec();
+    file.extend_from_slice(blake3::hash(&body).as_bytes());
+    file.extend_from_slice(&body);
+    std::fs::write(&image, file).unwrap();
+
+    let (copy, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &root.path().join("copy"),
+        VaultConfig::device(),
+        &vault,
+        320,
+    )
+    .unwrap();
+    assert_eq!(
+        copy.sync_state_keys_with_prefix("it:authored:").unwrap(),
+        marks
+    );
+    let rtxn = copy.store.env.read_txn().unwrap();
+    assert_eq!(
+        crate::identity_topology::admitted_author_in_txn(&copy.store, &rtxn, event).unwrap(),
+        Some(crate::write_envelope::WriteActor::new(
+            own,
+            EdgeActorClass::Human
+        ))
+    );
+}
+
 #[test]
 fn invalid_deferred_participant_erasure_cannot_activate_verified_merge() {
     use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
