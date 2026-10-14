@@ -152,8 +152,12 @@ impl Vault {
         let mut state = session_entry_state(&entry)?;
         // A stretch goes on record only through the owner's proof-bound door,
         // `OffRecordSession::flip_on_record_as`, which also tells a room: on
-        // record, later turns land in this vault (everyone's, in a room).
-        if mode == OffRecordMode::OnRecord {
+        // record, later turns land in this vault (everyone's, in a room). A
+        // closing, anonymous or already on-record session answers as before.
+        if mode == OffRecordMode::OnRecord
+            && state.record.mode == OffRecordMode::OffRecord
+            && !(state.record.closing || state.gone)
+        {
             return Err(Error::OffRecord(
                 OffRecordError::OffRecordPromoteUnauthenticated {
                     session_ref: session_ref.to_owned(),
