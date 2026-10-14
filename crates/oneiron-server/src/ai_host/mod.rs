@@ -6,6 +6,7 @@
 //! `/api/health` and `GET /v1/ai/status`. Writes never wait on a model.
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use oneiron::attempt_queue::{AttemptQueue, AttemptState, CleanupAttemptLeases};
 use oneiron::dreamer_consolidation::DREAMER_EXTRACTION_ROLE;
@@ -241,6 +242,32 @@ impl AiHandle {
         });
     }
 
+    /// The sieve reads a bounded batch with each turn wake; history it has
+    /// not read yet (a vault the Dreamer starts on for the first time) is
+    /// read here, a pass at a time, off the request path, until it is read
+    /// or shutdown raises the drain's stop. A pass in flight then commits
+    /// its own transaction, and the drain stops before the next. `None`
+    /// without a running Dreamer.
+    fn drain_sieve(&self, vault: &Arc<Vault>) -> Option<SieveDrain> {
+        self.hints.as_ref()?;
+        let vault = Arc::clone(vault);
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::clone(&stop);
+        let task = tokio::task::spawn_blocking(move || {
+            while !stopped.load(Ordering::Acquire) {
+                match vault.sieve_pass(vault.now_recorded_at()) {
+                    Ok(pass) if pass.more => {}
+                    Ok(_) => break,
+                    Err(error) => {
+                        tracing::warn!(kind = ?error.kind(), "sieve backlog pass failed");
+                        break;
+                    }
+                }
+            }
+        });
+        Some(SieveDrain { stop, task })
+    }
+
     /// A Dreamer attempt was queued outside the driver: the running Dreamer
     /// takes a pass for it now instead of at its next deadline.
     pub fn attempt_queued(&self) {
@@ -279,6 +306,13 @@ pub struct AiHost {
     handle: AiHandle,
     dreamer: Option<DreamerHost>,
     workflows: Option<WorkflowPump>,
+    sieve: Option<SieveDrain>,
+}
+
+/// The sieve's backlog drain and the stop it checks between passes.
+struct SieveDrain {
+    stop: Arc<AtomicBool>,
+    task: tokio::task::JoinHandle<()>,
 }
 
 impl AiHost {
@@ -323,6 +357,7 @@ impl AiHost {
             handle: handle.clone(),
             dreamer: None,
             workflows: None,
+            sieve: None,
         };
         let Some(models) = models else {
             return host;
@@ -344,6 +379,7 @@ impl AiHost {
         // Turns that landed while no Dreamer ran, or just before a crash,
         // get their due wake now rather than waiting for the next turn.
         host.handle.turn_landed(&vault, WakeTurnSubject::Vault);
+        host.sieve = host.handle.drain_sieve(&vault);
         host
     }
 
@@ -352,15 +388,27 @@ impl AiHost {
         self.handle.clone()
     }
 
-    /// Lets running chat turns end, then stops both workers cooperatively
-    /// and waits for them.
+    /// Lets running chat turns end, then stops both workers and the sieve's
+    /// backlog drain cooperatively and waits for them.
     pub async fn shutdown(mut self) {
+        let sieve = self.sieve.take();
+        if let Some(drain) = &sieve {
+            drain.stop.store(true, Ordering::Release);
+        }
         self.handle.turns.shutdown(TURN_GRACE).await;
         if let Some(pump) = self.workflows.take() {
             pump.stop().await;
         }
         if let Some(dreamer) = self.dreamer.take() {
             dreamer.stop().await;
+        }
+        if let Some(drain) = sieve
+            && let Err(error) = drain.task.await
+        {
+            tracing::warn!(
+                panicked = error.is_panic(),
+                "sieve backlog drain did not stop cleanly"
+            );
         }
         self.handle.status.update(|status| {
             for work in [&mut status.dreamer, &mut status.workflows] {
@@ -384,6 +432,9 @@ impl Drop for AiHost {
         }
         if let Some(dreamer) = &self.dreamer {
             dreamer.signal_stop();
+        }
+        if let Some(drain) = &self.sieve {
+            drain.stop.store(true, Ordering::Release);
         }
     }
 }
