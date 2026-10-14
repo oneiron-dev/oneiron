@@ -5303,12 +5303,14 @@ fn the_generic_sync_state_door_cannot_mark_a_carrier_as_written_here() {
 /// which no erasure in the copy could reach.
 #[test]
 fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
+    /// One database's rows in a checkpoint image.
+    type Rows = Vec<(Vec<u8>, Vec<u8>)>;
     /// A checkpoint image's wire shape.
     #[derive(serde::Serialize, serde::Deserialize)]
     struct Image {
         version: u16,
         created_at: u64,
-        databases: std::collections::BTreeMap<String, Vec<(Vec<u8>, Vec<u8>)>>,
+        databases: std::collections::BTreeMap<String, Rows>,
     }
     let root = tempfile::tempdir().unwrap();
     let vault = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
