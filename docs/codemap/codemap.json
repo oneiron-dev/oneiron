@@ -7897,7 +7897,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -8034,7 +8034,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 7,
       "struct": 2
@@ -8120,7 +8120,7 @@
      "path": "src/claim/scoped_read/visibility.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -14089,7 +14089,7 @@
      "path": "src/dreamer_consolidation/partition.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 7,
       "struct": 3
      }
@@ -14135,7 +14135,7 @@
      "path": "src/dreamer_consolidation/redirty.rs",
      "purpose": "The re-dirty carrier: a TURN whose final words changed after a round may have consumed it is pending again…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 15
      }
     },
     {
@@ -14366,6 +14366,14 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_consolidation/tests/turn_wake.rs",
+     "purpose": "The turn wake against ARCH-0026's projector and shared-carrier lines: a wake over material the projection…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -14380,7 +14388,7 @@
      "path": "src/dreamer_consolidation/tests/witnessed_turns.rs",
      "purpose": "Turns captured through the Memory witness door keep their words on MESSAGE children",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -14414,7 +14422,7 @@
      "path": "src/dreamer_consolidation/turn_text.rs",
      "purpose": "The read-only text of one TURN as a consolidation branch sees it",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 21
      }
     },
     {
@@ -15221,8 +15229,8 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 1,
-      "re-export": 8
+      "crate-vis": 7,
+      "re-export": 10
      }
     },
     {
@@ -15259,6 +15267,20 @@
      "path": "src/dreamer_wake/policy/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProjectorPolicy"
+     ],
+     "path": "src/dreamer_wake/projector.rs",
+     "purpose": "The projector's surprise check (ARCH-0026 RD-26): a due wake writes only when its material is new to the…",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 2,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -15305,6 +15327,94 @@
      "purpose": "What the driver does with an attempt once the executor returns: milestones, landing, complete, park, publish",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/sieve/chunks.rs",
+     "purpose": "A TURN's words as the sieve reads them: one chunk per source row, each with the digest that versions it…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SievePass",
+      "SieveQueue",
+      "SieveRung",
+      "SieveSkipped",
+      "SieveSpan",
+      "SpanBand",
+      "SpanKind",
+      "SpanOrigin"
+     ],
+     "path": "src/dreamer_wake/sieve/mod.rs",
+     "purpose": "The continuous sieve (ARCH-0026, the Continuous recipe): the cheap check that tags what is new on the local…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 4,
+      "fn": 2,
+      "re-export": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SievePolicy"
+     ],
+     "path": "src/dreamer_wake/sieve/policy.rs",
+     "purpose": "The sieve's policy row: how much one pass reads, how interesting each kind of span is, how sure each rule…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/sieve/read.rs",
+     "purpose": "One turn's read: a whole read from its rows, a read that goes on where the text bound stopped it, and the…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RuleClass"
+     ],
+     "path": "src/dreamer_wake/sieve/rules.rs",
+     "purpose": "The sieve's rules: the date and name spans of one chunk of text, as byte ranges, each with the rule class…",
+     "surface": {
+      "crate-vis": 13,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_wake/sieve/tests.rs",
+     "purpose": "The sieve against the packet's checks (gate 3, ARCH-0026 Continuous): a turn chunk with a date and a name…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/sieve/words.rs",
+     "purpose": "The prose under the sieve's rules: code, sentences, words, and runs of capitalized words and of katakana…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -36089,7 +36199,7 @@
      "path": "src/tagging/tags.rs",
      "purpose": "The saved tag sets: what save mode keeps for a tagged turn, the index of the entities they name, and the…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 2,
       "fn": 6,
       "struct": 5
@@ -37089,6 +37199,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_util/dreamer_rows.rs",
+     "purpose": "A policy manifest without the Dreamer's actor-keyed rows, as a release before warm-by-default seeded it",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_util/log_capture.rs",
      "purpose": "Thread-scoped capture of everything `tracing` would write: every event and span at every level, with its…",
      "surface": {
@@ -37102,7 +37222,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -40316,7 +40436,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40358,7 +40478,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 14,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -41100,7 +41220,7 @@
      "purpose": "Doors for tests that drive the engine from another crate, such as the seal organ's end-to-end check, which…"
     },
     "test_util": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41207,8 +41327,8 @@
    },
    "over_bar": 38,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2499,
-   "test_files": 801
+   "source_files": 2507,
+   "test_files": 803
   },
   "oneiron-android": {
    "files": [
@@ -44064,12 +44184,15 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "OpenPhrase",
       "QueryTemporalHints",
       "TemporalExpression",
       "TemporalExpressionParseError",
       "TemporalGranularity",
       "TemporalHintReport",
       "TemporalHintStatus",
+      "TemporalPhraseSpan",
+      "TemporalPhraseStep",
       "TemporalUnit",
       "TimeRange",
       "WeekdayRelation"
@@ -44079,8 +44202,8 @@
      "surface": {
       "const": 1,
       "enum": 6,
-      "fn": 6,
-      "struct": 3
+      "fn": 8,
+      "struct": 6
      }
     },
     {
