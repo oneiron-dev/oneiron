@@ -82,6 +82,12 @@ impl OpenAiCompatStreamAccumulator {
                 Some(JsonValue::Array(tools)) => tools.as_slice(),
                 Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
             };
+            if delta
+                .get("function_call")
+                .is_some_and(|call| !call.is_null())
+            {
+                return Err(FatalLlmError::InvalidRequest.into());
+            }
             for tool in tools {
                 let index = tool
                     .get("index")

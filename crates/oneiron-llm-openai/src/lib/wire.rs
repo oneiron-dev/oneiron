@@ -180,6 +180,14 @@ pub fn parse_openai_chat_response(body: &JsonValue) -> LlmResult<LlmResponse> {
         }
         Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
     }
+    // The legacy single-call field asks for a tool too. This adapter never
+    // offers legacy functions, so it cannot read one: the decode fails.
+    if message
+        .get("function_call")
+        .is_some_and(|call| !call.is_null())
+    {
+        return Err(FatalLlmError::InvalidRequest.into());
+    }
 
     if content.is_empty() {
         return Err(if matches!(finish_reason, FinishReason::ContentFiltered) {

@@ -11,6 +11,16 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+/// The fields of a Gemini part that each hold its one piece of data.
+const PART_DATA: [&str; 7] = [
+    "text",
+    "inlineData",
+    "fileData",
+    "functionCall",
+    "functionResponse",
+    "executableCode",
+    "codeExecutionResult",
+];
 #[derive(Debug, Clone, Default)]
 pub(super) struct GeminiAccumulator {
     assembly: StreamAssembly,
@@ -54,6 +64,16 @@ impl GeminiAccumulator {
             .and_then(Value::as_array)
         {
             for part in parts {
+                // A part holds one piece of data. A second beside its text, a
+                // function call above all, would vanish behind a tool-free
+                // answer, so the decode fails.
+                let data = PART_DATA
+                    .iter()
+                    .filter(|field| part.get(**field).is_some_and(|value| !value.is_null()))
+                    .count();
+                if data > 1 {
+                    return Err(FatalLlmError::InvalidRequest.into());
+                }
                 if let Some(text) = part.get("text").and_then(Value::as_str) {
                     let reasoning = part.get("thought").and_then(Value::as_bool) == Some(true);
                     let part_id = self.text_part(reasoning, &mut events)?;

@@ -245,7 +245,9 @@ fn a_reply_that_names_no_finish_is_not_a_stop() {
 /// policy classifier took for a finished, tool-free answer: an Allow. A reply
 /// that asked for a tool is pending, never a verdict, so a malformed
 /// `tool_calls` field or entry fails the decode, buffered and streamed. A
-/// tool-free answer and a well-formed tool call still decode.
+/// tool-free answer and a well-formed tool call still decode. The legacy
+/// `function_call` field (Astra, round 7) asks for a tool as well, and this
+/// adapter offers no legacy functions, so one fails the decode too.
 #[test]
 fn a_malformed_tool_call_never_decodes_as_a_finished_answer() {
     let allow = "{\"violation\":0,\"policy_category\":null}";
@@ -291,8 +293,41 @@ fn a_malformed_tool_call_never_decodes_as_a_finished_answer() {
         );
     }
 
+    for function_call in [
+        json!({ "name": "check_policy", "arguments": "{}" }),
+        json!({ "arguments": "{}" }),
+    ] {
+        let reply = json!({ "choices": [{
+            "finish_reason": "stop",
+            "message": { "role": "assistant", "content": allow, "function_call": function_call },
+        }] });
+        assert!(
+            super::parse_openai_chat_response(&reply).is_err(),
+            "H122: a legacy {function_call} decoded as a finished, tool-free answer"
+        );
+        let mut stream = super::stream::OpenAiCompatStreamAccumulator::new();
+        let chunk = json!({
+            "choices": [{
+                "index": 0,
+                "delta": { "content": allow, "function_call": function_call },
+                "finish_reason": "stop",
+            }],
+            "usage": { "prompt_tokens": 3, "completion_tokens": 1 },
+        });
+        assert!(
+            stream.push_chunk(chunk).is_err(),
+            "H122: a streamed legacy {function_call} finished as a tool-free answer"
+        );
+    }
+
     // The controls.
     let answer = buffered(serde_json::Value::Null).expect("a tool-free answer decodes");
+    assert_eq!(answer.finish_reason, oneiron::FinishReason::Stop);
+    let answer = super::parse_openai_chat_response(&json!({ "choices": [{
+        "finish_reason": "stop",
+        "message": { "role": "assistant", "content": allow, "function_call": null },
+    }] }))
+    .expect("a null legacy call is no call");
     assert_eq!(answer.finish_reason, oneiron::FinishReason::Stop);
     let called = buffered(json!([{ "id": "call-1", "type": "function",
         "function": { "name": "check_policy", "arguments": "{}" } }]))
