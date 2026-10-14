@@ -207,6 +207,15 @@ pub(crate) fn readmit_held_asset_in_txn(
     lift_release_fence(store, txn, asset)
 }
 
+/// Whether the fence on `id` is one a release planted, which a live holder may lift. A published
+/// delete of that id makes the fence its own first.
+#[cfg(feature = "sync")]
+pub(crate) fn release_fenced(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    Ok(crate::deletion::ROW_DELETION_FENCE
+        .get(store, txn, &HexId(*id))?
+        .is_some_and(|value| value == RELEASE_FENCE))
+}
+
 /// Drops the fence a release left on `asset`. A fence an explicit delete left, and a hard-delete
 /// marker, stay.
 fn lift_release_fence(store: &Store, txn: &mut RwTxn<'_>, asset: &EntityId) -> Result<()> {

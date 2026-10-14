@@ -373,3 +373,38 @@ fn a_late_claim_leaves_an_explicit_asset_delete_fenced() -> Result<()> {
     );
     Ok(())
 }
+
+/// Bug repro (ASTRA-R3-002, H125): a delete of released bytes published to this vault, but not
+/// replayed yet, makes their release fence final, so a late claim of another live artifact
+/// cannot lift it.
+#[cfg(feature = "sync")]
+#[test]
+fn a_published_asset_delete_makes_a_release_fence_final() -> Result<()> {
+    let origin = Origin::open()?;
+    let (gone, gone_claims) = origin.artifact(&VERSION_BYTES[..1], 10)?;
+    let (kept, kept_claims) = origin.artifact(&VERSION_BYTES[..1], 20)?;
+    let asset = asset_of(VERSION_BYTES[0])?;
+    let (_replica_dir, replica) = open_test_vault_with(embedding_test_config());
+    replicate(&origin.vault, &replica, &[origin.person, gone, kept, asset])?;
+    replicate(&origin.vault, &replica, &gone_claims)?;
+    replica.delete_entity_with_reason(&gone, DeleteReason::UserHardDelete)?;
+    assert!(!stored(&replica, &asset)? && fenced(&replica, &asset)?);
+
+    let doc = loro::LoroDoc::new();
+    crate::sync::loro_support::map_insert_bytes(
+        &doc.get_map("tombstones"),
+        &asset.to_hex(),
+        &hard_tombstone(),
+    )?;
+    doc.commit();
+    replica.with_write_txn_grouped(|txn| {
+        replica.fence_published_deletes_in_txn(txn, "2026-02", &doc)
+    })?;
+
+    replicate(&origin.vault, &replica, &kept_claims)?;
+    assert!(
+        fenced(&replica, &asset)?,
+        "a version claim lifted the fence of a published delete"
+    );
+    Ok(())
+}

@@ -146,6 +146,12 @@ impl Vault {
             },
         );
         for (id, value) in tombstones {
+            // The fence a blob artifact's delete left on bytes it released is lifted when a live
+            // artifact holds them again. A published delete of those bytes makes it final.
+            if crate::blob_artifact::release_fenced(&self.store, wtxn, &id)? {
+                self.fence_unapplied_delete_in_txn(wtxn, &id, &value)?;
+                continue;
+            }
             let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &id)?
             else {
                 continue;
