@@ -323,11 +323,17 @@ fn a_stale_base_route_session_witness_commits_no_base_rows() {
 /// channel. That is deliberate: a deadlock inside `thread::scope` would hang
 /// the suite (the implicit join blocks even while unwinding), so the watchdog
 /// has to sit outside the scope. A timeout here IS the deadlock.
+///
+/// Progress is counted in calls, never in time. A search revalidates the route
+/// it minted, so while the flipper runs a loaded host can refuse every one of
+/// an arm's first rounds; each arm therefore runs its rounds, then on (to a
+/// bound) until both arms have landed a call.
 #[test]
 fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
     const ROUNDS: usize = 40;
+    const MAX_ROUNDS: usize = 50 * ROUNDS;
 
     let (done_tx, done_rx) = std::sync::mpsc::channel::<(usize, usize, bool)>();
     std::thread::spawn(move || {
@@ -340,9 +346,15 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
 
         let witnessed = AtomicUsize::new(0);
         let searched = AtomicUsize::new(0);
+        let keep_going = |round: usize| {
+            round < ROUNDS
+                || (round < MAX_ROUNDS
+                    && (witnessed.load(AtomicOrdering::Relaxed) == 0
+                        || searched.load(AtomicOrdering::Relaxed) == 0))
+        };
         std::thread::scope(|scope| {
             scope.spawn(|| {
-                for round in 0..ROUNDS {
+                for round in (0..).take_while(|&round| keep_going(round)) {
                     // Refusals are legitimate: the flipper may have sealed the
                     // room under this route. Only a HANG is a failure.
                     if facade
@@ -367,7 +379,7 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
                 }
             });
             scope.spawn(|| {
-                for _ in 0..ROUNDS {
+                for _ in (0..).take_while(|&round| keep_going(round)) {
                     if session.search_text("lockorderneedle", 4).is_ok() {
                         searched.fetch_add(1, AtomicOrdering::Relaxed);
                     }
