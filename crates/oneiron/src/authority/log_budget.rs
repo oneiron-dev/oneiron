@@ -128,16 +128,20 @@ fn admits_device(op: &AuthorityOp) -> Option<&DeviceAuthority> {
 /// The slip issuers, read from the log's structure alone, so the fold's
 /// bounds and the store doors judge a row the same way: the genesis owner,
 /// and each owner key named by a signed re-root, rotation or enrollment that
-/// an owner or admin in this chain signed or cosigned, less each key such a
-/// signer revoked. The issuer a fold accepts is always one of them. A key no
-/// such row names counts as any other signer, so a stranger's slip ops count
-/// in full, and so does every slip op of a log without exactly one genesis
-/// owner.
-fn slip_issuers<'a>(
+/// a key already in the set signed or cosigned. It holds owner keys only: a
+/// machine, agent or peer key, a stranger, and every signer of a log without
+/// exactly one genesis owner count as any other signer.
+///
+/// Every key the host-rooted fold holds as a live owner is in the set: the
+/// genesis owner, or a re-root an owner signed. Nothing leaves it, so a
+/// revocation the fold refuses never drops the issuer, and slip rows a door
+/// stored uncounted never come to count against the fold's bounds. An owner
+/// key leaves the roster only by a handoff, and a key a handoff retired
+/// signs nothing new at the replicated door.
+pub(super) fn slip_issuers<'a>(
     entries: impl Iterator<Item = &'a AuthorityLogEntry>,
 ) -> BTreeSet<AuthorityKey> {
     let mut admissions = Vec::new();
-    let mut revocations = Vec::new();
     let mut roots = Vec::new();
     for entry in entries {
         if let AuthorityOp::Genesis { device, .. } = &entry.op {
@@ -147,12 +151,8 @@ fn slip_issuers<'a>(
             {
                 roots.push(&device.key);
             }
-        } else if admits_device(&entry.op)
-            .is_some_and(|device| device.roles & (ROLE_OWNER | ROLE_ADMIN) != 0)
-        {
+        } else if admits_device(&entry.op).is_some_and(|device| device.roles & ROLE_OWNER != 0) {
             admissions.push(entry);
-        } else if matches!(entry.op, AuthorityOp::RevokeDevice { .. }) {
-            revocations.push(entry);
         }
     }
     roots.sort();
@@ -160,39 +160,24 @@ fn slip_issuers<'a>(
     let [root] = roots[..] else {
         return BTreeSet::new();
     };
-    let mut admitters = BTreeSet::from([root]);
     let mut owners = BTreeSet::from([root.clone()]);
-    let signed_by = |entry: &AuthorityLogEntry, admitters: &BTreeSet<&AuthorityKey>| {
-        std::iter::once(&entry.signer)
-            .chain(&entry.cosigns)
-            .any(|signature| admitters.contains(&signature.public_key))
-    };
     let mut grew = true;
     while grew {
         grew = false;
         admissions.retain(|entry| {
-            let entry: &'a AuthorityLogEntry = *entry;
-            if !signed_by(entry, &admitters) {
+            let signed_by_owner = std::iter::once(&entry.signer)
+                .chain(&entry.cosigns)
+                .any(|signature| owners.contains(&signature.public_key));
+            if !signed_by_owner {
                 return true;
             }
             if verify_entry_signatures(entry).is_ok()
                 && let Some(device) = admits_device(&entry.op)
             {
-                if device.roles & ROLE_OWNER != 0 {
-                    owners.insert(device.key.clone());
-                }
-                grew |= admitters.insert(&device.key);
+                grew |= owners.insert(device.key.clone());
             }
             false
         });
-    }
-    for entry in revocations {
-        if let AuthorityOp::RevokeDevice { revoked_key } = &entry.op
-            && signed_by(entry, &admitters)
-            && verify_entry_signatures(entry).is_ok()
-        {
-            owners.remove(revoked_key);
-        }
     }
     owners
 }
@@ -294,11 +279,7 @@ pub(crate) fn door_refuses_past_budget(
             rows += 1;
             slips += usize::from(is_slip_op(&stored.op));
         }
-        if matches!(
-            stored.op,
-            AuthorityOp::Genesis { .. } | AuthorityOp::RevokeDevice { .. }
-        ) || admits_device(&stored.op).is_some()
-        {
+        if matches!(stored.op, AuthorityOp::Genesis { .. }) || admits_device(&stored.op).is_some() {
             admissions.push(stored);
         }
     }

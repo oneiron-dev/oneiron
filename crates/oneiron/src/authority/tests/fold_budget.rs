@@ -208,7 +208,8 @@ fn claims_numbered(template: &SlipClaims, n: usize) -> SlipClaims {
 /// Bug repro (the OAuth bound): every OAuth exchange mints one slip row
 /// signed by the host root. Past its per-signer bound and the fold's row
 /// bound, exchanges still mint and the owner's machine stays theirs: the
-/// slip issuer's slip rows count toward no bound.
+/// slip issuer's slip rows count toward no bound. After a host move the new
+/// root mints past every bound too, and the old root's rows stay uncounted.
 #[test]
 fn oauth_exchanges_past_every_bound_still_mint_and_the_machines_stay_mine() {
     const BOUND: usize = 4;
@@ -238,6 +239,27 @@ fn oauth_exchanges_past_every_bound_still_mint_and_the_machines_stay_mine() {
         let fold = host.vault.authority_fold().unwrap();
         assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
         assert!(fold.slips.mints.len() > 40 * BOUND);
+        assert!(
+            fold.machine(machine.machine)
+                .is_some_and(FoldedMachine::is_mine)
+        );
+    });
+    let next = HostSlipIssuer::from_secret(b"next host root placeholder words").unwrap();
+    host.vault.re_root_host(&host.issuer, &next).unwrap();
+    with_rows_per_signer_for_test(BOUND, || {
+        let root = host.vault.ensure_host_root_slip(&next).unwrap();
+        for n in 0..10 * BOUND {
+            host.vault
+                .mint_oauth_capability_slip(
+                    &next,
+                    claims_numbered(&root.claims, 1000 + n),
+                    3600,
+                    None,
+                )
+                .unwrap();
+        }
+        let fold = host.vault.authority_fold().unwrap();
+        assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
         assert!(
             fold.machine(machine.machine)
                 .is_some_and(FoldedMachine::is_mine)
@@ -337,62 +359,106 @@ fn the_slip_issuers_slip_rows_count_toward_no_fold_bound() {
     });
 }
 
-/// Substrate invariant: slip ops by a signer that is not the slip issuer
-/// count toward that signer's bound, as any other row does. Its revocation
-/// still lands past the bound.
+/// Substrate invariant: the slip issuers are owner keys only. Slip ops
+/// signed by an agent key the host enrolled, or by the key of a machine the
+/// owner holds as theirs, count toward that signer's bound as any other row
+/// does. Its revocation still lands past the bound.
 #[test]
-fn a_non_issuer_signers_slip_ops_count_toward_its_bound() {
+fn agent_and_machine_keys_slip_ops_count_toward_their_bounds() {
     const BOUND: usize = 4;
-    let host = host();
-    let agent = ed_key(72);
-    let agent_key = authority_key_from_ed(&agent);
-    let at = TimeRange { start: 1, end: 1 };
-    let fold = host.vault.authority_fold().unwrap();
-    let enroll = crate::authority::slip_vault::next_entry(
-        &host.issuer,
-        &fold,
-        AuthorityOp::EnrollDevice {
-            device: device(agent_key.clone(), ROLE_AGENT, AuthorityTier::Software),
-        },
-        host.vault.now_recorded_at(),
-    )
-    .unwrap();
-    host.vault.put_authority_log_entry(&enroll, at, 1).unwrap();
-    let root = host.vault.ensure_host_root_slip(&host.issuer).unwrap();
-    let agent_row = |seq: u64, op| {
-        let heads = host.vault.authority_fold().unwrap().append_heads;
-        sign_ed(
-            unsigned_entry(
-                Some(host.vault_id),
-                seq,
-                heads.into_iter().collect(),
-                op,
-                agent_key.clone(),
-                1,
-            ),
-            &agent,
-        )
-    };
-    with_rows_per_signer_for_test(BOUND, || {
-        for n in 0..BOUND {
-            let mint = AuthorityOp::SlipMint(SlipMintAction {
-                claims: claims_numbered(&root.claims, n),
-            });
+    for machine in [false, true] {
+        let host = host();
+        let signing = ed_key(72);
+        let key = authority_key_from_ed(&signing);
+        let at = TimeRange { start: 1, end: 1 };
+        if machine {
+            let request = request_for(host.vault_id, EntityId::now(), &signing);
             host.vault
-                .put_authority_log_entry(&agent_row(n as u64 + 1, mint), at, 1)
+                .enroll_machine(
+                    &host.issuer,
+                    &host.owner,
+                    &request,
+                    MachineRole::Owned(MachineOwnership::Yours),
+                )
                 .unwrap();
-        }
-        let over = AuthorityOp::SlipMint(SlipMintAction {
-            claims: claims_numbered(&root.claims, BOUND),
-        });
-        let err = host
-            .vault
-            .put_authority_log_entry(&agent_row(BOUND as u64 + 1, over), at, 1)
-            .unwrap_err();
-        assert_eq!(err.kind(), crate::error::ErrorKind::AuthorityLogFull);
-        let revoke = AuthorityOp::SlipRevoke { slip_id: [3; 32] };
-        host.vault
-            .put_authority_log_entry(&agent_row(BOUND as u64 + 2, revoke), at, 1)
+        } else {
+            let enroll = crate::authority::slip_vault::next_entry(
+                &host.issuer,
+                &host.vault.authority_fold().unwrap(),
+                AuthorityOp::EnrollDevice {
+                    device: device(key.clone(), ROLE_AGENT, AuthorityTier::Software),
+                },
+                host.vault.now_recorded_at(),
+            )
             .unwrap();
-    });
+            host.vault.put_authority_log_entry(&enroll, at, 1).unwrap();
+        }
+        let root = host.vault.ensure_host_root_slip(&host.issuer).unwrap();
+        let row = |seq: u64, op| {
+            let heads = host.vault.authority_fold().unwrap().append_heads;
+            sign_ed(
+                unsigned_entry(
+                    Some(host.vault_id),
+                    seq,
+                    heads.into_iter().collect(),
+                    op,
+                    key.clone(),
+                    1,
+                ),
+                &signing,
+            )
+        };
+        with_rows_per_signer_for_test(BOUND, || {
+            for n in 0..BOUND {
+                let mint = AuthorityOp::SlipMint(SlipMintAction {
+                    claims: claims_numbered(&root.claims, n),
+                });
+                host.vault
+                    .put_authority_log_entry(&row(n as u64 + 1, mint), at, 1)
+                    .unwrap();
+            }
+            let over = AuthorityOp::SlipMint(SlipMintAction {
+                claims: claims_numbered(&root.claims, BOUND),
+            });
+            let err = host
+                .vault
+                .put_authority_log_entry(&row(BOUND as u64 + 1, over), at, 1)
+                .unwrap_err();
+            assert_eq!(
+                err.kind(),
+                crate::error::ErrorKind::AuthorityLogFull,
+                "machine {machine}"
+            );
+            assert!(err.to_string().contains(&authority_signer_label(&key)));
+            let revoke = AuthorityOp::SlipRevoke { slip_id: [3; 32] };
+            host.vault
+                .put_authority_log_entry(&row(BOUND as u64 + 2, revoke), at, 1)
+                .unwrap();
+        });
+    }
+}
+
+/// Oracle comparison: every key a fold holds as a live owner, which is what
+/// `require_host` accepts as the slip issuer, is in the structural issuer
+/// set. The random logs hold owner enrollments, re-roots, and revocations of
+/// owner keys, alone or cosigned, that the fold accepts or refuses.
+#[test]
+fn every_live_owner_a_fold_holds_is_a_slip_issuer() {
+    let mut revoked_owners = 0;
+    for seed in 0..400_u64 {
+        let entries = super::fold_schedule::random_log(&mut StdRng::seed_from_u64(seed));
+        let issuers = crate::authority::log_budget::slip_issuers(entries.iter());
+        for fold in [
+            fold_authority_log(&entries),
+            fold_legacy_authority_log(&entries),
+        ] {
+            for (key, folded) in &fold.roster {
+                if roster_has_live_owner(&fold.roster, key) {
+                    assert!(issuers.contains(key), "seed {seed}");
+                }
+                revoked_owners += usize::from(folded.revoked && folded.roles & ROLE_OWNER != 0);
+            }
+        }
+    }
+    assert!(revoked_owners > 50, "{revoked_owners} revoked owner keys");
 }

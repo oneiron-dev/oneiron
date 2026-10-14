@@ -103,9 +103,10 @@ fn rescan_entry_states(
 }
 
 /// A random log over one genesis: confirmations that collide, agent and
-/// retired owner enrollments, revocations, slip withdrawals, rows by a key no
-/// one enrolled, sequences that repeat, and parents that never arrive.
-fn random_log(rng: &mut StdRng) -> Vec<AuthorityLogEntry> {
+/// retired owner enrollments, re-roots, revocations of agent and owner keys
+/// alone or cosigned, slip withdrawals, rows by a key no one enrolled,
+/// sequences that repeat, and parents that never arrive.
+pub(super) fn random_log(rng: &mut StdRng) -> Vec<AuthorityLogEntry> {
     let owner = ed_key(40);
     let genesis = genesis_entry(40, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
     let vault_id = genesis_vault_id(&genesis).unwrap();
@@ -124,7 +125,7 @@ fn random_log(rng: &mut StdRng) -> Vec<AuthorityLogEntry> {
         parents.sort();
         parents.dedup();
         let agent = &agents[rng.gen_range(0..agents.len())];
-        let op = match rng.gen_range(0..7) {
+        let op = match rng.gen_range(0..8) {
             0 | 1 => {
                 let id = rng.gen_range(0..6_u8);
                 AuthorityOp::FederationConfirm(AuthorityConfirmAction {
@@ -150,14 +151,21 @@ fn random_log(rng: &mut StdRng) -> Vec<AuthorityLogEntry> {
                 ),
             },
             4 => AuthorityOp::RevokeDevice {
-                revoked_key: authority_key_from_ed(agent),
+                revoked_key: authority_key_from_ed(if rng.gen_bool(0.3) { &owner } else { agent }),
             },
             5 => AuthorityOp::RevokeActor {
                 authority_key: authority_key_from_ed(agent),
                 epoch: 1,
             },
-            _ => AuthorityOp::SlipRevoke {
+            6 => AuthorityOp::SlipRevoke {
                 slip_id: [rng.gen_range(1..4_u8); 32],
+            },
+            _ => AuthorityOp::ReRoot {
+                new_device: device(
+                    authority_key_from_ed(agent),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
             },
         };
         let signer = match rng.gen_range(0..10) {
@@ -166,17 +174,21 @@ fn random_log(rng: &mut StdRng) -> Vec<AuthorityLogEntry> {
             _ => &owner,
         };
         let seq = if rng.gen_bool(0.15) { 1 } else { n + 1 };
-        entries.push(sign_ed(
-            unsigned_entry(
-                Some(vault_id),
-                seq,
-                parents,
-                op,
-                authority_key_from_ed(signer),
-                2,
-            ),
-            signer,
-        ));
+        let entry = unsigned_entry(
+            Some(vault_id),
+            seq,
+            parents,
+            op,
+            authority_key_from_ed(signer),
+            2,
+        );
+        let cosigner = if rng.gen_bool(0.5) { &owner } else { agent };
+        let cosigned = rng.gen_bool(0.35) && cosigner.verifying_key() != signer.verifying_key();
+        entries.push(if cosigned {
+            cosign_ed(entry, signer, cosigner)
+        } else {
+            sign_ed(entry, signer)
+        });
     }
     entries
 }
