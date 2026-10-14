@@ -49,16 +49,36 @@ pub struct AuthenticatedOwner {
 }
 
 impl AuthenticatedOwner {
-    /// The authenticated human actor.
+    /// The authenticated human actor, for tests that inspect a proof. A door
+    /// takes it from [`Self::revalidate_in_txn`] or [`Self::actor_for_read`].
+    #[cfg(test)]
     #[must_use]
     pub const fn actor(&self) -> EntityId {
         self.actor
     }
 
-    /// The authenticated principal reference.
+    /// The authenticated principal reference, for tests that inspect a proof.
+    #[cfg(test)]
     #[must_use]
     pub fn principal_ref(&self) -> &str {
         &self.principal_ref
+    }
+
+    /// The actor for a pure read: this proof belongs to `vault`. Never for an
+    /// act of owner authority, which takes its actor from
+    /// [`Self::revalidate_in_txn`] inside the acting transaction.
+    pub fn actor_for_read(&self, vault: &Vault) -> Result<EntityId> {
+        self.check_vault(vault)?;
+        Ok(self.actor)
+    }
+
+    fn check_vault(&self, vault: &Vault) -> Result<()> {
+        if self.vault_path.as_path() != vault.store.env.path() {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "owner proof belongs to another vault",
+            )));
+        }
+        Ok(())
     }
 
     /// The Gate decision this AUTHENTICATION is bound to.
@@ -77,17 +97,20 @@ impl AuthenticatedOwner {
     /// checks its owner before it opens its writer. A door never rebuilds a
     /// proof from its public fields instead: a proof another vault
     /// authenticated for the same PERSON id would pass that.
-    pub(crate) fn revalidate(&self, vault: &Vault) -> Result<()> {
+    pub(crate) fn revalidate(&self, vault: &Vault) -> Result<EntityId> {
         let txn = vault.store.env.read_txn()?;
         self.revalidate_in_txn(vault, &txn)
     }
 
-    pub(crate) fn revalidate_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
-        if self.vault_path.as_path() != vault.store.env.path() {
-            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                "owner proof belongs to another vault",
-            )));
-        }
+    /// The actor of an act of owner authority: this proof belongs to `vault`,
+    /// its person is live, and the credential it carried is still live and
+    /// still an owner's, all in the acting transaction.
+    pub(crate) fn revalidate_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<EntityId> {
+        self.check_vault(vault)?;
         if !person_is_live_in_txn(vault, txn, &self.actor)? {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "authenticated owner is no longer active",
@@ -108,7 +131,7 @@ impl AuthenticatedOwner {
                 )));
             }
         }
-        Ok(())
+        Ok(self.actor)
     }
 
     /// [`Self::revalidate_in_txn`], and the actor owns this vault even when
@@ -119,14 +142,14 @@ impl AuthenticatedOwner {
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
-    ) -> Result<()> {
-        self.revalidate_in_txn(vault, txn)?;
-        if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &self.actor)? {
+    ) -> Result<EntityId> {
+        let actor = self.revalidate_in_txn(vault, txn)?;
+        if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)? {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "authenticated actor is not an owner of this vault",
             )));
         }
-        Ok(())
+        Ok(actor)
     }
 
     pub(super) fn stamp(&self) -> ConsentOwnerStamp {
