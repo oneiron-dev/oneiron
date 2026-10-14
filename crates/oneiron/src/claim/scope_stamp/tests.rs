@@ -308,7 +308,7 @@ fn scoped_export_withholds_rows_of_a_device_only_world() -> Result<()> {
             .collect())
     };
     assert!(exported(&vault)?.contains(&private));
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
 
     let ids = exported(&vault)?;
     assert!(ids.contains(&portable));

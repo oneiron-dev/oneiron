@@ -5,6 +5,7 @@
  * and never needs the bytes re-sent. Keeping it separate from `worker.ts` lets
  * the same logic run without spinning up a Worker.
  */
+import { WorkbookBudgetError } from "./budget";
 import { readSheet, readWorkbookOutline } from "./parse";
 import type { ParseRequest, ParseResponse } from "./protocol";
 import type { IWorksheetData } from "@univerjs/core";
@@ -31,7 +32,7 @@ export class ParseSessionStore {
           return {
             kind: "init",
             id: request.id,
-            workbook: readWorkbookOutline(request.bytes, request.name),
+            workbook: readWorkbookOutline(request.bytes, request.name, request.budget),
           };
         }
         case "sheet": {
@@ -56,6 +57,7 @@ export class ParseSessionStore {
         kind: "error",
         id: request.kind === "dispose" ? -1 : request.id,
         message: err instanceof Error ? err.message : String(err),
+        ...(err instanceof WorkbookBudgetError ? { budget: { line: err.line, reason: err.reason } } : {}),
       };
     }
   }
