@@ -395,7 +395,7 @@ fn smart_http_advertisement_moves_capabilities_to_the_first_surviving_ref() {
     let mut captured = CapturingSink::default();
     let head = second.as_str().to_owned();
     {
-        let mut gate = AdvertisedRefGate::new(&vault, &repo_dir, &mut captured);
+        let mut gate = AdvertisedRefGate::new(&vault, &repo_dir, true, &mut captured);
         gate.begin(200, &advertisement_headers()).expect("begin");
         let body = [
             pkt("# service=git-upload-pack\n"),
@@ -438,7 +438,7 @@ fn smart_http_advertisement_with_no_surviving_ref_still_carries_capabilities() {
     let mut captured = CapturingSink::default();
     let head = "2".repeat(40);
     {
-        let mut gate = AdvertisedRefGate::new(&vault, elsewhere.path(), &mut captured);
+        let mut gate = AdvertisedRefGate::new(&vault, elsewhere.path(), true, &mut captured);
         gate.begin(200, &advertisement_headers()).expect("begin");
         let body = [
             pkt("# service=git-upload-pack\n"),

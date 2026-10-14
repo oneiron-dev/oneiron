@@ -58,6 +58,11 @@ oneiron-llm-anthropic = { version = "0.1.0", path = "../oneiron-llm-anthropic" }
 oneiron-llm-openai = { version = "0.1.0", path = "../oneiron-llm-openai" }
 loro = "1.10"
 axum = { version = "0.8", features = ["ws"] }
+# The accept loop (`http_listener`) drives hyper's HTTP/1 connection itself, so
+# it can set the header deadline and hold a permit inside each socket. Both
+# are already in the graph through axum.
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "service"] }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.26"
 futures-util = "0.3"

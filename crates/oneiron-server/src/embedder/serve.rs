@@ -128,11 +128,15 @@ pub(crate) async fn run(config: EmbedderConfig, listen: Listen) -> anyhow::Resul
         auth = listen.key.is_some(),
         "embedder endpoint serving /v1/embeddings"
     );
-    axum::serve(listener, router(embedder, listen.aliases, listen.key))
-        .with_graceful_shutdown(async {
+    crate::http_listener::serve(
+        listener,
+        router(embedder, listen.aliases, listen.key),
+        crate::config::LimitsConfig::default().connections(),
+        async {
             let _ = tokio::signal::ctrl_c().await;
-        })
-        .await?;
+        },
+    )
+    .await;
     Ok(())
 }
 

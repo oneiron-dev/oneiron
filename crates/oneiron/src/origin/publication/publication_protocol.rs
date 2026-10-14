@@ -3,7 +3,9 @@
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo, lock_repository};
+use crate::git_wire::{
+    GitOid, GitRefName, GitWire, GitWireRepo, lock_repository, try_lock_repository,
+};
 
 use super::publication_codec::{
     KEEP_OWNER, PUBLICATIONS, keep_owner_key, origin_keep_ref_name, origin_publication_id,
@@ -228,6 +230,36 @@ impl Vault {
     ) -> Result<Vec<(GitRefName, GitOid)>> {
         self.validate_origin_repo(repo_id, repo)?;
         let _guard = lock_repository(repo.common_dir())?;
+        self.project_published_origin_refs(git, repo_id, repo)
+    }
+
+    /// [`Vault::published_origin_refs`] for a reader that may not wait on the
+    /// repository coordinator: it projects under the coordinator when it finds
+    /// it free, and without it while a writer holds it.
+    ///
+    /// Without the coordinator the projection can only hide more, never show
+    /// more. `Published` is terminal, a row's `Published` mark and its visible
+    /// slot land in one transaction, and the live ref only disproves a row. So
+    /// a projection overlapping a landing may hide that landing's ref until it
+    /// is finalized, and can never advertise a ref/OID pair no publication
+    /// claims.
+    pub(crate) fn published_origin_refs_without_waiting(
+        &self,
+        git: &GitWire<'_>,
+        repo_id: EntityId,
+        repo: &GitWireRepo,
+    ) -> Result<Vec<(GitRefName, GitOid)>> {
+        self.validate_origin_repo(repo_id, repo)?;
+        let _free = try_lock_repository(repo.common_dir())?;
+        self.project_published_origin_refs(git, repo_id, repo)
+    }
+
+    fn project_published_origin_refs(
+        &self,
+        git: &GitWire<'_>,
+        repo_id: EntityId,
+        repo: &GitWireRepo,
+    ) -> Result<Vec<(GitRefName, GitOid)>> {
         let mut advertised = Vec::new();
         for publication_id in self.origin_visible_ref_rows(&repo_id)? {
             let Some(record) = self.origin_publication(publication_id)? else {

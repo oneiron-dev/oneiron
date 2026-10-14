@@ -193,6 +193,19 @@ impl Vault {
             .map(|record| record.with_oid(oid)))
     }
 
+    /// The bytes every recorded LFS object declares, deleted ones still
+    /// awaiting reclamation included: what the object plane holds on disk,
+    /// before chunk sharing. A storage quota is judged against it.
+    pub fn lfs_object_bytes(&self) -> Result<u64> {
+        let txn = self.store.env.read_txn()?;
+        OBJECTS
+            .iter_from(&self.store, &txn, &[])?
+            .try_fold(0_u64, |total, row| {
+                let (_, record) = row?;
+                Ok(total.saturating_add(record.size_bytes))
+            })
+    }
+
     /// Whether a live object has this exact declared size.
     pub fn has_lfs_object(&self, oid: LfsOid, size: u64) -> Result<bool> {
         Ok(self.lfs_object(oid)?.is_some_and(|o| o.size_bytes == size))

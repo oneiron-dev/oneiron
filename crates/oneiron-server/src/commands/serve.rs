@@ -139,24 +139,21 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
     host.ready()?;
     // Open sockets may never close by themselves, so the drain is bounded.
     let (stopping, mut stopped) = tokio::sync::watch::channel(false);
-    let serving = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(async move {
-        stop_requested().await;
-        let _ = stopping.send(true);
-    });
-    let result = tokio::select! {
-        result = serving => result,
+    // Connections are admitted, and their headers timed, before any route runs.
+    let serving =
+        crate::http_listener::serve(listener, app, config.limits.connections(), async move {
+            stop_requested().await;
+            let _ = stopping.send(true);
+        });
+    tokio::select! {
+        () = serving => {}
         () = async {
             let _ = stopped.wait_for(|stop| *stop).await;
             tokio::time::sleep(DRAIN_GRACE).await;
         } => {
             tracing::warn!("connections still open after the drain grace; stopping anyway");
-            Ok(())
         }
-    };
+    }
     // A pass or step in flight reaches its own boundary before this returns.
     ai.shutdown().await;
     // A receipt write already admitted ends before the process does.
@@ -172,7 +169,6 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
         handle.abort();
         let _ = handle.await;
     }
-    result?;
 
     Ok(())
 }

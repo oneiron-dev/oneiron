@@ -21,6 +21,7 @@
 )]
 
 pub mod actions;
+mod admission;
 pub mod ai_host;
 mod api;
 mod auth;
@@ -34,6 +35,7 @@ mod embedder;
 pub mod error;
 pub mod feedback_delivery;
 mod handler;
+mod http_listener;
 mod idempotency;
 mod linear_host;
 mod livequery;

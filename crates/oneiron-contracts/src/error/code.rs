@@ -165,6 +165,16 @@ pub enum CodeError {
         /// Why the serve invocation could not complete.
         reason: String,
     },
+    /// A `git http-backend` exchange moved no byte in either direction for
+    /// its whole idle limit, so it was ended and its child killed. Nothing
+    /// it would have landed was journaled.
+    #[error("git smart-http exchange made no progress within its idle limit")]
+    GitHttpExchangeIdle,
+    /// Another writer held the repository when a push arrived over a
+    /// transport that refuses rather than waits. No backend ran and nothing
+    /// was admitted; the push may be retried.
+    #[error("git repository is busy with another writer")]
+    GitHttpRepositoryBusy,
     /// The credential door refused a push inside the quarantine window
     /// (ONE-1908). The refs never moved and the objects never became
     /// reachable. The reason names paths and detector codes only — never a
@@ -233,6 +243,8 @@ impl CodeError {
             Self::GitHttpInvalidRepoName(_) => ErrorKind::GitHttpInvalidRepoName,
             Self::GitHttpRepoNotFound { .. } => ErrorKind::GitHttpRepoNotFound,
             Self::GitHttpServeFailed { .. } => ErrorKind::GitHttpServeFailed,
+            Self::GitHttpExchangeIdle => ErrorKind::GitHttpExchangeIdle,
+            Self::GitHttpRepositoryBusy => ErrorKind::GitHttpRepositoryBusy,
             Self::ReceivePackDoorRejected { .. } => ErrorKind::ReceivePackDoorRejected,
             Self::ReceivePackLandingRefused { .. } => ErrorKind::ReceivePackLandingRefused,
             Self::VaultRead(_) => ErrorKind::VaultRead,

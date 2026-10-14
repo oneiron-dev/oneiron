@@ -54,6 +54,8 @@ mod status_codec;
 #[cfg(test)]
 mod tests_auth;
 #[cfg(test)]
+mod tests_lifetime;
+#[cfg(test)]
 mod tests_push;
 
 pub(crate) use self::routes::git_http_routes;

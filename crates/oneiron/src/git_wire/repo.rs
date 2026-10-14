@@ -111,31 +111,50 @@ pub(crate) struct GitWireRepoGuard {
 
 /// Serializes every engine effect on the repository behind `common_dir`.
 pub(crate) fn lock_repository(common_dir: &Path) -> Result<GitWireRepoGuard> {
+    acquire_repository(common_dir, true)?.ok_or(Error::ConcurrentWrite(
+        "git wire repository lock not granted",
+    ))
+}
+
+/// [`lock_repository`] that never waits: `None` while another thread or
+/// another process holds the repository. Re-entrant on the holding thread all
+/// the same.
+pub(crate) fn try_lock_repository(common_dir: &Path) -> Result<Option<GitWireRepoGuard>> {
+    acquire_repository(common_dir, false)
+}
+
+fn acquire_repository(common_dir: &Path, wait: bool) -> Result<Option<GitWireRepoGuard>> {
     let key = common_dir.as_os_str().as_encoded_bytes().to_vec();
     let depth = held_depth(&key);
     if depth > 0 {
         set_held_depth(&key, depth.saturating_add(1));
-        return Ok(GitWireRepoGuard {
+        return Ok(Some(GitWireRepoGuard {
             key,
             cell: None,
             file: None,
-        });
+        }));
     }
     let cell = repo_lock_cell(&key)?;
-    acquire_cell(&cell)?;
-    let file = match acquire_file_lock(common_dir) {
-        Ok(file) => file,
+    if !acquire_cell(&cell, wait)? {
+        return Ok(None);
+    }
+    let file = match acquire_file_lock(common_dir, wait) {
+        Ok(FileLock::Held(file)) => file,
+        Ok(FileLock::Busy) => {
+            release_cell(&cell);
+            return Ok(None);
+        }
         Err(error) => {
             release_cell(&cell);
             return Err(error);
         }
     };
     set_held_depth(&key, 1);
-    Ok(GitWireRepoGuard {
+    Ok(Some(GitWireRepoGuard {
         key,
         cell: Some(cell),
         file,
-    })
+    }))
 }
 
 impl Drop for GitWireRepoGuard {
@@ -181,19 +200,24 @@ fn repo_lock_cell(key: &[u8]) -> Result<Arc<GitWireRepoLockCell>> {
         .clone())
 }
 
-fn acquire_cell(cell: &Arc<GitWireRepoLockCell>) -> Result<()> {
+/// Takes the in-process hold, and says whether it did: `false` only when
+/// `wait` is off and another thread holds it.
+fn acquire_cell(cell: &Arc<GitWireRepoLockCell>, wait: bool) -> Result<bool> {
     let mut held = cell
         .held
         .lock()
         .map_err(|_| Error::ConcurrentWrite("git wire repository lock poisoned"))?;
     while *held {
+        if !wait {
+            return Ok(false);
+        }
         held = cell
             .released
             .wait(held)
             .map_err(|_| Error::ConcurrentWrite("git wire repository lock poisoned"))?;
     }
     *held = true;
-    Ok(())
+    Ok(true)
 }
 
 fn release_cell(cell: &Arc<GitWireRepoLockCell>) {
@@ -203,8 +227,17 @@ fn release_cell(cell: &Arc<GitWireRepoLockCell>) {
     }
 }
 
+/// What one attempt at the cross-process lock got.
+enum FileLock {
+    /// The lock, held through this descriptor; none where there is no file
+    /// lock to take.
+    Held(Option<fs::File>),
+    /// Another process holds it, and the caller would not wait.
+    Busy,
+}
+
 #[cfg(unix)]
-fn acquire_file_lock(common_dir: &Path) -> Result<Option<fs::File>> {
+fn acquire_file_lock(common_dir: &Path, wait: bool) -> Result<FileLock> {
     use std::os::fd::AsRawFd;
 
     let file = fs::OpenOptions::new()
@@ -213,19 +246,29 @@ fn acquire_file_lock(common_dir: &Path) -> Result<Option<fs::File>> {
         .create(true)
         .truncate(false)
         .open(common_dir.join(GIT_WIRE_REPO_LOCK_FILE_NAME))?;
-    // SAFETY: `file.as_raw_fd()` is valid for the duration of this call and
-    // `flock(LOCK_EX)` blocks until the kernel grants the advisory lock.
-    let granted = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
-    if granted == 0 {
-        Ok(Some(file))
+    let operation = if wait {
+        libc::LOCK_EX
     } else {
-        Err(std::io::Error::last_os_error().into())
+        libc::LOCK_EX | libc::LOCK_NB
+    };
+    // SAFETY: `file.as_raw_fd()` is valid for the duration of this call and
+    // `flock(LOCK_EX)` blocks until the kernel grants the advisory lock, or
+    // with `LOCK_NB` returns at once.
+    let granted = unsafe { libc::flock(file.as_raw_fd(), operation) };
+    if granted == 0 {
+        return Ok(FileLock::Held(Some(file)));
+    }
+    let error = std::io::Error::last_os_error();
+    if !wait && error.kind() == std::io::ErrorKind::WouldBlock {
+        Ok(FileLock::Busy)
+    } else {
+        Err(error.into())
     }
 }
 
 #[cfg(not(unix))]
-fn acquire_file_lock(_common_dir: &Path) -> Result<Option<fs::File>> {
-    Ok(None)
+fn acquire_file_lock(_common_dir: &Path, _wait: bool) -> Result<FileLock> {
+    Ok(FileLock::Held(None))
 }
 
 #[cfg(unix)]

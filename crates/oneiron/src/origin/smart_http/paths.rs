@@ -102,6 +102,19 @@ pub(super) const DOOR_WINDOW_POLL: Duration = Duration::from_millis(2);
 /// closed. A push whose door window cannot complete is refused, never admitted.
 pub const DOOR_WINDOW_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// How long an exchange may move no byte, in either direction, before its
+/// backend is killed: the door window's family. A transfer that keeps moving,
+/// however slowly, is never cut.
+pub const SERVE_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// The name git gives a receive-pack's object quarantine, under the objects
+/// directory, ahead of its random suffix (`tmp-objdir.c`).
+pub(super) const SERVE_QUARANTINE_PREFIX: &str = "tmp_objdir-incoming-";
+
+/// How long a backend whose output has ended may take to exit before it is
+/// killed and reaped.
+pub(super) const SERVE_REAP_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// The most blob bytes one push may hand the door to scan, across the tip
 /// diffs and the history walk together. The door reads every framed byte into
 /// memory, so a push past this is refused whole by the hook rather than scanned
@@ -138,6 +151,14 @@ pub(super) fn serve_failed(reason: impl Into<String>) -> Error {
     Error::Code(CodeError::GitHttpServeFailed {
         reason: reason.into(),
     })
+}
+
+pub(super) fn serve_idle() -> Error {
+    Error::Code(CodeError::GitHttpExchangeIdle)
+}
+
+pub(super) fn repository_busy() -> Error {
+    Error::Code(CodeError::GitHttpRepositoryBusy)
 }
 
 /// Carries a door refusal out through the crate error surface without ever

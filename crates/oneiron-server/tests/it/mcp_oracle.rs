@@ -124,8 +124,8 @@ use oneiron::{
     LlmUsage, ModelId, ModelLocality, ModelTierRef, TimeRange, Vault, VaultConfig,
 };
 use oneiron_server::mcp::{
-    McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider, McpConnectorScope,
-    McpEngineNativeCodeHost, McpResolvedActor, mcp_code_run_id,
+    CodeRunLimits, McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider,
+    McpConnectorScope, McpEngineNativeCodeHost, McpResolvedActor, mcp_code_run_id,
 };
 
 fn oracle_vault_config() -> VaultConfig {
@@ -349,7 +349,7 @@ async fn injected_host_execute_code() -> InjectedHostRun {
         lease: BudgetLease::for_test("mcp-oracle-execute-code"),
         witness: Arc::clone(&witness),
     });
-    let host = McpEngineNativeCodeHost::new(provider);
+    let host = McpEngineNativeCodeHost::new(provider, CodeRunLimits::default());
 
     let run_ref = "oracle-run";
     let run_id = mcp_code_run_id(run_ref, &resolved);
