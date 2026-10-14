@@ -31,11 +31,12 @@ impl CompactionSpawn for InlineSpawn {
 }
 
 /// The fixture compaction model: answers the schema, or fails one check on
-/// every try. Records the retry each try was told about.
+/// every try. Records each request and the retry each try was told about.
 #[derive(Default)]
 struct Compactor {
     fail: Mutex<Option<CompactionCheck>>,
     tries: Mutex<Vec<Option<CompactionCheck>>>,
+    requests: Mutex<Vec<CompactionRequest>>,
     /// The rendered input one call takes whole; `None` takes any.
     limit: Option<u64>,
     /// A door each pass shuts as it runs, as a credential revoked mid-pass.
@@ -101,6 +102,11 @@ impl CompactionBackend for CompactorSeat {
         retry: Option<CompactionCheck>,
     ) -> std::result::Result<CompactionProduct, CompactionRefusal> {
         self.0.tries.lock().expect("tries").push(retry);
+        self.0
+            .requests
+            .lock()
+            .expect("requests")
+            .push(request.clone());
         if let Some(door) = self.0.shuts.lock().expect("shuts").as_ref() {
             door.shut(true);
         }
@@ -721,6 +727,50 @@ fn a_window_the_compactor_cannot_take_whole_compacts_in_prefixes() {
             .expect("stamped");
         assert_eq!((born.worlds, born.facets), (one(world), one(facet)));
     }
+}
+
+/// Sol and Wonder on the input-size fix: counted by parts (the envelope
+/// beside each step's frame alone), a lone step's input runs a token or so
+/// over its rendered whole, so a first step whose input fitted the seat to
+/// the token was refused as unable to fit, on every call. Measured on the
+/// same run with no limit, step 0's rendered input is the seat's whole room
+/// here, and it compacts.
+#[test]
+fn a_step_whose_input_fits_the_seat_to_the_token_compacts() {
+    let probe = LongRun::start(10);
+    let measuring = Arc::new(Compactor::default());
+    let compact_at = probe.base_tokens + probe.step_tokens * 7 / 2;
+    let mut seat = probe.seat(compact_at, &measuring);
+    probe.call(&mut seat, 2..8, 6, 10);
+    let request = measuring.requests.lock().expect("requests")[0].clone();
+    let first = &request.window[..1];
+    assert_eq!(first[0].turn, 0, "the first pass starts at step 0");
+    let room = crate::compaction::compaction_input_tokens(
+        request.turn_start,
+        first,
+        &crate::engine_executor::compaction::window_pins(first),
+        request.summary_token_budget,
+    );
+
+    let run = LongRun::start(10);
+    let compactor = Arc::new(Compactor {
+        limit: Some(room),
+        ..Compactor::default()
+    });
+    let mut seat = run.seat(compact_at, &compactor);
+    run.call(&mut seat, 2..8, 6, 10);
+    let first_span = run
+        .vault
+        .code_run_compaction_coverage(run.run_id)
+        .expect("coverage")
+        .iter()
+        .map(|row| (row.epoch(), row.first(), row.last()))
+        .next();
+    assert_eq!(
+        first_span,
+        Some((1, 0, 0)),
+        "step 0 fits the seat to the token and compacts alone"
+    );
 }
 
 /// Canon §d7: every check fails closed. A pass that fails one check on every

@@ -480,13 +480,10 @@ pub(super) fn failure_pin(content: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// `held` and then each step's failure line in `window` that `held` lacks,
-/// in order: a line several steps fail with is one pin, kept once.
-pub(super) fn window_pins(
-    held: &[String],
-    window: &[crate::compaction::CompactionWindowMessage],
-) -> Vec<String> {
-    let mut pins = held.to_vec();
+/// The failure line of each step in `window`, in order: a line several
+/// steps fail with is one pin, kept once.
+pub(super) fn window_pins(window: &[crate::compaction::CompactionWindowMessage]) -> Vec<String> {
+    let mut pins = Vec::new();
     for pin in window
         .iter()
         .filter_map(|message| failure_pin(&message.content))

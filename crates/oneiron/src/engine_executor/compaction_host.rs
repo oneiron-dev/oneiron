@@ -147,7 +147,13 @@ impl EngineNativeExecutor<'_> {
         };
         let mut window = Vec::new();
         let mut pins: Vec<String> = Vec::new();
-        let mut steps = 0_u64;
+        // The input so far, counted by parts: the envelope (span, budget,
+        // pins, retry), counted again only when a pin joins, and each step's
+        // frame alone. Parts run a token or so over the joined whole, so a
+        // step they turn away is counted whole before the window stops, and
+        // the count restarts from the whole.
+        let mut envelope = None;
+        let mut frames = 0_u64;
         for seq in start..=watermark {
             let message = super::compaction::window_message(
                 super::compaction::step_message_id(run_id, seq),
@@ -156,20 +162,35 @@ impl EngineNativeExecutor<'_> {
                 load_utf8_output(&self.storage, record, &script_output_path(seq))?,
                 load_utf8_output(&self.storage, record, &observation_output_path(seq))?,
             );
-            steps = steps.saturating_add(crate::compaction::compaction_step_input_tokens(&message));
-            let held = super::compaction::window_pins(&pins, std::slice::from_ref(&message));
+            // A line several steps fail with is one pin, kept once.
+            let pin =
+                super::compaction::failure_pin(&message.content).filter(|pin| !pins.contains(pin));
+            let pinned = pin.is_some();
+            pins.extend(pin);
+            frames =
+                frames.saturating_add(crate::compaction::compaction_step_input_tokens(&message));
+            window.push(message);
             // The summary holds every pin whole, inside its budget.
-            let unpinnable = held.len() > pins.len()
-                && count_context_pack_tokens(&held.join("\n")) as u64 > budget;
-            let overflows = room.is_some_and(|room| {
-                steps.saturating_add(crate::compaction::compaction_input_tokens(
-                    start,
-                    &[],
-                    &held,
-                    budget,
-                )) > room
-            });
-            if overflows || unpinnable {
+            let unpinnable = pinned && count_context_pack_tokens(&pins.join("\n")) as u64 > budget;
+            let mut fits = !unpinnable;
+            if fits && let Some(room) = room {
+                let around = match envelope {
+                    Some(around) if !pinned => around,
+                    _ => crate::compaction::compaction_input_tokens(start, &[], &pins, budget),
+                };
+                envelope = Some(around);
+                if around.saturating_add(frames) > room {
+                    let whole =
+                        crate::compaction::compaction_input_tokens(start, &window, &pins, budget);
+                    fits = whole <= room;
+                    frames = whole.saturating_sub(around);
+                }
+            }
+            if !fits {
+                window.pop();
+                if pinned {
+                    pins.pop();
+                }
                 if window.is_empty() {
                     return Err(if unpinnable {
                         crate::Error::InvalidConfig(
@@ -182,12 +203,10 @@ impl EngineNativeExecutor<'_> {
                 }
                 break;
             }
-            pins = held;
-            window.push(message);
         }
-        // Each frame was priced alone; the backend reads them joined, so the
-        // whole input is priced once more, and a step it does not hold waits
-        // for the next pass.
+        // The backend takes the joined input whole or not at all: it is
+        // counted whole once more, and a step it does not hold waits for the
+        // next pass.
         while let Some(room) = room
             && crate::compaction::compaction_input_tokens(start, &window, &pins, budget) > room
         {
@@ -195,7 +214,7 @@ impl EngineNativeExecutor<'_> {
             if window.is_empty() {
                 return Err(oversized().into());
             }
-            pins = super::compaction::window_pins(&[], &window);
+            pins = super::compaction::window_pins(&window);
         }
         // The host's own words: the run's speech, and every epoch its
         // requests rendered (each prior epoch of the run).

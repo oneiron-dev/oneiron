@@ -73,18 +73,20 @@ fn step_frame(message: &CompactionWindowMessage) -> Value {
 
 /// The tokens [`compaction_request_input`] renders for `window` from
 /// `turn_start` with `pins`, on its costliest try (whichever retry it names),
-/// counted as a backend counts its input.
+/// counted as a backend counts its input. The retry's name sits between
+/// fixed keys, so the costliest is found on an empty input.
 pub(crate) fn compaction_input_tokens(
     turn_start: u64,
     window: &[CompactionWindowMessage],
     pins: &[String],
     summary_token_budget: u64,
 ) -> u64 {
-    let render = |window: &[CompactionWindowMessage], retry: Option<CompactionCheck>| {
-        count_context_pack_tokens(
-            &input_document(turn_start, window, pins, summary_token_budget, retry).to_string(),
-        ) as u64
-    };
+    let render =
+        |window: &[CompactionWindowMessage], pins: &[String], retry: Option<CompactionCheck>| {
+            count_context_pack_tokens(
+                &input_document(turn_start, window, pins, summary_token_budget, retry).to_string(),
+            ) as u64
+        };
     let retry = [
         None,
         Some(CompactionCheck::NaturalStop),
@@ -95,9 +97,9 @@ pub(crate) fn compaction_input_tokens(
         Some(CompactionCheck::Coverage),
     ]
     .into_iter()
-    .max_by_key(|retry| render(&[], *retry))
+    .max_by_key(|retry| render(&[], &[], *retry))
     .flatten();
-    render(window, retry)
+    render(window, pins, retry)
 }
 
 /// The tokens one step adds to [`compaction_request_input`]: its JSON frame,
