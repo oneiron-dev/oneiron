@@ -1164,6 +1164,104 @@ fn peer_ask_wait_projects_its_existing_followup_ladder() -> Result<()> {
     Ok(())
 }
 
+/// Wonder R10 F2: a peer ask's wait takes its next notice from the ask's
+/// group, whose class comes from the TASK the ask names. A projection that
+/// shows the wait lists that TASK among the rows its answer was derived
+/// from, so a host withholds the answer off this device once the TASK's
+/// world is device-local (DEC-0005).
+#[test]
+fn a_peer_ask_wait_lists_the_task_its_class_came_from() -> Result<()> {
+    use crate::task_verb::{
+        ConsultPayloadRef, TaskAskDefault, TaskAskQuestion, TaskAskSpec, TaskAskTarget,
+        TaskAssignee, TaskCreateSpec,
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let peer = EntityId::from_bytes([0xE2; 16])?;
+    let world = EntityId::now();
+    for (id, kind, body) in [
+        (peer, crate::registry::ENTITY_TYPE_PERSON, &b"room peer"[..]),
+        (world, crate::registry::ENTITY_TYPE_WORLD, b"world"),
+    ] {
+        vault.put_entity(&id, kind, TimeRange { start: 1, end: 1 }, 1, body)?;
+    }
+    let project = EntityId::now();
+    let mut record = ProjectRecord::new(
+        project,
+        Some(vault.root_project()?),
+        vault.root_project()?,
+        owner,
+    )
+    .unwrap();
+    record.roster.push(peer.to_hex());
+    vault.put_project(project, &record, 1)?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    permit_room_reads(&vault, &[owner, peer])?;
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let (trunk, root) = (EntityId::now(), EntityId::now());
+    for (id, metadata, at) in [
+        (trunk, serde_json::json!({}), 2),
+        (
+            root,
+            serde_json::json!({"room_thread_of": trunk.to_hex()}),
+            3,
+        ),
+    ] {
+        memory
+            .rooms_speak(&turn(room, id, WitnessAuthor::User, metadata, at))
+            .unwrap();
+    }
+    let class_task = vault
+        .memory(owner, EdgeActorClass::Human)
+        .with_birth_position(crate::federation::record_scope::BirthPosition {
+            world: Some(world),
+            facet: None,
+        })
+        .tasks_create(&TaskCreateSpec::new(
+            rmpv::Value::from("orchid errand"),
+            None,
+            None,
+            None,
+        ))
+        .unwrap()
+        .task_ref
+        .unwrap();
+    let before = crate::unix_seconds_now();
+    let mut ask = TaskAskSpec::shorthand(
+        Some(TaskAskTarget::Responder(TaskAssignee::Peer {
+            actor_ref: peer,
+        })),
+        TaskAskQuestion::new(ConsultPayloadRef::Turn(root)),
+        Some(before + 300),
+        TaskAskDefault::AskMe,
+    );
+    ask.task_ref = Some(class_task);
+    ask.remind = Some(vec![30, 60]);
+    let receipt = memory.tasks_ask(&ask).unwrap();
+    let producers = crate::memory::ProducerRows::default();
+    let projection = vault
+        .memory(owner, EdgeActorClass::Human)
+        .listing_producers(&producers)
+        .rooms_threads(
+            room,
+            RoomThreadPolicy {
+                now: before + 100,
+                fresh_for: 1,
+                rows_per_list: 8,
+                tokens_per_list: 512,
+                fill: RoomThreadFill::Stage,
+                waits_per_thread: 8,
+            },
+        )
+        .unwrap();
+    assert!(projection.waiting.rows[0].waits[0].next_nudge.is_some());
+    let listed = producers.take();
+    assert!(listed.contains(&receipt.task_refs[0]), "{listed:?}");
+    assert!(listed.contains(&class_task), "{listed:?}");
+    Ok(())
+}
+
 #[test]
 fn settled_multi_recipient_ask_drops_unanswered_sibling_wait() -> Result<()> {
     use crate::task_verb::{

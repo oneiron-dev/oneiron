@@ -90,23 +90,36 @@ pub(super) fn thread_tasks_capped(
         // Ask-group ladders live on the existing group row. A peer consult
         // without a group has no promised nudge; a governed ask supplies its
         // next notice or its absolute cutoff without a duplicate cursor.
+        // Both come from the group's class, so from the TASK that gave it
+        // (DEC-0005): off this device, while a world is device-local, a group
+        // that never recorded that TASK gives neither.
         let ask_group = body.consult.as_ref().map(|payload| payload.correlation_ref);
-        let group_settled = if let Some(group_id) = ask_group {
-            super::ask_record::read_group(vault, &txn, group_id)?.is_some_and(|group| {
-                group
-                    .members
-                    .iter()
-                    .any(|member| member.task == id.to_hex())
-            }) && super::ask_settlement::read_result(vault, &txn, group_id)?.is_some()
-        } else {
-            false
+        let group = match ask_group {
+            Some(group_id) => {
+                super::ask_record::read_group(vault, &txn, group_id)?.filter(|group| {
+                    group
+                        .members
+                        .iter()
+                        .any(|member| member.task == id.to_hex())
+                        && (kept.is_empty() || !group.class_source_unrecorded())
+                })
+            }
+            None => None,
         };
-        let ask_due = if body.task_kind() == super::TaskKind::Consult && !group_settled {
-            super::ask_record::ask_notice_at_in(vault, &txn, id, 0)?
-                .map(|(notice, cutoff)| notice.map_or(cutoff, |at| at.min(cutoff)))
-        } else {
-            None
+        let group_settled = match ask_group.filter(|_| group.is_some()) {
+            Some(group_id) => super::ask_settlement::read_result(vault, &txn, group_id)?.is_some(),
+            None => false,
         };
+        let ask_due =
+            if body.task_kind() == super::TaskKind::Consult && group.is_some() && !group_settled {
+                super::ask_record::ask_notice_at_in(vault, &txn, id, 0)?
+                    .map(|(notice, cutoff)| notice.map_or(cutoff, |at| at.min(cutoff)))
+            } else {
+                None
+            };
+        let class_tasks = group
+            .map(|group| group.class_tasks().collect::<Vec<_>>())
+            .unwrap_or_default();
         candidates.push((
             id,
             thread,
@@ -114,11 +127,12 @@ pub(super) fn thread_tasks_capped(
             authority.cancelled,
             ask_due,
             group_settled,
+            class_tasks,
         ));
     }
     drop(txn);
     let mut result = Vec::new();
-    for (id, thread, body, cancelled, ask_due, group_settled) in candidates {
+    for (id, thread, body, cancelled, ask_due, group_settled, class_tasks) in candidates {
         // `Memory::get_entity` opens a reader of its own: finish the index
         // snapshot first or LMDB refuses recursive reuse of its reader slot.
         // Room membership alone never grants TASK visibility.
@@ -196,8 +210,13 @@ pub(super) fn thread_tasks_capped(
             Some((result, at)) if scoped.is_entity_readable_now(&result)? => Some((result, at)),
             _ => None,
         };
-        // The thread's counts are derived from this TASK and its result.
-        memory.produced_from(std::iter::once(id).chain(delivered.map(|(result, _)| result)));
+        // The thread's counts are derived from this TASK and its result, its
+        // wait from the TASK its ask's class came from.
+        memory.produced_from(
+            std::iter::once(id)
+                .chain(delivered.map(|(result, _)| result))
+                .chain(class_tasks),
+        );
         result.push(RoomThreadTask {
             task: id,
             thread,

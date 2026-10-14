@@ -68,6 +68,25 @@ pub(super) struct AskGroup {
     pub policy_surface: super::TaskAskSurface,
 }
 
+impl AskGroup {
+    /// The TASK the ask took its class from: the one `task_ref` named, or
+    /// the governed TASK an ask that omitted it bound.
+    pub(crate) fn class_tasks(&self) -> impl Iterator<Item = EntityId> {
+        self.requested
+            .task_ref
+            .into_iter()
+            .chain(self.governed_task)
+    }
+
+    /// A class from a governed TASK the group never recorded (one stored
+    /// before groups kept it): its source is unknown.
+    pub(crate) fn class_source_unrecorded(&self) -> bool {
+        self.context_class.is_some()
+            && self.requested.task_ref.is_none()
+            && self.governed_task.is_none()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AskAnswerFact {
@@ -302,8 +321,7 @@ impl crate::memory::Memory<'_> {
             .members
             .iter()
             .filter_map(|member| EntityId::from_hex(&member.task).ok())
-            .chain(group.requested.task_ref)
-            .chain(group.governed_task)
+            .chain(group.class_tasks())
             .chain(
                 std::iter::once(what.reference)
                     .chain(what.context_refs.iter().copied())
@@ -313,10 +331,7 @@ impl crate::memory::Memory<'_> {
         self.produced_from(rows.iter().copied());
         let store = &self.vault().store;
         let kept = crate::settings::device_local_worlds_at(store, txn, self.locality())?;
-        let unrecorded = group.context_class.is_some()
-            && group.requested.task_ref.is_none()
-            && group.governed_task.is_none();
-        if unrecorded && !kept.is_empty() {
+        if group.class_source_unrecorded() && !kept.is_empty() {
             return Ok(None);
         }
         for row in &rows {
