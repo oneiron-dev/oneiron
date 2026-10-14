@@ -14,8 +14,9 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::identity_topology::{
-    AdmissionVerdict, EntityLifecycleState, IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite,
-    IdentityTopologyOp, MergeOp, StoredIdentityOpAction, StoredIdentityOpEvent, SurvivorshipPlan,
+    AdmissionDisposition, AdmissionVerdict, EntityLifecycleState, IdentityOpEvidence,
+    IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp, ProposalRuling,
+    StoredIdentityOpAction, StoredIdentityOpEvent, SurvivorshipPlan,
     encode_identity_topology_event_body, fold_identity_topology_log, sealed_by_key_for_test,
 };
 use crate::registry::{
@@ -61,8 +62,8 @@ fn install() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
-/// The owner pairs `install` into `host` with `role`.
-fn enroll(host: &Host, install: &Vault, role: MachineRole) {
+/// The owner pairs `install` into `host` with `role`; the machine it joins as.
+fn enroll(host: &Host, install: &Vault, role: MachineRole) -> EntityId {
     let request = install
         .machine_enrolment_request(
             host.vault_id,
@@ -75,6 +76,7 @@ fn enroll(host: &Host, install: &Vault, role: MachineRole) {
     host.vault
         .enroll_machine(&host.issuer, &host.owner, &request, role)
         .unwrap();
+    request.machine
 }
 
 fn put_person(vault: &Vault, person: EntityId) {
@@ -211,6 +213,26 @@ fn deliver_row(vault: &Vault, id: EntityId, row: &StoredIdentityOpEvent) {
     assert!(vault.get_raw(&id).unwrap().is_some(), "stored, not refused");
 }
 
+/// The sidecar row that carries `fact` for `core`.
+fn fact_row(
+    core: &StoredIdentityOpEvent,
+    seq: u64,
+    fact: AdmissionDisposition,
+) -> StoredIdentityOpEvent {
+    StoredIdentityOpEvent {
+        seq,
+        validated_at_write: false,
+        invalidated: false,
+        at: core.at,
+        actor: None,
+        source: core.source,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::AdmissionDisposition(fact),
+    }
+}
+
 /// A peer's own `Auto` merge of two persons this vault holds, sealed by
 /// `seal` (a key this vault never enrolled) or not sealed at all.
 fn forged_merge(vault: &Vault, loser: EntityId, survivor: EntityId, seal: Option<&SigningKey>) {
@@ -232,14 +254,8 @@ fn forged_merge(vault: &Vault, loser: EntityId, survivor: EntityId, seal: Option
     let event = EntityId::now();
     deliver_row(vault, event, &core);
     if let Some(key) = seal {
-        let fact = StoredIdentityOpEvent {
-            seq: 51,
-            action: StoredIdentityOpAction::AdmissionDisposition(
-                sealed_by_key_for_test(key, event, &core, AdmissionVerdict::Validated).unwrap(),
-            ),
-            ..core.clone()
-        };
-        deliver_row(vault, EntityId::now(), &fact);
+        let fact = sealed_by_key_for_test(key, event, &core, AdmissionVerdict::Validated).unwrap();
+        deliver_row(vault, EntityId::now(), &fact_row(&core, 51, fact));
     }
 }
 
@@ -270,10 +286,11 @@ fn a_refusal_sealed_by_an_unknown_key_never_undoes_a_merge() {
     let (loser, survivor) = (EntityId::now(), EntityId::now());
     merge_locally(&vault, loser, survivor);
     assert!(shell_edge(&vault, loser, survivor));
-    let rtxn = vault.store.env.read_txn().unwrap();
-    let (event, core) = vault
+    let ids = vault
         .entities_by_type(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
-        .unwrap()
+        .unwrap();
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let (event, core) = ids
         .into_iter()
         .filter_map(|id| {
             let row = vault.identity_topology_event_in_txn(&rtxn, &id).unwrap()?;
@@ -283,15 +300,13 @@ fn a_refusal_sealed_by_an_unknown_key_never_undoes_a_merge() {
         .unwrap();
     drop(rtxn);
     let stranger = SigningKey::generate(&mut rand_core::OsRng);
-    let fact = StoredIdentityOpEvent {
-        seq: core.seq + 10,
-        action: StoredIdentityOpAction::AdmissionDisposition(
-            sealed_by_key_for_test(&stranger, event, &core, AdmissionVerdict::RefusedActorClass)
-                .unwrap(),
-        ),
-        ..core.clone()
-    };
-    deliver_row(&vault, EntityId::now(), &fact);
+    let fact = sealed_by_key_for_test(&stranger, event, &core, AdmissionVerdict::RefusedActorClass)
+        .unwrap();
+    deliver_row(
+        &vault,
+        EntityId::now(),
+        &fact_row(&core, core.seq + 10, fact),
+    );
 
     assert!(
         shell_edge(&vault, loser, survivor),
@@ -381,6 +396,146 @@ fn an_enrolment_arriving_after_the_merge_brings_it_into_force() {
         "the enrolment brings the parked merge into force"
     );
     assert_eq!(folded_state(&replica, loser), EntityLifecycleState::Merged);
+}
+
+/// The owner's own pairing and removal on this vault move the stored edges
+/// at once, as the same rows arriving through sync do.
+#[test]
+fn a_local_enrolment_and_removal_move_the_stored_edges() {
+    let host = host();
+    let (_dir, laptop) = install();
+    let (loser, survivor) = (EntityId::now(), EntityId::now());
+    merge_locally(&laptop, loser, survivor);
+    deliver_merge(&host.vault, &laptop, loser, survivor);
+    assert!(
+        !shell_edge(&host.vault, loser, survivor),
+        "parked before enrolment"
+    );
+
+    let machine = enroll(&host, &laptop, MachineRole::Owned(MachineOwnership::Yours));
+    assert!(
+        shell_edge(&host.vault, loser, survivor),
+        "a local enrolment brings it into force"
+    );
+
+    host.vault
+        .set_machine_role(&host.issuer, &host.owner, machine, MachineRole::Removed)
+        .unwrap();
+    assert!(
+        !shell_edge(&host.vault, loser, survivor),
+        "a local removal takes it out of force"
+    );
+    assert_eq!(
+        folded_state(&host.vault, loser),
+        EntityLifecycleState::Active
+    );
+}
+
+/// A peer's ruling on a proposal this vault parked is no outcome here while
+/// no seal this vault counts binds it: no outcome receipt, and no ramp
+/// history after a rebuild.
+#[test]
+fn a_strangers_ruling_is_no_outcome_receipt_or_ramp_history() {
+    let (_dir, vault) = install();
+    let (_stranger_dir, stranger) = install();
+    let (loser, survivor) = (EntityId::now(), EntityId::now());
+    put_person(&vault, loser);
+    put_person(&vault, survivor);
+    let IdentityOpOutcome::Parked { event: proposal } = vault
+        .apply_identity_topology_op(
+            &IdentityTopologyOp::Merge(MergeOp {
+                sources: vec![loser],
+                survivor,
+                evidence: IdentityOpEvidence {
+                    refs: Vec::new(),
+                    rationale: "fixture rationale".to_owned(),
+                },
+                survivorship_plan: SurvivorshipPlan::ReadThrough,
+            }),
+            &IdentityOpWrite {
+                approval: ClaimApprovalStatus::Proposed,
+                ..IdentityOpWrite::auto(ClaimSource::Inferred)
+            },
+            200,
+        )
+        .unwrap()
+    else {
+        panic!("a proposed merge parks");
+    };
+    deliver_merge(&stranger, &vault, loser, survivor);
+    let before = stranger
+        .entities_by_type(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+        .unwrap();
+    let (_, ruling) = stranger
+        .resolve_identity_proposal(
+            &proposal,
+            ProposalRuling::Reject,
+            &IdentityOpWrite::auto(ClaimSource::UserStated),
+            300,
+        )
+        .unwrap();
+    let StoredIdentityOpAction::ProposalResolution { scope, .. } = stranger
+        .identity_topology_event(&ruling)
+        .unwrap()
+        .unwrap()
+        .action
+    else {
+        panic!("a ruling row");
+    };
+    for id in stranger
+        .entities_by_type(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+        .unwrap()
+    {
+        if !before.contains(&id) {
+            deliver_blob(&vault, &id, &stranger.get_raw(&id).unwrap().unwrap()).unwrap();
+        }
+    }
+    assert!(
+        vault.get_raw(&ruling).unwrap().is_some(),
+        "stored, not refused"
+    );
+
+    let outcomes = vault
+        .receipts(
+            crate::receipt::ReceiptQuery::new(10)
+                .with_kind(crate::receipt::ReceiptKind::ProposalOutcome),
+        )
+        .unwrap();
+    assert!(outcomes.is_empty(), "{outcomes:?}");
+    vault.rebuild_ramp_stats_from_receipts().unwrap();
+    assert!(
+        vault
+            .scope_stats(&crate::consent_graduation::RampScope::from(&scope))
+            .unwrap()
+            .is_none()
+    );
+}
+
+/// A restore that keeps the vault's current authority carries each seal's
+/// marker with the decision it belongs to, and a decision made after the
+/// image does not block it.
+#[test]
+fn a_restore_keeping_authority_keeps_own_merges_in_force() {
+    let root = tempfile::tempdir().unwrap();
+    let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    let (loser, survivor) = (EntityId::now(), EntityId::now());
+    merge_locally(&source, loser, survivor);
+    let image = root.path().join("image");
+    source.snapshot_checkpoint(&image, 100).unwrap();
+    merge_locally(&source, EntityId::now(), EntityId::now());
+
+    let (copy, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &root.path().join("copy"),
+        VaultConfig::device(),
+        &source,
+        120,
+    )
+    .unwrap();
+    copy.with_write_txn(|wtxn| copy.reconcile_identity_topology_edges_in_txn(wtxn))
+        .unwrap();
+    assert!(shell_edge(&copy, loser, survivor));
+    assert_eq!(folded_state(&copy, loser), EntityLifecycleState::Merged);
 }
 
 /// A vault's own merges stay in force on a copy restored beside it, which

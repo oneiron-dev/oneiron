@@ -443,10 +443,6 @@ fn admit(
         }
         return Err(err);
     }
-    // A machine enrolled or removed here changes whose type-76 seals count (H161).
-    if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
-        vault.reconcile_identity_topology_edges_in_txn(wtxn)?;
-    }
     if delete_protected {
         refuse_protected_tombstones(ctx, wtxn, &id, header.entity_type)?;
         return Ok(EntityStep::Protected { id, wrote: true });

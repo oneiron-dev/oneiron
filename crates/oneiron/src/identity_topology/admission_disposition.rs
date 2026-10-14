@@ -20,6 +20,10 @@ const BAD: &str = "identity topology admission disposition invalid";
 /// and a copy restored beside the vault keeps its history in force.
 const SEALED_HERE: SideTable<HexId, [u8; 96], Raw> =
     SideTable::new(&side_table::IDENTITY_TOPOLOGY_SEALED_HERE);
+/// Which install keys were mine signers when an authority write last
+/// reconciled the shell edges, as one digest. Local, like the marker.
+const MINE_SIGNERS: SideTable<(), [u8; 32], Raw> =
+    SideTable::new(&side_table::IDENTITY_TOPOLOGY_MINE_SIGNERS);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdmissionVerdict {
@@ -274,6 +278,40 @@ fn signer_is_mine(roster: &AuthorityFold, signer: &[u8; 32]) -> bool {
     roster
         .live_machine_by_key(signer)
         .is_some_and(FoldedMachine::is_mine)
+}
+
+/// Whether the mine signers differ from those the last authority write
+/// reconciled against, recording the new set. A roster change decides again
+/// which seals count, so the stored shell edges must follow it; an authority
+/// write that changes no standing (a header-only replay, a slip mint) does
+/// not pay for a reconcile.
+pub(super) fn mine_signers_changed_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<bool> {
+    let roster = crate::authority::authority_fold_readonly_for_store_in_txn(
+        store,
+        store.privacy_posture,
+        wtxn,
+    )?;
+    let mut signers: Vec<[u8; 32]> = roster
+        .machines
+        .values()
+        .map(|machine| machine.profile.machine_key)
+        .filter(|key| signer_is_mine(&roster, key))
+        .collect();
+    signers.sort_unstable();
+    signers.dedup();
+    let mut digest = blake3::Hasher::new();
+    for signer in &signers {
+        digest.update(signer);
+    }
+    let digest = *digest.finalize().as_bytes();
+    if MINE_SIGNERS.get(store, wtxn, &())? == Some(digest) {
+        return Ok(false);
+    }
+    MINE_SIGNERS.put(store, wtxn, &(), &digest)?;
+    Ok(true)
 }
 
 /// A missing target is a pending fact, never an authority shortcut. Conflicts

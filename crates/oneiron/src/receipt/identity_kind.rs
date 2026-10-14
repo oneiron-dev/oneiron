@@ -75,9 +75,10 @@ pub(super) fn identity_topology_receipts(
         );
         if action_is_resolution || action_is_cancellation {
             let effective = vault.fold_effective_identity_topology_events_in_txn(rtxn)?;
-            // A cancellation whose proposal has not arrived (or whose
-            // participant does not belong to it) is not a completed act.
-            if action_is_cancellation && !effective.iter().any(|event| event.event_id == event_id) {
+            // A ruling or cancellation the effective fold leaves out is not a
+            // completed act: its proposal has not arrived, its participant does
+            // not belong to it, or no seal this vault counts binds it (H161).
+            if !effective.iter().any(|event| event.event_id == event_id) {
                 continue;
             }
             let fold = crate::identity_topology::fold_identity_topology_log(&effective);
