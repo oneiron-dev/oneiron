@@ -36,6 +36,23 @@ impl ClaimReadStatus {
     }
 }
 
+impl<'v> ScopedRead<'v> {
+    /// This lane as the record verbs read it: the same key, its status half
+    /// admitting claims of every status. Only a plain lane has one; a lane
+    /// composed with a room audience, peer reads or a session view refuses.
+    pub(crate) fn recorded_lane(&self) -> Result<ScopedRead<'v>> {
+        if self.audience.is_some() || !self.peer_reads.is_empty() || self.session_view.is_some() {
+            return Err(Error::InvariantViolation(
+                "recorded lane of a composed read",
+            ));
+        }
+        Ok(self
+            .vault
+            .scoped_read(self.actor_key.clone())
+            .with_claim_status(ClaimReadStatus::Recorded))
+    }
+}
+
 impl ScopedRead<'_> {
     /// The same lane admitting claims of every status the record verbs serve.
     #[must_use]

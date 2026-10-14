@@ -123,9 +123,11 @@ pub(crate) struct ContextBoardSession {
     #[schema(example = "v1")]
     api_version: String,
     /// Live entity counts keyed by numeric entity type; zero counts are omitted.
+    /// Empty unless the caller reads the whole vault.
     #[schema(example = json!({ "16": 1 }))]
     counts: BTreeMap<String, u64>,
-    /// Latest learned-at timestamp across agent-visible entities.
+    /// Latest learned-at timestamp across agent-visible entities. Null unless
+    /// the caller reads the whole vault.
     #[serde(rename = "last_activity")]
     #[schema(example = 1_770_000_000_u64)]
     last_activity: Option<u64>,
@@ -232,7 +234,14 @@ pub(crate) async fn context_board_hydrate(
     let caller = auth.principal_ref().unwrap_or(auth.principal()).trim();
 
     let read = super::scoped_read_for_core_auth(&server.vault, &auth)?;
-    let session = session_prefix(&server, auth.locality()).await?;
+    // The session's counts and latest activity span the whole vault: only a
+    // caller that reads all of it learns them. Any other reads an empty
+    // inventory, the same whatever rows it cannot read hold.
+    let session = if super::core_auth_reads_whole_vault(&auth, &read) {
+        session_prefix(&server, auth.locality()).await?
+    } else {
+        empty_session_prefix()
+    };
     let notifications = pending_notifications(&server, &read, caller)?;
     let unprocessed = pending_unprocessed_items(&server, caller);
     let budget = standing.as_ref().map_or_else(
@@ -265,6 +274,7 @@ pub(crate) async fn context_board_hydrate(
     // The pack inventory the rider folds and the session records is the
     // caller's: a pack whose source row it cannot read is not installed.
     let mut installed_packs: Vec<(String, String)> = Vec::new();
+    let mut pack_sources = Vec::new();
     for row in server
         .vault
         .installed_packs()
@@ -278,6 +288,7 @@ pub(crate) async fn context_board_hydrate(
             .map_err(|error| super::core_engine_error("pack inventory failed", error))?
         {
             installed_packs.push((row.pack_name, row.content_hash));
+            pack_sources.push(source);
         }
     }
     // The rider is folded from, and acknowledged into, this one session.
@@ -289,7 +300,7 @@ pub(crate) async fn context_board_hydrate(
     .await?;
     let reads = session_read_set(&server, caller, session_id.as_deref()).await?;
     // The authenticated principal's own proposal outcomes and connector
-    // changes ride the same line; this route already refuses narrowed slips.
+    // changes ride the same line, each only while the caller's read reads it.
     let own = auth
         .principal_ref()
         .and_then(|reference| oneiron::EntityId::from_hex(reference).ok());
@@ -303,7 +314,7 @@ pub(crate) async fn context_board_hydrate(
             );
             changed.rows.extend(installs.rows);
             changed.overflow += installs.overflow;
-            reads.fold_own_changes(&server.vault, own, auth.locality(), &mut changed, 16)?;
+            reads.fold_own_changes(&read, own, auth.locality(), &mut changed, 16)?;
             Ok::<_, oneiron::Error>(changed)
         })
         .transpose()
@@ -446,7 +457,15 @@ pub(crate) async fn context_board_hydrate(
         }
     }
     // The rows this board was derived from, kept beside a keyed replay of it.
+    // A replay re-admits the notifications and pack sources among them.
     let mut served: Vec<_> = crate::device_local::changed_line_rows(&changed_line).collect();
+    served.extend(pack_sources);
+    served.extend(
+        response
+            .notifications
+            .iter()
+            .filter_map(|notification| oneiron::EntityId::from_hex(&notification.id).ok()),
+    );
     if let Some(pack) = &response.pack {
         served.extend(
             pack.served_rows()

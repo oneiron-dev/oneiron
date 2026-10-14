@@ -1243,3 +1243,54 @@ async fn a_removed_connector_is_named_by_its_whole_key() {
         "{tail:?}"
     );
 }
+
+/// F16 (S-F4): the own-change rider carries an outcome or a connector only
+/// while the caller's read reads its row. An agent whose grant reads no claim
+/// and no connector key learns of neither; the outcome stays owed, and both
+/// ride once its read admits them.
+#[tokio::test]
+async fn the_rider_carries_no_outcome_or_connector_its_reader_cannot_read() {
+    let (_dir, server) = auth_test_server();
+    let agent = seeded_test_entity_id(0x2516_0401);
+    let own = server
+        .vault
+        .park_run_proposal_for_test("rider-hidden", agent, oneiron::EntityId::now(), "one")
+        .unwrap();
+    assert!(agent_board(&server, agent, "hidden").await.is_empty());
+    settle_run(&server, "rider-hidden", "decline").await;
+    let key = oneiron::EntityId::now();
+    server
+        .vault
+        .register_connector_key(
+            &key,
+            oneiron::connector_key::ConnectorKeyRecord::active("rider_hidden", None, Vec::new(), 1),
+        )
+        .unwrap();
+    let names = |rows: &[String], needle: &str| rows.iter().any(|row| row.contains(needle));
+
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        agent,
+        &[oneiron::registry::ENTITY_TYPE_TURN],
+    );
+    let hidden = agent_board(&server, agent, "hidden").await;
+    for needle in [own.to_hex(), key.to_hex(), "rider_hidden".to_owned()] {
+        assert!(!names(&hidden, &needle), "{needle}: {hidden:?}");
+    }
+
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        agent,
+        &[
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::registry::ENTITY_TYPE_CLAIM,
+            oneiron::registry::ENTITY_TYPE_CONNECTOR_KEY,
+        ],
+    );
+    let shown = agent_board(&server, agent, "hidden").await;
+    assert!(
+        names(&shown, &format!("claim:{}: rejected", own.to_hex())),
+        "the withheld outcome was still owed: {shown:?}"
+    );
+    assert!(names(&shown, &key.to_hex()), "{shown:?}");
+}

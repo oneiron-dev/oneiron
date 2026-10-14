@@ -16,7 +16,7 @@ use super::super::empty_pack::{
 };
 use super::super::hydration::hydrate_entity;
 use super::super::psych_mirror::{
-    PsychProfilePackSection, missing_psych_profile_pack_section, psych_profile_pack_section,
+    PsychProfilePackSection, missing_psych_profile_pack_section, psych_profile_pack_section_in,
 };
 use super::super::quarantine::load_pack_quarantine_index;
 use super::super::telemetry::{
@@ -53,26 +53,34 @@ impl<'a> ContextPackBuilder<'a> {
     /// and reader admit it as they admit any row, and a profile either
     /// refuses reads as a missing one.
     pub fn run_with_psych_profile(self) -> Result<(ContextPack, Option<PsychProfilePackSection>)> {
-        let section = match self.psych_profile_key {
-            Some(key) if self.psych_profile_admitted(&key)? => {
-                Some(psych_profile_pack_section(self.vault, &key)?)
-            }
-            Some(key) => Some(missing_psych_profile_pack_section(key)),
-            None => None,
-        };
+        let section = self
+            .psych_profile_key
+            .map(|key| self.psych_profile_section(&key))
+            .transpose()?;
         let pack = self.run()?;
         Ok((pack, section))
     }
 
-    fn psych_profile_admitted(&self, key: &crate::psych_profile::PsychProfileKey) -> Result<bool> {
+    /// The profile section, admitted and read in one snapshot.
+    fn psych_profile_section(
+        &self,
+        key: &crate::psych_profile::PsychProfileKey,
+    ) -> Result<PsychProfilePackSection> {
         let id = crate::psych_profile::psych_profile_entity_id(key);
-        if let Some(reader) = self.l2_summary_reader
-            && !reader.is_entity_readable(&id)?
-        {
-            return Ok(false);
+        if let Some(reader) = self.l2_summary_reader {
+            reader.persist_grant_clock()?;
         }
         let rtxn = self.vault.store.env.read_txn()?;
-        disclosure_admits_target(&self.read, &rtxn, self.disclosure.as_ref(), &id)
+        if let Some(reader) = self.l2_summary_reader {
+            let policy = reader.live_policy_manifest_in(&rtxn)?;
+            if !reader.is_entity_readable_with_policy_in(&rtxn, &policy, &id)? {
+                return Ok(missing_psych_profile_pack_section(*key));
+            }
+        }
+        if !disclosure_admits_target(&self.read, &rtxn, self.disclosure.as_ref(), &id)? {
+            return Ok(missing_psych_profile_pack_section(*key));
+        }
+        psych_profile_pack_section_in(self.vault, &rtxn, key)
     }
 
     pub fn run(self) -> Result<ContextPack> {

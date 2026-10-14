@@ -10,6 +10,31 @@ impl<'v> ScopedRead<'v> {
         self.is_entity_readable_with_policy_in(&rtxn, &policy, id)
     }
 
+    /// Whether a ref a caller names resolves for this lane now. As
+    /// [`Self::is_entity_readable`], except that sealed secret custody is no
+    /// row a ref resolves to: it reads as absent here rather than refusing,
+    /// so a named custody id answers as a missing one does. A raw read of it
+    /// still refuses.
+    pub fn is_ref_readable(&self, id: &EntityId) -> Result<bool> {
+        let rtxn = self.grant_read_txn()?;
+        let policy = self.live_policy_manifest_in(&rtxn)?;
+        self.is_ref_readable_with_policy_in(&rtxn, &policy, id)
+    }
+
+    /// [`Self::is_ref_readable`] in the caller's snapshot, under `policy`
+    /// (`Self::live_policy_manifest_in`).
+    pub(crate) fn is_ref_readable_with_policy_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+    ) -> Result<bool> {
+        match self.is_entity_readable_with_policy_in(rtxn, policy, id) {
+            Err(error) if error.kind() == crate::ErrorKind::InvalidSecretCustodyBody => Ok(false),
+            readable => readable,
+        }
+    }
+
     pub(crate) fn is_entity_readable_in(
         &self,
         rtxn: &heed::RoTxn<'_>,

@@ -278,3 +278,41 @@ fn owner_session_flag_is_the_only_supervision_path() -> Result<()> {
     assert_eq!(set.non_owner().count(), 1);
     Ok(())
 }
+
+/// F16 (S-F8): a caller that reads the whole vault resolves a voice roster as
+/// the unscoped resolver does, a subject with no entity row of its own
+/// included. A roster's segments carry no record scope, so for any other
+/// caller it is the one unresolved entry a missing roster gives.
+#[test]
+fn a_voice_roster_resolves_only_for_a_whole_vault_reader() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    seed_voice_roster(
+        &vault,
+        "call-rowless",
+        vec![enrolled_owner_segment("seg-1", test_id(0x66))],
+    )?;
+    let input = InterlocutorResolutionInput {
+        owner_session: false,
+        parties: Vec::new(),
+        voice_session_ref: Some("call-rowless".to_owned()),
+    };
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").unwrap());
+    let labels = |set: &InterlocutorSet| {
+        set.entries()
+            .iter()
+            .map(|entry| (entry.label().to_owned(), entry.owner_print_matched()))
+            .collect::<Vec<_>>()
+    };
+    let whole = vault.resolve_interlocutors_under(&input, &read, true)?;
+    assert_eq!(
+        labels(&whole),
+        labels(&vault.resolve_interlocutors(&input)?)
+    );
+    assert_eq!(labels(&whole), [(test_id(0x66).to_hex(), true)]);
+    let narrowed = vault.resolve_interlocutors_under(&input, &read, false)?;
+    assert_eq!(
+        labels(&narrowed),
+        [(VOICE_ROSTER_UNRESOLVED_LABEL.to_owned(), false)]
+    );
+    Ok(())
+}

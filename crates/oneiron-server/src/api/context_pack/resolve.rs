@@ -80,19 +80,9 @@ pub(crate) async fn run_context_pack(
         .as_deref()
         .map(|room| {
             let room = super::super::parse_entity_id_param(room, "conversation_id")?;
-            scoped_read
-                .is_entity_readable(&room)
-                .and_then(|readable| {
-                    if readable {
-                        return server.vault.room_audience_members(room);
-                    }
-                    server
-                        .vault
-                        .room_audience_members(room)
-                        .ok()
-                        .filter(|members| principal.is_some_and(|id| members.contains(&id)))
-                        .ok_or(oneiron::Error::EntityNotFound)
-                })
+            server
+                .vault
+                .room_audience_members_under(&scoped_read, room, principal)
                 .map_err(|error| core_engine_error("room audience failed", error))
         })
         .transpose()?;

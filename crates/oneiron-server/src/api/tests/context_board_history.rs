@@ -830,3 +830,120 @@ async fn a_board_delivers_no_notification_its_reader_cannot_read() {
         "a reader that reads the notification receives it"
     );
 }
+
+/// F16 (S-F1): a narrowed board's session prefix counts and dates no row its
+/// reader cannot read: a hidden row moves none of it. A caller that reads the
+/// whole vault still gets the vault's counts and latest activity.
+#[tokio::test]
+async fn a_narrowed_board_counts_and_dates_no_row_it_cannot_read() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x2516_0111);
+    restrict_principal_read_types(&server, principal, &[oneiron::registry::ENTITY_TYPE_TURN]);
+    let session = || async {
+        let (status, board) =
+            route_json(server.clone(), hydrate(principal, "core:read", &json!({}))).await;
+        assert_eq!(status, StatusCode::OK, "{board:#}");
+        board["session"].clone()
+    };
+    let before = session().await;
+    put_person(
+        &server,
+        seeded_test_entity_id(0x2516_0112),
+        "hidden counted person",
+    );
+    assert_eq!(
+        session().await,
+        before,
+        "a hidden row moves no count or date"
+    );
+
+    let (status, board) = route_json(
+        server.clone(),
+        core_request_with_authz(
+            "POST",
+            "/v1/core/context-board",
+            owner_bearer(),
+            Some(&json!({})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{board:#}");
+    let people = oneiron::registry::ENTITY_TYPE_PERSON.to_string();
+    assert!(
+        board["session"]["counts"][people].as_u64().unwrap_or(0) >= 1,
+        "{board:#}"
+    );
+    assert!(board["session"]["last_activity"].is_u64(), "{board:#}");
+}
+
+/// F16 (A-F6): a keyed board's replay re-admits the notifications it
+/// delivered under its reader's read as it stands now. Once that read reads
+/// no notification, the replay is refused as a board naming an unreadable
+/// document is.
+#[tokio::test]
+async fn a_board_replay_delivers_no_notification_its_reader_no_longer_reads() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x2516_0121);
+    let notice = seeded_test_entity_id(0x2516_0122);
+    server
+        .vault
+        .put_entity(
+            &notice,
+            oneiron::registry::ENTITY_TYPE_NOTIFICATION,
+            oneiron::TimeRange { start: 2, end: 2 },
+            2,
+            &rmp_serde::to_vec_named(&json!({ "title": "replayed notice" })).unwrap(),
+        )
+        .unwrap();
+    let turn = seeded_test_entity_id(0x2516_0123);
+    put_turn(&server, turn, principal);
+    let keyed = || {
+        let mut request = hydrate(
+            principal,
+            "core:read,core:write",
+            &json!({
+                "retrieval": {"query": "unrelated empty query", "limit": 1},
+                "session": {"session_id": principal.to_hex()},
+                "turn": {"id": turn.to_hex()}
+            }),
+        );
+        request.headers_mut().insert(
+            "Idempotency-Key",
+            axum::http::HeaderValue::from_static("board-notice-retry"),
+        );
+        request
+    };
+    restrict_principal_read_types(
+        &server,
+        principal,
+        &[
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::registry::ENTITY_TYPE_NOTIFICATION,
+        ],
+    );
+    let (status, first) = route_json(server.clone(), keyed()).await;
+    assert_eq!(status, StatusCode::OK, "{first:#}");
+    assert!(
+        first["notifications"]
+            .to_string()
+            .contains(&notice.to_hex()),
+        "{first:#}"
+    );
+    let (status, retried) = route_json(server.clone(), keyed()).await;
+    assert_eq!(status, StatusCode::OK, "{retried:#}");
+    assert_eq!(retried, first);
+
+    restrict_principal_read_types(&server, principal, &[oneiron::registry::ENTITY_TYPE_TURN]);
+    let (status, refused) = route_json(server.clone(), keyed()).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused:#}");
+    assert!(
+        refused.to_string().contains("board_document_unreadable"),
+        "{refused:#}"
+    );
+}

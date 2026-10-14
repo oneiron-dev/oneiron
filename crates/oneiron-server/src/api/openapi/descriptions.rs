@@ -388,11 +388,11 @@ const PROPERTY_DESCRIPTIONS: &[(&str, &[(&str, &str)])] = &[
             ("api_version", "Stable API level string."),
             (
                 "counts",
-                "Live entity counts keyed by numeric entity type; zero counts are omitted.",
+                "Live entity counts keyed by numeric entity type; zero counts are omitted. Empty unless the caller reads the whole vault.",
             ),
             (
                 "last_activity",
-                "Latest learned-at timestamp across agent-visible entities.",
+                "Latest learned-at timestamp across agent-visible entities. Null unless the caller reads the whole vault.",
             ),
         ],
     ),

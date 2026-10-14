@@ -130,7 +130,9 @@ pub(crate) async fn board_turn_idempotency(
 /// A replayed board response goes out only if the caller may still be shown
 /// everything it disclosed: every pack result and neighbour and every
 /// MEMORIES row passes the caller's current read scope and disclosure clamp,
-/// as on the board's read-back (409 `board_document_unreadable` otherwise).
+/// as on the board's read-back, and every notification it delivered and
+/// installed pack it named is one the caller's read still reads (409
+/// `board_document_unreadable` otherwise).
 /// Off this device it goes out only while every row it was derived from
 /// (`rows`, listed when it was cached) may leave this device, and names no
 /// row a device-local world keeps now. A refused replay records nothing
@@ -147,6 +149,8 @@ fn release_board_replay(
         memories: Option<Rows>,
         #[serde(default)]
         pack: Option<Pack>,
+        #[serde(default)]
+        notifications: Vec<Row>,
     }
     #[derive(Deserialize)]
     struct Rows {
@@ -172,6 +176,12 @@ fn release_board_replay(
         return Err(ApiError::invalid_state(Some("board_document_unreadable")));
     }
     let disclosed: Disclosed = serde_json::from_slice(cached).map_err(|_| unreadable())?;
+    let notifications = disclosed
+        .notifications
+        .iter()
+        .map(|row| EntityId::from_hex(&row.id))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| unreadable())?;
     let documents = disclosed
         .memories
         .into_iter()
@@ -198,6 +208,31 @@ fn release_board_replay(
         })?;
     if !admitted {
         return Err(ApiError::invalid_state(Some("board_document_unreadable")));
+    }
+    // The packs the board named are those whose source rows it kept beside
+    // the response and that are still installed.
+    let installed = server.vault.installed_packs().map_err(|_| {
+        tracing::error!(
+            reason = "board_replay_check_failed",
+            "board replay check failed"
+        );
+        ApiError::internal_server_error("board history failed")
+    })?;
+    let pack_sources = installed
+        .iter()
+        .filter_map(|row| EntityId::from_hex(&row.source_id).ok())
+        .filter(|source| rows.contains(source));
+    for id in notifications.into_iter().chain(pack_sources) {
+        let readable = read.is_ref_readable(&id).map_err(|_| {
+            tracing::error!(
+                reason = "board_replay_check_failed",
+                "board replay check failed"
+            );
+            ApiError::internal_server_error("board history failed")
+        })?;
+        if !readable {
+            return Err(ApiError::invalid_state(Some("board_document_unreadable")));
+        }
     }
     Ok(())
 }

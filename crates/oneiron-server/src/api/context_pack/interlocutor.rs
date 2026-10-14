@@ -23,7 +23,8 @@ use crate::error::ApiError;
 ///
 /// Every contact the set names is one `read`, the caller's own read, reads:
 /// one it cannot read resolves as a missing one does, so a narrowed caller
-/// learns no contact's existence, status, label or id by naming it.
+/// learns no contact's existence, status, label or id by naming it. A voice
+/// roster resolves only for a caller that reads the whole vault.
 pub(crate) fn resolve_core_interlocutor_set(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
@@ -77,7 +78,7 @@ pub(crate) fn resolve_core_interlocutor_set(
                     continue;
                 }
                 oneiron::disclosure::RoomParty::Contact(contact)
-                    if read.is_entity_readable(contact).map_err(|error| {
+                    if read.is_ref_readable(contact).map_err(|error| {
                         core_engine_error("room contact admission failed", error)
                     })? =>
                 {
@@ -97,7 +98,7 @@ pub(crate) fn resolve_core_interlocutor_set(
     if let Some(principal_ref) = auth.principal_ref() {
         let principal_id = parse_entity_id_param(principal_ref, "principal_ref")?;
         if room_reader != Some(principal_id) {
-            let readable = read.is_entity_readable(&principal_id).map_err(|error| {
+            let readable = read.is_ref_readable(&principal_id).map_err(|error| {
                 core_engine_error(
                     "core context-pack interlocutor principal lookup failed",
                     error,
@@ -149,8 +150,9 @@ pub(crate) fn resolve_core_interlocutor_set(
         parties,
         voice_session_ref,
     };
+    let read_rosters = super::super::core_auth_reads_whole_vault(auth, read);
     vault
-        .resolve_interlocutors_under(&input, read)
+        .resolve_interlocutors_under(&input, read, read_rosters)
         .map(Some)
         .map_err(|error| {
             tracing::error!(error = %error, "core context-pack interlocutor resolution failed");

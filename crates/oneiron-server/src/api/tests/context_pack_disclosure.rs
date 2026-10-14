@@ -1356,3 +1356,55 @@ async fn a_narrowed_reader_resolves_no_contact_it_cannot_read() {
         );
     }
 }
+
+/// F16 (S-F5): a sealed secret custody id a caller names as a contact or a
+/// room is a ref that resolves to nothing, as a missing id is: the same
+/// status and error, never a server error that tells the two apart.
+#[tokio::test]
+async fn a_named_custody_id_reads_as_a_missing_ref() {
+    let (_dir, server) = interlocutor_test_server();
+    let principal = seeded_test_entity_id(0x2516_0011);
+    let custody = server
+        .vault
+        .register_test_secret("ref-placeholder", b"placeholder", Vec::new(), 1)
+        .unwrap();
+    let missing = seeded_test_entity_id(0x2516_0012);
+    let pack = |body: Value| {
+        route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                "/v1/core/context-pack",
+                "core:read",
+                &principal.to_hex(),
+                Some(&body),
+            ),
+        )
+    };
+    let error = |body: &Value| {
+        (
+            body["error"]["code"].clone(),
+            body["error"]["message"].clone(),
+            body["error"]["details"].clone(),
+        )
+    };
+    let requests: [fn(oneiron::EntityId) -> Value; 2] = [
+        |id| {
+            json!({
+                "query": "anything",
+                "interlocutors": { "third_parties": [{ "contact_ref": id.to_hex() }] }
+            })
+        },
+        |id| json!({ "query": "anything", "conversation_id": id.to_hex() }),
+    ];
+    for request in requests {
+        let (missing_status, missing_body) = pack(request(missing)).await;
+        assert_eq!(missing_status, StatusCode::NOT_FOUND, "{missing_body}");
+        let (status, body) = pack(request(custody)).await;
+        assert_eq!(
+            (status, error(&body)),
+            (missing_status, error(&missing_body)),
+            "{body}"
+        );
+    }
+}

@@ -770,14 +770,17 @@ fn diary_pair_revoked_during_answerer_cannot_be_used_as_graph_evidence() -> crat
 /// F16 H391: a relationship's MESSAGE answers the asker only on the asker's
 /// own live grant. Without one it is neither a unit the answerer sees nor a
 /// neighbor of one; once the asker holds a MessagesRead grant for the
-/// relationship, it is a neighbor like any row the asker reads.
+/// relationship, it is a neighbor like any row the asker reads. The asker is
+/// an agent: in an unrooted vault any PERSON reads as the live owner.
 #[test]
 fn a_relationship_message_reaches_the_answerer_only_on_the_askers_grant() -> crate::Result<()> {
     use crate::access_grant::{
         AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
     };
     let (_temp, vault) = open_vault();
-    let (principal, actor) = identities(&vault)?;
+    let principal = crate::test_util::seed_agent_definition(&vault, EntityId::now(), "asker");
+    grant_graph_reads(&vault, principal)?;
+    let actor = WriteActor::new(principal, EdgeActorClass::Agent);
     let owner = EntityId::now();
     put_entity(&vault, owner, ENTITY_TYPE_PERSON, b"owner")?;
     let space = EntityId::now();

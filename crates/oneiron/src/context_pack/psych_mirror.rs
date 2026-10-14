@@ -162,10 +162,22 @@ pub fn psych_profile_pack_section(
     vault: &Vault,
     key: &PsychProfileKey,
 ) -> Result<PsychProfilePackSection> {
-    let state = vault.psych_profile_for(key)?;
-    let key = *key;
+    Ok(pack_section(*key, vault.psych_profile_for(key)?))
+}
+
+/// [`psych_profile_pack_section`] in the caller's snapshot.
+pub(super) fn psych_profile_pack_section_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    key: &PsychProfileKey,
+) -> Result<PsychProfilePackSection> {
+    let state = vault.psych_profile_state_in_txn(rtxn, &psych_profile_entity_id(key), None)?;
+    Ok(pack_section(*key, state))
+}
+
+fn pack_section(key: PsychProfileKey, state: PsychProfileState) -> PsychProfilePackSection {
     let entity_id = psych_profile_entity_id(&key);
-    Ok(match state {
+    match state {
         PsychProfileState::Missing => missing_psych_profile_pack_section(key),
         PsychProfileState::Fresh(profile) => PsychProfilePackSection {
             section: "psych_profile".to_owned(),
@@ -191,5 +203,5 @@ pub fn psych_profile_pack_section(
                 stale_reason: Some(stale_reason),
             }
         }
-    })
+    }
 }

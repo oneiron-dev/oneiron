@@ -74,9 +74,20 @@ pub(crate) async fn session_prefix(
     })
 }
 
+/// The session prefix of a caller that does not read the whole vault: no
+/// count and no activity date, so no row it cannot read moves it.
+pub(crate) fn empty_session_prefix() -> SessionContext {
+    SessionContext {
+        api_version: API_LEVEL.to_owned(),
+        counts: BTreeMap::new(),
+        last_activity: None,
+    }
+}
+
 /// The caller's pending notifications: those `read`, its own read, reads,
 /// whose recipient markers name it. A recipient marker targets delivery; it
-/// never grants a read the caller does not hold.
+/// never grants a read the caller does not hold. Each body is the one the
+/// read admits, in the snapshot that admits it.
 pub(crate) fn pending_notifications(
     server: &SyncServer,
     read: &oneiron::claim::ScopedRead<'_>,
@@ -96,14 +107,19 @@ pub(crate) fn pending_notifications(
         })
         .map_err(|_| ApiError::internal_server_error("pending notification scan failed"))?;
 
-    for (id, learned_at, raw_body) in rows {
-        let readable = read
-            .is_entity_readable(&id)
-            .inspect_err(|e| {
-                tracing::error!(kind = ?e.kind(), "pending notification admission failed");
-            })
-            .map_err(|_| ApiError::internal_server_error("pending notification scan failed"))?;
-        if !readable {
+    let ids: Vec<_> = rows.into_iter().map(|(id, _, _)| id).collect();
+    let admitted = read
+        .get_entities_parts_with_receipt(&ids, None)
+        .inspect_err(|e| {
+            tracing::error!(kind = ?e.kind(), "pending notification admission failed");
+        })
+        .map_err(|_| ApiError::internal_server_error("pending notification scan failed"))?
+        .value;
+    for (id, parts) in ids.into_iter().zip(admitted) {
+        let Some((entity_type, learned_at, raw_body)) = parts else {
+            continue;
+        };
+        if entity_type != ENTITY_TYPE_NOTIFICATION {
             continue;
         }
         let Some(body) = notification_body_json(&raw_body) else {

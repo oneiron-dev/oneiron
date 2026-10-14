@@ -11,7 +11,7 @@ use crate::attempt_queue::{
 };
 use crate::error::{Error, Result};
 
-use super::inbound::route_inbound_surface_event;
+use super::inbound::{route_inbound_surface_event, route_inbound_surface_event_admitting_in_txn};
 use super::validate_non_blank;
 use super::{
     InboundSurfaceEventInput, InboundSurfaceRouteReceipt, SurfaceEvent, SurfaceEventDispatchRoute,
@@ -222,17 +222,39 @@ impl Vault {
             return Ok(SurfaceEventAdmission::Rejected(receipt));
         };
         let record = admit_surface_event_once(self, &event, now)?;
-        Ok(SurfaceEventAdmission::Accepted(SurfaceEventAck {
-            status_path: surface_event_status_path(&event.correlation_id),
-            correlation_id: event.correlation_id,
-            attempt_ref: SurfaceEventAttemptRef::from_attempt_id(record.attempt.id),
-            state: SurfaceEventHandoffState::from_attempt_state(record.attempt.state),
-            replayed: record.replayed,
-            // The row's own stamp, not this call's clock: a replay admitted
-            // nothing, and dating the ack `now` would contradict the
-            // `created_at` the status snapshot reads off the same attempt.
-            accepted_at: record.attempt.created_at,
-        }))
+        Ok(SurfaceEventAdmission::Accepted(surface_event_ack(
+            event, &record,
+        )))
+    }
+
+    /// [`Self::enqueue_inbound_surface_event`] for a submitter that reads as
+    /// `read`. The receiving identity is admitted under that read in the one
+    /// writer snapshot that queues the event: an identity the submitter
+    /// cannot read is refused as an address no identity holds, and nothing
+    /// is queued. A rejection names no agent the submitter cannot read.
+    pub fn enqueue_inbound_surface_event_as(
+        &self,
+        read: &crate::claim::ScopedRead<'_>,
+        input: InboundSurfaceEventInput,
+        now: u64,
+    ) -> Result<SurfaceEventAdmission> {
+        read.persist_grant_clock()?;
+        self.with_write_txn_grouped(|txn| {
+            let receipt = {
+                let rtxn: &heed::RoTxn<'_> = txn;
+                let policy = read.live_policy_manifest_in(rtxn)?;
+                route_inbound_surface_event_admitting_in_txn(self, rtxn, input, &|id| {
+                    read.is_ref_readable_with_policy_in(rtxn, &policy, id)
+                })?
+            };
+            let Some(event) = receipt.surface_event.clone() else {
+                return Ok(SurfaceEventAdmission::Rejected(receipt));
+            };
+            let record = admit_surface_event_once_in_txn(self, txn, &event, None, now)?;
+            Ok(SurfaceEventAdmission::Accepted(surface_event_ack(
+                event, &record,
+            )))
+        })
     }
 
     /// Foreign pack intake: resolve and enforce the acting agent under the
@@ -255,17 +277,9 @@ impl Vault {
             crate::Error::InvalidConfig("pack surface event did not route".into())
         })?;
         let record = admit_surface_event_once_in_txn(self, txn, &event, None, now)?;
-        Ok(SurfaceEventAdmission::Accepted(SurfaceEventAck {
-            status_path: surface_event_status_path(&event.correlation_id),
-            correlation_id: event.correlation_id,
-            attempt_ref: SurfaceEventAttemptRef::from_attempt_id(record.attempt.id),
-            state: SurfaceEventHandoffState::from_attempt_state(record.attempt.state),
-            replayed: record.replayed,
-            // The row's own stamp, not this call's clock: a replay admitted
-            // nothing, and dating the ack `now` would contradict the
-            // `created_at` the status snapshot reads off the same attempt.
-            accepted_at: record.attempt.created_at,
-        }))
+        Ok(SurfaceEventAdmission::Accepted(surface_event_ack(
+            event, &record,
+        )))
     }
 
     /// Reads the durable handoff snapshot for one public correlation id.
@@ -283,6 +297,36 @@ impl Vault {
         else {
             return Ok(None);
         };
+        Ok(Some(handoff_status(correlation_id, &attempt)))
+    }
+
+    /// [`Self::surface_event_handoff_status`] as `read` reads it, in one
+    /// snapshot: a handoff whose receiving identity the reader cannot read
+    /// is no handoff.
+    pub fn surface_event_handoff_status_as(
+        &self,
+        read: &crate::claim::ScopedRead<'_>,
+        correlation_id: &str,
+    ) -> Result<Option<SurfaceEventHandoffStatus>> {
+        validate_non_blank(
+            correlation_id,
+            "surface event correlation id must be non-empty",
+        )?;
+        let run_id = surface_event_run_id(correlation_id);
+        read.persist_grant_clock()?;
+        let rtxn = self.store.env.read_txn()?;
+        let policy = read.live_policy_manifest_in(&rtxn)?;
+        let records = AttemptQueue::new(self).list_run_in_txn(&rtxn, &run_id)?;
+        let Some(attempt) = sole_surface_event_attempt(records, correlation_id)? else {
+            return Ok(None);
+        };
+        let payload = decode_surface_event_attempt_payload(&attempt.payload)?;
+        let Ok(identity) = crate::EntityId::from_hex(&payload.event.receiving_identity_ref) else {
+            return Ok(None);
+        };
+        if !read.is_ref_readable_with_policy_in(&rtxn, &policy, &identity)? {
+            return Ok(None);
+        }
         Ok(Some(handoff_status(correlation_id, &attempt)))
     }
 
@@ -571,6 +615,20 @@ fn sole_surface_event_attempt(
         ));
     }
     Ok(Some(record))
+}
+
+fn surface_event_ack(event: SurfaceEvent, record: &AdmittedSurfaceEvent) -> SurfaceEventAck {
+    SurfaceEventAck {
+        status_path: surface_event_status_path(&event.correlation_id),
+        correlation_id: event.correlation_id,
+        attempt_ref: SurfaceEventAttemptRef::from_attempt_id(record.attempt.id),
+        state: SurfaceEventHandoffState::from_attempt_state(record.attempt.state),
+        replayed: record.replayed,
+        // The row's own stamp, not this call's clock: a replay admitted
+        // nothing, and dating the ack `now` would contradict the
+        // `created_at` the status snapshot reads off the same attempt.
+        accepted_at: record.attempt.created_at,
+    }
 }
 
 fn handoff_status(correlation_id: &str, record: &AttemptRecord) -> SurfaceEventHandoffStatus {

@@ -63,9 +63,10 @@ fn a_restored_checkpoint_cannot_push_the_rider_past_the_row_byte_limit() {
         rows: vec![(huge.clone(), ServedLifecycle::Superseded(huge))],
         ..ChangedLine::default()
     };
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new(id(7).to_hex()).unwrap());
     session
         .fold_own_changes(
-            &vault,
+            &read,
             Some(id(7)),
             crate::claim::CallerLocality::OnDevice,
             &mut line,
@@ -156,8 +157,10 @@ fn a_refused_later_write_never_answers_for_a_settled_proposal() -> crate::Result
     }))
     .unwrap();
     let mut line = ChangedLine::default();
+    crate::test_util::authorize_readers(&vault, &[&id(7).to_hex()]);
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new(id(7).to_hex()).unwrap());
     session.fold_own_changes(
-        &vault,
+        &read,
         Some(id(7)),
         crate::claim::CallerLocality::OnDevice,
         &mut line,
@@ -227,10 +230,12 @@ fn an_outcome_delivered_past_a_full_watch_rides_once_per_submission() -> crate::
             )
         })
     };
+    crate::test_util::authorize_readers(&vault, &[&actor.to_hex()]);
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new(actor.to_hex()).unwrap());
     let wake = |session: &mut SessionReadSet| -> crate::Result<usize> {
         let mut line = ChangedLine::default();
         session.fold_own_changes(
-            &vault,
+            &read,
             Some(actor),
             crate::claim::CallerLocality::OnDevice,
             &mut line,

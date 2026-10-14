@@ -226,6 +226,9 @@ pub fn standing_source_frontier(
     unit: EntityId,
     evidence: &[EntityId],
 ) -> Result<[u8; 32]> {
+    // Grant expiry is judged at a clock persisted before the snapshot, as
+    // every read lane judges it.
+    vault.store.authorization_now()?;
     let txn = vault.store.env.read_txn()?;
     let (_, record) = standing_record(vault, &txn, principal, question, expected_version)?;
     if !record.definition.units.contains(&unit) {
@@ -246,6 +249,7 @@ pub fn backfill_standing_answer(
     input: StandingAnswer,
     now: u64,
 ) -> Result<AnswerRecord> {
+    vault.store.authorization_now()?;
     vault.with_write_txn_grouped(|txn| {
         let (mut head, record) =
             standing_record(vault, txn, principal, question, expected_version)?;
