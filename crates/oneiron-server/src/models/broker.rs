@@ -37,7 +37,9 @@ use serde_json::Value as JsonValue;
 use zeroize::Zeroizing;
 
 use super::output_cap::OutputCap;
-use crate::config::models::{BrokerConfig, ModelsConfig, ProviderConfig, ProviderKind};
+use crate::config::models::{
+    BrokerConfig, ModelsConfig, ProviderConfig, ProviderKind, ResponseFormatWire,
+};
 
 /// The effector a `key_secret`'s custody binding names: the custody door
 /// hands the key to a model call's broker leg and to nothing else.
@@ -102,6 +104,7 @@ enum Wire {
 pub(super) struct BrokerBackend {
     wire: Wire,
     cap: OutputCap,
+    response_format: ResponseFormatWire,
     /// The provider's `https://host[:port]`.
     origin: String,
     /// The base URL's path under the origin, with no trailing `/`.
@@ -227,6 +230,7 @@ pub(super) fn broker_backend(
     Ok(BrokerBackend {
         wire,
         cap,
+        response_format: provider.response_format,
         origin: url.origin().ascii_serialization(),
         prefix,
         headers: provider
@@ -265,6 +269,7 @@ impl BrokerBackend {
             }
         };
         self.cap.apply(&mut body);
+        super::openai::send_format(self.response_format, &mut body);
         let wire_model = self
             .catalog
             .get(&request.model)

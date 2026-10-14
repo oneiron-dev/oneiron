@@ -1474,6 +1474,8 @@ fn predicate_root_never_bucket_key_conflict_key_confusion() {
 struct ScriptedBackend {
     calls: AtomicUsize,
     script: Mutex<VecDeque<LlmResult<crate::LlmResponse>>>,
+    /// The model each call named, in order.
+    models: Mutex<Vec<String>>,
 }
 
 impl ScriptedBackend {
@@ -1481,17 +1483,26 @@ impl ScriptedBackend {
         Self {
             calls: AtomicUsize::new(0),
             script: Mutex::new(script.into_iter().collect()),
+            models: Mutex::new(Vec::new()),
         }
+    }
+
+    fn models(&self) -> Vec<String> {
+        self.models.lock().expect("models mutex").clone()
     }
 }
 
 impl LlmBackend for ScriptedBackend {
     fn generate<'a>(
         &'a self,
-        _request: LlmRequest,
+        request: LlmRequest,
         _lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.models
+            .lock()
+            .expect("models mutex")
+            .push(request.model.as_str().to_owned());
         let next = self
             .script
             .lock()
@@ -1572,6 +1583,7 @@ fn authorized_extraction_egress_reaches_executor_only_after_host_verdict() -> Re
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -1657,6 +1669,7 @@ fn no_fabricated_belief_writes() -> Result<()> {
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -1987,6 +2000,7 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
         );
         let mut sink = CapturingSink::default();
         let mut executor = ConsolidationExecutor {
+            roles: Default::default(),
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -2028,6 +2042,7 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
         // Neither the conflict-free extraction nor the merge is lost.
         backend.clock.store(0, Ordering::SeqCst);
         let mut resumed = ConsolidationExecutor {
+            roles: Default::default(),
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -2076,6 +2091,7 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -2134,6 +2150,7 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
         let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
         let mut sink = CapturingSink::default();
         let mut executor = ConsolidationExecutor {
+            roles: Default::default(),
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -2309,6 +2326,7 @@ fn wake_prepared_wake_rereads_original_bytes_and_refuses_write_drift() -> Result
         admitted.status.attempt.id,
         None,
         Some(&pin),
+        None,
     )?;
     let citation = SwarmEvidenceRef::whole_turn(turn);
     let original = resources.verify_evidence_refs(&[citation])?;
@@ -2531,6 +2549,7 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -2597,6 +2616,7 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -2674,6 +2694,7 @@ fn re_executed_step_mints_same_claim_id() -> Result<()> {
     let run = |now_ms: u64| -> Result<Vec<EntityId>> {
         let mut sink = CapturingSink::default();
         let mut executor = ConsolidationExecutor {
+            roles: Default::default(),
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -2747,6 +2768,7 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
     let run = |now_ms: u64| -> Result<Vec<EntityId>> {
         let mut sink = CapturingSink::default();
         let mut executor = ConsolidationExecutor {
+            roles: Default::default(),
             backend: &backend,
             guard: &guard,
             strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -2872,6 +2894,7 @@ fn fatal_extraction_executes_declared_fallback_and_completes_partition() -> Resu
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,
@@ -3098,6 +3121,7 @@ fn queued_session_end_miner_executes_under_system_authority() -> Result<()> {
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
     let mut executor = ConsolidationExecutor {
+        roles: Default::default(),
         backend: &backend,
         guard: &guard,
         strategy: DreamerClaimAuthoringStrategy::SinglePass,

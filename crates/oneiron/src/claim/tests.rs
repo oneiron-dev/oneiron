@@ -1064,6 +1064,114 @@ fn claim_consolidatable_excludes_auto_generated_until_vetted() {
     );
 }
 
+/// Engine ruling 2026-10-12, check (c): provisional standing is
+/// `claim_consolidatable` without its generated-`Auto` reason, for a
+/// first-party generated head only. A federated generated head, in any form,
+/// and a tainted generated head never stand provisionally; every other reason
+/// consolidation declines a claim declines it here; and no claim holds both
+/// standings. Before, a generated head carrying a federated origin marker
+/// stood provisionally.
+#[test]
+fn provisional_standing_is_only_the_first_party_generated_auto_exit() {
+    let subject = ClaimSubject::Entity(EntityId::from_bytes([0x13; 16]).expect("valid id"));
+    let head = |edit: &dyn Fn(&mut ClaimBody)| {
+        let mut body = ClaimBody::new(
+            "test.pred",
+            subject,
+            Value::from("v"),
+            0.5,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        body.source = Some(ClaimSource::Generated);
+        edit(&mut body);
+        body
+    };
+    let scope = |entries: &[(&str, &str)]| {
+        Some(Value::Map(
+            entries
+                .iter()
+                .map(|(key, value)| (Value::from(*key), Value::from(*value)))
+                .collect(),
+        ))
+    };
+    let federated = CLAIM_SCOPE_FEDERATED_ORIGINAL_SOURCE_KEY;
+    let taint = CLAIM_SCOPE_EVIDENCE_TAINT_KEY;
+    let own = head(&|_| {});
+    assert!(claim_correctable_generated(&own), "the Dreamer's own head");
+    assert!(!claim_consolidatable(&own));
+
+    let declined: Vec<(&str, ClaimBody)> = vec![
+        (
+            "a federated restamp",
+            head(&|body| {
+                body.source = Some(ClaimSource::Imported);
+                body.scope = scope(&[(federated, "generated")]);
+            }),
+        ),
+        (
+            "a generated head with a federated origin marker",
+            head(&|body| body.scope = scope(&[(federated, "generated")])),
+        ),
+        (
+            "an unreadable federated origin marker",
+            head(&|body| body.scope = scope(&[(federated, "nonsense")])),
+        ),
+        (
+            "a duplicate federated origin marker",
+            head(&|body| {
+                body.scope = scope(&[(federated, "generated"), (federated, "generated")]);
+            }),
+        ),
+        (
+            "a tool-output taint",
+            head(&|body| body.scope = scope(&[(taint, "tool_output")])),
+        ),
+        (
+            "an imported taint",
+            head(&|body| body.scope = scope(&[(taint, "imported")])),
+        ),
+        (
+            "a malformed taint",
+            head(&|body| body.scope = scope(&[(taint, "nonsense")])),
+        ),
+        (
+            "an approved head",
+            head(&|body| body.approval = ClaimApprovalStatus::Approved),
+        ),
+        (
+            "a proposed head",
+            head(&|body| body.approval = ClaimApprovalStatus::Proposed),
+        ),
+        (
+            "a closed head",
+            head(&|body| body.lifecycle = ClaimLifecycleStatus::Superseded),
+        ),
+        ("a stale head", head(&|body| body.stale = true)),
+        (
+            "exact-store data",
+            head(&|body| body.predicate = KEY_VALUE_PREDICATE.to_owned()),
+        ),
+        (
+            "a user-stated head",
+            head(&|body| body.source = Some(ClaimSource::UserStated)),
+        ),
+        ("a sourceless head", head(&|body| body.source = None)),
+    ];
+    for (case, body) in &declined {
+        assert!(!claim_correctable_generated(body), "{case}");
+        assert!(
+            !(claim_consolidatable(body) && claim_correctable_generated(body)),
+            "{case}"
+        );
+    }
+    // A tainted generated head is defence in depth: no write door stores one.
+    for (case, body) in &declined[4..7] {
+        assert!(validate_claim_source_lineage(body).is_err(), "{case}");
+    }
+}
+
 #[test]
 fn self_unconfirmed_not_consolidatable() -> Result<()> {
     let subject = ClaimSubject::Entity(EntityId::from_bytes([0x18; 16]).expect("valid id"));
