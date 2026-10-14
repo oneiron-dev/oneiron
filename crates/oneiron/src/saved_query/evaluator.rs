@@ -439,6 +439,11 @@ impl SavedQueryEvaluator<'_> {
             return Ok(None);
         };
         let body = decode_claim_body(&raw, true)?;
+        // A claim awaiting its owner's critical confirmation is no evidence
+        // for a membership the query acts on (ARCH-0026 §G3).
+        if !self.vault.claim_critical_confirm_settled(claim_ref)? {
+            return Ok(None);
+        }
         Ok(claim_effective_at(&body, valid_at).then_some(body))
     }
 

@@ -299,6 +299,7 @@ impl Vault {
                 )
                 || body.lifecycle != ClaimLifecycleStatus::Active
                 || body.stale
+                || !self.claim_critical_confirm_settled(&id)?
             {
                 continue;
             }

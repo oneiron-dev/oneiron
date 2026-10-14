@@ -698,7 +698,15 @@ fn active_bodies_in_txn(
         }
         None::<()>
     })?;
-    Ok(heads)
+    // A fact awaiting its owner's critical confirmation is read, not acted
+    // on (ARCH-0026 §G3).
+    let mut settled = Vec::with_capacity(heads.len());
+    for (id, body) in heads {
+        if crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &id)? {
+            settled.push((id, body));
+        }
+    }
+    Ok(settled)
 }
 
 /// Eligible concurrent heads on this exact stored subject must agree.

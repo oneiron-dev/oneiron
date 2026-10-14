@@ -99,7 +99,7 @@ fn read_source(
         return Err(invalid());
     }
     let body = decode_claim_body(&bytes, true)?;
-    if !claim_evidence_admissible(&body) {
+    if !claim_evidence_admissible(&body) || !reader.vault().claim_critical_confirm_settled(&id)? {
         return Err(invalid());
     }
     if let Some(owner) = voice_owner

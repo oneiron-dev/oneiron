@@ -298,7 +298,7 @@ pub(super) fn matching_claims_in_txn(
     }
     let mut matches = Vec::new();
     for claim_id in vault.claims_for_subject_in_txn(rtxn, &party_ref)? {
-        let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? else {
+        let Some(body) = vault.get_claim_for_effect_in_txn(rtxn, &claim_id)? else {
             continue;
         };
         if body.predicate != predicate || !is_comm_claim_predicate(&body.predicate) {
@@ -380,7 +380,7 @@ pub(super) fn build_contact_view_in_txn(
     let mut opt_out = Vec::new();
     let threads = active_thread_refs_in_txn(vault, rtxn, party_ref)?;
     for claim_id in vault.claims_for_subject_in_txn(rtxn, &party_ref)? {
-        let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? else {
+        let Some(body) = vault.get_claim_for_effect_in_txn(rtxn, &claim_id)? else {
             continue;
         };
         if !is_comm_claim_predicate(&body.predicate) {

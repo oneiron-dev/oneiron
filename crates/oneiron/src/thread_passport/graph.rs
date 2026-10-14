@@ -65,7 +65,9 @@ fn thread_claims(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<Vec<(EntityId,
                 continue;
             }
             validate_thread_claim_owner_in_txn(store, rtxn, &body, false)?;
-            if body.lifecycle == ClaimLifecycleStatus::Active {
+            if body.lifecycle == ClaimLifecycleStatus::Active
+                && crate::gate::claim_critical_confirm_settled_in_txn(store, rtxn, &id)?
+            {
                 rows.insert(id, body);
             }
         }

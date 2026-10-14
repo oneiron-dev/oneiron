@@ -294,7 +294,7 @@ fn active_heads_in_txn(
 ) -> Result<Vec<(EntityId, ClaimBody, u64)>> {
     let mut rows = Vec::new();
     for id in vault.claims_for_subject_in_txn(rtxn, actor)? {
-        let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
+        let Some(body) = vault.get_claim_for_effect_in_txn(rtxn, &id)? else {
             continue;
         };
         if body.predicate != predicate

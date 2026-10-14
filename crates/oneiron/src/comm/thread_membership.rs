@@ -106,7 +106,7 @@ fn matching_thread_membership_with_boundary_in_txn(
     let canonical = canonical_member_ref(&aliases, thread_ref);
     let mut rows = Vec::new();
     for id in vault.claims_for_subject_in_txn(rtxn, &party_ref)? {
-        let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
+        let Some(body) = vault.get_claim_for_effect_in_txn(rtxn, &id)? else {
             continue;
         };
         if body.predicate != PREDICATE_COMM_THREAD_MEMBER {
@@ -151,7 +151,7 @@ pub(crate) fn active_thread_refs_in_txn(
     let aliases = crate::thread_passport::thread_aliases_in_txn(vault, rtxn)?;
     let mut candidates = BTreeSet::new();
     for id in vault.claims_for_subject_in_txn(rtxn, &party_ref)? {
-        let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
+        let Some(body) = vault.get_claim_for_effect_in_txn(rtxn, &id)? else {
             continue;
         };
         if body.predicate == PREDICATE_COMM_THREAD_MEMBER

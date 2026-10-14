@@ -76,6 +76,7 @@ pub(super) fn admitted_ruling(
         || body.source != Some(ClaimSource::UserStated)
         || body.world.is_some()
         || body.scope.is_some()
+        || !crate::gate::claim_critical_confirm_settled_in_txn(store, txn, id)?
     {
         return Ok(None);
     }

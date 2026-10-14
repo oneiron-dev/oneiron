@@ -407,7 +407,7 @@ pub(crate) fn standing_opt_out_heads_in_txn(
 ) -> CommResult<Vec<StandingOptOutHead>> {
     let mut heads = Vec::new();
     for claim_id in vault.claims_for_subject_in_txn(rtxn, &party_ref)? {
-        let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? else {
+        let Some(body) = vault.get_claim_for_effect_in_txn(rtxn, &claim_id)? else {
             continue;
         };
         if body.predicate != PREDICATE_COMM_OPT_OUT {
@@ -556,7 +556,9 @@ pub(crate) fn send_override_for_send_in_txn(
         let Some(body) = claim_body_in_txn(store, txn, &claim_id)? else {
             continue;
         };
-        if body.predicate != PREDICATE_COMM_SEND_OVERRIDE {
+        if body.predicate != PREDICATE_COMM_SEND_OVERRIDE
+            || !crate::gate::claim_critical_confirm_settled_in_txn(store, txn, &claim_id)?
+        {
             continue;
         }
         let claim = CommClaim::from_claim_body(&body)?;

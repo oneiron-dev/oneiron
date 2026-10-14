@@ -355,6 +355,7 @@ pub(super) fn evaluate_fact(
         || prediction.predicate != "judgment.answer"
         || prediction.subject != ClaimSubject::Entity(answer.unit)
         || prediction.value != expected
+        || !crate::gate::claim_critical_confirm_settled_in_txn(store, txn, &answer.claim)?
     {
         return Ok(None);
     }

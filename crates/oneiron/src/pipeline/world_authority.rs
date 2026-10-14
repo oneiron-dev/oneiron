@@ -361,6 +361,7 @@ fn world_access_rows(
             if body.subject != ClaimSubject::Entity(*agent_ref)
                 || !claim_surfaceable(&body)
                 || !world_access_row_in_force(&body, at)
+                || !crate::gate::claim_critical_confirm_settled_in_txn(store, rtxn, &claim_id)?
             {
                 continue;
             }

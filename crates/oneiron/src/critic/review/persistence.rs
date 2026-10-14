@@ -155,7 +155,7 @@ pub(super) fn read_reliabilities(
     let mut rows = BTreeMap::new();
     let rtxn = vault.store.env.read_txn()?;
     for id in vault.claims_for_subject_in_txn(&rtxn, session)? {
-        let Some(body) = vault.get_claim_in_txn(&rtxn, &id)? else {
+        let Some(body) = vault.get_claim_for_effect_in_txn(&rtxn, &id)? else {
             continue;
         };
         if !crate::claim::claim_surfaceable(&body) || !trusted_claim(vault, &rtxn, &id, &body)? {

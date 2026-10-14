@@ -621,7 +621,7 @@ pub(crate) fn native_mail_reputation_earned(
     };
     let mut seen = [false; 5];
     for id in vault.claims_for_subject_in_txn(txn, &identity_ref)? {
-        let Some(claim) = vault.get_claim_in_txn(txn, &id)? else {
+        let Some(claim) = vault.get_claim_for_effect_in_txn(txn, &id)? else {
             continue;
         };
         if claim.lifecycle != ClaimLifecycleStatus::Active

@@ -131,6 +131,9 @@ pub(super) fn read_fact<T: serde::de::DeserializeOwned>(
         if body.subject != ClaimSubject::Entity(subject)
             || body.predicate != predicate
             || !claim_surfaceable(&body)
+            || !vault
+                .claim_critical_confirm_settled(&id)
+                .map_err(storage_failure)?
         {
             continue;
         }

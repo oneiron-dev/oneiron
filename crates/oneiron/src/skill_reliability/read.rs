@@ -108,16 +108,17 @@ pub(super) fn active_reliability_heads_in_txn(
     skill: &EntityId,
     executor: Option<&str>,
 ) -> Result<Vec<(EntityId, ClaimBody, u64)>> {
-    Ok(
-        active_claims_in_txn(vault, rtxn, skill, PREDICATE_SKILL_RELIABILITY)?
-            .into_iter()
-            .filter(|(_, body, _)| {
-                body.source == Some(crate::claim::ClaimSource::Observed)
-                    && body.approval == crate::claim::ClaimApprovalStatus::Auto
-                    && claim_executor(body) == executor
-            })
-            .collect(),
-    )
+    let mut heads = Vec::new();
+    for (id, body, at) in active_claims_in_txn(vault, rtxn, skill, PREDICATE_SKILL_RELIABILITY)? {
+        if body.source == Some(crate::claim::ClaimSource::Observed)
+            && body.approval == crate::claim::ClaimApprovalStatus::Auto
+            && claim_executor(&body) == executor
+            && crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, &id)?
+        {
+            heads.push((id, body, at));
+        }
+    }
+    Ok(heads)
 }
 
 // ---------------------------------------------------------------------------

@@ -403,7 +403,10 @@ impl Vault {
                 // question through this predicate; this family asked a
                 // narrower one and so let a Proposed head win the truth read
                 // from ANY route that can mint one, peer sync included.
-                if body.subject != ClaimSubject::Entity(*subject) || !claim_surfaceable(&body) {
+                if body.subject != ClaimSubject::Entity(*subject)
+                    || !claim_surfaceable(&body)
+                    || !crate::gate::claim_critical_confirm_settled_in_txn(&self.store, rtxn, &id)?
+                {
                     continue;
                 }
                 if body.valid_from.is_some_and(|v| v > at) || body.valid_to.is_some_and(|v| v <= at)

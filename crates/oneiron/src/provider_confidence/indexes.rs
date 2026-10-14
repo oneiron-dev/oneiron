@@ -196,6 +196,7 @@ fn validated_prior_head_owner_in_txn(
         || body.stale
         || validate_actor_confidence_prior_claim_structure(&body).is_err()
         || unit_interval_f32(&body.value).is_none()
+        || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, head)?
     {
         return Ok(None);
     }
@@ -331,7 +332,7 @@ fn active_priors_for_actor_in_txn(
 ) -> Result<Vec<(u64, EntityId, f32)>> {
     let mut priors = Vec::new();
     for claim_id in vault.claims_for_subject_in_txn(rtxn, actor)? {
-        let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? else {
+        let Some(body) = vault.get_claim_for_effect_in_txn(rtxn, &claim_id)? else {
             continue;
         };
         if !is_actor_confidence_prior_claim_predicate(&body.predicate)

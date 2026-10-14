@@ -101,7 +101,7 @@ pub(in crate::booking) fn confirmed_start_for_reminder(
     // occurrence, never an unapproved or superseded claim.
     for claim_id in claims_for_subject(vault, &rtxn, event_ref)? {
         let body = vault
-            .get_claim_in_txn(&rtxn, &claim_id)
+            .get_claim_for_effect_in_txn(&rtxn, &claim_id)
             .map_err(|error| engine_failure("calendar status read", error))?;
         if let Some(body) = body.filter(crate::claim::claim_surfaceable)
             && body.predicate == PREDICATE_CALENDAR_STATUS
@@ -185,7 +185,7 @@ pub(super) fn booking_event_type_in(
 ) -> Result<Option<EventTypeKey>, BookingError> {
     for claim_id in claims_for_subject(vault, rtxn, event_ref)? {
         let Some(body) = vault
-            .get_claim_in_txn(rtxn, &claim_id)
+            .get_claim_for_effect_in_txn(rtxn, &claim_id)
             .map_err(|error| engine_failure("booking claim read", error))?
             .filter(crate::claim::claim_surfaceable)
         else {
@@ -216,7 +216,7 @@ fn is_confirmed_booking_in(
     let (mut on_page, mut of_type, mut confirmed, mut cancelled) = (false, false, false, false);
     for claim_id in claims_for_subject(vault, rtxn, event_ref)? {
         let Some(body) = vault
-            .get_claim_in_txn(rtxn, &claim_id)
+            .get_claim_for_effect_in_txn(rtxn, &claim_id)
             .map_err(|error| engine_failure("booking claim read", error))?
             .filter(crate::claim::claim_surfaceable)
         else {
@@ -469,6 +469,8 @@ pub(super) fn read_booking_facts(
         };
         if !crate::claim::claim_surfaceable(&body)
             || body.subject != ClaimSubject::Entity(*event_ref)
+            || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, &claim_id)
+                .map_err(|error| engine_failure("booking claim confirm read", error))?
         {
             continue;
         }

@@ -380,7 +380,7 @@ fn current_status_in(
     let mut heads = Vec::new();
     for claim_id in vault.claims_for_subject_in_txn(rtxn, event_ref)? {
         let Some(body) = vault
-            .get_claim_in_txn(rtxn, &claim_id)?
+            .get_claim_for_effect_in_txn(rtxn, &claim_id)?
             .filter(claim_surfaceable)
         else {
             continue;

@@ -93,6 +93,11 @@ impl<'v> AccessContext<'v> {
                     let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
                     if body.predicate == crate::federation::PREDICATE_RELATIONSHIP_PERSON_REF
                         && claim_surfaceable(&body)
+                        && crate::gate::claim_critical_confirm_settled_in_txn(
+                            &vault.store,
+                            txn,
+                            &id,
+                        )?
                         && body
                             .value
                             .as_str()

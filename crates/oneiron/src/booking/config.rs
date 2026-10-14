@@ -489,6 +489,8 @@ fn live_config_in_txn(
     if body.predicate != BOOKING_EVENT_TYPE_PREDICATE
         || body.subject != ClaimSubject::Entity(page_ref)
         || !claim_surfaceable(&body)
+        || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, id)
+            .map_err(storage_failure)?
     {
         return Ok(None);
     }

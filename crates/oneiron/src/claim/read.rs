@@ -51,6 +51,33 @@ impl Vault {
         self.get_claim_in_txn(&rtxn, id)
     }
 
+    /// [`Vault::get_claim_in_txn`] for a reader about to ACT on the claim.
+    ///
+    /// A critical claim whose owner confirmation is outstanding, attached or
+    /// timed out, reads as absent here; every retrieval read still returns it
+    /// (ARCH-0026 §G3). This is the marker rule only: each caller keeps its
+    /// own approval, source and lifecycle rules on the body.
+    pub(crate) fn get_claim_for_effect_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<ClaimBody>> {
+        let Some(body) = self.get_claim_in_txn(rtxn, id)? else {
+            return Ok(None);
+        };
+        if !crate::gate::claim_critical_confirm_settled_in_txn(&self.store, rtxn, id)? {
+            return Ok(None);
+        }
+        Ok(Some(body))
+    }
+
+    /// [`crate::gate::claim_critical_confirm_settled_in_txn`] in its own read
+    /// transaction, for an acting reader that holds none.
+    pub(crate) fn claim_critical_confirm_settled(&self, id: &EntityId) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        crate::gate::claim_critical_confirm_settled_in_txn(&self.store, &rtxn, id)
+    }
+
     /// Transaction-composable [`Vault::get_claim`]: reads and decodes a CLAIM
     /// body through the caller's txn (so it composes inside a write txn, where a
     /// nested read txn would be illegal).
@@ -260,7 +287,9 @@ impl Vault {
         crate::ports::ClaimStore::port_claim_list_by_predicate(self, rtxn, predicate)
     }
 
-    pub(crate) fn claim_bodies_for_subjects_matching(
+    /// Bodies an acting reader may apply: a claim awaiting its owner's
+    /// critical confirmation is skipped (ARCH-0026 §G3).
+    pub(crate) fn effect_claim_bodies_for_subjects_matching(
         &self,
         subjects: &[EntityId],
         mut matches: impl FnMut(&ClaimBody, &EntityId) -> bool,
@@ -285,7 +314,13 @@ impl Vault {
                 let Some(body) = self.claim_body_if_claim_in_txn(&rtxn, &claim_id)? else {
                     continue;
                 };
-                if matches(&body, subject) {
+                if matches(&body, subject)
+                    && crate::gate::claim_critical_confirm_settled_in_txn(
+                        &self.store,
+                        &rtxn,
+                        &claim_id,
+                    )?
+                {
                     claims.push(body);
                 }
             }
