@@ -1,11 +1,10 @@
 //! Txn row reads/writes, teardown, lazy expiry, and the one stamping body.
 
-use std::fs;
-
 use zeroize::Zeroizing;
 
 use super::admission::admit_record_use;
 use super::codec::{SECRET_LEASE, SECRET_LOCAL_REGISTRATION, SECRET_MATERIALIZATION_RECEIPT};
+use super::files::remove_secret_file;
 use super::types::{
     SecretLease, SecretLeaseMaterialization, SecretLeaseStatus, SecretMaterializationReceipt,
     StoredLocalRegistration, VaultInstant,
@@ -134,9 +133,10 @@ pub(super) mod registration_fault_hook {
 /// T2 teardown, shared by revoke and both expiry paths: removes the
 /// registered file best-effort and records the outcome. The registration
 /// row is DELETED only when the file is verifiably gone (removed, or
-/// already absent); a failed removal retains the row with the error and
-/// the attempt time recorded, so the path stays in SECRET-03's exclusion
-/// set for as long as the file may still hold the value.
+/// already absent); a failed removal, or a path now held by some other file,
+/// retains the row with the error and the attempt time recorded, so the path
+/// stays in SECRET-03's exclusion set for as long as the file may still hold
+/// the value, and the other file is left untouched.
 ///
 /// `pub(crate)` for SECRET-04's `revoke_secret` (ONE-1922), which revokes
 /// every lease over a ref inside its own write transaction and must tear
@@ -150,17 +150,16 @@ pub(crate) fn teardown_local_registration_in_txn(
     let Some(stored) = read_local_registration_in_txn(store, wtxn, lease_id)? else {
         return Ok(());
     };
-    let file_gone = match fs::remove_file(&stored.registration.path) {
+    let file_gone = match remove_secret_file(&stored.registration.path, stored.file_identity) {
         Ok(()) => true,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
         Err(error) => {
             write_local_registration_in_txn(
                 store,
                 wtxn,
                 &StoredLocalRegistration {
-                    registration: stored.registration,
                     removal_error: Some(error.to_string()),
                     removal_attempted_at: Some(at),
+                    ..stored
                 },
             )?;
             false
