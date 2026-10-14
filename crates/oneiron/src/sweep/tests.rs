@@ -145,7 +145,7 @@ fn a_run_with_no_due_obligation_leaves_every_window_as_it_was() {
             .unwrap()
             .map(|entry| {
                 let (key, value) = entry.unwrap();
-                (key.to_owned(), value.to_vec())
+                (key.into_owned(), value.to_vec())
             })
             .collect()
     };

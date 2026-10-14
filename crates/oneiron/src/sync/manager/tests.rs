@@ -50,12 +50,12 @@ fn open_window_tracks_issued_handle_before_discard_can_deregister() {
 
     assert!(manager.loaded_keys().is_empty());
     assert!(
-        manager.window_live_for_sweep(&key),
+        manager.while_window_closed(&key, || ()).is_none(),
         "discard racing handle issue must still leave the issued handle tracked"
     );
     drop(issued);
     assert!(
-        !manager.window_live_for_sweep(&key),
+        manager.while_window_closed(&key, || ()).is_some(),
         "dead issued handles should prune after the external handle drops"
     );
 }
@@ -101,12 +101,12 @@ fn window_lookup_tracks_issued_handle_before_discard_can_deregister() {
 
     assert!(manager.loaded_keys().is_empty());
     assert!(
-        manager.window_live_for_sweep(&key),
+        manager.while_window_closed(&key, || ()).is_none(),
         "discard racing handle lookup must still leave the issued handle tracked"
     );
     drop(issued);
     assert!(
-        !manager.window_live_for_sweep(&key),
+        manager.while_window_closed(&key, || ()).is_some(),
         "dead issued handles should prune after the external handle drops"
     );
 }

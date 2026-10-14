@@ -322,10 +322,7 @@ async fn a_voice_print_past_its_retention_deadline_matches_no_one_and_a_running_
 /// A T2 secret lease of 60 seconds whose value is written to a file under
 /// `dir`. Returns the file.
 fn lease_a_file(dir: &Path, vault: &Vault) -> PathBuf {
-    use oneiron::secret_custody::{
-        CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding,
-        SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
-    };
+    use rmpv::Value;
     let target = dir
         .canonicalize()
         .expect("canonical tempdir")
@@ -333,27 +330,58 @@ fn lease_a_file(dir: &Path, vault: &Vault) -> PathBuf {
         .join(".secrets")
         .join("api.key");
     std::fs::create_dir_all(target.parent().expect("parent")).expect("mkdir");
-    vault
-        .register_secret(SecretCustodyRecord {
-            schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
-            name: "local".to_owned(),
-            class: CustodyClass::CustodyPortable,
-            device_only: false,
-            value_bytes: b"housekeeping-lease-fixture-value".to_vec(),
-            status: SecretCustodyStatus::Active,
-            registered_at: T0,
-            rotated_at: None,
-            rotation_generation: 0,
-            bindings: vec![SecretBinding {
-                effector: "connector:test".to_owned(),
-                tier_ceiling: CustodyTier::T2LocalRegistered,
-                scopes: vec!["read".to_owned()],
-            }],
-            manifest_ref: "secrets.toml".to_owned(),
-            declared_paths: vec![target.to_string_lossy().into_owned()],
-            policy_floor_snapshot: SecretCustodyFloor::default(),
-        })
-        .expect("register secret");
+    // The value field is the engine's own, so the record goes through the
+    // public body codec, as the manifest flow writes it.
+    let band = |min: u64, max: u64| {
+        Value::Map(vec![
+            (Value::from("min"), Value::from(min)),
+            (Value::from("max"), Value::from(max)),
+        ])
+    };
+    let body = Value::Map(vec![
+        (Value::from("schema_version"), Value::from(1_u64)),
+        (Value::from("name"), Value::from("local")),
+        (Value::from("class"), Value::from("custody-portable")),
+        (Value::from("device_only"), Value::from(false)),
+        (
+            Value::from("value_bytes"),
+            Value::Binary(b"housekeeping-lease-fixture-value".to_vec()),
+        ),
+        (Value::from("status"), Value::from("active")),
+        (Value::from("registered_at"), Value::from(T0)),
+        (Value::from("rotated_at"), Value::Nil),
+        (Value::from("rotation_generation"), Value::from(0_u64)),
+        (
+            Value::from("bindings"),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from("effector"), Value::from("connector:test")),
+                (Value::from("tier_ceiling"), Value::from(2_u64)),
+                (
+                    Value::from("scopes"),
+                    Value::Array(vec![Value::from("read")]),
+                ),
+            ])]),
+        ),
+        (Value::from("manifest_ref"), Value::from("secrets.toml")),
+        (
+            Value::from("declared_paths"),
+            Value::Array(vec![Value::from(target.to_str().expect("utf-8 target"))]),
+        ),
+        (
+            Value::from("policy_floor_snapshot"),
+            Value::Map(vec![
+                (Value::from("portable"), band(0, 2)),
+                (Value::from("device_bound"), band(0, 2)),
+                (Value::from("cross_vault"), band(0, 0)),
+                (Value::from("rotation_max_age_secs"), Value::Nil),
+                (Value::from("env_bindings"), Value::Map(vec![])),
+            ]),
+        ),
+    ]);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &body).expect("encode");
+    let record = oneiron::secret_custody::decode_secret_custody_body(&bytes).expect("decode");
+    vault.register_secret(record).expect("register secret");
     let lease = vault
         .materialize_secret_lease("local", "connector:test", 60)
         .expect("lease");
