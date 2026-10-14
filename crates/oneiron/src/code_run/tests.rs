@@ -1242,7 +1242,7 @@ fn facet_reader(
 /// private EVENT into work nor the work EVENT into private. Each refusal
 /// names no endpoint type, alike for a stored target and a missing one, so
 /// it tells the run nothing about a row its lane may not read (Astra R9 F2,
-/// R10 F2).
+/// R10 F2, R11 F1, R12 F1, R13 F1; Sol R13 F1).
 #[test]
 fn a_door_credential_stamps_only_a_row_it_reads_into_its_own_facets() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -1317,14 +1317,49 @@ fn a_door_credential_stamps_only_a_row_it_reads_into_its_own_facets() -> Result<
         actor,
         crate::federation::ScopeAxis::All,
     )?)));
+    // The wide key reads a NOTE its holder wrote, and may place it again in
+    // its birth facet.
+    let memo = vault
+        .create_note(
+            "research",
+            "born",
+            WriteActor::new(actor, EdgeActorClass::Agent),
+        )
+        .expect("NOTE birth");
+    wide.dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+        memo,
+        EdgeKind::FacetOf,
+        vault.default_facet()?,
+        1.0,
+    )))?;
+    let custody = vault.register_secret(crate::secret_custody::SecretCustodyRecord {
+        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "placement_probe".to_owned(),
+        class: crate::secret_custody::CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"custody-value-never-read-here".to_vec(),
+        status: crate::secret_custody::SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: Vec::new(),
+        manifest_ref: "secrets.toml".to_owned(),
+        declared_paths: Vec::new(),
+        policy_floor_snapshot: crate::secret_custody::SecretCustodyFloor::default(),
+    })?;
     // An off-table source (a FACET stamps nothing) onto a stored facet is
     // refused as onto a missing id, so the refusal never tells a FACET apart
-    // (Astra R12 F1).
+    // (Astra R12 F1). So is the NOTE's restamp into another facet (Astra R13
+    // F1), and a custody row, which no lane reads (Sol R13 F1).
     for (src, tgt) in [
         (shared, held),
         (shared, absent),
         (work, home),
         (work, absent),
+        (memo, work),
+        (memo, absent),
+        (custody, work),
+        (custody, absent),
     ] {
         let refused = wide
             .dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(

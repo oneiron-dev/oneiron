@@ -517,7 +517,9 @@ impl<'a> ExecutorStorage<'a> {
 /// on #1432). The target must be a stored FACET, or the type table refuses
 /// the stamp later naming the target's type. Any other stamp is refused here
 /// naming no endpoint type, so the refusal says nothing about a target the
-/// lane may not read (Astra R9 F2, R11 F1).
+/// lane may not read (Astra R9 F2, R11 F1). A custody source is no lane's to
+/// read, and its read refusal names its type, so it is refused here as a
+/// missing source is (Sol R13 F1).
 pub(crate) fn require_facet_placement_in(
     vault: &Vault,
     reader: &ScopedReadActorKey,
@@ -534,6 +536,8 @@ pub(crate) fn require_facet_placement_in(
     if in_scope
         && crate::batch::stored_entity_type(&vault.store, txn, &tgt)?
             == Some(crate::registry::ENTITY_TYPE_FACET)
+        && crate::batch::stored_entity_type(&vault.store, txn, &src)?
+            != Some(crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
         && lane.is_entity_readable_with_policy_in(txn, &lane.live_policy_manifest_in(txn)?, &src)?
     {
         return Ok(());

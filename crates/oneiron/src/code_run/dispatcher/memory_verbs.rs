@@ -385,12 +385,15 @@ impl HostSelfDispatcher<'_> {
                     .map_err(|refused| match refused {
                         // A door's credential learns no endpoint type from the type
                         // table either: its every FacetOf refusal reads alike (Astra
-                        // R12 F1 on #1432).
-                        Error::Registry(crate::error::RegistryError::InvalidFacetOfEdge {
-                            ..
-                        }) if placement.is_some() => unplaceable(call.src, call.tgt),
+                        // R12 F1 on #1432). A NOTE's or ASSET's refused restamp is
+                        // judged only once the target is a stored FACET, so it reads
+                        // alike too (Astra R13 F1).
+                        Error::Registry(
+                            crate::error::RegistryError::InvalidFacetOfEdge { .. }
+                            | crate::error::RegistryError::FacetStampImmutable { .. },
+                        ) if placement.is_some() => unplaceable(call.src, call.tgt),
                         other => other,
-                    })?
+                    })?;
             }
             ExecutorStorage::Session(binding) => binding.session.executor_put_edge(
                 &binding.route,
