@@ -111,6 +111,7 @@ fn a_structural_refusal_preserves_only_its_receipt_and_no_candidate_rows() -> Re
                 auto_checker: None,
                 defer_metrics_until_commit: true,
                 transition: None,
+                owner_authored: None,
             },
             &policy,
             GateWriteMode {
@@ -200,6 +201,7 @@ fn late_refusal_preserves_only_its_receipt() -> Result<()> {
                 auto_checker: None,
                 defer_metrics_until_commit: true,
                 transition: None,
+                owner_authored: None,
             },
             &policy,
             GateWriteMode {

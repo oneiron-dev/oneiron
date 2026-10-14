@@ -23,6 +23,10 @@ const CRITICAL_CONFIRM_SWEEP_PAGE_LIMIT: usize = 256;
 const CRITICAL_CONFIRM_LIST_CALL_ROW_BUDGET: usize = CRITICAL_CONFIRM_SWEEP_PAGE_LIMIT * 2;
 pub const GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED: &str =
     "gate.allow.critical_confirm_attached";
+/// The receipt reason of a critical claim its vault's authenticated owner
+/// wrote in person: it carries its own confirmation and attaches none.
+pub(crate) const GATE_REASON_ALLOW_CRITICAL_OWNER_AUTHORED: &str =
+    "gate.allow.critical_owner_authored";
 // The decision receipt uses the allow namespace; the durable pending row must
 // remain in store.rs's existing pending namespace.
 pub(super) const GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED: &str =

@@ -164,7 +164,17 @@ fn facade_invoke(
     let memory = credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality());
     Ok(match facade_room_turn(headers)? {
         Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
-        None => oneiron::task_verb::sdk::invoke(&memory, verb, value)?,
+        None => {
+            // The owner's own request on the owner's own full credential:
+            // owner-authored writes carry their own confirmation. Any other
+            // caller is refused by the owner door and writes as itself.
+            let owner = super::owner_routes::owner(auth, server).ok();
+            let memory = match &owner {
+                Some(owner) => memory.with_owner_authorship(owner),
+                None => memory,
+            };
+            oneiron::task_verb::sdk::invoke(&memory, verb, value)?
+        }
     })
 }
 

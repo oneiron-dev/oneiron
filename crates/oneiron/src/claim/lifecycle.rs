@@ -735,6 +735,7 @@ impl Vault {
                     auto_checker: None,
                     defer_metrics_until_commit: false,
                     transition: Some(&transition),
+                    owner_authored: None,
                 },
                 &policy,
                 crate::gate::GateWriteMode {

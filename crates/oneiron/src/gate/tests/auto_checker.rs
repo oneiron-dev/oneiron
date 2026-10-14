@@ -209,6 +209,7 @@ fn gate_claim_write(
             auto_checker: checker,
             defer_metrics_until_commit: false,
             transition: None,
+            owner_authored: None,
         },
         &policy,
         GateWriteMode {

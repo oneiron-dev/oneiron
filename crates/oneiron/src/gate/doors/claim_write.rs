@@ -22,8 +22,8 @@ use crate::claim::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::confirm::{
-    GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED,
-    critical_claim_can_land_auto_with_confirm,
+    GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_ALLOW_CRITICAL_OWNER_AUTHORED,
+    GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED, critical_claim_can_land_auto_with_confirm,
 };
 use crate::gate::constants::LOCAL_WRITE_ACTOR_CLASS;
 use crate::gate::decision::{GateDecision, GateOutcome, GateReasonCode};
@@ -31,6 +31,7 @@ use crate::gate::definition_ceiling::agent_definition_ceiling_for_actor;
 use crate::gate::input::{GateActor, GateContentKind, GateProvenanceHandles};
 use crate::gate::resolution::{PolicyManifestResolution, check_claim_source_trust};
 use crate::llm::{AutoCheckCandidate, AutoCheckOutcome, AutoChecker};
+use crate::ports::EntityStoreRead;
 use crate::store::{
     GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store,
     checker_hold_receipt_reason,
@@ -59,12 +60,14 @@ fn closes_stored_value_beyond_preview(
                 && proof.matches_body(store, txn, id, body).unwrap_or(false)
         })
         && store
-            .entities
-            .get(txn, id.as_bytes())
+            .port_entity_record(txn, id)
             .ok()
             .flatten()
-            .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
-            .and_then(|stored| decode_claim_body(stored, true).ok())
+            .map(|row| row.encode())
+            .and_then(|raw| {
+                raw.get(ENTITY_METADATA_HEADER_LEN..)
+                    .and_then(|stored| decode_claim_body(stored, true).ok())
+            })
             .is_some_and(|stored| stored.value == body.value)
 }
 
@@ -178,6 +181,7 @@ fn check_claim_policy_for_write_with_record_inner(
         auto_checker,
         defer_metrics_until_commit,
         transition,
+        owner_authored,
     } = write;
     *recorded_decision = None;
     if let Some(envelope) = envelope {
@@ -319,13 +323,29 @@ fn check_claim_policy_for_write_with_record_inner(
         {
             decision = GateDecision::pending(vec![GateReasonCode::PendingCarryForwardConfidence]);
         }
-        let attach_critical_confirm = body.approval == ClaimApprovalStatus::Auto
+        let critical_floor_only = body.approval == ClaimApprovalStatus::Auto
             && critical_claim_can_land_auto_with_confirm(
                 &input,
                 decision.reason_codes(),
                 &body.predicate,
             );
-        if attach_critical_confirm {
+        // Owner-authored writes carry their own confirmation: the vault's
+        // owner, revalidated in this transaction, wrote this claim in person,
+        // so it lands Auto with nothing to confirm. The proof rides the
+        // write's options from the door that authenticated the owner; the
+        // envelope only has to name the same actor.
+        let owner_authored = critical_floor_only
+            && owner_authored.is_some_and(|write| {
+                envelope.is_some_and(|envelope| {
+                    envelope.actor().entity_ref() == write.actor()
+                        && envelope.actor().actor_class() == crate::edge::EdgeActorClass::Human
+                })
+            });
+        let attach_critical_confirm = critical_floor_only && !owner_authored;
+        if owner_authored {
+            decision = GateDecision::allow()
+                .with_receipt_reasons([GATE_REASON_ALLOW_CRITICAL_OWNER_AUTHORED]);
+        } else if attach_critical_confirm {
             decision = GateDecision::allow()
                 .with_receipt_reasons([GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED]);
         }

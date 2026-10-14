@@ -71,6 +71,7 @@ pub(in crate::batch) fn apply_put(
                 refinement_admission,
                 transition,
                 posture,
+                owner_authored,
             },
     } = request;
     let Replication {
@@ -235,7 +236,8 @@ pub(in crate::batch) fn apply_put(
                     wtxn,
                     &id,
                     crate::gate::ClaimGateWrite::plain(&body, write_envelope)
-                        .with_transition(transition),
+                        .with_transition(transition)
+                        .with_owner_authored(owner_authored),
                     policy,
                     options.gate_write_mode(),
                     options.decision.preflight,
