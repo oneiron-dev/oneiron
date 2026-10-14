@@ -480,6 +480,24 @@ pub(super) fn failure_pin(content: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// `held` and then each step's failure line in `window` that `held` lacks,
+/// in order: a line several steps fail with is one pin, kept once.
+pub(super) fn window_pins(
+    held: &[String],
+    window: &[crate::compaction::CompactionWindowMessage],
+) -> Vec<String> {
+    let mut pins = held.to_vec();
+    for pin in window
+        .iter()
+        .filter_map(|message| failure_pin(&message.content))
+    {
+        if !pins.contains(&pin) {
+            pins.push(pin);
+        }
+    }
+    pins
+}
+
 /// The bridge positions this run spoke at: each call that emitted a bubble.
 /// A position no call spoke at names none of the run's records, whatever
 /// sits at its id. The trailing fallback speaks only once the run completes,

@@ -36,7 +36,7 @@ impl CompactionSpawn for InlineSpawn {
 struct Compactor {
     fail: Mutex<Option<CompactionCheck>>,
     tries: Mutex<Vec<Option<CompactionCheck>>>,
-    /// The window tokens one call takes whole; `None` takes any window.
+    /// The rendered input one call takes whole; `None` takes any.
     limit: Option<u64>,
     /// A door each pass shuts as it runs, as a credential revoked mid-pass.
     shuts: Mutex<Option<Arc<ShutDoor>>>,
@@ -91,7 +91,7 @@ impl CompactionBackend for CompactorSeat {
         CompactionTierClass::Cheap
     }
 
-    fn window_token_limit(&self, _summary_token_budget: u64) -> Option<u64> {
+    fn input_token_limit(&self, _summary_token_budget: u64) -> Option<u64> {
         self.0.limit
     }
 
