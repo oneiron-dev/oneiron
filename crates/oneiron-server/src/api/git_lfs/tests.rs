@@ -858,6 +858,50 @@ async fn lfs_uploads_past_a_principals_share_are_refused_while_one_is_held() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn lfs_chunk_exchanges_are_refused_while_every_transfer_permit_is_held() {
+    let config = SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            lfs_transfers: 1,
+            ..Default::default()
+        },
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let held = hold_upload(&server, &writer_token(), 4_096).await;
+
+    let token = format!(
+        "{}scope=core:read;principal_ref={}",
+        crate::test_credentials::RECIPE_PREFIX,
+        oneiron::EntityId::now().to_hex()
+    );
+    let exchange = || async {
+        let request = request(
+            "POST",
+            &format!("/git/{REPO}/info/lfs/chunks"),
+            Some(&token),
+            Body::from(b"not a chunk request".to_vec()),
+        );
+        route(&server, request).await
+    };
+    let (status, headers, _) = exchange().await;
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "refused before its worker starts, not queued"
+    );
+    assert_eq!(headers["retry-after"], "1");
+
+    // Once the permit is back the exchange reaches its own checks again.
+    held.abort();
+    let _ = held.await;
+    let freed = once_freed(StatusCode::SERVICE_UNAVAILABLE, || async {
+        exchange().await.0
+    })
+    .await;
+    assert_eq!(freed, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn lfs_quota_counts_stored_objects_and_uploads_in_flight() {
     let config = SyncServerConfig {
         limits: crate::config::LimitsConfig {

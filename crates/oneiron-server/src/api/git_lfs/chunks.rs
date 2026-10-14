@@ -1,6 +1,7 @@
 //! Grant-scoped binary have/want endpoint over the standing bearer identity.
 
 use super::gate::{LfsAccess, authorize};
+use super::support::lfs_saturated;
 use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
 use axum::body::Bytes;
@@ -19,9 +20,15 @@ pub(super) async fn exchange(
     let principal = auth.require_registered_principal()?;
     let principal = oneiron::EntityId::from_hex(principal)
         .map_err(|_| ApiError::forbidden_scope("registered chunk principal"))?;
+    // An LFS transfer like any other: its worker holds the permit until the
+    // reply is built, whether or not its caller is still there.
+    let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()) else {
+        return Ok(lfs_saturated());
+    };
     let vault = Arc::clone(&server.vault);
     let scope = crate::handler::selector_grant_scope();
     let (object, bytes) = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
         let object = oneiron::sync::chunks::chunk_request_object(&body)?;
         oneiron::sync::chunks::serve_chunk_request(&vault, principal, scope, &body)
             .map(|bytes| (object, bytes))
