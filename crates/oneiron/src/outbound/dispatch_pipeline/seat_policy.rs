@@ -71,12 +71,8 @@ impl SeatLedgerCount {
         let Some(policy) = request.linkedin_sandbox_policy.as_ref() else {
             return Self::default();
         };
-        if !request
-            .intent
-            .channel
-            .trim()
-            .eq_ignore_ascii_case(LINKEDIN_CHANNEL)
-        {
+        // The channel as the seat wall reads it.
+        if crate::outbound::capability::normalize_key(&request.intent.channel) != LINKEDIN_CHANNEL {
             return Self::default();
         }
         let (host_count, cap) = match verb_contract.kind.as_str() {
