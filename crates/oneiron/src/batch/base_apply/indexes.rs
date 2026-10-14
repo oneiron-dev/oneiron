@@ -45,6 +45,9 @@ pub(super) fn apply_text_index_update(
         crate::vault::ensure_text_index_manifest_matches_wtxn(store, wtxn, analyzer)?;
         *text_manifest_checked = true;
     }
+    // Text staged for idle publication meets the same ceiling now, at its
+    // write, rather than failing publication later.
+    crate::bm25::check_indexed_text_bytes(fields)?;
     if !crate::vault::entity_revision::defer_index_inputs(
         store,
         wtxn,
