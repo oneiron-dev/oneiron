@@ -28,6 +28,7 @@ const PARKED_STAMP: SideTable<(HexId, HexId, String), Vec<u8>, Raw> =
 /// The most stamps one sender holds on one row ahead of it. Every update that
 /// brings the row releases them all, so the bound is the work one small update
 /// can make admission do (Astra R5 F2 on #1432); a row sits in a few facets.
+#[cfg(feature = "sync")]
 pub(crate) const MAX_HELD_PER_ROW: usize = 16;
 
 /// Whether the stored row `id`, with header and body `raw` as `view` holds
@@ -115,6 +116,7 @@ fn stamp_prefix(src: EntityId, facet: EntityId) -> String {
 /// Holds the stamp `src -FacetOf-> facet`, with its edge `value`, under the
 /// sender's `lane`. A stamp past the sender's [`MAX_HELD_PER_ROW`] on that row
 /// is not held, so it never counts (fail-closed).
+#[cfg(feature = "sync")]
 pub(crate) fn park_stamp(
     dbs: &impl SideTableDbs,
     wtxn: &mut heed::RwTxn<'_>,
@@ -150,6 +152,7 @@ pub(crate) fn unpark_stamp(
 }
 
 /// The stamps on `src` held under `lane`: each facet with its edge value.
+#[cfg(feature = "sync")]
 pub(crate) fn parked_under(
     dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
