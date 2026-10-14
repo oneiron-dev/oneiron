@@ -228,6 +228,8 @@ impl ServeCommand {
             stdout: Some(stdout),
             stderr: Some(stderr),
             ended: None,
+            #[cfg(not(unix))]
+            killed: false,
         })
     }
 }
@@ -256,6 +258,11 @@ pub struct ServeChild {
     stderr: Option<ChildStderr>,
     /// How the reaped child ended.
     ended: Option<ExitStatus>,
+    /// Whether [`Self::end`] found the child still running. Off Unix a
+    /// killed child reports an exit code like any other, so its status
+    /// cannot say who ended it.
+    #[cfg(not(unix))]
+    killed: bool,
 }
 
 impl ServeChild {
@@ -312,7 +319,14 @@ impl ServeChild {
     /// such as the kill an exchange sends. One that had already exited when
     /// it was killed exited by itself.
     pub(super) fn exited_by_itself(&self) -> bool {
-        self.ended.is_some_and(|status| status.code().is_some())
+        #[cfg(unix)]
+        {
+            self.ended.is_some_and(|status| status.code().is_some())
+        }
+        #[cfg(not(unix))]
+        {
+            self.ended.is_some() && !self.killed
+        }
     }
 
     /// Kills the child and the service it runs without reaping it, from
@@ -326,6 +340,12 @@ impl ServeChild {
             unsafe {
                 libc::kill(-group, libc::SIGKILL);
             }
+        }
+        // A child that exits by itself between this check and the kill is
+        // counted as killed, so its exchange sweeps: the safe side.
+        #[cfg(not(unix))]
+        if matches!(self.child.try_wait(), Ok(None)) {
+            self.killed = true;
         }
         let _ = self.child.kill();
     }
