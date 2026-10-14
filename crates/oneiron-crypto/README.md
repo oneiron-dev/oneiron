@@ -114,6 +114,14 @@ and `ciphertext = AEAD(K, nonce, plaintext, aad = H)`. Every metadata field is b
 twice: into the key and into the AAD. Any failure to open is the single
 `Error::OpenFailed`.
 
+### Passphrase stretch outside envelopes
+
+`stretch_passphrase(passphrase, cost, salt)` returns the same Argon2id v0x13 output a
+passphrase wrap starts from, under the same bounds and in the same wiped work memory, for
+constructions that use it as key material instead of a wrap secret. The recovery kit in
+`oneiron` uses it to rebuild the passphrase piece's Shamir point; that construction, its
+salt and its stricter cost floor are specified with the kit.
+
 ### Nonce rules
 
 Salt (32 bytes) and nonce are fresh random bytes from the caller's CSPRNG for every

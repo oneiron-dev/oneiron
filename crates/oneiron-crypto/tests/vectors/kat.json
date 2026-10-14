@@ -65,6 +65,17 @@
   "ad": "040404040404040404040404",
   "tag": "0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659"
  },
+ "argon2id_libargon2_stretch": {
+  "source_url": "https://github.com/P-H-C/phc-winner-argon2",
+  "source_section": "libargon2 (the reference implementation) through argon2-cffi 25.1.0, argon2.low_level.hash_secret_raw, Type.ID, version 19, no secret and no associated data; computed 2026-10-14 for stretch_passphrase",
+  "memory_kib": 19456,
+  "passes": 1,
+  "lanes": 1,
+  "tag_length": 32,
+  "password": "706c616365686f6c64657220766563746f7220776f726473",
+  "salt": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+  "tag": "9d2919260cb63425e1f67a665d05933748381b3ce73857481db1c18dd8c1625f"
+ },
  "xchacha20poly1305_draft03_a3_1": {
   "source_url": "https://www.ietf.org/archive/id/draft-irtf-cfrg-xchacha-03.txt",
   "source_section": "Appendix A.3.1 AEAD_XCHACHA20_POLY1305",
