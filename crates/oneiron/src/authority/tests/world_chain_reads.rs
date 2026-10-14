@@ -593,7 +593,9 @@ fn a_poisoned_trusted_chain_never_acknowledges_a_widening() {
 /// wider than `OneMachine(B)` on R2 installs, it is orphaned there, and A's
 /// re-pick on top of it is valid: nothing stalls. Fails before: under the
 /// new pin B failed the target check, the edit became invalid, and W read
-/// everywhere.
+/// everywhere. On an R1 install B still holds W, so A has no standing at a
+/// door there, though R2's read would make its re-pick valid: a door takes
+/// standing from this install's read alone (Astra code-S2-R1 A1-F3).
 #[test]
 fn an_edit_made_across_a_re_issue_stays_valid_and_narrow() {
     let cloud = ed_key(195);
@@ -655,6 +657,10 @@ fn an_edit_made_across_a_re_issue_stays_valid_and_narrow() {
     assert_eq!(
         fold_under(&entries, Hosted, Some(&second)).world_edit_standing(a.machine, world),
         Some(WorldEditStanding::RepicksOrphan)
+    );
+    assert_eq!(
+        fold_under(&entries, Hosted, Some(&first)).world_edit_standing(a.machine, world),
+        None
     );
     let mut parents = heads.clone();
     parents.push(&moved);

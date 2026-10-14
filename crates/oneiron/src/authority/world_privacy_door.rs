@@ -106,20 +106,25 @@ impl Vault {
             ));
         }
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        if !fold
-            .trusted_machine(machine)
-            .is_some_and(|trusted| trusted.profile.machine_key == public_key)
-        {
+        // Mine with this install's key in a fold's own trust set.
+        let keyed = |judged: &AuthorityFold| {
+            judged
+                .trusted_machine(machine)
+                .is_some_and(|trusted| trusted.profile.machine_key == public_key)
+        };
+        if !keyed(&fold) {
             return Err(refused(
                 "only a machine the owner marked as theirs edits a world",
             ));
         }
-        // Standing comes from the read of an admitter whose chain admits this
-        // machine: this install's own first, then the earlier one's when the
-        // owner re-asserts. The edit names that admitter's chain heads.
+        // Standing comes from this install's own read, or, when the owner
+        // re-asserts, from the read of the admitter this machine was mine
+        // under before its last pin change, with this install's key there
+        // too. The edit names that admitter's chain heads.
         let (standing, admitter, judged) = match fold.world_edit_standing_by(machine, world) {
             Some((standing, admitter)) => (standing, admitter, &*fold),
             None => earlier
+                .filter(|earlier| keyed(earlier))
                 .and_then(|earlier| {
                     earlier
                         .world_edit_standing_by(machine, world)
@@ -292,7 +297,7 @@ impl Vault {
         };
         let previous = fold.world_privacy(world);
         let orphaned_from = if standing == WorldEditStanding::RepicksOrphan {
-            super::world_privacy::orphaned_from(&judged.world_read_under(world, admitter), |id| {
+            super::world_privacy::orphaned_from(&judged.world_local_read(world), |id| {
                 super::world_privacy::mine_by_roster(judged, id, admitter)
             })
         } else {

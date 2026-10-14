@@ -15,6 +15,7 @@ use super::support::{
     EnrollSpec, authority_key_from_ed, cosign_ed, device, ed_key, enroll_device_entry,
     genesis_entry,
 };
+use super::world_chain_reads::edit;
 use super::*;
 use crate::world_keys::{RecoveryRoot, RecoveryRootId, RecoveryRootSeed};
 use crate::{Vault, VaultConfig};
@@ -319,5 +320,51 @@ fn a_stale_roster_mark_never_vetoes_the_anchors_keys() {
     assert_eq!(
         mine_at(101 + DEFAULT_STALE_ROSTER_WINDOW_SECS),
         (Some(rekeyed.encryption_key), false)
+    );
+}
+
+/// The same graph, as the world-privacy fold counts M: M narrows a world to
+/// itself and then widens it, on both marks. Before the stale-roster window
+/// the live chains' keys disagree, so on an install pinned to the owner's
+/// root the widening only narrows; past it the stale roster mark vetoes
+/// nothing, M counts through the anchor, and the widening holds. Fails
+/// before: the install's counting held the stale roster chain instead, and
+/// its key still vetoed the anchor's (Sol code-S2-R1 S1-F2, Astra A1-F1).
+#[test]
+fn a_stale_roster_mark_never_vetoes_the_anchors_keys_in_a_world() {
+    let (owner, next, machine) = (ed_key(193), ed_key(194), ed_key(195));
+    let genesis = genesis_entry(193, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let request = request_for(id, EntityId::now(), &machine);
+    let mark = signed(id, &[&genesis], &owner, 1, profile(&request, YOURS, 1));
+    let handoff = re_root_entry(id, &mark, &owner, 2, &next);
+    let (root, anchor, published) = publish(id, &handoff);
+    let rekeyed = rekeyed(id, &request, &machine);
+    let anchored = signed(id, &[&published], &anchor, 2, profile(&rekeyed, YOURS, 1));
+    let world = EntityId::now();
+    let m = (request.machine, &machine);
+    let held = edit(id, &[&anchored], m, 1, world, ReadLocation::OneMachine(m.0));
+    let widened = edit(id, &[&held], m, 2, world, ReadLocation::Everywhere);
+    let entries = [genesis, mark, handoff, published, anchored, held, widened];
+    let first_seen: BTreeMap<_, _> = entries
+        .iter()
+        .map(|entry| (authority_entry_hash(entry).unwrap(), 100))
+        .collect();
+    let read_at = |now| {
+        fold_pinned_authority_log_for_posture(
+            &entries,
+            &first_seen,
+            now,
+            &BTreeMap::new(),
+            crate::HostingPrivacyPosture::SelfHostLocal,
+            Some(&pin(&root)),
+        )
+        .world_privacy(world)
+        .read
+    };
+    assert_eq!(read_at(100), EffectiveRead::OneMachine(m.0));
+    assert_eq!(
+        read_at(101 + DEFAULT_STALE_ROSTER_WINDOW_SECS),
+        EffectiveRead::Everywhere
     );
 }

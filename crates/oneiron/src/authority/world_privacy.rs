@@ -117,13 +117,13 @@ pub struct FoldedWorld {
     /// Each live edit and the machine that signed it.
     pub live: BTreeMap<AuthorityEntryHash, EntityId>,
     pub effective: EffectiveWorldPrivacy,
-    /// The read the roster rule alone gives, the same on every install. Who
-    /// may edit the world is judged on it, never on `effective`.
+    /// The read the roster rule alone gives, the same on every install.
     pub roster_read: EffectiveRead,
-    /// `read_X` for each anchor that chains some machine, beside the
-    /// roster's: who may edit the world under that anchor's trust set (world
-    /// privacy P6b). Every other anchor reads it as the roster does.
-    pub anchor_reads: BTreeMap<[u8; 32], EffectiveRead>,
+    /// `read_X` for this install's own trust (its pinned anchor while the
+    /// fold holds the root, else the roster): who may edit the world here,
+    /// judged on it and never on `effective` (world privacy P6b). A read
+    /// under another admitter is a fold under that admitter's pin.
+    pub local_read: EffectiveRead,
 }
 
 impl AuthorityFold {
@@ -191,39 +191,28 @@ impl AuthorityFold {
     }
 
     /// How `machine` may edit `world` now, and under which admitter's read:
-    /// the first of this install's own trust and each other chain that admits
-    /// the machine (`read_X`, judged by the roster rule, as the fold judges an
-    /// edit's validity). The machine itself is judged as this install counts
-    /// it under that trust set, which only refuses more.
+    /// this install's own trust alone, as every door judges (contract §4).
+    /// Another chain that admits the machine can make its edit valid on
+    /// every install, but never gives a door standing here (Astra code-S2-R1
+    /// A1-F3). The read is `read_X`, judged by the roster rule, as the fold
+    /// judges an edit's validity; the machine itself is judged as this
+    /// install counts it, which only refuses more.
     pub(crate) fn world_edit_standing_by(
         &self,
         machine: EntityId,
         world: EntityId,
     ) -> Option<(WorldEditStanding, MachineAdmitter)> {
-        let folded = self.machine(machine)?;
-        let roster = folded.roster_view();
         let local = self.local_admitter();
-        let admitters = std::iter::once(local).chain(
-            roster
-                .chains()
-                .filter(|(admitter, chain)| *admitter != local && chain.says_yours())
-                .map(|(admitter, _)| admitter),
-        );
-        for admitter in admitters {
-            let standing = edit_standing(
-                &self.world_read_under(world, admitter),
-                machine,
-                |id| {
-                    self.machine(id)
-                        .is_some_and(|folded| folded.trusted_under(&admitter).is_some())
-                },
-                |id| mine_by_roster(self, id, admitter),
-            );
-            if let Some(standing) = standing {
-                return Some((standing, admitter));
-            }
-        }
-        None
+        edit_standing(
+            &self.world_local_read(world),
+            machine,
+            |id| {
+                self.machine(id)
+                    .is_some_and(|folded| folded.trusted_under(&local).is_some())
+            },
+            |id| mine_by_roster(self, id, local),
+        )
+        .map(|standing| (standing, local))
     }
 
     /// The admitter this install trusts: its pinned anchor while the fold
@@ -235,24 +224,17 @@ impl AuthorityFold {
         })
     }
 
-    /// `read_X(world)`: the read an install trusting exactly `T(admitter)`
-    /// gives `world`, which decides who may edit it there. A conflicted vault
-    /// root fails closed, as for the settings.
+    /// `read_X(world)` for this install's own trust ([`Self::local_admitter`]),
+    /// which decides who may edit it here. A conflicted vault root fails
+    /// closed, as for the settings.
     #[must_use]
-    pub fn world_read_under(&self, world: EntityId, admitter: MachineAdmitter) -> EffectiveRead {
+    pub fn world_local_read(&self, world: EntityId) -> EffectiveRead {
         if self.vault_root_is_conflicted() {
             return EffectiveWorldPrivacy::unknowable().read;
         }
         self.worlds.get(&world).map_or_else(
             || EffectiveWorldPrivacy::default().read,
-            |folded| match admitter {
-                MachineAdmitter::Anchor(key) => folded
-                    .anchor_reads
-                    .get(&key)
-                    .unwrap_or(&folded.roster_read)
-                    .clone(),
-                MachineAdmitter::Roster => folded.roster_read.clone(),
-            },
+            |folded| folded.local_read.clone(),
         )
     }
 
@@ -439,18 +421,25 @@ impl PrivacyMeet {
 }
 
 /// The fold's public view of every edited world: this install's settings,
-/// under its pin and holds, and the read each admitter's trust set gives.
+/// under its pin and holds, the roster's read, and the read of this
+/// install's own trust. No other admitter's read is evaluated here, so an
+/// anchor that signs none of a world's edits adds no work to it (contract
+/// §4's cost bound; Sol code-S2-R1 S1-F4, Astra A1-F4).
 pub(super) fn folded_worlds(
     state: &FoldState,
     pin: Option<&PinnedRoot>,
     counted: InstallCounted<'_>,
 ) -> BTreeMap<EntityId, FoldedWorld> {
     let standing = Standing::new(state, pin, counted);
-    let admitters = standing.admitters();
     state
         .worlds
         .iter()
         .map(|(world, frontier)| {
+            let roster_read = read_under(&standing, *world, MachineAdmitter::Roster);
+            let local_read = match standing.local() {
+                MachineAdmitter::Roster => roster_read.clone(),
+                local => read_under(&standing, *world, local),
+            };
             (
                 *world,
                 FoldedWorld {
@@ -460,16 +449,8 @@ pub(super) fn folded_worlds(
                         .map(|(hash, edit)| (*hash, edit.machine))
                         .collect(),
                     effective: world_meet(&standing, *world, StandingView::Install).effective(),
-                    roster_read: read_under(&standing, *world, MachineAdmitter::Roster),
-                    anchor_reads: admitters
-                        .iter()
-                        .filter_map(|admitter| match admitter {
-                            MachineAdmitter::Anchor(key) => {
-                                Some((*key, read_under(&standing, *world, *admitter)))
-                            }
-                            MachineAdmitter::Roster => None,
-                        })
-                        .collect(),
+                    roster_read,
+                    local_read,
                 },
             )
         })

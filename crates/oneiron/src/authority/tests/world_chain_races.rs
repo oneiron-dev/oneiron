@@ -2,8 +2,9 @@
 //! self-host vault (contract §4, check 7c): the roster and an owner anchor
 //! both admit machines there, and a chain that blocks a machine now is a
 //! reason in the race whether or not it ever admitted it.
+use super::super::install_fold::fold_pinned_with_machine_standing;
 use super::machine_identity::request_for;
-use super::owner_anchor::{YOURS, profile, publish, signed};
+use super::owner_anchor::{YOURS, pin, profile, publish, signed};
 use super::support::{ed_key, genesis_entry};
 use super::world_chain_reads::{edit, read_under, seeing};
 use super::*;
@@ -172,4 +173,77 @@ fn an_anchor_removal_races_a_widening_beside_a_roster_mark() {
         read_under(&entries, SelfHostLocal, None, world),
         EffectiveRead::MyMachines
     );
+}
+
+/// The Engine's held-chain ruling: a chain this install holds acknowledges
+/// nothing, even while another chain of the pinned trust set keeps the
+/// machine counted. A is the owner's through the roster and the anchor with
+/// one key; it narrows W to itself and widens it, and the owner's roster
+/// key removes A listing the widening. Counting every chain, the removal
+/// acknowledges the widening; holding A's roster chain (as the fold with no
+/// vouch does when it does not count that chain), the widening only
+/// narrows. Fails before: the race judged the roster removal without the
+/// hold, so a held chain lifted the widening (Sol code-S2-R1 S1-F3).
+#[test]
+fn a_held_roster_removal_never_lifts_a_widening_beside_a_live_anchor() {
+    let vault = self_host(200);
+    let owner = pin(&vault.owner.0);
+    let a = vault.a.0.machine;
+    let roster_mark = signed(
+        vault.id,
+        &[&vault.published],
+        &vault.root,
+        1,
+        profile(&vault.a.0, YOURS, 1),
+    );
+    let anchor_mark = signed(
+        vault.id,
+        &[&vault.published],
+        &vault.owner.1,
+        2,
+        profile(&vault.a.0, YOURS, 1),
+    );
+    let world = EntityId::now();
+    let held = edit(
+        vault.id,
+        &[&roster_mark, &anchor_mark],
+        (a, &vault.a.1),
+        1,
+        world,
+        ReadLocation::OneMachine(a),
+    );
+    let widened = edit(
+        vault.id,
+        &[&roster_mark, &anchor_mark, &held],
+        (a, &vault.a.1),
+        2,
+        world,
+        ReadLocation::MyMachines,
+    );
+    let removal = signed(
+        vault.id,
+        &[&roster_mark],
+        &vault.root,
+        2,
+        seeing(&vault.a.0, MachineRole::Removed, 2, &[&widened]),
+    );
+    let entries = vec![
+        vault.genesis.clone(),
+        vault.published.clone(),
+        roster_mark,
+        anchor_mark,
+        held,
+        widened,
+        removal,
+    ];
+    let read = |holds_roster: bool| {
+        let counts = |machine, admitter| {
+            !(holds_roster && machine == a && admitter == MachineAdmitter::Roster)
+        };
+        fold_pinned_with_machine_standing(&entries, Some(&owner), &counts)
+            .world_privacy(world)
+            .read
+    };
+    assert_eq!(read(false), EffectiveRead::MyMachines);
+    assert_eq!(read(true), EffectiveRead::OneMachine(a));
 }

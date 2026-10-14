@@ -258,12 +258,25 @@ impl FoldedMachine {
     /// This install holds `admitter`'s chains here: they admit nothing, but
     /// their restriction and keys still count.
     pub(super) fn hold(&mut self, admitter: &MachineAdmitter) {
-        let chains = match admitter {
-            MachineAdmitter::Roster => vec![self.roster.as_mut(), self.roster_trusted.as_mut()],
-            MachineAdmitter::Anchor(key) => vec![self.anchored.get_mut(key)],
-        };
-        for chain in chains.into_iter().flatten() {
+        for chain in self.chains_mut(admitter) {
             chain.floor_held = true;
+        }
+    }
+
+    /// `admitter`'s chains went stale here: not live, and never a veto.
+    pub(super) fn go_stale(&mut self, admitter: &MachineAdmitter) {
+        for chain in self.chains_mut(admitter) {
+            chain.stale = true;
+        }
+    }
+
+    fn chains_mut(&mut self, admitter: &MachineAdmitter) -> Vec<&mut MachineRevision> {
+        match admitter {
+            MachineAdmitter::Roster => [self.roster.as_mut(), self.roster_trusted.as_mut()]
+                .into_iter()
+                .flatten()
+                .collect(),
+            MachineAdmitter::Anchor(key) => self.anchored.get_mut(key).into_iter().collect(),
         }
     }
 

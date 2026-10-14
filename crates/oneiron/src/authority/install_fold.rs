@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::fold_engine::{FoldLocalInputs, fold_authority_log_once};
-use super::machine_standing::InstallCounted;
+use super::machine_standing::{InstallCounted, InstallHold};
 use super::*;
 
 pub(super) fn fold_as_install(
@@ -58,11 +58,17 @@ pub(super) fn fold_as_install(
     // the second fold finds the same machines. So does a machine the fold with
     // no vouch does not count as this one would. Each is a chain of a machine,
     // not the machine: a chain held here does not veto another live chain
-    // that admitted the machine on its own (the Engine's held-chain ruling).
-    let mut uncounted = BTreeSet::<(crate::EntityId, MachineAdmitter)>::new();
+    // that admitted the machine on its own (the Engine's held-chain ruling),
+    // and a stale one vetoes nothing (Sol code-R3 S3-F3).
+    let mut stale = BTreeSet::<(crate::EntityId, MachineAdmitter)>::new();
+    let mut held = BTreeSet::<(crate::EntityId, MachineAdmitter)>::new();
     let mut fold = loop {
         let counted = |machine: crate::EntityId, admitter: MachineAdmitter| {
-            !uncounted.contains(&(machine, admitter)) && standing(machine, admitter)
+            let outer = standing(machine, admitter);
+            InstallHold {
+                held: outer.held || held.contains(&(machine, admitter)),
+                stale: outer.stale || stale.contains(&(machine, admitter)),
+            }
         };
         let fold = apply_stale_roster_window(
             entries,
@@ -86,7 +92,8 @@ pub(super) fn fold_as_install(
                 .get(&pin.anchor_key)
                 .is_some_and(|ids| ids.contains(&pin.id))
         });
-        let mut now_uncounted = BTreeSet::new();
+        let mut now_stale = BTreeSet::new();
+        let mut now_held = BTreeSet::new();
         for (id, machine) in &fold.machines {
             if machine
                 .roster
@@ -94,10 +101,10 @@ pub(super) fn fold_as_install(
                 .chain(&machine.roster_trusted)
                 .any(|chain| chain.stale || chain.admitter_unsettled)
             {
-                now_uncounted.insert((*id, MachineAdmitter::Roster));
+                now_stale.insert((*id, MachineAdmitter::Roster));
             }
             if let Some(no_vouch) = &no_vouch {
-                now_uncounted.extend(
+                now_held.extend(
                     no_vouch
                         .uncounted(&fold, *id, machine)
                         .into_iter()
@@ -105,10 +112,14 @@ pub(super) fn fold_as_install(
                 );
             }
         }
-        if fold.worlds.is_empty() || now_uncounted.is_subset(&uncounted) {
+        // Counting reaches only world edits and key records, and a key record
+        // counts only for a world an edit made private (an unedited world
+        // reads everywhere): with no edited world, nothing rests on it.
+        if fold.worlds.is_empty() || (now_stale.is_subset(&stale) && now_held.is_subset(&held)) {
             break fold;
         }
-        uncounted = now_uncounted;
+        stale = now_stale;
+        held = now_held;
     };
     if let Some(no_vouch) = &no_vouch {
         no_vouch.cap(&mut fold);
@@ -126,12 +137,26 @@ pub(super) fn fold_as_install(
 }
 
 /// [`fold_authority_log`] as an install that counts only some of the
-/// machines' chains the roster rule admits.
+/// machines' chains the roster rule admits: it holds the rest.
 #[cfg(test)]
 pub(super) fn fold_authority_log_with_machine_standing(
     entries: &[AuthorityLogEntry],
-    standing: InstallCounted<'_>,
+    counts: &dyn Fn(crate::EntityId, MachineAdmitter) -> bool,
 ) -> AuthorityFold {
+    fold_pinned_with_machine_standing(entries, None, counts)
+}
+
+/// The same, on an install pinned to `pin`.
+#[cfg(test)]
+pub(super) fn fold_pinned_with_machine_standing(
+    entries: &[AuthorityLogEntry],
+    pin: Option<&PinnedRoot>,
+    counts: &dyn Fn(crate::EntityId, MachineAdmitter) -> bool,
+) -> AuthorityFold {
+    let standing = |machine, admitter| InstallHold {
+        held: !counts(machine, admitter),
+        stale: false,
+    };
     super::fold_engine::fold_authority_log_inner(
         entries,
         &BTreeMap::new(),
@@ -139,7 +164,8 @@ pub(super) fn fold_authority_log_with_machine_standing(
         &BTreeMap::new(),
         folded_device_can_authority_consent,
         FoldLocalInputs {
-            machine_standing: Some(standing),
+            machine_standing: Some(&standing),
+            pin,
             ..FoldLocalInputs::VAULT_DOOR
         },
     )
@@ -361,7 +387,7 @@ impl NoVouch {
                 live: BTreeMap::new(),
                 effective: EffectiveWorldPrivacy::default(),
                 roster_read: EffectiveWorldPrivacy::default().read,
-                anchor_reads: BTreeMap::new(),
+                local_read: EffectiveWorldPrivacy::default().read,
             });
             folded.effective = super::world_privacy::meet_effective(
                 &folded.effective,

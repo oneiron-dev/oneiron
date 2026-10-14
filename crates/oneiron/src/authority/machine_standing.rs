@@ -4,10 +4,11 @@
 //!
 //! Validity is pin-free: a world edit is judged under `T(X)` for the admitter
 //! X of each chain that signed it ([`StandingView::Under`]). The settings this
-//! install reads are judged under `T(pin)` with this install's holds
-//! ([`StandingView::Install`]). A chain held here admits nothing and
-//! acknowledges nothing, but its restriction still lands, and its keys count
-//! against the other chains' (the Engine's held-chain ruling on the P2 port).
+//! install reads are judged under `T(pin)` with this install's floors, holds
+//! and staleness ([`StandingView::Install`]). A chain held here admits nothing
+//! and acknowledges nothing, but its restriction still lands, and its keys
+//! count against the other chains' (the Engine's held-chain ruling on the P2
+//! port). A chain stale here is not live either, and never vetoes.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -178,18 +179,32 @@ fn acknowledged(
 pub(super) enum StandingView {
     /// `T(X)`, pin-free and install-free: validity, `read_X`, who may edit.
     Under(MachineAdmitter),
-    /// `T(pin)` with this install's floors: the settings this install reads.
+    /// `T(pin)` with this install's floors and counting: the settings this
+    /// install reads, and the machines it counts.
     Install,
 }
 
-/// Whether this install counts one machine's chain under one admitter. P2's
+/// Why this install does not count one admitter's chains of a machine, if
+/// it does not: its own projections, which the structural fold never sees.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct InstallHold {
+    /// The fold with no vouch does not count it: held, as a head past its
+    /// floor is. It admits and acknowledges nothing, and its keys still
+    /// count against the other chains'.
+    pub(super) held: bool,
+    /// Stale here, or its roster has no settled root: not live, and never a
+    /// veto (Sol code-R3 S3-F3).
+    pub(super) stale: bool,
+}
+
+/// How this install counts one machine's chains under one admitter. P2's
 /// `MachineStanding` hook, per chain: a world edit signed while its machine
 /// was not counted here only narrows.
-pub(super) type InstallCounted<'a> = &'a dyn Fn(EntityId, MachineAdmitter) -> bool;
+pub(super) type InstallCounted<'a> = &'a dyn Fn(EntityId, MachineAdmitter) -> InstallHold;
 
 /// Every chain counts.
-pub(super) fn every_chain(_: EntityId, _: MachineAdmitter) -> bool {
-    true
+pub(super) fn every_chain(_: EntityId, _: MachineAdmitter) -> InstallHold {
+    InstallHold::default()
 }
 
 /// Whether an edit's machine was mine under `T(X)`, with the edit's key, at
@@ -232,8 +247,10 @@ impl TrustedAt {
 enum Kind {
     Roster,
     Install,
-    Counted,
 }
+
+/// Each machine's view, built on first use.
+type Views = BTreeMap<(EntityId, Kind), Option<Rc<FoldedMachine>>>;
 
 /// One state's machines, as the world-privacy fold judges them. Built once per
 /// entry applied and per world meet; each machine's view is built on first use.
@@ -242,7 +259,7 @@ pub(super) struct Standing<'s> {
     claims: ClaimIndex<'s>,
     local: MachineAdmitter,
     counted: InstallCounted<'s>,
-    views: RefCell<BTreeMap<(EntityId, Kind), Option<Rc<FoldedMachine>>>>,
+    views: RefCell<Views>,
 }
 
 impl<'s> Standing<'s> {
@@ -283,12 +300,20 @@ impl<'s> Standing<'s> {
         let view = self.state.machines.get(&id).map(|chains| {
             Rc::new(match kind {
                 Kind::Roster => self.claims.folded(id, chains, false, &no_hold),
-                Kind::Install => self.claims.folded(id, chains, false, &floor_hold),
-                Kind::Counted => self
-                    .claims
-                    .folded(id, chains, false, &|admitter, chain, head| {
-                        floor_hold(admitter, chain, head) || !(self.counted)(id, admitter)
-                    }),
+                Kind::Install => {
+                    let mut folded =
+                        self.claims
+                            .folded(id, chains, false, &|admitter, chain, head| {
+                                floor_hold(admitter, chain, head)
+                                    || (self.counted)(id, admitter).held
+                            });
+                    for admitter in chains.keys() {
+                        if (self.counted)(id, *admitter).stale {
+                            folded.go_stale(admitter);
+                        }
+                    }
+                    folded
+                }
             })
         });
         self.views.borrow_mut().insert((id, kind), view.clone());
@@ -318,9 +343,7 @@ impl<'s> Standing<'s> {
     /// this install's floors and counting. An edit it signs with another key,
     /// or none, only narrows here.
     pub(super) fn counted_key(&self, id: EntityId) -> Option<[u8; 32]> {
-        self.view(id, Kind::Counted)?
-            .trusted_under(&self.local)
-            .map(|trusted| trusted.profile.machine_key)
+        self.trusted_key(id, StandingView::Install)
     }
 
     /// Some chain admits `id`. Pin-free: it authorizes nothing.
@@ -387,27 +410,24 @@ impl<'s> Standing<'s> {
         }
     }
 
-    /// Every admitter with a chain of some machine here: the trust sets whose
-    /// reads can differ from the roster's.
-    pub(super) fn admitters(&self) -> BTreeSet<MachineAdmitter> {
-        self.state
-            .machines
-            .values()
-            .flat_map(BTreeMap::keys)
-            .copied()
-            .chain([MachineAdmitter::Roster])
-            .collect()
+    /// The admitter this install trusts here: its pinned anchor while the
+    /// state holds the pinned root, else the roster.
+    pub(super) fn local(&self) -> MachineAdmitter {
+        self.local
     }
 
     /// P2's race rule under `view`, per chain of its trust set. The edit passes
     /// while its machine is mine there now. Otherwise every chain of the trust
     /// set that no longer admits it, having admitted it at the edit's parents
-    /// (`marks`) or blocking it now, is a reason, and there must be one. Each reason must be a removal
-    /// or a demotion at its head, signed for the edit's key, neither
-    /// conflicted nor held, that acknowledged the edit. Poison and keys that
-    /// disagree across the set never acknowledge, nor does a chain that
-    /// admitted the machine and is gone now. A chain outside the set never
-    /// lifts an edit.
+    /// (`marks`) or blocking it now, is a reason, and there must be one. Each
+    /// reason must be a removal or a demotion at its head, signed for the
+    /// edit's key, not conflicted, held or stale, that acknowledged the edit.
+    /// In the install view a chain this install holds, past a floor or for
+    /// the fold with no vouch, is held (the Engine's held-chain ruling), and
+    /// one stale here is stale: neither is live, so neither lifts.
+    /// Poison and keys that disagree across the set never acknowledge, nor
+    /// does a chain that admitted the machine and is gone now. A chain outside
+    /// the set never lifts an edit.
     pub(super) fn race(
         &self,
         id: EntityId,
@@ -445,6 +465,8 @@ impl<'s> Standing<'s> {
             let lifts = &head.profile.machine_key == key
                 && !head.conflicted
                 && !head.floor_held
+                && !head.stale
+                && !head.admitter_unsettled
                 && !head.profile.says_mine()
                 && (!head.removed || head.profile.role == MachineRole::Removed)
                 && self

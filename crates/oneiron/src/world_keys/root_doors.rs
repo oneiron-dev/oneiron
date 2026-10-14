@@ -173,7 +173,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        check(&txn, &*fold)
+        check(&txn, &fold)
     }
 
     /// The kit-restored seed rule in `txn`: the seed's root, and whether the
@@ -232,7 +232,10 @@ impl Vault {
         Ok((secret, request))
     }
 
-    /// The pin, written only when it moves.
+    /// The pin, written only when it moves. Whose seals count follows the
+    /// pin (H161), so the stored shell edges are decided again here, in the
+    /// pin's transaction, whether or not the door appends a row after it
+    /// (Astra code-S2-R1 A1-F2).
     fn move_pin_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -243,7 +246,8 @@ impl Vault {
         if before == Some(pin) {
             return Ok(());
         }
-        write_pinned_root_in_txn(&self.store, txn, pin, earlier)
+        write_pinned_root_in_txn(&self.store, txn, pin, earlier)?;
+        self.reconcile_identity_topology_if_seals_moved_in_txn(txn)
     }
 
     /// Kit issue, phase 2: called after the kit issuer reports the pieces
