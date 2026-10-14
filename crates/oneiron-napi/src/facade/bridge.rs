@@ -20,6 +20,7 @@ impl VaultBridge {
     /// Opens (or creates) a vault at `path` with the device preset.
     #[napi(factory)]
     pub fn open(path: String, dimensions: Option<u32>) -> napi::Result<Self> {
+        crate::facade::before_vault_open();
         let mut config = VaultConfig::device();
         if let Some(dimensions) = dimensions {
             config.dimensions = dimensions as usize;

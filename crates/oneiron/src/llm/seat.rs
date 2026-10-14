@@ -115,6 +115,79 @@ impl Vault {
         }
     }
 
+    /// The level a call outside any seat birth carries for `purpose` on
+    /// `model`: the vault's authored default, composed as a birth composes
+    /// it, else `fallback`, on the model's ladder as a birth reads it (the
+    /// description policy's row first, refused when it disagrees with the
+    /// registry) and under the vault ceiling. A model without reasoning or on
+    /// the Gemini wire carries `none`, as a birth allows it. A level the
+    /// ladder does not admit comes down to its highest admitted rung below
+    /// that level, else up to its lowest admitted rung unless that widens an
+    /// authored level under narrow-only precedence; that is the vault's word,
+    /// so it comes back as authored. With no rung admitted (a ceiling below
+    /// the whole ladder) the call carries `none`.
+    pub fn purpose_effort(
+        &self,
+        purpose: &super::CallPurpose,
+        model: &ModelId,
+        reasoning: bool,
+        fallback: ReasoningEffort,
+    ) -> Result<PurposeEffort> {
+        let policy = self.seat_policy()?;
+        let descriptions = self.description_policy()?;
+        let composed = policy
+            .compose_defaults(&super::routing::purpose_key(purpose), descriptions.as_ref())?;
+        let described = descriptions
+            .as_ref()
+            .and_then(|row| row.models.iter().find(|row| &row.model == model));
+        let registered = self.model_registry_row(model)?;
+        if let (Some(row), Some(registered)) = (described, &registered)
+            && (row.wire != registered.wire || row.locality != registered.catalog.locality)
+        {
+            return Err(invalid("description policy disagrees with model catalog"));
+        }
+        let wire = registered
+            .map(|row| row.wire)
+            .or_else(|| described.map(|row| row.wire))
+            .unwrap_or(ModelWireFormat::OpenaiCompat);
+        if !reasoning || wire == ModelWireFormat::Gemini {
+            return Ok(PurposeEffort::Authored(ReasoningEffort::None));
+        }
+        let ladder = described.map_or_else(
+            || policy.ladder(model, wire, reasoning),
+            |row| row.effort_ladder.clone(),
+        );
+        let wanted = composed.unwrap_or(fallback);
+        if policy.admits(wanted, &ladder) {
+            return Ok(match composed {
+                Some(effort) => PurposeEffort::Authored(effort),
+                None => PurposeEffort::Fallback(fallback),
+            });
+        }
+        let rank = policy::effort_rank;
+        let admitted = || {
+            ladder
+                .iter()
+                .copied()
+                .filter(|rung| policy.admits(*rung, &ladder))
+        };
+        if let Some(lower) = admitted()
+            .filter(|rung| rank(*rung) <= rank(wanted))
+            .max_by_key(|rung| rank(*rung))
+        {
+            return Ok(PurposeEffort::Authored(lower));
+        }
+        let Some(higher) = admitted().min_by_key(|rung| rank(*rung)) else {
+            return Ok(PurposeEffort::Authored(ReasoningEffort::None));
+        };
+        if composed.is_some() && policy.precedence == SeatPrecedence::NarrowOnly {
+            return Err(invalid(
+                "authored effort has no rung at or below it on the model ladder",
+            ));
+        }
+        Ok(PurposeEffort::Authored(higher))
+    }
+
     /// Set a revision-pinned description for a registered MODEL identity.
     pub fn set_model_description(&self, description: &ModelDescription) -> Result<()> {
         description.validate_with(&self.seat_policy()?)?;
@@ -146,6 +219,14 @@ impl Vault {
             })
             .transpose()
     }
+}
+
+/// Where a call's level came from: the vault's policy, or the caller's own
+/// fallback, which a caller may pair with controls of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PurposeEffort {
+    Authored(ReasoningEffort),
+    Fallback(ReasoningEffort),
 }
 
 /// Kind is part of warm-seat eligibility; a follower never borrows a child seat.

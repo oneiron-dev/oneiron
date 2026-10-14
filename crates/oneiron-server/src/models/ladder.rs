@@ -65,6 +65,27 @@ impl LadderRung {
 
 /// A rung that fails hands the call on, unless the run refused it: the next
 /// rung's admission meets the same line.
+/// The closed class of a rung failure. An unsupported capability's reason is
+/// a provider's own words, so the log carries the class and not the error.
+fn failure_kind(error: &LlmError) -> &'static str {
+    use oneiron::RetryableLlmError;
+    use oneiron::llm::BudgetDenied;
+    match error {
+        LlmError::Retryable(RetryableLlmError::RateLimited { .. }) => "rate_limited",
+        LlmError::Retryable(RetryableLlmError::ServerError) => "server_error",
+        LlmError::Retryable(RetryableLlmError::Timeout) => "timeout",
+        LlmError::Retryable(RetryableLlmError::StreamCut) => "stream_cut",
+        LlmError::Fatal(FatalLlmError::InvalidRequest) => "invalid_request",
+        LlmError::Fatal(FatalLlmError::Auth) => "auth",
+        LlmError::Fatal(FatalLlmError::ContentFiltered) => "content_filtered",
+        LlmError::Fatal(FatalLlmError::EmptyResponse) => "empty_response",
+        LlmError::Fatal(FatalLlmError::Unsupported(_)) => "unsupported",
+        LlmError::BudgetDenied(BudgetDenied::Exhausted) => "budget_exhausted",
+        LlmError::BudgetDenied(BudgetDenied::LeaseInvalid) => "lease_invalid",
+        LlmError::BudgetDenied(BudgetDenied::AdmissionDenied) => "admission_denied",
+    }
+}
+
 fn falls_through(error: &LlmError) -> bool {
     !matches!(error, LlmError::BudgetDenied(_))
 }
@@ -253,7 +274,7 @@ impl OfferLadder {
                     if !falls_through(&error) {
                         return Err(error);
                     }
-                    tracing::warn!(seat = %self.name, rung = rung.position, provider = %rung.provider, ?error, "rung failed; trying the next");
+                    tracing::warn!(seat = %self.name, rung = rung.position, provider = %rung.provider, kind = failure_kind(&error), "rung failed; trying the next");
                     last = Some(error);
                 }
             }
@@ -336,7 +357,7 @@ impl OfferLadder {
                         let _ = events.send(Err(error)).await;
                         return;
                     }
-                    tracing::warn!(seat = %self.name, rung = rung.position, ?error, "rung stream failed before its first event; trying the next");
+                    tracing::warn!(seat = %self.name, rung = rung.position, kind = failure_kind(&error), "rung stream failed before its first event; trying the next");
                     last = Some(error);
                 }
                 Ended::Gone => return,

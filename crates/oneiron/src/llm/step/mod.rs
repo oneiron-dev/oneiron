@@ -28,7 +28,7 @@ mod types;
 use super::{BudgetLease, BudgetSettlement, LlmUsage};
 
 pub(crate) use self::execute::ExecutedModelWitness;
-pub use self::execute::{call_as_step, call_as_step_with_fallbacks};
+pub use self::execute::{call_as_step, call_as_step_checked, call_as_step_with_fallbacks};
 pub(crate) use self::execute::{
     verified_step_consolidation_eligible_in_txn, verified_step_effector_eligible_in_txn,
 };
@@ -44,7 +44,8 @@ pub use self::types::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_RETRY_BACKOFF_MS,
     DREAMER_STEP_VALUE_KEYS, DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE,
     DREAMER_TRAP_VALUE_KEYS, DREAMER_TRAP_VALUE_SCHEMA_VERSION, DreamerTrapKind, DreamerTrapState,
-    DurableStepContext, DurableStepError, DurableStepResult, StepOutcome, StepProgression, TrapRef,
+    DurableStepContext, DurableStepError, DurableStepResult, ReplyCheck, StepOutcome,
+    StepProgression, TrapRef,
 };
 
 pub(crate) use self::step_only::{

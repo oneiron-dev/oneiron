@@ -145,7 +145,7 @@ impl SyncServer {
                 }
             };
             joined.unwrap_or_else(|error| {
-                tracing::warn!(%error, "recall task failed to join");
+                tracing::warn!(panicked = error.is_panic(), "recall task failed to join");
                 Err(recall_did_not_finish())
             })
         }

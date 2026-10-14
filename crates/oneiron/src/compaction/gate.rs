@@ -465,6 +465,8 @@ impl CompactionOff {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompactionRefusal {
     pub suppression: CompactionSuppression,
-    /// Operator-facing detail for logs; never shown to the model.
+    /// Operator-facing detail for the refusal's receiver; never shown to the
+    /// model. Logs carry only `suppression`: the detail can quote a provider's
+    /// error body.
     pub detail: String,
 }

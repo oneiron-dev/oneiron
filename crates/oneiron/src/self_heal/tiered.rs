@@ -116,7 +116,6 @@ pub(super) fn propose(
             checkpoint_ref: None,
         },
         evidence_refs: evidence,
-        untrusted_detail: None,
         valid_from: first.started_at,
         valid_to: None,
     };
