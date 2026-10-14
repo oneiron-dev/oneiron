@@ -17,14 +17,15 @@ thread_local! {
 }
 
 /// Flags `world` device-only once, as a raw verdict opens the window it
-/// inspects: a flag committed after the verdict read the flag set.
+/// inspects or a selector export closes its snapshot: a flag committed after
+/// the door read the flag set.
 pub fn arm_device_only_flag_race(world: EntityId) {
     DEVICE_ONLY_FLAG.with(|slot| {
         *slot.borrow_mut() = Some(world);
     });
 }
 
-pub(super) fn run_device_only_flag_race(vault: &Vault) -> Result<()> {
+pub(in crate::sync) fn run_device_only_flag_race(vault: &Vault) -> Result<()> {
     match DEVICE_ONLY_FLAG.with(|slot| slot.borrow_mut().take()) {
         Some(world) => vault.set_world_device_only(world, true),
         None => Ok(()),
