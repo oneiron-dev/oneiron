@@ -1434,6 +1434,45 @@ fn managed_failure_signal_environment_is_refused_before_configuration() {
     }
 }
 
+/// `--trusted-proxies` is refused in managed mode, and so is its environment
+/// layer: a set `ONEIRON_TRUSTED_PROXIES`, even empty, is an explicit request
+/// managed serve would otherwise ignore (#1445 review, CodeRabbit).
+#[test]
+fn managed_trusted_proxies_environment_is_refused_before_configuration() {
+    const CHILD_CASE: &str = "W7_TEST_MANAGED_PROXIES_ENV";
+    const PROXIES: &str = "ONEIRON_TRUSTED_PROXIES";
+    if std::env::var_os(CHILD_CASE).is_some() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = ManagedArgs::from_serve_args(&parse_serve(&managed_argv(dir.path())))
+            .expect_err("an explicit environment layer is not argv");
+        assert!(
+            matches!(error, ManagedError::ConflictingEnvironment { env, .. } if env == PROXIES)
+        );
+        return;
+    }
+    // Isolate environment changes in children, not in the parallel test process.
+    for value in ["127.0.0.1", ""] {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "managed_trusted_proxies_environment_is_refused_before_configuration",
+            ])
+            .env_remove("ONEIRON_PRIVACY_POSTURE")
+            .env_remove("ONEIRON_HOSTED_KMS_KEY_REF")
+            .env_remove("ONEIRON_CONFIG")
+            .env_remove("ONEIRON_FAILURE_SIGNAL_EXPORT")
+            .env_remove("ONEIRON_FAILURE_SIGNAL_TRAINING")
+            .env(CHILD_CASE, "1")
+            .env(PROXIES, value)
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "isolated managed configuration assertion failed"
+        );
+    }
+}
+
 #[tokio::test]
 async fn admitted_http_body_blocks_quiescence_until_its_write_finishes() {
     use axum::body::{Body, Bytes};

@@ -627,6 +627,7 @@ fn reject_unmanaged_layers(args: &ServeArgs) -> Result<(), ManagedError> {
         "ONEIRON_CONFIG",
         "ONEIRON_FAILURE_SIGNAL_EXPORT",
         "ONEIRON_FAILURE_SIGNAL_TRAINING",
+        "ONEIRON_TRUSTED_PROXIES",
     ] {
         if std::env::var_os(env).is_some() {
             return Err(ManagedError::ConflictingEnvironment {
