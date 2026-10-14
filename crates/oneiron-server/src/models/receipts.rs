@@ -12,6 +12,22 @@ pub const RUN_RECEIPT_TARGET: &str = "oneiron::run_receipt";
 /// Logged in place of a string that is not the id its field names.
 const UNRECOGNISED: &str = "unrecognised";
 
+/// The names this server gives the runs it starts itself: `ai_host`'s
+/// `CODE_MODE_RUN`, `COMPACTION_RUN` and `DREAMER_PASS_RUN`, the embedder's
+/// `EMBEDDING_RUN` and `raw`'s `RAW_RUN`. A run renamed at its source logs as
+/// unrecognised.
+const SERVER_RUNS: [&str; 5] = [
+    "code-mode",
+    "code-mode-compaction",
+    "dreamer-pass",
+    "remote-embedding",
+    "raw-inference",
+];
+
+/// A recall rerank's run: this name, `:` and a random hex suffix
+/// (`server::recall_rerank`).
+const RECALL_RERANK_RUN: &str = "recall-rerank";
+
 /// Writes each run receipt row to the log as JSON.
 #[derive(Debug, Default)]
 pub struct LoggedReceipts;
@@ -23,16 +39,17 @@ impl RunReceiptSink for LoggedReceipts {
 }
 
 /// What a receipt's log line carries: ids, counts, codes and the request
-/// digest (owner ruling 2026-10-14, fix 6). The run's name, a teacher's
-/// purpose and a caller's selector are text someone wrote, a lease id begins
-/// with the run's name, a refusal can name a caller's connector, and a
-/// provider may report any string as the model it served, so none of them is
-/// logged as given. A route, a unit and a digest come from a host's config or
-/// backend as free strings, so each is logged only when it is an id. The
-/// host's own sink still gets the whole receipt.
+/// digest (owner ruling 2026-10-14, fix 6). A run's name is text someone
+/// wrote unless this server named it, so only the server's own run names are
+/// logged. A teacher's purpose and a caller's selector are text someone
+/// wrote, a lease id begins with the run's name, a refusal can name a
+/// caller's connector, and a provider may report any string as the model it
+/// served, so none of them is logged as given. A route, a unit and a digest
+/// come from a host's config or backend as free strings, so each is logged
+/// only when it is an id. The host's own sink still gets the whole receipt.
 fn logged_row(receipt: &RunReceipt) -> Value {
     let revision = receipt.revision;
-    match &receipt.event {
+    let mut row = match &receipt.event {
         RunEvent::Admitted(facts) => json!({
             "event": "admitted",
             "revision": revision,
@@ -99,6 +116,23 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             "revision": revision,
             "from": from,
         }),
+    };
+    row["run"] = Value::from(run_name(&receipt.run));
+    row
+}
+
+/// A run as logged: a run this server started, by its name, else a marker.
+fn run_name(run: &str) -> &'static str {
+    if let Some(name) = SERVER_RUNS.into_iter().find(|name| *name == run) {
+        return name;
+    }
+    match run.split_once(':') {
+        Some((RECALL_RERANK_RUN, suffix))
+            if !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_hexdigit()) =>
+        {
+            RECALL_RERANK_RUN
+        }
+        _ => UNRECOGNISED,
     }
 }
 
