@@ -1529,7 +1529,7 @@ fn synced_device(doc: &LoroDoc, window_key: &WindowKey, device: &Vault) -> LoroD
 #[test]
 fn a_stamp_ahead_of_its_row_stays_out_of_the_window_when_another_writer_brings_the_row() {
     let window_key = WindowKey::new("2026-05");
-    for (leg, seed) in [("local birth", 0x90_u8), ("another peer", 0xA0_u8)] {
+    for (leg, seed) in [("local birth", 0x90_u8), ("another peer", 0xB0_u8)] {
         let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(seed));
         let (_device_dir, device, _) = test_vault_with_grant(entity_id(seed));
         let [peer, other, work, private, row] = [1, 2, 3, 4, 5].map(|n| entity_id(seed + n));
@@ -1791,9 +1791,9 @@ fn a_staged_birth_confirmed_after_another_writer_birthed_the_row_is_refused() {
 #[test]
 fn one_row_update_releasing_different_stamps_on_two_devices_converges() {
     let window_key = WindowKey::new("2026-05");
-    let (_one_dir, one, _) = test_vault_with_grant(entity_id(0xE0));
-    let (_two_dir, two, _) = test_vault_with_grant(entity_id(0xE0));
-    let [peer, work, private, row] = [1, 2, 3, 4].map(|n| entity_id(0xE0 + n));
+    let (_one_dir, one, _) = test_vault_with_grant(entity_id(0xC0));
+    let (_two_dir, two, _) = test_vault_with_grant(entity_id(0xC0));
+    let [peer, work, private, row] = [1, 2, 3, 4].map(|n| entity_id(0xC0 + n));
     let role = FederationAdmissionRole::Member;
     let admit = |device: &Vault, doc: &LoroDoc, update: &[u8]| {
         doc.import(&admit_peer_window_update(device, &window_key, update, role, peer).unwrap())
