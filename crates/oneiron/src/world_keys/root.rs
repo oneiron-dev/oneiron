@@ -114,31 +114,12 @@ impl RecoveryRootSeed {
     }
 }
 
-/// Stack bytes wiped after the owner anchor's key is built or signs: Ed25519 expands its
-/// secret in plain stack arrays (Wonder code-R4 W4-F1). Sized from stack painting
-/// (`root::tests`), one per build, as `oneiron-crypto` sizes its own wipes.
-const ANCHOR_STACK_WIPE: usize = if cfg!(debug_assertions) {
-    256 * 1024
-} else {
-    128 * 1024
-};
-
-/// `message` signed by the owner anchor's key, with the stack the signature reached
-/// wiped after it.
-pub(crate) fn sign_as_anchor(anchor: &ed25519_dalek::SigningKey, message: &[u8]) -> Vec<u8> {
-    let signature = anchor_signature(anchor, message);
-    zeroize::zeroize_stack::<ANCHOR_STACK_WIPE>();
-    signature
-}
-
-/// Out of line, so the wipe in [`sign_as_anchor`] covers the signer's expansion of the
-/// anchor's secret.
-#[inline(never)]
-fn anchor_signature(anchor: &ed25519_dalek::SigningKey, message: &[u8]) -> Vec<u8> {
-    ed25519_dalek::Signer::sign(anchor, message)
-        .to_bytes()
-        .to_vec()
-}
+/// Stack bytes wiped after the owner anchor's key is built: in a release build the
+/// build leaves the anchor's secret below its caller (Wonder code-R4 W4-F1). Stack
+/// painting (`root::tests`, x86_64 Linux, rustc 1.96, 2026-10-14): the build reached 4,408
+/// bytes below its caller in a release build and 4,567 in a dev build, so about 1.8x.
+/// Signing leaves no anchor secret below its caller in either build, so it wipes nothing.
+const ANCHOR_STACK_WIPE: usize = 8 * 1024;
 
 /// Out of line, so the wipe in [`RecoveryRootSeed::anchor`] covers its frames.
 #[inline(never)]

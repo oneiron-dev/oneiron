@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, btree_map::Entry};
 
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signer, SigningKey};
 
 use super::*;
 use crate::Vault;
@@ -150,7 +150,9 @@ pub(crate) fn anchor_signed_entry(
         cosigns: Vec::new(),
         ts: now,
     };
-    entry.signer.signature =
-        crate::world_keys::sign_as_anchor(signer, &authority_transcript(&entry)?);
+    entry.signer.signature = signer
+        .sign(&authority_transcript(&entry)?)
+        .to_bytes()
+        .to_vec();
     Ok(entry)
 }
