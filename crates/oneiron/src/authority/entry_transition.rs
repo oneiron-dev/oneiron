@@ -312,7 +312,7 @@ pub(super) fn fold_entry_state(
 /// A row a sequence floor refuses only to restriction (Astra #1430): a world
 /// edit, or a machine revision. The roster rule reads either as a replica
 /// with no floor does; this install never counts what it grants.
-fn lands_restriction_only(op: &AuthorityOp) -> bool {
+pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
     matches!(
         op,
         AuthorityOp::WorldPrivacy(_) | AuthorityOp::MachineProfile(_)

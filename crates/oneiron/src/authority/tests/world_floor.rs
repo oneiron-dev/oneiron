@@ -6,7 +6,9 @@ use std::collections::BTreeSet;
 
 use super::machine_identity::{Host, host, request_for};
 use super::support::{authority_key_from_ed, ed_key, sign_ed, unsigned_entry};
-use super::world_privacy::{edit_by, land, other_machine, read_of, settings, world_row};
+use super::world_privacy::{
+    edit_by, land, other_machine, read_of, settings, stored_entries, world_row,
+};
 use super::*;
 use crate::{Vault, VaultConfig};
 
@@ -760,5 +762,88 @@ fn a_re_root_keeps_a_floor_held_mark_held() {
     let next = HostSlipIssuer::from_secret(b"world floor successor root").unwrap();
     replica.re_root_host(&host.issuer, &next).unwrap();
     assert!(!replica.authority_fold().unwrap().machines[&laptop].is_live());
+    assert_eq!(judged(&replica, world), held);
+}
+
+/// Wonder P2 round 9, W1: a handoff's vouch settles its line but never
+/// clears a floor-held mark through the causal floor repair. A later owner
+/// row arrives first; it descends from a "yours" mark past the floor and from
+/// a row its floor refuses. A re-root over it vouches for that refused row,
+/// so the later row's ancestry folds, yet the mark keeps its floor here: the
+/// world still reads the narrowing, and the marked machine stays not live.
+#[test]
+fn a_re_root_never_repairs_a_floor_held_mark_through_its_vouch() {
+    let host = host();
+    let world = world_row(&host);
+    let (laptop, laptop_key) =
+        other_machine(&host, 110, MachineRole::Owned(MachineOwnership::WorkSchool));
+    let (desk, desk_key) = other_machine(&host, 111, MachineRole::Owned(MachineOwnership::Yours));
+    let mine = edit_by(
+        &host,
+        desk,
+        &desk_key,
+        world,
+        settings(ReadLocation::MyMachines),
+    );
+    land(&host, std::slice::from_ref(&mine));
+    let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
+    let fold = host.vault.authority_fold().unwrap();
+    let seq = fold.append_sequences[&host.issuer.public_key()];
+    let heads: Vec<_> = fold.append_heads.iter().copied().collect();
+    let below_heads = stored_entries(&host.vault)
+        .into_iter()
+        .find(|entry| heads.contains(&hash(entry)) && entry.seq == seq)
+        .unwrap()
+        .parent_hashes;
+    let owner_row = |seq, parents, op| {
+        host.issuer
+            .sign_entry(Some(host.vault_id), seq, parents, op, 2)
+            .unwrap()
+    };
+    let refused = owner_row(
+        seq,
+        below_heads,
+        AuthorityOp::SlipRevoke { slip_id: [7; 32] },
+    );
+    let marked = revision(
+        &host,
+        &fold,
+        seq + 1,
+        MachineProfile {
+            role: MachineRole::Owned(MachineOwnership::Yours),
+            revision: 2,
+            ..fold.machine(laptop).unwrap().profile.clone()
+        },
+    );
+    let later = owner_row(
+        seq + 3,
+        vec![hash(&marked), hash(&refused)],
+        AuthorityOp::SlipRevoke { slip_id: [8; 32] },
+    );
+    let widening = edit_on(
+        &host,
+        (laptop, &laptop_key),
+        world,
+        1,
+        vec![hash(&marked), hash(&mine)],
+        ReadLocation::Everywhere,
+    );
+    let next = HostSlipIssuer::from_secret(b"world floor vouching root").unwrap();
+    let re_root = owner_row(
+        seq + 4,
+        vec![hash(&later)],
+        AuthorityOp::ReRoot {
+            new_device: next.root_device(),
+        },
+    );
+    let (_dir, replica) = replica_storing(&host, &[&later, &refused, &marked, &widening]);
+    let held = (EffectiveRead::MyMachines, false);
+    assert_eq!(judged(&replica, world), held);
+    replica
+        .put_authority_log_entry(&re_root, TimeRange { start: 3, end: 3 }, 3)
+        .unwrap();
+    let fold = replica.authority_fold().unwrap();
+    assert!(fold.valid_entries.contains(&hash(&re_root)));
+    assert!(!fold.machines[&laptop].is_live());
     assert_eq!(judged(&replica, world), held);
 }

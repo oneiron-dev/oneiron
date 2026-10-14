@@ -1,4 +1,5 @@
 //! Causally vouched history may arrive after its already-observed descendant.
+use super::entry_transition::lands_restriction_only;
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -47,6 +48,29 @@ pub(super) fn causal_sequence_floors(
                     ..context
                 },
             ) {
+                // A handoff vouches for its line to settle it, never to clear
+                // this install's floor-held marks: a machine revision or a
+                // world edit loses its floor only when the tip's ancestry
+                // folds without that vouch (Wonder P2 round 9, W1).
+                let unaided = context.floor_vouched.is_none()
+                    || entry_folds_on_available_ancestry(
+                        *tip_hash,
+                        by_hash,
+                        ancestors,
+                        FoldContext {
+                            sequence_floors: Some(&trial),
+                            floor_vouched: None,
+                            ..context
+                        },
+                    );
+                if !unaided {
+                    trial.extend(
+                        covered
+                            .iter()
+                            .filter(|hash| lands_restriction_only(&by_hash[*hash].op))
+                            .map(|hash| (*hash, floors[hash])),
+                    );
+                }
                 floors = trial;
             }
         }
