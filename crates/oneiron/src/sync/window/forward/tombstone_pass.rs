@@ -28,7 +28,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
     let vault = ctx.vault;
     let window_key = ctx.window_key;
     let entities_map = &ctx.entities_map;
-    let tombstones_map = &ctx.tombstones_map;
+    let tombstones_map = ctx.tombstones.map();
     let marked = &ledger.marked;
     let protected_admissions = &ledger.protected_admissions;
     let terminal_quarantines = &mut ledger.terminal_quarantines;
@@ -91,7 +91,14 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
                 && window_key.world().is_some()
                 && let Some(raw) = map_get_bytes(entities_map, &id.to_hex())
                 && crate::sync::types::retained_world_shell_belongs_to_window(
-                    vault, &txn, ctx.doc, &id, &raw, window_key, false,
+                    vault,
+                    &txn,
+                    ctx.doc,
+                    &ctx.tombstones,
+                    &id,
+                    &raw,
+                    window_key,
+                    false,
                 )?
             {
                 return Ok(crate::sync::types::TombstoneResidence::Match);

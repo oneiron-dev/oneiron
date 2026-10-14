@@ -13,10 +13,15 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::io::{Read, Seek, SeekFrom, Write};
 
+/// The per-object cap an upload meets when its caller names none: above the
+/// streaming flow's 16 MiB floor by far, and finite, so no caller's default
+/// spools without bound.
+pub const LFS_DEFAULT_OBJECT_CAP: u64 = 2 * 1024 * 1024 * 1024;
+
 /// The largest object the write door reads whole: a chunk edge splits no
 /// field, value or JSON member of it. Above it, each chunk is read alone and
 /// the stream seam reads what each edge splits.
-const LFS_WHOLE_SCAN_MAX: u64 = 8 * 1024 * 1024;
+pub(super) const LFS_WHOLE_SCAN_MAX: u64 = 8 * 1024 * 1024;
 
 /// Local hard-delete marker (`deletion::tombstone` owns the writer side; this is a read-only
 /// existence check bound to the SAME declaration, never decoding the value — presence-only,
@@ -42,20 +47,21 @@ impl Vault {
         self.put_lfs_object_stream_with_cap(
             expected_oid,
             expected_size,
-            None,
+            LFS_DEFAULT_OBJECT_CAP,
             reader,
             occurred,
             learned_at,
         )
     }
 
-    /// Uploads with an optional operator-set per-object limit. `None` imposes no cap.
-    /// Refusal happens at the first read crossing the cap, before any ASSET write.
+    /// Uploads under a per-object limit, [`LFS_DEFAULT_OBJECT_CAP`] unless an
+    /// operator set another. Refusal happens at the first read crossing the
+    /// cap, before any ASSET write.
     pub fn put_lfs_object_stream_with_cap<R: Read>(
         &self,
         expected_oid: LfsOid,
         expected_size: Option<u64>,
-        max_object_bytes: Option<u64>,
+        max_object_bytes: u64,
         mut reader: R,
         occurred: TimeRange,
         learned_at: u64,
@@ -77,7 +83,7 @@ impl Vault {
             size = size
                 .checked_add(count as u64)
                 .ok_or_else(|| chunks::invalid("lfs size overflow"))?;
-            if max_object_bytes.is_some_and(|limit| size > limit) {
+            if size > max_object_bytes {
                 return Err(chunks::invalid("lfs size exceeds configured object cap"));
             }
             if expected_size.is_some_and(|limit| size > limit) {
@@ -242,6 +248,7 @@ impl Vault {
                     Ok(())
                 })?;
             }
+            scanner.finish()?;
             let actual: [u8; 32] = sha.finalize().into();
             if actual != *oid.as_bytes() {
                 return Err(chunks::invalid("lfs manifest pointer mismatch"));

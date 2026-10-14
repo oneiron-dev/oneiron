@@ -58,10 +58,10 @@ struct BoundWords {
     /// moved into its entity document, a TURN whose messages show none, a
     /// MESSAGE that folds into such a TURN, or a row with no revision at all;
     /// or a row with words the write door refuses (stored while the owner's
-    /// secret scan was off), or a claim whose pinned body the run would not
-    /// serve. Its words would be read later, at whatever they had become, or
-    /// are words the run withholds, so no model is sent them. The run does
-    /// not rerank it.
+    /// secret scan was off), a TURN with a message whose body it refuses, or
+    /// a claim whose pinned body the run would not serve. Its words would be
+    /// read later, at whatever they had become, or are words the run
+    /// withholds, so no model is sent them. The run does not rerank it.
     unscored: bool,
 }
 
@@ -278,14 +278,17 @@ impl PipelineBuilder<'_> {
             .get(&self.read, rtxn, id)?
             .map(|meta| meta.entity_type);
         if kind == Some(ENTITY_TYPE_TURN) {
-            let text = self.turn_text(rtxn, id)?;
-            // Words the write door refuses are sent to no model, nor are
-            // words a TURN with none to pin may hold by the time they are read.
+            let text = self.turn_text(rtxn, id, true)?;
+            // Words the write door refuses are sent to no model, nor are the
+            // words of a message whose body it refuses, the body they are
+            // read from (CodeRabbit on #1433), nor words a TURN with none to
+            // pin may hold by the time they are read.
             let Some(text) = text.filter(|text| {
-                !text
-                    .messages
-                    .iter()
-                    .any(|(_, words)| write_door_refuses_body(words.as_bytes()))
+                !text.messages.iter().any(|(_, words, body)| {
+                    body.is_empty()
+                        || write_door_refuses_body(body)
+                        || write_door_refuses_body(words.as_bytes())
+                })
             }) else {
                 return Ok(BoundWords::UNSCORED);
             };
@@ -366,7 +369,10 @@ impl PipelineBuilder<'_> {
         )? {
             return Ok(words);
         }
-        match self.turn_text(rtxn, &turn)?.map(|text| text.revision) {
+        match self
+            .turn_text(rtxn, &turn, false)?
+            .map(|text| text.revision)
+        {
             Some(revision) => words.turn = Some((turn, revision)),
             None => return Ok(BoundWords::UNSCORED),
         }
@@ -403,15 +409,22 @@ impl PipelineBuilder<'_> {
     }
 
     /// The words `turn` holds in this transaction, under the text revision
-    /// that commits to the state of every message they come from; `None`
-    /// when its messages show none.
-    fn turn_text(&self, rtxn: &heed::RoTxn<'_>, turn: &EntityId) -> Result<Option<TurnText>> {
+    /// that commits to the state of every message they come from, with each
+    /// message's body when they are to be sent (`release`); `None` when its
+    /// messages show none.
+    fn turn_text(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        turn: &EntityId,
+        release: bool,
+    ) -> Result<Option<TurnText>> {
         Ok(crate::vault::entity_revision::served_turn_text_in_txn(
             self.vault,
             &self.read,
             rtxn,
             turn,
             ReadMode::Indexed,
+            release,
         )?
         .filter(|text| !text.messages.is_empty()))
     }
