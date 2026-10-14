@@ -5,7 +5,10 @@ mod locality;
 mod turn;
 pub(crate) use cold_attach::{COLD_ATTACH_PENDING_KEY, remark_all_embeddable_pending_in_txn};
 pub use device::{EmbeddingDevice, EmbeddingProvenance, EmbeddingProvenanceCount};
-pub(crate) use device::{clear_all_embedding_devices_in_txn, record_embedding_device_in_txn};
+pub(crate) use device::{
+    clear_all_embedding_devices_in_txn, copy_embedding_device_in_txn,
+    record_embedding_device_in_txn,
+};
 pub(crate) use eligibility::{
     embeddable_payload, embeddable_payload_in_txn, indexed_payload, joined_turn_text,
     turn_text_in_txn,
@@ -718,6 +721,11 @@ fn pending_input_in_txn(
     let Some(raw) = vault.store.port_entity_record(wtxn, id)? else {
         return Ok(None);
     };
+    // A stale record's words are withdrawn; whatever marked it, it is
+    // retired, never sent out.
+    if crate::ports::stale_in_txn(&vault.store, wtxn, id)? {
+        return Ok(None);
+    }
     // A TURN embeds its messages' text, read now, and the lease commits to
     // exactly that text: marking it again here makes a fill current only for
     // the words it embedded, even when a door that moved them marked nothing.

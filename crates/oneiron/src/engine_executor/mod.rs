@@ -7,6 +7,8 @@
 //! host dispatcher that records the typed bridge call in the durable replay log.
 
 mod code_check;
+mod compaction;
+mod compaction_host;
 mod driver;
 mod host;
 mod record;
@@ -15,16 +17,17 @@ mod store;
 mod types;
 mod wire;
 
+pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, WindowFullReason};
 pub use self::driver::EngineNativeExecutor;
 #[cfg(test)]
 use self::record::step_state_hash;
 pub use self::types::{
-    ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_HARD_STEP_LIMIT, ENGINE_EXECUTOR_PURPOSE_NAME,
-    ENGINE_EXECUTOR_SOFT_STEP_LIMIT, EngineExecutorConfig, EngineExecutorError,
-    EngineExecutorLimits, EngineExecutorOutcome, EngineExecutorResult, EngineExecutorStatus,
-    ExecutorLegibility, GUEST_BUDGET_RESPONSE_KEY, JsCodeModeHost, JsCodeModeOutput,
-    JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome, SelfDispatchResponse,
-    guest_response_with_budget,
+    ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,
+    ENGINE_EXECUTOR_HARD_STEP_LIMIT, ENGINE_EXECUTOR_PURPOSE_NAME, ENGINE_EXECUTOR_SOFT_STEP_LIMIT,
+    EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome,
+    EngineExecutorResult, EngineExecutorStatus, ExecutorLegibility, GUEST_BUDGET_RESPONSE_KEY,
+    JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
+    SelfDispatchResponse, guest_response_with_budget,
 };
 
 #[cfg(test)]

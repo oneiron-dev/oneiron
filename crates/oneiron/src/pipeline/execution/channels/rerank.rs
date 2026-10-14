@@ -258,7 +258,7 @@ impl PipelineBuilder<'_> {
         claim_gate: &mut ClaimStatusGateCache,
     ) -> Result<BoundWords> {
         let kind = metadata_cache
-            .get(&self.vault.store, rtxn, id)?
+            .get(&self.read, rtxn, id)?
             .map(|meta| meta.entity_type);
         if kind == Some(ENTITY_TYPE_TURN) {
             let text = self.turn_text(rtxn, id)?;
@@ -281,7 +281,10 @@ impl PipelineBuilder<'_> {
                 unscored: false,
             });
         }
-        let revision = match self.vault.indexed_revision_in_txn(rtxn, id) {
+        let revision = match self
+            .vault
+            .indexed_revision_from_in_txn(&self.read, rtxn, id)
+        {
             Ok(revision) => revision,
             Err(Error::EntityNotFound) => None,
             Err(error) => return Err(error),
@@ -296,8 +299,9 @@ impl PipelineBuilder<'_> {
                     self.vault, rtxn, id,
                 )?);
         if message_without_words
-            || crate::vault::entity_revision::read_entity_revision_in_txn(
+            || crate::vault::entity_revision::read_entity_revision_from_store_in_txn(
                 self.vault,
+                &self.read,
                 rtxn,
                 id,
                 ReadMode::Indexed,
@@ -318,12 +322,11 @@ impl PipelineBuilder<'_> {
         }
         // The fold's own rule: a MESSAGE stands as its TURN when the run
         // admits that TURN.
-        let Some(turn) = super::turn_fold::turn_of(&self.vault.store, rtxn, id, metadata_cache)?
-        else {
+        let Some(turn) = super::turn_fold::turn_of(&self.read, rtxn, id, metadata_cache)? else {
             return Ok(words);
         };
         if !pipeline_candidate_matches_filters_and_gate(
-            &self.vault.store,
+            &self.read,
             rtxn,
             &turn,
             filter_config,
@@ -345,6 +348,7 @@ impl PipelineBuilder<'_> {
     fn turn_text(&self, rtxn: &heed::RoTxn<'_>, turn: &EntityId) -> Result<Option<TurnText>> {
         Ok(crate::vault::entity_revision::served_turn_text_in_txn(
             self.vault,
+            &self.read,
             rtxn,
             turn,
             ReadMode::Indexed,
