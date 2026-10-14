@@ -324,6 +324,29 @@ impl PrivacyMeet {
         }
     }
 
+    /// The meet `effective` reads back as.
+    fn of_effective(effective: &EffectiveWorldPrivacy) -> Self {
+        let (named, mine_only, contenders) = match &effective.read {
+            EffectiveRead::Everywhere => (None, false, BTreeSet::new()),
+            EffectiveRead::MyMachines => (None, true, BTreeSet::new()),
+            EffectiveRead::OneMachine(machine) => (
+                Some(BTreeSet::from([*machine])),
+                false,
+                BTreeSet::from([*machine]),
+            ),
+            EffectiveRead::Conflicted { contenders } => {
+                (Some(BTreeSet::new()), false, contenders.clone())
+            }
+        };
+        Self {
+            named,
+            mine_only,
+            contenders,
+            sealed: effective.sealed,
+            models: effective.models.clone(),
+        }
+    }
+
     fn meet(&self, other: &Self) -> Self {
         Self {
             named: match (&self.named, &other.named) {
@@ -737,18 +760,29 @@ pub(super) fn live_edits_by(
         .collect()
 }
 
-/// The edits, live or replaced, that never count at full strength on this
-/// install: each landed restriction only, counts only as narrowing, or has
-/// copies that disagree.
+/// The edits that never count at full strength on this install: each one
+/// valid without effect, and each live or replaced edit this install reads
+/// as narrowing only (Sol P2 round 18, F1).
 pub(super) fn held_edits(state: &FoldState, out: &mut BTreeSet<AuthorityEntryHash>) {
+    out.extend(state.refused_world_edits.iter().copied());
     for frontier in state.worlds.values() {
         out.extend(
             frontier
                 .live
                 .iter()
                 .chain(&frontier.superseded)
-                .filter(|(_, edit)| edit.restriction_only || edit.narrow_only || edit.disputed)
+                .filter(|(hash, edit)| !full_strength(state, hash, edit, Counting::Install))
                 .map(|(hash, _)| *hash),
         );
     }
+}
+
+/// What both settings allow.
+pub(super) fn meet_effective(
+    left: &EffectiveWorldPrivacy,
+    right: &EffectiveWorldPrivacy,
+) -> EffectiveWorldPrivacy {
+    PrivacyMeet::of_effective(left)
+        .meet(&PrivacyMeet::of_effective(right))
+        .effective()
 }

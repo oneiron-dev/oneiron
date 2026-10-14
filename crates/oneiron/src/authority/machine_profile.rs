@@ -59,7 +59,8 @@ pub struct FoldedMachine {
     /// The winning revision reached this install past its signer's sequence
     /// floor: the roster rule reads it as a replica with no floor does, but
     /// this install does not count the machine until a later revision lands
-    /// (Astra #1430). Not live here.
+    /// (Astra #1430). Also set when the fold with no vouch does not count the
+    /// machine under that revision (`install_fold::NoVouch`). Not live here.
     pub floor_held: bool,
     /// The roster key that signed the revision, and its class. The class is
     /// judged again on the merged history: a key found to be in the host's

@@ -49,8 +49,8 @@ pub(super) struct AuthorityLocalObservations {
     pub(super) sequence_floors: BTreeMap<AuthorityEntryHash, u64>,
     /// Rows a handoff vouches for: no floor refuses them.
     pub(super) vouched: BTreeSet<AuthorityEntryHash>,
-    /// No handoff vouches for anything: the fold whose install view every
-    /// vouched fold keeps (`install_fold::held_without_vouch`).
+    /// Neither a handoff nor a removal vouches for anything: the fold that
+    /// bounds every vouched fold's install view (`install_fold::NoVouch`).
     pub(super) unvouched: bool,
     pub(super) policy: AuthorityObservationPolicy,
 }
@@ -74,7 +74,8 @@ impl AuthorityLocalObservations {
         }
     }
 
-    /// The same observations with no handoff's vouch, now or later.
+    /// The same observations with no handoff's or removal's vouch, now or
+    /// later.
     pub(super) fn without_vouch(&self) -> Self {
         Self {
             sequence_floors: self.sequence_floors.clone(),

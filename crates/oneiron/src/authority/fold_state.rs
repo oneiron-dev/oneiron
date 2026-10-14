@@ -136,12 +136,23 @@ pub struct AuthorityFold {
     /// Well-signed world edits from a machine that could not edit that
     /// world: valid entries without effect.
     pub refused_world_edits: BTreeSet<AuthorityEntryHash>,
-    /// The machine revisions and world edits this install holds back: each
-    /// landed restriction only, or never counts at full strength here
-    /// (Astra #1430).
-    pub(super) held_back: BTreeSet<AuthorityEntryHash>,
+    /// What this install holds back beside the roster rule (Astra #1430).
+    pub(super) install: InstallBound,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
+}
+
+/// What bounds this install's view beside the roster rule (Astra #1430).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct InstallBound {
+    /// The machine revisions and world edits this install holds back: each
+    /// revision that landed restriction only, and each edit that never counts
+    /// at full strength here, one valid without effect included.
+    pub(super) held_back: BTreeSet<AuthorityEntryHash>,
+    /// The first still-future second at which the fold with no vouch that
+    /// bounds this view changes (`install_fold::NoVouch`). A cached view
+    /// lasts no longer.
+    pub(super) no_vouch_deadline: Option<u64>,
 }
 
 /// One folded `{signing_key_id, actor_ref, actor_class, epoch, status}` tuple.

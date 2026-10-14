@@ -48,7 +48,7 @@ pub(super) fn fold_entry_state(
     // parents (Sol P2 round 3, F3), but acknowledges nothing here (Astra
     // #1430b). A row a handoff or a removal vouches for is never refused, and
     // still lands restriction only, as does every row the fold with no vouch
-    // holds back or only the vouch admits (`install_held`).
+    // holds back or only the vouch admits (`install_fold::NoVouch`).
     let past_floor = context
         .sequence_floors
         .and_then(|floors| floors.get(&hash))

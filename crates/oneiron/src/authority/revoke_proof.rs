@@ -109,8 +109,11 @@ pub(super) fn derive_revoke_facts(
         // when the branch arrives on its own, siblings at one sequence
         // included (Astra #1423b, Sol #1423 r8 and r9). A row of it past its
         // floor still lands restriction only: the proof's copy acknowledges
-        // nothing the ordinary fold's copy does not (Astra #1430b).
-        let branch: BTreeSet<_> = if removal {
+        // nothing the ordinary fold's copy does not (Astra #1430b). The fold
+        // with no vouch (`floor_vouched: None`) vouches for no branch either
+        // (Sol P2 round 18, F2).
+        let removal_vouch = removal && context.floor_vouched.is_some();
+        let branch: BTreeSet<_> = if removal_vouch {
             ancestors
                 .get(hash)
                 .into_iter()
@@ -121,7 +124,7 @@ pub(super) fn derive_revoke_facts(
         } else {
             BTreeSet::new()
         };
-        let context = if removal {
+        let context = if removal_vouch {
             FoldContext {
                 floor_vouched: Some(&branch),
                 ..context

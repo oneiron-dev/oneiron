@@ -18,7 +18,7 @@ pub(super) struct FoldContext<'a> {
     /// Rows no floor refuses (a handoff's line, a removal's own branch); one
     /// past its floor still lands restriction only.
     pub(super) floor_vouched: Option<&'a BTreeSet<AuthorityEntryHash>>,
-    /// Revisions and world edits held to restriction only (`install_fold::held_without_vouch`).
+    /// Revisions and world edits held to restriction only (`install_fold::NoVouch`).
     pub(super) install_held: Option<&'a BTreeSet<AuthorityEntryHash>>,
     pub(super) entry_ancestors:
         Option<&'a BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>>,
@@ -655,7 +655,7 @@ pub(super) fn fold_authority_log_once(
             machines: BTreeMap::new(),
             worlds: BTreeMap::new(),
             refused_world_edits: BTreeSet::new(),
-            held_back: BTreeSet::new(),
+            install: InstallBound::default(),
             issues,
         };
     }
@@ -763,9 +763,9 @@ pub(super) fn fold_authority_log_once(
         refused_world_edits: merged
             .as_ref()
             .map_or_else(BTreeSet::new, |state| state.refused_world_edits.clone()),
-        held_back: merged
+        install: merged
             .as_ref()
-            .map_or_else(BTreeSet::new, super::install_fold::held_back),
+            .map_or_else(InstallBound::default, super::install_fold::held_back),
         issues,
     }
 }

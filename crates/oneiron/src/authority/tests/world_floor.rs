@@ -711,7 +711,7 @@ struct Start {
     host: Host,
     world: EntityId,
     laptop: (EntityId, SigningKey),
-    desk: EntityId,
+    desk: (EntityId, SigningKey),
     mine: AuthorityLogEntry,
     fold: AuthorityFold,
     seq: u64,
@@ -742,11 +742,53 @@ impl Start {
             host,
             world,
             laptop,
-            desk,
+            desk: (desk, desk_key),
             mine,
             fold,
             seq,
         }
+    }
+
+    /// The same start once the host's history holds `rows`.
+    fn landed(mut self, rows: &[AuthorityLogEntry]) -> Self {
+        land(&self.host, rows);
+        self.fold = self.host.vault.authority_fold().unwrap();
+        self.seq = self.fold.append_sequences[&self.host.issuer.public_key()];
+        self
+    }
+
+    /// `machine` answered `role` at its next revision, having seen `seen`.
+    fn answer(
+        &self,
+        machine: EntityId,
+        role: MachineRole,
+        bump: u64,
+        seen: BTreeSet<AuthorityEntryHash>,
+    ) -> AuthorityOp {
+        let profile = &self.fold.machine(machine).unwrap().profile;
+        AuthorityOp::MachineProfile(MachineProfile {
+            role,
+            revision: profile.revision + bump,
+            seen_world_edits: seen,
+            ..profile.clone()
+        })
+    }
+
+    /// The owner's re-root at `seq` on `parents`, to a root named `name`.
+    fn re_root(
+        &self,
+        seq: u64,
+        parents: Vec<AuthorityEntryHash>,
+        name: &[u8],
+    ) -> AuthorityLogEntry {
+        let next = HostSlipIssuer::from_secret(name).unwrap();
+        self.owner_row(
+            seq,
+            parents,
+            AuthorityOp::ReRoot {
+                new_device: next.root_device(),
+            },
+        )
     }
 
     fn heads(&self) -> Vec<AuthorityEntryHash> {
@@ -825,7 +867,8 @@ impl Start {
         MarkPastFloor {
             name,
             world: self.world,
-            laptop: self.laptop.0,
+            read: EffectiveRead::MyMachines,
+            held: Some(self.laptop.0),
             _dir: dir,
             replica,
             re_root,
@@ -838,19 +881,33 @@ fn hash(entry: &AuthorityLogEntry) -> AuthorityEntryHash {
     authority_entry_hash(entry).unwrap()
 }
 
-/// A replica holding the laptop's mark past its floor, and the handoff that
-/// arrives after it.
+/// A replica holding a row past its floor, and the handoff (or the removal)
+/// whose vouch arrives after it.
 struct MarkPastFloor {
     name: &'static str,
     host: Host,
     world: EntityId,
-    laptop: EntityId,
+    /// What the world reads before the vouch and after it.
+    read: EffectiveRead,
+    /// A machine not live after the vouch.
+    held: Option<EntityId>,
     _dir: tempfile::TempDir,
     replica: Vault,
     re_root: Option<AuthorityLogEntry>,
 }
 
 impl MarkPastFloor {
+    /// The same replica judged on `world`, which reads `read` throughout,
+    /// and with `held` not live after the vouch.
+    fn expecting(self, world: EntityId, read: EffectiveRead, held: Option<EntityId>) -> Self {
+        Self {
+            world,
+            read,
+            held,
+            ..self
+        }
+    }
+
     /// Stores the handoff in a write of its own. A hand-signed re-root must
     /// stand, as a handoff that vouches for its line.
     fn hand_off(&self) {
@@ -863,18 +920,22 @@ impl MarkPastFloor {
             .put_authority_log_entry(re_root, TimeRange { start: 3, end: 3 }, 3)
             .unwrap();
         let fold = self.replica.authority_fold().unwrap();
-        assert!(fold.valid_entries.contains(&hash(re_root)), "{}", self.name);
+        if matches!(re_root.op, AuthorityOp::ReRoot { .. }) {
+            assert!(fold.valid_entries.contains(&hash(re_root)), "{}", self.name);
+        }
     }
 
-    /// The world reads the narrowing before the handoff and after it, and
-    /// the laptop is not live after it.
+    /// The world reads the same before the vouch and after it, never on an
+    /// unknown destination, and the held machine is not live after it.
     fn assert_held_through_the_handoff(&self) {
-        let held = (EffectiveRead::MyMachines, false);
-        assert_eq!(judged(&self.replica, self.world), held);
+        let held = (self.read.clone(), false);
+        assert_eq!(judged(&self.replica, self.world), held, "{}", self.name);
         self.hand_off();
         let fold = self.replica.authority_fold().unwrap();
-        assert!(!fold.machines[&self.laptop].is_live());
-        assert_eq!(judged(&self.replica, self.world), held);
+        if let Some(machine) = self.held {
+            assert!(!fold.machines[&machine].is_live(), "{}", self.name);
+        }
+        assert_eq!(judged(&self.replica, self.world), held, "{}", self.name);
     }
 }
 
@@ -892,7 +953,7 @@ fn ordinary_re_root() -> MarkPastFloor {
         start.seq + 2,
         MachineProfile {
             revision: 2,
-            ..start.fold.machine(start.desk).unwrap().profile.clone()
+            ..start.fold.machine(start.desk.0).unwrap().profile.clone()
         },
     );
     let widening = start.widening(&marked);
@@ -1011,9 +1072,208 @@ fn retired_permission() -> MarkPastFloor {
     )
 }
 
+/// Sol P2 round 18, F1, and Wonder P2 round 12, W1 (the demotion past its
+/// own floor): the desk holds the world on itself alone, and an owner row
+/// only a re-root's vouch admits demotes it. Another machine of the owner's
+/// re-picks the world as an orphan over that demotion. With no vouch that
+/// edit is valid without effect, so it grants nothing here.
+fn refused_repick(seed: u8, demoted_at: u64, re_root_at: u64) -> MarkPastFloor {
+    let start = Start::new(seed);
+    let other = other_machine(
+        &start.host,
+        seed + 2,
+        MachineRole::Owned(MachineOwnership::Yours),
+    );
+    let desk = start.desk.0;
+    let holding = edit_by(
+        &start.host,
+        desk,
+        &start.desk.1,
+        start.world,
+        settings(ReadLocation::OneMachine(desk)),
+    );
+    let start = start.landed(std::slice::from_ref(&holding));
+    let later = start.revoke(start.seq + 4, start.heads(), seed);
+    let refused = start.revoke(start.seq, start.below_heads(), seed + 1);
+    let mut parents = start.heads();
+    parents.push(hash(&refused));
+    let demotion = start.owner_row(
+        start.seq + demoted_at,
+        parents,
+        start.answer(
+            desk,
+            MachineRole::Owned(MachineOwnership::WorkSchool),
+            1,
+            BTreeSet::new(),
+        ),
+    );
+    let repick = edit_on(
+        &start.host,
+        (other.0, &other.1),
+        start.world,
+        1,
+        vec![hash(&demotion), hash(&holding)],
+        ReadLocation::Everywhere,
+    );
+    let re_root = start.re_root(
+        start.seq + re_root_at,
+        vec![hash(&demotion), hash(&later)],
+        &[seed; 8],
+    );
+    let world = start.world;
+    start
+        .replica(
+            "refused re-pick",
+            &[&later, &refused, &demotion, &repick],
+            Some(re_root),
+        )
+        .expecting(world, EffectiveRead::OneMachine(desk), None)
+}
+
+/// Sol P2 round 18, F2: two "yours" revisions of one number leave a machine
+/// in conflict, so its widening counts only as narrowing. A removal over a
+/// row its floor refuses lists the widening; with no handoff, only the
+/// removal's own branch vouch admits it, and it acknowledges nothing here.
+fn removal_vouch() -> MarkPastFloor {
+    let start = Start::new(126);
+    let machine = other_machine(
+        &start.host,
+        128,
+        MachineRole::Owned(MachineOwnership::Yours),
+    );
+    let widening = edit_by(
+        &start.host,
+        machine.0,
+        &machine.1,
+        start.world,
+        settings(ReadLocation::Everywhere),
+    );
+    let start = start.landed(std::slice::from_ref(&widening));
+    let yours = MachineRole::Owned(MachineOwnership::Yours);
+    let seen = BTreeSet::from([hash(&widening)]);
+    let quiet = start.owner_row(
+        start.seq + 1,
+        start.heads(),
+        start.answer(machine.0, yours, 1, BTreeSet::new()),
+    );
+    let listing = start.owner_row(
+        start.seq + 2,
+        start.heads(),
+        start.answer(machine.0, yours, 1, seen.clone()),
+    );
+    let later = start.revoke(start.seq + 4, start.heads(), 26);
+    let refused = start.revoke(start.seq, start.below_heads(), 27);
+    let mut parents = start.heads();
+    parents.push(hash(&refused));
+    let removal = start.owner_row(
+        start.seq + 5,
+        parents,
+        start.answer(machine.0, MachineRole::Removed, 2, seen),
+    );
+    let world = start.world;
+    start
+        .replica(
+            "removal vouch",
+            &[&quiet, &listing, &later, &refused],
+            Some(removal),
+        )
+        .expecting(world, EffectiveRead::MyMachines, Some(machine.0))
+}
+
+/// Wonder P2 round 12, W2: the laptop's later "yours" revision lands past
+/// the floor and holds it, and a re-root whose line holds the earlier mark
+/// and a refused row fences that later revision away. The earlier mark then
+/// heads the laptop, but the fold with no vouch holds the laptop.
+fn fenced_held_head() -> MarkPastFloor {
+    let start = Start::new(130);
+    let marked = start.mark(start.seq + 1);
+    let widening = start.widening(&marked);
+    let later = start.revoke(start.seq + 4, start.heads(), 30);
+    let successor = start.owner_row(
+        start.seq + 2,
+        vec![hash(&marked)],
+        AuthorityOp::MachineProfile(start.yours(3)),
+    );
+    let refused = start.revoke(start.seq, start.below_heads(), 31);
+    let over = start.revoke(start.seq + 3, vec![hash(&marked), hash(&refused)], 32);
+    let re_root = start.re_root(
+        start.seq + 5,
+        vec![hash(&over), hash(&later)],
+        b"world floor fenced head root",
+    );
+    start.replica(
+        "fenced held head",
+        &[&marked, &widening, &later, &successor, &refused, &over],
+        Some(re_root),
+    )
+}
+
+/// The desk narrows a fresh world over its own demotion, which only a
+/// re-root's vouch admits. With no vouch the demotion waits and the
+/// narrowing stands; with the vouch the desk may no longer edit, the
+/// narrowing never stands, and the world would read its default everywhere.
+fn voided_narrowing() -> MarkPastFloor {
+    let start = Start::new(132);
+    let fresh = world_row(&start.host);
+    let desk = start.desk.0;
+    let later = start.revoke(start.seq + 4, start.heads(), 33);
+    let refused = start.revoke(start.seq, start.below_heads(), 34);
+    let mut parents = start.heads();
+    parents.push(hash(&refused));
+    let demotion = start.owner_row(
+        start.seq + 5,
+        parents,
+        start.answer(
+            desk,
+            MachineRole::Owned(MachineOwnership::WorkSchool),
+            1,
+            BTreeSet::new(),
+        ),
+    );
+    let narrowing = edit_on(
+        &start.host,
+        (desk, &start.desk.1),
+        fresh,
+        2,
+        vec![hash(&demotion)],
+        ReadLocation::MyMachines,
+    );
+    let re_root = start.re_root(
+        start.seq + 6,
+        vec![hash(&demotion), hash(&later)],
+        b"world floor voided narrowing root",
+    );
+    start
+        .replica(
+            "voided narrowing",
+            &[&later, &refused, &demotion, &narrowing],
+            Some(re_root),
+        )
+        .expecting(fresh, EffectiveRead::MyMachines, None)
+}
+
+/// Every graph a review of #1430's vouch found (Wonder P2 rounds 9-12, Sol P2
+/// rounds 17-18), and the narrowing a vouched demotion voids: in each, a
+/// vouch rescues a row its floor refuses.
+fn vouched_graphs() -> Vec<MarkPastFloor> {
+    vec![
+        vouch_over_a_refused_row(),
+        two_step_repair(),
+        rescued_successor(),
+        retired_permission(),
+        refused_repick(118, 5, 6),
+        refused_repick(122, 1, 5),
+        removal_vouch(),
+        fenced_held_head(),
+        voided_narrowing(),
+    ]
+}
+
 #[test]
 fn a_re_root_keeps_a_floor_held_mark_held() {
-    ordinary_re_root().assert_held_through_the_handoff();
+    let graph = ordinary_re_root();
+    graph.assert_held_through_the_handoff();
+    assert_no_vouch_widens(&graph.replica);
 }
 
 #[test]
@@ -1036,13 +1296,37 @@ fn a_permission_only_the_vouch_gives_repairs_no_floor() {
     retired_permission().assert_held_through_the_handoff();
 }
 
-/// What a vouch widens on `vault`'s install view, row by row, and how many
-/// rows its fold with no vouch holds back (the Engine's ruling on Sol P2
-/// round 17). The vouched fold holds back every machine revision and world
-/// edit the fold with no vouch holds back, and every one only the vouch
-/// admits that no handoff precedes. A machine the fold with no vouch holds
-/// stays held unless a revision after a handoff heads it.
-pub(super) fn vouch_widenings(vault: &Vault) -> (usize, Vec<String>) {
+#[test]
+fn an_edit_valid_without_effect_gains_none_through_the_vouch() {
+    refused_repick(118, 5, 6).assert_held_through_the_handoff();
+    refused_repick(122, 1, 5).assert_held_through_the_handoff();
+}
+
+#[test]
+fn a_removal_branch_vouch_acknowledges_nothing() {
+    removal_vouch().assert_held_through_the_handoff();
+}
+
+#[test]
+fn a_fenced_held_head_leaves_its_machine_held() {
+    fenced_held_head().assert_held_through_the_handoff();
+}
+
+#[test]
+fn a_narrowing_a_vouched_demotion_voids_still_narrows() {
+    voided_narrowing().assert_held_through_the_handoff();
+}
+
+/// Where `vault`'s install view reads wider than the fold with no vouch at
+/// all, outside a fresh grant after a handoff (the Engine's rulings on Sol P2
+/// rounds 17-18), and whether the vouch changed the fold there at all. Both
+/// folds read the same rows, receipts and clock; the one with no vouch runs
+/// neither a handoff's vouch nor a removal's. Wider means a world readable on
+/// a destination (unknown, or any machine) the other withholds it from, a
+/// looser seal or another model order, or a machine live or mine here only.
+/// A machine a revision after a handoff heads, and a world only edits after
+/// a handoff hold, are fresh grants.
+pub(super) fn vouch_widenings(vault: &Vault) -> (bool, Vec<String>) {
     let entries = stored_entries(vault);
     let txn = vault.store.env.read_txn().unwrap();
     let observations = authority_local_observations_in_txn(&vault.store, &txn, &entries).unwrap();
@@ -1074,34 +1358,71 @@ pub(super) fn vouch_widenings(vault: &Vault) -> (usize, Vec<String>) {
         }
         false
     };
-    let row = |kind: &str, hash: &AuthorityEntryHash| format!("{kind} {:02x?}", &hash[..4]);
+    let fresh = |id: &EntityId| {
+        vouched
+            .machine(*id)
+            .is_some_and(|here| after_handoff(&here.entry))
+    };
     let mut widened = Vec::new();
-    for (hash, entry) in &by_hash {
-        if !matches!(
-            entry.op,
-            AuthorityOp::MachineProfile(_) | AuthorityOp::WorldPrivacy(_)
-        ) || !vouched.valid_entries.contains(hash)
-            || vouched.held_back.contains(hash)
-        {
+    let machines: BTreeSet<_> = vouched
+        .machines
+        .keys()
+        .chain(unvouched.machines.keys())
+        .copied()
+        .collect();
+    for id in machines.iter().filter(|id| !fresh(id)) {
+        let Some(here) = vouched.machine(*id) else {
+            continue;
+        };
+        let there = unvouched.machine(*id);
+        if here.is_live() && !there.is_some_and(FoldedMachine::is_live) {
+            widened.push(format!("machine {id:?} live"));
+        }
+        if here.is_mine() && !there.is_some_and(FoldedMachine::is_mine) {
+            widened.push(format!("machine {id:?} mine"));
+        }
+    }
+    let destinations: Vec<_> = std::iter::once(Destination::Unknown)
+        .chain(
+            machines
+                .iter()
+                .filter(|id| !fresh(id))
+                .map(|id| Destination::Machine(*id)),
+        )
+        .collect();
+    let worlds: BTreeSet<_> = vouched
+        .worlds
+        .keys()
+        .chain(unvouched.worlds.keys())
+        .copied()
+        .collect();
+    for world in &worlds {
+        if vouched.worlds.get(world).is_some_and(|folded| {
+            !folded.live.is_empty() && folded.live.keys().all(|edit| after_handoff(edit))
+        }) {
             continue;
         }
-        if unvouched.held_back.contains(hash) {
-            widened.push(row("held back with no vouch", hash));
-        } else if !unvouched.valid_entries.contains(hash) && !after_handoff(hash) {
-            widened.push(row("admitted only by the vouch", hash));
+        for destination in &destinations {
+            if vouched.world_readable_on(*world, *destination)
+                && !unvouched.world_readable_on(*world, *destination)
+            {
+                widened.push(format!("world {world:?} readable on {destination:?}"));
+            }
+        }
+        let (here, there) = (
+            vouched.world_privacy(*world),
+            unvouched.world_privacy(*world),
+        );
+        if here.sealed > there.sealed {
+            widened.push(format!("world {world:?} sealed {:?}", here.sealed));
+        }
+        if here.models != there.models && here.models != EffectiveModelOrder::Conflicted {
+            widened.push(format!("world {world:?} models {:?}", here.models));
         }
     }
-    for (id, machine) in &unvouched.machines {
-        if machine.floor_held
-            && vouched
-                .machines
-                .get(id)
-                .is_some_and(|other| !other.floor_held && !after_handoff(&other.entry))
-        {
-            widened.push(row("held machine headed by", &vouched.machines[id].entry));
-        }
-    }
-    (unvouched.held_back.len(), widened)
+    let changed =
+        vouched.valid_entries != unvouched.valid_entries || vouched.machines != unvouched.machines;
+    (changed, widened)
 }
 
 /// A handoff fixture's install view after its handoffs: no vouch widened it.
@@ -1111,27 +1432,21 @@ pub(super) fn assert_no_vouch_widens(vault: &Vault) {
 }
 
 /// The Engine's invariant for #1430 (rulings on Wonder P2 rounds 9-10 and
-/// Sol P2 round 17): a vouch decides only which handoffs stand and what the
-/// roster view shows, never the install effect of a machine revision or a
-/// world edit. In every scenario above, after its handoff, the vouched fold
-/// is no wider than the fold with no vouch.
+/// Sol P2 rounds 17-18): a vouch decides only which handoffs stand, which
+/// wins and settles, and what the roster view shows, never what this install
+/// reads. In every graph above, after its vouch, the install view is no
+/// wider than the fold with no vouch anywhere.
 #[test]
 fn a_vouch_never_widens_the_install_view() {
     let mut widened = Vec::new();
-    for scenario in [
-        ordinary_re_root(),
-        vouch_over_a_refused_row(),
-        two_step_repair(),
-        rescued_successor(),
-        retired_permission(),
-    ] {
-        scenario.hand_off();
-        let (held, wider) = vouch_widenings(&scenario.replica);
-        assert!(held > 0, "{}: nothing held back to keep", scenario.name);
+    for graph in vouched_graphs() {
+        graph.hand_off();
+        let (changed, wider) = vouch_widenings(&graph.replica);
+        assert!(changed, "{}: the vouch changed nothing", graph.name);
         widened.extend(
             wider
                 .into_iter()
-                .map(|row| format!("{}: {row}", scenario.name)),
+                .map(|row| format!("{}: {row}", graph.name)),
         );
     }
     assert!(widened.is_empty(), "the vouch widened: {widened:?}");
