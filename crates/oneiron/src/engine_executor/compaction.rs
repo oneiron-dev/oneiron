@@ -191,9 +191,9 @@ impl RunCompaction {
                 }))
             }
             PassOutcome::Refused(refusal) => {
+                // The detail can quote a provider's error body: never logged.
                 tracing::warn!(
                     reason = refusal.suppression.as_str(),
-                    detail = %refusal.detail,
                     "the compaction backend refused a pass"
                 );
                 Some(Err(refusal.suppression))
@@ -278,7 +278,11 @@ impl RunCompaction {
                             }
                             Ok(None) => seat.driver.abandon(),
                             Err(error) => {
-                                tracing::warn!(%error, "a compaction window could not be sealed");
+                                tracing::warn!(
+                                    variant = error.variant(),
+                                    kind = ?error.engine_kind(),
+                                    "a compaction window could not be sealed"
+                                );
                                 seat.driver.abandon();
                                 let held = CompactionSuppression::TurnScoped { check: None };
                                 seat.held = Some(held);

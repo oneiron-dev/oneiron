@@ -48,7 +48,11 @@ impl EngineNativeExecutor<'_> {
                                 Ok(())
                             }
                             Err(error) => {
-                                tracing::warn!(%error, "a gated compaction did not land");
+                                tracing::warn!(
+                                    variant = error.variant(),
+                                    kind = ?error.engine_kind(),
+                                    "a gated compaction did not land"
+                                );
                                 seat.hold(crate::compaction::CompactionSuppression::TurnScoped {
                                     check: None,
                                 });
