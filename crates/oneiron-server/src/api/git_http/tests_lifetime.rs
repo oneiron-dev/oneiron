@@ -184,6 +184,10 @@ async fn response(stream: &mut TcpStream) -> (u16, Vec<u8>) {
 /// The advertisement: a fresh exchange of its own, refused while the bound is
 /// full.
 async fn advertise(origin: &Origin) -> u16 {
+    advertisement(origin).await.0
+}
+
+async fn advertisement(origin: &Origin) -> (u16, Vec<u8>) {
     let mut head =
         "GET /git/demo.git/info/refs?service=git-upload-pack HTTP/1.0\r\nhost: origin\r\n"
             .to_owned();
@@ -193,7 +197,30 @@ async fn advertise(origin: &Origin) -> u16 {
     head.push_str("\r\n");
     let mut stream = TcpStream::connect(origin.addr).await.unwrap();
     stream.write_all(head.as_bytes()).await.unwrap();
-    response(&mut stream).await.0
+    response(&mut stream).await
+}
+
+/// Commits `text` in the source and pushes it through the origin to
+/// `branch` with stock git, answering the commit it pushed.
+fn push_change(
+    origin: &Origin,
+    branch: &str,
+    text: &'static str,
+) -> tokio::task::JoinHandle<String> {
+    let url = format!("http://{}/git/demo.git", origin.addr);
+    let source = origin.source.path().to_owned();
+    let [token, binding] = origin.git_auth.clone();
+    let target = format!("HEAD:refs/heads/{branch}");
+    tokio::task::spawn_blocking(move || {
+        std::fs::write(source.join("README.md"), format!("{text}\n")).expect("readme");
+        stock_git(&source, &["add", "README.md"]);
+        commit(&source, text);
+        stock_git(
+            &source,
+            &["-c", &token, "-c", &binding, "push", &url, &target],
+        );
+        stock_git(&source, &["rev-parse", "HEAD"])
+    })
 }
 
 /// A pkt-line framing `payload`.
@@ -229,28 +256,7 @@ async fn a_stalled_push_is_ended_and_frees_the_repository_for_the_next() {
 
     // The stalled push's answer comes once its worker has let the
     // coordinator go, so the next push lands.
-    let url = format!("http://{}/git/demo.git", origin.addr);
-    let source = origin.source.path().to_owned();
-    let [token, binding] = origin.git_auth.clone();
-    let push = tokio::task::spawn_blocking(move || {
-        std::fs::write(source.join("README.md"), "second\n").expect("readme");
-        stock_git(&source, &["add", "README.md"]);
-        commit(&source, "second");
-        stock_git(
-            &source,
-            &[
-                "-c",
-                &token,
-                "-c",
-                &binding,
-                "push",
-                &url,
-                "HEAD:refs/heads/next",
-            ],
-        );
-        stock_git(&source, &["rev-parse", "HEAD"])
-    });
-    let pushed = tokio::time::timeout(PATIENCE, push)
+    let pushed = tokio::time::timeout(PATIENCE, push_change(&origin, "next", "second"))
         .await
         .expect("the next push gets the repository once the stalled one ends")
         .unwrap();
@@ -271,6 +277,7 @@ async fn a_stalled_push_is_ended_and_frees_the_repository_for_the_next() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn reads_never_queue_behind_a_push_that_holds_the_repository() {
     let origin = origin(limits(4, 10_000)).await;
+    let published = push_change(&origin, "published", "second").await.unwrap();
 
     // A push that holds the repository coordinator for its idle limit.
     let _stalled = rpc(&origin, "git-receive-pack", 4_096, b"00").await;
@@ -278,10 +285,17 @@ async fn reads_never_queue_behind_a_push_that_holds_the_repository() {
 
     // Far inside that limit, an advertisement and a fetch are both served.
     let soon = Duration::from_secs(3);
-    let advertised = tokio::time::timeout(soon, advertise(&origin))
+    let (status, refs) = tokio::time::timeout(soon, advertisement(&origin))
         .await
         .expect("an advertisement never waits on the push that holds the repository");
-    assert_eq!(advertised, 200);
+    assert_eq!(status, 200);
+    // Projected without the coordinator, the ref list still carries what
+    // was published.
+    let refs = String::from_utf8_lossy(&refs);
+    assert!(
+        refs.contains(&format!("{published} refs/heads/published")),
+        "{refs}"
+    );
     let request = format!(
         "{}0000{}",
         pkt(&format!("want {}\n", origin.oid)),

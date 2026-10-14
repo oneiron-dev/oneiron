@@ -123,7 +123,9 @@ pub fn serve(
 /// so whichever side sees the stall first ends the exchange the same way. And
 /// it never waits for the repository: a push that finds the coordinator taken
 /// fails at once with [`CodeError::GitHttpRepositoryBusy`], so an admitted
-/// exchange never sits queued behind another push.
+/// exchange never sits queued behind another push. A read is never refused
+/// for it: it recovers and projects its ref list under the coordinator only
+/// when it finds it free.
 ///
 /// [`CodeError::GitHttpRepositoryBusy`]: crate::error::CodeError::GitHttpRepositoryBusy
 pub fn serve_bounded(
@@ -286,6 +288,7 @@ fn serve_request(
             repo_dir: &repo_dir,
             hooks: &hooks,
             idle,
+            wait_for_repository,
         },
         &mut child,
         body,
@@ -445,6 +448,7 @@ struct ExchangeSetup<'a> {
     repo_dir: &'a Path,
     hooks: &'a DoorHooksDir,
     idle: Duration,
+    wait_for_repository: bool,
 }
 
 fn run_exchange(
@@ -460,6 +464,7 @@ fn run_exchange(
         repo_dir,
         hooks,
         idle,
+        wait_for_repository,
     } = setup;
     let stdin = child.take_stdin()?;
     let stdout = child.take_stdout()?;
@@ -496,7 +501,7 @@ fn run_exchange(
         // is rewritten in flight: the gate holds one pkt-line, never the
         // advertisement.
         let streamed = if request.is_ref_advertisement() {
-            let mut gate = AdvertisedRefGate::new(vault, repo_dir, &mut sink);
+            let mut gate = AdvertisedRefGate::new(vault, repo_dir, wait_for_repository, &mut sink);
             stream_response(stdout, &mut gate)
         } else {
             stream_response(stdout, &mut sink)
