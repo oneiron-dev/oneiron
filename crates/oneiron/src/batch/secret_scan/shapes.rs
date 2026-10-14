@@ -651,7 +651,11 @@ pub(super) fn cut_assignment(
             // A key cut in the middle is longer than any name, so only its
             // ending can read as one, once its own ends are trimmed as whole.
             // A head left as the start of another `export ` may strip on past
-            // the cut.
+            // the cut, and so may one whose last character the cut split (read
+            // as U+FFFD, it may have been a blank).
+            let head = head
+                .strip_suffix(char::REPLACEMENT_CHARACTER)
+                .unwrap_or(head);
             let exported = head.trim_start().trim_start_matches("export ");
             let start = exported.trim_start().trim_start_matches(['"', '\'']);
             let ending = key.trim_end().trim_end_matches(['"', '\'']);

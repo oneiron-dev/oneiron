@@ -625,6 +625,90 @@ fn an_entitys_own_alias_in_its_own_fields_never_becomes_its_name() {
 }
 
 #[test]
+fn an_entitys_own_id_under_a_body_id_or_name_key_never_becomes_its_name() {
+    // Sol R6, Wonder R6: no key in a row's body names the row or its name
+    // field. Its own id stands as its short id under an object holding
+    // another row's ref as its `id`, under a nested `name`, and beside a
+    // body field `id` that a serialized row's ref gives way to; another
+    // row's id there still becomes that row's name at its first mention.
+    let words: Vec<&str> =
+        "legal winner thank year wave sausage worth useful legal winner thank yellow"
+            .split(' ')
+            .collect();
+    let name = words[6..].join(" ");
+    let id = EntityId::from_bytes_unchecked([0x99; 16]);
+    let about = format!("{} {}", words[..6].join(" "), id.to_hex());
+    let person = EntityId::from_bytes_unchecked([0x9a; 16]);
+    let with = format!("zebra {}", person.to_hex());
+    let entity = |id: EntityId, short_id: &str, entity_type: u8, fields: &Value| ContextEntity {
+        source_revision_ref: None,
+        critical: false,
+        id,
+        short_id: short_id.to_owned(),
+        content_hash: 0x01,
+        entity_type,
+        score: 0.5,
+        fields: fields
+            .as_object()
+            .map(|map| map.clone().into_iter().collect()),
+        edges: None,
+        vector: None,
+    };
+    for fields in [
+        serde_json::json!({
+            "about": { "id": "pe01:01", "text": about, "with": with },
+            "name": name,
+        }),
+        serde_json::json!({
+            "about": { "id": "as01:01", "name": about, "with": with },
+            "name": name,
+        }),
+        serde_json::json!({ "about": about, "id": "pe01:01", "name": name, "with": with }),
+    ] {
+        let mut stored = Vec::new();
+        rmpv::encode::write_value(&mut stored, &rmpv::ext::to_value(&fields).unwrap()).unwrap();
+        assert!(crate::batch::secret_scan::scan_write_payload(&stored).is_ok());
+        let pack = ContextPack {
+            capabilities: Vec::new(),
+            l2_base: None,
+            retrieval_quality: Default::default(),
+            results: vec![entity(
+                id,
+                "as01",
+                crate::registry::ENTITY_TYPE_ASSET,
+                &fields,
+            )],
+            neighbors: vec![entity(
+                person,
+                "pe01",
+                crate::registry::ENTITY_TYPE_PERSON,
+                &serde_json::json!({ "name": "Alice" }),
+            )],
+            stats: empty_stats(),
+            empty: None,
+        };
+        for format in [
+            PackFormat::Json,
+            PackFormat::Yaml,
+            PackFormat::Toon,
+            PackFormat::Markdown,
+            PackFormat::Plaintext,
+        ] {
+            // Its row comes first, before the neighbor's.
+            let config = SerializeConfig {
+                merge_neighbors: false,
+                ..savings_config(format, FieldProfile::Full)
+            };
+            let text = String::from_utf8_lossy(&serialize_pack(&pack, &config)).into_owned();
+            let case = format!("{fields} {format:?}: {text}");
+            assert!(text.contains("sausage as01"), "{case}");
+            assert!(!text.contains("sausage worth"), "{case}");
+            assert!(text.contains("zebra Alice (pe01)"), "{case}");
+        }
+    }
+}
+
+#[test]
 fn another_entitys_identity_key_holding_a_short_id_still_becomes_its_name() {
     // Sol R2: the own-alias rule kept every identity key that holds a short
     // id out of the aliases, another entity's too; Sol R4: or its own.

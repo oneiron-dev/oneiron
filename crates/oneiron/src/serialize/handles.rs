@@ -7,12 +7,9 @@ use std::collections::{HashMap, HashSet};
 /// An alias's entity: its short id, its name, and its source id.
 type Handle = (String, String, [u8; 16]);
 
-#[derive(Default)]
 pub(super) struct Handles {
     aliases: HashMap<String, Handle>,
     seen: HashSet<String>,
-    /// Each row's short ref (a serialized row's `id`), and its source id.
-    rows: HashMap<String, [u8; 16]>,
 }
 impl Handles {
     pub(super) fn new(pack: &ContextPack, prepared: &mut PreparedPack) -> Self {
@@ -58,10 +55,8 @@ impl Handles {
                 aliases.insert(key.into(), handle);
             }
         }
-        let mut rows = HashMap::new();
         for (_, group) in prepared.results.iter_mut().chain(&mut prepared.neighbors) {
             for row in group {
-                rows.insert(row.id.clone(), row.source_id);
                 let identity = row
                     .source_id
                     .iter()
@@ -81,7 +76,6 @@ impl Handles {
         Self {
             aliases,
             seen: HashSet::new(),
-            rows,
         }
     }
     /// `text` with each alias rendered: as its entity's name and short id at
@@ -107,6 +101,7 @@ impl Handles {
             }
         })
     }
+    /// Text outside every row: no alias in it is any entity's own.
     pub(super) fn value(&mut self, value: &mut Value) {
         self.walk(value, None);
     }
@@ -140,9 +135,9 @@ impl Handles {
         }
     }
 
-    /// Each string in `value` through [`Self::text`]. A serialized row (an
-    /// object whose `id` is a row's short ref) reads each of its fields as
-    /// that row's own.
+    /// Each string in `value` through [`Self::text`], read as `own`'s (a
+    /// row's source id, and its top-level field) however deep it sits: no
+    /// `id` or `name` key in a body names a row or its name field.
     fn walk(&mut self, value: &mut Value, own: Option<([u8; 16], &str)>) {
         match value {
             Value::String(string) => *string = self.text(string, own),
@@ -152,16 +147,11 @@ impl Handles {
                 }
             }
             Value::Object(map) => {
-                let row = map
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .and_then(|id| self.rows.get(id))
-                    .copied();
                 for (key, value) in map {
                     // Never substitute a short ref in a citation: its
                     // content-hash suffix is the revision gate.
                     if key != "stats" && key != "id" {
-                        self.walk(value, row.map(|row| (row, key.as_str())).or(own));
+                        self.walk(value, own);
                     }
                 }
             }

@@ -467,7 +467,8 @@ fn a_segment_past_what_a_seam_reads_whole_reads_as_the_write_door_reads_it() {
     // whole). Wonder R4: quotes past what the seam keeps after a sensitive
     // key, which its read trims whole (refused whole). Sol and Wonder R5:
     // `export ` prefixes that run past the cut before the key's name
-    // (refused whole). Chunks as long as a peer sends.
+    // (refused whole). Wonder R6: a blank the cut splits after them, quotes
+    // past it (refused whole). Chunks as long as a peer sends.
     let pad = |units: usize| b"zz  ".repeat(units);
     let value: &[u8] = b"t7Rk2pLq9WzX";
     let chunked = |parts: &[Vec<u8>]| -> Vec<Vec<u8>> {
@@ -525,6 +526,19 @@ fn a_segment_past_what_a_seam_reads_whole_reads_as_the_write_door_reads_it() {
             true,
             chunked(&[
                 [&b"export ".repeat(1_300_000)[..], b"password="].concat(),
+                [value, b"\n"].concat(),
+            ]),
+        ),
+        (
+            true,
+            chunked(&[
+                [
+                    &b"export ".repeat(299_593)[..],
+                    "\u{3000}".as_bytes(),
+                    &b"\"'".repeat(3_500_000),
+                    b"password=",
+                ]
+                .concat(),
                 [value, b"\n"].concat(),
             ]),
         ),

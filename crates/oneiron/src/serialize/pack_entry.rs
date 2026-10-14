@@ -198,17 +198,21 @@ pub(super) fn serialize_prepared_pack(
         prepared.results.is_empty() && prepared.neighbors.is_empty() && prepared.l2_base.is_none();
     let l2_base = prepared.l2_base.clone();
     let mut handles = super::handles::Handles::new(pack, &mut prepared);
-    if !matches!(config.format, PackFormat::Json | PackFormat::Toon) {
-        handles.rows(&mut prepared.results, config.format != PackFormat::Yaml);
-        handles.rows(&mut prepared.neighbors, config.format != PackFormat::Yaml);
-    }
+    // Rows render before any format builds them, each with its own source
+    // id: a serialized row's `id` can be a body field's.
+    let table = !matches!(
+        config.format,
+        PackFormat::Json | PackFormat::Toon | PackFormat::Yaml
+    );
+    handles.rows(&mut prepared.results, table);
+    handles.rows(&mut prepared.neighbors, table);
     let bytes = match config.format {
         PackFormat::OpenaiCompat | PackFormat::AnthropicMessages | PackFormat::Gemini => {
             super::provider_codecs::serialize_provider(config.format, prepared)
         }
         PackFormat::Json => serialize_json(pack, config, prepared, &mut handles),
         PackFormat::Yaml => serialize_yaml(config, prepared).into_bytes(),
-        PackFormat::Toon => serialize_toon(config, prepared, &mut handles).into_bytes(),
+        PackFormat::Toon => serialize_toon(config, prepared).into_bytes(),
         PackFormat::Markdown => serialize_markdown(config, prepared).into_bytes(),
         PackFormat::Plaintext => serialize_plaintext(config, prepared).into_bytes(),
     };
@@ -327,27 +331,22 @@ fn serialize_json(
         root.insert("stats".to_owned(), json_stats(&stats));
     }
     if let Some(empty) = &pack.empty
-        && let Ok(value) = serde_json::to_value(empty)
+        && let Ok(mut value) = serde_json::to_value(empty)
     {
+        handles.value(&mut value);
         root.insert("empty".to_owned(), value);
     }
 
-    let mut value = Value::Object(root);
-    handles.value(&mut value);
-    serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec())
+    serde_json::to_vec(&Value::Object(root)).unwrap_or_else(|_| b"{}".to_vec())
 }
 
-fn serialize_toon(
-    config: &SerializeConfig,
-    prepared: PreparedPack,
-    handles: &mut super::handles::Handles,
-) -> String {
+fn serialize_toon(config: &SerializeConfig, prepared: PreparedPack) -> String {
     let mut out = String::new();
     if prepared.merged {
-        out.push_str(&encode_toon_section(&prepared.results, handles));
+        out.push_str(&encode_toon_section(&prepared.results));
     } else {
-        let results = encode_toon_section(&prepared.results, handles);
-        let neighbors = encode_toon_section(&prepared.neighbors, handles);
+        let results = encode_toon_section(&prepared.results);
+        let neighbors = encode_toon_section(&prepared.neighbors);
 
         if !results.is_empty() {
             out.push_str(&results);

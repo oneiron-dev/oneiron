@@ -211,7 +211,7 @@ fn encode_document(document: &WholeVaultDocument, format: PackFormat) -> Result<
         PackFormat::Json => unreachable!(),
         PackFormat::Yaml => write_yaml_groups(&mut out, &groups, 0),
         PackFormat::Toon => {
-            out = encode_toon_section(&groups, &mut super::handles::Handles::default());
+            out = encode_toon_section(&groups);
         }
         PackFormat::Markdown => write_markdown_groups(&mut out, &groups, "##"),
         PackFormat::Plaintext => write_plaintext_groups(&mut out, &groups),
