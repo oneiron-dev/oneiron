@@ -161,19 +161,31 @@ fn validate_window_update(
         if let Some(error) = refused {
             return Err(error);
         }
-        // A shallow snapshot also carries the state at its root, where a
-        // carrier deleted after the root survives outside the retained ops.
-        // Loro keeps that root as encoded and later exports reuse it. A read
-        // through Loro can be steered away from it: the sender's latest-state
-        // section masks it, and replay or checkout resolves a key from a
-        // retained op that shares the root entry's id. So decode the snapshot
-        // with its root section standing in as the latest state, which Loro
-        // loads as-is with no replay, and read the root's own values. Every
-        // value Loro can later derive comes from that section, the retained
-        // ops or the latest-state section, and each is read here.
-        if candidate.is_shallow() {
-            let root = root_as_latest_state(update)
-                .ok_or_else(|| decode_error(loro::LoroError::DecodeDataCorruptionError))?;
+        // A snapshot can also carry the state at a root, where a carrier
+        // deleted after the root survives outside the retained ops, and
+        // later exports reuse that root as encoded. Two Loro readers decode
+        // it: the state load keeps a container's last table entry and the
+        // root-history load its first, so first require tables that read
+        // one way. Then a read through Loro can still be steered away from
+        // the root: the latest-state section masks it, and replay or checkout
+        // resolves a key from a retained op that shares the root entry's id.
+        // So decode the snapshot with its root section standing in as the
+        // latest state, which Loro loads as-is with no replay, and read the
+        // root's own values. Every value Loro can later derive comes from
+        // that section, the retained ops or the latest-state section, and
+        // each is read here.
+        let corrupt = || decode_error(loro::LoroError::DecodeDataCorruptionError);
+        let sections = snapshot_sections(update).ok_or_else(corrupt)?;
+        let [_, latest, root] = sections;
+        if !(latest == EMPTY_STATE || state_section_is_canonical(latest))
+            || !state_section_is_canonical(root)
+        {
+            return Err(Error::InvalidConfig(
+                "snapshot state is not canonical".into(),
+            ));
+        }
+        if !root.is_empty() {
+            let root = root_as_latest_state(update, sections).ok_or_else(corrupt)?;
             let root = LoroDoc::from_snapshot(&root).map_err(decode_error)?;
             let mut at_root = None;
             map_for_each_value_bytes(&root.get_map("entities"), |_, blob| {
@@ -417,30 +429,58 @@ fn check_tombstone_residence(
     Ok(())
 }
 
-/// `snapshot` with its root-state section copied over its latest-state
-/// section, so a decode loads the encoded root as the doc's state and replays
-/// nothing. Loro 1.16 lays a fast snapshot out as a 22-byte header (magic,
-/// checksum, mode) and three u32-length-prefixed sections (ops, latest state,
-/// root state); the checksum is xxh32 over everything from byte 20.
-/// `None` for any other layout, so admission refuses rather than guesses.
-fn root_as_latest_state(snapshot: &[u8]) -> Option<Vec<u8>> {
-    const HEADER: usize = 22;
-    let mut rest = snapshot.get(HEADER..)?;
+/// Loro 1.16 lays a fast snapshot out as a header (magic, checksum, mode)
+/// and three u32-length-prefixed sections: ops, latest state, root state.
+const SNAPSHOT_HEADER: usize = 22;
+/// A latest-state section Loro left out: the decode replays from the root.
+const EMPTY_STATE: &[u8] = b"E";
+
+/// The sections of a fast snapshot, `None` for any other layout, so
+/// admission refuses rather than guesses.
+fn snapshot_sections(snapshot: &[u8]) -> Option<[&[u8]; 3]> {
+    let mut rest = snapshot.get(SNAPSHOT_HEADER..)?;
     let mut sections = [&[][..]; 3];
     for section in &mut sections {
         let (len, tail) = rest.split_first_chunk::<4>()?;
         let len = usize::try_from(u32::from_le_bytes(*len)).ok()?;
         (*section, rest) = tail.split_at_checked(len)?;
     }
-    if !rest.is_empty() {
-        return None;
-    }
-    let mut rebuilt = snapshot[..HEADER].to_vec();
-    for section in [sections[0], sections[2], sections[2]] {
+    rest.is_empty().then_some(sections)
+}
+
+/// `snapshot` with its root-state section copied over its latest-state
+/// section, so a decode loads the encoded root as the doc's state and
+/// replays nothing. The checksum is xxh32 over everything from byte 20.
+fn root_as_latest_state(snapshot: &[u8], [ops, _, root]: [&[u8]; 3]) -> Option<Vec<u8>> {
+    let mut rebuilt = snapshot.get(..SNAPSHOT_HEADER)?.to_vec();
+    for section in [ops, root, root] {
         rebuilt.extend_from_slice(&u32::try_from(section.len()).ok()?.to_le_bytes());
         rebuilt.extend_from_slice(section);
     }
     let checksum = xxhash_rust::xxh32::xxh32(&rebuilt[20..], u32::from_le_bytes(*b"LORO"));
     rebuilt[16..20].copy_from_slice(&checksum.to_le_bytes());
     Some(rebuilt)
+}
+
+/// Whether a state section reads one way through every Loro reader: empty,
+/// or a table whose blocks validate and whose keys strictly increase, each
+/// the canonical bytes of a container id or the frontiers entry. Loro's own
+/// encoder writes only such tables.
+fn state_section_is_canonical(section: &[u8]) -> bool {
+    if section.is_empty() {
+        return true;
+    }
+    let Ok(table) = loro::kv_store::sstable::SsTable::import_all(section.to_vec().into(), true)
+    else {
+        return false;
+    };
+    let mut previous: Option<Vec<u8>> = None;
+    table.iter().all(|(key, _)| {
+        let key = &key[..];
+        let canonical =
+            key == b"fr" || ContainerID::try_from_bytes(key).is_ok_and(|id| id.to_bytes() == key);
+        let increasing = previous.as_deref().is_none_or(|previous| previous < key);
+        previous = Some(key.to_vec());
+        canonical && increasing
+    })
 }
