@@ -64,7 +64,7 @@ fn stored(vault: &Vault, id: &EntityId) -> Result<bool> {
 }
 
 /// A `blob.version` claim body naming `subject` as the holder of `bytes`.
-fn version_claim(subject: EntityId, bytes: &[u8]) -> ClaimBody {
+fn version_claim(subject: EntityId, bytes: &[u8]) -> Result<ClaimBody> {
     ClaimBody::new(
         BLOB_VERSION_CLAIM_PREDICATE,
         ClaimSubject::Entity(subject),
@@ -278,7 +278,7 @@ fn a_version_claim_naming_its_own_asset_does_not_recurse_on_delete() -> Result<(
     put_claim(
         &replica,
         &EntityId::now(),
-        &version_claim(asset, VERSION_BYTES[0]),
+        &version_claim(asset, VERSION_BYTES[0])?,
         12,
     )?;
 
@@ -332,13 +332,13 @@ fn a_claim_rewritten_to_another_artifact_keeps_both_holders() -> Result<()> {
     put_claim(
         &replica,
         &claim,
-        &version_claim(first, VERSION_BYTES[0]),
+        &version_claim(first, VERSION_BYTES[0])?,
         30,
     )?;
     put_claim(
         &replica,
         &claim,
-        &version_claim(second, VERSION_BYTES[0]),
+        &version_claim(second, VERSION_BYTES[0])?,
         31,
     )?;
 
