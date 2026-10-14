@@ -248,13 +248,14 @@ fn members_in_txn(
             Some(rmpv::Value::String(author)) => author.as_bytes().to_vec(),
             _ => Vec::new(),
         };
+        let order = message.order;
         let text = message.shown();
         let body = if bodies && text.is_some() {
             body
         } else {
             Vec::new()
         };
-        rows.push((message.order, id, text, author, body));
+        rows.push((order, id, text, author, body));
     }
     rows.sort_by(|left, right| {
         left.0
