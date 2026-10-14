@@ -44,9 +44,7 @@ pub(crate) fn validate_transition(
         // Decision 10: a deleted project's history still stands at its id.
         return Err(unresolved(id, "project id already holds signed history"));
     }
-    let reader = ProjectReader::new(store, txn, posture)?
-        .ok_or_else(invalid)?
-        .uncommitted();
+    let reader = ProjectReader::new(store, txn, posture)?.ok_or_else(invalid)?;
     let Some(proof) = &next.write_proof else {
         // An owner-door birth: main's stored-row rule.
         return match reader.judge_stored(id, &next)? {

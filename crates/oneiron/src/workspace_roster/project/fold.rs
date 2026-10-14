@@ -408,13 +408,17 @@ pub(crate) fn fold_project(cx: &FoldCx<'_, '_, '_>, stored: &ProjectRecord) -> R
         head: witness_head,
         anchor,
     });
-    match parent_bounds(reader, id, &effective)? {
-        Ok(()) => {
+    match (parent_bounds(reader, id, &effective)?, witness) {
+        (Ok(()), Some(witness)) => {
             fold.frontier.disposition = disposition;
-            fold.frontier.witness = witness;
+            fold.frontier.witness = Some(witness);
             fold.frontier.effective = Some(effective);
         }
-        Err(verdict) => fold.frontier.disposition = ProjectDisposition::of_verdict(verdict),
+        // Authority is served only with the witness a live write builds on.
+        (Ok(()), None) => {
+            fold.frontier.disposition = ProjectDisposition::unauthorized(reason::TOO_DEEP);
+        }
+        (Err(verdict), _) => fold.frontier.disposition = ProjectDisposition::of_verdict(verdict),
     }
     finish(cx, &mut fold, Some(&walk))?;
     Ok(fold)
@@ -564,13 +568,20 @@ fn root_and_walk(
     };
     let mut node = root;
     loop {
-        let (step, _, settlement) = cx.step(node)?;
+        let (step, valid, settlement) = cx.step(node)?;
+        // A settlement that excluded a valid child shapes what is served,
+        // whether one winner or a tie's meet follows: the frozen reader
+        // re-verifies it with the path.
+        if settlement
+            .superseded
+            .iter()
+            .any(|lost| valid.contains(lost))
+        {
+            walk.resolutions.extend(settlement.closure.iter().copied());
+        }
         match step {
             Step::Head => break,
-            Step::Advance { winner, resolution } => {
-                if resolution.is_some() {
-                    walk.resolutions.extend(settlement.closure.iter().copied());
-                }
+            Step::Advance { winner, .. } => {
                 walk.path.push(winner);
                 node = winner;
             }
@@ -650,7 +661,7 @@ fn finish(cx: &FoldCx<'_, '_, '_>, fold: &mut ProjectFold, walk: Option<&Walk>) 
             .collect(),
     };
     let mut seen = BTreeSet::new();
-    let mut todo = roots.clone();
+    let mut todo = roots;
     while let Some(node) = todo.pop() {
         if !seen.insert(node) {
             continue;
@@ -679,36 +690,29 @@ fn finish(cx: &FoldCx<'_, '_, '_>, fold: &mut ProjectFold, walk: Option<&Walk>) 
             on_path: on_path.contains(&node),
         });
     }
-    // The counted set: authenticated signed rows and envelopes reachable
-    // from the root (a seal tip counts what descends from its revision).
-    let mut counted = BTreeSet::new();
-    for node in &seen {
-        if cx.origin(*node)? == RevisionOrigin::Authenticated
-            && matches!(cx.row(node), Some(ProjectRevision::Signed { .. }))
-        {
-            counted.insert(*node);
-        }
-        for envelope in cx.held.resolutions_at(node) {
-            if cx.origin(*envelope)? == RevisionOrigin::Authenticated {
-                counted.insert(*envelope);
-            }
-        }
-    }
-    if let Some(seal) = walk.and_then(|walk| walk.seal) {
-        counted.insert(seal);
-    }
+    let counted = counted_set(cx)?;
     fold.evidence = ProjectEvidenceSet::of(walk.map(|walk| walk.root), &counted);
     Ok(())
 }
 
-/// The valid seals no valid seal supersedes.
+/// The valid seals no valid seal supersedes. Seals are judged oldest first:
+/// a valid seal supersedes only older ones, so each link of a long chain is
+/// already judged when the next is, and the depth guard never cuts it.
 pub(super) fn seal_tips(cx: &FoldCx<'_, '_, '_>) -> Result<BTreeSet<ProjectRevisionHash>> {
+    let mut held: Vec<(u64, ProjectRevisionHash, &ProjectSeal)> = cx
+        .held
+        .seals
+        .iter()
+        .filter_map(|hash| match cx.row(hash) {
+            Some(ProjectRevision::Seal { seal, .. }) => Some((seal.signed_at, *hash, seal)),
+            _ => None,
+        })
+        .collect();
+    held.sort_by_key(|(signed_at, hash, _)| (*signed_at, *hash));
     let mut seals = BTreeMap::new();
-    for hash in &cx.held.seals {
-        if let Some(ProjectRevision::Seal { seal, .. }) = cx.row(hash)
-            && cx.verdict(*hash)? == ProjectVerdict::Visible
-        {
-            seals.insert(*hash, seal);
+    for (_, hash, seal) in held {
+        if cx.verdict(hash)? == ProjectVerdict::Visible {
+            seals.insert(hash, seal);
         }
     }
     let superseded: BTreeSet<ProjectRevisionHash> = seals
@@ -722,50 +726,71 @@ pub(super) fn seal_tips(cx: &FoldCx<'_, '_, '_>) -> Result<BTreeSet<ProjectRevis
         .collect())
 }
 
-/// How many revisions the budget counts (point H): authenticated signed rows
-/// and envelopes, read from the index. Under one standing seal the fold
-/// restarts at its revision, so only what descends from it counts.
+/// How many revisions the budget counts (point H).
 pub(super) fn budget_count(cx: &FoldCx<'_, '_, '_>) -> Result<u64> {
+    Ok(counted_set(cx)?.len() as u64)
+}
+
+/// What the budget counts (point H): authenticated signed revisions reachable
+/// through the child index from the root, every boundary and every birth,
+/// plus the authenticated envelopes at reachable nodes, read from the index.
+/// Under one standing seal the fold restarts at its revision, so only the
+/// seal and what descends from it count. A row nothing reachable names, such
+/// as an envelope over an anchor this replica lacks, spends nothing.
+fn counted_set(cx: &FoldCx<'_, '_, '_>) -> Result<BTreeSet<ProjectRevisionHash>> {
+    let authenticated = |hash: &ProjectRevisionHash| {
+        cx.held
+            .get(hash)
+            .is_some_and(|row| row.origin == RevisionOrigin::Authenticated)
+    };
     let tips = seal_tips(cx)?;
     let mut only = tips.iter();
-    let (Some(tip), None) = (only.next(), only.next()) else {
-        return Ok(cx
+    let mut counted = BTreeSet::new();
+    let roots: Vec<ProjectRevisionHash> = match (only.next(), only.next()) {
+        (Some(tip), None) => {
+            let Some(ProjectRevision::Seal { seal, .. }) = cx.row(tip) else {
+                return Ok(counted);
+            };
+            counted.insert(*tip);
+            vec![seal.next]
+        }
+        _ => cx
             .held
             .rows
-            .values()
-            .filter(|row| {
-                row.origin == RevisionOrigin::Authenticated
-                    && !matches!(row.revision, ProjectRevision::Boundary { .. })
+            .iter()
+            .filter(|(_, row)| {
+                matches!(
+                    row.revision,
+                    ProjectRevision::Boundary { .. } | ProjectRevision::Signed { parent: None, .. }
+                )
             })
-            .count() as u64);
+            .map(|(hash, _)| *hash)
+            .collect(),
     };
-    let Some(ProjectRevision::Seal { seal, .. }) = cx.row(tip) else {
-        return Ok(0);
-    };
-    let mut count = 1_u64;
     let mut seen = BTreeSet::new();
-    let mut todo = vec![seal.next];
+    let mut todo = roots;
     while let Some(node) = todo.pop() {
         if !seen.insert(node) {
             continue;
         }
-        if cx
-            .held
-            .get(&node)
-            .is_some_and(|row| row.origin == RevisionOrigin::Authenticated)
-        {
-            count += 1;
+        if authenticated(&node) && matches!(cx.row(&node), Some(ProjectRevision::Signed { .. })) {
+            counted.insert(node);
         }
-        for envelope in cx.held.resolutions_at(&node) {
-            if cx
-                .held
-                .get(envelope)
-                .is_some_and(|row| row.origin == RevisionOrigin::Authenticated)
-            {
-                count += 1;
-            }
-        }
+        counted.extend(
+            cx.held
+                .resolutions_at(&node)
+                .filter(|hash| authenticated(hash)),
+        );
         todo.extend(cx.held.children_of(&node).copied());
     }
-    Ok(count)
+    if tips.len() != 1 {
+        for hash in &cx.held.seals {
+            if authenticated(hash)
+                && matches!(cx.row(hash), Some(ProjectRevision::Seal { seal, .. }) if seen.contains(&seal.next))
+            {
+                counted.insert(*hash);
+            }
+        }
+    }
+    Ok(counted)
 }

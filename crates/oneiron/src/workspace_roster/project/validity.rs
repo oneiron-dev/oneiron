@@ -5,7 +5,7 @@ use super::read::{Holder, ProjectReader, ProjectVerdict};
 use super::resolution::{ProjectResolution, ProjectSeal};
 use super::revision::{
     HeldRevisions, ProjectRevision, ProjectRevisionHash, ProjectRevisionProof, RevisionOrigin,
-    anchor_of, authenticate,
+    anchor_of, authenticate, signed_depth,
 };
 use super::*;
 use crate::federation::ScopeId;
@@ -47,6 +47,9 @@ pub(super) struct FoldCx<'r, 'a, 't> {
     verdicts: RefCell<BTreeMap<ProjectRevisionHash, ProjectVerdict>>,
     signers: RefCell<BTreeMap<ProjectRevisionHash, String>>,
     depth: Cell<usize>,
+    /// How often the depth guard refused. A verdict that consumed a refusal
+    /// depends on where the walk entered the chain, so it is not memoized.
+    refusals: Cell<u64>,
 }
 
 impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
@@ -62,6 +65,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             verdicts: RefCell::new(BTreeMap::new()),
             signers: RefCell::new(BTreeMap::new()),
             depth: Cell::new(0),
+            refusals: Cell::new(0),
         }
     }
 
@@ -87,13 +91,17 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             return Ok(*known);
         }
         if self.depth.get() > MAX_FOLD_DEPTH {
+            self.refusals.set(self.refusals.get() + 1);
             return Ok(ProjectVerdict::Quarantined(reason::TOO_DEEP));
         }
+        let refusals = self.refusals.get();
         self.depth.set(self.depth.get() + 1);
         let verdict = self.judge(hash);
         self.depth.set(self.depth.get() - 1);
         let verdict = verdict?;
-        self.verdicts.borrow_mut().insert(hash, verdict);
+        if self.refusals.get() == refusals {
+            self.verdicts.borrow_mut().insert(hash, verdict);
+        }
         Ok(verdict)
     }
 
@@ -162,6 +170,11 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
                 let prior = self.verdict(parent)?;
                 if prior != ProjectVerdict::Visible {
                     return Ok(prior);
+                }
+                // A valid parent's lineage is held, so only length fails
+                // here: no row could carry this revision's witness.
+                if signed_depth(self.held, hash).is_none() {
+                    return Ok(ProjectVerdict::Quarantined(reason::TOO_DEEP));
                 }
                 match anchor_of(self.held, parent) {
                     Some(anchor) => Some(anchor),
@@ -264,7 +277,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
     ) -> Result<std::result::Result<ProjectEffective, ProjectVerdict>> {
         let parent = EntityId::from_hex(parent)
             .map_err(|_| RecordError::InvalidProjectBody("invalid parent id"))?;
-        Ok(parent_view(self.reader, parent)?)
+        parent_view(self.reader, parent)
     }
 
     fn resolution(&self, resolution: &ProjectResolution) -> Result<ProjectVerdict> {

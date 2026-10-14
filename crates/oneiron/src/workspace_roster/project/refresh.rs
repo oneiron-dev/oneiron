@@ -126,9 +126,7 @@ fn refresh_one(
         let Some(stored) = read::stored(store, txn, project, kind)? else {
             return Ok(false);
         };
-        let reader = ProjectReader::new(store, txn, posture)?
-            .ok_or_else(invalid)?
-            .uncommitted();
+        let reader = ProjectReader::new(store, txn, posture)?.ok_or_else(invalid)?;
         let held = held_in_txn(store, txn, project, kind)?;
         let cx = FoldCx::new(&reader, project, &held);
         let count = budget_count(&cx)?;
@@ -240,12 +238,33 @@ fn drain(
                     .filter(|child| !done.contains(child)),
             );
         } else if waits_on_parent_project(verdict) {
-            for parent in &authority.parents {
-                if let Ok(parent) = EntityId::from_hex(parent) {
-                    drained.waits.push((parent, node));
-                }
+            for parent in lineage_parents(cx, node) {
+                drained.waits.push((parent, node));
             }
         }
     }
     Ok(drained)
+}
+
+/// Every parent project named along `node`'s held lineage: a verdict that
+/// waits on a parent project may come from an ancestor's bounds, so the
+/// retry waits on each of them.
+fn lineage_parents(cx: &FoldCx<'_, '_, '_>, node: ProjectRevisionHash) -> BTreeSet<EntityId> {
+    let mut parents = BTreeSet::new();
+    let mut next = Some(node);
+    for _ in 0..=MAX_PROJECT_ANCHORS {
+        let Some(row) = next.and_then(|at| cx.row(&at)) else {
+            break;
+        };
+        if let Some(authority) = row.authority() {
+            parents.extend(
+                authority
+                    .parents
+                    .iter()
+                    .filter_map(|parent| EntityId::from_hex(parent).ok()),
+            );
+        }
+        next = row.parent();
+    }
+    parents
 }

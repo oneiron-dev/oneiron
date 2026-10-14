@@ -24,7 +24,7 @@ impl Vault {
     pub fn project_frontier(&self, id: EntityId) -> Result<Option<ProjectFrontier>> {
         let txn = self.store.env.read_txn()?;
         match ProjectReader::new(&self.store, &txn, self.privacy_posture())? {
-            Some(reader) => reader.frontier(id),
+            Some(reader) => reader.committed().frontier(id),
             None => Ok(None),
         }
     }
@@ -75,8 +75,7 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             {
                 let reader = ProjectReader::new(&self.store, txn, self.privacy_posture())?
-                    .ok_or_else(invalid)?
-                    .uncommitted();
+                    .ok_or_else(invalid)?;
                 let Some(frontier) = reader.frontier(id)? else {
                     return Err(Error::EntityNotFound);
                 };
@@ -170,8 +169,7 @@ impl Vault {
             );
             let (record, anchor, supersedes) = {
                 let reader = ProjectReader::new(&self.store, txn, self.privacy_posture())?
-                    .ok_or_else(invalid)?
-                    .uncommitted();
+                    .ok_or_else(invalid)?;
                 let Some(record) = stored(&self.store, txn, id, kind)? else {
                     return Err(Error::EntityNotFound);
                 };
@@ -215,14 +213,14 @@ impl Vault {
                 version: ProjectProofVersion::V3,
             });
             let chain = revision::revisions_of_row(id, &next)?;
-            let Some((next_hash, _)) = chain.last() else {
+            let Some(next_hash) = chain.last().map(|(hash, _)| *hash) else {
                 return Err(invalid());
             };
-            if revision::REVISIONS.contains(&self.store, txn, &(id, *next_hash))? {
+            if revision::REVISIONS.contains(&self.store, txn, &(id, next_hash))? {
                 return Err(unresolved(id, "seal snapshot repeats; retry"));
             }
             let mut seal = ProjectSeal {
-                next: *next_hash,
+                next: next_hash,
                 supersedes: supersedes.into_iter().collect(),
                 slip_wire: slip_wire.clone(),
                 holder_signature: Vec::new(),
@@ -247,6 +245,19 @@ impl Vault {
                     &envelope.canonical_bytes()?,
                 )
                 .apply(txn)?;
+            // The owner's act commits only a seal the fold installs: a
+            // signature or slip it refuses fails here, not on a later read.
+            let reader = ProjectReader::new(&self.store, txn, self.privacy_posture())?
+                .ok_or_else(invalid)?;
+            let installed = reader.frontier(id)?.is_some_and(|frontier| {
+                frontier.disposition == ProjectDisposition::Settled
+                    && frontier
+                        .witness
+                        .is_some_and(|witness| witness.head == next_hash)
+            });
+            if !installed {
+                return Err(unresolved(id, "the seal does not install"));
+            }
             Ok(envelope_hash)
         })
     }

@@ -19,8 +19,11 @@ pub(crate) const PROJECT_REVISION_SHORT_ID_PREFIX: &str = "pv";
 /// slip, challenge, resolution and seal domain.
 const REVISION_HASH_DOMAIN: &[u8] = b"oneiron/project-revision/v1/";
 
-/// Largest revision body admitted; a signed state holds one authority and a slip.
-const MAX_REVISION_BYTES: usize = 64 * 1024;
+/// Largest revision body admitted: above the largest single state the PROJECT
+/// body gate admits for its id lists (three of 4,096 entries) plus the largest slip
+/// wire, so capture never refuses a row the projection took. It bounds decode
+/// work on an untrusted carrier.
+const MAX_REVISION_BYTES: usize = 1024 * 1024;
 
 /// blake3(REVISION_HASH_DOMAIN || canonical body). Serde: a MessagePack bin of
 /// exactly 32 bytes; another length or an array form is refused.
@@ -452,6 +455,25 @@ pub(crate) fn held_in_txn(
 /// Rebuilds the exact nested `ProjectAnchor` of a held revision, the value
 /// its children's unchanged `write_challenge` signs over. `None` when a link
 /// is missing or the chain is deeper than the fold follows.
+/// How many signed states the held lineage of `hash` holds, itself
+/// included; `None` when a link is not held or the lineage holds more signed
+/// states than one PROJECT row carries.
+pub(crate) fn signed_depth(held: &HeldRevisions, hash: ProjectRevisionHash) -> Option<usize> {
+    let mut signed = 0;
+    let mut next = Some(hash);
+    while let Some(at) = next {
+        let row = &held.get(&at)?.revision;
+        if matches!(row, ProjectRevision::Signed { .. }) {
+            signed += 1;
+            if signed > MAX_PROJECT_ANCHORS {
+                return None;
+            }
+        }
+        next = row.parent();
+    }
+    Some(signed)
+}
+
 pub(crate) fn anchor_of(held: &HeldRevisions, hash: ProjectRevisionHash) -> Option<ProjectAnchor> {
     let mut chain = Vec::new();
     let mut next = Some(hash);
@@ -488,11 +510,15 @@ pub(crate) fn anchor_of(held: &HeldRevisions, hash: ProjectRevisionHash) -> Opti
     anchor
 }
 
+/// What one held revision's origin check reads: the slip wire, the challenge
+/// its signature covers and the holder signature.
+type SignedChallenge = (String, Vec<u8>, Vec<u8>);
+
 /// The challenge a held revision's signature covers, when its chain is held.
-pub(crate) fn challenge_of(
+fn challenge_of(
     held: &HeldRevisions,
     hash: ProjectRevisionHash,
-) -> Option<Result<(String, Vec<u8>, Vec<u8>)>> {
+) -> Option<Result<SignedChallenge>> {
     let row = &held.get(&hash)?.revision;
     Some(match row {
         ProjectRevision::Boundary { .. } => return None,

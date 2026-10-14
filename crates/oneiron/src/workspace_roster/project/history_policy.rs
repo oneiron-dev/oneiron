@@ -238,6 +238,7 @@ impl Vault {
         let Some(reader) = ProjectReader::new(&self.store, &txn, self.privacy_posture())? else {
             return Ok(Vec::new());
         };
+        let reader = reader.committed();
         let mut over = Vec::new();
         for (id, _, _) in reader.all()? {
             if let Some(ProjectFrontier {

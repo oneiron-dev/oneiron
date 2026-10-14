@@ -12,6 +12,7 @@ use super::authority::{
 use super::history::{
     board_signed_s0, copy_of, head_of, ids, open, seats_of, signed_over, without,
 };
+use super::history_resolution::put_companion;
 use crate::sync::bridge::Materializer;
 use crate::sync::loro_support::map_insert_bytes;
 use crate::sync::schema::create_window_doc;
@@ -32,7 +33,7 @@ fn materialize(vault: &Arc<Vault>, doc: &loro::LoroDoc, key: &WindowKey) -> Resu
     forward_rematerialize(vault, doc, &Arc::new(Materializer::new()), key).map(drop)
 }
 
-fn exported(vault: &Vault, key: &WindowKey) -> Result<loro::LoroDoc> {
+pub(super) fn exported(vault: &Vault, key: &WindowKey) -> Result<loro::LoroDoc> {
     let doc = create_window_doc("project-history", key);
     reverse_rematerialize(vault, &doc, key)?;
     Ok(doc)
@@ -107,7 +108,7 @@ fn a_squatter_or_poisoned_carrier_never_hides_the_signed_removal() -> Result<()>
     let s1 = signed_over(&vault, id, &project.s0, project.board, without(x))?;
     vault.put_project(id, &s1, 3)?;
     let s2 = signed_over(&vault, id, &project.s0, leader, |row| {
-        row.depth_remaining -= 1
+        row.depth_remaining -= 1;
     })?;
     replay_project(&vault, id, &s2, 4)?;
     assert_eq!(seats_of(&vault, id), ids(&[leader]));
@@ -219,18 +220,24 @@ fn a_deleted_or_restored_project_keeps_its_history() -> Result<()> {
     // A replayed older row does not bring X back.
     replay_project(&vault, id, &project.s0, 8)?;
     assert_eq!(seats_of(&vault, id), ids(&[leader]));
-    // Nor does a restore of a checkpoint from before the removal, under the
-    // current authority.
+    // Nor does a restore of a checkpoint from before the removal: under the
+    // current authority it would roll the deleted project back, so the door
+    // refuses it (a restore it allows keeps history: the check below).
     let restored_dir = tempfile::tempdir()?;
-    if let Ok((restored, _)) = Vault::restore_checkpoint_keeping_authority(
+    let refused = Vault::restore_checkpoint_keeping_authority(
         &image,
         &restored_dir.path().join("restored"),
         crate::VaultConfig::default(),
         &vault,
         20,
-    ) {
-        assert!(!seats_of(&restored, id).contains(&x));
-    }
+    );
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("restore it beside the vault")),
+        "{:?}",
+        refused.map(drop)
+    );
 
     // A second birth at the id: no leader spawns and no seat is served
     // until the owner seals one.
@@ -245,18 +252,7 @@ fn a_deleted_or_restored_project_keeps_its_history() -> Result<()> {
         Some(ProjectDisposition::ConflictingBirths { .. })
     ));
     assert!(seats_of(&vault, id).is_empty());
-    assert!(
-        spawn_signed(
-            &vault,
-            id,
-            EntityId::now(),
-            second,
-            second,
-            root.slice.clone(),
-            10
-        )
-        .is_err()
-    );
+    assert!(spawn_signed(&vault, id, EntityId::now(), second, second, root.slice, 10).is_err());
     let actor = vault.ensure_embedded_owner_actor().expect("owner actor");
     let owner = vault.authenticate_owner(
         actor,
@@ -272,6 +268,19 @@ fn a_deleted_or_restored_project_keeps_its_history() -> Result<()> {
     claims.parent_id = None;
     claims.holder_ref = "host".into();
     let slip = vault.mint_capability_slip(&issuer, claims)?;
+    // A seal whose signatures do not verify installs nothing: refused.
+    assert!(
+        vault
+            .seal_project(
+                &owner,
+                id,
+                authority.clone(),
+                head_of(id, &birth)?,
+                slip.to_token()?,
+                |_| Ok(vec![9; 64]),
+            )
+            .is_err()
+    );
     vault.seal_project(
         &owner,
         id,
@@ -287,5 +296,35 @@ fn a_deleted_or_restored_project_keeps_its_history() -> Result<()> {
         Some(ProjectDisposition::Settled)
     ));
     assert_eq!(seats_of(&vault, id), ids(&[second]));
+    Ok(())
+}
+
+/// Bug repro: a board removal learned only as history since a checkpoint,
+/// the stored row unchanged, is dropped by a restore on main, which seats the
+/// removed member again. Here history is live: the restore keeps it.
+#[cfg(feature = "sync")]
+#[test]
+fn a_restore_keeps_history_learned_since_its_checkpoint() -> Result<()> {
+    let x = EntityId::now();
+    let dir = tempfile::tempdir()?;
+    let vault = open(&dir)?;
+    let project = board_signed_s0(&vault, &[x], &[], |_| {})?;
+    let images = tempfile::tempdir()?;
+    let image = images.path().join("before-removal");
+    vault.snapshot_checkpoint(&image, 5)?;
+    let s1 = signed_over(&vault, project.id, &project.s0, project.board, without(x))?;
+    let (_, removal) = super::super::revision::revisions_of_row(project.id, &s1)?
+        .pop()
+        .ok_or_else(invalid)?;
+    put_companion(&vault, &removal, 6)?;
+    assert_eq!(seats_of(&vault, project.id), ids(&[project.leader]));
+    let (restored, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &images.path().join("restored"),
+        crate::VaultConfig::default(),
+        &vault,
+        20,
+    )?;
+    assert_eq!(seats_of(&restored, project.id), ids(&[project.leader]));
     Ok(())
 }

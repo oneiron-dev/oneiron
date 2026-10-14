@@ -115,8 +115,6 @@ mod project;
 pub(crate) use project::create_project_signed_for_test;
 #[cfg(test)]
 pub(crate) use project::set_project_depth_signed_for_test;
-#[cfg(test)]
-pub(crate) use project::spawn_signed_project_for_test;
 pub use project::{
     DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, ProjectDisposition, ProjectEffective,
     ProjectForkEvidence, ProjectForkOutcome, ProjectFrontier, ProjectHistoryOverBudget,
@@ -145,9 +143,13 @@ pub(crate) use project::{
 };
 pub(crate) use project::{
     PROJECT_REVISION_SHORT_ID_PREFIX, ProjectForks, capture_before_tear, capture_project_put,
-    check_revision_put, decode_revision, exportable_revisions_in_txn, is_project_revision_type,
-    project_revision_type, projects_touched_by_put, rebuild_project_revision_indexes,
-    refresh_project_frontiers, refuse_revision_delete, revision_carrier_admissible,
+    check_revision_put, is_project_revision_type, project_revision_type, projects_touched_by_put,
+    rebuild_project_revision_indexes, refresh_project_frontiers, refuse_revision_delete,
+};
+#[cfg(feature = "sync")]
+pub(crate) use project::{
+    decode_revision, exportable_revisions_in_txn, forged_revision_in_txn,
+    revision_carrier_admissible,
 };
 
 mod rooms;

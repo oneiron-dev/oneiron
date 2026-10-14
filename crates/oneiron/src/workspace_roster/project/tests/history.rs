@@ -273,7 +273,7 @@ fn two_leader_siblings_install_neither_meet_their_bounds_and_a_board_sibling_res
         sign_with(&vault, id, &mut body, Some(leader), None, None)?;
         Ok((id, body))
     };
-    let (wide_id, wide) = child(BTreeSet::from([dropped.clone()]))?;
+    let (wide_id, wide) = child(BTreeSet::from([dropped]))?;
     let refused = vault.spawn_subproject(
         project.id,
         wide_id,
@@ -288,19 +288,19 @@ fn two_leader_siblings_install_neither_meet_their_bounds_and_a_board_sibling_res
     );
     replay_project(&vault, wide_id, &wide, 5)?;
     assert!(vault.project(wide_id)?.is_none());
-    let (narrow_id, narrow) = child(BTreeSet::from([kept.clone()]))?;
+    let (narrow_id, narrow) = child(BTreeSet::from([kept]))?;
     vault.spawn_subproject(
         project.id,
         narrow_id,
         leader,
-        narrow.slice.clone(),
-        narrow.write_proof.clone().ok_or_else(invalid)?,
+        narrow.slice,
+        narrow.write_proof.ok_or_else(invalid)?,
         6,
     )?;
 
     // Leader siblings under C1, then a board sibling over S0 that installs.
     let d1 = signed_over(&vault, project.id, &c1, leader, |row| {
-        row.depth_remaining = 0
+        row.depth_remaining = 0;
     })?;
     let d2 = signed_over(&vault, project.id, &c1, leader, without(y))?;
     replay_project(&vault, project.id, &d1, 7)?;
@@ -309,6 +309,8 @@ fn two_leader_siblings_install_neither_meet_their_bounds_and_a_board_sibling_res
     vault.put_project(project.id, &board, 8)?;
     assert_eq!(seats_of(&vault, project.id), ids(&[leader, y]));
     let (anchor, c1_hash) = (head_of(project.id, &project.s0)?, head_of(project.id, &c1)?);
+    // Evidence publishes from a fold over a committed read.
+    frontier(&vault, project.id)?;
     let forks = vault.project_forks();
     let at_s0: Vec<_> = forks.iter().filter(|fork| fork.anchor == anchor).collect();
     assert!(

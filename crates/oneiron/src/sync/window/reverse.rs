@@ -103,12 +103,17 @@ pub(in crate::sync) fn reverse_rematerialize_with(
     // Closure (decision 9): every held revision of a PROJECT row in this
     // window travels with it, whatever month it was learned in, so a late
     // joiner that materializes only this window still folds the whole
-    // signed history. Forged rows never travel.
+    // signed history. Forged rows never travel, by either road.
     {
         let rtxn = vault.store.env.read_txn()?;
         let mut seen: HashSet<EntityId> = entities_in_range.iter().copied().collect();
+        let mut kept = Vec::with_capacity(entities_in_range.len());
         let mut closure = Vec::new();
         for id in &entities_in_range {
+            if crate::workspace_roster::forged_revision_in_txn(&vault.store, &rtxn, *id)? {
+                continue;
+            }
+            kept.push(*id);
             for companion in
                 crate::workspace_roster::exportable_revisions_in_txn(&vault.store, &rtxn, *id)?
             {
@@ -117,7 +122,8 @@ pub(in crate::sync) fn reverse_rematerialize_with(
                 }
             }
         }
-        entities_in_range.extend(closure);
+        kept.extend(closure);
+        entities_in_range = kept;
     }
     let device_only = if withhold_device_only {
         let rtxn = vault.store.env.read_txn()?;
@@ -644,9 +650,9 @@ fn held_revision_dominates_map_carrier(
 }
 
 /// Removes, with their incident edges, the carriers that claim the revision
-/// kind at an id this vault does not hold and that no peer's admission arm
-/// would take: a body that is not canonical, does not derive its id, or
-/// names another vault.
+/// kind at an id this vault marked forged, or at an id it does not hold when
+/// no peer's admission arm would take them: a body that is not canonical,
+/// does not derive its id, or names another vault.
 fn remove_inadmissible_revision_carriers(
     vault: &Vault,
     entities_map: &LoroMap,
@@ -675,10 +681,12 @@ fn remove_inadmissible_revision_carriers(
         let Ok(id) = EntityId::from_hex(&key) else {
             continue;
         };
-        if vault.get_raw_in(&rtxn, &id)?.is_some() {
-            continue;
-        }
-        if !crate::workspace_roster::revision_carrier_admissible(&fold, id, &blob) {
+        let inadmissible = if vault.get_raw_in(&rtxn, &id)?.is_some() {
+            crate::workspace_roster::forged_revision_in_txn(&vault.store, &rtxn, id)?
+        } else {
+            !crate::workspace_roster::revision_carrier_admissible(&fold, id, &blob)
+        };
+        if inadmissible {
             removed |= remove_entity_crdt_carriers(entities_map, edges_map, &id)?;
         }
     }

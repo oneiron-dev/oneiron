@@ -24,9 +24,12 @@ mod revision;
 mod validity;
 mod widen;
 pub(crate) use capture::{
-    capture_before_tear, capture_project_put, check_revision_put, exportable_revisions_in_txn,
-    projects_touched_by_put, rebuild_project_revision_indexes, refuse_revision_delete,
-    revision_carrier_admissible,
+    capture_before_tear, capture_project_put, check_revision_put, projects_touched_by_put,
+    rebuild_project_revision_indexes, refuse_revision_delete,
+};
+#[cfg(feature = "sync")]
+pub(crate) use capture::{
+    exportable_revisions_in_txn, forged_revision_in_txn, revision_carrier_admissible,
 };
 pub(crate) use deletion::deindex_project_room;
 pub(crate) use edges::{
@@ -48,9 +51,10 @@ pub use history_policy::{
 };
 pub(crate) use refresh::refresh_project_frontiers;
 pub use resolution::{ProjectResolution, ProjectSeal};
+#[cfg(feature = "sync")]
+pub(crate) use revision::decode_revision;
 pub(crate) use revision::{
-    PROJECT_REVISION_SHORT_ID_PREFIX, decode_revision, is_project_revision_type,
-    project_revision_type,
+    PROJECT_REVISION_SHORT_ID_PREFIX, is_project_revision_type, project_revision_type,
 };
 pub use revision::{ProjectRevision, ProjectRevisionHash, ProjectRevisionProof};
 #[cfg(test)]
@@ -78,8 +82,6 @@ pub(crate) use projection::{
 pub(crate) use tests::create_project_signed_for_test;
 #[cfg(test)]
 pub(crate) use tests::set_project_depth_signed_for_test;
-#[cfg(test)]
-pub(crate) use tests::spawn_signed_project_for_test;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::derived_domains::PROJECT_HOME_ROOM;
@@ -804,6 +806,7 @@ impl Vault {
         let Some(reader) = ProjectReader::new(&self.store, &txn, self.privacy_posture())? else {
             return Ok(None);
         };
+        let reader = reader.committed();
         let project = EntityId::from_hex(&room.project_id)?;
         Ok(reader
             .visible_with_effective(project)?
@@ -820,6 +823,7 @@ impl Vault {
             return Ok(Vec::new());
         };
         Ok(reader
+            .committed()
             .all()?
             .into_iter()
             .filter(|(_, _, verdict)| *verdict != ProjectVerdict::Visible)

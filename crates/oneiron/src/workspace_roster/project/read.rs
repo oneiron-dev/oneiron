@@ -72,7 +72,11 @@ pub(crate) struct ProjectReader<'a, 't> {
     fold: RefCell<Option<std::rc::Rc<AuthorityFold>>>,
     frontiers: RefCell<BTreeMap<EntityId, Option<ProjectFrontier>>>,
     open: RefCell<BTreeSet<EntityId>>,
-    /// Whether this snapshot is committed, so its fork evidence may publish.
+    /// How often a fold met an open project (a parent cycle). A frontier whose
+    /// fold met one depends on where the read began, so it is not kept.
+    cycle_hits: std::cell::Cell<u64>,
+    /// Whether this snapshot is committed, so its fork evidence may publish:
+    /// only a door that opened a read transaction says so.
     publish: bool,
 }
 
@@ -95,14 +99,16 @@ impl<'a, 't> ProjectReader<'a, 't> {
             fold: RefCell::new(None),
             frontiers: RefCell::new(BTreeMap::new()),
             open: RefCell::new(BTreeSet::new()),
-            publish: true,
+            cycle_hits: std::cell::Cell::new(0),
+            publish: false,
         }))
     }
 
-    /// A reader inside a write transaction that may still abort: its folds
-    /// publish no fork evidence.
-    pub(crate) fn uncommitted(mut self) -> Self {
-        self.publish = false;
+    /// A reader over a committed read snapshot: its folds publish fork
+    /// evidence. A reader inside a write transaction, which may still abort,
+    /// never does.
+    pub(crate) fn committed(mut self) -> Self {
+        self.publish = true;
         self
     }
 
@@ -130,6 +136,7 @@ impl<'a, 't> ProjectReader<'a, 't> {
             return Ok(None);
         };
         if !self.open.borrow_mut().insert(id) {
+            self.cycle_hits.set(self.cycle_hits.get() + 1);
             return Ok(Some(ProjectFrontier {
                 id,
                 disposition: super::fold::ProjectDisposition::unauthorized(reason::CYCLE),
@@ -137,10 +144,13 @@ impl<'a, 't> ProjectReader<'a, 't> {
                 effective: None,
             }));
         }
+        let hits = self.cycle_hits.get();
         let frontier = self.compute(id, &record);
         self.open.borrow_mut().remove(&id);
         let frontier = Some(frontier?);
-        self.frontiers.borrow_mut().insert(id, frontier.clone());
+        if self.cycle_hits.get() == hits {
+            self.frontiers.borrow_mut().insert(id, frontier.clone());
+        }
         Ok(frontier)
     }
 

@@ -38,7 +38,7 @@ pub(super) fn holder_slip(
 }
 
 /// A resolution at `anchor` signed by `holder`.
-fn resolution(
+pub(super) fn resolution(
     vault: &Vault,
     project: EntityId,
     holder: EntityId,
@@ -81,7 +81,7 @@ pub(super) fn put_companion(vault: &Vault, revision: &ProjectRevision, at: u64) 
     })
 }
 
-fn envelope(project: EntityId, resolution: ProjectResolution) -> ProjectRevision {
+pub(super) fn envelope(project: EntityId, resolution: ProjectResolution) -> ProjectRevision {
     ProjectRevision::Resolution {
         project,
         resolution,

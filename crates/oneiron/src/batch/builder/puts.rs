@@ -14,8 +14,8 @@ use crate::temporal::TimeRange;
 /// A check the committing terminal runs before it opens its transaction, on
 /// the put op at the index it names.
 ///
-/// The type byte of a public put, and the envelope of a replicated fixture
-/// put, were always judged at call time on the committing builder, so a bad
+/// The type byte of a public put, and the envelope of a replicated (fixture
+/// or engine-history) put, were always judged at call time on the committing builder, so a bad
 /// byte there refuses before its transaction opens. The caller-transaction
 /// terminal never ran them: its puts meet the same gates inside the
 /// transaction (`validate_put_type` and `apply_put`), because a runtime pack
@@ -24,7 +24,6 @@ use crate::temporal::TimeRange;
 /// terminals exactly where they were.
 pub(super) enum CommitCheck {
     PublicType(usize),
-    #[cfg(any(feature = "sync", test))]
     Replicated(usize),
 }
 
@@ -38,7 +37,6 @@ impl CommitCheck {
                     let (entity_type, _) = put_envelope(ops, index)?;
                     vault.store.validate_public_entity_type(entity_type)?;
                 }
-                #[cfg(any(feature = "sync", test))]
                 Self::Replicated(index) => {
                     let (entity_type, occurred) = put_envelope(ops, index)?;
                     if crate::registry::zone_of(entity_type)

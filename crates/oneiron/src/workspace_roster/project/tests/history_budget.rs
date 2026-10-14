@@ -10,7 +10,7 @@ use super::authority::{
 use super::history::{
     board_signed_s0, copy_of, head_of, ids, open, seats_of, signed_over, without,
 };
-use super::history_resolution::put_companion;
+use super::history_resolution::{envelope, put_companion, resolution};
 use crate::authority::{CapabilitySlip, HostSlipIssuer};
 use crate::error::ErrorKind;
 use ed25519_dalek::Signer;
@@ -76,18 +76,15 @@ fn forged_over(
         .ok_or_else(invalid)
 }
 
-/// A host slip and the signer the seal door takes.
-fn host_signer(vault: &Vault) -> Result<(String, impl Fn(&[u8]) -> Result<Vec<u8>>)> {
+/// A host slip the seal door signs with, and its issuer.
+fn host_slip(vault: &Vault) -> Result<(HostSlipIssuer, CapabilitySlip)> {
     let issuer = HostSlipIssuer::from_secret(FIXTURE_HOST)?;
     let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;
     claims.slip_id = *blake3::hash(EntityId::now().as_bytes()).as_bytes();
     claims.parent_id = None;
     claims.holder_ref = "host".into();
     let slip = vault.mint_capability_slip(&issuer, claims)?;
-    let wire = slip.to_token()?;
-    Ok((wire, move |challenge: &[u8]| {
-        issuer.binding_proof(&slip, challenge)
-    }))
+    Ok((issuer, slip))
 }
 
 /// Bug repro: past the budget, main keeps folding every row it holds and
@@ -163,7 +160,7 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
         row.depth_remaining -= 1;
     })?;
     let widen = signed_over(&vault, id, &off, project.board, |row| {
-        row.roster.push(EntityId::now().to_hex())
+        row.roster.push(EntityId::now().to_hex());
     })?;
     replay_authority(&vault, &a)?;
     replay_project(&a, id, &off, 7)?;
@@ -219,6 +216,7 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
     let (root_id, root, _) = root_leader(&d)?;
     let mut deposed = root.clone();
     deposed.leader = EntityId::now().to_hex();
+    deposed.roster.push(deposed.leader.clone());
     sign_with(&d, root_id, &mut deposed, None, Some(root.anchor()), None)?;
     d.put_project(root_id, &deposed, 20)?;
     assert!(d.project(id)?.is_none());
@@ -231,11 +229,13 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
         .ok_or_else(invalid)?
         .slip_wire
         .clone();
+    let mut forged_rows = Vec::new();
     for depth in 1..=2 {
         let mut row = s1.clone();
         row.depth_remaining -= depth;
         let bad_signature = forged_over(id, &s1, row, leader_wire.clone(), |_, _| Ok(vec![9; 64]))?;
         put_companion(&f, &bad_signature, 30)?;
+        forged_rows.push(bad_signature.hash()?);
         let mut row = s1.clone();
         row.depth_remaining -= depth + 2;
         let mut transferred = serde_json::to_value(CapabilitySlip::from_token(&leader_wire)?)
@@ -252,6 +252,22 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
                 .to_vec())
         })?;
         put_companion(&f, &stolen, 31)?;
+        forged_rows.push(stolen.hash()?);
+    }
+    // Nor do envelopes over an anchor the replica lacks: nothing reaches them.
+    let unheld = |byte| ProjectRevisionHash([byte; 32]);
+    for next in [3, 4] {
+        let contenders = vec![unheld(1), unheld(2)];
+        let stray = resolution(
+            &vault,
+            id,
+            project.board,
+            unheld(0),
+            vec![],
+            contenders,
+            unheld(next),
+        )?;
+        put_companion(&f, &envelope(id, stray), 31)?;
     }
     replay_authority(&vault, &f)?;
     replay_project(&f, id, &s1, 32)?;
@@ -268,6 +284,16 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
         })
         .count();
     assert_eq!(forged, 4);
+    // Forged rows never leave the replica that marked them.
+    let doc =
+        super::history_transport::exported(&f, &crate::sync::types::WindowKey::new("1970-01"))?;
+    for row in forged_rows {
+        let row = super::super::revision::revision_entity_id(row)?;
+        assert!(
+            crate::sync::loro_support::map_get_bytes(&doc.get_map("entities"), &row.to_hex())
+                .is_none()
+        );
+    }
 
     // (c′) A removal whose board act moved the project under a parent this
     // replica lacks lands once that parent arrives, with no other write to
@@ -285,7 +311,12 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
     vault.put_project(id, &removal, 43)?;
     replay_authority(&vault, &g)?;
     replay_project(&g, id, &by_successor, 13)?;
-    replay_project(&g, id, &removal, 43)?;
+    // The PROJECT row waits for its parent; its history travels on its own.
+    replay_rows(
+        &vault,
+        &g,
+        &[companion(id, &moved)?, companion(id, &removal)?],
+    )?;
     assert!(seats_of(&g, id).contains(&z));
     replay_rows(&vault, &g, &[q2])?;
     assert_eq!(seats_of(&g, id), ids(&[leader]));
@@ -314,7 +345,9 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
     let mut authority = project.s0.authority_at(ProjectProofVersion::V3);
     authority.roster = Some(BTreeSet::from([leader.to_hex(), z.to_hex()]));
     let base = head_of(id, &s2)?;
-    let (wire, signer) = host_signer(&vault)?;
+    let (issuer, slip) = host_slip(&vault)?;
+    let wire = slip.to_token()?;
+    let signer = |challenge: &[u8]| issuer.binding_proof(&slip, challenge);
     while std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| invalid())?
@@ -323,28 +356,31 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
     {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    let first = vault.seal_project(&sealer, id, authority.clone(), base, wire.clone(), &signer)?;
+    let first = vault.seal_project(&sealer, id, authority.clone(), base, wire.clone(), signer)?;
     assert_eq!(
         vault
-            .seal_project(&sealer, id, authority.clone(), base, wire.clone(), &signer)
+            .seal_project(&sealer, id, authority.clone(), base, wire.clone(), signer)
             .unwrap_err()
             .kind(),
         ErrorKind::ProjectAuthorityUnresolved
     );
     std::thread::sleep(std::time::Duration::from_millis(1100));
-    let second = vault.seal_project(&sealer, id, authority, base, wire, &signer)?;
+    let second = vault.seal_project(&sealer, id, authority, base, wire, signer)?;
     assert_ne!(first, second);
 
     // (h) Both replicas serve the sealed view; raising the policy clears a
     // freeze locally.
+    // A window carries every revision the origin holds, both seals and the
+    // revision each one seals included.
     let sealed = vault.project(id)?.ok_or(Error::EntityNotFound)?;
-    let envelopes = [
-        super::super::revision::revision_entity_id(first)?,
-        super::super::revision::revision_entity_id(second)?,
-    ];
+    let history = vault
+        .project_revisions(id)?
+        .into_iter()
+        .map(|(hash, _)| super::super::revision::revision_entity_id(hash))
+        .collect::<Result<Vec<_>>>()?;
     for replica in [&a, &b] {
         replay_authority(&vault, replica)?;
-        replay_rows(&vault, replica, &envelopes)?;
+        replay_rows(&vault, replica, &history)?;
         replay_project(replica, id, &sealed, 50)?;
         assert_eq!(over(replica, id)?, None);
         assert_eq!(seats_of(replica, id), ids(&[leader, z]));
@@ -357,5 +393,41 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
         },
     )?;
     assert_eq!(over(&g, id)?, None);
+    Ok(())
+}
+
+/// Bug repro (Sol code r1, S8): a frozen project already applied the board
+/// act A that moved it under Q; Q then narrows below A, so the removal B over
+/// A, which moves the project under R, inherits A's failure and waits. Only
+/// the authority log widens Q again: the retry must wait on Q, not just R.
+#[test]
+fn a_frozen_removal_waits_on_the_parent_project_its_ancestor_failed() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = open(&dir)?;
+    let x = EntityId::now();
+    let project = board_signed_s0(&vault, &[x], &[], |_| {})?;
+    let id = project.id;
+    let (root_id, root, holder) = root_leader(&vault)?;
+    let (q, r) = (EntityId::now(), EntityId::now());
+    let q_birth = spawn_signed(&vault, root_id, q, holder, holder, root.slice.clone(), 3)?;
+    spawn_signed(&vault, root_id, r, holder, holder, root.slice, 4)?;
+    vault.set_project_history_policy(&owner(&vault)?, ProjectHistoryPolicy { max_revisions: 2 })?;
+    let moved = signed_over(&vault, id, &project.s0, project.board, |row| {
+        row.parents = vec![q.to_hex()];
+        row.depth_remaining -= 1;
+    })?;
+    vault.put_project(id, &moved, 5)?;
+    assert!(over(&vault, id)?.is_some());
+    let narrow_q = signed_over(&vault, q, &q_birth, holder, |row| row.depth_remaining = 1)?;
+    vault.put_project(q, &narrow_q, 6)?;
+    let removal = signed_over(&vault, id, &moved, project.board, |row| {
+        row.parents = vec![r.to_hex()];
+        without(x)(row);
+    })?;
+    replay_project(&vault, id, &removal, 7)?;
+    assert!(seats_of(&vault, id).contains(&x));
+    let issuer = HostSlipIssuer::from_secret(FIXTURE_HOST)?;
+    vault.revoke_capability_slip(&issuer, slip_id(&narrow_q)?)?;
+    assert_eq!(seats_of(&vault, id), ids(&[project.leader]));
     Ok(())
 }

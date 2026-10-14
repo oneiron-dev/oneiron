@@ -24,8 +24,7 @@ pub(crate) fn deindex_project_room(
     {
         // Each child names its parents as its signed history folds them; a
         // child whose history serves no authority keeps its stored claim.
-        let reader = super::read::ProjectReader::new(store, txn, store.privacy_posture)?
-            .map(super::read::ProjectReader::uncommitted);
+        let reader = super::read::ProjectReader::new(store, txn, store.privacy_posture)?;
         for row in store.type_index.prefix_iter(txn, &[header.entity_type])? {
             let (key, _) = row?;
             let child_id = EntityId::from_bytes(

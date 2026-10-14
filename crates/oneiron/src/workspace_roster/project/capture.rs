@@ -331,6 +331,7 @@ pub(crate) fn rebuild_project_revision_indexes(
 
 /// The companions of a PROJECT row that travel with it: every held revision
 /// but a forged one. Empty for any other id.
+#[cfg(feature = "sync")]
 pub(crate) fn exportable_revisions_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -344,8 +345,35 @@ pub(crate) fn exportable_revisions_in_txn(
         .collect())
 }
 
+/// Whether `id` holds a revision this vault marked forged: such a row is
+/// kept, so its id stays fixed, but never exported (sections 2 and 9).
+#[cfg(feature = "sync")]
+pub(crate) fn forged_revision_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<bool> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
+        return Ok(false);
+    };
+    let is_revision = EntityMetadataHeader::parse(&raw)
+        .is_some_and(|header| super::revision::is_project_revision_type(store, header.entity_type));
+    if !is_revision {
+        return Ok(false);
+    }
+    let Ok((hash, revision)) =
+        super::revision::decode_revision(id, &raw[ENTITY_METADATA_HEADER_LEN..])
+    else {
+        return Ok(false);
+    };
+    Ok(REVISIONS
+        .get(store, txn, &(revision.project(), hash))?
+        .is_some_and(|(_, origin)| origin == RevisionOrigin::Forged))
+}
+
 /// Whether a transported carrier is a revision this vault's admission arm
 /// would take at `id`: canonical, hash-derived and bound to this vault.
+#[cfg(feature = "sync")]
 pub(crate) fn revision_carrier_admissible(
     fold: &crate::authority::AuthorityFold,
     id: EntityId,

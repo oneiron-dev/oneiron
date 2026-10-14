@@ -191,14 +191,7 @@ fn a_bad_raw_winner_never_hides_a_projects_valid_signed_authority() -> Result<()
     assert!(copy.project(child)?.is_some());
     // A history whose every revision is invalid serves no authority.
     let forged = EntityId::now();
-    let mut body = child_body(
-        &vault,
-        root_id,
-        forged,
-        outsider,
-        outsider,
-        root.slice.clone(),
-    )?;
+    let mut body = child_body(&vault, root_id, forged, outsider, outsider, root.slice)?;
     sign_with(&vault, forged, &mut body, Some(outsider), None, None)?;
     replay_project(&vault, forged, &body, 7)?;
     assert!(vault.project(forged)?.is_none());
