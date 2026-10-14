@@ -49,6 +49,65 @@ fn parked_refusal(
 
 /// Executes every outbound effect in ledger-read → replay → gate → debit →
 /// durable-Pending → transport order.
+/// Holds a send its admission ceiling stops: the decision is recorded and
+/// nothing is admitted. Held before admission, so the owner's approval stays
+/// unspent.
+fn ceiling_hold(
+    vault: &Vault,
+    mut wtxn: heed::RwTxn<'_>,
+    intent_id: crate::outbound_intent_ledger::IntentId,
+    prepared: &PreparedEffect,
+    count: u32,
+) -> Result<OutboundEffectResult, OutboundEffectError> {
+    let effect = vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
+    let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
+    let (decision_id, decision) =
+        gate::record_held_external_effect_policy(&vault.store, &mut wtxn, &effect, &policy)?;
+    wtxn.commit().map_err(Error::from)?;
+    vault.store.notify_attempt_observers();
+    let mut result = gate_rejection(intent_id, decision_id, decision);
+    result.ceiling_count = Some(count);
+    Ok(result)
+}
+
+/// An exact retry keeps its paid admission while the ceiling's window still
+/// counts it. A Pending retry whose admission aged out of that window is a
+/// send in today's window: it is held at a full ceiling, and otherwise renewed
+/// under this writer lock before transport, so a concurrent send counts it.
+/// Returns the hold, or `None` with the transaction settled.
+fn renew_aged_admission(
+    vault: &Vault,
+    mut wtxn: heed::RwTxn<'_>,
+    command: &OutboundEffectCommand,
+    record: &crate::outbound_intent_ledger::IntentLedgerRecord,
+    intent_id: crate::outbound_intent_ledger::IntentId,
+    now_ms: u64,
+) -> Result<Option<OutboundEffectResult>, OutboundEffectError> {
+    if let OutboundEffectCommand::New(prepared) = command
+        && record.state == IntentState::Pending
+        && let Some(ceiling) = prepared.admission_ceiling
+        && record.created_ms.max(record.updated_ms) < ceiling.since_ms
+    {
+        let admitted = crate::outbound_intent_ledger::admitted_calls_since_in_txn(
+            vault,
+            &wtxn,
+            &prepared.server,
+            &prepared.tool,
+            ceiling.since_ms,
+            Some(record.attempt_id),
+        )?;
+        let count = ceiling.prior.max(admitted);
+        if count >= ceiling.cap {
+            return ceiling_hold(vault, wtxn, intent_id, prepared, count).map(Some);
+        }
+        crate::outbound_intent_ledger::renew_admission_in_txn(vault, &mut wtxn, record, now_ms)?;
+        wtxn.commit().map_err(Error::from)?;
+        return Ok(None);
+    }
+    drop(wtxn);
+    Ok(None)
+}
+
 pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
@@ -107,7 +166,10 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         {
             validate_new_replay(&record, prepared)?;
         }
-        drop(wtxn);
+        if let Some(held) = renew_aged_admission(vault, wtxn, &command, &record, intent_id, now_ms)?
+        {
+            return Ok(held);
+        }
         force_sync(vault)?;
         if let OutboundEffectCommand::Park(prepared) = &command
             && record.state == IntentState::Pending
@@ -153,38 +215,6 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             ));
         }
     };
-
-    // A count bound reads the ledger under THIS writer lock, after an exact
-    // retry has replayed above: the call is held like a parked send, with its
-    // decision recorded and nothing admitted.
-    if let Some(ceiling) = prepared.admission_ceiling {
-        let admitted = crate::outbound_intent_ledger::admitted_calls_since_in_txn(
-            vault,
-            &wtxn,
-            &prepared.server,
-            &prepared.tool,
-            ceiling.since_ms,
-            None,
-        )?;
-        let count = ceiling.prior.max(admitted);
-        if count >= ceiling.cap {
-            let effect =
-                vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
-            let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
-            // Held before admission: the owner's approval stays unspent.
-            let (decision_id, decision) = gate::record_held_external_effect_policy(
-                &vault.store,
-                &mut wtxn,
-                &effect,
-                &policy,
-            )?;
-            wtxn.commit().map_err(Error::from)?;
-            vault.store.notify_attempt_observers();
-            let mut result = gate_rejection(intent_id, decision_id, decision);
-            result.ceiling_count = Some(count);
-            return Ok(result);
-        }
-    }
 
     // CAL-04 (ONE-1786) verb wall. `calendar.invite` is the one verb whose
     // frozen bytes must carry a payload this lane can vouch for: C7's exact
@@ -291,6 +321,25 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         wtxn.commit().map_err(Error::from)?;
         force_sync(vault)?;
         return suppression_result(vault, &suppressed, false);
+    }
+
+    // A count bound reads the ledger under THIS writer lock, after an exact
+    // retry has replayed and a semantic duplicate has been suppressed above,
+    // so only a new send meets it: the call is held like a parked send, with
+    // its decision recorded and nothing admitted.
+    if let Some(ceiling) = prepared.admission_ceiling {
+        let admitted = crate::outbound_intent_ledger::admitted_calls_since_in_txn(
+            vault,
+            &wtxn,
+            &prepared.server,
+            &prepared.tool,
+            ceiling.since_ms,
+            None,
+        )?;
+        let count = ceiling.prior.max(admitted);
+        if count >= ceiling.cap {
+            return ceiling_hold(vault, wtxn, intent_id, &prepared, count);
+        }
     }
 
     let (budget_accounting, budget_charge, exhausted) = charge_once(

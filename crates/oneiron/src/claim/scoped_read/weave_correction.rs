@@ -356,6 +356,71 @@ mod tests {
         Ok(())
     }
 
+    /// H420: the owner narrows their own bound below their running count.
+    /// The next report still lands, and as the first past the narrowed bound
+    /// it leaves the typed check. The check used to wait for a count of
+    /// exactly bound + 1, which had already gone by.
+    #[test]
+    fn a_narrowed_bound_still_leaves_the_owners_check() -> Result<()> {
+        use rmpv::Value;
+        let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+        let owner_id = crate::vault::embedded_owner_actor_id()?;
+        let peer = entity(0xb3);
+        vault.put_entity(
+            &peer,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"reader",
+        )?;
+        vault.put_edge(&owner_id, EdgeKind::Mentions, &peer, 0.5)?;
+        let link = EdgeRef::new(owner_id, EdgeKind::Mentions, peer);
+        let bound = |limit: i64| {
+            crate::test_util::authorize_readers_with(
+                &vault,
+                &[&owner_id.to_hex()],
+                vec![(
+                    Value::from("weave_correction_policy"),
+                    Value::Map(vec![
+                        (Value::from("vault_max"), Value::from(limit)),
+                        (Value::from("default"), Value::from(limit)),
+                        (Value::from("holders"), Value::Map(Vec::new())),
+                        (
+                            Value::from("precedence"),
+                            Value::from("holder_then_default"),
+                        ),
+                    ]),
+                )],
+            );
+        };
+        let report = || -> Result<()> {
+            let owner = vault.authenticate_owner(
+                owner_id,
+                &owner_id.to_hex(),
+                true,
+                crate::store::GateDecisionId::now(),
+            )?;
+            let read = vault.scoped_read(ScopedReadActorKey::new(owner_id.to_hex()).unwrap());
+            read.report_wrong_link(&owner, WeaveReader::Owner(&owner), link)?;
+            Ok(())
+        };
+        bound(3);
+        report()?;
+        report()?;
+        let kind = crate::own_rate::OwnRateKind::WeaveCorrection;
+        assert!(vault.own_rate_check(owner_id, kind)?.is_none());
+        bound(1);
+        report()?;
+        assert_eq!(
+            vault
+                .own_rate_check(owner_id, kind)?
+                .map(|check| (check.count, check.threshold)),
+            Some((3, 1)),
+            "FAILBEFORE H420: a narrowed bound left the owner no check"
+        );
+        Ok(())
+    }
+
     #[test]
     fn revocation_between_report_preflight_and_writer_admission_refuses_label() -> Result<()> {
         let (_tmp, vault, person, link) = fixture()?;

@@ -117,8 +117,13 @@ pub(crate) fn count_in_txn(
     Ok(count)
 }
 
-/// Writes the typed check when `count` is the first past the threshold in
+/// Writes the typed check for the first act past the threshold in force in
 /// `window`. A caller that keeps its own window counter calls this directly.
+///
+/// "First" is judged against the check already written, not by `count`
+/// landing exactly on `threshold + 1`: a threshold narrowed below an actor's
+/// running count would otherwise never meet that equality, and the act that
+/// first runs past the narrowed one still owes its check.
 pub(crate) fn observe_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -128,17 +133,26 @@ pub(crate) fn observe_in_txn(
     count: u64,
     rate: OwnRate,
 ) -> Result<()> {
-    if count != rate.threshold.saturating_add(1) {
+    if count <= rate.threshold {
+        return Ok(());
+    }
+    let key = (actor, kind.token().to_owned());
+    let window_started_at = window.saturating_mul(rate.window_seconds);
+    if let Some(check) = CHECKS.get(store, txn, &key)?
+        && check.window_started_at == window_started_at
+        && check.window_seconds == rate.window_seconds
+        && check.threshold == rate.threshold
+    {
         return Ok(());
     }
     CHECKS.put(
         store,
         txn,
-        &(actor, kind.token().to_owned()),
+        &key,
         &OwnRateCheck {
             kind,
             actor: actor.to_hex(),
-            window_started_at: window.saturating_mul(rate.window_seconds),
+            window_started_at,
             window_seconds: rate.window_seconds,
             count,
             threshold: rate.threshold,

@@ -601,6 +601,141 @@ fn a_suppressed_duplicate_spends_no_daily_connect_allowance()
     Ok(())
 }
 
+/// F26 H359: a semantic duplicate at a full daily cap is the chokepoint's
+/// terminal suppression, as it is below the cap; the cap holds only a new
+/// send. Held, the duplicate stayed retryable and could send once both the
+/// rolling day and the dedupe cooldown had passed.
+#[test]
+fn a_duplicate_at_a_full_cap_is_suppressed_not_held()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault, actor) = connect_fixture()?;
+    let deduped = |receipt_id: &str, intent_ref: &str| -> crate::Result<OutboundDispatchRequest> {
+        let mut request = connect_request(
+            receipt_id,
+            intent_ref,
+            "linkedin:member:jane-doe",
+            actor.clone(),
+            Some(daily_connect_cap_of_one()?),
+            1_060,
+        );
+        request.intent.dedupe_key = Some("connect:jane-doe".to_owned());
+        Ok(request)
+    };
+    let mut first_sink = capped_connect_sink("intent:fd:first", "linkedin:member:jane-doe")?;
+    let first = vault.dispatch_outbound_intent(
+        deduped("receipt:fd:first", "intent:fd:first")?,
+        &mut first_sink,
+    )?;
+    assert_ne!(first.outcome, OutboundDispatchOutcome::Held);
+    assert_eq!(first_sink.transport().calls.len(), 1);
+    let mut dup_sink = capped_connect_sink("intent:fd:dup", "linkedin:member:jane-doe")?;
+    let dup = vault
+        .dispatch_outbound_intent(deduped("receipt:fd:dup", "intent:fd:dup")?, &mut dup_sink)?;
+    assert_eq!(
+        dup.outcome,
+        OutboundDispatchOutcome::Suppressed,
+        "FAILBEFORE H359: a duplicate at a full cap was held, not suppressed"
+    );
+    assert!(dup_sink.transport().calls.is_empty());
+    Ok(())
+}
+
+/// F26 H359: a retry whose admission aged out of the rolling day sends in
+/// today's window, under today's cap of one. The first try sent nothing (its
+/// profile read failed). A day later the retry and a connect to someone else
+/// go out in either order, and only one of them sends: the retry used to
+/// replay past the cap, and once it had sent, its row still counted on the
+/// day it was first admitted, so the next connect went out too.
+#[test]
+fn an_aged_out_retry_meets_todays_cap() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let jane = "linkedin:member:jane-doe";
+    let john = "linkedin:member:john-roe";
+    for retry_first in [true, false] {
+        let (_tmp, vault, actor) = connect_fixture()?;
+        let mut failing = LinkedInMcpVerifiedConnectSink::new(
+            linkedin_adapter()?,
+            ConnectTransport {
+                calls: Vec::new(),
+                reads: Vec::new(),
+                observations: [Err("profile_read_down".to_owned())].into(),
+                send_result: Ok(serde_json::json!({"success": true})),
+            },
+        )
+        .with_plan(
+            "intent:ag:jane",
+            LinkedInVerifiedConnectPlan::new(jane, None)?.with_max_observation_attempts(1)?,
+        )?;
+        let _first_try = connect_dispatch_at(
+            &vault,
+            actor.clone(),
+            "receipt:ag:jane:first",
+            "intent:ag:jane",
+            jane,
+            &mut failing,
+            Some(daily_connect_cap_of_one()?),
+            1_060,
+        );
+        assert!(
+            failing.transport().calls.is_empty(),
+            "the first try sent nothing"
+        );
+
+        let next_day = 1_060 + 86_401;
+        let mut retry_sink = capped_connect_sink("intent:ag:jane", jane)?;
+        let mut other_sink = capped_connect_sink("intent:ag:john", john)?;
+        let mut retry = |at| {
+            connect_dispatch_at(
+                &vault,
+                actor.clone(),
+                "receipt:ag:jane:retry",
+                "intent:ag:jane",
+                jane,
+                &mut retry_sink,
+                Some(daily_connect_cap_of_one()?),
+                at,
+            )
+        };
+        let (first, second) = if retry_first {
+            let first = retry(next_day)?;
+            let second = connect_dispatch_at(
+                &vault,
+                actor.clone(),
+                "receipt:ag:john",
+                "intent:ag:john",
+                john,
+                &mut other_sink,
+                Some(daily_connect_cap_of_one()?),
+                next_day + 1,
+            )?;
+            (first, second)
+        } else {
+            let first = connect_dispatch_at(
+                &vault,
+                actor.clone(),
+                "receipt:ag:john",
+                "intent:ag:john",
+                john,
+                &mut other_sink,
+                Some(daily_connect_cap_of_one()?),
+                next_day,
+            )?;
+            (first, retry(next_day + 1)?)
+        };
+        assert_ne!(first.outcome, OutboundDispatchOutcome::Held);
+        assert_eq!(
+            second.outcome,
+            OutboundDispatchOutcome::Held,
+            "FAILBEFORE H359 (retry first: {retry_first}): a second connect went out under today's cap of one"
+        );
+        assert_eq!(
+            retry_sink.transport().calls.len() + other_sink.transport().calls.len(),
+            1,
+            "one connect today"
+        );
+    }
+    Ok(())
+}
+
 /// Security pack 2, F26 H359: the daily connect cap counts this vault's own
 /// admitted connects, not only the host's snapshot. On one unchanged snapshot
 /// with a cap of one, a connect to a second person is held before any profile

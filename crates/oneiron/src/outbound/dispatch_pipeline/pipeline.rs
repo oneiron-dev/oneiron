@@ -200,7 +200,7 @@ impl OutboundDispatchPipeline {
             &window_decision,
         );
         let seat_ledger =
-            super::seat_policy::SeatLedgerCount::read(vault, &prepared.request, verb_contract)?;
+            super::seat_policy::SeatLedgerCount::for_request(&prepared.request, verb_contract);
         let mut admission = super::admission::AdmissionStage::evaluate(
             &prepared.request,
             verb_contract,

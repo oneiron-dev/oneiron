@@ -1,13 +1,12 @@
 //! Connector-neutral seat wall and its host-supplied LinkedIn policy adapter.
 use std::collections::BTreeMap;
 
-use crate::Vault;
 use crate::linkedin_connector::{
     LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB, LINKEDIN_SEND_DM_VERB,
     LinkedInSeatPolicyAction, LinkedInSeatPolicyDecision, LinkedInSeatSandboxPolicy,
 };
 use crate::outbound::capability::OutboundVerbContract;
-use crate::outbound::dispatch_types::{OutboundDispatchError, OutboundDispatchRequest};
+use crate::outbound::dispatch_types::OutboundDispatchRequest;
 use crate::outbound_chokepoint::AdmissionCeiling;
 
 /// The window a seat's daily caps count over. Dispatch stamps the ledger with
@@ -48,6 +47,13 @@ impl From<LinkedInSeatPolicyDecision> for SeatPolicyDecision {
 /// This vault's own count of a seat's capped sends: the LinkedIn connects or
 /// DMs the outbound intent ledger admitted in the last day, settled or not.
 /// The host's count stays a floor; admission reads the larger of the two.
+///
+/// The count is read once, by the admission writer lock through
+/// [`Self::ceiling`], after an exact retry has replayed and a semantic
+/// duplicate has been suppressed. The seat wall before it sees only the
+/// host's count, so a duplicate at a full cap is still suppressed, never
+/// held; a send the ceiling holds raises this count to what the lock read
+/// ([`Self::held_at`]) for its typed reason.
 #[derive(Clone, Copy, Debug, Default)]
 pub(in crate::outbound) struct SeatLedgerCount {
     connect_requests: u16,
@@ -56,15 +62,14 @@ pub(in crate::outbound) struct SeatLedgerCount {
 }
 
 impl SeatLedgerCount {
-    /// Reads the count for a request whose seat policy caps its verb; every
-    /// other request counts nothing.
-    pub(super) fn read(
-        vault: &Vault,
+    /// The admission ceiling for a request whose seat policy caps its verb;
+    /// every other request has none.
+    pub(super) fn for_request(
         request: &OutboundDispatchRequest,
         verb_contract: &OutboundVerbContract,
-    ) -> Result<Self, OutboundDispatchError> {
+    ) -> Self {
         let Some(policy) = request.linkedin_sandbox_policy.as_ref() else {
-            return Ok(Self::default());
+            return Self::default();
         };
         if !request
             .intent
@@ -72,7 +77,7 @@ impl SeatLedgerCount {
             .trim()
             .eq_ignore_ascii_case(LINKEDIN_CHANNEL)
         {
-            return Ok(Self::default());
+            return Self::default();
         }
         let (host_count, cap) = match verb_contract.kind.as_str() {
             LINKEDIN_CONNECT_REQUEST_VERB => (
@@ -80,38 +85,17 @@ impl SeatLedgerCount {
                 policy.limits.daily_connect_request_cap,
             ),
             LINKEDIN_SEND_DM_VERB => (policy.state.dm_sends_today, policy.limits.daily_dm_cap),
-            _ => return Ok(Self::default()),
+            _ => return Self::default(),
         };
-        let since_ms = request.occurred_at.saturating_sub(SEAT_CAP_WINDOW_SECS);
-        // An exact retry of this logical send already holds its admission;
-        // its own Pending row is not a second one.
-        let own_attempt = crate::outbound::dispatch_attempt_id::outbound_dispatch_attempt_id(
-            request
-                .ledger_identity_ref
-                .as_deref()
-                .unwrap_or(&request.intent_ref),
-        )?;
-        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        let admitted = crate::outbound_intent_ledger::admitted_calls_since_in_txn(
-            vault,
-            &txn,
-            LINKEDIN_CHANNEL,
-            &verb_contract.kind,
-            since_ms,
-            Some(own_attempt),
-        )
-        .map_err(OutboundDispatchError::Chokepoint)?;
-        let admitted = u16::try_from(admitted).unwrap_or(u16::MAX);
-        let connect = verb_contract.kind == LINKEDIN_CONNECT_REQUEST_VERB;
-        Ok(Self {
-            connect_requests: if connect { admitted } else { 0 },
-            dm_sends: if connect { 0 } else { admitted },
+        Self {
+            connect_requests: 0,
+            dm_sends: 0,
             ceiling: Some(AdmissionCeiling {
-                since_ms,
+                since_ms: request.occurred_at.saturating_sub(SEAT_CAP_WINDOW_SECS),
                 prior: u32::from(host_count),
                 cap: u32::from(cap),
             }),
-        })
+        }
     }
 
     /// This count raised to what the admission writer lock read for a send

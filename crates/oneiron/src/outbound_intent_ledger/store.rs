@@ -125,11 +125,13 @@ pub(super) fn ledger_rows<'txn>(
         .map(move |row| row.map(|(key, value)| ([prefix, key.as_slice()].concat(), value))))
 }
 
-/// How many ledger rows of this server and tool were created at or after
-/// `since_ms`, read in the caller's transaction. Every row is an admitted
-/// call, settled or not, except a suppressed semantic duplicate, which was
-/// never admitted for transport, and the `exclude`d attempt (an exact retry's
-/// own row). Server and tool compare as the capability lookup spells them
+/// How many ledger rows of this server and tool were created or last touched
+/// at or after `since_ms`, read in the caller's transaction. A row counts in
+/// the window it was admitted in and in any window a retry renewed it or an
+/// ack landed on it; counting it twice only ever holds. Every row is an
+/// admitted call, settled or not, except a suppressed semantic duplicate,
+/// which was never admitted for transport, and the `exclude`d attempt (an
+/// exact retry's own row). Server and tool compare as the capability lookup spells them
 /// (trimmed, ASCII case folded). A row that does not decode counts as well:
 /// an accounting gap never opens a bound.
 pub(crate) fn admitted_calls_since_in_txn(
@@ -148,7 +150,7 @@ pub(crate) fn admitted_calls_since_in_txn(
             Ok(record) => {
                 same(&record.server, server)
                     && same(&record.tool, tool)
-                    && record.created_ms >= since_ms
+                    && record.created_ms.max(record.updated_ms) >= since_ms
                     && Some(record.attempt_id) != exclude
                     && record.recorded_outcome
                         != Some(RecordedOutboundOutcome::Abandoned(
@@ -475,6 +477,20 @@ pub(crate) fn record_definite_non_delivery(
         Some(RecordedOutboundOutcome::DefiniteNonDelivery),
         now_ms,
     )
+}
+
+/// Renews a Pending retry's admission at `now_ms`, in the caller's
+/// writer-locked transaction, so the window it is about to send in counts it.
+pub(crate) fn renew_admission_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &IntentLedgerRecord,
+    now_ms: u64,
+) -> IntentLedgerResult<()> {
+    let mut renewed = record.clone();
+    renewed.updated_ms = now_ms.max(record.updated_ms);
+    LEDGER.put(&vault.store, wtxn, &renewed.id, &renewed)?;
+    Ok(())
 }
 
 pub(crate) fn begin_definite_non_delivery_retry(
