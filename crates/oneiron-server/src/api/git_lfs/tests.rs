@@ -656,13 +656,36 @@ async fn lfs_download_withholds_an_object_only_a_device_only_world_owns() {
 async fn a_chunk_reply_built_before_its_world_turns_device_only_is_not_released() {
     let (_dir, server) = test_server(secret_config());
     let bytes = b"private attachment bytes".to_vec();
-    let oid = LfsOid::digest(&bytes);
+    let (want, token, world) = chunk_want(&server, &bytes);
+    let exchange = || {
+        request(
+            "POST",
+            &format!("/git/{REPO}/info/lfs/chunks"),
+            Some(&token),
+            Body::from(want.clone()),
+        )
+    };
+    let carries = |body: &[u8]| body.windows(bytes.len()).any(|window| window == bytes);
+    let (status, _, body) = route(&server, exchange()).await;
+    assert!(status == StatusCode::OK && carries(&body));
+
+    super::chunks::release_hook::arm(world);
+    let (status, _, body) = route(&server, exchange()).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(!carries(&body));
+}
+
+/// `bytes` stored and attached to a note in a world, and a grant-scoped
+/// chunk request for every one of its chunks from a viewer of that world:
+/// the request, its bearer, and the world.
+fn chunk_want(server: &Arc<SyncServer>, bytes: &[u8]) -> (Vec<u8>, String, oneiron::EntityId) {
+    let oid = LfsOid::digest(bytes);
     let vault = server.vault();
     let at = oneiron::TimeRange {
         start: 1_700_000_000,
         end: 1_700_000_000,
     };
-    vault.put_lfs_object(oid, &bytes, at, at.start).unwrap();
+    vault.put_lfs_object(oid, bytes, at, at.start).unwrap();
     let world = attach_to_a_note_in_a_world(vault, oid);
     let principal = oneiron::EntityId::now();
     let grant_id = oneiron::EntityId::now();
@@ -693,9 +716,16 @@ async fn a_chunk_reply_built_before_its_world_turns_device_only_is_not_released(
             oid: *oid.as_bytes(),
             selector,
             have: vec![],
-            want: Some(vec![
-                vault.lfs_manifest(oid).unwrap().expect("manifest").chunks[0].hash,
-            ]),
+            want: Some(
+                vault
+                    .lfs_manifest(oid)
+                    .unwrap()
+                    .expect("manifest")
+                    .chunks
+                    .iter()
+                    .map(|chunk| chunk.hash)
+                    .collect(),
+            ),
         })
         .unwrap();
     let token = format!(
@@ -703,22 +733,84 @@ async fn a_chunk_reply_built_before_its_world_turns_device_only_is_not_released(
         crate::test_credentials::RECIPE_PREFIX,
         principal.to_hex()
     );
-    let exchange = || {
-        request(
-            "POST",
-            &format!("/git/{REPO}/info/lfs/chunks"),
-            Some(&token),
-            Body::from(want.clone()),
+    (want, token, world)
+}
+
+/// Round 3 (Sol): a chunk reply keeps its transfer permit until it has been
+/// taken, and gives it back once its client has stopped reading for the
+/// idle limit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_chunk_reply_nobody_reads_gives_its_permit_back_at_the_idle_limit() {
+    let config = SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            lfs_transfers: 1,
+            transfer_idle_timeout_ms: 300,
+            ..Default::default()
+        },
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    // Many times the pieces a reply has in flight.
+    let mut seed = 0x9e37_79b9_u32;
+    let bytes = (0..1_000_000)
+        .map(|_| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed.to_le_bytes()[0]
+        })
+        .collect::<Vec<u8>>();
+    let (want, token, _) = chunk_want(&server, &bytes);
+    let exchange = |body: Vec<u8>| {
+        crate::test_credentials::bind_request(
+            &server,
+            request(
+                "POST",
+                &format!("/git/{REPO}/info/lfs/chunks"),
+                Some(&token),
+                Body::from(body),
+            ),
         )
     };
-    let carries = |body: &[u8]| body.windows(bytes.len()).any(|window| window == bytes);
-    let (status, _, body) = route(&server, exchange()).await;
-    assert!(status == StatusCode::OK && carries(&body));
+    let refused = || async {
+        let response = lfs_routes()
+            .with_state(Arc::clone(&server))
+            .oneshot(exchange(b"not a chunk request".to_vec()))
+            .await
+            .expect("route response");
+        response.status()
+    };
 
-    super::chunks::release_hook::arm(world);
-    let (status, _, body) = route(&server, exchange()).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    assert!(!carries(&body));
+    // Answered, and never read.
+    let unread = lfs_routes()
+        .with_state(Arc::clone(&server))
+        .oneshot(exchange(want.clone()))
+        .await
+        .expect("route response");
+    assert_eq!(unread.status(), StatusCode::OK);
+    assert_eq!(
+        refused().await,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "a reply still being handed out holds its permit"
+    );
+    let freed = once_freed(StatusCode::SERVICE_UNAVAILABLE, refused).await;
+    assert_eq!(freed, StatusCode::FORBIDDEN);
+    drop(unread);
+
+    // A reply that is read arrives whole.
+    let read = lfs_routes()
+        .with_state(Arc::clone(&server))
+        .oneshot(exchange(want))
+        .await
+        .expect("route response");
+    assert_eq!(read.status(), StatusCode::OK);
+    let declared: usize = read.headers()[CONTENT_LENGTH]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let body = to_bytes(read.into_body(), usize::MAX).await.expect("reply");
+    assert!(body.len() == declared && declared > bytes.len());
 }
 
 // -- storage admission (C6): finite by default, held by the worker ---------
