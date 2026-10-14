@@ -268,6 +268,17 @@ pub(crate) fn dreamer_may_read_messages_in(
     message_reader(&read)?.entities_readable_in_txn(txn, messages)
 }
 
+/// Which of `turns` the Dreamer may read in the caller's transaction,
+/// through the gate a branch reads its TURN by. It asks the gate only, and
+/// takes no body out.
+pub(crate) fn dreamer_may_read_turns_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turns: &[EntityId],
+) -> Result<Vec<bool>> {
+    dreamer_read(vault)?.entities_readable_in_txn(txn, turns)
+}
+
 /// [`collect_in`] over any reader of the MESSAGE rows: `read_rows` returns
 /// each id's `(type, learned_at, logical body)`, `None` where it is withheld.
 fn collect_with(

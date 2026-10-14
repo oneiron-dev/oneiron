@@ -27,9 +27,10 @@
 //! turn waits. A grant written later moves the grant epoch on, and a sweep
 //! that keeps its place across passes reads the waiting turns again on what
 //! a pass has left after new words, so a grant never holds new words back.
-//! The queue serves a span only while the Dreamer may read its source: a
-//! span of a MESSAGE whose grant is revoked after the read stays queued,
-//! unserved, until a grant lets the Dreamer read it again.
+//! The queue serves a span only while the Dreamer may read its turn and its
+//! source: a span whose MESSAGE grant is revoked after the read, or whose
+//! TURN the Dreamer's policy read no longer reaches, stays queued, unserved,
+//! until a grant lets the Dreamer read it again.
 //!
 //! One pass reads at most the policy row's bytes of text. A longer turn is
 //! read a segment at a time (see [`rules`]) and keeps its place: the next
@@ -46,7 +47,7 @@ mod tests;
 mod words;
 
 use std::cell::Cell;
-use std::collections::{HashMap, hash_map::Entry};
+use std::collections::{BTreeSet, HashMap};
 use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
@@ -235,9 +236,10 @@ pub struct SieveSpan {
 }
 
 /// What the interest queue serves. A span's words are the Dreamer's to
-/// read only while its source is: a span whose MESSAGE the Dreamer may no
-/// longer read, or that left its turn, stays queued but is not served, and
-/// a later grant serves it again with no new read.
+/// read only while its turn and its source are: a span whose TURN or
+/// MESSAGE the Dreamer may no longer read, or that left its turn, stays
+/// queued but is not served, and a later grant serves it again with no new
+/// read.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SieveQueue {
     /// The spans served, highest score first.
@@ -248,8 +250,9 @@ pub struct SieveQueue {
 /// The queued spans a readout passed over, by why.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SieveSkipped {
-    /// The Dreamer's gate refuses the source now: a private row, or a
-    /// relationship row whose grant is revoked or expired.
+    /// The Dreamer's gate refuses the turn or the source now: a private
+    /// row, a relationship row whose grant is revoked or expired, or a TURN
+    /// its policy read no longer reaches.
     pub unreadable: usize,
     /// The source is no longer part of its turn, or it or its turn is
     /// archived or gone.
@@ -275,39 +278,51 @@ impl Vault {
     }
 
     /// The first `limit` spans of the interest queue whose source the
-    /// Dreamer may read now, highest score first, each source admitted
-    /// under the Dreamer's current read in one transaction, and the spans
-    /// passed over on the way.
+    /// Dreamer may read now, highest score first, and the spans passed over
+    /// on the way. Every source is admitted under the Dreamer's current read
+    /// in one snapshot, taken after the grant clock is persisted, and the
+    /// readout holds no writer. It admits the queue a window at a time, each
+    /// twice the last, so a long run of spans it may not serve costs the
+    /// gate one call per window, not one per source.
     pub fn sieve_queue(&self, limit: usize) -> Result<SieveQueue> {
-        self.with_write_txn(|txn| {
-            // A grant is judged at a persisted clock floor, as a pass
-            // judges it.
-            crate::ports::observe_clock_floor_in_txn(&self.store, txn)?;
-            let txn = &*txn;
-            let mut queue = SieveQueue::default();
-            let mut admitted = HashMap::new();
-            for row in QUEUE.iter_from(&self.store, txn, &[])? {
+        // A grant is judged at a persisted clock floor, as a pass judges it.
+        self.store.authorization_now()?;
+        let txn = self.store.env.read_txn()?;
+        let mut queue = SieveQueue::default();
+        let mut admitted: HashMap<(EntityId, EntityId), Admission> = HashMap::new();
+        let mut rows = QUEUE.iter_from(&self.store, &txn, &[])?;
+        let mut window = limit;
+        while queue.spans.len() < limit {
+            let spans = rows
+                .by_ref()
+                .take(window)
+                .map(|row| row.map(|(_, span)| span))
+                .collect::<Result<Vec<SieveSpan>>>()?;
+            if spans.is_empty() {
+                break;
+            }
+            let unseen: Vec<(EntityId, EntityId)> = spans
+                .iter()
+                .map(|span| (span.turn, span.source))
+                .filter(|pair| !admitted.contains_key(pair))
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            let admissions = chunks::admissions_in_txn(self, &txn, &unseen)?;
+            admitted.extend(unseen.into_iter().zip(admissions));
+            for span in spans {
                 if queue.spans.len() >= limit {
                     break;
                 }
-                let (_, span) = row?;
-                let admission = match admitted.entry((span.turn, span.source)) {
-                    Entry::Occupied(seen) => *seen.get(),
-                    Entry::Vacant(slot) => *slot.insert(chunks::admission_in_txn(
-                        self,
-                        txn,
-                        &span.turn,
-                        &span.source,
-                    )?),
-                };
-                match admission {
+                match admitted[&(span.turn, span.source)] {
                     Admission::Readable => queue.spans.push(span),
                     Admission::Unreadable => queue.skipped.unreadable += 1,
                     Admission::Detached => queue.skipped.detached += 1,
                 }
             }
-            Ok(queue)
-        })
+            window = window.saturating_mul(2);
+        }
+        Ok(queue)
     }
 }
 

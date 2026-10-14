@@ -1,6 +1,7 @@
+use super::access_gate::HeldAuthority;
 use super::*;
 
-impl ScopedRead<'_> {
+impl<'v> ScopedRead<'v> {
     pub fn is_entity_readable(&self, id: &EntityId) -> Result<bool> {
         let rtxn = self.grant_read_txn()?;
         self.is_entity_readable_in(&rtxn, id)
@@ -56,10 +57,23 @@ impl ScopedRead<'_> {
         id: &EntityId,
         filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
+        self.is_entity_readable_held_in(rtxn, policy, id, filter, &HeldAuthority::default())
+    }
+
+    /// [`Self::is_entity_readable_with_filter_in`] for one row of a batch
+    /// read in `rtxn`, under the relationship authority the batch holds.
+    pub(super) fn is_entity_readable_held_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        filter: &ResolvedRetrievalFilter,
+        authority: &HeldAuthority<'v>,
+    ) -> Result<bool> {
         let Some(raw) = self.entity_record_in(rtxn, id)?.map(|row| row.encode()) else {
             return Ok(false);
         };
-        self.is_entity_raw_readable_with_filter_in(rtxn, policy, id, &raw, filter)
+        self.is_entity_raw_readable_held_in(rtxn, policy, id, &raw, filter, authority)
     }
 
     pub(super) fn is_entity_raw_readable_with_filter_in(
@@ -70,9 +84,28 @@ impl ScopedRead<'_> {
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
+        self.is_entity_raw_readable_held_in(
+            rtxn,
+            policy,
+            id,
+            raw,
+            filter,
+            &HeldAuthority::default(),
+        )
+    }
+
+    fn is_entity_raw_readable_held_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        raw: &[u8],
+        filter: &ResolvedRetrievalFilter,
+        authority: &HeldAuthority<'v>,
+    ) -> Result<bool> {
         Ok(
-            self.is_entity_raw_readable_own_in(rtxn, policy, id, raw, filter)?
-                && self.derived_sources_readable_in(rtxn, policy, id, raw)?,
+            self.is_entity_raw_readable_own_in(rtxn, policy, id, raw, filter, authority)?
+                && self.derived_sources_readable_in(rtxn, policy, id, raw, authority)?,
         )
     }
 
@@ -88,6 +121,7 @@ impl ScopedRead<'_> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
         raw: &[u8],
+        authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
         if self.actor_key.vault_owner_ref().is_some() {
             return Ok(true);
@@ -102,7 +136,7 @@ impl ScopedRead<'_> {
             let Some(raw) = self.entity_record_in(rtxn, source)?.map(|row| row.encode()) else {
                 return Ok(false);
             };
-            if !self.is_entity_raw_readable_own_in(rtxn, policy, source, &raw, &floor)? {
+            if !self.is_entity_raw_readable_own_in(rtxn, policy, source, &raw, &floor, authority)? {
                 return Ok(false);
             }
         }
@@ -117,6 +151,7 @@ impl ScopedRead<'_> {
         id: &EntityId,
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
+        authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -164,7 +199,7 @@ impl ScopedRead<'_> {
         {
             return Ok(false);
         }
-        if !self.relationship_raw_allowed_in(rtxn, id, raw)? {
+        if !self.relationship_raw_allowed_in(rtxn, id, raw, authority)? {
             return Ok(false);
         }
         if !self.audience_readable_raw_in(rtxn, id, raw)? {

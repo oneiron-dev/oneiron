@@ -79,8 +79,8 @@ pub use resources::ScopedConsolidationWrite;
 pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub use support::*;
 pub(crate) use turn_text::{
-    TurnText, cited_evidence_bytes, dreamer_may_read_messages_in, live_turn_text_in,
-    projected_turn_text_in,
+    TurnText, cited_evidence_bytes, dreamer_may_read_messages_in, dreamer_may_read_turns_in,
+    live_turn_text_in, projected_turn_text_in,
 };
 pub(crate) use wake_plan::AttemptPreparation;
 pub use wake_plan::{PreparedConsolidationAttempt, PreparedWake};

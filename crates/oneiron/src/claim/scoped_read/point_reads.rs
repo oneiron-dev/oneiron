@@ -1,5 +1,6 @@
 //! The one receipted point-read entry: ids and short references, each at its
 //! own read frontier, answered from one snapshot under one receipt.
+use super::access_gate::HeldAuthority;
 use super::versions::AdmittedRevision;
 use super::{RetrievalFilter, ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -41,15 +42,18 @@ impl ScopedRead<'_> {
 
     /// Whether this reader may read each of `ids` now, as
     /// [`Self::get_entities_parts_in_txn`] admits it, without taking its
-    /// body out: no live projection and no short-reference hash.
+    /// body out: no live projection and no short-reference hash. Every id is
+    /// judged in the one snapshot, so the reader's relationship authority is
+    /// resolved once for all of them.
     pub(crate) fn entities_readable_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         ids: &[EntityId],
     ) -> Result<Vec<bool>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        let authority = HeldAuthority::default();
         ids.iter()
-            .map(|id| self.is_entity_readable_with_filter_in(txn, &policy, id, &filter))
+            .map(|id| self.is_entity_readable_held_in(txn, &policy, id, &filter, &authority))
             .collect()
     }
 

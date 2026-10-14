@@ -795,6 +795,89 @@ fn a_revoked_grant_takes_its_spans_out_of_what_the_queue_serves() {
     assert_eq!(served(&vault), read, "served again, not read again");
 }
 
+/// Sol R15 (P2): a TURN whose own body carries its words was served on its
+/// liveness alone, so its spans stayed served after the owner's policy took
+/// the Dreamer's read away. The sieve asks the Dreamer's gate for the TURN
+/// as a branch does: a TURN it may not read gives no span until the owner
+/// grants the read, and one it may no longer read keeps its spans queued,
+/// unserved, until the read is granted again, with no new read.
+#[test]
+fn a_turn_the_dreamer_may_not_read_gives_and_serves_no_span_of_its_words() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), false);
+    crate::test_util::seeded_without_dreamer_rows(&vault).expect("seed");
+    let turn = EntityId::from_hex("6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c6c").expect("turn id");
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![
+            ("txt".into(), "Alice arrives tomorrow.".into()),
+            ("spkr".into(), "user".into()),
+        ]),
+    )
+    .expect("turn body");
+    vault
+        .put_entity(
+            &turn,
+            crate::registry::ENTITY_TYPE_TURN,
+            TimeRange {
+                start: NOW,
+                end: NOW,
+            },
+            NOW,
+            &body,
+        )
+        .expect("turn");
+    let served = |vault: &Vault| -> Vec<SieveSpan> {
+        vault
+            .sieve_queue(usize::MAX)
+            .expect("queue")
+            .spans
+            .into_iter()
+            .filter(|span| span.turn == turn)
+            .collect()
+    };
+    let mut now = NOW + drain(&vault, NOW) + 1;
+    assert!(served(&vault).is_empty(), "the Dreamer may not read it");
+    assert_eq!(
+        vault.sieve_queue(usize::MAX).expect("queue").skipped,
+        SieveSkipped::default(),
+        "no span was queued to pass over"
+    );
+
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner");
+    assert!(vault.grant_dreamer_weave(&owner, now).expect("weave grant"));
+    now += drain(&vault, now) + 1;
+    let read = served(&vault);
+    assert_eq!(read.len(), 2, "Alice and tomorrow");
+    assert!(
+        read.iter().all(|span| span.source == turn),
+        "the TURN's words"
+    );
+
+    crate::test_util::withhold_dreamer_read(&vault).expect("withhold");
+    now += drain(&vault, now) + 1;
+    assert!(served(&vault).is_empty(), "no span, ref, range or digest");
+    let queue = vault.sieve_queue(usize::MAX).expect("queue");
+    assert_eq!(queue.skipped.unreadable, 2);
+
+    assert!(
+        vault
+            .grant_dreamer_weave(&owner, now)
+            .expect("weave grant again")
+    );
+    assert_eq!(vault.sieve_pass(now).expect("pass").turns_read, 0);
+    assert_eq!(served(&vault), read, "served again, not read again");
+}
+
 /// Sol R11 and R12 (P2): the owner's grant that gives the Dreamer back its
 /// read writes a policy manifest, not an access grant, so the turns the
 /// sieve withheld waited for a grant that never came. A policy manifest a
