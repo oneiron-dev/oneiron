@@ -32,9 +32,11 @@ const PARKED_STAMP: SideTable<(HexId, HexId, String), Vec<u8>, Raw> =
 const PARKED_BY_LANE: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::FEDERATION_PARKED_FACET_LANE);
 
-/// The most stamps one sender holds on one row ahead of it. Every birth of
-/// the row releases them all, so the bound is the work one small update can
-/// make the release do (Astra R5 F2 on #1432); a row sits in a few facets.
+/// The most stamps one federation peer holds on one row ahead of it. Every
+/// birth of the row releases them all, so the bound is the work one small
+/// update can make the release do (Astra R5 F2 on #1432); a row sits in a few
+/// facets. An owner's staged artifact meets no count: once confirmed, its
+/// stamps are the owner's own work (rule 5).
 #[cfg(feature = "sync")]
 pub(crate) const MAX_HELD_PER_ROW: usize = 16;
 
@@ -223,7 +225,7 @@ fn remove_held(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Hold {
     Held,
-    /// The sender holds [`MAX_HELD_PER_ROW`] stamps on the row already: the
+    /// The peer holds [`MAX_HELD_PER_ROW`] stamps on the row already: the
     /// stamp is not held, so it never counts (fail-closed).
     RowFull,
     /// The sender holds [`MAX_HELD_PER_SENDER`] stamps, or
@@ -234,8 +236,8 @@ pub(crate) enum Hold {
 
 /// Holds the stamp `src -FacetOf-> facet`, with its edge `value`, under the
 /// sender's `lane` and the `grant` it sent it under, as of `now`. Only a
-/// `capped` sender, a federation peer, meets the per-sender caps: the owner's
-/// own staged import never does.
+/// `capped` sender, a federation peer, meets the caps: the owner's own staged
+/// import never does.
 #[cfg(feature = "sync")]
 pub(crate) fn park_stamp(
     dbs: &impl SideTableDbs,
@@ -247,7 +249,8 @@ pub(crate) fn park_stamp(
 ) -> Result<Hold> {
     let key = (HexId(src), HexId(facet), lane.to_owned());
     let prior = PARKED_STAMP.get(dbs, wtxn, &key)?;
-    if prior.is_none()
+    if capped
+        && prior.is_none()
         && PARKED_STAMP
             .scan_keys(dbs, wtxn, src.to_hex().as_bytes())?
             .into_iter()

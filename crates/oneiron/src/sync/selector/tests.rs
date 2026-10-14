@@ -1802,6 +1802,68 @@ fn a_staged_birth_confirmed_after_another_writer_birthed_the_row_releases_no_sta
     assert!(vault.row_in_facets(&row, &facet_set(private)).unwrap());
 }
 
+/// Rule 5 on #1432: a confirmed staged artifact is the owner's own work, so
+/// no count drops its stamps. One that brings a row and stamps it into 17
+/// facets, one past a peer's per-row cap, places all 17 at its confirmation.
+#[test]
+fn a_confirmed_staged_artifact_places_every_stamp_of_its_row() {
+    let window = "2026-05";
+    let window_key = WindowKey::new(window);
+    let (_dir, vault, _grant_id, mut client) = test_client_with_grant(entity_id(0x84), window);
+    let facets: Vec<EntityId> = (0x85..=0x95).map(entity_id).collect();
+    let [row, actor] = [0x96, 0x97].map(entity_id);
+    let artifact = create_window_doc("foreign", &window_key);
+    insert_entity(&artifact, row, ENTITY_TYPE_EVENT, b"row");
+    for &facet in &facets {
+        put_row(&vault, facet, ENTITY_TYPE_FACET);
+        insert_edge(&artifact, row, EdgeKind::FacetOf, facet);
+    }
+    artifact.commit();
+    let classification = crate::batch::export::VaultImportReceipt {
+        manifest_digest: [0x84; 32],
+        classification: crate::batch::export::VaultImportClassification::ForeignAuthorityChain,
+        mismatches: vec![],
+        exported_vault_id: None,
+        local_vault_id: None,
+        exported_label: None,
+        expected_label: None,
+        byte_faithful: false,
+    };
+    let staged = crate::batch::export::stage_foreign_vault_import(
+        &vault,
+        &classification,
+        crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
+            platform: "elsewhere".into(),
+        },
+        &window_key,
+        &artifact.export(ExportMode::all_updates()).unwrap(),
+    )
+    .unwrap();
+    let confirmation = crate::batch::export::VaultImportConfirmation {
+        receipt_id: staged.receipt.receipt_id,
+        actor,
+        confirmed_at_secs: 1,
+    };
+    client
+        .confirm_staged_vault_import(staged, confirmation)
+        .unwrap();
+    let live = client.window(window).expect("confirm loads the window");
+    rematerialize(&vault, &live.doc, &window_key);
+
+    assert_eq!(
+        facets.len(),
+        crate::federation::facet_read::MAX_HELD_PER_ROW + 1
+    );
+    for &facet in &facets {
+        assert!(
+            stamp_stored(&vault, row, facet),
+            "a confirmed artifact's stamp into {} was dropped by count",
+            facet.to_hex()
+        );
+        assert!(vault.row_in_facets(&row, &facet_set(facet)).unwrap());
+    }
+}
+
 /// Sol R5 F3: a peer's early stamps reach the owner's two devices apart, `row
 /// -FacetOf-> work` on one and `row -FacetOf-> private` on the other. The same
 /// row update then releases a different stamp on each. Each device authors
