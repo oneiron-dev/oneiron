@@ -81,7 +81,7 @@ async fn public_booking_render_requires_no_authentication() {
         StatusCode::UNAUTHORIZED
     );
     let context =
-        public_http_transport_context(Ok(ConnectInfo("127.0.0.1:43123".parse().expect("peer"))))
+        public_http_transport_context(ClientAddress(Some("127.0.0.1".parse().expect("peer"))))
             .expect("context");
     assert_eq!(context.authenticated_actor_ref, None);
     assert_eq!(context.transport, BookingTransport::AnonymousHttp);

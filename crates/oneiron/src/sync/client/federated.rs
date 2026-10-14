@@ -67,16 +67,18 @@ impl SyncClient {
 
     /// Builds a selector request frame for a selector-capable caller.
     ///
-    /// This builder is pure. Bind the authenticated remote peer in the client
-    /// config (or `bind_federation_peer`) before receiving selector `UPDATE`
-    /// frames. Bound lanes automatically route those frames through federation
-    /// admission and reject full-window vector/bulk fallback.
+    /// Refused until the authenticated remote peer is bound in the client
+    /// config (or `bind_federation_peer`): an unbound client would import the
+    /// response as its own device's bytes. The builder records nothing. Bound
+    /// lanes route the selector `UPDATE` frames through federation admission
+    /// and reject full-window vector/bulk fallback.
     pub fn federated_selector_vv_request(
         &self,
         window_key: &str,
         selector: &SyncSelector,
         remote_vv: &[u8],
     ) -> std::result::Result<Vec<u8>, TransportError> {
+        self.require_federation_peer()?;
         let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
         let payload = encode_selector_vv_request(selector, remote_vv)
             .map_err(|_| TransportError::InvalidPayload("sync selector request encode failed"))?;
@@ -87,6 +89,18 @@ impl SyncClient {
         )
         .into_result()?;
         Ok(frame)
+    }
+
+    /// The refusal every selector door gives a client with no federation peer
+    /// bound, the one the federated import door gives: its selector responses
+    /// would import as its own device's bytes.
+    pub(super) fn require_federation_peer(&self) -> std::result::Result<(), TransportError> {
+        if self.config.federation_peer.is_none() {
+            return Err(map_federated_admission_err(crate::Error::sync_protocol(
+                SyncProtocolValidation::FederationPeerUnbound,
+            )));
+        }
+        Ok(())
     }
 
     /// Imports a selector response whose caller already bound the request to

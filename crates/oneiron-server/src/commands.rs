@@ -777,8 +777,16 @@ pub async fn revoke(args: RevokeArgs) -> anyhow::Result<()> {
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths = dicts.paths;
     ensure_existing_vault_for_revoke(&config.vault_path)?;
-    let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
-        .map_err(|e| anyhow::anyhow!("open vault {} failed: {e}", config.vault_path.display()))?;
+    let vault =
+        oneiron::Vault::open_owned(&config.vault_path, vault_config).map_err(|e| match e {
+            // The running server owns the vault and its leases: revoke there.
+            oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD) => anyhow::anyhow!(
+                "vault {} is open in a running server; revoke the lease through it with POST \
+             /api/lease/revoke, or stop the server and run revoke again",
+                config.vault_path.display()
+            ),
+            e => anyhow::anyhow!("open vault {} failed: {e}", config.vault_path.display()),
+        })?;
     let server = SyncServer::new(Arc::new(vault), config.sync_server_config())
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?;
 
