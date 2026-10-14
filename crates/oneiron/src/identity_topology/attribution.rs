@@ -151,7 +151,7 @@ pub(crate) fn drop_unheld_author_marks_in_txn(
     for row in AUTHORED_HERE.iter_from(store, wtxn, &[])? {
         let (HexId(id), digest) = row?;
         let held = store.entities.get(wtxn, id.as_bytes())?.is_some_and(|raw| {
-            EntityMetadataHeader::parse(raw)
+            EntityMetadataHeader::parse(&raw)
                 .is_some_and(|header| header.entity_type == ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
                 && *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes() == digest
         });
