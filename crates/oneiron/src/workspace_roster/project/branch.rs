@@ -47,7 +47,9 @@ pub(super) struct Fork {
 /// What takes no authority in the tree below one root.
 pub(super) struct Exclusion {
     /// Resolutions whose signer, or whose successor's signer, a held act in
-    /// a sibling branch deposes: they settle nothing.
+    /// a sibling branch deposes: they settle nothing. An act below a
+    /// contender the resolution itself settles does not count against its
+    /// successor, since that contender leaves if the resolution stands.
     pub(super) void: BTreeSet<ProjectRevisionHash>,
     /// Signed revisions that take no authority, with their subtrees.
     pub(super) excluded: BTreeSet<ProjectRevisionHash>,
@@ -171,8 +173,10 @@ impl FoldCx<'_, '_, '_> {
     }
 
     /// One pass over the tree below `root`. A resolution is void when a held
-    /// act off its own line deposes its signer or its successor's: it
-    /// settles nothing, so the children it named stay in contention. Then,
+    /// act off its own line deposes its signer, or an act off its
+    /// successor's line, outside the contenders it settles, deposes its
+    /// successor's signer: it settles nothing, so the children it named stay
+    /// in contention. Then,
     /// over the children no standing settlement superseded, the well-founded
     /// exclusion of section 5a.
     fn exclude(&self, root: ProjectRevisionHash) -> Result<Exclusion> {
@@ -203,10 +207,15 @@ impl FoldCx<'_, '_, '_> {
                     continue;
                 }
                 let next = at.get(&resolution.next).copied();
+                let settled: Vec<usize> = (resolution.contenders.iter())
+                    .filter(|contender| **contender != resolution.next)
+                    .filter_map(|contender| at.get(contender).copied())
+                    .collect();
                 let signer = self.signer(hash);
-                if signer.is_some_and(|signer| held.challenge(&acts, position, &signer))
-                    || next
-                        .is_some_and(|next| held.challenge(&acts, Some(next), &acts[next].signer))
+                if signer.is_some_and(|signer| held.challenge(&acts, position, &signer, &[]))
+                    || next.is_some_and(|next| {
+                        held.challenge(&acts, Some(next), &acts[next].signer, &settled)
+                    })
                 {
                     exclusion.void.insert(*hash);
                 }
@@ -293,23 +302,31 @@ impl<'a> Deposers<'a> {
         Self(map)
     }
 
-    /// Whether an act off the line through `position` deposes `principal`.
-    /// An ancestor's deposition is history and a descendant's comes after;
-    /// only a sibling branch's challenges. The root's line (`None`) holds
-    /// every act.
-    fn challenge(&self, acts: &[Act], position: Option<usize>, principal: &str) -> bool {
+    /// Whether an act off the line through `position`, outside the subtrees
+    /// at `apart` (which lie off that line), deposes `principal`. An
+    /// ancestor's deposition is history and a descendant's comes after; only
+    /// a sibling branch's challenges. The root's line (`None`) holds every act.
+    fn challenge(
+        &self,
+        acts: &[Act],
+        position: Option<usize>,
+        principal: &str,
+        apart: &[usize],
+    ) -> bool {
         let (Some(deposers), Some(at)) = (self.0.get(principal), position) else {
             return false;
         };
-        let below = deposers.partition_point(|index| *index < acts[at].end)
-            - deposers.partition_point(|index| *index < at);
-        let mut on_line = below;
+        let within = |top: usize| {
+            deposers.partition_point(|index| *index < acts[top].end)
+                - deposers.partition_point(|index| *index < top)
+        };
+        let mut uncounted = within(at) + apart.iter().map(|top| within(*top)).sum::<usize>();
         let mut up = acts[at].parent;
         while let Some(ancestor) = up {
-            on_line += usize::from(deposers.binary_search(&ancestor).is_ok());
+            uncounted += usize::from(deposers.binary_search(&ancestor).is_ok());
             up = acts[ancestor].parent;
         }
-        deposers.len() > on_line
+        deposers.len() > uncounted
     }
 }
 
@@ -325,7 +342,7 @@ fn excluded_by(acts: &[Act], live: &[usize], discounted: &BTreeSet<usize>) -> BT
     for index in live {
         let act = &acts[*index];
         if act.parent.is_some_and(|parent| out.contains(&parent))
-            || deposers.challenge(acts, Some(*index), &act.signer)
+            || deposers.challenge(acts, Some(*index), &act.signer, &[])
         {
             out.insert(*index);
         }
