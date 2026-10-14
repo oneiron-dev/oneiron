@@ -26,7 +26,6 @@ use crate::registry::{
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
     ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
-use crate::secret_custody::plan_replicated_name_index;
 use crate::side_table::HexId;
 use crate::skill_hub::validate_refinement_admission;
 use crate::store::Store;
@@ -157,8 +156,6 @@ pub(in crate::batch) fn apply_put(
     // Registered maintenance kinds with pinned body schemas get the same
     // fail-closed treatment on every path that can admit their type byte.
     // Bodies of all other type bytes stay opaque at the storage layer.
-    let custody_name_index =
-        plan_replicated_name_index(store, wtxn, &id, entity_type, data, replicated)?;
     let mut is_lexical_query_hint_claim = false;
     let mut new_skill_record = None;
     let mut hub_origin_marker = None;
@@ -722,7 +719,6 @@ pub(in crate::batch) fn apply_put(
         },
     )?;
     super::put_staging::stage_task_and_turn(store, wtxn, id, entity_type, data, body_changed)?;
-    crate::secret_custody::stage_replicated_name_index(store, wtxn, &id, custody_name_index)?;
     if let Some(record) = new_skill_record.as_ref() {
         super::put_staging::stage_skill_index_rows(
             store,
