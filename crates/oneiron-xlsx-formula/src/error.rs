@@ -4,7 +4,8 @@ use std::borrow::Cow;
 /// Every way formula evaluation, routing, or corpus measurement can fail.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FormulaError {
-    /// A corpus case names a cell or range outside the 1-based grid.
+    /// A corpus case names a cell or range outside the 1-based grid, or a
+    /// read range over [`crate::engine::MAX_READ_RANGE_CELLS`].
     #[error("invalid cell address: {0}")]
     InvalidAddress(&'static str),
     /// A setup value or expected value has a shape the runner cannot stage.

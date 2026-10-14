@@ -40,6 +40,11 @@ pub const PINNED_TIMESTAMP_UTC: &str = "2026-01-01T00:00:00Z";
 /// Sheet name the corpus runner stages every case on.
 pub const CORPUS_SHEET: &str = "S";
 
+/// The most cells [`FormualizerEngine`] reads back through `read_range` in
+/// one [`RecalcEngine::evaluate`]. A larger rectangle is refused before the
+/// workbook materializes it, whoever the caller is.
+pub const MAX_READ_RANGE_CELLS: usize = 4096;
+
 pub use crate::calc::{
     CalcReport as RecalcReport, CalcSetup as StagedValue, CalcValue as CellValue, EngineId,
     RecalcEngine,
@@ -163,6 +168,13 @@ impl RecalcEngine for FormualizerEngine {
                 let address =
                     RangeAddress::new(CORPUS_SHEET, start_row, start_col, end_row, end_col)
                         .map_err(|_| FormulaError::InvalidAddress("bad read range"))?;
+                if u64::from(address.width()) * u64::from(address.height())
+                    > MAX_READ_RANGE_CELLS as u64
+                {
+                    return Err(FormulaError::InvalidAddress(
+                        "read range over the cell limit",
+                    ));
+                }
                 Ok::<_, FormulaError>(
                     workbook
                         .read_range(&address)
@@ -232,6 +244,24 @@ fn excel_time(time: NaiveTime) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn evaluate_refuses_a_read_range_over_the_cell_limit_before_reading_it() {
+        // C11: the read range was materialized whole, so `A1:XFD1048576`
+        // asked for 17 billion cells.
+        let mut engine = FormualizerEngine::new();
+        let mut read = |range: &str| engine.evaluate(&BTreeMap::new(), "=1", "A1", Some(range));
+        let over = FormulaError::InvalidAddress("read range over the cell limit");
+        assert_eq!(read("A1:A4097"), Err(over.clone()));
+        assert_eq!(read("A1:XFD1048576"), Err(over.clone()));
+        assert_eq!(read("A1:BL65"), Err(over));
+        // Exactly at the limit still evaluates and reads back every cell.
+        for range in ["A1:A4096", "A1:BL64"] {
+            let grid = read(range).expect("a read range at the limit").grid;
+            let cells: usize = grid.expect("grid").iter().map(Vec::len).sum();
+            assert_eq!(cells, MAX_READ_RANGE_CELLS);
+        }
+    }
 
     #[test]
     fn date_time_serialization_matches_excel_storage_not_display_text() {
