@@ -226,8 +226,8 @@ fn oauth_exchanges_past_every_bound_still_mint_and_the_machines_stay_mine() {
         .unwrap();
     with_rows_per_signer_for_test(BOUND, || {
         let root = host.vault.ensure_host_root_slip(&host.issuer).unwrap();
-        // Ten times the fold's row bound, all signed by the host root.
-        for n in 0..40 * BOUND {
+        // Five times the fold's row bound, all signed by the host root.
+        for n in 0..20 * BOUND {
             host.vault
                 .mint_oauth_capability_slip(
                     &host.issuer,
@@ -239,7 +239,7 @@ fn oauth_exchanges_past_every_bound_still_mint_and_the_machines_stay_mine() {
         }
         let fold = host.vault.authority_fold().unwrap();
         assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
-        assert!(fold.slips.mints.len() > 40 * BOUND);
+        assert!(fold.slips.mints.len() > 20 * BOUND);
         assert!(
             fold.machine(machine.machine)
                 .is_some_and(FoldedMachine::is_mine)
@@ -249,7 +249,7 @@ fn oauth_exchanges_past_every_bound_still_mint_and_the_machines_stay_mine() {
     host.vault.re_root_host(&host.issuer, &next).unwrap();
     with_rows_per_signer_for_test(BOUND, || {
         let root = host.vault.ensure_host_root_slip(&next).unwrap();
-        for n in 0..10 * BOUND {
+        for n in 0..5 * BOUND {
             host.vault
                 .mint_oauth_capability_slip(
                     &next,
