@@ -109,6 +109,29 @@ pub(crate) fn vault_import_keeps_stamps_in(
     STAMPS.contains(dbs, txn, &Hex64(*id))
 }
 
+/// Writes `record` as the receipt `id`'s record of its staged stamps, as an
+/// edit on disk would, and binds the receipt's digest to it when `bind`.
+#[cfg(test)]
+pub(crate) fn rewrite_staged_stamps_for_test(
+    vault: &Vault,
+    id: &[u8; 32],
+    record: &[u8],
+    bind: bool,
+) -> Result<()> {
+    let key = Hex64(*id);
+    let mut receipt = vault_import_stage_receipt(vault, id)?
+        .ok_or(Error::InvariantViolation("no receipt to rewrite"))?;
+    receipt.staged_stamps_digest = Some(*blake3::hash(record).as_bytes());
+    let encoded = encode_vault_import_receipt(&receipt)?;
+    vault.with_write_txn_grouped(|w| {
+        STAMPS.put(&vault.store, w, &key, &record.to_vec())?;
+        if bind {
+            RECEIPT.put(&vault.store, w, &key, &encoded)?;
+        }
+        Ok(())
+    })
+}
+
 /// Writes `receipt` unless one is stored under its id, with the admitted
 /// `content` and the record of its staged `stamps` when it is Pending.
 fn put_stage_if_absent(
@@ -278,6 +301,7 @@ pub fn stage_foreign_vault_import(
                 confirmed_by: None,
                 confirmed_at_secs: None,
                 failure: Some(VaultImportFailure::AdmissionRejected),
+                staged_stamps_digest: None,
             };
             if put_stage_if_absent(vault, &failed, None)? {
                 return Ok(StagedVaultImport {
@@ -346,6 +370,7 @@ pub fn stage_foreign_vault_import(
                 confirmed_by: None,
                 confirmed_at_secs: None,
                 failure: Some(VaultImportFailure::AdmissionRejected),
+                staged_stamps_digest: None,
             };
             if put_stage_if_absent(vault, &failed, None)? {
                 return Ok(StagedVaultImport {
@@ -378,6 +403,7 @@ pub fn stage_foreign_vault_import(
         confirmed_by: None,
         confirmed_at_secs: None,
         failure: None,
+        staged_stamps_digest: Some(*blake3::hash(&stamps).as_bytes()),
     };
     if put_stage_if_absent(vault, &pending, Some((&admitted, &stamps)))? {
         return Ok(StagedVaultImport {

@@ -233,6 +233,7 @@ impl SyncClient {
                 || durable.manifest_digest != staged.receipt.manifest_digest
                 || durable.remote_update_digest != staged.receipt.remote_update_digest
                 || durable.admitted_update_digest != staged.receipt.admitted_update_digest
+                || durable.staged_stamps_digest != staged.receipt.staged_stamps_digest
                 || durable.window_key != staged.receipt.window_key
                 || durable.source != staged.receipt.source
                 || durable.role != staged.receipt.role
@@ -294,7 +295,7 @@ impl SyncClient {
         let births = staged_births(
             &self.vault,
             &admission_key,
-            &durable.receipt_id,
+            (&durable.receipt_id, durable.staged_stamps_digest),
             &staged.admitted_update,
         )
         .map_err(map_federated_admission_err)?;

@@ -222,7 +222,7 @@ impl StagedBirths {
 pub(in crate::sync) fn staged_births(
     vault: &Vault,
     key: &WindowKey,
-    receipt_id: &[u8; 32],
+    (receipt_id, stamps_digest): (&[u8; 32], Option<[u8; 32]>),
     admitted_update: &[u8],
 ) -> Result<StagedBirths> {
     let admitted = create_window_doc("federation-staged", key);
@@ -237,11 +237,9 @@ pub(in crate::sync) fn staged_births(
     // be gone while its receipt is Pending. The receipt's own record holds
     // every staged stamp again before its birth is judged: an owner's import
     // never lands a row without the facets it staged (Astra-c F1 on #1432).
-    if let Some(record) = crate::batch::export::vault_import_staged_stamps(vault, receipt_id)? {
-        let stamps =
-            HeldStamp::from_record(&record).ok_or(Error::CorruptedIndex("staged facet stamps"))?;
-        hold_stamps(vault, key, (&lane, None), &stamps, false)?;
-    }
+    let record = crate::batch::export::vault_import_staged_stamps(vault, receipt_id)?;
+    let stamps = HeldStamp::from_receipt_record(&record.unwrap_or_default(), stamps_digest)?;
+    hold_stamps(vault, key, (&lane, None), &stamps, false)?;
     let births = pending_births(vault, &lane, &admitted.get_map("entities"), &[])?;
     Ok(StagedBirths { lane, births })
 }

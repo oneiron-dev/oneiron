@@ -1960,6 +1960,80 @@ fn a_pending_staged_stamp_outlives_the_age_a_peer_stamp_retires_at() {
     assert_eq!(held_under(&vault, &staged_lane), 0);
 }
 
+/// A staged artifact that brings `row` and stamps it into `work`, its record
+/// of that stamp rewritten by `edit` (bound to the receipt when `bind`) and
+/// staged again, then confirmed, which it refuses.
+fn confirm_edited_record(
+    seed: u8,
+    edit: impl FnOnce(&mut Vec<u8>, EntityId),
+    bind: bool,
+) -> (tempfile::TempDir, Arc<Vault>, [EntityId; 3]) {
+    let window_key = WindowKey::new("2026-05");
+    let (dir, vault, _grant_id, mut client) = test_client_with_grant(entity_id(seed), "2026-05");
+    let [work, home, row, actor] = [1, 2, 3, 4].map(|n| entity_id(seed + n));
+    for facet in [work, home] {
+        put_row(&vault, facet, ENTITY_TYPE_FACET);
+    }
+    let artifact = create_window_doc("foreign", &window_key);
+    insert_entity(&artifact, row, ENTITY_TYPE_EVENT, b"row");
+    insert_edge(&artifact, row, EdgeKind::FacetOf, work);
+    artifact.commit();
+    let id = stage_artifact(&vault, &window_key, &artifact, seed)
+        .receipt
+        .receipt_id;
+    let mut record = crate::batch::export::vault_import_staged_stamps(&vault, &id)
+        .unwrap()
+        .expect("the receipt keeps its record");
+    edit(&mut record, home);
+    crate::batch::export::rewrite_staged_stamps_for_test(&vault, &id, &record, bind).unwrap();
+    let staged = stage_artifact(&vault, &window_key, &artifact, seed);
+    let confirmation = crate::batch::export::VaultImportConfirmation {
+        receipt_id: id,
+        actor,
+        confirmed_at_secs: 1,
+    };
+    client
+        .confirm_staged_vault_import(staged, confirmation)
+        .expect_err("an edited record refuses the confirmation");
+    assert_eq!(
+        crate::batch::export::vault_import_stage_receipt(&vault, &id)
+            .unwrap()
+            .unwrap()
+            .status,
+        crate::batch::export::VaultImportStageStatus::Pending,
+        "the refused confirmation leaves the receipt Pending"
+    );
+    (dir, vault, [work, home, row])
+}
+
+/// Astra-d F1 on #1432: the receipt binds its record of staged stamps by
+/// digest, so a record whose stamp was moved on disk to another stored facet
+/// refuses the confirmation, and nothing lands.
+#[test]
+fn a_staged_record_moved_to_another_facet_on_disk_refuses_the_confirmation() {
+    let (_dir, vault, [work, home, row]) = confirm_edited_record(
+        0xB3,
+        |record, home| record[16..32].copy_from_slice(home.as_bytes()),
+        false,
+    );
+    assert!(!stamp_stored(&vault, row, home));
+    assert!(!stamp_stored(&vault, row, work));
+    assert!(!vault.row_in_facets(&row, &facet_set(home)).unwrap());
+}
+
+/// Astra-d F1 on #1432: a recorded stamp is decoded at the confirmation as
+/// admission decoded it, so a record whose digest matches but whose weight is
+/// NaN refuses the confirmation, and nothing lands.
+#[test]
+fn a_staged_record_with_a_nan_weight_refuses_the_confirmation() {
+    let (_dir, vault, [work, _, row]) = confirm_edited_record(
+        0xB8,
+        |record, _| record[40..44].copy_from_slice(&f32::NAN.to_le_bytes()),
+        true,
+    );
+    assert!(!stamp_stored(&vault, row, work));
+}
+
 /// Astra-c F1 on #1432, the guard: the held table restores live while the
 /// receipt restores with its content, so a Pending receipt can outlive its
 /// holds. The receipt's own record holds every staged stamp again at the

@@ -413,8 +413,32 @@ impl HeldStamp {
         record
     }
 
+    /// The stamps of a staged receipt's `record`, which the receipt binds by
+    /// `digest` (none for one staged before the record existed, which has no
+    /// record). A record edited, cut short or lost on disk, or one with a
+    /// value admission would refuse, is refused here, before any is held
+    /// again (Astra-d F1 on #1432).
+    pub(super) fn from_receipt_record(
+        record: &[u8],
+        digest: Option<[u8; 32]>,
+    ) -> Result<Vec<Self>> {
+        let bound = match digest {
+            Some(digest) => *blake3::hash(record).as_bytes() == digest,
+            None => record.is_empty(),
+        };
+        Self::from_record(record)
+            .filter(|stamps| {
+                bound
+                    && stamps.iter().all(|stamp| {
+                        crate::edge::decode_edge_value_for_kind(EdgeKind::FacetOf, &stamp.value)
+                            .is_ok()
+                    })
+            })
+            .ok_or(Error::CorruptedIndex("staged facet stamps"))
+    }
+
     /// A [`Self::record`] read back, or `None` for one that does not decode.
-    pub(super) fn from_record(mut record: &[u8]) -> Option<Vec<Self>> {
+    fn from_record(mut record: &[u8]) -> Option<Vec<Self>> {
         let mut stamps = Vec::new();
         while !record.is_empty() {
             let (src, rest) = record.split_first_chunk::<16>()?;
