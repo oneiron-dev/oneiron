@@ -1,7 +1,8 @@
 //! World privacy races: an edit by a machine that lost the owner's standing,
 //! or one this install does not count, only ever narrows a world, however
 //! many such edits chain and in whatever order they arrive.
-use super::history_transfer::re_root_entry;
+use super::super::slip_vault::next_entry;
+use super::history_transfer::{re_root_entry, store};
 use super::machine_identity::{host, request_for};
 use super::support::{
     authority_key_from_ed, cosign_ed, device, ed_key, genesis_entry, sign_ed, unsigned_entry,
@@ -10,6 +11,7 @@ use super::world_privacy::{
     edit_by, land, other_machine, read_of, settings, stored_entries, world_row,
 };
 use super::*;
+use crate::{Vault, VaultConfig};
 
 #[test]
 fn a_machine_removed_while_it_widened_never_widens() {
@@ -207,6 +209,80 @@ fn a_chain_of_raced_widens_never_widens() {
         );
         assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(laptop));
         assert!(!fold.world_readable_on(world, Destination::Unknown));
+    }
+}
+
+/// The stolen laptop's widening raced its demotion, so it only narrows. A
+/// later revision of the laptop, the owner's removal or a demotion signed
+/// again, took nothing away and acknowledges nothing, whether the owner's door
+/// signed it or a peer listed the widening in it (Wonder P2 round 1, W2).
+#[test]
+fn a_later_revision_never_acknowledges_a_raced_widening() {
+    for later in [
+        MachineRole::Removed,
+        MachineRole::Owned(MachineOwnership::Rented),
+    ] {
+        for listed in [false, true] {
+            let host = host();
+            let world = world_row(&host);
+            let (laptop, laptop_key) =
+                other_machine(&host, 81, MachineRole::Owned(MachineOwnership::Yours));
+            land(
+                &host,
+                &[edit_by(
+                    &host,
+                    laptop,
+                    &laptop_key,
+                    world,
+                    settings(ReadLocation::OneMachine(laptop)),
+                )],
+            );
+            let widen = edit_by(
+                &host,
+                laptop,
+                &laptop_key,
+                world,
+                settings(ReadLocation::Everywhere),
+            );
+            host.vault
+                .set_machine_role(
+                    &host.issuer,
+                    &host.owner,
+                    laptop,
+                    MachineRole::Owned(MachineOwnership::WorkSchool),
+                )
+                .unwrap();
+            land(&host, &[widen.clone()]);
+            assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(laptop));
+
+            if listed {
+                let fold = host.vault.authority_fold().unwrap();
+                let current = fold.machine(laptop).unwrap().profile.clone();
+                let mut seen_world_edits = current.seen_world_edits.clone();
+                seen_world_edits.insert(authority_entry_hash(&widen).unwrap());
+                let profile = MachineProfile {
+                    role: later,
+                    revision: current.revision + 1,
+                    seen_world_edits,
+                    ..current
+                };
+                land(
+                    &host,
+                    &[
+                        next_entry(&host.issuer, &fold, AuthorityOp::MachineProfile(profile), 3)
+                            .unwrap(),
+                    ],
+                );
+            } else {
+                host.vault
+                    .set_machine_role(&host.issuer, &host.owner, laptop, later)
+                    .unwrap();
+            }
+            let fold = host.vault.authority_fold().unwrap();
+            assert_eq!(fold.machine(laptop).unwrap().profile.role, later);
+            assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(laptop));
+            assert!(!fold.world_readable_on(world, Destination::Unknown));
+        }
     }
 }
 
@@ -438,6 +514,234 @@ fn a_holder_going_stale_never_accepts_a_refused_edit() {
     );
     assert!(after.machine(holder).is_some_and(|folded| folded.stale));
     assert!(after.machine(other).is_some_and(FoldedMachine::is_mine));
+}
+
+/// A refused edit stays refused when a machine whose edit it would have
+/// contended with goes stale here. B's pick of A replaced the conflict between
+/// B and C, so C's later widening is refused; weakening B's edits on one
+/// install brings the conflict back into the settings it reads, but who may
+/// edit is judged on the roster rule's read, so C never becomes a contender
+/// there (Sol P2 round 4, F1).
+#[test]
+fn a_conflict_weakened_back_never_accepts_a_refused_edit() {
+    let old = ed_key(130);
+    let next = ed_key(131);
+    let genesis = genesis_entry(130, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
+    let (a, a_key) = (EntityId::now(), ed_key(132));
+    let (b, b_key) = (EntityId::now(), ed_key(133));
+    let (c, c_key) = (EntityId::now(), ed_key(134));
+    let mark = |parent: &AuthorityLogEntry, signer: &SigningKey, seq, machine, key, revision| {
+        let request = request_for(id, machine, key);
+        sign_ed(
+            unsigned_entry(
+                Some(id),
+                seq,
+                vec![hash(parent)],
+                AuthorityOp::MachineProfile(MachineProfile {
+                    machine,
+                    owner: EntityId::now(),
+                    machine_key: request.machine_key,
+                    encryption_key: request.encryption_key,
+                    role: MachineRole::Owned(MachineOwnership::Yours),
+                    revision,
+                    machine_proof: request.machine_proof,
+                    seen_world_edits: BTreeSet::new(),
+                }),
+                authority_key_from_ed(signer),
+                2,
+            ),
+            signer,
+        )
+    };
+    let a_mark = mark(&genesis, &old, 1, a, &a_key, 1);
+    let b_mark = mark(&a_mark, &old, 2, b, &b_key, 1);
+    let c_mark = mark(&b_mark, &old, 3, c, &c_key, 1);
+    let world = EntityId::now();
+    let edit = |parents: &[&AuthorityLogEntry], seq, machine, key: &SigningKey, read| {
+        let mut parents: Vec<_> = parents.iter().map(|&parent| hash(parent)).collect();
+        parents.sort();
+        sign_ed(
+            unsigned_entry(
+                Some(id),
+                seq,
+                parents,
+                AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
+                    world,
+                    owner: EntityId::now(),
+                    machine,
+                    settings: settings(read),
+                }),
+                authority_key_from_ed(key),
+                2,
+            ),
+            key,
+        )
+    };
+    let b_pick = edit(&[&c_mark], 1, b, &b_key, ReadLocation::OneMachine(b));
+    let c_pick = edit(&[&c_mark], 1, c, &c_key, ReadLocation::OneMachine(c));
+    let repick = edit(
+        &[&c_mark, &b_pick, &c_pick],
+        2,
+        b,
+        &b_key,
+        ReadLocation::OneMachine(a),
+    );
+    let refused = edit(&[&c_mark, &repick], 2, c, &c_key, ReadLocation::Everywhere);
+    // The new root marks A and C again, never B.
+    let handoff = re_root_entry(id, &c_mark, &old, 4, &next);
+    let renewed_a = mark(&handoff, &next, 1, a, &a_key, 2);
+    let renewed_c = mark(&renewed_a, &next, 2, c, &c_key, 2);
+    let entries = [
+        genesis,
+        a_mark,
+        b_mark,
+        c_mark,
+        b_pick,
+        c_pick,
+        repick,
+        refused.clone(),
+        handoff,
+        renewed_a,
+        renewed_c,
+    ];
+    let first_seen: BTreeMap<_, _> = entries.iter().map(|entry| (hash(entry), 100)).collect();
+    for now in [100, 100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1] {
+        let fold = fold_authority_log_with_seen_times(&entries, &first_seen, now);
+        assert!(fold.refused_world_edits.contains(&hash(&refused)));
+        assert_eq!(fold.world_roster_read(world), EffectiveRead::OneMachine(a));
+        assert_eq!(fold.world_edit_standing(c, world), None);
+        assert_eq!(
+            fold.world_edit_standing(a, world),
+            Some(WorldEditStanding::Holds)
+        );
+        assert!(!fold.world_readable_on(world, Destination::Machine(c)));
+    }
+    let after = fold_authority_log_with_seen_times(
+        &entries,
+        &first_seen,
+        100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1,
+    );
+    assert!(after.machine(b).is_some_and(|folded| folded.stale));
+    // Here B's edits only narrow, so the world reads as the conflict again:
+    // stricter than A alone, and readable nowhere.
+    assert_eq!(
+        after.world_privacy(world).read,
+        EffectiveRead::Conflicted {
+            contenders: BTreeSet::from([a, b, c]),
+        }
+    );
+}
+
+/// A narrowing made above a main-log row the fold later refuses stays. The
+/// laptop signed it on a head the old root signed outside its own handoff, so
+/// the handoff's fence refuses that row and settlement drops everything above
+/// it; the edit is judged again with the row crossed, and the owner can still
+/// change the world after it (Wonder P2 round 1, W1).
+#[test]
+fn a_narrowing_above_a_fenced_row_stays() {
+    let old = ed_key(135);
+    let next = ed_key(136);
+    let genesis = genesis_entry(135, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
+    let (laptop, laptop_key) = (EntityId::now(), ed_key(137));
+    let (other, other_key) = (EntityId::now(), ed_key(138));
+    let mark = |parent: &AuthorityLogEntry, seq, machine, key| {
+        let request = request_for(id, machine, key);
+        sign_ed(
+            unsigned_entry(
+                Some(id),
+                seq,
+                vec![hash(parent)],
+                AuthorityOp::MachineProfile(MachineProfile {
+                    machine,
+                    owner: EntityId::now(),
+                    machine_key: request.machine_key,
+                    encryption_key: request.encryption_key,
+                    role: MachineRole::Owned(MachineOwnership::Yours),
+                    revision: 1,
+                    machine_proof: request.machine_proof,
+                    seen_world_edits: BTreeSet::new(),
+                }),
+                authority_key_from_ed(&old),
+                2,
+            ),
+            &old,
+        )
+    };
+    let laptop_mark = mark(&genesis, 1, laptop, &laptop_key);
+    let handoff = re_root_entry(id, &laptop_mark, &old, 2, &next);
+    let fenced = mark(&laptop_mark, 3, other, &other_key);
+    let world = EntityId::now();
+    let edit = |parents: &[&AuthorityLogEntry], seq, read| {
+        let mut parents: Vec<_> = parents.iter().map(|&parent| hash(parent)).collect();
+        parents.sort();
+        sign_ed(
+            unsigned_entry(
+                Some(id),
+                seq,
+                parents,
+                AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
+                    world,
+                    owner: EntityId::now(),
+                    machine: laptop,
+                    settings: settings(read),
+                }),
+                authority_key_from_ed(&laptop_key),
+                2,
+            ),
+            &laptop_key,
+        )
+    };
+    let narrow = edit(&[&fenced], 1, ReadLocation::OneMachine(laptop));
+    let mut entries = vec![
+        genesis,
+        laptop_mark,
+        handoff.clone(),
+        fenced.clone(),
+        narrow.clone(),
+    ];
+    let fold = fold_authority_log(&entries);
+    assert!(
+        fold.issues
+            .contains(&AuthorityFoldIssue::RetiredSigner(hash(&fenced)))
+    );
+    assert!(fold.valid_entries.contains(&hash(&narrow)));
+    assert_eq!(
+        fold.world_privacy(world).read,
+        EffectiveRead::OneMachine(laptop)
+    );
+    assert!(!fold.world_readable_on(world, Destination::Unknown));
+    assert_eq!(
+        fold.worlds[&world]
+            .live
+            .keys()
+            .copied()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([hash(&narrow)])
+    );
+
+    // Past the handoff the laptop names the narrowing as its side head and
+    // widens the world again.
+    let reopen = edit(&[&handoff, &narrow], 2, ReadLocation::Everywhere);
+    entries.push(reopen.clone());
+    let fold = fold_authority_log(&entries);
+    assert!(fold.valid_entries.contains(&hash(&reopen)));
+    assert_eq!(fold.world_privacy(world).read, EffectiveRead::Everywhere);
+
+    // A replica that held the fenced row before it settled the handoff still
+    // stores the narrowing, and keeps it (Wonder P2 round 1, W4).
+    let dir = tempfile::tempdir().unwrap();
+    let replica = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    for entry in [&entries[0], &entries[1], &fenced, &handoff, &narrow] {
+        store(&replica, entry);
+    }
+    assert_eq!(
+        replica.world_privacy(world).unwrap().read,
+        EffectiveRead::OneMachine(laptop)
+    );
 }
 
 /// A mark that still says "yours" acknowledges no edit when its signer turns

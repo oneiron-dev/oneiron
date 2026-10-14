@@ -86,8 +86,6 @@ pub enum ActorBindingRejection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorityFold {
     pub(super) append_heads: BTreeSet<AuthorityEntryHash>,
-    /// Each world's side heads, kept out of the main-log heads.
-    pub(super) side_heads: BTreeMap<EntityId, BTreeSet<AuthorityEntryHash>>,
     pub(super) append_sequences: BTreeMap<AuthorityKey, u64>,
     /// Historical actor/class pairs affected by a key revocation, including rebind-away.
     pub actor_revocation_affected_writers: BTreeSet<(EntityId, String)>,

@@ -251,8 +251,15 @@ impl Vault {
         mut profile: MachineProfile,
     ) -> Result<FoldedMachine> {
         // A revision that takes "yours" away keeps the effect of the machine's
-        // world edits it has seen; one it never saw only counts stricter.
-        profile.seen_world_edits = super::world_privacy::live_edits_by(fold, profile.machine);
+        // world edits it has seen; one it never saw only counts stricter. A
+        // later revision of a machine already not the owner's took nothing
+        // away: it carries that list, and the fold reads only the first.
+        profile.seen_world_edits = match fold.machine(profile.machine) {
+            Some(current) if !current.profile.says_mine() => {
+                current.profile.seen_world_edits.clone()
+            }
+            _ => super::world_privacy::live_edits_by(fold, profile.machine),
+        };
         profile.validate()?;
         let now = self.instant_in_txn(txn)?.secs();
         let entry = next_entry(

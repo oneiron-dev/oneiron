@@ -2,8 +2,11 @@
 //! owner's door, on a machine the owner marked "yours" that holds the world.
 //! Concurrent edits fold stricter in every order, and no forged entry, generic
 //! write, replayed edit, restore or machine that lost "yours" widens a world.
+use super::super::slip_vault::next_entry;
 use super::machine_identity::{Host, encryption_key, host, request_for};
-use super::support::{authority_key_from_ed, ed_key, genesis_entry, sign_ed, unsigned_entry};
+use super::support::{
+    authority_key_from_ed, device, ed_key, genesis_entry, sign_ed, unsigned_entry,
+};
 use super::*;
 use crate::registry::ENTITY_TYPE_WORLD;
 use crate::{Vault, VaultConfig};
@@ -73,7 +76,7 @@ pub(super) fn set(
 }
 
 /// An edit `key` signs as `machine`, on the host's main-log heads and the
-/// world's side heads: what that machine's own door would sign.
+/// world's live edits: what that machine's own door would sign.
 pub(super) fn edit_by(
     host: &Host,
     machine: EntityId,
@@ -85,8 +88,8 @@ pub(super) fn edit_by(
     let signer = authority_key_from_ed(key);
     let seq = fold.append_sequences.get(&signer).map_or(1, |seq| seq + 1);
     let mut parents = fold.append_heads.clone();
-    if let Some(side) = fold.side_heads.get(&world) {
-        parents.extend(side.iter().copied());
+    if let Some(folded) = fold.worlds.get(&world) {
+        parents.extend(folded.live.keys().copied());
     }
     sign_ed(
         unsigned_entry(
@@ -123,6 +126,124 @@ pub(super) fn stored_entries(vault: &Vault) -> Vec<AuthorityLogEntry> {
         .into_iter()
         .map(|(_, body)| decode_authority_log_entry_body(&body).unwrap())
         .collect()
+}
+
+/// A machine of the owner's that floods a world with more concurrent edits
+/// than one entry may name never locks the owner out of it: the door replaces
+/// them a share at a time (Wonder P2 round 1, W5).
+#[test]
+fn a_flood_of_concurrent_edits_never_locks_the_door() {
+    let host = host();
+    let world = world_row(&host);
+    let here = enrol_here(&host);
+    let (flooder, flooder_key) =
+        other_machine(&host, 63, MachineRole::Owned(MachineOwnership::Yours));
+    let flood: Vec<_> = (0..40)
+        .map(|ts| {
+            let mut entry = edit_by(
+                &host,
+                flooder,
+                &flooder_key,
+                world,
+                settings(ReadLocation::Everywhere),
+            );
+            entry.ts = ts;
+            sign_ed(entry, &flooder_key)
+        })
+        .collect();
+    land(&host, &flood);
+    assert_eq!(
+        host.vault.authority_fold().unwrap().worlds[&world]
+            .live
+            .len(),
+        40
+    );
+
+    set(
+        &host,
+        EditOrigin::ThisMachine,
+        world,
+        ReadLocation::OneMachine(here),
+    )
+    .unwrap();
+    let fold = host.vault.authority_fold().unwrap();
+    assert_eq!(fold.worlds[&world].live.len(), 1);
+    assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(here));
+}
+
+/// The owner's door names only the rows its standing rests on, never an
+/// unrelated main-log head. A replica that settled a handoff before a row the
+/// old root signed beside it arrived refuses that row, and still takes the
+/// owner's next edit: the world changes on both replicas (Engine ruling
+/// 2026-10-14 on Wonder P2 round 1, W4).
+#[test]
+fn a_replica_that_refused_a_fenced_row_takes_the_next_edit() {
+    let host = host();
+    let world = world_row(&host);
+    let here = enrol_here(&host);
+    let before = host.vault.authority_fold().unwrap();
+    let root = &before.roster[&host.issuer.public_key()];
+    let successor = ed_key(64);
+    let handoff = next_entry(
+        &host.issuer,
+        &before,
+        AuthorityOp::ReRoot {
+            new_device: device(authority_key_from_ed(&successor), root.roles, root.tier),
+        },
+        3,
+    )
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let replica = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    replica
+        .import_signed_authority_history(&host.vault.export_signed_authority_history().unwrap())
+        .unwrap();
+    replica
+        .put_authority_log_entry(&handoff, TimeRange { start: 3, end: 3 }, 3)
+        .unwrap();
+
+    // The old root marks another machine beside its handoff: the newest
+    // main-log head here, which the replica refuses.
+    let (other, _) = other_machine(&host, 65, MachineRole::Owned(MachineOwnership::Yours));
+    let fenced = stored_entries(&host.vault)
+        .into_iter()
+        .find(|entry| {
+            matches!(&entry.op, AuthorityOp::MachineProfile(profile) if profile.machine == other)
+        })
+        .unwrap();
+    assert!(
+        replica
+            .put_authority_log_entry(&fenced, TimeRange { start: 3, end: 3 }, 3)
+            .is_err()
+    );
+
+    set(
+        &host,
+        EditOrigin::ThisMachine,
+        world,
+        ReadLocation::OneMachine(here),
+    )
+    .unwrap();
+    let edit = stored_entries(&host.vault)
+        .into_iter()
+        .find(|entry| matches!(entry.op, AuthorityOp::WorldPrivacy(_)))
+        .unwrap();
+    assert!(
+        !edit
+            .parent_hashes
+            .contains(&authority_entry_hash(&fenced).unwrap())
+    );
+    replica
+        .put_authority_log_entry(&edit, TimeRange { start: 4, end: 4 }, 4)
+        .unwrap();
+    assert_eq!(
+        replica.world_privacy(world).unwrap().read,
+        EffectiveRead::OneMachine(here)
+    );
+    host.vault
+        .put_authority_log_entry(&handoff, TimeRange { start: 4, end: 4 }, 4)
+        .unwrap();
+    assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(here));
 }
 
 #[test]
@@ -443,11 +564,11 @@ fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
         without.valid_entries
     );
     assert!(without.machine(later).is_some_and(FoldedMachine::is_mine));
-    assert!(without.side_heads.is_empty());
-    // The second edit took the first as its parent: one side head, never a
+    assert!(without.worlds.is_empty());
+    // The second edit took the first as its parent: one live edit, never a
     // main-log head.
-    let edit = *full.side_heads[&world].first().unwrap();
-    assert_eq!(full.side_heads[&world], BTreeSet::from([edit]));
+    assert_eq!(full.worlds[&world].live.len(), 1);
+    let edit = *full.worlds[&world].live.keys().next().unwrap();
     assert!(full.append_heads.is_disjoint(&edit_hashes));
     assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(here));
 

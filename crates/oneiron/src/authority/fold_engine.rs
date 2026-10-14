@@ -386,8 +386,7 @@ fn fold_authority_log_inner(
         }
         uncounted = now_uncounted;
     };
-    (fold.append_heads, fold.side_heads) =
-        super::world_privacy::log_heads(entries, &fold.valid_entries);
+    fold.append_heads = super::world_privacy::main_log_heads(entries, &fold.valid_entries);
     for entry in entries {
         // Advance beyond even a signed rejected local entry. A new local write
         // never reuses a sequence, though independently received siblings may.
@@ -686,6 +685,13 @@ fn fold_authority_log_once(
             losers
         },
     );
+    super::world_privacy::refold_world_edits(
+        &mut states,
+        &by_hash,
+        &entry_ancestors,
+        context,
+        &mut issues,
+    );
     let retired_keys = retirements.keys();
     let mut vault_ids = BTreeSet::new();
     for state in states.values() {
@@ -700,7 +706,6 @@ fn fold_authority_log_once(
         }
         return AuthorityFold {
             append_heads: BTreeSet::new(),
-            side_heads: BTreeMap::new(),
             append_sequences: BTreeMap::new(),
             actor_revocation_affected_writers: BTreeSet::new(),
             actor_write_frontiers: BTreeMap::new(),
@@ -768,7 +773,6 @@ fn fold_authority_log_once(
 
     AuthorityFold {
         append_heads: BTreeSet::new(),
-        side_heads: BTreeMap::new(),
         append_sequences: BTreeMap::new(),
         actor_revocation_affected_writers: super::causal_write::revocation_affected_writers(
             &states,

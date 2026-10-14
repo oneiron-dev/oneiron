@@ -70,6 +70,12 @@ pub(super) struct MachineChain {
     pub(super) head: FoldedMachine,
     /// The highest revision an owner-held key signed.
     pub(super) owner_held: Option<FoldedMachine>,
+    /// While the machine is not the owner's: the world edits the revision
+    /// that took "yours" away had seen, and on concurrent branches only those
+    /// every such revision had seen. A later revision of a machine already
+    /// not the owner's took nothing away and acknowledges nothing (Wonder P2
+    /// round 1, W2).
+    pub(super) acknowledged: Option<BTreeSet<AuthorityEntryHash>>,
 }
 
 impl FoldedMachine {
@@ -152,7 +158,14 @@ pub(super) fn apply_machine_profile(
     if !admitted {
         return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
-    let head = roster_chain(state, profile.machine).map(|chain| &chain.head);
+    let chain = roster_chain(state, profile.machine);
+    let head = chain.map(|chain| &chain.head);
+    let acknowledged = match chain {
+        _ if profile.says_mine() => None,
+        Some(chain) if !chain.head.profile.says_mine() => chain.acknowledged.clone(),
+        Some(_) => Some(profile.seen_world_edits.clone()),
+        None => Some(BTreeSet::new()),
+    };
     if key_is_authority(state, &profile.machine_key)
         || machine_is_actor(state, profile.machine)
         || !profile.proof_verifies(&state.vault_id)
@@ -181,6 +194,7 @@ pub(super) fn apply_machine_profile(
         MachineChain {
             head: folded,
             owner_held,
+            acknowledged,
         },
     );
     state
@@ -212,6 +226,15 @@ fn in_host_custody(state: &FoldState, key: &AuthorityKey) -> bool {
         }
     }
     false
+}
+
+/// The world edits of `machine` the revision that took "yours" away had
+/// seen; `None` while no revision has.
+pub(super) fn acknowledged_world_edits(
+    state: &FoldState,
+    machine: EntityId,
+) -> Option<&BTreeSet<AuthorityEntryHash>> {
+    roster_chain(state, machine)?.acknowledged.as_ref()
 }
 
 fn roster_chain(state: &FoldState, machine: EntityId) -> Option<&MachineChain> {
@@ -259,6 +282,10 @@ fn merge_chain(left: &MachineChain, right: &MachineChain) -> MachineChain {
         head: merge_machine(&left.head, &right.head),
         owner_held: match (&left.owner_held, &right.owner_held) {
             (Some(left), Some(right)) => Some(merge_machine(left, right)),
+            (one, other) => one.clone().or_else(|| other.clone()),
+        },
+        acknowledged: match (&left.acknowledged, &right.acknowledged) {
+            (Some(left), Some(right)) => Some(left.intersection(right).copied().collect()),
             (one, other) => one.clone().or_else(|| other.clone()),
         },
     }

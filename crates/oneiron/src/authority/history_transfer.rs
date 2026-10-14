@@ -244,7 +244,7 @@ impl Vault {
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         // The main-log heads: a world's side entries are never a main entry's parent.
-        let parents = fold.append_heads.clone();
+        let parents = fold.append_heads;
         let seq = history
             .values()
             .filter(|(_, entry)| entry.signer_key() == &signer_key)

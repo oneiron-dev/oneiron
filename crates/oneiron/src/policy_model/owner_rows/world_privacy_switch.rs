@@ -80,51 +80,66 @@ impl Vault {
                 .device_only_flag_lock
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            let change =
-                self.append_world_privacy_edit_in_txn(txn, owner.actor(), origin, world, settings)?;
-            let last = RECEIPTS
-                .iter_rev_from(&self.store, txn, &[])?
-                .next()
-                .transpose()?
-                .map(|(revision, _)| revision);
-            let revision = match last {
-                None => 1,
-                Some(revision) => revision.checked_add(1).ok_or(Error::InvariantViolation(
-                    "world privacy receipt revision overflow",
-                ))?,
-            };
-            let receipt = WorldPrivacyReceipt {
-                receipt_id: self.store.clock.entity_id()?.to_hex(),
-                revision,
-                world: world.to_hex(),
-                author: owner.actor().to_hex(),
-                machine: change.machine.to_hex(),
-                previous: change.previous,
-                next: change.next,
-                entry_hash: change
-                    .entry_hash
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect(),
-                orphaned_from: change.orphaned_from.iter().map(EntityId::to_hex).collect(),
-                at: self.instant_in_txn(txn)?.secs(),
-            };
-            RECEIPTS.put(&self.store, txn, &revision, &receipt)?;
-            put_event_in_txn(
-                self,
-                txn,
-                &PolicyChangedEvent {
-                    kind: WORLD_PRIVACY_CHANGED.to_owned(),
-                    receipt_id: receipt.receipt_id.clone(),
-                    author: receipt.author.clone(),
-                    scope: Some(PolicyRowScope::World(receipt.world.clone())),
-                    target: None,
-                    at: receipt.at,
-                },
-            )?;
+            let receipt = self.set_world_privacy_in_txn(txn, owner, origin, world, settings)?;
             Ok((release, receipt))
         })?;
+        Ok(receipt)
+    }
+
+    /// The door's work in the caller's write transaction, for a door that
+    /// does more in the same commit: the caller holds the release lock until
+    /// the commit is durable.
+    pub(crate) fn set_world_privacy_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        origin: EditOrigin,
+        world: EntityId,
+        settings: WorldPrivacy,
+    ) -> Result<WorldPrivacyReceipt> {
+        owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let change =
+            self.append_world_privacy_edit_in_txn(txn, owner.actor(), origin, world, settings)?;
+        let last = RECEIPTS
+            .iter_rev_from(&self.store, txn, &[])?
+            .next()
+            .transpose()?
+            .map(|(revision, _)| revision);
+        let revision = match last {
+            None => 1,
+            Some(revision) => revision.checked_add(1).ok_or(Error::InvariantViolation(
+                "world privacy receipt revision overflow",
+            ))?,
+        };
+        let receipt = WorldPrivacyReceipt {
+            receipt_id: self.store.clock.entity_id()?.to_hex(),
+            revision,
+            world: world.to_hex(),
+            author: owner.actor().to_hex(),
+            machine: change.machine.to_hex(),
+            previous: change.previous,
+            next: change.next,
+            entry_hash: change
+                .entry_hash
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+            orphaned_from: change.orphaned_from.iter().map(EntityId::to_hex).collect(),
+            at: self.instant_in_txn(txn)?.secs(),
+        };
+        RECEIPTS.put(&self.store, txn, &revision, &receipt)?;
+        put_event_in_txn(
+            self,
+            txn,
+            &PolicyChangedEvent {
+                kind: WORLD_PRIVACY_CHANGED.to_owned(),
+                receipt_id: receipt.receipt_id.clone(),
+                author: receipt.author.clone(),
+                scope: Some(PolicyRowScope::World(receipt.world.clone())),
+                target: None,
+                at: receipt.at,
+            },
+        )?;
         Ok(receipt)
     }
 

@@ -112,39 +112,102 @@ impl Vault {
             ));
         }
         let signer = AuthorityKey::Ed25519(public_key);
-        let seq = match fold.append_sequences.get(&signer) {
+        let mut seq = match fold.append_sequences.get(&signer) {
             None => 1,
             Some(seq) => seq.checked_add(1).ok_or_else(invalid_authority)?,
         };
-        let mut parents: BTreeSet<AuthorityEntryHash> = fold.append_heads.clone();
-        if let Some(side) = fold.side_heads.get(&world) {
-            parents.extend(side.iter().copied());
-        }
         let now = self.instant_in_txn(txn)?.secs();
-        let mut entry = AuthorityLogEntry {
-            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
-            vault_id: fold.vault_id,
-            seq,
-            parent_hashes: parents.into_iter().collect(),
-            op: AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
-                world,
-                owner,
-                machine,
-                settings,
-            }),
-            signer: AuthoritySignature {
-                suite: AuthoritySignatureSuite::Ed25519,
-                public_key: signer,
-                signature: vec![0; 64],
-            },
-            cosigns: Vec::new(),
-            ts: now,
+        let sign = |seq, parents: BTreeSet<AuthorityEntryHash>, settings| {
+            let mut entry = AuthorityLogEntry {
+                schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+                vault_id: fold.vault_id,
+                seq,
+                parent_hashes: parents.into_iter().collect(),
+                op: AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
+                    world,
+                    owner,
+                    machine,
+                    settings,
+                }),
+                signer: AuthoritySignature {
+                    suite: AuthoritySignatureSuite::Ed25519,
+                    public_key: signer.clone(),
+                    signature: vec![0; 64],
+                },
+                cosigns: Vec::new(),
+                ts: now,
+            };
+            entry.signer.signature = key.sign(&authority_transcript(&entry)?).to_bytes().to_vec();
+            Ok::<_, Error>(entry)
         };
-        entry.signer.signature = key.sign(&authority_transcript(&entry)?).to_bytes().to_vec();
+        // The edit names only the rows its standing rests on: the head
+        // revisions of this machine, of each machine the world's read names
+        // and of a one-machine target. An unrelated main-log head adds no
+        // safety, and one a handoff later fences would wedge a replica that
+        // refused it (Engine ruling 2026-10-14 on Wonder P2 round 1, W4).
+        let roster_read = fold.world_roster_read(world);
+        let named = match &roster_read {
+            EffectiveRead::OneMachine(only) => BTreeSet::from([*only]),
+            EffectiveRead::Conflicted { contenders } => contenders.clone(),
+            EffectiveRead::Everywhere | EffectiveRead::MyMachines => BTreeSet::new(),
+        };
+        let target = match settings.read {
+            ReadLocation::OneMachine(target) => Some(target),
+            ReadLocation::MyMachines | ReadLocation::Everywhere => None,
+        };
+        let standing_rows: BTreeSet<AuthorityEntryHash> = std::iter::once(machine)
+            .chain(named)
+            .chain(target)
+            .filter_map(|id| fold.machine(id).map(|folded| folded.entry))
+            .collect();
+        // The edit replaces the live edits it names; a refused edit replaces
+        // nothing and is never named. More than one entry may name are
+        // replaced a share at a time, each share's edit picking this machine
+        // alone, which keeps its standing, and the last edit carries the
+        // owner's settings. The first share leads with the edits that pick this
+        // machine, so a contender stays one (Wonder P2 round 1, W5).
+        let mut live = Vec::new();
+        for hash in fold
+            .worlds
+            .get(&world)
+            .into_iter()
+            .flat_map(|folded| folded.live.keys())
+        {
+            let picks_this = stored_authority_row(&self.store, txn, hash)?.is_some_and(|row| {
+                matches!(row.op, AuthorityOp::WorldPrivacy(edit)
+                    if edit.settings.read == ReadLocation::OneMachine(machine))
+            });
+            live.push((!picks_this, *hash));
+        }
+        live.sort_unstable();
+        let mut live = live.into_iter().map(|(_, hash)| hash);
+        let mut entries = Vec::new();
+        let mut parents = standing_rows.clone();
+        while parents.len() + live.len() > MAX_PARENTS {
+            let room = MAX_PARENTS
+                .checked_sub(parents.len())
+                .filter(|room| *room > 0)
+                .ok_or_else(invalid_authority)?;
+            parents.extend(live.by_ref().take(room));
+            let share = sign(
+                seq,
+                std::mem::replace(&mut parents, standing_rows.clone()),
+                WorldPrivacy {
+                    read: ReadLocation::OneMachine(machine),
+                    ..settings.clone()
+                },
+            )?;
+            parents.insert(authority_entry_hash(&share)?);
+            seq = seq.checked_add(1).ok_or_else(invalid_authority)?;
+            entries.push(share);
+        }
+        parents.extend(live);
+        let entry = sign(seq, parents, settings)?;
         let entry_hash = authority_entry_hash(&entry)?;
+        entries.push(entry);
         let previous = fold.world_privacy(world);
         let orphaned_from = if standing == WorldEditStanding::RepicksOrphan {
-            super::world_privacy::orphaned_from(&previous.read, |id| {
+            super::world_privacy::orphaned_from(&roster_read, |id| {
                 fold.machine(id)
                     .is_some_and(super::world_privacy::mine_by_roster)
             })
@@ -155,7 +218,8 @@ impl Vault {
             start: now,
             end: now,
         };
-        self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
+        let rows: Vec<_> = entries.into_iter().map(|entry| (entry, at, now)).collect();
+        self.put_authority_log_entries_in_txn(txn, &rows)?;
         let after = self.authority_view_readonly_in_txn(txn)?;
         if !after
             .worlds

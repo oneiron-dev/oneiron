@@ -17,12 +17,17 @@
 //! does an edit whose machine the roster rule admits but this install does
 //! not count: losing standing never widens a world.
 //!
+//! Which edits stand is judged on the meet the roster rule alone gives, the
+//! same on every install. This install's counting makes the settings it reads
+//! stricter and never decides who may edit: a stricter meet can name more
+//! contenders, and a contender may edit (Sol P2 round 4, F1).
+//!
 //! A world whose read names no machine still the owner's is orphaned: any
 //! machine of the owner's that stores it may re-pick it. A re-pick only makes
 //! the world editable again; bringing its rows back is a restore's job.
-//! Whether a world is orphaned is judged on the machines this install counts,
-//! as the owner's door judges it, so a holder stale here leaves its world to
-//! be re-picked.
+//! Whether a world is orphaned is judged by the roster rule too, so a holder
+//! stale on one install keeps its world until the owner removes or re-marks
+//! it.
 //!
 //! An edit is valid when some chain of its machine's revisions admits the
 //! machine as the owner's under the key that signed it: each admitter vouches
@@ -31,10 +36,11 @@
 //! Under a conflicted vault root no world's settings can be known, so every
 //! world reads as readable nowhere and the withheld set cannot be named.
 //!
-//! Edits are per-world side entries. An entry for world W takes main-log heads
-//! and W's own side heads as parents and is never a parent of a main-log entry
-//! or of another world's entry, so a replica that may not hold W folds the
-//! main log without W's entries.
+//! Edits are per-world side entries. An entry for world W takes as parents
+//! the head revisions its standing rests on (its machine's, each machine W's
+//! read names, a one-machine target's) and W's live edits. It is never a
+//! parent of a main-log entry or of another world's entry, so a replica that
+//! may not hold W folds the main log without W's entries.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -42,7 +48,7 @@ use std::sync::Arc;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
-use super::machine_profile::{derived_chains, derived_machine};
+use super::machine_profile::{acknowledged_world_edits, derived_chains, derived_machine};
 use super::*;
 
 /// Where a world may be read, after every live edit is met.
@@ -110,6 +116,9 @@ pub struct FoldedWorld {
     /// Each live edit and the machine that signed it.
     pub live: BTreeMap<AuthorityEntryHash, EntityId>,
     pub effective: EffectiveWorldPrivacy,
+    /// The read the roster rule alone gives, the same on every install. Who
+    /// may edit the world is judged on it, never on `effective`.
+    pub roster_read: EffectiveRead,
 }
 
 impl AuthorityFold {
@@ -173,10 +182,23 @@ impl AuthorityFold {
         world: EntityId,
     ) -> Option<WorldEditStanding> {
         edit_standing(
-            &self.world_privacy(world).read,
+            &self.world_roster_read(world),
             machine,
             |id| self.machine(id).is_some_and(FoldedMachine::is_mine),
             |id| self.machine(id).is_some_and(mine_by_roster),
+        )
+    }
+
+    /// The read the roster rule alone gives `world`, which decides who may
+    /// edit it. A conflicted vault root fails closed, as for the settings.
+    #[must_use]
+    pub fn world_roster_read(&self, world: EntityId) -> EffectiveRead {
+        if self.vault_root_is_conflicted() {
+            return EffectiveWorldPrivacy::unknowable().read;
+        }
+        self.worlds.get(&world).map_or_else(
+            || EffectiveWorldPrivacy::default().read,
+            |folded| folded.roster_read.clone(),
         )
     }
 }
@@ -196,9 +218,9 @@ pub(super) fn mine_by_roster(folded: &FoldedMachine) -> bool {
     .is_mine()
 }
 
-/// `is_mine` judges the editor, `named_mine` the machines the world's read
-/// names, both by the roster rule in the fold. The door judges its own
-/// machine as this install counts it, which only refuses more.
+/// `read` is the roster rule's. `is_mine` judges the editor, `named_mine` the
+/// machines the read names, both by the roster rule in the fold. The door
+/// judges its own machine as this install counts it, which only refuses more.
 fn edit_standing(
     read: &EffectiveRead,
     machine: EntityId,
@@ -334,6 +356,15 @@ impl PrivacyMeet {
     }
 }
 
+/// Whose counting a world's meet follows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Counting {
+    /// The roster rule alone, the same on every install: which edits stand.
+    Roster,
+    /// This install's, which only weakens: the settings this install reads.
+    Install,
+}
+
 /// One accepted edit of a world.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct FrontierEdit {
@@ -382,14 +413,21 @@ fn is_mine(state: &FoldState, machine: EntityId) -> bool {
 /// counted the machine when the edit was made. A revision that still says
 /// "yours" took nothing away: when it stops standing for another reason (its
 /// signer found in a host's custody) it acknowledges no edit (Sol P2 round 3,
-/// F2).
-fn full_strength(state: &FoldState, hash: &AuthorityEntryHash, edit: &FrontierEdit) -> bool {
-    !edit.narrow_only
+/// F2). Nor does a later revision of a machine already not the owner's, such
+/// as a removal after a demotion (Wonder P2 round 1, W2).
+fn full_strength(
+    state: &FoldState,
+    hash: &AuthorityEntryHash,
+    edit: &FrontierEdit,
+    counting: Counting,
+) -> bool {
+    (counting == Counting::Roster || !edit.narrow_only)
         && derived_machine(state, edit.machine).is_some_and(|folded| {
             folded.is_mine()
                 || (!folded.conflicted
                     && !folded.profile.says_mine()
-                    && folded.profile.seen_world_edits.contains(hash)
+                    && acknowledged_world_edits(state, edit.machine)
+                        .is_some_and(|seen| seen.contains(hash))
                     && (!folded.removed || folded.profile.role == MachineRole::Removed))
         })
 }
@@ -404,9 +442,10 @@ fn contribution(
     frontier: &WorldFrontier,
     hash: AuthorityEntryHash,
     edit: &FrontierEdit,
+    counting: Counting,
 ) -> PrivacyMeet {
     let mut meet = PrivacyMeet::of(&edit.settings);
-    if full_strength(state, &hash, edit) {
+    if full_strength(state, &hash, edit, counting) {
         return meet;
     }
     let mut visited = BTreeSet::from([hash]);
@@ -427,7 +466,7 @@ fn contribution(
                 continue;
             };
             meet = meet.meet(&PrivacyMeet::of(&prior.settings));
-            if !full_strength(state, replaced, prior) {
+            if !full_strength(state, replaced, prior, counting) {
                 pending.push(prior);
             }
         }
@@ -435,12 +474,12 @@ fn contribution(
     meet
 }
 
-fn world_meet(state: &FoldState, world: EntityId) -> PrivacyMeet {
+fn world_meet(state: &FoldState, world: EntityId, counting: Counting) -> PrivacyMeet {
     let mut contributions = state.worlds.get(&world).into_iter().flat_map(|frontier| {
         frontier
             .live
             .iter()
-            .map(|(hash, edit)| contribution(state, frontier, *hash, edit))
+            .map(|(hash, edit)| contribution(state, frontier, *hash, edit, counting))
     });
     let first = contributions
         .next()
@@ -449,7 +488,7 @@ fn world_meet(state: &FoldState, world: EntityId) -> PrivacyMeet {
 }
 
 fn may_edit(state: &FoldState, machine: EntityId, world: EntityId) -> bool {
-    let read = world_meet(state, world).effective().read;
+    let read = world_meet(state, world, Counting::Roster).effective().read;
     let is_mine = |id| is_mine(state, id);
     edit_standing(&read, machine, is_mine, is_mine).is_some()
 }
@@ -511,6 +550,98 @@ pub(super) fn apply_world_privacy(
     Ok(())
 }
 
+/// Settlement drops every row above a main-log row it refuses (a concurrent
+/// tier floor, a retired signer's fence, a confirmation collision, an
+/// unsettled handoff), and the door names every main-log head as a parent, so
+/// a world's edits would fall with an unrelated row and the world would read
+/// wider than the owner set it (Wonder P2 round 1, W1). A world edit is judged
+/// on the main log as the fold keeps it: every edit above a main-log row the
+/// fold did not keep is folded again, in causal order, with each such row
+/// crossed, never applied. An edit invalid on its own stays invalid.
+pub(super) fn refold_world_edits(
+    states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
+    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    context: FoldContext<'_>,
+    issues: &mut Vec<AuthorityFoldIssue>,
+) {
+    let causal = |hashes: BTreeSet<AuthorityEntryHash>| {
+        let mut hashes: Vec<_> = hashes.into_iter().collect();
+        hashes.sort_by_key(|hash| (ancestors.get(hash).map_or(0, BTreeSet::len), *hash));
+        hashes
+    };
+    let crossable = |hash: &AuthorityEntryHash| {
+        !states.contains_key(hash)
+            && by_hash
+                .get(hash)
+                .is_some_and(|entry| side_world(&entry.op).is_none())
+    };
+    let lost = causal(
+        by_hash
+            .iter()
+            .filter(|(hash, entry)| {
+                side_world(&entry.op).is_some()
+                    && !states.contains_key(*hash)
+                    && ancestors
+                        .get(*hash)
+                        .is_some_and(|past| past.iter().any(crossable))
+            })
+            .map(|(hash, _)| *hash)
+            .collect(),
+    );
+    if lost.is_empty() {
+        return;
+    }
+    // A main-log row the fold did not keep stands for the merge of its
+    // parents, each kept or crossed in turn.
+    let crossed = causal(
+        lost.iter()
+            .filter_map(|hash| ancestors.get(hash))
+            .flatten()
+            .filter(|hash| crossable(hash))
+            .copied()
+            .collect(),
+    );
+    let mut stand_ins = BTreeMap::<AuthorityEntryHash, FoldState>::new();
+    for hash in crossed {
+        let mut parents = by_hash[&hash]
+            .parent_hashes
+            .iter()
+            .map(|parent| states.get(parent).or_else(|| stand_ins.get(parent)));
+        let merged = parents.next().flatten().and_then(|first| {
+            parents.try_fold(first.clone(), |merged, next| {
+                next.map(|state| merge_states(&merged, state))
+            })
+        });
+        if let Some(state) = merged {
+            stand_ins.insert(hash, state);
+        }
+    }
+    for hash in lost {
+        let entry = &by_hash[&hash];
+        let parents: BTreeMap<_, _> = entry
+            .parent_hashes
+            .iter()
+            .filter_map(|parent| {
+                states
+                    .get(parent)
+                    .or_else(|| stand_ins.get(parent))
+                    .map(|state| (*parent, state.clone()))
+            })
+            .collect();
+        if let EntryFold::Ready(state) = fold_entry_state(entry, hash, &parents, context) {
+            states.insert(hash, state);
+            issues.retain(|issue| {
+                !matches!(issue,
+                    AuthorityFoldIssue::InvalidEntry(row)
+                    | AuthorityFoldIssue::InvalidAncestry(row)
+                    | AuthorityFoldIssue::SignerNotInAncestry(row)
+                    | AuthorityFoldIssue::NonMonotonicSeq(row) if *row == hash)
+            });
+        }
+    }
+}
+
 /// The fold's public view of every edited world.
 pub(super) fn folded_worlds(state: &FoldState) -> BTreeMap<EntityId, FoldedWorld> {
     state
@@ -525,7 +656,8 @@ pub(super) fn folded_worlds(state: &FoldState) -> BTreeMap<EntityId, FoldedWorld
                         .iter()
                         .map(|(hash, edit)| (*hash, edit.machine))
                         .collect(),
-                    effective: world_meet(state, *world).effective(),
+                    effective: world_meet(state, *world, Counting::Install).effective(),
+                    roster_read: world_meet(state, *world, Counting::Roster).effective().read,
                 },
             )
         })
@@ -561,45 +693,26 @@ pub(super) fn side_branch_violations(
         .collect()
 }
 
-/// The heads new entries take as parents: the main-log heads, which no valid
-/// main-log entry names, and each world's side heads, which no valid entry of
-/// that world names. A side entry naming a main-log entry does not retire it
-/// as a head.
-pub(super) fn log_heads(
+/// The heads a new main-log entry takes as parents: the valid main-log
+/// entries no valid main-log entry names. A side entry naming a main-log entry
+/// does not retire it as a head.
+pub(super) fn main_log_heads(
     entries: &[AuthorityLogEntry],
     valid: &BTreeSet<AuthorityEntryHash>,
-) -> (
-    BTreeSet<AuthorityEntryHash>,
-    BTreeMap<EntityId, BTreeSet<AuthorityEntryHash>>,
-) {
+) -> BTreeSet<AuthorityEntryHash> {
     let mut main = BTreeSet::new();
-    let mut side = BTreeMap::<EntityId, BTreeSet<AuthorityEntryHash>>::new();
-    let mut named_by_main = BTreeSet::new();
-    let mut named_by_side = BTreeSet::new();
+    let mut named = BTreeSet::new();
     for entry in entries {
         let Ok(hash) = authority_entry_hash(entry) else {
             continue;
         };
-        if !valid.contains(&hash) {
-            continue;
-        }
-        let parents = entry.parent_hashes.iter().copied();
-        match side_world(&entry.op) {
-            None => {
-                main.insert(hash);
-                named_by_main.extend(parents);
-            }
-            Some(world) => {
-                side.entry(world).or_default().insert(hash);
-                named_by_side.extend(parents);
-            }
+        if valid.contains(&hash) && side_world(&entry.op).is_none() {
+            main.insert(hash);
+            named.extend(entry.parent_hashes.iter().copied());
         }
     }
-    main.retain(|hash| !named_by_main.contains(hash));
-    for heads in side.values_mut() {
-        heads.retain(|hash| !named_by_side.contains(hash));
-    }
-    (main, side)
+    main.retain(|hash| !named.contains(hash));
+    main
 }
 
 /// The live world edits `machine` signed: what a new profile revision lists
