@@ -436,6 +436,8 @@ fn promote_one(
                 vault.store.clock.now_recorded_at(),
                 auto_write_rate,
             )?;
+            #[cfg(test)]
+            crate::own_rate::counted_auto_write(crate::own_rate::AutoWriteDoor::Promotion);
         }
         // The MESSAGE words the evidence names become this claim's
         // dependencies in the claim's own transaction.

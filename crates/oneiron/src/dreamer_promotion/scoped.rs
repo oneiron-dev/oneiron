@@ -377,5 +377,7 @@ fn attach_ref(
         vault.store.clock.now_recorded_at(),
         auto_write_rate,
     )?;
+    #[cfg(test)]
+    crate::own_rate::counted_auto_write(crate::own_rate::AutoWriteDoor::Attachment);
     evidence.record_message_dependencies_in_txn(vault, txn, &id)
 }

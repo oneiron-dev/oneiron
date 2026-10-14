@@ -875,3 +875,134 @@ fn a_connect_past_the_daily_cap_is_held_on_an_unchanged_snapshot()
     assert_eq!(next_day.transport().calls.len(), 1);
     Ok(())
 }
+
+/// How a connect meets the admission ceiling.
+#[derive(Clone, Copy, Debug)]
+enum CeilingPath {
+    /// A connect with no row yet.
+    FreshSend,
+    /// A Pending retry whose admission aged out of the rolling day and whose
+    /// replay resends: its first try failed before sending.
+    AgedResend,
+}
+
+/// F26 H359, the ceiling's invariant: a cap only adds a hold to a send
+/// governance would let out. Every path that meets the ceiling, under live
+/// governance that allows it or denies it (a suspended connector key), with
+/// today's cap of one full or not: a denial is the gate-denied suppression it
+/// is everywhere, never a retryable hold; a full cap holds an allowed send,
+/// and a held retry stays the Pending row it was; room lets it out. Nothing
+/// held or denied reaches the provider.
+#[test]
+fn a_ceiling_only_holds_a_send_governance_lets_out()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let jane = "linkedin:member:jane-doe";
+    let john = "linkedin:member:john-roe";
+    let today = 1_060 + 86_401;
+    for path in [CeilingPath::FreshSend, CeilingPath::AgedResend] {
+        for denied in [false, true] {
+            for full in [false, true] {
+                let (_tmp, vault, actor) = connect_fixture()?;
+                let key_id = entity(0xC5);
+                vault.register_connector_key(
+                    &key_id,
+                    crate::connector_key::ConnectorKeyRecord::active(
+                        LINKEDIN_CHANNEL,
+                        None,
+                        Vec::new(),
+                        1_000,
+                    ),
+                )?;
+                if let CeilingPath::AgedResend = path {
+                    let mut failing = LinkedInMcpVerifiedConnectSink::new(
+                        linkedin_adapter()?,
+                        ConnectTransport {
+                            calls: Vec::new(),
+                            reads: Vec::new(),
+                            observations: [Err("profile_read_down".to_owned())].into(),
+                            send_result: Ok(serde_json::json!({"success": true})),
+                        },
+                    )
+                    .with_plan(
+                        "intent:cl:jane",
+                        LinkedInVerifiedConnectPlan::new(jane, None)?
+                            .with_max_observation_attempts(1)?,
+                    )?;
+                    let _first_try = connect_dispatch_at(
+                        &vault,
+                        actor.clone(),
+                        "receipt:cl:jane:first",
+                        "intent:cl:jane",
+                        jane,
+                        &mut failing,
+                        Some(daily_connect_cap_of_one()?),
+                        1_060,
+                    );
+                    assert!(failing.transport().calls.is_empty());
+                }
+                if full {
+                    let mut filler = capped_connect_sink("intent:cl:john", john)?;
+                    let filled = connect_dispatch_at(
+                        &vault,
+                        actor.clone(),
+                        "receipt:cl:john",
+                        "intent:cl:john",
+                        john,
+                        &mut filler,
+                        Some(daily_connect_cap_of_one()?),
+                        today,
+                    )?;
+                    assert_ne!(filled.outcome, OutboundDispatchOutcome::Held);
+                    assert_eq!(filler.transport().calls.len(), 1, "today's cap is full");
+                }
+                if denied {
+                    vault.suspend_connector_key(&key_id, "owner paused the seat", today)?;
+                }
+                let mut sink = capped_connect_sink("intent:cl:jane", jane)?;
+                let result = connect_dispatch_at(
+                    &vault,
+                    actor.clone(),
+                    "receipt:cl:jane:retry",
+                    "intent:cl:jane",
+                    jane,
+                    &mut sink,
+                    Some(daily_connect_cap_of_one()?),
+                    today + 1,
+                )?;
+                let case = format!("{path:?}, denied: {denied}, full: {full}");
+                let field = |name: &str| result.receipt.fields.get(name).map(String::as_str);
+                match (denied, full) {
+                    (true, _) => {
+                        assert_eq!(
+                            result.outcome,
+                            OutboundDispatchOutcome::Suppressed,
+                            "FAILBEFORE H359 ({case}): a live denial came back as a retryable hold"
+                        );
+                        assert_eq!(field("suppression"), Some("gate_denied"), "{case}");
+                    }
+                    (false, true) => {
+                        assert_eq!(result.outcome, OutboundDispatchOutcome::Held, "{case}");
+                        if let CeilingPath::AgedResend = path {
+                            assert_eq!(
+                                field("intent_state"),
+                                Some(crate::outbound_intent_ledger::IntentState::Pending.as_str()),
+                                "{case}: the held retry is still the Pending row it was"
+                            );
+                        }
+                    }
+                    (false, false) => {
+                        assert_ne!(result.outcome, OutboundDispatchOutcome::Held, "{case}");
+                        assert_eq!(sink.transport().calls.len(), 1, "{case}: room lets it out");
+                    }
+                }
+                if denied || full {
+                    assert!(
+                        sink.transport().calls.is_empty(),
+                        "{case}: nothing reached the provider"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}

@@ -261,6 +261,8 @@ impl Vault {
                     self.store.clock.now_recorded_at(),
                     auto_write_rate,
                 )?;
+                #[cfg(test)]
+                crate::own_rate::counted_auto_write(crate::own_rate::AutoWriteDoor::DeferredGrant);
             }
             then(txn)?;
             Ok((decision, closure_decision))

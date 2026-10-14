@@ -51,7 +51,8 @@ fn parked_refusal(
 /// durable-Pending → transport order.
 /// Holds a send its admission ceiling stops: the decision is recorded and
 /// nothing is admitted. Held before admission, so the owner's approval stays
-/// unspent.
+/// unspent. A live denial is not the ceiling's to hold: it comes back as the
+/// denial it is, with no ceiling count, as on every other path.
 fn ceiling_hold(
     vault: &Vault,
     mut wtxn: heed::RwTxn<'_>,
@@ -65,8 +66,9 @@ fn ceiling_hold(
         gate::record_held_external_effect_policy(&vault.store, &mut wtxn, &effect, &policy)?;
     wtxn.commit().map_err(Error::from)?;
     vault.store.notify_attempt_observers();
+    let denied = decision.outcome() == GateOutcome::Deny;
     let mut result = gate_rejection(intent_id, decision_id, decision);
-    result.ceiling_count = Some(count);
+    result.ceiling_count = (!denied).then_some(count);
     Ok(result)
 }
 
@@ -75,9 +77,10 @@ fn ceiling_hold(
 /// whose replay will enter transport, is a send in today's window: it is held
 /// at a full ceiling, and otherwise renewed under this writer lock before
 /// transport, so a concurrent send counts it. A held retry keeps the row's
-/// Pending state and resolution. A replay that never sends (an outcome-free
-/// row that cannot be resent) is left to its own settlement. Returns the
-/// hold, or `None` with the transaction settled.
+/// Pending state and resolution; a live denial is not held, and takes the
+/// rejection path every other denial takes. A replay that never sends (an
+/// outcome-free row that cannot be resent) is left to its own settlement.
+/// Returns the hold or denial, or `None` with the transaction settled.
 fn renew_aged_admission(
     vault: &Vault,
     mut wtxn: heed::RwTxn<'_>,
@@ -108,9 +111,11 @@ fn renew_aged_admission(
         let count = ceiling.prior.max(admitted);
         if count >= ceiling.cap {
             let mut held = ceiling_hold(vault, wtxn, intent_id, prepared, count)?;
-            let pending = effect_result(record, None, true, None);
-            held.resolution = pending.resolution;
-            held.dispatch = pending.dispatch;
+            if held.ceiling_count.is_some() {
+                let pending = effect_result(record, None, true, None);
+                held.resolution = pending.resolution;
+                held.dispatch = pending.dispatch;
+            }
             return Ok(Some(held));
         }
         crate::outbound_intent_ledger::renew_admission_in_txn(vault, &mut wtxn, record, now_ms)?;

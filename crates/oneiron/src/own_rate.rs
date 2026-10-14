@@ -71,6 +71,55 @@ pub(crate) fn auto_write_rate() -> OwnRate {
     AUTO_WRITE
 }
 
+/// Declares [`AutoWriteDoor`] and its `ALL` list from one list of doors, so
+/// the check that walks the list cannot miss a door the enum names.
+#[cfg(test)]
+macro_rules! auto_write_doors {
+    ($($(#[doc = $doc:literal])* $door:ident,)*) => {
+        /// Every door through which the Dreamer's consolidation writer lands
+        /// an Auto claim. Each counts its write on the Dreamer actor's
+        /// window and names itself here as it does.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub(crate) enum AutoWriteDoor {
+            $($(#[doc = $doc])* $door,)*
+        }
+
+        impl AutoWriteDoor {
+            pub(crate) const ALL: &'static [Self] = &[$(Self::$door,)*];
+        }
+    };
+}
+
+#[cfg(test)]
+auto_write_doors! {
+    /// `promote_one`: unscoped and scoped promotions, and the conflict closes
+    /// routed through them.
+    Promotion,
+    /// `attach_ref`: a new evidence assertion on a claim that already stands.
+    Attachment,
+    /// `grant_deferred_claim_auto_after`: a replacement a Dreamer run parked,
+    /// granted Auto through the public or the scoped grant door.
+    DeferredGrant,
+}
+
+#[cfg(test)]
+thread_local! {
+    static COUNTED_AUTO_WRITES: std::cell::RefCell<Vec<AutoWriteDoor>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Notes that `door` just counted an Auto write.
+#[cfg(test)]
+pub(crate) fn counted_auto_write(door: AutoWriteDoor) {
+    COUNTED_AUTO_WRITES.with(|doors| doors.borrow_mut().push(door));
+}
+
+/// The doors that counted on this thread since the last call.
+#[cfg(test)]
+pub(crate) fn take_counted_auto_writes() -> Vec<AutoWriteDoor> {
+    COUNTED_AUTO_WRITES.with(|doors| std::mem::take(&mut *doors.borrow_mut()))
+}
+
 /// OF-520 question at an own actor's first threshold crossing in one window.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
