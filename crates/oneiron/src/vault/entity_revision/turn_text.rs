@@ -32,6 +32,7 @@ use super::{ReadMode, RevisionRef};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::error::Result;
 use crate::side_table::{self, HexId, Named, SideTable};
+use crate::store::ManifestDbs;
 use crate::{EntityId, Vault};
 use heed::RoTxn;
 
@@ -85,28 +86,29 @@ impl TurnText {
 /// pins them. A pin at one of the row's own revisions reads the current
 /// words; a pin at a text revision reads the words it was served with, or
 /// nothing once they can no longer be found. `None` also for a turn that is
-/// gone or archived.
+/// gone or archived. `store` is the content read: the vault's own, or a
+/// room's view, whose turns and messages compose with base.
 pub(crate) fn served_turn_text_in_txn(
     vault: &Vault,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     turn: &EntityId,
     mode: ReadMode,
 ) -> Result<Option<TurnText>> {
     let row = match mode {
         ReadMode::Pinned(revision) => {
-            if !entity_owns_revision_in_txn(&vault.store, txn, turn, revision)? {
-                return Ok(resolve_in_txn(vault, txn, turn, revision)?
+            if !entity_owns_revision_in_txn(store, txn, turn, revision)? {
+                return Ok(resolve_in_txn(vault, store, txn, turn, revision)?
                     .map(|(_, messages)| TurnText { revision, messages }));
             }
             revision
         }
         ReadMode::Live | ReadMode::Indexed => {
-            let Some(raw) =
-                crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, turn)?
+            let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, turn)?
             else {
                 return Ok(None);
             };
-            state(&vault.store, txn, turn)?.map_or_else(
+            state(store, txn, turn)?.map_or_else(
                 || reference(turn, &raw),
                 |current| match mode {
                     ReadMode::Indexed => current.indexed,
@@ -115,7 +117,7 @@ pub(crate) fn served_turn_text_in_txn(
             )
         }
     };
-    let Some(sources) = current_sources_in_txn(vault, txn, turn)? else {
+    let Some(sources) = current_sources_in_txn(vault, store, txn, turn)? else {
         return Ok(None);
     };
     let revision = if sources.is_empty() {
@@ -141,11 +143,12 @@ pub(crate) fn served_turn_text_in_txn(
 /// revision of it the vault retains still resolves.
 pub(crate) fn turn_row_for_text_revision_in_txn(
     vault: &Vault,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     turn: &EntityId,
     revision: RevisionRef,
 ) -> Result<Option<RevisionRef>> {
-    Ok(resolve_in_txn(vault, txn, turn, revision)?.map(|(row, _)| row))
+    Ok(resolve_in_txn(vault, store, txn, turn, revision)?.map(|(row, _)| row))
 }
 
 /// One state of a source message: what a text revision commits to for it,
@@ -159,6 +162,7 @@ struct SourceState {
 /// sources first, then each set its sources' retained states can make.
 fn resolve_in_txn(
     vault: &Vault,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     turn: &EntityId,
     revision: RevisionRef,
@@ -166,11 +170,11 @@ fn resolve_in_txn(
     if revision.0[..2] != turn_hint(turn) {
         return Ok(None);
     }
-    let rows = row_revisions_starting_with_in_txn(&vault.store, txn, turn, revision.0[2])?;
+    let rows = row_revisions_starting_with_in_txn(store, txn, turn, revision.0[2])?;
     if rows.is_empty() {
         return Ok(None);
     }
-    let Some(members) = crate::tagging::turn_members_in_txn(vault, txn, turn)? else {
+    let Some(members) = crate::tagging::turn_members_in_txn(vault, store, txn, turn)? else {
         return Ok(None);
     };
     let target = Target {
@@ -180,7 +184,7 @@ fn resolve_in_txn(
     };
     let mut current = Vec::with_capacity(members.len());
     for (id, text) in members {
-        let state = current_state_in_txn(vault, txn, &id, text)?;
+        let state = current_state_in_txn(vault, store, txn, &id, text)?;
         current.push((id, state));
     }
     let now: Vec<_> = current
@@ -197,7 +201,7 @@ fn resolve_in_txn(
     HISTORY_SEARCHES.with(|count| count.set(count.get() + 1));
     let mut sources = Vec::with_capacity(current.len());
     for (id, state) in current {
-        sources.push(source_in_txn(vault, txn, id, state)?);
+        sources.push(source_in_txn(vault, store, txn, id, state)?);
     }
     Ok(target.search(&sources))
 }
@@ -301,24 +305,31 @@ fn next_pick(picks: &mut [usize], choices: &[Vec<Option<usize>>]) -> bool {
 /// current state. `None` for a turn that is gone or archived.
 fn current_sources_in_txn(
     vault: &Vault,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<Vec<(EntityId, SourceState)>>> {
-    let Some(members) = crate::tagging::turn_members_in_txn(vault, txn, turn)? else {
+    let Some(members) = crate::tagging::turn_members_in_txn(vault, store, txn, turn)? else {
         return Ok(None);
     };
     let mut sources = Vec::with_capacity(members.len());
     for (id, text) in members {
-        if let Some(state) = current_state_in_txn(vault, txn, &id, text)? {
+        if let Some(state) = current_state_in_txn(vault, store, txn, &id, text)? {
             sources.push((id, state));
         }
     }
     Ok(Some(sources))
 }
 
-/// The state `message` stands at, when it shows `text`.
+/// The state `message` stands at, when it shows `text`. An entity document
+/// is the vault's, so its frontier is read on the vault's own store.
 fn current_state_in_txn(
+    #[cfg_attr(
+        not(feature = "sync"),
+        expect(unused_variables, reason = "no document reads")
+    )]
     vault: &Vault,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     message: &EntityId,
     text: Option<String>,
@@ -326,8 +337,7 @@ fn current_state_in_txn(
     let Some(text) = text else {
         return Ok(None);
     };
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, message)?
-    else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, message)? else {
         return Ok(None);
     };
     #[cfg(feature = "sync")]
@@ -359,6 +369,7 @@ pub(crate) fn message_has_document_in_txn(
 /// read ([`MAX_SOURCE_STATES`] of each).
 fn source_in_txn(
     vault: &Vault,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     message: EntityId,
     current: Option<SourceState>,
@@ -404,7 +415,7 @@ fn source_in_txn(
         }
         return Ok(source);
     }
-    for raw in retained_rows_in_txn(&vault.store, txn, &message, MAX_SOURCE_STATES)? {
+    for raw in retained_rows_in_txn(store, txn, &message, MAX_SOURCE_STATES)? {
         let text = raw
             .get(ENTITY_METADATA_HEADER_LEN..)
             .and_then(crate::tagging::shown_message_text);

@@ -12,7 +12,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{EntityStoreRead, TimeAxis, TimelineQuery};
 use crate::retrieval_depth::RetrievalDeadline;
-use crate::store::Store;
+use crate::store::StoreRead;
 
 use super::channels::{
     TemporalCandidateScore, TemporalIndexCollectionContext, TemporalScoringContext,
@@ -30,7 +30,7 @@ use super::types::{
 /// vault (ARCH-0004 #temporal-bound); bounded, its rankings may differ from
 /// that scan only past the bound.
 pub(super) fn scoped_temporal_channel_limit(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     requested: usize,
     scope_widening_active: bool,
@@ -74,7 +74,7 @@ impl TemporalWindow {
     /// the rows; the request's scores and orders them.
     pub(super) fn rescore(
         &mut self,
-        store: &Store,
+        store: &StoreRead<'_>,
         rtxn: &RoTxn<'_>,
         config: &TemporalSearchConfig,
         metadata_cache: &mut EntityMetadataCache,
@@ -153,7 +153,12 @@ impl<'p, 'f> ReadableRows<'p, 'f> {
         }
     }
 
-    pub(super) fn reads(&self, store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    pub(super) fn reads(
+        &self,
+        store: &StoreRead<'_>,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
         if let Some(&reads) = self.answers()?.get(id) {
             return Ok(reads);
         }
@@ -168,7 +173,7 @@ impl<'p, 'f> ReadableRows<'p, 'f> {
     /// Whether the reader may read at least `count` of `ids`, asked in order.
     pub(super) fn read_at_least(
         &self,
-        store: &Store,
+        store: &StoreRead<'_>,
         rtxn: &RoTxn<'_>,
         ids: &[EntityId],
         count: usize,
@@ -227,7 +232,12 @@ impl<'r, 'p, 'f> WindowCut<'r, 'p, 'f> {
         }
     }
 
-    pub(super) fn keeps(&self, store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    pub(super) fn keeps(
+        &self,
+        store: &StoreRead<'_>,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
         let Some(&position) = self.positions.get(id) else {
             return Ok(false);
         };
@@ -260,7 +270,7 @@ impl<'r, 'p, 'f> WindowCut<'r, 'p, 'f> {
 /// for the scope walk to take as it goes. Taking it here instead would ask
 /// the reader about every row inside the bound on every call.
 pub(super) fn execute_temporal_for_reader<'r, 'p, 'f>(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     config: &TemporalSearchConfig,
     now: u64,
@@ -293,7 +303,7 @@ pub(super) fn execute_temporal_for_reader<'r, 'p, 'f>(
 /// probe cannot read may hold a row too: the rounds then run as they would
 /// without the probe, and a collection that reaches the ring meets its error.
 pub(super) fn axis_can_grow(
-    store: &Store,
+    store: &StoreRead<'_>,
     axis: TimeAxis,
     rtxn: &RoTxn<'_>,
     collection: TemporalIndexCollectionContext<'_>,

@@ -1,7 +1,9 @@
-//! Log-derived, typed restrictive facts (actor revocations, slip withdrawals
-//! and slip burns), independent of roster survivors.
+//! Log-derived, typed restrictive facts (actor revocations, slip withdrawals,
+//! slip burns and machine removals), independent of roster survivors.
 
 use std::collections::{BTreeMap, BTreeSet};
+
+use crate::entity_id::EntityId;
 
 use super::*;
 
@@ -25,6 +27,12 @@ enum Restriction {
     /// A verified `SlipConsume`: every id its proven branch had burnt, the
     /// single-use ancestors it spent among them.
     SlipBurn(BTreeSet<[u8; 32]>),
+    /// A verified machine removal: the machine's chains on the removal's own
+    /// branch, whose head is the terminal revision.
+    MachineRemoval {
+        machine: EntityId,
+        chains: BTreeMap<MachineAdmitter, MachineChain>,
+    },
 }
 
 #[derive(Default)]
@@ -56,9 +64,26 @@ impl RevokeFacts {
                 Restriction::SlipBurn(burnt) => {
                     state.slips.consumed.extend(burnt.iter().copied());
                 }
+                Restriction::MachineRemoval { machine, chains } => {
+                    super::machine_profile::merge_machine_chains(state, *machine, chains);
+                }
             }
         }
     }
+}
+
+/// A signed withdrawal that may cross rejected permissive ancestry.
+pub(super) fn restrictive_withdrawal(op: &AuthorityOp) -> bool {
+    match op {
+        AuthorityOp::RevokeActor { .. }
+        | AuthorityOp::SlipRevoke { .. }
+        | AuthorityOp::SlipConsume { .. } => true,
+        op => removes_machine(op),
+    }
+}
+
+fn removes_machine(op: &AuthorityOp) -> bool {
+    matches!(op, AuthorityOp::MachineProfile(profile) if profile.role == MachineRole::Removed)
 }
 
 /// Every candidate comes from the already signature-filtered entry graph.
@@ -72,26 +97,55 @@ pub(super) fn derive_revoke_facts(
 ) -> RevokeFacts {
     let mut facts = RevokeFacts::default();
     for (hash, entry) in entries {
-        let AuthorityOp::RevokeActor {
-            authority_key,
-            epoch,
-        } = &entry.op
-        else {
+        let removal = match &entry.op {
+            AuthorityOp::RevokeActor { .. } => false,
+            op if removes_machine(op) => true,
+            _ => continue,
+        };
+        // A removal is terminal on every replica. It vouches for its own
+        // signed branch as a handoff vouches for its line: a local floor only
+        // records which of a signer's rows this vault saw first, so the proof
+        // applies none inside the branch and accepts what the fold accepts
+        // when the branch arrives on its own, siblings at one sequence
+        // included (Astra #1423b, Sol #1423 r8 and r9).
+        let context = if removal {
+            FoldContext {
+                sequence_floors: None,
+                ..context
+            }
+        } else {
+            context
+        };
+        let Some(state) = verify_signed_branch(*hash, entries, ancestors, context, !removal) else {
             continue;
         };
-        if let Some(state) = verify_signed_branch(*hash, entries, ancestors, context, true) {
-            facts.by_hash.insert(
-                *hash,
-                VerifiedRestriction {
-                    vault_id: state.vault_id,
-                    entry_hash: *hash,
-                    kind: Restriction::Actor {
-                        authority_key: authority_key.clone(),
-                        epoch: *epoch,
-                    },
-                },
-            );
-        }
+        let kind = match &entry.op {
+            AuthorityOp::RevokeActor {
+                authority_key,
+                epoch,
+            } => Restriction::Actor {
+                authority_key: authority_key.clone(),
+                epoch: *epoch,
+            },
+            AuthorityOp::MachineProfile(profile) => {
+                let Some(chains) = state.machines.get(&profile.machine) else {
+                    continue;
+                };
+                Restriction::MachineRemoval {
+                    machine: profile.machine,
+                    chains: chains.clone(),
+                }
+            }
+            _ => continue,
+        };
+        facts.by_hash.insert(
+            *hash,
+            VerifiedRestriction {
+                vault_id: state.vault_id,
+                entry_hash: *hash,
+                kind,
+            },
+        );
     }
     facts
 }
@@ -180,9 +234,9 @@ impl RevokeFacts {
 /// The target's own folded state, proved over its signed ancestry alone.
 /// `refuse_equal_sequences` refuses a branch holding two entries of one signer
 /// at one sequence, as an actor revocation's proof always has. A slip
-/// restriction's proof follows the fold instead, which admits concurrent
-/// siblings at one sequence and refuses only a sequence that does not rise
-/// along the ancestry.
+/// restriction's or machine removal's proof follows the fold instead, which
+/// admits concurrent siblings at one sequence and refuses only a sequence
+/// that does not rise along the ancestry.
 fn verify_signed_branch(
     target: AuthorityEntryHash,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
@@ -263,12 +317,7 @@ fn verify_signed_branch(
             .collect();
         let mut rescued = false;
         for hash in pending.clone() {
-            if !matches!(
-                entries[&hash].op,
-                AuthorityOp::RevokeActor { .. }
-                    | AuthorityOp::SlipRevoke { .. }
-                    | AuthorityOp::SlipConsume { .. }
-            ) {
+            if !restrictive_withdrawal(&entries[&hash].op) {
                 continue;
             }
             if let EntryFold::Ready(state) = super::ancestry_evaluator::evaluate_entry(

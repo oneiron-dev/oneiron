@@ -18,7 +18,10 @@ impl PipelineBuilder<'_> {
         txn: &RoTxn<'_>,
         subjects: &[EntityId],
     ) -> Result<Vec<(EntityId, ClaimBody)>> {
+        // Authority (policy, worlds) is the vault's; the evidence is read
+        // where the run reads, a room's view included.
         let store = &self.vault.store;
+        let content = &self.read;
         let policy = crate::gate::resolve_policy_manifest(store, txn)?;
         let owner_filter =
             crate::gate::narrow_retrieval_filter(&policy.retrieval_floor_for_actor(None), None)?;
@@ -40,7 +43,7 @@ impl PipelineBuilder<'_> {
         let mut ids = BTreeSet::new();
         let mut scanned = 0usize;
         for subject in &subjects {
-            for edge in store.port_edges(
+            for edge in content.port_edges(
                 txn,
                 subject,
                 EdgeDirection::In,
@@ -59,14 +62,15 @@ impl PipelineBuilder<'_> {
         let mut evidence = Vec::new();
         let mut evidence_bytes = 0usize;
         for id in ids {
-            let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
+            let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(content, txn, &id)?
+            else {
                 continue;
             };
             if raw.len() > 256 * 1024 {
                 return Err(Error::IndexOverflow("L2 evidence bytes"));
             }
             if !pipeline_candidate_matches_filters_and_gate(
-                store,
+                content,
                 txn,
                 &id,
                 filters,

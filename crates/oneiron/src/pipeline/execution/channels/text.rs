@@ -63,7 +63,7 @@ impl PipelineBuilder<'_> {
             let exact_posting_fails_claim_gate = {
                 let mut exact_posting_fails_claim_gate = |id: &EntityId| {
                     claim_status_gate_allows(
-                        &self.vault.store,
+                        &self.read,
                         rtxn,
                         id,
                         metadata_cache,
@@ -72,7 +72,7 @@ impl PipelineBuilder<'_> {
                     .map(|allowed| !allowed)
                 };
                 crate::bm25::final_token_exact_posting_matches(
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     &self.vault.analyzer,
                     bm25_config,
@@ -85,7 +85,7 @@ impl PipelineBuilder<'_> {
             } else {
                 let mut classify_prefix_posting = |id: &EntityId| {
                     let rejected_by_gate = !claim_status_gate_allows(
-                        &self.vault.store,
+                        &self.read,
                         rtxn,
                         id,
                         metadata_cache,
@@ -93,7 +93,7 @@ impl PipelineBuilder<'_> {
                     )?;
                     let matches_scope = !rejected_by_gate
                         && pipeline_candidate_matches_filters_and_gate(
-                            &self.vault.store,
+                            &self.read,
                             rtxn,
                             id,
                             filter_config,
@@ -106,7 +106,7 @@ impl PipelineBuilder<'_> {
                     })
                 };
                 crate::bm25::final_token_prefix_expansion_has_scoped_and_rejected_postings(
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     &self.vault.analyzer,
                     bm25_config,
@@ -160,7 +160,7 @@ impl PipelineBuilder<'_> {
             text_channel_index = Some(acc.admit_channel(
                 RetrievalSignal::Text,
                 text_results,
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 inputs.filter_config,
                 metadata_cache,
@@ -170,7 +170,7 @@ impl PipelineBuilder<'_> {
                     break;
                 }
                 let retry_scoped_text_limit = scoped_text_channel_limit(
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     retry_channel_limit(*limit),
                     inputs.text_scope_widening_active,
@@ -187,7 +187,7 @@ impl PipelineBuilder<'_> {
                 };
                 let mut retry_exact_posting_matches_scope = |id: &EntityId| {
                     pipeline_candidate_matches_filters_and_gate(
-                        &self.vault.store,
+                        &self.read,
                         rtxn,
                         id,
                         inputs.filter_config,
@@ -213,8 +213,8 @@ impl PipelineBuilder<'_> {
                         },
                     )?
                 } else {
-                    crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
-                        self.vault,
+                    self.vault.text_scoped_in_txn(
+                        &self.read,
                         rtxn,
                         crate::ports::TextQuery {
                             query,
@@ -252,7 +252,7 @@ impl PipelineBuilder<'_> {
                         trace: RetrievalSignal::HydeRetry,
                     },
                     results,
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     inputs.filter_config,
                     metadata_cache,
@@ -273,7 +273,7 @@ impl PipelineBuilder<'_> {
         (metadata_cache, claim_gate): (&mut EntityMetadataCache, &mut ClaimStatusGateCache),
     ) -> Result<Vec<ScoredEntity>> {
         let scoped_text_limit = scoped_text_channel_limit(
-            &self.vault.store,
+            &self.read,
             rtxn,
             if inputs.overrides.widen_channel_limits {
                 retry_channel_limit(limit)
@@ -296,7 +296,7 @@ impl PipelineBuilder<'_> {
         };
         let mut exact_posting_matches_scope = |id: &EntityId| {
             pipeline_candidate_matches_filters_and_gate(
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 id,
                 inputs.filter_config,
@@ -335,8 +335,8 @@ impl PipelineBuilder<'_> {
                     },
                 )?
             } else {
-                crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
-                    self.vault,
+                self.vault.text_scoped_in_txn(
+                    &self.read,
                     rtxn,
                     crate::ports::TextQuery {
                         query: text_query,
@@ -356,7 +356,7 @@ impl PipelineBuilder<'_> {
                 &rows,
                 candidate_limit,
                 self.turn_fold,
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 inputs.filter_config,
                 &mut fold_metadata,
@@ -418,7 +418,7 @@ impl PipelineBuilder<'_> {
         };
         truncate_widened_channel_results_to_scope(
             rows,
-            &self.vault.store,
+            &self.read,
             rtxn,
             kept,
             filter_config,
@@ -430,7 +430,7 @@ impl PipelineBuilder<'_> {
                 rows,
                 requested,
                 self.turn_fold,
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 filter_config,
                 metadata_cache,
@@ -454,11 +454,7 @@ impl PipelineBuilder<'_> {
         F: FnMut(&EntityId) -> Result<bool>,
     {
         let in_category = |id: &EntityId| {
-            super::super::super::capabilities::CapabilityLane::Memory.admits(
-                &self.vault.store,
-                rtxn,
-                id,
-            )
+            super::super::super::capabilities::CapabilityLane::Memory.admits(&self.read, rtxn, id)
         };
         let mut matches_scope = |id: &EntityId| {
             if self.memory_category && !in_category(id)? {
@@ -473,7 +469,7 @@ impl PipelineBuilder<'_> {
         };
         if self.candidate_filter.is_some() {
             crate::bm25::search_text_filtered_with_recency(
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 &self.vault.analyzer,
                 config,
@@ -485,14 +481,11 @@ impl PipelineBuilder<'_> {
             // Category admission consumes no claim body. D19 decisions made by
             // prefix/widening probes remain reusable by fusion and projection.
             let mut category = |id: &EntityId| {
-                super::super::super::capabilities::CapabilityLane::Memory.admits(
-                    &self.vault.store,
-                    rtxn,
-                    id,
-                )
+                super::super::super::capabilities::CapabilityLane::Memory
+                    .admits(&self.read, rtxn, id)
             };
             crate::bm25::search_text_category_with_recency(
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 &self.vault.analyzer,
                 config,
@@ -505,7 +498,7 @@ impl PipelineBuilder<'_> {
             )
         } else {
             crate::bm25::search_text_scoped_with_recency(
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 &self.vault.analyzer,
                 config,

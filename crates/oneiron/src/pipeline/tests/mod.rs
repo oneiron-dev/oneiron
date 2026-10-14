@@ -19,6 +19,7 @@ mod relevance_order;
 mod rerank_hyde_session_stale;
 mod rerank_words;
 mod retrieval_blend;
+mod room_reads;
 mod scoring_basics;
 mod telemetry_trace;
 mod temporal;

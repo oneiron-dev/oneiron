@@ -231,7 +231,11 @@ pub(super) fn ppr_query_in_txn_with_identity(
         });
     }
 
-    if VAD_PROPAGATION_EVIDENCE.with(|active| active.borrow().is_some()) {
+    // A room's union walk computes and never caches: cache rows are keyed and
+    // validated by base graph versions, which overlay writes never bump, so a
+    // cached walk could omit the room's edges, and a walk over the room must
+    // not land in the base cache (not even after the room goes on record).
+    if store.is_union() || VAD_PROPAGATION_EVIDENCE.with(|active| active.borrow().is_some()) {
         let state = ppr_compute_state_weighted(store, txn, seeds, weighting, depth, alphas, None)?;
         return Ok(PprQueryResult {
             scores: state.scores,

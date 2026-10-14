@@ -230,7 +230,7 @@ impl Memory<'_> {
             for target in targets {
                 let view = match target {
                     Some((_, mode)) => match rows.next().flatten() {
-                        Some(row) => self.entity_view_of_in_txn(txn, row, *mode)?,
+                        Some(row) => self.entity_view_of_in_txn(lane, txn, row, *mode)?,
                         None => None,
                     },
                     None => None,
@@ -243,8 +243,11 @@ impl Memory<'_> {
 
     /// Projects one admitted row to the typed entity view. A deleted shell
     /// has no body and projects to nothing.
+    /// Projects a row `lane` admitted; its short ref is read where the lane
+    /// reads, a room's view included.
     pub(super) fn entity_view_of_in_txn(
         &self,
+        lane: &ScopedRead<'_>,
         txn: &heed::RoTxn<'_>,
         row: ReadRow,
         mode: ReadMode,
@@ -252,7 +255,7 @@ impl Memory<'_> {
         let Some(body) = row.body else {
             return Ok(None);
         };
-        let short_ref = self.short_ref_of_in_txn(txn, &row.id)?.map(|reference| {
+        let short_ref = short_ref_in_txn(&lane.store_read(), txn, &row.id)?.map(|reference| {
             let short = reference.split(':').next().unwrap_or(&reference);
             match mode {
                 ReadMode::Pinned(revision) => {

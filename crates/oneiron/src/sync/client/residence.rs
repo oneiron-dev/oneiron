@@ -147,7 +147,7 @@ impl ResidenceRpc {
         // then attenuates it to the actor.
         if let Some(credential) = &config.transport_credential {
             credential
-                .sign_upgrade(vault.store.clock.wall_now(), &mut request)
+                .sign_upgrade(vault, vault.store.clock.wall_now(), &mut request)
                 .map_err(|_| refused())?;
         } else if !config.auth_token.is_empty() {
             let header = format!("Bearer {}", config.auth_token)
