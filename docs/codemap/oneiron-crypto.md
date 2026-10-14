@@ -16,17 +16,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/codec.rs` | src | s | 13 crate-vis | — | Canonical encoding primitives: big-endian integers, fixed-size fields and length-prefixed byte strings… |
 | `src/envelope/hybrid.rs` | src | s | 3 crate-vis | — | The `kem-x25519-mlkem1024-v1` capsule: ML-KEM-1024 (FIPS 203) and X25519 (RFC 7748) combined with the… |
 | `src/envelope/hybrid/tests.rs` | test | s | — | — | Every combiner input reaches the output: changing any one of them alone changes the wrap secret (the… |
-| `src/envelope/mod.rs` | src | m | 2 struct · 4 enum · 3 fn · 1 re-export · 2 crate-vis | Envelope, Header, Kdf, Purpose, WrapParams, WrapType | The sealed envelope: its typed header, the canonical encoding and the strict parser |
-| `src/envelope/seal.rs` | src | m | 2 struct · 2 enum · 2 fn | OpenKey, OpenPolicy, SealKey, SealParams | Sealing and opening, and the one key schedule every wrap type shares: |
+| `src/envelope/mod.rs` | src | m | 2 struct · 4 enum · 3 fn · 1 re-export · 3 crate-vis | Envelope, Header, Kdf, Purpose, WrapParams, WrapType | The sealed envelope: its typed header, the canonical encoding and the strict parser |
+| `src/envelope/seal.rs` | src | m | 2 struct · 2 enum · 2 fn · 1 crate-vis | OpenKey, OpenPolicy, SealKey, SealParams | Sealing and opening, and the one key schedule every wrap type shares: |
 | `src/envelope/seal/tests.rs` | test | s | — | — | The HKDF key schedule's stack wipe (RustCrypto/meta#38): the bare schedule leaves its secrets below its… |
 | `src/error.rs` | src | s | 1 enum · 1 type | Error | The one error type |
 | `src/keys.rs` | src | s | 6 struct · 9 fn · 11 const · 11 crate-vis | Argon2Cost, HybridPublicKey, HybridSecretKey, Kek, Passphrase, RecoverySecret | Key material types |
-| `src/lib.rs` | src | s | 3 const · 6 re-export | — | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… |
+| `src/lib.rs` | src | s | 3 const · 7 re-export | — | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… |
 | `src/nonce.rs` | src | s | 1 struct · 2 fn | NonceLedger | Duplicate-nonce detection where the caller can see it |
 | `src/record/mod.rs` | src | m | 3 struct · 2 enum · 8 fn · 1 re-export · 1 crate-vis | CheckpointRef, RecordBody, SigPurpose, SignatureEntry, SignatureRecord | Signature records: the canonical encoding, the strict parser and the roster rules |
 | `src/record/sign.rs` | src | m | 1 struct · 2 enum · 8 fn | SigningKey, VerifyPolicy, VerifyingKey | Signing and verifying records |
 | `src/record/sign/tests.rs` | test | s | — | — | Record signing's stack wipe (RustCrypto/meta#38): the bare SLH-DSA signer leaves its secrets below its… |
 | `src/stack_probe.rs` | src | s | 4 crate-vis | — | Test-only stack probe |
+| `src/stretch.rs` | src | s | 1 fn | — | A stretched passphrase as raw key material, for constructions that are not envelope wraps: the recovery kit… |
 | `src/suite.rs` | src | s | 2 struct · 2 enum · 2 fn · 11 const · 3 crate-vis | Suite, SuiteId, SuiteKind, SuiteStatus | The suite table: every algorithm combination the format can name, its state and its minimum epoch |
 | `tests/envelope.rs` | test | L | — | — | Envelope contract: round trips for every wrap type, fail-closed parsing, reader policy, AAD binding of every… |
 | `tests/kat.rs` | test | s | — | — | Published known-answer vectors for every primitive the crate uses, run against the exact pinned crates |

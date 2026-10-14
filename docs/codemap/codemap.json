@@ -29592,18 +29592,53 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "BackupShareLocation",
-      "PrivacyBackupError",
-      "PrivacyBackupShare",
-      "RestoredVaultKey"
+      "CodeKeeping",
+      "IssuedKit",
+      "KitCoverage",
+      "KitError",
+      "KitIssue",
+      "KitMachine",
+      "KitManifest",
+      "KitPassphrase",
+      "KitSecretKind",
+      "PassphraseCost",
+      "PieceHome",
+      "RestoredKitSecret"
      ],
      "path": "src/recovery/privacy_kit.rs",
-     "purpose": "Vault-scoped 2-of-3 offline recovery shares; no person-level master secret",
+     "purpose": "Vault-scoped 2-of-3 offline recovery kits; no person-level master secret",
      "surface": {
-      "enum": 2,
-      "fn": 7,
-      "struct": 2
+      "const": 3,
+      "enum": 6,
+      "fn": 14,
+      "re-export": 1,
+      "struct": 6
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "KitId",
+      "KitPiece",
+      "PieceExport",
+      "RecoveryCode"
+     ],
+     "path": "src/recovery/privacy_kit/piece.rs",
+     "purpose": "Piece format v2: a 47-byte body and a 3-byte check, typed as a recovery code or kept as an export with its…",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 11,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/privacy_kit/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -40679,7 +40714,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 51,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -41066,8 +41101,8 @@
    },
    "over_bar": 38,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2490,
-   "test_files": 798
+   "source_files": 2491,
+   "test_files": 799
   },
   "oneiron-android": {
    "files": [
@@ -44185,7 +44220,7 @@
      "path": "src/envelope/mod.rs",
      "purpose": "The sealed envelope: its typed header, the canonical encoding and the strict parser",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 4,
       "fn": 3,
       "re-export": 1,
@@ -44204,6 +44239,7 @@
      "path": "src/envelope/seal.rs",
      "purpose": "Sealing and opening, and the one key schedule every wrap type shares:",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "fn": 2,
       "struct": 2
@@ -44258,7 +44294,7 @@
      "purpose": "The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table…",
      "surface": {
       "const": 3,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -44326,6 +44362,16 @@
      "purpose": "Test-only stack probe",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/stretch.rs",
+     "purpose": "A stretched passphrase as raw key material, for constructions that are not envelope wraps: the recovery kit…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -44430,6 +44476,13 @@
      "layout": "file",
      "purpose": "Test-only stack probe"
     },
+    "stretch": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A stretched passphrase as raw key material, for constructions that are not envelope wraps: the recovery kit…"
+    },
     "suite": {
      "files": 1,
      "impl_vault": false,
@@ -44440,7 +44493,7 @@
    },
    "over_bar": 0,
    "purpose": "The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table…",
-   "source_files": 14,
+   "source_files": 15,
    "test_files": 7
   },
   "oneiron-docedit": {
