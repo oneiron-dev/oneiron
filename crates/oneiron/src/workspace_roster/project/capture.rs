@@ -401,15 +401,13 @@ pub(crate) fn inadmissible_revision_carriers(
     let mut held = std::collections::BTreeMap::new();
     for (_, hash, revision) in &admitted {
         let project = revision.project();
-        if !held.contains_key(&project) {
-            held.insert(
-                project,
-                super::revision::held_in_txn(store, txn, project, kind)?,
-            );
-        }
-        if let Some(set) = held.get_mut(&project) {
-            set.insert(*hash, revision.clone(), RevisionOrigin::AwaitingParent);
-        }
+        let set = match held.entry(project) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(super::revision::held_in_txn(store, txn, project, kind)?)
+            }
+        };
+        set.insert(*hash, revision.clone(), RevisionOrigin::AwaitingParent);
     }
     for (id, hash, revision) in &admitted {
         if held.get(&revision.project()).is_some_and(|set| {
