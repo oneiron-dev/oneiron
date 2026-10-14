@@ -3172,7 +3172,7 @@ fn every_dreamer_call_names_medium_with_its_budget_unless_the_vault_authors_a_le
                     owner: None,
                     public_benchmark: Some("placeholder benchmark".into()),
                     vendor: None,
-                    effort_ladder: vec![ReasoningEffort::Low],
+                    effort_ladder: vec![ReasoningEffort::Low, ReasoningEffort::Medium],
                 }],
                 contradiction_margin_millionths: 0,
                 vault_effort: None,
@@ -3228,7 +3228,8 @@ fn every_dreamer_call_names_medium_with_its_budget_unless_the_vault_authors_a_le
             "PREDICATE RULE",
             "two or more lowercase English words joined by dots",
             "LAYOUT",
-            "a last line that is exactly ]}",
+            "The last line is exactly ]}",
+            "\"persons\"",
         ] {
             assert!(system.contains(rule), "the system text names {rule}");
         }

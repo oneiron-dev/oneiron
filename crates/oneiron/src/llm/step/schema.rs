@@ -29,16 +29,13 @@ pub(super) fn validate_fallback(
     response: &LlmResponse,
     check: Option<&ReplyCheck>,
 ) -> DurableStepResult<()> {
-    let checked = || {
-        check.map_or(Ok(()), |check| {
+    let ResponseFormat::Json { schema } = &request.envelope.response_format else {
+        return check.map_or(Ok(()), |check| {
             check(response).map_err(|error| DurableStepError::SchemaValidation {
                 attempts: 1,
                 errors: vec![error],
             })
-        })
-    };
-    let ResponseFormat::Json { schema } = &request.envelope.response_format else {
-        return checked();
+        });
     };
     let text: String = response
         .message
@@ -55,8 +52,7 @@ pub(super) fn validate_fallback(
         .map_err(|error| DurableStepError::SchemaValidation {
             attempts: 1,
             errors: vec![error],
-        })?;
-    checked()
+        })
 }
 
 pub(super) async fn generate(
@@ -201,11 +197,6 @@ pub(super) async fn generate(
                 }
             },
             Err(error) => vec![error.to_string()],
-        };
-        // A checked step's caller holds a schema-valid reply to its own check too.
-        let errors = match check.map(|check| check(&response)) {
-            Some(Err(error)) if errors.is_empty() => vec![error],
-            _ => errors,
         };
         if errors.is_empty() {
             response.usage = usage.clone();

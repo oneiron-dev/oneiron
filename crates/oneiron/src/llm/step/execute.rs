@@ -102,7 +102,9 @@ pub async fn call_as_step(
 
 /// Durable step whose request asks for its reply without a schema and
 /// checks it here instead: a reply `check` refuses is paid and refused as a
-/// schema miss is, and never memoized, so a replay asks again.
+/// schema miss is, and never memoized, so a replay asks again. Only a reply
+/// the check passed is ever stored, so a memo or a recovered payload needs
+/// no second check. A request with a schema keeps the schema's own door.
 pub async fn call_as_step_checked(
     ctx: &DurableStepContext<'_>,
     backend: &dyn LlmBackend,
@@ -110,6 +112,15 @@ pub async fn call_as_step_checked(
     request: LlmRequest,
     check: &ReplyCheck,
 ) -> DurableStepResult<StepOutcome> {
+    if matches!(
+        request.envelope.response_format,
+        super::super::ResponseFormat::Json { .. }
+    ) {
+        return Err(Error::InvalidConfig(
+            "a checked step asks for its reply without a schema".into(),
+        )
+        .into());
+    }
     durable_step(
         ctx,
         backend,
@@ -155,15 +166,8 @@ async fn durable_step(
             .get_claim(&claim_id)?
             .ok_or(Error::InvalidClaimBody("dreamer step index claim missing"))?;
         let decoded = decode_step_claim_value(&body.value)?;
-        // A checked step returns only a stored reply its check passes; any
-        // other misses and the step asks again.
-        let response = if step_claim_matches_request(&decoded, &request)? {
-            Some(load_step_response(ctx.vault, &decoded)?)
-                .filter(|response| check.is_none_or(|check| check(response).is_ok()))
-        } else {
-            None
-        };
-        if let Some(response) = response {
+        if step_claim_matches_request(&decoded, &request)? {
+            let response = load_step_response(ctx.vault, &decoded)?;
             let failure_policy = failure_policy(ctx.vault, &response)?;
             return Ok(StepOutcome::Finished {
                 response,
@@ -182,17 +186,15 @@ async fn durable_step(
         && let Some(payload) = row.response_payload.as_deref()
     {
         let response: LlmResponse = serde_json::from_slice(payload)?;
-        if check.is_none_or(|check| check(&response).is_ok()) {
-            let failure_policy = failure_policy(ctx.vault, &response)?;
-            log_terminal_step(ctx, &step_hash, &request, &response, payload)?;
-            step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
-            return Ok(StepOutcome::Finished {
-                response,
-                memoized: true,
-                legibility: step_legibility(ctx, guard),
-                failure_policy,
-            });
-        }
+        let failure_policy = failure_policy(ctx.vault, &response)?;
+        log_terminal_step(ctx, &step_hash, &request, &response, payload)?;
+        step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
+        return Ok(StepOutcome::Finished {
+            response,
+            memoized: true,
+            legibility: step_legibility(ctx, guard),
+            failure_policy,
+        });
     }
 
     // Graceful wrap (ONE-1305): once the finalize window opens, NEW steps

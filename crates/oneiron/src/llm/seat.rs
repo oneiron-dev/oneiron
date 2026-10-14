@@ -117,10 +117,12 @@ impl Vault {
 
     /// The level a call outside any seat birth carries for `purpose` on
     /// `model`: the vault's authored default, composed as a birth composes
-    /// it, else `fallback` held under the vault ceiling. A level the model's
-    /// ladder lacks comes down to its highest rung below that level (`none`
-    /// for a plain or Gemini model), and is the vault's word, so it comes back
-    /// as authored, as a ceiling below `fallback` does.
+    /// it, else `fallback`, on the model's ladder as a birth reads it (the
+    /// description policy's row first) and under the vault ceiling. A level
+    /// the ladder does not admit comes down to its highest admitted rung
+    /// below that level, else up to its lowest admitted rung; that is the
+    /// vault's word, so it comes back as authored. With no rung admitted
+    /// (a ceiling below the whole ladder) the call carries `none`.
     pub fn purpose_effort(
         &self,
         purpose: &super::CallPurpose,
@@ -129,28 +131,40 @@ impl Vault {
         fallback: ReasoningEffort,
     ) -> Result<PurposeEffort> {
         let policy = self.seat_policy()?;
-        let composed = policy.compose_defaults(
-            &super::routing::purpose_key(purpose),
-            self.description_policy()?.as_ref(),
-        )?;
-        let wire = self
-            .model_registry_row(model)?
-            .map_or(ModelWireFormat::OpenaiCompat, |row| row.wire);
-        let ladder = policy.ladder(model, wire, reasoning);
+        let descriptions = self.description_policy()?;
+        let composed = policy
+            .compose_defaults(&super::routing::purpose_key(purpose), descriptions.as_ref())?;
+        let described = descriptions
+            .as_ref()
+            .and_then(|row| row.models.iter().find(|row| &row.model == model));
+        let ladder = match described {
+            Some(row) => row.effort_ladder.clone(),
+            None => {
+                let wire = self
+                    .model_registry_row(model)?
+                    .map_or(ModelWireFormat::OpenaiCompat, |row| row.wire);
+                policy.ladder(model, wire, reasoning)
+            }
+        };
         let wanted = composed.unwrap_or(fallback);
-        if composed.is_none() && policy.admits(fallback, &ladder) {
-            return Ok(PurposeEffort::Fallback(fallback));
-        }
         if policy.admits(wanted, &ladder) {
-            return Ok(PurposeEffort::Authored(wanted));
+            return Ok(match composed {
+                Some(effort) => PurposeEffort::Authored(effort),
+                None => PurposeEffort::Fallback(fallback),
+            });
         }
         let rank = policy::effort_rank;
-        Ok(PurposeEffort::Authored(
+        let admitted = || {
             ladder
                 .iter()
                 .copied()
-                .filter(|rung| rank(*rung) <= rank(wanted) && policy.admits(*rung, &ladder))
+                .filter(|rung| policy.admits(*rung, &ladder))
+        };
+        Ok(PurposeEffort::Authored(
+            admitted()
+                .filter(|rung| rank(*rung) <= rank(wanted))
                 .max_by_key(|rung| rank(*rung))
+                .or_else(|| admitted().min_by_key(|rung| rank(*rung)))
                 .unwrap_or(ReasoningEffort::None),
         ))
     }
