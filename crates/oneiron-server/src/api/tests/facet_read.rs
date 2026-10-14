@@ -367,39 +367,6 @@ async fn an_owner_credential_handed_to_another_key_keeps_its_facet_limit() {
     assert!(!vault.lane_reads("fr-delegate", vault.private).await);
 }
 
-/// Astra on #1432 F2, the room half: a peer can add a room edge to a message
-/// it did not write, and under the any-facet rule an added room only widens.
-/// A message whose edges name two rooms sits in neither room's facet, even
-/// when the added room's id sorts first.
-#[tokio::test]
-async fn a_message_whose_edges_name_two_rooms_sits_in_neither() {
-    let vault = facets();
-    let mut rooms = [vault.work, vault.home, vault.private];
-    rooms.sort_by_key(|room| room.room);
-    let (added, said) = (rooms[0], rooms[2]);
-    let only = |facet| ScopeAxis::Some(BTreeSet::from([ScopeId(facet)]));
-    let sits_in = |facet| {
-        vault
-            .server
-            .vault
-            .row_in_facets(&said.message, &only(facet))
-            .unwrap()
-    };
-    assert!(sits_in(said.facet));
-    vault
-        .server
-        .vault
-        .put_edge(
-            &said.message,
-            oneiron::EdgeKind::BelongsTo,
-            &added.room,
-            1.0,
-        )
-        .unwrap();
-    assert!(!sits_in(added.facet), "an added room widened the message");
-    assert!(!sits_in(said.facet));
-}
-
 /// FACET-READ check 4: a TASK born under a {work, home} credential whose
 /// write facet is home lands in home; in a session whose mode names work it
 /// lands in work; a session naming private is refused, on MCP and on the

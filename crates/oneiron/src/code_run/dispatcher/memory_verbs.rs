@@ -4,7 +4,7 @@ use rmpv::Value;
 
 use crate::claim::ScopedReadActorKey;
 use crate::code_run::consent;
-use crate::code_run::storage::ExecutorStorage;
+use crate::code_run::storage::{ExecutorStorage, require_facet_placement_in, unplaceable};
 use crate::code_run::types::{
     AGENT_VERB_SESSION_BOUND, SelfDeniedResult, SelfDispatchOutcome, SelfEffect,
     SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,
@@ -329,18 +329,20 @@ impl HostSelfDispatcher<'_> {
     }
 
     /// A facet stamp its door admitted with a key places only a row that
-    /// key's lane reads (`ExecutorStorage::require_facet_placement`).
+    /// key's lane reads, judged in the edge's own write transaction
+    /// (`require_facet_placement_in`).
     pub(super) fn dispatch_memory_put_edge(
         &self,
         call: SelfMemoryPutEdgeCall,
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         ensure_public_memory_edge_kind(call.kind)?;
-        if call.kind == EdgeKind::FacetOf
-            && let Some(reader) = read_as
-        {
-            self.storage
-                .require_facet_placement(reader, call.src, call.tgt)?;
+        let placement = read_as.filter(|_| call.kind == EdgeKind::FacetOf);
+        if placement.is_some() && matches!(self.storage, ExecutorStorage::Session(_)) {
+            // A room's rows include overlay rows a door's lane cannot name, so
+            // a session-bound run places no facet stamp on a door's key, as
+            // its narrowed search is refused.
+            return Err(unplaceable(call.src, call.tgt, None));
         }
         let admission = self.non_candidate_code_emission_admission()?;
         if matches!(
@@ -371,7 +373,12 @@ impl HostSelfDispatcher<'_> {
                 &envelope,
                 gate_id,
                 &gate_body,
-                |_| Ok(()),
+                |txn| match &placement {
+                    Some(reader) => {
+                        require_facet_placement_in(vault, reader, txn, call.src, call.tgt)
+                    }
+                    None => Ok(()),
+                },
             )?,
             ExecutorStorage::Session(binding) => binding.session.executor_put_edge(
                 &binding.route,
