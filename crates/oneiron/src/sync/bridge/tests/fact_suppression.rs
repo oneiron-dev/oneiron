@@ -129,7 +129,7 @@ fn a_restore_keeps_the_refusal_of_a_task_deleted_since() {
 
     suppress_a_cancellation(&vault, EntityId::now(), task, owner);
     vault.batch().delete(&task).commit().unwrap();
-    let restored = Vault::restore_checkpoint_keeping_authority(
+    let (restored, _report) = Vault::restore_checkpoint_keeping_authority(
         &image,
         &backups.path().join("restored"),
         vault.config.clone(),
@@ -185,7 +185,7 @@ fn a_recovered_window_keeps_the_refusal_of_a_suppressed_fact() {
                 let (key, value) = row.unwrap();
                 let target = EntityId::from_bytes(key[17..].try_into().unwrap()).unwrap();
                 let key = format!("{}:{:02}:{}", owner_fact.to_hex(), key[16], target.to_hex());
-                map_insert_bytes(&window.get_map("edges"), &key, value).unwrap();
+                map_insert_bytes(&window.get_map("edges"), &key, &value).unwrap();
             }
         }
     }
