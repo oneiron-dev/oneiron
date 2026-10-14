@@ -1,5 +1,6 @@
 //! A reranker that binds words scores the words a row's pin holds, and the
-//! run serves those words (Sol R31 F1 and F4 on #1419's code). A row whose
+//! run serves those words (Sol R31 F1 and F4 on #1419's code, Astra F2 on
+//! #1426). A row whose
 //! index publication waits holds two bodies: the one its pin and postings
 //! name, and a newer live one.
 
@@ -124,6 +125,95 @@ fn a_live_pack_serves_a_scored_row_at_the_words_scored() -> Result<()> {
             .fields
             .as_ref()
             .and_then(|fields| fields.get("content")),
+        Some(&serde_json::json!("old-words")),
+        "{served:?}"
+    );
+    Ok(())
+}
+
+/// A binding reranker that, while it scores, has another thread put `body`
+/// back as `id`'s live row: a write landing after retrieval read the row and
+/// before the pack hydrates it.
+struct RestoringReranker<'a> {
+    vault: &'a Vault,
+    id: EntityId,
+    body: Vec<u8>,
+}
+
+impl Reranker for RestoringReranker<'_> {
+    fn id(&self) -> &str {
+        "test/reranker-restoring@v1"
+    }
+
+    fn rerank(&self, _query: &str, candidates: &[RerankCandidate<'_>]) -> Result<Vec<f32>> {
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    self.vault
+                        .batch()
+                        .put(
+                            &self.id,
+                            ENTITY_TYPE_CLAIM,
+                            TimeRange { start: 1, end: 1 },
+                            1,
+                            &self.body,
+                        )
+                        .commit()
+                })
+                .join()
+                .expect("the writer")
+        })?;
+        Ok(vec![0.0; candidates.len()])
+    }
+
+    fn binds_words(&self) -> bool {
+        true
+    }
+}
+
+/// Astra on #1426 (F2): a claim scored at its pin was hydrated from the body
+/// the claim gate cached when retrieval read it live, whenever the live row
+/// equalled the pin by the time the pack hydrated. A write restoring the
+/// pinned bytes did that, and the pack served the words retrieval read live
+/// under the score for the pinned ones. A scored claim takes the cache only
+/// when it holds the pinned body.
+#[test]
+fn a_restored_claim_is_served_at_the_words_scored() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    // The claim's subject, which the pack's validation reads.
+    vault.put_entity(
+        &entity_id(0x7C),
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"person",
+    )?;
+    let id = entity_id(0x6C);
+    let old = claim_body("old-words");
+    put_twice(
+        &vault,
+        id,
+        ENTITY_TYPE_CLAIM,
+        &old,
+        &claim_body("new-words"),
+    )?;
+    let reranker = RestoringReranker {
+        vault: &vault,
+        id,
+        body: old,
+    };
+
+    let pack = vault
+        .context_pack()
+        .read_mode(ReadMode::Live)
+        .search_text("lantern", 10)
+        .rerank(&reranker, RerankOptions::default())
+        .run()?;
+
+    let served = pack.results.first().expect("the claim");
+    assert_eq!(served.id, id);
+    assert_eq!(
+        served.fields.as_ref().and_then(|fields| fields.get("val")),
         Some(&serde_json::json!("old-words")),
         "{served:?}"
     );

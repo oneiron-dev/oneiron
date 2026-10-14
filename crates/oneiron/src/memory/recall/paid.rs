@@ -16,14 +16,17 @@
 //! write door once more: a TURN's messages can pass one by one and refuse
 //! together. A block none of whose texts holds a word makes no call. The
 //! host scores those texts outside every transaction, under its own
-//! admission and lease. The second pass runs with
-//! the scores as a prepared reranker, which applies them, in its own
+//! admission and lease, and runs the device-only verdict again before each
+//! request it sends: once it keeps a row that would leave with words,
+//! nothing more leaves and the recall ranks by fusion. The second pass runs
+//! with the scores as a prepared reranker, which applies them, in its own
 //! transaction and before it serves or records anything, only to the same
 //! block at the same revisions: a block or a row that changed in between
 //! takes none of the scores, and the door scores the new block once more
 //! before it refuses.
-use std::sync::Mutex;
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -83,11 +86,15 @@ pub trait RecallRerankHost: Sync {
 
     /// One score per document, in order, higher meaning more relevant to
     /// `query`. `answer_at` is when the recall's door answers, if it has a
-    /// deadline. A refusal is the recall's: nothing stands in for the model.
+    /// deadline. Before each request it sends, a fallback's too, the host
+    /// asks `egress` whether the texts may still leave
+    /// ([`RerankEgress::holds`]), and sends nothing more once it says no. A
+    /// refusal is the recall's: nothing stands in for the model.
     fn score(
         &self,
         query: &str,
         documents: &[RerankDocument<'_>],
+        egress: &RerankEgress<'_>,
         answer_at: Option<Instant>,
     ) -> MemoryResult<RerankScores>;
 
@@ -104,6 +111,46 @@ pub trait RecallRerankHost: Sync {
 pub struct RerankDocument<'a> {
     pub id: EntityId,
     pub text: &'a str,
+}
+
+/// The rows a block sends with words, judged again before each request a
+/// host sends. A request that left before a flag committed stays sent. Once
+/// the device-only verdict, run again, keeps any of those rows (its world was
+/// flagged since, or it was placed in a flagged world since), nothing more
+/// leaves, and the recall ranks by fusion.
+pub struct RerankEgress<'a> {
+    vault: &'a crate::Vault,
+    /// Each row sent with words, and the world its item names at the
+    /// revision scored; `None` when the host's model runs on this device,
+    /// which is sent every row.
+    sent: Option<Vec<(EntityId, Option<EntityId>)>>,
+    refused: AtomicBool,
+}
+
+impl RerankEgress<'_> {
+    /// Whether the block's texts may still leave this device: the device-only
+    /// verdict, run again now, keeps none of the rows sent with words. It
+    /// reads as the first verdict did, under the store's flag lock and
+    /// outside every transaction; a verdict that cannot be read refuses. Once
+    /// it refuses, it refuses for the rest of the call.
+    pub fn holds(&self) -> bool {
+        let Some(sent) = &self.sent else {
+            return true;
+        };
+        if self.refused() {
+            return false;
+        }
+        let holds = kept_on_device(&self.vault.store, sent).is_ok_and(|kept| kept.is_empty());
+        if !holds {
+            self.refused.store(true, Ordering::Relaxed);
+        }
+        holds
+    }
+
+    /// Whether [`Self::holds`] has said no.
+    pub fn refused(&self) -> bool {
+        self.refused.load(Ordering::Relaxed)
+    }
 }
 
 /// A host's scores for one block, and the model that gave them.
@@ -147,6 +194,9 @@ pub enum RerankSkip {
     NoCandidates,
     /// The deadline came before the rerank stage.
     Deadline,
+    /// A row sent with words became one a device-only world keeps while the
+    /// reranker was called, so nothing more was sent ([`RerankEgress`]).
+    DeviceOnly,
 }
 
 /// One block candidate, owned past the transaction that ranked it.
@@ -299,6 +349,28 @@ impl Memory<'_> {
                 on_cut(pack);
             }
         });
+        // The paid expansion without its rerank stage.
+        let by_fusion = |deadline: Option<&RetrievalDeadline>| {
+            self.recall_with_execution(
+                &input.query,
+                effort,
+                scope,
+                limit,
+                format,
+                Some(host.lease()),
+                &RecallExecution {
+                    deadline,
+                    embedding,
+                    as_of: Some(as_of),
+                    on_cut: cut_first
+                        .as_ref()
+                        .map(|on_cut| on_cut as &(dyn Fn(MemoryPack) + Sync)),
+                    door_fallback: fallback,
+                    rerank_unavailable: true,
+                    ..Default::default()
+                },
+            )
+        };
         for call in 1..=RERANK_CALLS {
             let deadline = budget.map(|budget| RetrievalDeadline::hard(door.arrived, budget));
             let capture = BlockCapture::default();
@@ -331,27 +403,9 @@ impl Memory<'_> {
                 }
                 (Err(error), None) => return Err(error),
             };
-            let texts = self.rerank_documents(scope, &block, host.runs_on_device())?;
+            let (texts, egress) = self.rerank_documents(scope, &block, host.runs_on_device())?;
             if texts.iter().all(String::is_empty) {
-                let mut pack = self.recall_with_execution(
-                    &input.query,
-                    effort,
-                    scope,
-                    limit,
-                    format,
-                    Some(host.lease()),
-                    &RecallExecution {
-                        deadline: deadline.as_ref(),
-                        embedding,
-                        as_of: Some(as_of),
-                        on_cut: cut_first
-                            .as_ref()
-                            .map(|on_cut| on_cut as &(dyn Fn(MemoryPack) + Sync)),
-                        door_fallback: fallback,
-                        rerank_unavailable: true,
-                        ..Default::default()
-                    },
-                )?;
+                let mut pack = by_fusion(deadline.as_ref())?;
                 pack.retrieval_meta.rerank = Some(unreranked(&pack));
                 return Ok(pack);
             }
@@ -366,12 +420,24 @@ impl Memory<'_> {
             let mut scored = match host.score(
                 &input.query,
                 &documents,
+                &egress,
                 deadline.as_ref().map(RetrievalDeadline::answer_at),
             ) {
                 Ok(scored) => RerankScores {
                     served_model: scored.served_model.filter(|name| reported_model(name)),
                     ..scored
                 },
+                Err(_) if egress.refused() => {
+                    let mut pack = by_fusion(deadline.as_ref())?;
+                    pack.retrieval_meta.rerank = Some(if pack.retrieval_meta.partial {
+                        unreranked(&pack)
+                    } else {
+                        RerankReport::Skipped {
+                            reason: RerankSkip::DeviceOnly,
+                        }
+                    });
+                    return Ok(pack);
+                }
                 Err(error) => match answered(deadline.as_ref()) {
                     Some(fallback) => return Ok(fallback.clone()),
                     None => return Err(error),
@@ -477,13 +543,14 @@ impl Memory<'_> {
     /// or with no revision to read it at, is sent empty and scores last, as
     /// is a text the write door refuses whole; nothing it holds leaves. So is
     /// a row a device-only world keeps (the vault's own flag, whoever reads),
-    /// unless the host's model runs on this device (`on_device`).
+    /// unless the host's model runs on this device (`on_device`). With the
+    /// texts come the rows that leave with words, to be judged again.
     fn rerank_documents(
         &self,
         scope: &RecallScope,
         block: &[BlockCandidate],
         on_device: bool,
-    ) -> MemoryResult<Vec<String>> {
+    ) -> MemoryResult<(Vec<String>, RerankEgress<'_>)> {
         let worlds = self.recall_worlds(scope)?;
         let lane = self
             .read_lane(ClaimReadStatus::Surfaceable)?
@@ -521,47 +588,65 @@ impl Memory<'_> {
                 text
             });
         }
-        if !on_device {
-            self.withhold_device_only(block, &pinned_worlds, &mut texts)?;
-        }
-        Ok(texts)
+        let sent = if on_device {
+            None
+        } else {
+            let with_words: Vec<(EntityId, Option<EntityId>)> = block
+                .iter()
+                .zip(pinned_worlds)
+                .zip(&texts)
+                .filter(|(_, text)| !text.is_empty())
+                .map(|((candidate, world), _)| (candidate.id, world))
+                .collect();
+            let kept = kept_on_device(&self.vault.store, &with_words)?;
+            for (candidate, text) in block.iter().zip(&mut texts) {
+                if kept.contains(&candidate.id) {
+                    text.clear();
+                }
+            }
+            Some(
+                with_words
+                    .into_iter()
+                    .filter(|(id, _)| !kept.contains(id))
+                    .collect(),
+            )
+        };
+        let egress = RerankEgress {
+            vault: self.vault,
+            sent,
+            refused: AtomicBool::new(false),
+        };
+        Ok((texts, egress))
     }
+}
 
-    /// Empties the text of each row a device-only world keeps: one the live
-    /// row's flag withholds, or one whose item, read at the revision scored,
-    /// names a flagged world. A flag commits under the write side of the
-    /// store's flag lock and this verdict reads under the read side, as a
-    /// sync release's does, so a flag committed before the verdict is one it
-    /// read. It only reads the store while it holds the lock: a scoped read
-    /// can take the writer, which a flag commit holds while it waits.
-    fn withhold_device_only(
-        &self,
-        block: &[BlockCandidate],
-        pinned_worlds: &[Option<EntityId>],
-        texts: &mut [String],
-    ) -> MemoryResult<()> {
-        let store = &self.vault.store;
-        let _flags = store
-            .device_only_flag_lock
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let rtxn = store.env.read_txn().map_err(crate::Error::from)?;
-        let flagged = crate::settings::device_only_worlds_in(store, &rtxn)?;
-        if flagged.is_empty() {
-            return Ok(());
+/// The rows a device-only world keeps, of `rows`: each a row and the world
+/// its item names at the revision scored. Kept is one the live row's flag
+/// withholds, or one whose item names a flagged world. A flag commits under
+/// the write side of the store's flag lock and this verdict reads under the
+/// read side, as a sync release's does, so a flag committed before the
+/// verdict is one it read. It only reads the store while it holds the lock:
+/// a scoped read can take the writer, which a flag commit holds while it
+/// waits.
+fn kept_on_device(
+    store: &crate::store::Store,
+    rows: &[(EntityId, Option<EntityId>)],
+) -> crate::Result<BTreeSet<EntityId>> {
+    let _flags = store
+        .device_only_flag_lock
+        .read()
+        .unwrap_or_else(PoisonError::into_inner);
+    let rtxn = store.env.read_txn()?;
+    let flagged = crate::settings::device_only_worlds_in(store, &rtxn)?;
+    let mut kept = BTreeSet::new();
+    for (id, world) in rows {
+        if world.is_some_and(|world| flagged.contains(&world))
+            || crate::settings::device_only_withholds(store, &rtxn, &flagged, id)?
+        {
+            kept.insert(*id);
         }
-        for ((candidate, world), text) in block.iter().zip(pinned_worlds).zip(texts) {
-            if text.is_empty() {
-                continue;
-            }
-            if world.is_some_and(|world| flagged.contains(&world))
-                || crate::settings::device_only_withholds(store, &rtxn, &flagged, &candidate.id)?
-            {
-                text.clear();
-            }
-        }
-        Ok(())
     }
+    Ok(kept)
 }
 
 /// Whether an endpoint's name for the model that answered is one a pack

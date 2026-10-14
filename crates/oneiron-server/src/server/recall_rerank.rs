@@ -12,7 +12,9 @@
 //! keeps is sent to it empty. Each rung a call reaches reserves that price,
 //! so a fallback rung goes out only while the line still covers the whole
 //! payload, and a rung that failed after it went out is charged what it may
-//! have billed.
+//! have billed. Each rung, the first too, goes out only while the
+//! device-only verdict, run again, keeps none of the rows it sends with words
+//! ([`RerankEgress::holds`]).
 //!
 //! A call is driven on its caller's runtime when that runtime is
 //! multi-thread. A synchronous door holds its caller's thread until the
@@ -27,7 +29,7 @@ use oneiron::llm::BudgetDenied;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::memory::{
     Effort, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
-    RecallRerank, RecallRerankHost, RerankDocument, RerankScores,
+    RecallRerank, RecallRerankHost, RerankDocument, RerankEgress, RerankScores,
 };
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, EdgeActorClass, EntityId, LlmError,
@@ -147,6 +149,7 @@ impl RecallRerankHost for ServedRerank {
         &self,
         query: &str,
         documents: &[RerankDocument<'_>],
+        egress: &RerankEgress<'_>,
         answer_at: Option<Instant>,
     ) -> MemoryResult<RerankScores> {
         let texts: Vec<&str> = documents.iter().map(|document| document.text).collect();
@@ -171,7 +174,10 @@ impl RecallRerankHost for ServedRerank {
             )
             .map_err(|refusal| unavailable(&format!("the reranker call was refused: {refusal}")))?;
         let model = call.request.model.clone();
-        let generate = call.ladder.generate(&run, call.request, None);
+        let may_send = || egress.holds();
+        let generate = call
+            .ladder
+            .generate_while(&run, call.request, None, &may_send);
         // The timer is made inside the runtime that drives it: a sync door's
         // thread has none of its own.
         let answered = match answer_at {
@@ -182,6 +188,9 @@ impl RecallRerankHost for ServedRerank {
             None => self.runtime.block_on(generate),
         };
         let response = answered.map_err(|error| match error {
+            _ if egress.refused() => {
+                unavailable("a row became device-only while the reranker was called")
+            }
             LlmError::BudgetDenied(denied) => spent(denied),
             error => unavailable(&format!("the reranker call failed: {error}")),
         })?;

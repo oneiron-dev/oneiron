@@ -164,19 +164,27 @@ pub(super) fn hydrate_entity(
     let mut gated_claim_body: Option<&ClaimBody> = None;
     let decoded_here: Option<ClaimBody>;
     if header.entity_type == ENTITY_TYPE_CLAIM {
+        // Reads allow reserved `edge.*` predicates.
+        let decode = || {
+            raw.get(ENTITY_METADATA_HEADER_LEN..)
+                .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+        };
+        // The gate cached the body retrieval read live. A row scored at its
+        // words takes it only when it is the pinned body: a live row equal
+        // to the pin now says nothing of the row the gate read then.
+        let pinned = if options.words_pinned { decode() } else { None };
         match options
             .claim_bodies
             .filter(|_| raw == live_raw)
             .and_then(|cache| cache.get(&id))
+            .filter(|body| !options.words_pinned || pinned.as_ref() == Some(*body))
         {
             // Pipeline-gated result: already decoded once and surfaceable.
             Some(body) => gated_claim_body = Some(body),
             None => {
                 // Neighbor (or cache miss): decode once for gate +
-                // projection; reads allow reserved `edge.*` predicates.
-                decoded_here = raw
-                    .get(ENTITY_METADATA_HEADER_LEN..)
-                    .and_then(|body| crate::claim::decode_claim_body(body, true).ok());
+                // projection.
+                decoded_here = pinned.or_else(decode);
                 match &decoded_here {
                     Some(body) if claim_surfaceable(body) => gated_claim_body = Some(body),
                     _ => {

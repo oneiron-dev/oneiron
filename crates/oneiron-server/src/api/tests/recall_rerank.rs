@@ -169,6 +169,16 @@ async fn served(
 }
 
 fn remember(vault: &oneiron::Vault, actor: oneiron::EntityId, text: &str) -> oneiron::EntityId {
+    remember_in(vault, actor, None, text)
+}
+
+/// [`remember`] in `world` (base reality when `None`).
+fn remember_in(
+    vault: &oneiron::Vault,
+    actor: oneiron::EntityId,
+    world: Option<oneiron::EntityId>,
+    text: &str,
+) -> oneiron::EntityId {
     let id = oneiron::EntityId::now();
     let mut claim = oneiron::ClaimBody::new(
         "profile.note",
@@ -180,6 +190,7 @@ fn remember(vault: &oneiron::Vault, actor: oneiron::EntityId, text: &str) -> one
     )
     .unwrap();
     claim.source = Some(oneiron::ClaimSource::UserStated);
+    claim.world = world;
     vault
         .put_claim(&id, &claim, oneiron::TimeRange { start: 10, end: 10 }, 10)
         .unwrap();
@@ -204,16 +215,27 @@ async fn recall(
     actor: oneiron::EntityId,
     effort: &str,
 ) -> Result<Value, Value> {
+    let spec = json!({"query": QUERY, "effort": effort, "limit": 10});
+    recall_spec(server, credential, actor, spec).await
+}
+
+/// One MCP `recall` of `spec`: the pack, or the refusal.
+async fn recall_spec(
+    server: &Arc<SyncServer>,
+    credential: &str,
+    actor: oneiron::EntityId,
+    spec: Value,
+) -> Result<Value, Value> {
     let (status, reply) = route_json(
         server.clone(),
         mcp_endpoint_call_request(
             MCP_TOOL_FIRST_PATH,
             credential,
-            &format!("recall-{effort}"),
+            &format!("recall-{}", spec["effort"]),
             "recall",
             mcp_merge_args(
                 mcp_endpoint_envelope(actor, "read_memory"),
-                json!({"arguments": {"spec": {"query": QUERY, "effort": effort, "limit": 10}}}),
+                json!({"arguments": {"spec": spec}}),
             ),
         ),
     )
@@ -633,6 +655,136 @@ rerank_budget_units = 16500
     assert_eq!(taken.load(Ordering::SeqCst), 1, "the first rung went out");
     assert_eq!(fake.calls(), 0, "the fallback rung was not sent");
     down.abort();
+}
+
+/// A loopback `/v1/rerank` that takes each request, holds it until `go` is
+/// notified, then fails it, as a provider that stalls and goes down.
+/// `taken` yields each request it took.
+struct HeldReranker {
+    base_url: String,
+    taken: tokio::sync::mpsc::UnboundedReceiver<Value>,
+    go: Arc<tokio::sync::Notify>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for HeldReranker {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+impl HeldReranker {
+    async fn start() -> Self {
+        type Held = (
+            tokio::sync::mpsc::UnboundedSender<Value>,
+            Arc<tokio::sync::Notify>,
+        );
+        let (sender, taken) = tokio::sync::mpsc::unbounded_channel();
+        let go = Arc::new(tokio::sync::Notify::new());
+        let app = axum::Router::new()
+            .route(
+                "/v1/rerank",
+                axum::routing::post(
+                    |State((sender, go)): State<Held>, Json(body): Json<Value>| async move {
+                        let _ = sender.send(body);
+                        go.notified().await;
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                    },
+                ),
+            )
+            .with_state((sender, Arc::clone(&go)));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        Self {
+            base_url: format!("http://{addr}"),
+            taken,
+            go,
+            task,
+        }
+    }
+}
+
+/// Whether a `/v1/rerank` request sent `text` in one of its documents.
+fn sent(request: &Value, text: &str) -> bool {
+    request["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|document| document.as_str().unwrap().contains(text))
+}
+
+/// Astra on #1426 (F1): the device-only verdict ran once, before the call,
+/// but one call can reach several rungs. A world flagged while the first
+/// rung held the words, then failed, reached the fallback rung with the
+/// words of a row that world keeps. Each rung, the fallback's too, now goes
+/// out only while no world has been flagged since the words were judged: the
+/// fallback is never sent, and the recall ranks by fusion and says why.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_world_flagged_while_a_rung_is_out_reaches_no_fallback_rung() {
+    const KEPT: &str = "the lantern key is under the mat";
+    let mut held = HeldReranker::start().await;
+    let fake = FakeReranker::start(prefers_known(), no_hook(), 10).await;
+    let models = models_toml(&format!(
+        r#"
+[providers.held]
+kind = "local-openai-compat"
+base_url = "{}"
+[providers.rerank]
+kind = "local-openai-compat"
+base_url = "{}"
+[roles.reranker]
+rungs = [{{ model = "held:fake-reranker" }}, {{ model = "rerank:fake-reranker" }}]
+[dreamer]
+enabled = false
+[recall]
+rerank_budget_units = 32000
+"#,
+        held.base_url, fake.base_url
+    ));
+    let (_dir, server, _host, _) = served(Some(&models)).await;
+    let actor = reader(&server, "rerank-flagged").await;
+    let world = oneiron::EntityId::now();
+    server
+        .vault()
+        .put_entity(
+            &world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .unwrap();
+    remember_in(server.vault(), actor, Some(world), KEPT);
+
+    let recalling = {
+        let server = Arc::clone(&server);
+        let spec = json!({
+            "query": QUERY,
+            "effort": "high",
+            "limit": 10,
+            "scope": {"world_ref": world.to_hex()},
+        });
+        tokio::spawn(async move { recall_spec(&server, "rerank-flagged", actor, spec).await })
+    };
+    let first = held.taken.recv().await.expect("the first rung took a call");
+    assert!(sent(&first, KEPT), "the world was not yet flagged: {first}");
+    server.vault().set_world_device_only(world, true).unwrap();
+    held.go.notify_one();
+    let pack = recalling.await.unwrap().unwrap();
+
+    assert_eq!(fake.calls(), 0, "the fallback rung was not sent");
+    assert_eq!(
+        pack["retrieval_meta"]["rerank"],
+        json!({"status": "skipped", "reason": "device_only"}),
+        "{pack}"
+    );
+    assert!(
+        order(&pack).iter().any(|text| text.contains(KEPT)),
+        "the reader's own recall still serves the row: {pack}"
+    );
 }
 
 /// #1419 Wonder W1-3: the pack repeats the name the endpoint says answered

@@ -449,7 +449,11 @@ joined as the reranker would read them, and one the door refuses is sent
 empty. So is a row a device-only world keeps, at the revision scored: a
 `[models]` reranker is reached over HTTP, never on the device. A row sent
 empty scores last. A block with no text to send makes no call and says
-`skipped` with `no_candidates`. The pack repeats the name the endpoint says
+`skipped` with `no_candidates`. Each rung, a fallback's too, goes out only
+while that device-only verdict, run again, keeps none of the rows it sends
+with words. Once it keeps one (its world was flagged while a rung was out),
+nothing more is sent, and the recall ranks by fusion and says `skipped` with
+`device_only`. The pack repeats the name the endpoint says
 answered as `served_model` only when it is at most 200 printable characters.
 The model runs outside every vault transaction, and the scores apply only to
 that same block. A block that changed while it was scored (the vault was
@@ -457,7 +461,7 @@ written to) is scored once more; if it changes again the recall is refused
 with `INVALID_STATE` (409) and nothing stale is used. The pack's
 `retrieval_meta.rerank` says what happened: `{"status": "applied", "model",
 "served_model", "candidates", "calls"}` or `{"status": "skipped", "reason":
-"no_reranker" | "no_candidates" | "deadline"}`.
+"no_reranker" | "no_candidates" | "deadline" | "device_only"}`.
 
 Without a `reranker` route, `high` and above run their graph expansion
 unreranked, and say `skipped` with `no_reranker`. With one, nothing stands in

@@ -83,9 +83,10 @@ impl crate::memory::RecallRerankHost for Placed<'_> {
         &self,
         query: &str,
         documents: &[crate::memory::RerankDocument<'_>],
+        egress: &crate::memory::RerankEgress<'_>,
         answer_at: Option<std::time::Instant>,
     ) -> MemoryResult<crate::memory::RerankScores> {
-        crate::memory::RecallRerankHost::score(self.host, query, documents, answer_at)
+        crate::memory::RecallRerankHost::score(self.host, query, documents, egress, answer_at)
     }
 
     fn runs_on_device(&self) -> bool {

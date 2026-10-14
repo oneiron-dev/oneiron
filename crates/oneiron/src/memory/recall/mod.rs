@@ -16,7 +16,8 @@ pub use self::call_mode::{DEFAULT_CALL_MODE_DEADLINE, RecallEffort, resolve_reca
 #[cfg(test)]
 pub(super) use self::paid::PREPARED_SCORES_TAKEN;
 pub use self::paid::{
-    RecallRerank, RecallRerankHost, RerankDocument, RerankReport, RerankScores, RerankSkip,
+    RecallRerank, RecallRerankHost, RerankDocument, RerankEgress, RerankReport, RerankScores,
+    RerankSkip,
 };
 
 use self::presentation::{hedge_bucket_for, value_text_of};

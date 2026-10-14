@@ -215,9 +215,26 @@ impl OfferLadder {
         request: LlmRequest,
         selector: Option<&str>,
     ) -> LlmResult<LlmResponse> {
+        self.generate_while(run, request, selector, &|| true).await
+    }
+
+    /// [`Self::generate`], asking `may_send` before each rung is admitted,
+    /// the first one's too: once it says no, no rung is sent, and the call
+    /// fails with the last rung's error (an invalid request when none went
+    /// out).
+    pub async fn generate_while(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+    ) -> LlmResult<LlmResponse> {
         self.admits(&request)?;
         let mut last = None;
         for (index, rung) in self.rungs.iter().enumerate() {
+            if !may_send() {
+                break;
+            }
             let (call, permit) = self.admit(run, rung, &request, selector, false)?;
             let gate = run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
             match gate.generate(call, permit.lease()).await {
