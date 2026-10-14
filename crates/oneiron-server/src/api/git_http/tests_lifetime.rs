@@ -1,10 +1,10 @@
 //! The lifetime of one git exchange (C5), end to end over the real routes and
 //! a real `git http-backend`: a stalled push is ended at the idle limit and
 //! frees the repository coordinator for the next push, a push that finds the
-//! coordinator taken is refused rather than queued, exchanges past the
-//! bound are refused while a stalled one holds its permit, the permit returns
-//! once the stalled child is gone, and a slow transfer that keeps moving is
-//! never cut.
+//! coordinator taken is refused rather than queued while reads go on past it,
+//! exchanges past the bound are refused while a stalled one holds its permit,
+//! the permit returns once the stalled child is gone, and a slow transfer
+//! that keeps moving is never cut.
 
 use super::routes::git_http_routes;
 use crate::config::{LimitsConfig, SyncServerConfig};
@@ -265,6 +265,42 @@ async fn a_stalled_push_is_ended_and_frees_the_repository_for_the_next() {
     assert!(
         refs.contains(&format!("{pushed}\trefs/heads/next")),
         "{refs}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn reads_never_queue_behind_a_push_that_holds_the_repository() {
+    let origin = origin(limits(4, 10_000)).await;
+
+    // A push that holds the repository coordinator for its idle limit.
+    let _stalled = rpc(&origin, "git-receive-pack", 4_096, b"00").await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Far inside that limit, an advertisement and a fetch are both served.
+    let soon = Duration::from_secs(3);
+    let advertised = tokio::time::timeout(soon, advertise(&origin))
+        .await
+        .expect("an advertisement never waits on the push that holds the repository");
+    assert_eq!(advertised, 200);
+    let request = format!(
+        "{}0000{}",
+        pkt(&format!("want {}\n", origin.oid)),
+        pkt("done\n")
+    );
+    let mut fetch = rpc(
+        &origin,
+        "git-upload-pack",
+        request.len(),
+        request.as_bytes(),
+    )
+    .await;
+    let (status, body) = tokio::time::timeout(soon, response(&mut fetch))
+        .await
+        .expect("a fetch never waits on the push that holds the repository");
+    assert_eq!(status, 200);
+    assert!(
+        body.windows(4).any(|window| window == b"PACK"),
+        "the fetch delivers its pack"
     );
 }
 

@@ -256,7 +256,15 @@ fn serve_request(
     }
     // This also runs for advertisements and no-op retries. A crash after the
     // backend effect must not leave a ref hidden merely because no new hook runs.
-    vault.reconcile_receive_pack_operations(&repo_dir)?;
+    // Recovery takes the coordinator, which a push already holds here. A read
+    // that may not wait for it leaves recovery to whoever holds it or to the
+    // next request that finds it free: a ref still hidden is the safe side,
+    // and a read never queues behind a write.
+    if coordinator.is_some() || wait_for_repository {
+        vault.reconcile_receive_pack_operations(&repo_dir)?;
+    } else if let Some(_free) = try_lock_repository(&repo_common_dir(&repo_dir)?)? {
+        vault.reconcile_receive_pack_operations(&repo_dir)?;
+    }
     let mut child = command.spawn(request)?;
     let exchange = run_exchange(
         &ExchangeSetup {
