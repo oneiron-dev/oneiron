@@ -1,12 +1,14 @@
 //! The frozen `git http-backend` invocation: typed request, closed argv/env
 //! command, and the running child handle.
 
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Stdio};
 use std::time::{Duration, Instant};
 
-use super::paths::{SERVE_REAP_TIMEOUT, serve_failed};
+use super::paths::{SERVE_QUARANTINE_PREFIX, SERVE_REAP_TIMEOUT, serve_failed};
 use crate::error::Result;
 use crate::git_wire::GitWireProcessEnv;
 
@@ -123,6 +125,11 @@ impl ServeCommand {
     /// is a git config key; `git -c` gives it command-line precedence and
     /// carries it to every git child the backend spawns, so no repository-local
     /// `hooksPath` and no repository-supplied hook can displace the door's.
+    ///
+    /// Automatic maintenance is pinned off the same way, as GitWire pins it
+    /// for its own commands: a push would otherwise start a repack that
+    /// detaches and outlives the exchange that started it, and with it the
+    /// exchange's permit.
     pub fn http_backend(
         repo_dir: &Path,
         project_root: &Path,
@@ -132,12 +139,19 @@ impl ServeCommand {
         let hooks = door_hooks_dir
             .to_str()
             .ok_or_else(|| serve_failed("door hooks path must be UTF-8"))?;
-        let argv = vec![
+        let mut argv = vec![
             path_arg(process_env.git_binary())?,
             "-c".to_owned(),
             format!("core.hooksPath={hooks}"),
-            "http-backend".to_owned(),
         ];
+        for pinned in [
+            "receive.autogc=false",
+            "gc.auto=0",
+            "maintenance.auto=false",
+        ] {
+            argv.extend(["-c".to_owned(), pinned.to_owned()]);
+        }
+        argv.push("http-backend".to_owned());
         let mut env = BTreeMap::new();
         env.insert("GIT_DIR".to_owned(), path_arg(repo_dir)?);
         env.insert("GIT_PROJECT_ROOT".to_owned(), path_arg(project_root)?);
@@ -298,5 +312,59 @@ impl ServeChild {
             }
         }
         let _ = self.child.kill();
+    }
+}
+
+impl Drop for ServeChild {
+    /// A child its exchange never reaped, because the exchange unwound, is
+    /// ended and reaped here: no backend outlives the permit that owns it.
+    fn drop(&mut self) {
+        if matches!(self.child.try_wait(), Ok(None)) {
+            self.kill();
+        }
+    }
+}
+
+/// The quarantines a receive-pack's backend makes in the repository's objects
+/// directory. Git removes its own as it exits, but not when it is killed:
+/// dropping this removes every one that appeared since [`Self::note`]. Drop
+/// it once the backend is reaped and before the repository coordinator is
+/// let go, so none of them can belong to another push.
+pub(super) struct IncomingQuarantines {
+    objects: PathBuf,
+    before: BTreeSet<OsString>,
+}
+
+impl IncomingQuarantines {
+    pub(super) fn note(objects: PathBuf) -> Self {
+        let before = Self::present(&objects);
+        Self { objects, before }
+    }
+
+    fn present(objects: &Path) -> BTreeSet<OsString> {
+        fs::read_dir(objects)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.file_name())
+            .filter(|name| {
+                name.as_encoded_bytes()
+                    .starts_with(SERVE_QUARANTINE_PREFIX.as_bytes())
+            })
+            .collect()
+    }
+}
+
+impl Drop for IncomingQuarantines {
+    fn drop(&mut self) {
+        for name in Self::present(&self.objects) {
+            if self.before.contains(&name) {
+                continue;
+            }
+            let path = self.objects.join(&name);
+            if fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_dir()) {
+                let _ = fs::remove_dir_all(&path);
+            }
+        }
     }
 }

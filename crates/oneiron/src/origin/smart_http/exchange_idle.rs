@@ -74,12 +74,22 @@ impl ServeSink for ProgressSink<'_> {
     }
 }
 
+/// What an exchange tells the watchdog over its backend.
+pub(super) enum Watched {
+    /// The exchange failed: nothing more is wanted from the backend.
+    End,
+    /// Every thread that reads the backend's pipes or answers its hook has
+    /// been joined: the watch is over.
+    Joined,
+}
+
 /// Kills the backend once the exchange has moved no byte for `idle`, and
-/// says whether it did. A message on `watched` kills it at once and is no
-/// idling: the exchange already failed, and nothing more is wanted from the
-/// backend. The watch ends when `watched` closes, which the exchange does
-/// only once every thread that reads the backend's pipes or answers its hook
-/// has been joined, so none of them waits on a backend nobody watches.
+/// says whether it did. [`Watched::End`] kills it at once and is no idling:
+/// the exchange already failed. The watch lasts until [`Watched::Joined`],
+/// which the exchange sends only once every thread that waits on the
+/// backend has been joined, so none of them waits on a backend nobody
+/// watches. An exchange that goes away without saying so, because it
+/// unwound, takes its backend with it.
 ///
 /// The kill is what unblocks the exchange: the backend's pipes close with it,
 /// so the response reader sees its end, the body pump its broken pipe, the
@@ -87,7 +97,7 @@ impl ServeSink for ProgressSink<'_> {
 pub(super) fn watch(
     progress: &Progress,
     idle: Duration,
-    watched: &Receiver<()>,
+    watched: &Receiver<Watched>,
     child: &mut ServeChild,
 ) -> bool {
     loop {
@@ -98,11 +108,11 @@ pub(super) fn watch(
         }
         match watched.recv_timeout(idle - quiet) {
             Err(RecvTimeoutError::Timeout) => {}
-            Ok(()) => {
+            Ok(Watched::Joined) => return false,
+            Ok(Watched::End) | Err(RecvTimeoutError::Disconnected) => {
                 child.end();
                 return false;
             }
-            Err(RecvTimeoutError::Disconnected) => return false,
         }
     }
 }

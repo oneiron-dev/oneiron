@@ -15,7 +15,7 @@ use super::cgi_finish::{finish_serve, stream_response};
 use super::door::{DoorAdmissionStamp, DoorHook, DoorSeam, NoopDoorHook};
 use super::door_window::{DoorWindowContext, DoorWindowReport, serve_door_window};
 use super::evidence::{ReceivePackOutcome, receive_pack_provenance_refused};
-use super::exchange_idle::{Progress, ProgressRead, ProgressSink, stall_as_idle, watch};
+use super::exchange_idle::{Progress, ProgressRead, ProgressSink, Watched, stall_as_idle, watch};
 use super::hooks::DoorHooksDir;
 use super::intent::ReceivePackRefResult;
 use super::landing::ReceivePackLanding;
@@ -24,7 +24,7 @@ use super::paths::{
     origin_door_root, origin_repo_dir, origin_serving_root, repository_busy, serve_failed,
     serve_idle,
 };
-use super::serve_cmd::{ServeChild, ServeCommand, ServeRequest};
+use super::serve_cmd::{IncomingQuarantines, ServeChild, ServeCommand, ServeRequest};
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::credential_door::CredentialDoorService;
@@ -247,6 +247,15 @@ fn serve_request(
         // a push and neither delays one.
         None
     };
+    // Between the coordinator and the child, so on every way out the child
+    // is reaped first, then what a killed backend left in quarantine is
+    // swept, and only then is the coordinator let go.
+    let quarantines = match coordinator {
+        Some(_) => Some(IncomingQuarantines::note(
+            repo_common_dir(&repo_dir)?.join("objects"),
+        )),
+        None => None,
+    };
     // The same coordinator guards epoch cutover. Stamp and persist only after
     // acquiring it, so an old accepted request cannot cross an epoch change.
     let mut admission = stamp_admission(vault, request, &repo_dir, seam)?;
@@ -299,6 +308,7 @@ fn serve_request(
     let report = finish_serve(vault, request, &repo_dir, admission, exchange);
     // Held to here on purpose: the ref mutation, the quarantine migration and
     // the journaled advance are one window, and it closes here.
+    drop(quarantines);
     drop(coordinator);
     report
 }
@@ -467,12 +477,14 @@ fn run_exchange(
         sink,
         progress: &progress,
     };
-    let (watching, watched) = std::sync::mpsc::channel::<()>();
+    let (watching, watched) = std::sync::mpsc::channel::<Watched>();
 
     std::thread::scope(|scope| {
         // Closed when this body returns, however it returns, so the
-        // watchdog never outlives the exchange it watches.
+        // watchdog never outlives the exchange it watches; closed by an
+        // unwind, as when a thread below cannot start, it ends the backend.
         let watching = watching;
+        let _finished = FinishedOnDrop(&finished);
         let clock = &progress;
         let watchdog = scope.spawn(move || watch(clock, idle, &watched, child));
         let pump = scope.spawn(move || pump_request_body(&mut body, stdin));
@@ -494,7 +506,7 @@ fn run_exchange(
             // Nothing more is wanted from the backend, and a push's hook may
             // be waiting on a verdict the door window will now never give:
             // end it, so the joins below see their ends.
-            let _ = watching.send(());
+            let _ = watching.send(Watched::End);
         }
         let pumped = join_thread(pump.join());
         let stderr = drain.join().unwrap_or_default();
@@ -504,7 +516,7 @@ fn run_exchange(
         };
         // Disarmed only once every thread is joined: until then, a backend
         // one of them still waited on was watched.
-        drop(watching);
+        let _ = watching.send(Watched::Joined);
         // A response cut short by the watchdog's kill reads as an ending; it
         // is the idle limit's, never a success.
         if join_thread(watchdog.join().map(Ok))? {
@@ -521,6 +533,17 @@ fn run_exchange(
             stderr,
         })
     })
+}
+
+/// Marks the response finished when the exchange body ends however it ends,
+/// an unwind included, so the door window stops waiting for a request that
+/// can no longer come.
+struct FinishedOnDrop<'a>(&'a AtomicBool);
+
+impl Drop for FinishedOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
 }
 
 fn join_thread<T>(joined: std::thread::Result<Result<T>>) -> Result<T> {

@@ -107,6 +107,10 @@ pub const DOOR_WINDOW_TIMEOUT: Duration = Duration::from_secs(300);
 /// however slowly, is never cut.
 pub const SERVE_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// The name git gives a receive-pack's object quarantine, under the objects
+/// directory, ahead of its random suffix (`tmp-objdir.c`).
+pub(super) const SERVE_QUARANTINE_PREFIX: &str = "tmp_objdir-incoming-";
+
 /// How long a backend whose output has ended may take to exit before it is
 /// killed and reaped.
 pub(super) const SERVE_REAP_TIMEOUT: Duration = Duration::from_secs(30);
