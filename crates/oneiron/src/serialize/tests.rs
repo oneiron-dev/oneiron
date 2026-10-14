@@ -530,7 +530,8 @@ fn an_entitys_own_alias_in_its_own_fields_never_becomes_its_name() {
     // closes the first half of the phrase and whose name holds the second:
     // no stored run and no field spells it, but its name set in place of
     // its own alias would. Sol R1: an identity key equal to its own short id
-    // must not bring the name back after the alias becomes that short id.
+    // must not bring the name back after the alias becomes that short id;
+    // Wonder R3: nor one two abutting renders of it spell again.
     let words: Vec<&str> =
         "legal winner thank year wave sausage worth useful legal winner thank yellow"
             .split(' ')
@@ -556,7 +557,16 @@ fn an_entitys_own_alias_in_its_own_fields_never_becomes_its_name() {
             edges: None,
             vector: None,
         };
-    for (identity_key, alias) in [("zq9", "zq9".to_owned()), ("as01", id.to_hex())] {
+    // The identity key, its mention, and what the mention renders as.
+    for (identity_key, alias, rendered) in [
+        ("zq9", "zq9".to_owned(), "as01"),
+        ("as01", id.to_hex(), "as01"),
+        (
+            "-as01as01-",
+            "--as01as01--as01as01--".to_owned(),
+            "--as01as01--as01as01--",
+        ),
+    ] {
         let headline = format!("{} {alias}", words[..6].join(" "));
         let body = rmpv::Value::Map(vec![
             ("headline".into(), headline.as_str().into()),
@@ -604,7 +614,7 @@ fn an_entitys_own_alias_in_its_own_fields_never_becomes_its_name() {
             ))
             .into_owned();
             let case = format!("{identity_key} {format:?}: {text}");
-            assert!(text.contains("sausage as01"), "{case}");
+            assert!(text.contains(&format!("sausage {rendered}")), "{case}");
             assert!(!text.contains("sausage worth"), "{case}");
             // Its own name still shows in its name, and another entity's id
             // in its fields still becomes that entity's name.

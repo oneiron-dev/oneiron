@@ -41,18 +41,18 @@ impl Handles {
             let handle = (entity.short_id.clone(), name.to_owned());
             aliases.insert(entity.id.to_hex(), handle.clone());
             let mut mine = vec![entity.id.to_hex()];
-            // An identity key that holds its own short id as a word is no
-            // alias: the short id an own alias becomes below would read as it.
+            // An identity key that holds its own short id is no alias. The
+            // own pass below renders an own alias as that short id, a word
+            // whose neighbours are what bounded the alias; so the only own
+            // alias its output can spell again (two abutting renders
+            // included) is one that holds the short id.
             if let Some(key) = entity
                 .fields
                 .as_ref()
                 .and_then(|f| f.get("identity_key"))
                 .and_then(Value::as_str)
                 .filter(|s| !s.is_empty())
-                .filter(|key| {
-                    !key.split(|c| !is_word(c))
-                        .any(|word| word == entity.short_id)
-                })
+                .filter(|key| !key.contains(entity.short_id.as_str()))
             {
                 aliases.insert(key.into(), handle.clone());
                 mine.push(key.into());

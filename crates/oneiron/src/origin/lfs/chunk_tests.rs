@@ -456,16 +456,48 @@ fn a_phrase_split_at_a_seam_reads_as_the_write_door_reads_it_whole() {
     ]);
 }
 
-/// Installs each two-part object, read by chunk and seam alone, and asserts
-/// that it is refused exactly when the write door refuses it read whole (as
-/// each case says it does), while each part alone passes.
-fn seam_reads_as_whole(cases: &[(bool, [Vec<u8>; 2])]) {
+#[test]
+fn a_segment_past_what_a_seam_reads_whole_keeps_its_first_assignment() {
+    // Sol R3: padding carries a segment past what the seam reads whole, and
+    // the first `=` falls where it cut: a key and its value there (refused
+    // whole), or the first `=` there and a sensitive one at the end (accepted
+    // whole, for the first `=` holds the key). Chunks as long as a peer sends.
+    let pad = |units: usize| b"zz  ".repeat(units);
+    let value: &[u8] = b"t7Rk2pLq9WzX";
+    let chunked = |parts: [Vec<u8>; 2]| -> Vec<Vec<u8>> {
+        parts
+            .iter()
+            .flat_map(|part| part.chunks(LFS_CHUNK_MAX).map(<[u8]>::to_vec))
+            .collect()
+    };
+    seam_reads_as_whole(&[
+        (
+            true,
+            chunked([
+                [&pad(1_060_000)[..], b"_password="].concat(),
+                [value, b" ", &pad(1_540_000), b"\n"].concat(),
+            ]),
+        ),
+        (
+            false,
+            chunked([
+                [&pad(1_060_000)[..], b"=", &pad(1_540_000), b"_password="].concat(),
+                [value, b"\n"].concat(),
+            ]),
+        ),
+    ]);
+}
+
+/// Installs each object, its parts its chunks, read by chunk and seam alone,
+/// and asserts that it is refused exactly when the write door refuses it read
+/// whole (as each case says it does), while each part alone passes.
+fn seam_reads_as_whole<P: AsRef<[Vec<u8>]>>(cases: &[(bool, P)]) {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let mut misread = Vec::new();
-    for (case, (refused, [first, second])) in cases.iter().enumerate() {
-        let parts: [&[u8]; 2] = [first, second];
+    for (case, (refused, parts)) in cases.iter().enumerate() {
+        let parts: Vec<&[u8]> = parts.as_ref().iter().map(Vec::as_slice).collect();
         let whole = parts.concat();
-        for part in parts {
+        for &part in &parts {
             crate::batch::secret_scan::scan_write_payload(part).unwrap();
         }
         assert_eq!(

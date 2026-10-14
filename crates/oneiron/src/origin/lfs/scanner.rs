@@ -19,9 +19,9 @@ pub(super) struct CredentialStream {
     phrases: Option<crate::batch::secret_scan::PhraseStream>,
 }
 
-/// The most of one segment a seam keeps, once its padding is squeezed: as
-/// much as an object the upload reads whole, so a segment up to that size is
-/// read whole however a peer cuts it.
+/// How much of one segment a seam reads whole, once its padding is squeezed:
+/// as much as an object the upload reads whole, so a segment up to that size
+/// is read whole however a peer cuts it.
 const SEAM_MAX: usize = super::upload::LFS_WHOLE_SCAN_MAX as usize;
 
 /// How much of a run of one repeated character a seam keeps: as much as the
@@ -34,6 +34,11 @@ const RUN_KEEP: usize = 128;
 /// rule's `export ` prefix strips only before a run of one space).
 const SPACE_KEEP: usize = 2;
 
+/// How much a segment longer than [`SEAM_MAX`] keeps of each of the four
+/// places the assignment rule reads (see [`Seam::bound`]): together, as much
+/// as [`SEAM_MAX`].
+const PART_KEEP: usize = SEAM_MAX / 4;
+
 /// The write door's text rules across feed edges, but for the recovery-phrase
 /// rule, which the stream reads whole. A batch scan reads each chunk alone,
 /// so a `password=` at one chunk's end and its value at the next one's start
@@ -43,11 +48,12 @@ const SPACE_KEEP: usize = 2;
 /// the stream, so each byte is read once more at most. A peer chooses the
 /// edges, and padding must not carry a key away from its value: each run of
 /// whitespace reads as its first [`SPACE_KEEP`] characters and each run of
-/// one other character as at most [`RUN_KEEP`] of it. A segment still longer than [`SEAM_MAX`] keeps
-/// its two ends, the key's side and the side that meets the next edge.
+/// one other character as at most [`RUN_KEEP`] of it. A segment still
+/// longer than [`SEAM_MAX`] keeps what the assignment rule reads of it: its
+/// first `=` or `:` and what stands on either side ([`Seam::bound`]).
 #[derive(Default)]
 struct Seam {
-    /// The start of a segment cut to its two ends.
+    /// What a segment longer than [`SEAM_MAX`] keeps before `tail`.
     front: Vec<u8>,
     /// The open segment's text since its start (or since its front).
     tail: Vec<u8>,
@@ -55,6 +61,22 @@ struct Seam {
     crossed: bool,
     /// The last character kept or squeezed, and how long its run is.
     run: Option<(char, usize)>,
+    /// Where in `tail` the segment's first `=` or `:` stands, until a long
+    /// segment's front takes it.
+    separator: Option<usize>,
+    /// Which part of a segment longer than [`SEAM_MAX`] `tail` holds.
+    long: Option<Part>,
+}
+
+/// The part of a long segment a seam's tail holds.
+#[derive(Clone, Copy)]
+enum Part {
+    /// The key, past its first [`PART_KEEP`].
+    Key,
+    /// The value's start, until it holds [`PART_KEEP`].
+    Value,
+    /// What follows the value's start; `true` once some of it was dropped.
+    Rest(bool),
 }
 
 impl Seam {
@@ -87,15 +109,80 @@ impl Seam {
         if bytes.is_empty() {
             return;
         }
-        self.crossed |= !self.tail.is_empty();
+        self.crossed |= !self.front.is_empty() || !self.tail.is_empty();
         self.squeeze(bytes);
-        // Cut only once the tail is twice what it keeps, so each byte moves
-        // once at most.
-        if self.tail.len() > SEAM_MAX {
-            if self.front.is_empty() {
-                self.front = self.tail[..SEAM_MAX / 2].to_vec();
+        self.bound();
+    }
+
+    /// Bounds a segment longer than [`SEAM_MAX`] to what the assignment rule
+    /// reads of it, which is its first `=` or `:` and what stands beside it:
+    /// [`PART_KEEP`] of each end of its key, of its value's start, and of its
+    /// own end. That separator is never dropped, so a key and a value are
+    /// read as in the whole segment unless a key's leading text or a value's
+    /// first word is itself longer than [`PART_KEEP`]. A space stands where
+    /// text was dropped, so no word or token joins across the gap. A tail is
+    /// cut only once it is twice what it keeps, so each byte moves once at
+    /// most.
+    fn bound(&mut self) {
+        loop {
+            match self.long {
+                None if self.tail.len() <= SEAM_MAX => return,
+                None => {
+                    let key = self.separator.unwrap_or(self.tail.len());
+                    if key > 2 * PART_KEEP {
+                        self.keep_key_ends(key);
+                    }
+                    self.long = Some(Part::Key);
+                }
+                Some(Part::Key) => {
+                    let Some(at) = self.separator.take() else {
+                        if self.tail.len() > 2 * PART_KEEP {
+                            self.keep_key_ends(self.tail.len());
+                        }
+                        return;
+                    };
+                    // A key whose first part is in front keeps its last.
+                    let dropped = if self.front.is_empty() {
+                        0
+                    } else {
+                        at.saturating_sub(PART_KEEP)
+                    };
+                    self.tail.drain(..dropped);
+                    self.front.extend(self.tail.drain(..=at - dropped));
+                    self.long = Some(Part::Value);
+                }
+                Some(Part::Value) => {
+                    if self.tail.len() < PART_KEEP {
+                        return;
+                    }
+                    self.front.extend(self.tail.drain(..PART_KEEP));
+                    self.long = Some(Part::Rest(false));
+                }
+                Some(Part::Rest(cut)) => {
+                    if self.tail.len() <= 2 * PART_KEEP {
+                        return;
+                    }
+                    if !cut {
+                        self.front.push(b' ');
+                    }
+                    self.tail.drain(..self.tail.len() - PART_KEEP);
+                    self.long = Some(Part::Rest(true));
+                    return;
+                }
             }
-            self.tail.drain(..self.tail.len() - SEAM_MAX / 2);
+        }
+    }
+
+    /// Keeps the first [`PART_KEEP`] of a key the tail holds `key` bytes of,
+    /// in front, and its last: the middle is dropped.
+    fn keep_key_ends(&mut self, key: usize) {
+        if self.front.is_empty() {
+            self.front.extend_from_slice(&self.tail[..PART_KEEP]);
+            self.front.push(b' ');
+        }
+        self.tail.drain(..key - PART_KEEP);
+        if let Some(at) = &mut self.separator {
+            *at -= key - PART_KEEP;
         }
     }
 
@@ -115,6 +202,12 @@ impl Seam {
                 };
                 self.run = Some((class, run));
                 if run <= if class == ' ' { SPACE_KEEP } else { RUN_KEEP } {
+                    if matches!(ch, '=' | ':')
+                        && self.separator.is_none()
+                        && matches!(self.long, None | Some(Part::Key))
+                    {
+                        self.separator = Some(self.tail.len());
+                    }
                     self.tail
                         .extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
                 }

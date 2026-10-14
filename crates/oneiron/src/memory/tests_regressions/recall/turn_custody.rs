@@ -20,40 +20,32 @@ fn a_turn_gives_no_words_of_a_message_the_write_door_refuses() {
     let turn = witness_turn(&facade, 0xD9, &[CUSTODY_PHRASE, kept], 1_900);
     fill_turn(&vault, &turn, &MEANING);
     assert_eq!(refused_message_bodies(&vault, &turn), [true, false]);
-    turn_doors_serve(&vault, &facade, &turn, "kettle", &MEANING, kept, "sausage");
+    let item = recalled_turn(&facade, "kettle", &MEANING);
+    turn_doors_serve(&vault, &facade, &turn, &item, &MEANING, kept, "sausage");
 }
 
-/// The words leg alone (Wonder R2): a message whose text lives in its entity
-/// document has a body the write door accepts, and its words are read as
+/// The words leg alone (Wonder R2): a reference pinned while a message held
+/// the phrase, which a later write of its row made clean. Its stored body
+/// now passes, and the words the pin serves, its earlier row's, are read as
 /// they are served.
-#[cfg(feature = "sync")]
 #[test]
-fn a_turn_gives_no_words_the_write_door_refuses_from_a_document() {
-    use crate::entity_doc::{DocAuthorization, TextField};
+fn a_turn_pinned_before_its_message_was_made_clean_gives_none_of_its_words() {
     const MEANING: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
     let (_dir, vault, owner) = scan_off_embedding_vault();
     let facade = facade_for(&vault, owner);
     let kept = "the clock chimes at noon";
     let turn = witness_turn(&facade, 0xDA, &[CUSTODY_PHRASE, kept], 1_900);
     fill_turn(&vault, &turn, &MEANING);
-    let authenticated = vault
-        .authenticate_owner(
-            owner,
-            "principal:turn-custody-test",
-            true,
-            crate::store::GateDecisionId::now(),
-        )
-        .expect("owner");
-    vault
-        .migrate_entity_text(
-            &first_message(&vault, &turn),
-            &TextField::MapField("content".into()),
-            crate::write_envelope::WriteActor::new(owner, EdgeActorClass::Human),
-            &DocAuthorization::Owner(&authenticated),
-        )
-        .expect("move the message's text into its document");
+    let pinned = recalled_turn(&facade, "clock", &MEANING);
+    rewrite_first_message(&vault, &turn, |fields| {
+        for (key, value) in fields.iter_mut() {
+            if key.as_str() == Some("content") {
+                *value = "the stove ticks softly".into();
+            }
+        }
+    });
     assert_eq!(refused_message_bodies(&vault, &turn), [false, false]);
-    turn_doors_serve(&vault, &facade, &turn, "clock", &MEANING, kept, "sausage");
+    turn_doors_serve(&vault, &facade, &turn, &pinned, &MEANING, kept, "sausage");
 }
 
 /// The body leg alone: a message whose row holds a credential beside words
@@ -66,7 +58,26 @@ fn a_turn_gives_no_words_of_a_message_whose_body_holds_a_secret() {
     let kept = "the porch light flickers";
     let turn = witness_turn(&facade, 0xDC, &["the stove ticks softly", kept], 1_900);
     fill_turn(&vault, &turn, &MEANING);
-    let message = first_message(&vault, &turn);
+    rewrite_first_message(&vault, &turn, |fields| {
+        fields.push((
+            rmpv::Value::from("password"),
+            rmpv::Value::from("t7Rk2pLq9WzX"),
+        ));
+    });
+    assert_eq!(refused_message_bodies(&vault, &turn), [true, false]);
+    let item = recalled_turn(&facade, "porch", &MEANING);
+    turn_doors_serve(&vault, &facade, &turn, &item, &MEANING, kept, "stove");
+}
+
+/// Rewrites the stored body of `turn`'s first message with `edit`, as a
+/// write the owner's scan does not read may (a replica's): its earlier row
+/// stays among its retained revisions.
+fn rewrite_first_message(
+    vault: &crate::Vault,
+    turn: &EntityId,
+    edit: impl FnOnce(&mut Vec<(rmpv::Value, rmpv::Value)>),
+) {
+    let message = first_message(vault, turn);
     let raw = vault.get_raw(&message).expect("raw read").expect("stored");
     let (header, body) = raw.split_at(crate::batch::ENTITY_METADATA_HEADER_LEN);
     let rmpv::Value::Map(mut fields) =
@@ -74,17 +85,20 @@ fn a_turn_gives_no_words_of_a_message_whose_body_holds_a_secret() {
     else {
         panic!("a message body is a map");
     };
-    fields.push((
-        rmpv::Value::from("password"),
-        rmpv::Value::from("t7Rk2pLq9WzX"),
-    ));
+    edit(&mut fields);
     let mut row = header.to_vec();
     rmpv::encode::write_value(&mut row, &rmpv::Value::Map(fields)).expect("encode");
     vault
-        .with_write_txn(|wtxn| vault.store.entities.put(wtxn, message.as_bytes(), &row))
-        .expect("store a body the write door refuses, as a replica with its scan off may");
-    assert_eq!(refused_message_bodies(&vault, &turn), [true, false]);
-    turn_doors_serve(&vault, &facade, &turn, "porch", &MEANING, kept, "stove");
+        .with_write_txn(|wtxn| {
+            crate::vault::entity_revision::capture_entity_revision(
+                &vault.store,
+                wtxn,
+                &message,
+                &row,
+            )?;
+            vault.store.entities.put(wtxn, message.as_bytes(), &row)
+        })
+        .expect("rewrite the message's row");
 }
 
 /// A vault whose turns embed, with the owner's write scan off.
@@ -130,20 +144,19 @@ fn refused_message_bodies(vault: &crate::Vault, turn: &EntityId) -> Vec<bool> {
 }
 
 /// Asserts that each door that joins `turn`'s words serves `kept` and no
-/// `withheld`: recall's item for `query`, the scoped context pack's `txt`
-/// live and pinned at that item, and a document chat naming it, its items
-/// and its answer, with no format, Markdown and plain text. A rendered
-/// answer need not quote the words, so it is held only to `withheld`.
+/// `withheld`: recall's `item`, the scoped context pack's `txt` live and
+/// pinned at that item, and a document chat naming it, its items and its
+/// answer, with no format, Markdown and plain text. A rendered answer need
+/// not quote the words, so it is held only to `withheld`.
 fn turn_doors_serve(
     vault: &crate::Vault,
     facade: &Memory<'_>,
     turn: &EntityId,
-    query: &str,
+    item: &crate::memory::MemoryItem,
     meaning: &[f32],
     kept: &str,
     withheld: &str,
 ) {
-    let item = recalled_turn(facade, query, meaning);
     let lane = facade
         .read_lane(crate::claim::ClaimReadStatus::Recorded)
         .expect("owner read lane");
@@ -173,7 +186,7 @@ fn turn_doors_serve(
         ("pack live".to_owned(), live.unwrap_or_default()),
         (
             "pack pinned".to_owned(),
-            pinned_pack_text(vault, &lane, turn, meaning, &item).unwrap_or_default(),
+            pinned_pack_text(vault, &lane, turn, meaning, item).unwrap_or_default(),
         ),
     ];
     for format in [None, Some("md"), Some("txt")] {
