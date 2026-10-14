@@ -1,6 +1,6 @@
 //! Native-human routing, follow-up cursor lifecycle and the wake driver.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use rmpv::Value;
 
@@ -54,13 +54,17 @@ pub fn resolve_native_human_route(
     resolve_native_human_route_in(vault, &txn, person_ref)
 }
 
+/// [`resolve_native_human_route_in`] for the identity `owner_ref` sends from.
+/// Each `comm.*` CLAIM whose veto takes an active channel away is pushed
+/// onto `vetoes`: the route read is derived from it.
 pub(crate) fn resolve_native_human_route_for_actor_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     person_ref: EntityId,
     owner_ref: EntityId,
+    vetoes: &mut Vec<EntityId>,
 ) -> HumanTaskResult<NativeHumanRoute> {
-    resolve_native_human_route_with_sender_in(vault, txn, person_ref, Some(owner_ref))
+    resolve_native_human_route_with_sender_in(vault, txn, person_ref, Some(owner_ref), vetoes)
 }
 
 pub(crate) fn resolve_native_human_route_in(
@@ -68,14 +72,15 @@ pub(crate) fn resolve_native_human_route_in(
     txn: &heed::RoTxn<'_>,
     person_ref: EntityId,
 ) -> HumanTaskResult<NativeHumanRoute> {
-    resolve_native_human_route_with_sender_in(vault, txn, person_ref, None)
+    resolve_native_human_route_with_sender_in(vault, txn, person_ref, None, &mut Vec::new())
 }
 
-fn resolve_native_human_route_with_sender_in(
+pub(super) fn resolve_native_human_route_with_sender_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     person_ref: EntityId,
     owner_ref: Option<EntityId>,
+    vetoes: &mut Vec<EntityId>,
 ) -> HumanTaskResult<NativeHumanRoute> {
     if vault.get_entity_type_in_txn(txn, &person_ref)? != Some(ENTITY_TYPE_PERSON) {
         return Err(HumanTaskError::NotAPerson);
@@ -95,7 +100,11 @@ fn resolve_native_human_route_with_sender_in(
         let Some(identity) = vault.get_channel_identity_in_txn(txn, &channel_identity_ref)? else {
             continue;
         };
-        if identity.state() != ChannelIdentityState::Active || vetoed.contains(identity.channel()) {
+        if identity.state() != ChannelIdentityState::Active {
+            continue;
+        }
+        if let Some(claims) = vetoed.get(identity.channel()) {
+            vetoes.extend(claims.iter().copied());
             continue;
         }
         if let Some(owner) = owner_ref {
@@ -170,15 +179,16 @@ fn comm_party_key(
 
 // ── follow-up cursor ────────────────────────────────────────────────────────
 
-/// Channel classes this person's standing `comm.*` state takes off the table:
-/// an active opt-out, or an explicit "not reachable here".
+/// Channel classes this person's standing `comm.*` state takes off the table,
+/// each with the CLAIMs that take it: an active opt-out, or an explicit "not
+/// reachable here".
 fn vetoed_channel_classes(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     person_ref: EntityId,
     now: u64,
-) -> Result<BTreeSet<String>> {
-    let mut vetoed = BTreeSet::new();
+) -> Result<BTreeMap<String, Vec<EntityId>>> {
+    let mut vetoed = BTreeMap::<String, Vec<EntityId>>::new();
     for claim_ref in vault.claims_for_subject_in_txn(txn, &person_ref)? {
         let Some(body) = vault.get_claim_in_txn(txn, &claim_ref)? else {
             continue;
@@ -208,7 +218,7 @@ fn vetoed_channel_classes(
                 reachable: false,
                 ..
             } => {
-                vetoed.insert(channel_class);
+                vetoed.entry(channel_class).or_default().push(claim_ref);
             }
             // ONE-1752 fan-out only. This helper answers a PER-CLASS question,
             // and neither a party-wide (channel-less) opt-out nor a send
@@ -446,6 +456,7 @@ impl<'a> HumanTaskFollowupDriver<'a> {
                     &txn,
                     record.assignee_ref,
                     owner_ref,
+                    &mut Vec::new(),
                 )
             } else {
                 // Non-ask human TASK follow-ups retain their existing route

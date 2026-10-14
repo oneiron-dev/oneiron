@@ -74,7 +74,7 @@ async fn describe(
         &server.vault,
         &auth,
         oneiron::task_verb::sdk::describe(
-            &credential_memory(&server.vault, Some(&auth), actor, class),
+            &credential_memory(&server.vault, Some(&auth), actor, class).at(auth.locality()),
             facade_input(value)?,
         )?,
     )?))
@@ -187,6 +187,7 @@ async fn recall(
                 actor,
                 class,
                 auth.verified_slip().cloned(),
+                auth.locality(),
                 facade_room_turn(&headers)?,
                 facade_input(value)?,
             )
@@ -220,12 +221,13 @@ async fn export(
     let output = if proof.claims().holder_ref == "host" {
         server
             .vault
-            .export_with_verified_host_owner(&input, proof)?
+            .export_with_verified_host_owner(&input, proof, auth.locality())?
     } else {
         let (actor, class) = facade_actor(&auth)?;
         server
             .vault
             .memory(actor, class)
+            .at(auth.locality())
             .export_with_verified_owner(&input, proof)?
     };
     Ok(Json(serde_json::to_value(output).map_err(|_| {

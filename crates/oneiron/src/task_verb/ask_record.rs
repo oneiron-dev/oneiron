@@ -54,6 +54,9 @@ pub(super) struct AskGroup {
     pub requested: super::TaskAskSpec,
     pub effective: super::TaskAskSpec,
     pub context_class: Option<super::TaskAskClass>,
+    /// The governed TASK an ask that omits `task_ref` took its class from.
+    #[serde(default)]
+    pub governed_task: Option<EntityId>,
     pub question_digest: [u8; 32],
     pub link_verify_key: [u8; 32],
     pub members: Vec<AskMember>,
@@ -63,6 +66,25 @@ pub(super) struct AskGroup {
     #[serde(default)]
     pub guest_grants: std::collections::BTreeMap<EntityId, EntityId>,
     pub policy_surface: super::TaskAskSurface,
+}
+
+impl AskGroup {
+    /// The TASK the ask took its class from: the one `task_ref` named, or
+    /// the governed TASK an ask that omitted it bound.
+    pub(crate) fn class_tasks(&self) -> impl Iterator<Item = EntityId> {
+        self.requested
+            .task_ref
+            .into_iter()
+            .chain(self.governed_task)
+    }
+
+    /// A class from a governed TASK the group never recorded (one stored
+    /// before groups kept it): its source is unknown.
+    pub(crate) fn class_source_unrecorded(&self) -> bool {
+        self.context_class.is_some()
+            && self.requested.task_ref.is_none()
+            && self.governed_task.is_none()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -277,6 +299,49 @@ pub(super) fn put<T: Serialize>(
         .put_task_fact(&id, &encoded, now)
         .apply(txn)?;
     Ok(())
+}
+
+impl crate::memory::Memory<'_> {
+    /// The ask group `id`, read as its handle's verbs read it (DEC-0005):
+    /// each member TASK, the TASK its class came from and its question and
+    /// context rows are listed as producers of what the call answers from the
+    /// group. Off this device a group with any such row a device-local world
+    /// keeps reads as no group. A group whose class came from a governed
+    /// TASK it never recorded reads as no group wherever it is read: no
+    /// answer derived from it could list that TASK.
+    pub(super) fn ask_group_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+    ) -> Result<Option<AskGroup>> {
+        let Some(group) = read_group(self.vault(), txn, id)? else {
+            return Ok(None);
+        };
+        let what = &group.effective.what;
+        let rows = group
+            .members
+            .iter()
+            .filter_map(|member| EntityId::from_hex(&member.task).ok())
+            .chain(group.class_tasks())
+            .chain(
+                std::iter::once(what.reference)
+                    .chain(what.context_refs.iter().copied())
+                    .map(super::ConsultPayloadRef::entity_ref),
+            )
+            .collect::<Vec<_>>();
+        self.produced_from(rows.iter().copied());
+        let store = &self.vault().store;
+        let kept = crate::settings::device_local_worlds_at(store, txn, self.locality())?;
+        if group.class_source_unrecorded() {
+            return Ok(None);
+        }
+        for row in &rows {
+            if crate::settings::device_local_keeps_among(store, txn, &kept, row)? {
+                return Ok(None);
+            }
+        }
+        Ok(Some(group))
+    }
 }
 
 pub(super) fn read_group(

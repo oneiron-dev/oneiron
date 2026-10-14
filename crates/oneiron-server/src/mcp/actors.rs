@@ -268,6 +268,15 @@ pub struct McpResolvedActor {
 }
 
 impl McpResolvedActor {
+    /// Where the caller's connection sits: off this device unless its
+    /// verified auth was found on it.
+    pub(crate) fn locality(&self) -> oneiron::claim::CallerLocality {
+        self.auth.as_ref().map_or(
+            oneiron::claim::CallerLocality::OffDevice,
+            crate::auth::CoreAuth::locality,
+        )
+    }
+
     pub(crate) fn has_unrestricted_record_scope(&self) -> bool {
         self.auth
             .as_ref()

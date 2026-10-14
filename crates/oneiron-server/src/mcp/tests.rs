@@ -717,6 +717,7 @@ fn page_snapshot(row: &str) -> McpPageSnapshot {
         source: McpPageSource::complete(1),
         health: McpRetrievalHealth::Healthy,
         keyframe: None,
+        rows: Vec::new(),
     }
 }
 

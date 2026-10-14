@@ -380,6 +380,10 @@ pub struct Memory<'v> {
     /// The write origin a host bound, when one did: claim doors stamp it in
     /// place of the caller's declared source.
     pub(super) host_origin: Option<HostWriteOrigin>,
+    /// Where the caller sits; see [`Memory::at`].
+    pub(super) locality: crate::claim::CallerLocality,
+    /// Where a host collects the rows its reads pick (`listing_producers`).
+    pub(super) producers: Option<&'v super::ProducerRows>,
     /// Where a host bound its writer's TASKs to be born (`with_birth_position`).
     pub(super) birth_position: crate::federation::record_scope::BirthPosition,
 }
@@ -428,6 +432,8 @@ impl Vault {
             read_proof: None,
             room_turn: None,
             host_origin: None,
+            locality: crate::claim::CallerLocality::OnDevice,
+            producers: None,
             birth_position: Default::default(),
         }
     }
@@ -456,6 +462,8 @@ impl Vault {
             read_proof: None,
             room_turn: None,
             host_origin: None,
+            locality: crate::claim::CallerLocality::OnDevice,
+            producers: None,
             birth_position: Default::default(),
         }
     }
@@ -489,6 +497,8 @@ impl<'v> Memory<'v> {
                 read_proof: self.read_proof.clone(),
                 room_turn: Some(ceiling),
                 host_origin: self.host_origin.clone(),
+                locality: self.locality,
+                producers: self.producers,
                 birth_position: self.birth_position,
             },
         })

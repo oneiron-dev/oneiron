@@ -327,16 +327,18 @@ fn mcp_task_in_world(
 /// scope omission: rows proven inside the credential's world and facet that
 /// another of its bounds withholds. A row in a world or facet the credential
 /// cannot read, or one that cannot prove where it sits, adds to no count
-/// (ARCH-0067 §5, DEC-0005).
+/// (ARCH-0067 §5, DEC-0005). Each row it admits is listed in `served`.
 pub(super) fn mcp_scoped_tasks_section(
     server: &Arc<SyncServer>,
     actor: &McpResolvedActor,
     rows: oneiron::context_board::TasksSectionRows,
+    served: &mut Vec<oneiron::EntityId>,
 ) -> Result<(oneiron::context_board::TasksSection, usize), McpGatewayError> {
     let scoped_read = mcp_scoped_read(&server.vault, actor)?;
     let mut omitted = 0_usize;
     let mut admits = |row_id: &str| -> Result<bool, McpGatewayError> {
         if mcp_scope_admits_row(&server.vault, actor, &scoped_read, row_id)? {
+            served.extend(oneiron::EntityId::from_hex(row_id).ok());
             return Ok(true);
         }
         if mcp_row_position_inside(&server.vault, actor, &scoped_read, row_id)? {

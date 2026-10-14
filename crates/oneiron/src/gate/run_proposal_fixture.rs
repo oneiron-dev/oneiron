@@ -48,6 +48,40 @@ impl Vault {
         predicate: &str,
         value: impl Into<Value>,
     ) -> Result<EntityId> {
+        self.park_run_proposal_at_for_test(run_id, agent, subject, predicate, None, value)
+    }
+
+    /// [`Vault::park_run_proposal_for_test`] with a proposal in `world`.
+    ///
+    /// # Errors
+    /// Any write failure, or the live policy not parking the proposal.
+    pub fn park_run_proposal_in_world_for_test(
+        &self,
+        run_id: &str,
+        agent: EntityId,
+        subject: EntityId,
+        world: EntityId,
+        value: impl Into<Value>,
+    ) -> Result<EntityId> {
+        self.park_run_proposal_at_for_test(
+            run_id,
+            agent,
+            subject,
+            "profile.name",
+            Some(world),
+            value,
+        )
+    }
+
+    fn park_run_proposal_at_for_test(
+        &self,
+        run_id: &str,
+        agent: EntityId,
+        subject: EntityId,
+        predicate: &str,
+        world: Option<EntityId>,
+        value: impl Into<Value>,
+    ) -> Result<EntityId> {
         let at = TimeRange { start: 1, end: 1 };
         for (id, body) in [(agent, b"run agent".as_slice()), (subject, b"run subject")] {
             if self.get(&id)?.is_none() {
@@ -59,9 +93,12 @@ impl Vault {
             chain: Vec::new(),
             source_meet: ClaimSource::Generated,
         });
-        let candidate =
+        let mut candidate =
             ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value.into(), 1.0)
                 .with_evidence(evidence);
+        if let Some(world) = world {
+            candidate = candidate.with_world(world);
+        }
         let envelope = WriteEnvelope::new(
             WriteActor::new(agent, EdgeActorClass::Agent),
             ClaimSource::Generated,
