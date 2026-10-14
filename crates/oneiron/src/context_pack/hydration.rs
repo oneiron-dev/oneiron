@@ -183,19 +183,10 @@ pub(super) fn hydrate_entity(
             Some(body) => gated_claim_body = Some(body),
             None => {
                 // Neighbor (or cache miss): decode once for gate +
-                // projection. A scored claim the cache cannot stand for is
-                // held to retrieval's gate, its live support included.
+                // projection.
                 decoded_here = pinned.or_else(decode);
-                let admitted = match &decoded_here {
-                    Some(body) => {
-                        claim_surfaceable(body)
-                            && (!options.words_pinned
-                                || crate::claim::has_live_support_in_txn(store, rtxn, body)?)
-                    }
-                    None => false,
-                };
                 match &decoded_here {
-                    Some(body) if admitted => gated_claim_body = Some(body),
+                    Some(body) if claim_surfaceable(body) => gated_claim_body = Some(body),
                     _ => {
                         *claims_suppressed += 1;
                         return Ok(None);
@@ -203,6 +194,17 @@ pub(super) fn hydrate_entity(
                 }
             }
         }
+    }
+
+    // Live support is read where the claim is served: the gate read a
+    // result's in retrieval's snapshot, and validation reads no neighbor's.
+    // A claim whose cited sources are gone by now is not served, as a result
+    // or a neighbor, from the cache or decoded here.
+    if let Some(body) = gated_claim_body
+        && !crate::claim::has_live_support_in_txn(store, rtxn, body)?
+    {
+        *claims_suppressed += 1;
+        return Ok(None);
     }
 
     // A claim the write door refuses, stored while the owner's scan was off,

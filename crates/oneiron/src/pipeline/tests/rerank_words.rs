@@ -131,70 +131,74 @@ fn a_live_pack_serves_a_scored_row_at_the_words_scored() -> Result<()> {
     Ok(())
 }
 
-/// A binding reranker that, while it scores, has another thread put `body`
-/// back as `id`'s live row: a write landing after retrieval read the row and
-/// before the pack hydrates it.
-struct RestoringReranker<'a> {
-    vault: &'a Vault,
-    id: EntityId,
-    body: Vec<u8>,
+/// A reranker that, while it scores, has another thread run `write`: a
+/// write landing after retrieval read the block and before the pack hydrates
+/// it. It binds words unless `unbound`.
+struct WritingReranker<'a> {
+    write: &'a (dyn Fn() -> Result<()> + Sync),
+    unbound: bool,
 }
 
-impl Reranker for RestoringReranker<'_> {
+impl Reranker for WritingReranker<'_> {
     fn id(&self) -> &str {
-        "test/reranker-restoring@v1"
+        "test/reranker-writing@v1"
     }
 
     fn rerank(&self, _query: &str, candidates: &[RerankCandidate<'_>]) -> Result<Vec<f32>> {
-        std::thread::scope(|scope| {
-            scope
-                .spawn(|| {
-                    self.vault
-                        .batch()
-                        .put(
-                            &self.id,
-                            ENTITY_TYPE_CLAIM,
-                            TimeRange { start: 1, end: 1 },
-                            1,
-                            &self.body,
-                        )
-                        .commit()
-                })
-                .join()
-                .expect("the writer")
-        })?;
+        std::thread::scope(|scope| scope.spawn(self.write).join().expect("the writer"))?;
         Ok(vec![0.0; candidates.len()])
     }
 
     fn binds_words(&self) -> bool {
-        true
+        !self.unbound
     }
 }
 
-/// The context pack a binding reranker scores claim `id` in, born with
-/// `old`, put again with newer words whose index publication waits, and put
-/// back to `old` while the reranker scores it.
-fn restored_pack(vault: &Vault, id: EntityId, old: Vec<u8>) -> Result<crate::ContextPack> {
-    // The claim's subject, which the pack's validation reads.
+/// The context pack, read live, of a search for lanterns that `reranker`
+/// scores.
+fn scored_pack<'a>(vault: &'a Vault, reranker: &'a dyn Reranker) -> Result<crate::ContextPack> {
+    vault
+        .context_pack()
+        .read_mode(ReadMode::Live)
+        .search_text("lantern", 10)
+        .rerank(reranker, RerankOptions::default())
+        .run()
+}
+
+/// Stores the subject [`claim_body`] names, which a pack's validation reads.
+fn put_subject(vault: &Vault) -> Result<()> {
     vault.put_entity(
         &entity_id(0x7C),
         crate::registry::ENTITY_TYPE_PERSON,
         TimeRange { start: 1, end: 1 },
         1,
         b"person",
-    )?;
+    )
+}
+
+/// The context pack a binding reranker scores claim `id` in, born with
+/// `old`, put again with newer words whose index publication waits, and put
+/// back to `old` while the reranker scores it.
+fn restored_pack(vault: &Vault, id: EntityId, old: Vec<u8>) -> Result<crate::ContextPack> {
+    put_subject(vault)?;
     put_twice(vault, id, ENTITY_TYPE_CLAIM, &old, &claim_body("new-words"))?;
-    let reranker = RestoringReranker {
-        vault,
-        id,
-        body: old,
+    let restore = || {
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &old,
+            )
+            .commit()
     };
-    vault
-        .context_pack()
-        .read_mode(ReadMode::Live)
-        .search_text("lantern", 10)
-        .rerank(&reranker, RerankOptions::default())
-        .run()
+    let reranker = WritingReranker {
+        write: &restore,
+        unbound: false,
+    };
+    scored_pack(vault, &reranker)
 }
 
 /// Astra on #1426 (F2): a claim scored at its pin was hydrated from the body
@@ -227,35 +231,136 @@ fn a_restored_claim_is_served_at_the_words_scored() -> Result<()> {
 /// support too.
 #[test]
 fn a_restored_claim_with_no_live_support_is_not_served() -> Result<()> {
-    use crate::dreamer_consolidation::{
-        ConsolidationEvidenceEnvelope, encode_consolidation_evidence,
-    };
     let (_dir, vault) = open_test_vault();
     let id = entity_id(0x6D);
-    let mut unsupported = ClaimBody::new(
-        "test.rerank_words",
-        ClaimSubject::Entity(entity_id(0x7C)),
-        rmpv::Value::from("old-words"),
-        0.9,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    )
-    .unwrap();
-    unsupported.evidence = Some(encode_consolidation_evidence(
-        &ConsolidationEvidenceEnvelope {
-            refs: vec![entity_id(0x7D)],
-            chain: Vec::new(),
-            source_meet: ClaimSource::UserStated,
-        },
-    ));
-    let old = crate::claim::encode_claim_body(&unsupported).expect("encode claim body");
 
-    let pack = restored_pack(&vault, id, old)?;
+    let pack = restored_pack(&vault, id, cited_body(entity_id(0x7D), "old-words"))?;
 
     assert!(
         pack.results.iter().all(|row| row.id != id),
         "{:?}",
         pack.results
     );
+    Ok(())
+}
+
+/// A claim body of `words` whose consolidation evidence cites `source`
+/// alone: it has live support only while `source` is live.
+fn cited_body(source: EntityId, words: &str) -> Vec<u8> {
+    use crate::dreamer_consolidation::{
+        ConsolidationEvidenceEnvelope, encode_consolidation_evidence,
+    };
+    let mut body = ClaimBody::new(
+        "test.rerank_words",
+        ClaimSubject::Entity(entity_id(0x7C)),
+        rmpv::Value::from(words),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.evidence = Some(encode_consolidation_evidence(
+        &ConsolidationEvidenceEnvelope {
+            refs: vec![source],
+            chain: Vec::new(),
+            source_meet: ClaimSource::UserStated,
+        },
+    ));
+    crate::claim::encode_claim_body(&body).expect("encode claim body")
+}
+
+/// Wonder R10 and Sol R11 on this branch: the claim gate judged a claim's
+/// live support in retrieval's snapshot, and the pack, hydrated in a later
+/// one, served the claim without asking again; validation never asks for a
+/// neighbor. The only source the claim cites, deleted while a reranker
+/// scored the block, left a claim retrieval would now suppress in the pack:
+/// a word-bound hit from the gate's cache, an unbound hit at its indexed pin,
+/// and either one again as a neighbor of a row that cites it. Every claim a
+/// pack serves is held to its live support where the pack is hydrated.
+#[test]
+fn a_claim_whose_source_is_deleted_while_it_is_scored_is_not_served() -> Result<()> {
+    // A word-bound hit read live from the gate's cache, and an unbound hit
+    // read at its indexed pin while newer words wait to be published.
+    let mut served = Vec::new();
+    for (unbound, read_mode, newer) in [
+        (false, ReadMode::Live, None),
+        (true, ReadMode::Indexed, Some("new-words")),
+    ] {
+        let (_dir, vault) = open_test_vault();
+        put_subject(&vault)?;
+        let source = entity_id(0x7E);
+        vault.put_entity(
+            &source,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"source",
+        )?;
+        let id = entity_id(0x6E);
+        let old = cited_body(source, "old-words");
+        match newer {
+            Some(words) => put_twice(
+                &vault,
+                id,
+                ENTITY_TYPE_CLAIM,
+                &old,
+                &cited_body(source, words),
+            )?,
+            None => {
+                crate::test_util::publish_seeded_revisions(&vault);
+                vault
+                    .batch()
+                    .put(
+                        &id,
+                        ENTITY_TYPE_CLAIM,
+                        TimeRange { start: 1, end: 1 },
+                        1,
+                        &old,
+                    )
+                    .text(&id, &[("body", "the brass lantern")])
+                    .commit()?;
+            }
+        }
+        // A row the search finds too, which points at the claim.
+        let seed = entity_id(0x6F);
+        vault
+            .batch()
+            .put(
+                &seed,
+                ENTITY_TYPE_ASSET_TEXT,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &rmp_serde::to_vec_named(&serde_json::json!({"content": "a lantern shelf"}))
+                    .expect("body"),
+            )
+            .text(&seed, &[("body", "the lantern shelf")])
+            .commit()?;
+        vault.put_edge(&seed, crate::edge::EdgeKind::Supports, &id, 1.0)?;
+        let delete = || vault.delete_entity(&source).map(drop);
+        let reranker = WritingReranker {
+            write: &delete,
+            unbound,
+        };
+
+        let pack = vault
+            .context_pack()
+            .read_mode(read_mode)
+            .search_text("lantern", 10)
+            .edge_hop(1)
+            .rerank(&reranker, RerankOptions::default())
+            .run()?;
+
+        assert!(
+            pack.results.iter().any(|row| row.id == seed),
+            "the seed is served: {:?}",
+            pack.results
+        );
+        for (part, rows) in [("results", &pack.results), ("neighbors", &pack.neighbors)] {
+            if rows.iter().any(|row| row.id == id) {
+                served.push(format!("unbound {unbound}: in {part}"));
+            }
+        }
+    }
+    assert!(served.is_empty(), "{served:?}");
     Ok(())
 }
