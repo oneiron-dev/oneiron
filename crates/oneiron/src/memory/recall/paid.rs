@@ -621,8 +621,10 @@ impl Memory<'_> {
 }
 
 /// The rows a device-only world keeps, of `rows`: each a row and the world
-/// its item names at the revision scored. Kept is one the live row's flag
-/// withholds, or one whose item names a flagged world. A flag commits under
+/// its item names at the revision scored. Kept is one the judge every read
+/// door asks keeps from a caller off this device (a live row a flag
+/// withholds, or one whose world cannot be read), or one whose item names a
+/// flagged world. A flag commits under
 /// the write side of the store's flag lock and this verdict reads under the
 /// read side, as a sync release's does, so a flag committed before the
 /// verdict is one it read. It only reads the store while it holds the lock:
@@ -637,11 +639,16 @@ fn kept_on_device(
         .read()
         .unwrap_or_else(PoisonError::into_inner);
     let rtxn = store.env.read_txn()?;
-    let flagged = crate::settings::device_only_worlds_in(store, &rtxn)?;
+    // The reranker sits off this device: a host on it never asks.
+    let flagged = crate::settings::device_local_worlds_at(
+        store,
+        &rtxn,
+        crate::claim::CallerLocality::OffDevice,
+    )?;
     let mut kept = BTreeSet::new();
     for (id, world) in rows {
         if world.is_some_and(|world| flagged.contains(&world))
-            || crate::settings::device_only_withholds(store, &rtxn, &flagged, id)?
+            || crate::settings::device_local_keeps_among(store, &rtxn, &flagged, id)?
         {
             kept.insert(*id);
         }

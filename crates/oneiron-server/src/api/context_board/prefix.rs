@@ -21,7 +21,13 @@ pub(crate) const PREFIX_NOTIFICATION_LIMIT: usize = 128;
 
 pub(crate) const PREFIX_NOTIFICATION_SCAN_LIMIT: usize = 4096;
 
-pub(crate) async fn session_prefix(server: &SyncServer) -> Result<SessionContext, ApiError> {
+/// The vault's inventory as a caller at `locality` may learn it: one off
+/// this device counts and dates no row a device-local world keeps
+/// (DEC-0005).
+pub(crate) async fn session_prefix(
+    server: &SyncServer,
+    locality: oneiron::claim::CallerLocality,
+) -> Result<SessionContext, ApiError> {
     let mut counts = BTreeMap::new();
 
     for entity_type in u8::MIN..=u8::MAX {
@@ -31,7 +37,7 @@ pub(crate) async fn session_prefix(server: &SyncServer) -> Result<SessionContext
 
         let count = server
             .vault
-            .count_entities_by_type(entity_type)
+            .count_entities_by_type_at(entity_type, locality)
             .inspect_err(|e| {
                 tracing::error!(error = %e, entity_type, "session prefix count scan failed");
             })
@@ -49,10 +55,10 @@ pub(crate) async fn session_prefix(server: &SyncServer) -> Result<SessionContext
     } else {
         server
             .vault
-            .latest_learned_at_excluding_entity_types(&[
-                ENTITY_TYPE_POLICY_MANIFEST,
-                ENTITY_TYPE_AUTHORITY_LOG,
-            ])
+            .latest_learned_at_excluding_entity_types_at(
+                &[ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_AUTHORITY_LOG],
+                locality,
+            )
             .inspect_err(|e| {
                 tracing::error!(error = %e, "session prefix activity summary failed");
             })

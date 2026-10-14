@@ -487,6 +487,42 @@ impl Vault {
         Ok(ids)
     }
 
+    /// [`Self::entities_by_type`] for a caller at `locality`. Off this device
+    /// a row a device-local world keeps is skipped before it counts toward
+    /// the cap, so neither the ids nor an overflow hint at one (DEC-0005).
+    pub fn entities_by_type_at(
+        &self,
+        entity_type: u8,
+        locality: crate::claim::CallerLocality,
+    ) -> Result<Vec<EntityId>> {
+        self.entities_by_type_at_with_cap(entity_type, locality, MAX_TYPE_QUERY_RESULTS)
+    }
+
+    pub(crate) fn entities_by_type_at_with_cap(
+        &self,
+        entity_type: u8,
+        locality: crate::claim::CallerLocality,
+        cap: usize,
+    ) -> Result<Vec<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        let flagged = crate::settings::device_local_worlds_at(&self.store, &rtxn, locality)?;
+        let mut ids = Vec::new();
+        for entry in self
+            .store
+            .port_entity_ids_by_type(&rtxn, entity_type, None)?
+        {
+            let id = entry?;
+            if crate::settings::device_local_keeps_among(&self.store, &rtxn, &flagged, &id)? {
+                continue;
+            }
+            if ids.len() >= cap {
+                return Err(Error::IndexOverflow("entities_by_type"));
+            }
+            ids.push(id);
+        }
+        Ok(ids)
+    }
+
     /// Returns at most `limit` entity IDs of a given type after `after`.
     ///
     /// This is the bounded counterpart to [`Self::entities_by_type`] for
@@ -578,16 +614,28 @@ impl Vault {
     /// This is the exact count primitive for deterministic paginated list
     /// metadata. It does not materialize entity IDs or read entity bodies.
     pub fn count_entities_by_type(&self, entity_type: u8) -> Result<u64> {
+        self.count_entities_by_type_at(entity_type, crate::claim::CallerLocality::OnDevice)
+    }
+
+    /// [`Self::count_entities_by_type`] for a caller at `locality`: one off
+    /// this device counts no row a device-local world keeps (DEC-0005).
+    pub fn count_entities_by_type_at(
+        &self,
+        entity_type: u8,
+        locality: crate::claim::CallerLocality,
+    ) -> Result<u64> {
         let rtxn = self.store.env.read_txn()?;
+        let flagged = crate::settings::device_local_worlds_at(&self.store, &rtxn, locality)?;
         let mut total = 0_u64;
         for entry in self
             .store
             .port_entity_ids_by_type(&rtxn, entity_type, None)?
         {
-            entry?;
-            total = total
-                .checked_add(1)
-                .ok_or(Error::IndexOverflow("count_entities_by_type"))?;
+            if !crate::settings::device_local_keeps_among(&self.store, &rtxn, &flagged, &entry?)? {
+                total = total
+                    .checked_add(1)
+                    .ok_or(Error::IndexOverflow("count_entities_by_type"))?;
+            }
         }
         Ok(total)
     }

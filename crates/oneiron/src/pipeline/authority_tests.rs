@@ -735,6 +735,7 @@ fn authority_bounded_candidates_inherit_resolved_stale_and_keep_filters() -> Res
                 world_scope: &WorldScope::All,
                 world_active_set: None,
                 corpus_scope: &crate::corpus::CorpusScope::All,
+                device_local: None,
                 deadline: None,
             };
             let mut metadata = EntityMetadataCache::default();

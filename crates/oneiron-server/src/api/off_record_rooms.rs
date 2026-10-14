@@ -259,11 +259,13 @@ async fn witness(
     let request = json(payload)?;
     let room = parse_entity_id_param(&request.room, "room")?;
     let credential = auth.verified_slip().cloned();
+    let locality = auth.locality();
     let receipt = blocking(move || {
         let vault = server.vault();
         let session = bind(vault, room, &request.session_ref, actor)?;
         vault
             .memory(actor, class)
+            .at(locality)
             .witness_into_session_as_member(
                 &session,
                 &request.turn,
