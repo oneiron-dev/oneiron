@@ -415,6 +415,19 @@ fn a_segment_split_at_a_seam_reads_as_the_write_door_reads_it_whole() {
             ],
         ),
         (true, [key.to_vec(), b"t7Rk2pLq9WzX".to_vec()]),
+        // Wonder R2: `export ` strips only before one space, so a tab, or a
+        // second space before another `export`, keeps the key unknown.
+        (
+            false,
+            [b"export\tpassword=".to_vec(), b"t7Rk2pLq9WzX\n".to_vec()],
+        ),
+        (
+            false,
+            [
+                b"export   export password=".to_vec(),
+                b"t7Rk2pLq9WzX\n".to_vec(),
+            ],
+        ),
     ]);
 }
 

@@ -29,6 +29,11 @@ const SEAM_MAX: usize = super::upload::LFS_WHOLE_SCAN_MAX as usize;
 /// so the run reads as it did.
 const RUN_KEEP: usize = 128;
 
+/// How much of a run of whitespace a seam keeps: its first two characters,
+/// which every text rule reads as it reads the whole run (the assignment
+/// rule's `export ` prefix strips only before a run of one space).
+const SPACE_KEEP: usize = 2;
+
 /// The write door's text rules across feed edges, but for the recovery-phrase
 /// rule, which the stream reads whole. A batch scan reads each chunk alone,
 /// so a `password=` at one chunk's end and its value at the next one's start
@@ -37,8 +42,8 @@ const RUN_KEEP: usize = 128;
 /// it) is read whole once it ends, in the chunk that ends it or at the end of
 /// the stream, so each byte is read once more at most. A peer chooses the
 /// edges, and padding must not carry a key away from its value: each run of
-/// whitespace reads as one space and each run of one other character as at
-/// most [`RUN_KEEP`] of it. A segment still longer than [`SEAM_MAX`] keeps
+/// whitespace reads as its first [`SPACE_KEEP`] characters and each run of
+/// one other character as at most [`RUN_KEEP`] of it. A segment still longer than [`SEAM_MAX`] keeps
 /// its two ends, the key's side and the side that meets the next edge.
 #[derive(Default)]
 struct Seam {
@@ -95,19 +100,21 @@ impl Seam {
     }
 
     /// Appends `bytes` with their padding squeezed: each run of whitespace
-    /// (every character the assignment rule trims) to one space, and each
-    /// run of one other character past [`RUN_KEEP`] to that many. Bytes that
-    /// are not text (a character an edge cut in two) stay as they are.
+    /// (every character the assignment rule trims) to its first
+    /// [`SPACE_KEEP`], and each run of one other character past [`RUN_KEEP`]
+    /// to that many. Bytes that are not text (a character an edge cut in
+    /// two) stay as they are.
     fn squeeze(&mut self, bytes: &[u8]) {
         for chunk in bytes.utf8_chunks() {
             for ch in chunk.valid().chars() {
-                let ch = if ch.is_whitespace() { ' ' } else { ch };
+                // Whitespace of any kind runs as one.
+                let class = if ch.is_whitespace() { ' ' } else { ch };
                 let run = match self.run {
-                    Some((previous, run)) if previous == ch => run + 1,
+                    Some((previous, run)) if previous == class => run + 1,
                     _ => 1,
                 };
-                self.run = Some((ch, run));
-                if run <= if ch == ' ' { 1 } else { RUN_KEEP } {
+                self.run = Some((class, run));
+                if run <= if class == ' ' { SPACE_KEEP } else { RUN_KEEP } {
                     self.tail
                         .extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
                 }
