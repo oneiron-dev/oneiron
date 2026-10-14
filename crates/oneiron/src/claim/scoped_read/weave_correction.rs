@@ -33,6 +33,10 @@ impl ScopedRead<'_> {
     /// File a wrong-link tap only for an authenticated human viewing that live
     /// link in their own report. A caller-chosen edge reference alone grants no
     /// write authority. The persisted label is not an edge retraction.
+    ///
+    /// Each reader's labels on a link are bounded by the policy, except the
+    /// vault owner's: an owner past the bound files anyway, and the first such
+    /// report on a link leaves the typed own-rate check.
     pub fn report_wrong_link(
         &self,
         auth: &AuthenticatedOwner,
@@ -74,7 +78,23 @@ impl ScopedRead<'_> {
             .filter(|label| label.actor == auth.actor())
             .count();
         if own >= limit {
-            return Err(Error::IndexOverflow("weave correction labels"));
+            // Capabilities first: the owner's own reports are never refused
+            // on count. Every other reader stays bounded.
+            if !crate::policy_model::is_live_vault_owner_in_txn(self.vault, &txn, &auth.actor())? {
+                return Err(Error::IndexOverflow("weave correction labels"));
+            }
+            crate::own_rate::observe_in_txn(
+                &self.vault.store,
+                &mut txn,
+                crate::own_rate::OwnRateKind::WeaveCorrection,
+                auth.actor(),
+                0,
+                u64::try_from(own).unwrap_or(u64::MAX).saturating_add(1),
+                crate::own_rate::OwnRate {
+                    threshold: u64::try_from(limit).unwrap_or(u64::MAX),
+                    window_seconds: 0,
+                },
+            )?;
         }
         let correction = WeaveLinkCorrection {
             id: EntityId::now(),
@@ -273,6 +293,65 @@ mod tests {
         assert!(
             matches!(&other, Ok(label) if label.actor == peer),
             "H420: another reader's label spent this reader's allowance ({other:?})"
+        );
+        Ok(())
+    }
+
+    // H420, capabilities first: the vault owner's own reports are never
+    // refused on count. Past the bound the owner's report lands, and the
+    // first one past it leaves the typed own-rate check instead.
+    #[test]
+    fn the_owners_reports_past_the_bound_land_with_a_typed_check() -> Result<()> {
+        use rmpv::Value;
+        let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+        // The bootstrap already wrote the embedded owner's PERSON.
+        let owner_id = crate::vault::embedded_owner_actor_id()?;
+        let peer = entity(0xb2);
+        vault.put_entity(
+            &peer,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"reader",
+        )?;
+        vault.put_edge(&owner_id, EdgeKind::Mentions, &peer, 0.5)?;
+        let link = EdgeRef::new(owner_id, EdgeKind::Mentions, peer);
+        crate::test_util::authorize_readers_with(
+            &vault,
+            &[&owner_id.to_hex()],
+            vec![(
+                Value::from("weave_correction_policy"),
+                Value::Map(vec![
+                    (Value::from("vault_max"), Value::from(1)),
+                    (Value::from("default"), Value::from(1)),
+                    (Value::from("holders"), Value::Map(Vec::new())),
+                    (
+                        Value::from("precedence"),
+                        Value::from("holder_then_default"),
+                    ),
+                ]),
+            )],
+        );
+        let owner = vault.authenticate_owner(
+            owner_id,
+            &owner_id.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )?;
+        let read = vault.scoped_read(ScopedReadActorKey::new(owner_id.to_hex()).unwrap());
+        for _ in 0..3 {
+            let filed = read.report_wrong_link(&owner, WeaveReader::Owner(&owner), link);
+            assert!(
+                matches!(&filed, Ok(label) if label.actor == owner_id),
+                "FAILBEFORE H420: the owner's own report was refused on count ({filed:?})"
+            );
+        }
+        let check =
+            vault.own_rate_check(owner_id, crate::own_rate::OwnRateKind::WeaveCorrection)?;
+        assert_eq!(
+            check.map(|check| (check.count, check.threshold)),
+            Some((2, 1)),
+            "the first report past the bound leaves the check"
         );
         Ok(())
     }

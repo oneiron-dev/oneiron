@@ -22,6 +22,8 @@ pub enum OwnRateKind {
     TaskCreate,
     /// Claims an agent wrote as Auto.
     AutoWrite,
+    /// Wrong-link reports one owner filed on one weave link.
+    WeaveCorrection,
 }
 
 impl OwnRateKind {
@@ -29,6 +31,7 @@ impl OwnRateKind {
         match self {
             Self::TaskCreate => "task_create",
             Self::AutoWrite => "auto_write",
+            Self::WeaveCorrection => "weave_correction",
         }
     }
 }
@@ -75,6 +78,7 @@ pub struct OwnRateCheck {
     pub kind: OwnRateKind,
     pub actor: String,
     pub window_started_at: u64,
+    /// 0 for a count with no time window, such as every report on one link.
     pub window_seconds: u64,
     pub count: u64,
     pub threshold: u64,
@@ -127,7 +131,6 @@ pub(crate) fn observe_in_txn(
     if count != rate.threshold.saturating_add(1) {
         return Ok(());
     }
-    let window_seconds = rate.window_seconds.max(1);
     CHECKS.put(
         store,
         txn,
@@ -135,8 +138,8 @@ pub(crate) fn observe_in_txn(
         &OwnRateCheck {
             kind,
             actor: actor.to_hex(),
-            window_started_at: window.saturating_mul(window_seconds),
-            window_seconds,
+            window_started_at: window.saturating_mul(rate.window_seconds),
+            window_seconds: rate.window_seconds,
             count,
             threshold: rate.threshold,
         },

@@ -114,6 +114,18 @@ impl SeatLedgerCount {
         })
     }
 
+    /// This count raised to what the admission writer lock read for a send
+    /// its ceiling held.
+    pub(super) fn held_at(mut self, verb_contract: &OutboundVerbContract, count: u32) -> Self {
+        let count = u16::try_from(count).unwrap_or(u16::MAX);
+        if verb_contract.kind == LINKEDIN_CONNECT_REQUEST_VERB {
+            self.connect_requests = self.connect_requests.max(count);
+        } else {
+            self.dm_sends = self.dm_sends.max(count);
+        }
+        self
+    }
+
     /// The policy with each capped count raised to this vault's own count.
     fn raise(self, policy: &LinkedInSeatSandboxPolicy) -> LinkedInSeatSandboxPolicy {
         let mut policy = policy.clone();

@@ -166,7 +166,8 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             ceiling.since_ms,
             None,
         )?;
-        if ceiling.prior.max(admitted) >= ceiling.cap {
+        let count = ceiling.prior.max(admitted);
+        if count >= ceiling.cap {
             let effect =
                 vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
             let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
@@ -180,7 +181,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             wtxn.commit().map_err(Error::from)?;
             vault.store.notify_attempt_observers();
             let mut result = gate_rejection(intent_id, decision_id, decision);
-            result.ceiling_held = true;
+            result.ceiling_count = Some(count);
             return Ok(result);
         }
     }

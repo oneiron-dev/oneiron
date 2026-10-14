@@ -1237,6 +1237,53 @@ fn a_correction_on_an_unregistered_predicate_lands_with_its_grant() -> Result<()
     Ok(())
 }
 
+/// F26 H327: a replacement the Dreamer lands through its deferred grant is an
+/// Auto write like any other, so it counts on the agent's own-rate window.
+/// Staged Proposed, it used to land Auto with nothing counted. Past the
+/// threshold it still lands Auto and leaves the typed check.
+#[test]
+fn a_granted_correction_counts_on_the_agents_auto_write_rate() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = provisional_fixture(&vault)?;
+    criticality(&vault, "critical", &[])?;
+    let pin = PreparedWake::capture_with_grants(
+        &vault,
+        DreamerConsolidationScope::Micro,
+        Some(&fx.scope),
+    )?;
+    let backend = ScriptedBackend::new(vec![Ok(correct(&fx, "Alex"))]);
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    crate::own_rate::set_auto_write_threshold_for_test(Some(0));
+    let pass = execute_at_pin(
+        &vault,
+        &fx,
+        &backend,
+        &mut sink,
+        fx.scope.clone(),
+        Some(&pin),
+    );
+    crate::own_rate::set_auto_write_threshold_for_test(None);
+    pass.unwrap_or_else(|error| panic!("the pass refused: {error}; {:?}", sink.outcome));
+    let [new] = sink.outcome.landed.as_slice() else {
+        panic!("one granted replacement: {:?}", sink.outcome);
+    };
+    assert_eq!(
+        vault.get_claim(new)?.expect("replacement").approval,
+        ClaimApprovalStatus::Auto,
+        "the count never holds the write"
+    );
+    let check = vault.own_rate_check(
+        fx.run.agent_actor.entity_ref(),
+        crate::own_rate::OwnRateKind::AutoWrite,
+    )?;
+    assert_eq!(
+        check.map(|check| (check.count, check.threshold)),
+        Some((1, 0)),
+        "FAILBEFORE H327: a granted replacement was not counted"
+    );
+    Ok(())
+}
+
 /// Engine ruling 2026-10-12, check (a): the Dreamer's own unvetted claim
 /// stands provisionally. The wake lists it, a correction naming it lands
 /// with its grant, and the claim closes. Before, the listing skipped it, the

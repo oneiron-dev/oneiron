@@ -112,8 +112,8 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
     let resolution = effect_result.resolution;
     // A ceiling reached under the writer lock parks the send as Held.
     let parked = parked.or(effect_result
-        .ceiling_held
-        .then_some(OutboundDispatchOutcome::Held));
+        .ceiling_count
+        .map(|_| OutboundDispatchOutcome::Held));
     let outcome = if effect_result.dedupe_suppressed {
         OutboundDispatchOutcome::Suppressed
     } else {
@@ -136,6 +136,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         outcome,
         execution: transport.execution,
         suppression_receipt: effect_result.suppression_receipt,
+        ceiling_count: effect_result.ceiling_count,
     })
 }
 

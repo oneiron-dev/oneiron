@@ -221,4 +221,22 @@ impl Vault {
             self.now_recorded_at() / window_seconds,
         )
     }
+
+    /// [`Self::task_create_count`] for the actor's asks.
+    #[cfg(test)]
+    pub(crate) fn task_ask_count_for_test(
+        &self,
+        actor: EntityId,
+        window_seconds: u64,
+    ) -> Result<u64> {
+        let window_seconds = window_seconds.max(1);
+        let txn = self.store.env.read_txn()?;
+        read_window(
+            self,
+            &txn,
+            actor,
+            window_seconds | ASK_WINDOW_KEY_TAG,
+            self.now_recorded_at() / window_seconds,
+        )
+    }
 }

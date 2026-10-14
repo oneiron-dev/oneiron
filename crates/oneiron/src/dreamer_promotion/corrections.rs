@@ -33,6 +33,8 @@ pub(super) fn grant_allowed_replacement(
     // The prior as the grant left it, read in the grant's own transaction:
     // the handoff's later writes hold it to that revision.
     let mut closed_at = None;
+    // Read on the calling thread: a grouped commit may run the closure elsewhere.
+    let auto_write_rate = crate::own_rate::auto_write_rate();
     match vault.grant_deferred_claim_auto_after(
         &replacement,
         run.now_ms,
@@ -40,6 +42,16 @@ pub(super) fn grant_allowed_replacement(
         |txn| fence.validate_in_txn(vault, txn),
         |txn| {
             closed_at = RowRevision::read_in(vault, txn, &prior)?;
+            // The granted replacement is an Auto write like any the Dreamer
+            // lands, so it counts on the agent's own-rate window too.
+            crate::own_rate::count_in_txn(
+                &vault.store,
+                txn,
+                crate::own_rate::OwnRateKind::AutoWrite,
+                run.agent_actor.entity_ref(),
+                vault.store.clock.now_recorded_at(),
+                auto_write_rate,
+            )?;
             Ok(())
         },
     ) {

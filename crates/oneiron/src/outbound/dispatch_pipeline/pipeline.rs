@@ -201,7 +201,7 @@ impl OutboundDispatchPipeline {
         );
         let seat_ledger =
             super::seat_policy::SeatLedgerCount::read(vault, &prepared.request, verb_contract)?;
-        let admission = super::admission::AdmissionStage::evaluate(
+        let mut admission = super::admission::AdmissionStage::evaluate(
             &prepared.request,
             verb_contract,
             seat_ledger,
@@ -257,6 +257,16 @@ impl OutboundDispatchPipeline {
                 &admission.window_resolution,
             ),
         })?;
+        // A cap reached under the admission writer lock is the seat's own
+        // hold. The receipt carries the count that lock read and the closed
+        // cap reason, not the Allow the earlier read produced.
+        if let Some(count) = verdict.ceiling_count {
+            admission.seat = super::seat_policy::evaluate_seat_policy(
+                &request,
+                verb_contract,
+                seat_ledger.held_at(verb_contract, count),
+            );
+        }
         let result = crate::outbound::receipt_fields::dispatch_result_receipt(
             &request,
             verb_contract,

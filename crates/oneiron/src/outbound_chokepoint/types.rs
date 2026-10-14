@@ -33,9 +33,10 @@ pub(crate) struct OutboundEffectResult {
     /// OF-327 suppression is not a Gate denial or a Gate reason code.
     pub(crate) dedupe_suppressed: bool,
     pub(crate) suppression_receipt: Option<ReceiptRecord>,
-    /// The admission ceiling held this call before its Pending insert:
-    /// nothing was admitted or sent.
-    pub(crate) ceiling_held: bool,
+    /// Set when the admission ceiling held this call before its Pending
+    /// insert, to the count it read under the writer lock: nothing was
+    /// admitted or sent.
+    pub(crate) ceiling_count: Option<u32>,
 }
 
 /// The only two commands accepted by the effectful entry.

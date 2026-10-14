@@ -109,6 +109,25 @@ fn connect_dispatch_at(
     policy: Option<LinkedInSeatSandboxPolicy>,
     occurred_at: u64,
 ) -> std::result::Result<OutboundDispatchResult, Box<dyn std::error::Error>> {
+    let request = connect_request(
+        receipt_id,
+        intent_ref,
+        recipient,
+        actor,
+        policy,
+        occurred_at,
+    );
+    Ok(vault.dispatch_outbound_intent(request, sink)?)
+}
+
+fn connect_request(
+    receipt_id: &str,
+    intent_ref: &str,
+    recipient: &str,
+    actor: OutboundDispatchActor,
+    policy: Option<LinkedInSeatSandboxPolicy>,
+    occurred_at: u64,
+) -> OutboundDispatchRequest {
     let intent = OutboundIntent::from_trigger(
         OutboundIntentDraft::new(
             "agent-alpha",
@@ -133,7 +152,7 @@ fn connect_dispatch_at(
     if let Some(policy) = policy {
         request = request.linkedin_sandbox_policy(policy);
     }
-    Ok(vault.dispatch_outbound_intent(request, sink)?)
+    request
 }
 
 fn connect_fixture() -> std::result::Result<
@@ -522,6 +541,66 @@ fn daily_connect_cap_of_one() -> crate::Result<LinkedInSeatSandboxPolicy> {
     })
 }
 
+/// F26 H359: a semantic duplicate the chokepoint suppressed was never admitted
+/// for transport, so it spends none of the seat's daily allowance. Under a cap
+/// of two, one sent connect and its suppressed duplicate leave room for a
+/// connect to someone else.
+#[test]
+fn a_suppressed_duplicate_spends_no_daily_connect_allowance()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault, actor) = connect_fixture()?;
+    let cap_of_two = || {
+        active_linkedin_policy()?.with_limits(
+            crate::linkedin_connector::LinkedInAccountRiskLimits {
+                daily_connect_request_cap: 2,
+                ..crate::linkedin_connector::LinkedInAccountRiskLimits::default()
+            },
+        )
+    };
+    let deduped = |receipt_id: &str, intent_ref: &str| -> crate::Result<OutboundDispatchRequest> {
+        let mut request = connect_request(
+            receipt_id,
+            intent_ref,
+            "linkedin:member:jane-doe",
+            actor.clone(),
+            Some(cap_of_two()?),
+            1_060,
+        );
+        request.intent.dedupe_key = Some("connect:jane-doe".to_owned());
+        Ok(request)
+    };
+    let mut first_sink = capped_connect_sink("intent:dd:first", "linkedin:member:jane-doe")?;
+    let first = vault.dispatch_outbound_intent(
+        deduped("receipt:dd:first", "intent:dd:first")?,
+        &mut first_sink,
+    )?;
+    assert_ne!(first.outcome, OutboundDispatchOutcome::Held);
+    assert_eq!(first_sink.transport().calls.len(), 1);
+    let mut dup_sink = capped_connect_sink("intent:dd:dup", "linkedin:member:jane-doe")?;
+    let dup = vault
+        .dispatch_outbound_intent(deduped("receipt:dd:dup", "intent:dd:dup")?, &mut dup_sink)?;
+    assert_eq!(dup.outcome, OutboundDispatchOutcome::Suppressed);
+    assert!(dup_sink.transport().calls.is_empty());
+
+    let mut other_sink = capped_connect_sink("intent:dd:other", "linkedin:member:john-roe")?;
+    let other = connect_dispatch_to(
+        &vault,
+        actor,
+        "receipt:dd:other",
+        "intent:dd:other",
+        "linkedin:member:john-roe",
+        &mut other_sink,
+        Some(cap_of_two()?),
+    )?;
+    assert_ne!(
+        other.outcome,
+        OutboundDispatchOutcome::Held,
+        "FAILBEFORE H359: a suppressed duplicate spent the daily allowance"
+    );
+    assert_eq!(other_sink.transport().calls.len(), 1);
+    Ok(())
+}
+
 /// Security pack 2, F26 H359: the daily connect cap counts this vault's own
 /// admitted connects, not only the host's snapshot. On one unchanged snapshot
 /// with a cap of one, a connect to a second person is held before any profile
@@ -601,6 +680,22 @@ fn a_connect_past_the_daily_cap_is_held_on_an_unchanged_snapshot()
         "FAILBEFORE H359 race: the admission took the last allowance twice"
     );
     assert!(racing_sink.transport().calls.is_empty());
+    // Either way the receipt is the seat's own cap hold, with the count the
+    // admission read, never the Allow an earlier read produced.
+    for (leg, held) in [("in order", &second), ("race", &racing)] {
+        let field = |key: &str| held.receipt.fields.get(key).map(String::as_str);
+        assert_eq!(
+            field("linkedin_engine_policy_decision"),
+            Some("hold"),
+            "{leg}"
+        );
+        assert_eq!(
+            field("linkedin_engine_policy_reason"),
+            Some("linkedin.daily_connect_request_cap"),
+            "{leg}"
+        );
+        assert_eq!(field("linkedin_connect_requests_today"), Some("1"), "{leg}");
+    }
 
     // The window is a day of the dispatch clock's seconds: yesterday's
     // connect no longer spends today's allowance.
