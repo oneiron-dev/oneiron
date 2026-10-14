@@ -29,8 +29,8 @@ pub(in crate::store) use self::keys::{
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE, GATE_DECISION_KEY_PREFIX,
     gate_decision_upper_bound,
 };
-pub(crate) use self::orcb::ForkedCustodyDir;
 pub(in crate::store) use self::orcb::{CUSTODY_ROOT_KEY, decode_custody_root};
+pub(crate) use self::orcb::{ForkedCustodyDir, directory_identity};
 
 pub(in crate::store) use self::types::GATE_DIFF_HANDLE_MAX_LEN;
 pub(crate) use self::types::{

@@ -9,7 +9,7 @@ mod rebuild;
 mod restore_class;
 mod tiers;
 use crate::side_table::{self, Named, SideTable};
-use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody};
+use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody, directory_identity};
 use crate::{EntityId, Error, Result, Vault, VaultConfig};
 use heed::types::Bytes;
 use serde::{Deserialize, Serialize};
@@ -85,17 +85,38 @@ impl Drop for ForkedCustody {
 }
 /// The destination a restore created, removed on drop unless kept: a restore
 /// refused after it made its destination leaves nothing there, and the same
-/// destination can take a later restore. Held before the vault opened in
-/// it, so the vault closes first.
-struct CreatedDestination<'a>(Option<&'a Path>);
-impl CreatedDestination<'_> {
+/// destination can take a later restore. Named by device and inode, and held
+/// open so no other directory takes that inode meanwhile: a directory that
+/// took the path since is never removed. Where no identity reads, nothing
+/// is. Held before the vault opened in it, so the vault closes first.
+struct CreatedDestination<'a>(Option<(&'a Path, (u64, u64), std::fs::File)>);
+impl<'a> CreatedDestination<'a> {
+    /// Names the directory `create_dir` just made at `destination`.
+    fn new(destination: &'a Path) -> Self {
+        let directory = std::fs::File::open(destination).ok();
+        Self(directory.and_then(|directory| {
+            let identity = directory_identity(&directory.metadata().ok()?)?;
+            Some((destination, identity, directory))
+        }))
+    }
+    /// Whether the path now names another directory than the one created.
+    fn replaced(&self) -> bool {
+        self.0.as_ref().is_some_and(|(destination, identity, _)| {
+            std::fs::symlink_metadata(destination)
+                .ok()
+                .and_then(|meta| directory_identity(&meta))
+                != Some(*identity)
+        })
+    }
     fn keep(mut self) {
         self.0 = None;
     }
 }
 impl Drop for CreatedDestination<'_> {
     fn drop(&mut self) {
-        if let Some(destination) = self.0.take() {
+        if !self.replaced()
+            && let Some((destination, ..)) = self.0.take()
+        {
             let _ = std::fs::remove_dir_all(destination);
         }
     }
@@ -373,7 +394,7 @@ impl Vault {
     ) -> Result<(Self, RestoreReport)> {
         let (mut image, checkpoint_id) = read_image(path)?;
         image.drop_machine_identity();
-        let (vault, report, forked) = Self::restore_image(
+        let (vault, report, forked, created) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -383,6 +404,7 @@ impl Vault {
             Custody::Keep,
         )?;
         forked.keep();
+        created.keep();
         Ok((vault, report))
     }
     /// [`Vault::restore_checkpoint`] as a copy served beside its source vault.
@@ -402,7 +424,7 @@ impl Vault {
         let live = source.capture()?;
         let (mut image, checkpoint_id) = read_image(path)?;
         image.drop_machine_identity();
-        let (vault, report, forked) = Self::restore_image(
+        let (vault, report, forked, created) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -412,6 +434,7 @@ impl Vault {
             Custody::Fork(Some(&live)),
         )?;
         forked.keep();
+        created.keep();
         Ok((vault, report))
     }
     /// This vault as the source of a restore beside it
@@ -542,7 +565,7 @@ impl Vault {
         if let Custody::Fork(_) = custody {
             image.drop_machine_identity();
         }
-        let (vault, report, forked) = Self::restore_image(
+        let (vault, report, forked, created) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -554,24 +577,24 @@ impl Vault {
         if let Err(error) = authority_plane::refuse_new_members(current, &vault)
             .and_then(|()| decisions::refuse_loosened_decisions(current, &vault))
         {
+            // The destination this call created goes as `created` drops, and
+            // the custody it forked as `forked` does, once the vault closed.
             drop(vault);
-            // This call created the destination; nothing else is in it. The
-            // custody it forked goes with it as `forked` drops.
-            let _ = std::fs::remove_dir_all(destination);
             return Err(error);
         }
         forked.keep();
+        created.keep();
         Ok((vault, report))
     }
-    fn restore_image(
+    fn restore_image<'d>(
         image: CheckpointImage,
         checkpoint_id: String,
-        destination: &Path,
+        destination: &'d Path,
         config: VaultConfig,
         reason: RestoreReason,
         restored_at: u64,
         custody: Custody<'_>,
-    ) -> Result<(Self, RestoreReport, ForkedCustody)> {
+    ) -> Result<(Self, RestoreReport, ForkedCustody, CreatedDestination<'d>)> {
         // A job row of another kind in the owner-retained key range would
         // hide from that kind's scans: refused before any destination exists.
         if image.databases["job_records"].iter().any(|(key, value)| {
@@ -594,9 +617,15 @@ impl Vault {
         }
         // Existing content is never replaced or partially restored over.
         std::fs::create_dir(destination)?;
-        let created = CreatedDestination(Some(destination));
+        let created = CreatedDestination::new(destination);
         let mut forked = ForkedCustody(None);
         let vault = Self::open_owned(destination, config.clone())?;
+        // The vault opened by path: one that is not the directory this call
+        // created is existing content, refused before any database clears.
+        if created.replaced() {
+            drop(vault);
+            return Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists).into());
+        }
         vault.with_write_txn_grouped(|txn| {
             for entry in DB_MANIFEST {
                 let db = vault
@@ -684,8 +713,7 @@ impl Vault {
             rebuilt_text_documents,
             pending_embeddings,
         };
-        created.keep();
-        Ok((vault, report, forked))
+        Ok((vault, report, forked, created))
     }
     pub fn restore_epochs(&self) -> Result<Vec<RestoreEpoch>> {
         let txn = self.store.env.read_txn()?;

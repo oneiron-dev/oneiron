@@ -11,6 +11,9 @@
 //! replicated, the seeder's), is no wider and keeps the lineage. A row older
 //! than the pin answers to itself, and a seeded id to its seed. Only the
 //! owner's door (`Vault::update_agent_definition_as`) moves a pin wider.
+//! A shell pins its id before any body says the lineage: the id holds
+//! `Proposed`, where no parent clamps it further, and the first definition
+//! put there names the lineage.
 
 use super::codec::decode_agent_definition;
 use super::types::{AgentCeiling, AgentDefinition};
@@ -27,23 +30,52 @@ struct AgentIdPin {
     /// The widest ceiling a row at this id may hold: the last put's, which
     /// was no wider than the one before, unless the owner widened it.
     ceiling: AgentCeiling,
-    /// The parent row the id was born forked from, if any.
-    forked_from: Option<EntityId>,
+    /// The parent the id was born forked from.
+    lineage: Lineage,
+}
+
+/// The parent an agent id was born forked from, as its pin knows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lineage {
+    /// Born forked from this row, or from none.
+    Born(Option<EntityId>),
+    /// Not yet read: the id was pinned off a definition shell, which keeps
+    /// no body, so the pin holds `Proposed` and the next put names it.
+    Unread,
+}
+
+impl Lineage {
+    /// The lineage a put of `def` leaves the id with.
+    fn named_by(self, def: &AgentDefinition) -> Self {
+        match self {
+            Self::Unread => Self::Born(def.forked_from),
+            born => born,
+        }
+    }
 }
 
 impl RawValue for AgentIdPin {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        let mut bytes = vec![u8::from(self.ceiling == AgentCeiling::Auto)];
-        if let Some(parent) = self.forked_from {
-            bytes.extend_from_slice(parent.as_bytes());
-        }
-        Ok(bytes)
+        let auto = u8::from(self.ceiling == AgentCeiling::Auto);
+        Ok(match self.lineage {
+            Lineage::Born(None) => vec![auto],
+            Lineage::Born(Some(parent)) => [&[auto][..], parent.as_bytes()].concat(),
+            // Only a `Proposed` pin leaves its lineage unread.
+            Lineage::Unread if auto == 0 => vec![2],
+            Lineage::Unread => return Err(Error::CorruptedIndex("agent id pin").into()),
+        })
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
         let (ceiling, parent) = match bytes.split_first() {
             Some((0, parent)) => (AgentCeiling::Proposed, parent),
             Some((1, parent)) => (AgentCeiling::Auto, parent),
+            Some((2, [])) => {
+                return Ok(Self {
+                    ceiling: AgentCeiling::Proposed,
+                    lineage: Lineage::Unread,
+                });
+            }
             _ => return Err(Error::CorruptedIndex("agent id pin").into()),
         };
         let forked_from = match parent.len() {
@@ -56,7 +88,7 @@ impl RawValue for AgentIdPin {
         };
         Ok(Self {
             ceiling,
-            forked_from,
+            lineage: Lineage::Born(forked_from),
         })
     }
 }
@@ -69,7 +101,7 @@ fn seeded_pin(id: &EntityId) -> Result<Option<AgentIdPin>> {
     Ok(
         super::manifest::seeded_lineage(id)?.map(|(ceiling, forked_from)| AgentIdPin {
             ceiling,
-            forked_from,
+            lineage: Lineage::Born(forked_from),
         }),
     )
 }
@@ -83,7 +115,7 @@ fn bound_in_txn(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<O
     Ok(match (seeded_pin(id)?, stored_row_pin(store, txn, id)?) {
         (Some(seed), Some(row)) if seed.ceiling.widens_beyond(row.ceiling) => Some(AgentIdPin {
             ceiling: row.ceiling,
-            forked_from: seed.forked_from,
+            lineage: seed.lineage,
         }),
         (seed, row) => seed.or(row),
     })
@@ -103,14 +135,15 @@ fn stored_row_pin(
         .and_then(|row| decode_agent_definition(&row.body).ok())
         .map(|def| AgentIdPin {
             ceiling: def.ceiling,
-            forked_from: def.forked_from,
+            lineage: Lineage::Born(def.forked_from),
         }))
 }
 
 /// Checks a put of `def` at `id` against what the id answers to, and returns
 /// the pin row the put stages with its body, or `None` when the stored pin
 /// already says it. A first put pins the id at its own ceiling and lineage; a
-/// later one may narrow the ceiling, never widen it, and keeps the lineage.
+/// later one may narrow the ceiling, never widen it, and keeps the lineage
+/// (or names it, where the id's pin has not read it).
 ///
 /// # Errors
 ///
@@ -125,13 +158,13 @@ pub(crate) fn agent_id_pin_for_put_in_txn(
     let next = match bound_in_txn(store, txn, id)? {
         None => AgentIdPin {
             ceiling: def.ceiling,
-            forked_from: def.forked_from,
+            lineage: Lineage::Born(def.forked_from),
         },
         Some(pin) => {
             answer_to_pin(pin, def)?;
             AgentIdPin {
                 ceiling: def.ceiling,
-                forked_from: pin.forked_from,
+                lineage: pin.lineage.named_by(def),
             }
         }
     };
@@ -157,21 +190,26 @@ pub(super) fn move_pin_for_owner_in_txn(
 ) -> Result<()> {
     let pin = AgentIdPin {
         ceiling: def.ceiling,
-        forked_from: bound_in_txn(store, wtxn, id)?.map_or(def.forked_from, |pin| pin.forked_from),
+        lineage: bound_in_txn(store, wtxn, id)?.map_or(Lineage::Born(def.forked_from), |pin| {
+            pin.lineage.named_by(def)
+        }),
     };
     // The ceiling is the owner's to move; the lineage is not.
     answer_to_pin(pin, def)?;
     PIN.put(store, wtxn, id, &pin)
 }
 
-/// Refuses `def` when it widens beyond `pin` or names another parent.
+/// Refuses `def` when it widens beyond `pin` or names another parent than
+/// the one `pin` has read.
 fn answer_to_pin(pin: AgentIdPin, def: &AgentDefinition) -> Result<()> {
     if def.ceiling.widens_beyond(pin.ceiling) {
         return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "an agent id's ceiling cannot widen beyond the narrowest it has held",
         )));
     }
-    if def.forked_from != pin.forked_from {
+    if let Lineage::Born(parent) = pin.lineage
+        && def.forked_from != parent
+    {
         return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "an agent id keeps the lineage it was born with, across a delete too",
         )));
@@ -286,7 +324,8 @@ pub(crate) fn pin_stored_rows_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>) 
 /// Pins the definition stored at `id` as a put of it would have: a row
 /// narrower than its id's pin narrows the pin, and a row whose id holds no
 /// pin is pinned at its own ceiling and lineage (no wider than its seed), or
-/// at `Proposed` when it does not decode (a retained shell keeps no body).
+/// at `Proposed` when it does not decode (a retained shell keeps no body), on
+/// its seed's lineage or, for an unseeded id, with the lineage unread.
 /// Unpinned, a row that reached the store without a put could be deleted and
 /// come back wider or as another type; so the shell door pins what it
 /// writes, and a delete pins the row it removes. A row wider than its pin,
@@ -306,7 +345,7 @@ pub(crate) fn pin_stored_row_in_txn(
         (None, Some(row)) => bound_in_txn(store, wtxn, id)?.unwrap_or(row),
         (None, None) => AgentIdPin {
             ceiling: AgentCeiling::Proposed,
-            forked_from: seeded_pin(id)?.and_then(|seed| seed.forked_from),
+            lineage: seeded_pin(id)?.map_or(Lineage::Unread, |seed| seed.lineage),
         },
     };
     PIN.put(store, wtxn, id, &pin)

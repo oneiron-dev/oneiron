@@ -270,6 +270,20 @@ fn refused_as_body(result: Result<()>, road: &str) {
     );
 }
 
+/// As [`refused_as_body`], by the agent id's pin itself.
+#[cfg(feature = "sync")]
+fn refused_by_pin(result: Result<()>, road: &str) {
+    let err = result.expect_err(road);
+    assert!(
+        matches!(
+            &err,
+            Error::Artifact(crate::error::ArtifactError::InvalidAgentDefBody(why))
+                if why.starts_with("an agent id")
+        ),
+        "{road}: {err:?}"
+    );
+}
+
 /// H215 (security scan, W2-T7): the agent a seeded ceiling binds may hold
 /// `core:write`, and the gate reads its bound off its own row. An update that
 /// widens that row is refused, typed, on the raw batch door, the typed door
@@ -464,7 +478,7 @@ fn a_deleted_agent_id_comes_back_no_wider_and_on_its_own_lineage() -> Result<()>
     narrowed.ceiling = AgentCeiling::Proposed;
     vault.update_agent_definition(&scout_id, &narrowed, test_time_range(6, 6), 6)?;
     vault.batch().delete(&scout_id).commit()?;
-    let mut seed_wide = narrowed.clone();
+    let mut seed_wide = narrowed;
     seed_wide.version = "3".to_owned();
     seed_wide.ceiling = AgentCeiling::Auto;
     reborn(
@@ -678,7 +692,10 @@ fn a_retained_shell_cannot_retype_an_agent_id() -> Result<()> {
 /// carries may be the first this vault learns of an agent id. The shell
 /// keeps no body to bound the id by, so it pins the id at `Proposed`:
 /// deleted, the id comes back no wider and as nothing else, without waiting
-/// for the next open, and within its pin it still comes back.
+/// for the next open. The shell says no lineage either (Sol R5 F1), so the
+/// fork it was comes back at `Proposed` under its own parent, and then keeps
+/// that parent. The rows are `Imported`, so no birth-source custody (which
+/// the shell's hard delete retires) refuses them: the pin alone does.
 #[cfg(feature = "sync")]
 #[test]
 fn a_first_seen_definition_shell_pins_its_id() -> Result<()> {
@@ -704,8 +721,24 @@ fn a_first_seen_definition_shell_pins_its_id() -> Result<()> {
         )
     })?;
     vault.batch().delete(&shell_id).commit()?;
-    refused_as_body(
-        custom_agent_at(&vault, shell_id, AgentCeiling::Auto).map(drop),
+    assert!(vault.get_raw(&shell_id)?.is_none(), "the shell is gone");
+    let (herald_id, herald) = seeded_row(&vault, "sys.herald");
+    let fork = |ceiling, forked_from| {
+        let mut def = herald.clone();
+        def.agent_id = "oneiron.agent.custom".to_owned();
+        def.version = "1".to_owned();
+        def.logical_id = None;
+        def.display_name = None;
+        def.source = ClaimSource::Imported;
+        def.ceiling = ceiling;
+        def.forked_from = forked_from;
+        def
+    };
+    let put = |def: &crate::agent_def::AgentDefinition, at| {
+        vault.put_agent_definition(&shell_id, def, test_time_range(at, at), at)
+    };
+    refused_by_pin(
+        put(&fork(AgentCeiling::Auto, None), 3),
         "an Auto definition where a shell stood",
     );
     let err = vault
@@ -718,8 +751,14 @@ fn a_first_seen_definition_shell_pins_its_id() -> Result<()> {
         )
         .expect_err("a PERSON where a definition shell stood");
     assert_eq!(err.kind(), ErrorKind::EntityTypeImmutable, "{err:?}");
-    custom_agent_at(&vault, shell_id, AgentCeiling::Proposed)?;
+    put(&fork(AgentCeiling::Proposed, Some(herald_id)), 4)?;
     auto_write_is_held(&vault, shell_id, 0x5B, 10)?;
+    vault.batch().delete(&shell_id).commit()?;
+    refused_by_pin(
+        put(&fork(AgentCeiling::Proposed, None), 5),
+        "the fork reborn without the parent it came back under",
+    );
+    put(&fork(AgentCeiling::Proposed, Some(herald_id)), 6)?;
     Ok(())
 }
 
@@ -914,7 +953,7 @@ fn a_restore_pins_a_definition_its_live_vault_never_held() -> Result<()> {
         Some(custom.clone())
     );
     restored.batch().delete(&custom_id).commit()?;
-    let mut wider = custom.clone();
+    let mut wider = custom;
     wider.ceiling = AgentCeiling::Auto;
     refused_as_body(
         restored.put_agent_definition(&custom_id, &wider, test_time_range(3, 3), 3),
