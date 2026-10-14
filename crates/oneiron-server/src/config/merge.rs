@@ -13,6 +13,7 @@ use super::embedder::{EmbedderConfig, EmbedderProvider};
 use super::embedder::{EmbedderConfigOverride, lookup_embedder_override};
 use super::feedback::{FeedbackConfigOverride, lookup_feedback_override};
 use super::import::ImportConfigOverride;
+use super::limits::LimitsConfigOverride;
 use super::lookup::{
     DEFAULT_CONFIG_DIR, DEFAULT_CONFIG_FILE, expand_home, lookup_bool, lookup_list, lookup_parse,
     lookup_path, lookup_path_list, normalize_list, redacted_secret,
@@ -279,6 +280,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     config.backup.validate()?;
     config.feedback.validate()?;
     config.recall.validate()?;
+    config.limits.validate()?;
     config.import.validate(&config.vault_path)?;
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
@@ -479,6 +481,7 @@ struct FileServeConfig {
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
     recall: Option<RecallConfigOverride>,
+    limits: Option<LimitsConfigOverride>,
     import: Option<ImportConfigOverride>,
     models: Option<ModelsFile>,
     privacy_posture: Option<HostingPrivacyPosture>,
@@ -526,6 +529,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             backup: value.backup,
             feedback: value.feedback,
             recall: value.recall,
+            limits: value.limits,
             import: value.import,
             models: None,
             privacy_posture: value.privacy_posture,
@@ -574,6 +578,7 @@ struct PartialServeConfig {
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
     recall: Option<RecallConfigOverride>,
+    limits: Option<LimitsConfigOverride>,
     import: Option<ImportConfigOverride>,
     /// `[models]` is file-only: it is too structured for env or argv.
     models: Option<ModelsConfig>,
@@ -634,6 +639,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
             .field("recall", &self.recall)
+            .field("limits", &self.limits)
             .field("import", &self.import)
             .field("models", &self.models)
             .field("privacy_posture", &self.privacy_posture)
@@ -732,7 +738,7 @@ impl PartialServeConfig {
             resolved.max_entity_blob = value;
         }
         if let Some(value) = self.max_lfs_object_bytes {
-            resolved.max_lfs_object_bytes = Some(value);
+            resolved.max_lfs_object_bytes = value;
         }
         if let Some(value) = self.max_bulk_decompressed {
             resolved.max_bulk_decompressed = value;
@@ -763,6 +769,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.recall {
             resolved.recall.apply_override(value);
+        }
+        if let Some(value) = self.limits {
+            resolved.limits.apply_override(value);
         }
         if let Some(value) = self.import {
             resolved.import.apply_override(value);
@@ -831,6 +840,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             backup: None,
             feedback: None,
             recall: None,
+            limits: None,
             import: None,
             models: None,
             privacy_posture: value.privacy_posture,

@@ -93,6 +93,31 @@ client, so list proxy hosts only, never a client network. An entry that does
 not parse, a `/0` block, or an address with bits set past its prefix stops
 startup. The default is empty: every caller is keyed by its own connection.
 
+`[limits]` bounds the work a caller can start; the connection bounds hold
+before any credential is read. Every bound is finite, and a zero is a config
+error. A caller past a bound is refused at once with a 503 and `retry-after`,
+never queued.
+
+```toml
+[limits]
+max_connections = 512             # sockets open at once, from every peer
+max_connections_per_peer = 64     # sockets one off-device address may hold
+header_read_timeout_ms = 30000    # headers must arrive within it; also idle keep-alive
+body_idle_timeout_ms = 60000      # a request body may pause this long between pieces
+git_exchanges = 8                 # git smart-HTTP exchanges (one child each)
+git_exchanges_per_principal = 4
+lfs_transfers = 8                 # LFS uploads, downloads and verifies
+lfs_transfers_per_principal = 4
+lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight (507 past it)
+transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
+```
+
+A loopback peer meets `max_connections` only: it is this device, or a TLS
+proxy whose callers all arrive from its one address. A push to a repository
+another writer holds answers 503 rather than waiting, and an LFS object over
+`--max-lfs-object-bytes` (2 GiB unless set) is refused, by its declared size
+before any byte is read.
+
 ## CJK Dictionaries
 
 Oneiron can run without CJK dictionaries, but Japanese, Chinese, and Korean

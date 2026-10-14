@@ -6,6 +6,7 @@ mod embedder_shape;
 mod embedder_space;
 mod feedback;
 pub mod import;
+mod limits;
 mod lookup;
 pub mod merge;
 pub mod models;
@@ -24,6 +25,7 @@ pub use embedder::{
 pub use embedder_shape::{EmbedderAttention, EmbedderOutputQuantization};
 pub use feedback::FeedbackConfig;
 pub use import::ImportConfig;
+pub use limits::LimitsConfig;
 pub(crate) use merge::layer_serve_config;
 pub use merge::{
     EnvConfig, default_config_path, resolve_backup_config, resolve_serve_config,
