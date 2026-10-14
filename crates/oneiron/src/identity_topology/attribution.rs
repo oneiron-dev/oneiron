@@ -38,6 +38,7 @@ const AUTHORED_HERE: SideTable<HexId, [u8; 32], Raw> =
 struct Carrier {
     id: EntityId,
     actor: WriteActor,
+    source: ClaimSource,
     /// Whether this vault wrote the carrier itself.
     here: bool,
 }
@@ -80,7 +81,12 @@ fn scan_in_txn(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<AttributionState
                     .carriers
                     .entry((target, core_digest))
                     .or_default()
-                    .push(Carrier { id, actor, here });
+                    .push(Carrier {
+                        id,
+                        actor,
+                        source: record.source,
+                        here,
+                    });
             }
             StoredIdentityOpAction::AuthorRedaction {
                 target,
@@ -307,7 +313,19 @@ pub(crate) fn redact_author_attribution_in_txn(
         .identity_topology_event_in_txn(wtxn, &target)?
         .ok_or(Error::CorruptedIndex("identity topology redaction target"))?;
     let core_digest = super::admission_disposition::core_digest(&core)?;
-    let key = (target, core_digest);
+    redact_attribution_key_in_txn(vault, wtxn, (target, core_digest), core.source, now)
+}
+
+/// Redacts one exact `(target, digest)` key and scrubs every carrier bound to
+/// it, this vault's and peers' alike.
+fn redact_attribution_key_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: AttributionKey,
+    source: ClaimSource,
+    now: u64,
+) -> Result<Vec<EntityId>> {
+    let (target, core_digest) = key;
     let state = scan_in_txn(&vault.store, wtxn)?;
     if !state.redacted.contains(&key) {
         // A refusal is admission: only an author this vault stamped itself
@@ -328,7 +346,7 @@ pub(crate) fn redact_author_attribution_in_txn(
                 target,
                 core_digest,
             },
-            core.source,
+            source,
             now,
         )?;
     }
@@ -344,7 +362,10 @@ pub(crate) fn redact_author_attribution_in_txn(
 }
 
 /// Actor erasure is independent of the decision's participant set. One
-/// redaction per affected core defeats a delayed replica's old stamp.
+/// redaction per affected core defeats a delayed replica's old stamp. Every
+/// carrier naming the actor goes by its own key: a peer's carrier for a
+/// decision this vault lacks, or for another body, is erased too, and never
+/// fails the erasure.
 pub(crate) fn redact_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -352,21 +373,50 @@ pub(crate) fn redact_actor_in_txn(
     now: u64,
 ) -> Result<Vec<EntityId>> {
     let state = scan_in_txn(&vault.store, wtxn)?;
-    let targets: BTreeSet<_> = state
+    let keys: BTreeMap<AttributionKey, ClaimSource> = state
         .carriers
         .iter()
-        .filter(|(_, carriers)| {
+        .filter_map(|(key, carriers)| {
             carriers
                 .iter()
-                .any(|carrier| carrier.actor.entity_ref() == actor)
+                .find(|carrier| carrier.actor.entity_ref() == actor)
+                .map(|carrier| (*key, carrier.source))
         })
-        .map(|(key, _)| key.0)
         .collect();
     let mut scrubbed = Vec::new();
-    for target in targets {
-        scrubbed.extend(redact_author_attribution_in_txn(vault, wtxn, target, now)?);
+    for (key, source) in keys {
+        scrubbed.extend(
+            if held_decision_digest_in_txn(vault, wtxn, key.0)? == Some(key.1) {
+                redact_author_attribution_in_txn(vault, wtxn, key.0, now)?
+            } else {
+                redact_attribution_key_in_txn(vault, wtxn, key, source, now)?
+            },
+        );
     }
     Ok(scrubbed)
+}
+
+/// The core digest of `target` when it is a decision this vault holds.
+fn held_decision_digest_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    target: EntityId,
+) -> Result<Option<[u8; 32]>> {
+    if vault.get_entity_type_in_txn(rtxn, &target)? != Some(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT) {
+        return Ok(None);
+    }
+    let Some(core) = vault.identity_topology_event_in_txn(rtxn, &target)? else {
+        return Ok(None);
+    };
+    if matches!(
+        core.action,
+        StoredIdentityOpAction::AdmissionDisposition(_)
+            | StoredIdentityOpAction::AuthorAttribution { .. }
+            | StoredIdentityOpAction::AuthorRedaction { .. }
+    ) {
+        return Ok(None);
+    }
+    super::admission_disposition::core_digest(&core).map(Some)
 }
 
 /// Export/forward can inspect candidate sidecars without mutating a vault.

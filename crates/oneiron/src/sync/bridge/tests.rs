@@ -5011,20 +5011,29 @@ fn peer_author_carrier(
     core: &crate::identity_topology::StoredIdentityOpEvent,
     actor: EntityId,
 ) -> Vec<u8> {
+    peer_carrier_for_key(
+        target,
+        crate::identity_topology::core_digest(core).unwrap(),
+        actor,
+    )
+}
+
+/// A peer's author carrier bound to `(target, core_digest)` as it chose it.
+fn peer_carrier_for_key(target: EntityId, core_digest: [u8; 32], actor: EntityId) -> Vec<u8> {
     use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
     let row = StoredIdentityOpEvent {
-        seq: core.seq + 1,
+        seq: 60,
         validated_at_write: false,
         invalidated: false,
-        at: core.at,
+        at: 200,
         actor: None,
-        source: core.source,
+        source: ClaimSource::Inferred,
         approval: ClaimApprovalStatus::Auto,
         confidence: 1.0,
         evidence: None,
         action: StoredIdentityOpAction::AuthorAttribution {
             target,
-            core_digest: crate::identity_topology::core_digest(core).unwrap(),
+            core_digest,
             actor: crate::write_envelope::WriteActor::new(actor, EdgeActorClass::Human),
         },
     };
@@ -5183,6 +5192,58 @@ fn a_peer_carrier_naming_a_missing_actor_never_parks_a_sealed_merge() {
             (!stamped).then_some(human(ghost))
         );
     }
+}
+
+/// Erasing an actor erases every peer carrier naming it, each by its own key:
+/// one for a decision this vault never held, one for another body of a
+/// decision it holds, one aimed at a row that is no decision. None of them
+/// fails the erasure, and none comes back when its window replays.
+#[test]
+fn erasing_an_actor_scrubs_every_peer_carrier_naming_it() {
+    let vault = test_vault();
+    let (loser, survivor, actor, person) = (
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+    );
+    for id in [&loser, &survivor, &actor, &person] {
+        put_test_person(&vault, id);
+    }
+    let event = merge_here(&vault, loser, survivor, None);
+    let carriers: Vec<(EntityId, Vec<u8>)> = [
+        (EntityId::now(), [7; 32]),
+        (event, [9; 32]),
+        (person, [5; 32]),
+    ]
+    .into_iter()
+    .map(|(target, digest)| (EntityId::now(), peer_carrier_for_key(target, digest, actor)))
+    .collect();
+    for (id, blob) in &carriers {
+        deliver_peer_row(&vault, id, blob);
+    }
+
+    vault
+        .delete_entity_with_reason(&actor, crate::deletion::DeleteReason::GdprDelete)
+        .expect("no peer carrier fails the erasure");
+    let doc = LoroDoc::new();
+    let tombstones = doc.get_map("tombstones");
+    for (id, blob) in &carriers {
+        assert!(vault.get_raw(id).unwrap().is_none(), "{id:?}");
+        let step = vault
+            .with_write_txn(|wtxn| ingest_peer_blob(&vault, wtxn, &tombstones, id, blob))
+            .unwrap();
+        assert!(
+            matches!(step, EntityStep::Protected { wrote: false, .. }),
+            "{step:?}"
+        );
+        assert!(vault.get_raw(id).unwrap().is_none(), "{id:?}");
+    }
+    assert!(
+        vault
+            .edge_exists(&loser, crate::edge::EdgeKind::MergedInto, &survivor)
+            .unwrap()
+    );
 }
 
 #[test]

@@ -114,14 +114,14 @@ side_tables! {
     /// Cached HTTP response (status, headers, body) for one Idempotency-Key replay within its 24h
     /// TTL, keyed by principal and header value. Key: hex ":" hex (principal, idempotency key).
     HTTP_IDEMPOTENCY_REPLY: SyncState b"http:idempotency:" LegacyCompact;
-    /// Local evidence that a soft delete was applied; outlives the `pt:` propagation intent so an
-    /// out-of-order proposal cancellation never settles against a live entity. Presence-only,
-    /// empty value. Key: hex32 (entity id).
-    DELETION_IDENTITY_SOFT_DELETE_MARKER: SyncState b"it:deleted:" Raw;
     /// An identity-topology author carrier this vault wrote itself: a blake3 digest of the
     /// carrier row's body (32 bytes). Local truth that never replicates. Key: hex32 (carrier
     /// entity id).
     IDENTITY_TOPOLOGY_AUTHORED_HERE: SyncState b"it:authored:" Raw;
+    /// Local evidence that a soft delete was applied; outlives the `pt:` propagation intent so an
+    /// out-of-order proposal cancellation never settles against a live entity. Presence-only,
+    /// empty value. Key: hex32 (entity id).
+    DELETION_IDENTITY_SOFT_DELETE_MARKER: SyncState b"it:deleted:" Raw;
     /// Durable provenance row (source/tier/thread/message/surface-event) for one ingested LinkedIn
     /// message. Key: hex16 (same hash as the seen marker).
     LINKEDIN_INBOX_SYNC_PROVENANCE: SyncState b"linkedin:inbox_sync:provenance:v1:" LegacyJson;
