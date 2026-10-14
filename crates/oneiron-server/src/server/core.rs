@@ -303,13 +303,19 @@ impl SyncServer {
     }
 
     /// Bind a readiness-verified QuickJS provider before exposing this vault's
-    /// routes. Missing components or providers keep execute_code unadvertised.
+    /// routes, running at most `runs` at once. Missing components or providers
+    /// keep execute_code unadvertised.
     #[cfg(feature = "code-sandbox-wasmtime")]
     #[must_use]
-    pub fn with_mcp_quickjs_provider(mut self, provider: crate::mcp::McpQuickJsProvider) -> Self {
+    pub fn with_mcp_quickjs_provider(
+        mut self,
+        provider: crate::mcp::McpQuickJsProvider,
+        runs: crate::mcp::CodeRunLimits,
+    ) -> Self {
         let provider = provider.with_run_receipts(self.run_receipts());
         self.mcp_code_host = Some(Arc::new(crate::mcp::McpEngineNativeCodeHost::new(
             Arc::new(provider),
+            runs,
         )));
         self
     }
