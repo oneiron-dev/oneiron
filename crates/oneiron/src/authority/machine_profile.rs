@@ -89,6 +89,27 @@ pub(super) struct Revision {
     past: Arc<BTreeSet<AuthorityEntryHash>>,
 }
 
+impl Revision {
+    /// One entry applied over two different pasts (a removal's proof beside
+    /// the ordinary fold) keeps what both copies grant: it takes "yours"
+    /// away with acknowledgement only when both would, from the same mark,
+    /// and exempts only the past both saw. The meet is order-free.
+    fn meet(left: &Arc<Self>, right: &Arc<Self>) -> Arc<Self> {
+        if Arc::ptr_eq(left, right) || left == right {
+            return Arc::clone(left);
+        }
+        Arc::new(Self {
+            profile: left.profile.clone(),
+            signer: left.signer.clone(),
+            owner_held: left.owner_held
+                && right.owner_held
+                && left.replaced_mark == right.replaced_mark,
+            replaced_mark: left.replaced_mark.min(right.replaced_mark),
+            past: Arc::new(left.past.intersection(&right.past).copied().collect()),
+        })
+    }
+}
+
 impl FoldedMachine {
     /// Of two entries carrying one revision, the smaller entry speaks for it.
     fn min_by_entry(self, other: &Self) -> Self {
@@ -358,12 +379,12 @@ fn merge_chain(left: &MachineChain, right: &MachineChain) -> MachineChain {
         },
         revisions: {
             let mut revisions = left.revisions.clone();
-            revisions.extend(
-                right
-                    .revisions
-                    .iter()
-                    .map(|(hash, revision)| (*hash, Arc::clone(revision))),
-            );
+            for (hash, revision) in &right.revisions {
+                revisions
+                    .entry(*hash)
+                    .and_modify(|held| *held = Revision::meet(held, revision))
+                    .or_insert_with(|| Arc::clone(revision));
+            }
             revisions
         },
     }
