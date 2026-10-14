@@ -26,7 +26,8 @@ pub fn arm_device_only_flag_race(world: EntityId) {
     arm_device_only_race(move |vault| vault.keep_world_on_this_machine_for_test(world, true));
 }
 
-/// Runs `race` once, as a raw verdict opens the window it inspects.
+/// Runs `race` once, as a raw verdict opens the window it inspects or a
+/// selector export closes its snapshot.
 pub fn arm_device_only_race(race: impl FnOnce(&Vault) -> Result<()> + 'static) {
     DEVICE_ONLY_RACE.with(|slot| {
         *slot.borrow_mut() = Some(Box::new(race));
