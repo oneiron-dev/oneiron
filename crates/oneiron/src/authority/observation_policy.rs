@@ -14,6 +14,15 @@ pub const DEFAULT_AUTHORITY_INGEST_WINDOW_SECS: u64 = 60 * 60;
 /// Rows one signer no slip issuer vouches for stores before its next rows
 /// wait, far above fleet scale (H72).
 pub const DEFAULT_AUTHORITY_LOG_SIGNER_BOUND: u64 = super::MAX_AUTHORITY_ROWS_PER_SIGNER as u64;
+/// Counted rows at which the log warns that its fold nears its bounds: half
+/// of what one chain of counted rows holds before the fold's ancestor-pair
+/// bound (2·2048² pairs, about 4,096 rows). Each local writer's log is one
+/// chain, so it closes there, short of the 8,192-row bound (H72, rule 5).
+pub const DEFAULT_AUTHORITY_LOG_HEADROOM_ROWS: u64 = super::MAX_AUTHORITY_ROWS_PER_SIGNER as u64;
+/// Slip issuers' handoffs at which the log warns: half of what one fold
+/// reads (H72, rule 5).
+pub const DEFAULT_AUTHORITY_LOG_HEADROOM_HANDOFFS: u64 =
+    super::MAX_AUTHORITY_FOLD_HANDOFFS as u64 / 2;
 
 /// Device-local authority observation policy durations. Key: ().
 const POLICY: SideTable<(), AuthorityObservationPolicy, Raw> =
@@ -21,7 +30,7 @@ const POLICY: SideTable<(), AuthorityObservationPolicy, Raw> =
 
 /// Version-one local observation policy. Durations use elapsed monotonic time,
 /// never an entry timestamp. The ingest threshold raises a check, not a stop.
-/// A row written before the signer bound existed reads with its default.
+/// A row written before the log's bounds existed reads with their defaults.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AuthorityObservationPolicy {
     /// Inclusive age at which a pre-revocation approval remains usable.
@@ -34,6 +43,11 @@ pub struct AuthorityObservationPolicy {
     /// rest of what it signs waits, unless a slip issuer signed or cosigned
     /// them (H72). Raising it lands the waiting rows on the next drain.
     pub log_signer_bound: u64,
+    /// The `authority_log_fold_headroom` row for counted rows: the log
+    /// raises that check once it stores this many.
+    pub log_headroom_rows: u64,
+    /// The `authority_log_fold_headroom` row for slip issuers' handoffs.
+    pub log_headroom_handoffs: u64,
 }
 
 impl Default for AuthorityObservationPolicy {
@@ -43,6 +57,8 @@ impl Default for AuthorityObservationPolicy {
             ingest_window_secs: DEFAULT_AUTHORITY_INGEST_WINDOW_SECS,
             ingest_check_threshold: DEFAULT_AUTHORITY_INGEST_CHECK_THRESHOLD,
             log_signer_bound: DEFAULT_AUTHORITY_LOG_SIGNER_BOUND,
+            log_headroom_rows: DEFAULT_AUTHORITY_LOG_HEADROOM_ROWS,
+            log_headroom_handoffs: DEFAULT_AUTHORITY_LOG_HEADROOM_HANDOFFS,
         }
     }
 }
@@ -54,9 +70,12 @@ impl AuthorityObservationPolicy {
                 "authority ingest observation window must be positive".to_owned(),
             ));
         }
-        if self.log_signer_bound == 0 {
+        if self.log_signer_bound == 0
+            || self.log_headroom_rows == 0
+            || self.log_headroom_handoffs == 0
+        {
             return Err(Error::InvalidConfig(
-                "authority log signer bound must be positive".to_owned(),
+                "authority log bounds must be positive".to_owned(),
             ));
         }
         Ok(())
@@ -65,12 +84,14 @@ impl AuthorityObservationPolicy {
 
 impl RawValue for AuthorityObservationPolicy {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        let mut raw = Vec::with_capacity(32);
+        let mut raw = Vec::with_capacity(48);
         for value in [
             self.stale_roster_window_secs,
             self.ingest_window_secs,
             self.ingest_check_threshold,
             self.log_signer_bound,
+            self.log_headroom_rows,
+            self.log_headroom_handoffs,
         ] {
             raw.extend_from_slice(&value.to_be_bytes());
         }
@@ -78,10 +99,17 @@ impl RawValue for AuthorityObservationPolicy {
     }
 
     fn from_raw(raw: &[u8]) -> std::result::Result<Self, CodecError> {
-        if raw.len() != 24 && raw.len() != 32 {
+        if raw.len() != 24 && raw.len() != 48 {
             return Err(Error::CorruptedIndex("authority observation policy").into());
         }
-        let mut values = [0_u64, 0, 0, DEFAULT_AUTHORITY_LOG_SIGNER_BOUND];
+        let mut values = [
+            0,
+            0,
+            0,
+            DEFAULT_AUTHORITY_LOG_SIGNER_BOUND,
+            DEFAULT_AUTHORITY_LOG_HEADROOM_ROWS,
+            DEFAULT_AUTHORITY_LOG_HEADROOM_HANDOFFS,
+        ];
         for (slot, bytes) in values.iter_mut().zip(raw.chunks_exact(8)) {
             *slot = u64::from_be_bytes(
                 bytes
@@ -94,6 +122,8 @@ impl RawValue for AuthorityObservationPolicy {
             ingest_window_secs: values[1],
             ingest_check_threshold: values[2],
             log_signer_bound: values[3],
+            log_headroom_rows: values[4],
+            log_headroom_handoffs: values[5],
         };
         policy.validate()?;
         Ok(policy)

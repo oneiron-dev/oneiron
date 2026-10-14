@@ -1736,9 +1736,10 @@ fn a_world_edit_lands_only_from_its_own_machines_install_key() {
 }
 
 /// Rule 5 (Engine check): the owner's work never waits, so past every bound
-/// it would close the fold. The log warns at half of what one fold reads:
+/// it would close the fold. The log warns at half of what one fold holds:
 /// its counted rows at half of what one chain holds before the pair bound,
-/// and its slip issuers' handoffs at half the handoff bound.
+/// and its slip issuers' handoffs at half the handoff bound. Both are policy
+/// rows.
 #[test]
 fn the_log_warns_at_half_of_one_folds_bounds() {
     const BOUND: usize = 4;
@@ -1766,7 +1767,7 @@ fn the_log_warns_at_half_of_one_folds_bounds() {
         vault.put_authority_log_entries(&rows).unwrap();
         assert!(headroom(&vault).is_empty());
         vault.put_authority_log_entries(&[half]).unwrap();
-        assert_eq!(headroom(&vault), vec![(BOUND as u64, 2 * BOUND as u64)]);
+        assert_eq!(headroom(&vault), vec![(BOUND as u64, BOUND as u64)]);
     });
 
     let dir = tempfile::tempdir().unwrap();
@@ -1799,14 +1800,19 @@ fn the_log_warns_at_half_of_one_folds_bounds() {
         (signer, parent) = (next, authority_entry_hash(&handoff).unwrap());
     }
     let half = MAX_AUTHORITY_FOLD_HANDOFFS as u64 / 2;
-    assert_eq!(
-        headroom(&vault),
-        vec![(half, MAX_AUTHORITY_FOLD_HANDOFFS as u64)]
-    );
+    assert_eq!(headroom(&vault), vec![(half, half)]);
+    // Each threshold is a policy row the owner may move.
+    vault
+        .set_authority_observation_policy(AuthorityObservationPolicy {
+            log_headroom_handoffs: half + 1,
+            ..AuthorityObservationPolicy::default()
+        })
+        .unwrap();
+    assert!(headroom(&vault).is_empty());
 }
 
-/// Substrate invariant: an observation policy row written before the signer
-/// bound existed, three u64be, still reads, with the default bound.
+/// Substrate invariant: an observation policy row written before the log's
+/// bounds existed, three u64be, still reads, with their defaults.
 #[test]
 fn a_policy_row_written_before_the_signer_bound_reads_with_its_default() {
     use crate::side_table::RawValue;
@@ -1821,7 +1827,16 @@ fn a_policy_row_written_before_the_signer_bound_reads_with_its_default() {
             policy.ingest_window_secs,
             policy.ingest_check_threshold,
             policy.log_signer_bound,
+            policy.log_headroom_rows,
+            policy.log_headroom_handoffs,
         ),
-        (10, 20, 30, DEFAULT_AUTHORITY_LOG_SIGNER_BOUND)
+        (
+            10,
+            20,
+            30,
+            DEFAULT_AUTHORITY_LOG_SIGNER_BOUND,
+            DEFAULT_AUTHORITY_LOG_HEADROOM_ROWS,
+            DEFAULT_AUTHORITY_LOG_HEADROOM_HANDOFFS,
+        )
     );
 }

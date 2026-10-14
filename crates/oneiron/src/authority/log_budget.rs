@@ -7,7 +7,7 @@
 //! no owner, admin or install key signed: the fold applies none. The owner's
 //! work, any row a slip issuer signs or cosigns, never meets a bound (the
 //! owner's rate law, rule 5): the fold's own bounds stay its limit, and the
-//! log's headroom check warns the owner at half of them. The slip issuer's
+//! log's headroom check warns the owner at half of what one fold holds. The slip issuer's
 //! slip ops count toward no bound at all: every sign-in mints one, so a busy
 //! owner's log gains thousands a year. Any other key stores up to the
 //! `authority_log_signer_bound` policy row; past it, its rows wait, never
@@ -68,6 +68,19 @@ fn signer_bound(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<us
     Ok(usize::try_from(bound).unwrap_or(usize::MAX))
 }
 
+/// The counted rows and slip-issuer handoffs at which the log warns of its
+/// fold's headroom: the policy rows, or a test's scaled bound for rows.
+fn headroom(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<(usize, usize)> {
+    let policy = authority_observation_policy_in_txn(store, txn)?;
+    let handoffs = usize::try_from(policy.log_headroom_handoffs).unwrap_or(usize::MAX);
+    #[cfg(test)]
+    if let Some(rows) = ROWS_PER_SIGNER_FOR_TEST.with(std::cell::Cell::get) {
+        return Ok((rows, handoffs));
+    }
+    let rows = usize::try_from(policy.log_headroom_rows).unwrap_or(usize::MAX);
+    Ok((rows, handoffs))
+}
+
 fn fold_entries_bound() -> usize {
     4 * rows_per_signer()
 }
@@ -76,13 +89,6 @@ fn fold_entries_bound() -> usize {
 /// chain.
 pub(super) fn ancestor_edges_bound() -> usize {
     2 * rows_per_signer() * rows_per_signer()
-}
-
-/// The counted rows one chain holds when its ancestor pairs reach
-/// [`ancestor_edges_bound`]. A log that is one chain, as each local
-/// writer's is, closes there, short of the fold's row bound.
-fn chain_rows_bound() -> usize {
-    2 * rows_per_signer()
 }
 
 impl AuthorityFold {
@@ -625,8 +631,7 @@ pub struct AuthorityLogCheck {
     /// The signer's stored rows, or the log's counted rows or slip-issuer
     /// handoffs.
     pub count: u64,
-    /// The bound `count` reached, or for a headroom check the fold bound
-    /// whose half it reached.
+    /// The policy row `count` reached.
     pub threshold: u64,
 }
 
@@ -635,18 +640,18 @@ impl AuthorityLogCheck {
     /// `authority_log_signer_bound` row: its further rows wait until the
     /// owner raises the row, and then land on the next drain.
     pub const SIGNER_BOUND: &'static str = "authority_log_signer_bound";
-    /// The log's counted rows reached half of what one chain of them holds
-    /// before the fold's ancestor-pair bound (twice the per-signer bound,
-    /// short of the fold's row bound), or its slip issuers' handoffs half of
-    /// the handoff bound. The owner's work is never held, so past them the
-    /// fold fails closed.
+    /// The log's counted rows, or its slip issuers' handoffs, reached their
+    /// `authority_log_fold_headroom` policy row: by default half of what one
+    /// fold holds (a one-chain log's 4,096 counted rows under the
+    /// ancestor-pair bound, and 32 handoffs). The owner's work is never
+    /// held, so past those bounds the fold fails closed.
     pub const FOLD_HEADROOM: &'static str = "authority_log_fold_headroom";
 }
 
 impl crate::Vault {
     /// The open checks on the stored authority log: each key no slip issuer
     /// vouches for that reached its bound, and the log's headroom once it
-    /// reaches half of one fold's bounds.
+    /// reaches its policy rows.
     pub fn authority_log_checks(&self) -> crate::error::Result<Vec<AuthorityLogCheck>> {
         let txn = self.store.env.read_txn()?;
         let view = door_view(&self.store, &txn)?;
@@ -662,16 +667,14 @@ impl crate::Vault {
                 threshold: bound as u64,
             })
             .collect();
-        for (count, fold_bound) in [
-            (view.counted, chain_rows_bound()),
-            (view.issuer_handoffs, MAX_AUTHORITY_FOLD_HANDOFFS),
-        ] {
-            if count >= fold_bound / 2 {
+        let (rows_at, handoffs_at) = headroom(&self.store, &txn)?;
+        for (count, at) in [(view.counted, rows_at), (view.issuer_handoffs, handoffs_at)] {
+            if count >= at {
                 checks.push(AuthorityLogCheck {
                     kind: AuthorityLogCheck::FOLD_HEADROOM,
                     signer: None,
                     count: count as u64,
-                    threshold: fold_bound as u64,
+                    threshold: at as u64,
                 });
             }
         }
