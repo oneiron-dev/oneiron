@@ -186,7 +186,10 @@ pub(crate) async fn revoke_companion_access_grant(
         }
         Err(error) => {
             tracing::error!(kind = ?error.kind(), "companion access grant read failed");
-            return Err(companion_engine_error("companion access grant read failed", error).into());
+            return Err(companion_engine_error(
+                "companion access grant read failed",
+                error,
+            ));
         }
     };
     require_companion_access_grant_write_for_principal(&auth, &existing.principal_ref)
