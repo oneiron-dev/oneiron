@@ -453,3 +453,7 @@ pub fn encode_edge_value_for_crdt(
 pub fn format_edge_key(src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> String {
     format!("{}:{:02}:{}", src.to_hex(), kind as u8, tgt.to_hex())
 }
+
+#[cfg(test)]
+#[path = "companion_identity_tests.rs"]
+mod tests;
