@@ -5,8 +5,8 @@
 //! top meet their frontiers with the anchor's own bounds, so a tie still
 //! installs no widening. A principal that a held act in one branch deposes
 //! or removes takes no authority from what it signed in a sibling branch,
-//! a resolution included. Every step is a function of the held set: no
-//! arrival order, no arbitrary winner.
+//! a resolution included, unless that act itself takes none. Every step is
+//! a function of the held set: no arrival order, no arbitrary winner.
 use super::fold::{ProjectEffective, ProjectRank, rank_at};
 use super::read::ProjectVerdict;
 use super::revision::{ProjectRevision, ProjectRevisionHash};
@@ -46,15 +46,14 @@ pub(super) struct Fork {
 
 /// What takes no authority in the tree below one root.
 pub(super) struct Exclusion {
-    /// Resolutions whose signer, or whose successor's signer, a held act in
-    /// a sibling branch deposes: they settle nothing. An act below a
-    /// contender the resolution itself settles does not count against its
-    /// successor, since that contender leaves if the resolution stands.
-    pub(super) void: BTreeSet<ProjectRevisionHash>,
-    /// Signed revisions that take no authority, with their subtrees.
+    /// The settlements that stand, by node. A node's settlement is absent
+    /// when it has none or none stands: its children stay in contention.
+    pub(super) settled: BTreeMap<ProjectRevisionHash, Settlement>,
+    /// Signed revisions that take no authority, with their subtrees: those a
+    /// deposition excludes and those a standing settlement supersedes.
     pub(super) excluded: BTreeSet<ProjectRevisionHash>,
-    /// Every node the exclusion relies on: each act that deposes anyone, and
-    /// each settlement that superseded a valid child.
+    /// Every node the labelling relies on: each act that deposes anyone,
+    /// and each valid resolution in the tree.
     pub(super) relied: BTreeSet<ProjectRevisionHash>,
 }
 
@@ -67,6 +66,26 @@ struct Act {
     signer: String,
     /// The principals whose rank this act lowers from its parent's.
     deposes: Vec<String>,
+}
+
+/// One valid resolution below a root. It supersedes every child its prior
+/// closure names but its successor, and overrides every other resolution at
+/// its node that does not build on it.
+struct Resolver {
+    node: ProjectRevisionHash,
+    /// The act index of the node (`None`: the root).
+    anchor: Option<usize>,
+    /// The first resolver at the same node.
+    node_first: usize,
+    /// The resolvers it builds on, itself included.
+    builds_on: Vec<usize>,
+    /// Its verified signer.
+    signer: Option<String>,
+    /// The act index of its successor.
+    next: Option<usize>,
+    /// The act indices it supersedes.
+    settles: Vec<usize>,
+    settlement: Settlement,
 }
 
 impl FoldCx<'_, '_, '_> {
@@ -108,7 +127,7 @@ impl FoldCx<'_, '_, '_> {
     fn fold_fork(&self, root: ProjectRevisionHash, node: ProjectRevisionHash) -> Result<Fork> {
         let exclusion = self.exclusion(root)?;
         let valid = self.valid_children(node)?;
-        let settlement = self.settlement(node, &exclusion.void)?;
+        let settlement = exclusion.settled.get(&node).cloned().unwrap_or_default();
         let authority = self.authority_of(&node);
         let mut fork = Fork {
             step: Step::Head,
@@ -172,74 +191,71 @@ impl FoldCx<'_, '_, '_> {
         Ok(fork)
     }
 
-    /// One pass over the tree below `root`. A resolution is void when a held
-    /// act off its own line deposes its signer, or an act off its
-    /// successor's line, outside the contenders it settles, deposes its
-    /// successor's signer: it settles nothing, so the children it named stay
-    /// in contention. Then,
-    /// over the children no standing settlement superseded, the well-founded
-    /// exclusion of section 5a.
+    /// One pass over the tree below `root`: the well-founded labelling of
+    /// section 5a over every valid act and resolution. A deposition attacks
+    /// each act its target signed off the deposing act's line. A resolution
+    /// attacks what it supersedes and every resolution at its node that does
+    /// not build on it; it is attacked when an act off its node's line
+    /// deposes its signer, or an act off its successor's line, outside what
+    /// it supersedes, deposes the successor's signer. Only an attack by what
+    /// is never itself excluded counts.
     fn exclude(&self, root: ProjectRevisionHash) -> Result<Exclusion> {
         let acts = self.acts_below(root)?;
         let at: BTreeMap<ProjectRevisionHash, usize> = (acts.iter().enumerate())
             .map(|(index, act)| (act.hash, index))
             .collect();
-        let all: Vec<usize> = (0..acts.len()).collect();
-        let mut exclusion = Exclusion {
-            void: BTreeSet::new(),
-            excluded: BTreeSet::new(),
-            relied: (acts.iter())
-                .filter(|act| !act.deposes.is_empty())
-                .map(|act| act.hash)
-                .collect(),
-        };
-        let held = Deposers::of(&acts, &all);
-        let nodes: Vec<ProjectRevisionHash> = std::iter::once(root)
-            .chain(acts.iter().map(|act| act.hash))
+        let mut relied: BTreeSet<ProjectRevisionHash> = (acts.iter())
+            .filter(|act| !act.deposes.is_empty())
+            .map(|act| act.hash)
             .collect();
-        for node in &nodes {
-            let position = at.get(node).copied();
-            for hash in self.held.resolutions_at(node) {
-                let Some(ProjectRevision::Resolution { resolution, .. }) = self.row(hash) else {
+        let mut resolvers: Vec<Resolver> = Vec::new();
+        let nodes = std::iter::once((root, None))
+            .chain((acts.iter().enumerate()).map(|(index, act)| (act.hash, Some(index))));
+        for (node, anchor) in nodes {
+            let node_first = resolvers.len();
+            for settlement in self.settlements(node)? {
+                let Some(tip) = settlement.tip else {
                     continue;
                 };
-                if self.verdict(*hash)? != ProjectVerdict::Visible {
+                let Some(ProjectRevision::Resolution { resolution, .. }) = self.row(&tip) else {
                     continue;
-                }
-                let next = at.get(&resolution.next).copied();
-                let settled: Vec<usize> = (resolution.contenders.iter())
-                    .filter(|contender| **contender != resolution.next)
-                    .filter_map(|contender| at.get(contender).copied())
+                };
+                relied.insert(tip);
+                resolvers.push(Resolver {
+                    node,
+                    anchor,
+                    node_first,
+                    builds_on: Vec::new(),
+                    signer: self.signer(&tip),
+                    next: at.get(&resolution.next).copied(),
+                    settles: (settlement.superseded.iter())
+                        .filter_map(|lost| at.get(lost).copied())
+                        .collect(),
+                    settlement,
+                });
+            }
+            let node_end = resolvers.len();
+            let index_of: BTreeMap<ProjectRevisionHash, usize> = (node_first..node_end)
+                .filter_map(|index| Some((resolvers[index].settlement.tip?, index)))
+                .collect();
+            for resolver in &mut resolvers[node_first..node_end] {
+                resolver.builds_on = (resolver.settlement.closure.iter())
+                    .filter_map(|hash| index_of.get(hash).copied())
                     .collect();
-                let signer = self.signer(hash);
-                if signer.is_some_and(|signer| held.challenge(&acts, position, &signer, &[]))
-                    || next.is_some_and(|next| {
-                        held.challenge(&acts, Some(next), &acts[next].signer, &settled)
-                    })
-                {
-                    exclusion.void.insert(*hash);
-                }
             }
         }
-        // A child a standing settlement superseded leaves with its subtree.
-        let mut live = vec![true; acts.len()];
-        for node in &nodes {
-            let valid = self.valid_children(*node)?;
-            let settlement = self.settlement(*node, &exclusion.void)?;
-            if (settlement.superseded.iter()).any(|lost| valid.contains(lost)) {
-                exclusion.relied.extend(settlement.closure.iter().copied());
-            }
-            for lost in &settlement.superseded {
-                if let Some(&index) = at.get(lost) {
-                    live[index..acts[index].end].fill(false);
-                }
-            }
-        }
-        let live: Vec<usize> = all.into_iter().filter(|index| live[*index]).collect();
-        exclusion.excluded = (well_founded(&acts, &live).into_iter())
-            .map(|index| acts[index].hash)
-            .collect();
-        Ok(exclusion)
+        let (out, over) = well_founded(&acts, &resolvers);
+        Ok(Exclusion {
+            excluded: (acts.iter().zip(&out))
+                .filter(|(_, out)| **out)
+                .map(|(act, _)| act.hash)
+                .collect(),
+            settled: (resolvers.into_iter().enumerate())
+                .filter(|(index, _)| !over[acts.len() + index])
+                .map(|(_, resolver)| (resolver.node, resolver.settlement))
+                .collect(),
+            relied,
+        })
     }
 
     /// Every valid signed revision below `root`, in preorder.
@@ -330,42 +346,61 @@ impl<'a> Deposers<'a> {
     }
 }
 
-/// The acts among `live` that a deposition excludes when the acts in
-/// `discounted` depose no one, with their live subtrees.
-fn excluded_by(acts: &[Act], live: &[usize], discounted: &BTreeSet<usize>) -> BTreeSet<usize> {
-    let counted: Vec<usize> = (live.iter())
-        .filter(|index| !discounted.contains(index))
-        .copied()
+/// What the acts and resolutions outside `discounted` attack: acts by
+/// index, then resolutions after them. An attacked act's subtree goes with it.
+fn attacked(acts: &[Act], resolvers: &[Resolver], discounted: &[bool]) -> Vec<bool> {
+    let counted: Vec<usize> = (0..acts.len())
+        .filter(|index| !discounted[*index])
         .collect();
     let deposers = Deposers::of(acts, &counted);
-    let mut out = BTreeSet::new();
-    for index in live {
-        let act = &acts[*index];
-        if act.parent.is_some_and(|parent| out.contains(&parent))
-            || deposers.challenge(acts, Some(*index), &act.signer, &[])
-        {
-            out.insert(*index);
+    let standing = |index: usize| !discounted[acts.len() + index];
+    let mut at_node = vec![0; resolvers.len()];
+    for (index, resolver) in resolvers.iter().enumerate() {
+        if standing(index) {
+            at_node[resolver.node_first] += 1;
         }
+    }
+    let mut out = vec![false; acts.len() + resolvers.len()];
+    let mut superseded = vec![false; acts.len()];
+    for (index, resolver) in resolvers.iter().enumerate() {
+        let built_on = (resolver.builds_on.iter())
+            .filter(|other| standing(**other))
+            .count();
+        out[acts.len() + index] = at_node[resolver.node_first] > built_on
+            || (resolver.signer.as_deref())
+                .is_some_and(|signer| deposers.challenge(acts, resolver.anchor, signer, &[]))
+            || resolver.next.is_some_and(|next| {
+                deposers.challenge(acts, Some(next), &acts[next].signer, &resolver.settles)
+            });
+        if standing(index) {
+            for lost in &resolver.settles {
+                superseded[*lost] = true;
+            }
+        }
+    }
+    for (index, act) in acts.iter().enumerate() {
+        out[index] = act.parent.is_some_and(|parent| out[parent])
+            || superseded[index]
+            || deposers.challenge(acts, Some(index), &act.signer, &[]);
     }
     out
 }
 
-/// Two branches can each depose the other's signer, so exclusion is the
-/// least fixpoint of excluding twice (the well-founded reading, Engine
-/// ruling 2026-10-14): an act is excluded only when an act that is never
-/// itself excluded, in a sibling branch, deposes its signer. Mutual
-/// depositions exclude neither side, and a chain resolves from its
-/// unchallenged end.
-fn well_founded(acts: &[Act], live: &[usize]) -> BTreeSet<usize> {
-    let mut under = BTreeSet::new();
-    if live.iter().all(|index| acts[*index].deposes.is_empty()) {
-        return under;
-    }
+/// Two branches can each depose the other's signer, so the labelling is the
+/// least fixpoint of attacking twice (the well-founded reading, Engine
+/// ruling 2026-10-14): what an act or resolution that is never itself
+/// excluded attacks is excluded, and what nothing left standing attacks
+/// stands. Mutual depositions exclude neither side, a chain resolves from
+/// its unchallenged end, and two resolutions neither builds on settle
+/// nothing. Returns the excluded set and the set anything not excluded
+/// attacks.
+fn well_founded(acts: &[Act], resolvers: &[Resolver]) -> (Vec<bool>, Vec<bool>) {
+    let mut under = vec![false; acts.len() + resolvers.len()];
     loop {
-        let over = excluded_by(acts, live, &under);
-        let next = excluded_by(acts, live, &over);
+        let over = attacked(acts, resolvers, &under);
+        let next = attacked(acts, resolvers, &over);
         if next == under {
-            return under;
+            return (under, over);
         }
         under = next;
     }

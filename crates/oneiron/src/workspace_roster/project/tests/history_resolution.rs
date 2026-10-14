@@ -518,3 +518,65 @@ fn a_deposed_board_holders_resolution_settles_nothing_in_either_order() -> Resul
     }
     Ok(())
 }
+
+/// Bug repro (Astra #1434 r10 F1): L removes Y (A) over S0; over A, B2
+/// drops B1 (D) and lowers the depth (E), and B3 settles A's tie for E.
+/// Over S0, B1 removes X (C), B2 drops B4 (U), and B4 drops B3 (T). U
+/// excludes T, so T never unsettles B3's resolution: D stays superseded,
+/// C's removal holds, and X stays out, in both arrival orders.
+#[cfg(feature = "sync")]
+#[test]
+fn an_excluded_act_never_unsettles_a_resolution_in_either_order() -> Result<()> {
+    let (b1, b2, b3, b4, x, y) = (
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+    );
+    let origin = tempfile::tempdir()?;
+    let project = board_signed_s0(&open(&origin)?, &[x, y], &[b1, b2, b3, b4], |_| {})?;
+    let (id, s0) = (project.id, &project.s0);
+    let copies = [copy_of(&origin)?, copy_of(&origin)?];
+    let vault = open(&origin)?;
+    let a = signed_over(&vault, id, s0, project.leader, without(y))?;
+    let d = signed_over(&vault, id, &a, b2, off_board(b1))?;
+    let e = signed_over(&vault, id, &a, b2, |row| row.depth_remaining -= 1)?;
+    let c = signed_over(&vault, id, s0, b1, without(x))?;
+    let u = signed_over(&vault, id, s0, b2, off_board(b4))?;
+    let t = signed_over(&vault, id, s0, b4, off_board(b3))?;
+    let he = head_of(id, &e)?;
+    let settle = envelope(
+        id,
+        resolution(
+            &vault,
+            id,
+            b3,
+            head_of(id, &a)?,
+            vec![],
+            sorted(vec![head_of(id, &d)?, he]),
+            he,
+        )?,
+    );
+    let anchor = head_of(id, s0)?;
+    for ((_dir, replica), settle_first) in copies.into_iter().zip([false, true]) {
+        replay_authority(&vault, &replica)?;
+        if settle_first {
+            put_companion(&replica, &settle, 9)?;
+        }
+        let order = if settle_first {
+            [&t, &u, &c, &e, &d, &a]
+        } else {
+            [&a, &d, &e, &c, &u, &t]
+        };
+        for (at, row) in (10..).zip(order) {
+            replay_project(&replica, id, row, at)?;
+        }
+        if !settle_first {
+            put_companion(&replica, &settle, 20)?;
+        }
+        board_tie_keeps_x_out(&replica, &project, x, anchor)?;
+    }
+    Ok(())
+}

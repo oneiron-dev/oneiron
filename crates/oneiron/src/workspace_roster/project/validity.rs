@@ -18,11 +18,12 @@ use std::rc::Rc;
 /// `supersedes`) and revisions the fold follows from one entry.
 const MAX_FOLD_DEPTH: usize = 4 * MAX_PROJECT_ANCHORS;
 
-/// The settlement of the valid resolutions at one node.
+/// The settlement one resolution gives at its node.
+#[derive(Clone, Default)]
 pub(super) struct Settlement {
-    /// The single tip, when there is exactly one.
+    /// The resolution; `None` when nothing settles the node.
     pub(super) tip: Option<ProjectRevisionHash>,
-    /// The tip and its prior closure.
+    /// The resolution and its prior closure.
     pub(super) closure: BTreeSet<ProjectRevisionHash>,
     pub(super) superseded: BTreeSet<ProjectRevisionHash>,
 }
@@ -427,65 +428,50 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         Ok(valid)
     }
 
-    /// The single resolution tip at `node` and what its prior closure
-    /// settles, counting no resolution in `void`.
-    pub(super) fn settlement(
-        &self,
-        node: ProjectRevisionHash,
-        void: &BTreeSet<ProjectRevisionHash>,
-    ) -> Result<Settlement> {
+    /// Each valid resolution at `node`, as the settlement it gives if it
+    /// stands: its prior closure, and every child that closure names but its
+    /// own successor. `branch.rs` judges which one stands.
+    pub(super) fn settlements(&self, node: ProjectRevisionHash) -> Result<Vec<Settlement>> {
         let mut valid = BTreeMap::new();
         for hash in self.held.resolutions_at(&node) {
             if let Some(ProjectRevision::Resolution { resolution, .. }) = self.row(hash)
-                && !void.contains(hash)
                 && self.verdict(*hash)? == ProjectVerdict::Visible
             {
                 valid.insert(*hash, resolution);
             }
         }
-        let named: BTreeSet<ProjectRevisionHash> = valid
-            .values()
-            .flat_map(|resolution| resolution.prior.iter().copied())
-            .collect();
-        let tips: Vec<ProjectRevisionHash> = valid
-            .keys()
-            .filter(|hash| !named.contains(hash))
-            .copied()
-            .collect();
-        let [tip] = tips[..] else {
-            return Ok(Settlement {
-                tip: None,
-                closure: BTreeSet::new(),
-                superseded: BTreeSet::new(),
-            });
-        };
-        let mut closure = BTreeSet::new();
-        let mut todo = vec![tip];
-        while let Some(at) = todo.pop() {
-            if let Some(resolution) = valid.get(&at)
-                && closure.insert(at)
-            {
-                todo.extend(resolution.prior.iter().copied());
+        let settlement = |tip: ProjectRevisionHash, keep: ProjectRevisionHash| {
+            let mut closure = BTreeSet::new();
+            let mut todo = vec![tip];
+            while let Some(at) = todo.pop() {
+                if let Some(resolution) = valid.get(&at)
+                    && closure.insert(at)
+                {
+                    todo.extend(resolution.prior.iter().copied());
+                }
             }
-        }
-        let keep = valid[&tip].next;
-        let superseded = closure
+            let superseded = closure
+                .iter()
+                .flat_map(|at| {
+                    let resolution = valid[at];
+                    resolution
+                        .contenders
+                        .iter()
+                        .copied()
+                        .chain([resolution.next])
+                })
+                .filter(|hash| *hash != keep)
+                .collect();
+            Settlement {
+                tip: Some(tip),
+                closure,
+                superseded,
+            }
+        };
+        Ok(valid
             .iter()
-            .flat_map(|at| {
-                let resolution = valid[at];
-                resolution
-                    .contenders
-                    .iter()
-                    .copied()
-                    .chain([resolution.next])
-            })
-            .filter(|hash| *hash != keep)
-            .collect();
-        Ok(Settlement {
-            tip: Some(tip),
-            closure,
-            superseded,
-        })
+            .map(|(tip, resolution)| settlement(*tip, resolution.next))
+            .collect())
     }
 
     /// The valid resolutions at `anchor` that no valid resolution there
