@@ -70,6 +70,8 @@ struct AdvertisementProjection {
 pub(super) struct AdvertisedRefGate<'a> {
     vault: Arc<Vault>,
     repo_dir: PathBuf,
+    /// Whether the projection may wait for a writer holding the repository.
+    wait_for_repository: bool,
     inner: &'a mut dyn ServeSink,
     /// Off until the CGI headers prove this really is an advertisement.
     gating: bool,
@@ -83,10 +85,16 @@ pub(super) struct AdvertisedRefGate<'a> {
 }
 
 impl<'a> AdvertisedRefGate<'a> {
-    pub(super) fn new(vault: &Arc<Vault>, repo_dir: &Path, inner: &'a mut dyn ServeSink) -> Self {
+    pub(super) fn new(
+        vault: &Arc<Vault>,
+        repo_dir: &Path,
+        wait_for_repository: bool,
+        inner: &'a mut dyn ServeSink,
+    ) -> Self {
         Self {
             vault: Arc::clone(vault),
             repo_dir: repo_dir.to_path_buf(),
+            wait_for_repository,
             inner,
             gating: false,
             carry: Vec::new(),
@@ -248,7 +256,12 @@ impl<'a> AdvertisedRefGate<'a> {
         if self.projection.is_some() || self.unresolved {
             return;
         }
-        match resolve_advertisement_projection(&self.vault, &self.repo_dir, pin) {
+        match resolve_advertisement_projection(
+            &self.vault,
+            &self.repo_dir,
+            pin,
+            self.wait_for_repository,
+        ) {
             Ok(projection) => self.projection = Some(projection),
             Err(_) => self.unresolved = true,
         }
@@ -308,11 +321,17 @@ fn resolve_advertisement_projection(
     vault: &Vault,
     repo_dir: &Path,
     pin: &GitOid,
+    wait_for_repository: bool,
 ) -> Result<AdvertisementProjection> {
     let wire = GitWire::new(vault)?;
     let handle = wire.open_repo(local_repo_ref(repo_dir, pin)?, repo_dir)?;
     let repo_id = lfs_repo_id(&handle.identity().as_hex())?;
-    let published = vault.published_origin_refs(&wire, repo_id, &handle)?;
+    // A bounded read never queues behind the push that holds the repository.
+    let published = if wait_for_repository {
+        vault.published_origin_refs(&wire, repo_id, &handle)?
+    } else {
+        vault.published_origin_refs_without_waiting(&wire, repo_id, &handle)?
+    };
     Ok(AdvertisementProjection { repo_id, published })
 }
 

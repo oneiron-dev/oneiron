@@ -74,6 +74,8 @@ pub struct SyncServer {
     pub(super) lifecycle_in_flight: Mutex<HashSet<LifecycleJobKey>>,
     /// Server configuration.
     pub(crate) config: SyncServerConfig,
+    /// Permits for git and LFS transfers, sized by `config.limits`.
+    pub(crate) transfers: crate::api::Transfers,
     /// Set only by managed boot after inherited-credential and DEK checks.
     /// The supervisor authenticates callers before routing its private socket.
     pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
@@ -115,6 +117,9 @@ pub struct SyncServer {
     /// Model seats, background AI status and the Dreamer's session hints.
     /// Inert unless the serve path attaches a configured host.
     pub(crate) ai: crate::ai_host::AiHandle,
+    /// Where rerank calls run when their door cannot drive them on its
+    /// caller's runtime.
+    pub(crate) rerank_runtime: super::recall_rerank::CallRuntime,
     /// Host-injected, request-by-request egress decision for nonlocal extraction.
     pub(crate) extraction_egress: Option<Arc<dyn oneiron::llm::ExtractionEgressPredicate>>,
     /// The vault's path, backup plan and schedule, set by `serve`. `None`
@@ -250,6 +255,7 @@ impl SyncServer {
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
             ),
             dreamer_progress: Mutex::new(DreamerAttemptProgressProducer::new()),
+            transfers: crate::api::Transfers::new(&config.limits),
             config,
             managed_issuer: None,
             mcp_registry,
@@ -262,6 +268,7 @@ impl SyncServer {
             llm: None,
             run_receipts: Arc::default(),
             ai: crate::ai_host::AiHandle::inert(),
+            rerank_runtime: Default::default(),
             extraction_egress: None,
             owner_host: None,
             feedback: None,
@@ -303,13 +310,19 @@ impl SyncServer {
     }
 
     /// Bind a readiness-verified QuickJS provider before exposing this vault's
-    /// routes. Missing components or providers keep execute_code unadvertised.
+    /// routes, running at most `runs` at once. Missing components or providers
+    /// keep execute_code unadvertised.
     #[cfg(feature = "code-sandbox-wasmtime")]
     #[must_use]
-    pub fn with_mcp_quickjs_provider(mut self, provider: crate::mcp::McpQuickJsProvider) -> Self {
+    pub fn with_mcp_quickjs_provider(
+        mut self,
+        provider: crate::mcp::McpQuickJsProvider,
+        runs: crate::mcp::CodeRunLimits,
+    ) -> Self {
         let provider = provider.with_run_receipts(self.run_receipts());
         self.mcp_code_host = Some(Arc::new(crate::mcp::McpEngineNativeCodeHost::new(
             Arc::new(provider),
+            runs,
         )));
         self
     }

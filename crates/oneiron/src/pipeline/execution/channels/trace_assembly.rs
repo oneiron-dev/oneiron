@@ -128,6 +128,8 @@ impl PipelineBuilder<'_> {
                 inputs.blend_access_factors,
                 inputs.trace_candidate_limit,
             ),
+            fusion_list_length: u32::try_from(crate::fusion::FUSION_LIST_LENGTH)
+                .unwrap_or(u32::MAX),
         }
     }
 }
