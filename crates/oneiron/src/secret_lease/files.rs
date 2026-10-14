@@ -1,88 +1,79 @@
-//! T2 file policy, owner-only write, and the armed cleanup guard.
+//! T2 file policy, owner-only write, the armed cleanup guard, and teardown.
+//!
+//! Custody follows the file the vault wrote, not the path string (C9). On
+//! unix the target's directory is reached one component at a time through
+//! descriptors that never follow a symlink, the file is opened relative to
+//! that directory, and its device and inode are recorded on the registration
+//! row. Re-materialization writes only into that same file, and teardown
+//! unlinks only that same file. Anything else at the name is refused and left
+//! in place.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
+use super::types::FileIdentity;
 use crate::error::{Error, Result, SecretError};
 
-// ---------------------------------------------------------------------------
-// T2 file lifecycle (SOL-1920-03)
-// ---------------------------------------------------------------------------
-
-/// The T2 file policy, checked BEFORE any byte lands: the declared target
-/// and its existing ancestors are never followed through a symlink, and the
-/// vault never clobbers an occupant it did not create under this lease. A
-/// regular file already at the target is touched only under `replace` —
-/// same-path re-materialization, where this lease's live registration row
-/// already covers exactly this path. Anything else denies typed
-/// ([`SecretError::SecretLeasePathRefused`](crate::error::SecretError::SecretLeasePathRefused)). Ancestors are checked at policy time;
-/// an ancestor swap between this check and open is the same race class as the
-/// documented leaf check-to-open race. Race-free traversal needs openat2 or
-/// dirfd handling and is intentionally out of scope here.
-fn check_secret_file_policy(target_path: &Path, replace: bool) -> Result<()> {
-    for ancestor in target_path.ancestors().skip(1) {
-        match fs::symlink_metadata(ancestor) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(Error::Secret(SecretError::SecretLeasePathRefused {
-                    path: ancestor.display().to_string(),
-                    reason: "ancestor is a symlink (the vault never follows)",
-                }));
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-
-    let metadata = match fs::symlink_metadata(target_path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.into()),
-    };
-    let file_type = metadata.file_type();
-    if file_type.is_symlink() {
-        return Err(Error::Secret(SecretError::SecretLeasePathRefused {
-            path: target_path.display().to_string(),
-            reason: "target is a symlink (the vault never follows)",
-        }));
-    }
-    if !file_type.is_file() {
-        return Err(Error::Secret(SecretError::SecretLeasePathRefused {
-            path: target_path.display().to_string(),
-            reason: "target exists and is not a regular file",
-        }));
-    }
-    if !replace {
-        return Err(Error::Secret(SecretError::SecretLeasePathRefused {
-            path: target_path.display().to_string(),
-            reason: "target file exists with no live registration under this lease",
-        }));
-    }
-    Ok(())
+fn refused(path: &Path, reason: &'static str) -> Error {
+    Error::Secret(SecretError::SecretLeasePathRefused {
+        path: path.display().to_string(),
+        reason,
+    })
 }
+
+/// Names what occupies `path` after an open or create refused it. Only the
+/// refusal's reason is read from the path; the operation has already failed
+/// closed. `file_reason` names a regular file that was already there.
+#[cfg(unix)]
+fn refuse_occupant(path: &Path, error: std::io::Error, file_reason: &'static str) -> Error {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            refused(path, "target is a symlink (the vault never follows)")
+        }
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            refused(path, "target exists and is not a regular file")
+        }
+        Ok(_) if error.kind() == std::io::ErrorKind::AlreadyExists => refused(path, file_reason),
+        _ => error.into(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// T2 file lifecycle (SOL-1920-03, C9)
+// ---------------------------------------------------------------------------
 
 /// The cleanup guard for a T2 file written by THIS registration attempt.
 /// Armed at creation; [`SecretFileGuard::disarm`] runs only after the
 /// registration commits durable. A drop while armed removes the file ONLY
-/// when `fresh` — created by this attempt under a lease with no durable
-/// registration for the path, so a failed row write, lease write, or
-/// commit never strands plaintext no row can clean. A same-path replace is
-/// never the guard's to remove: the live registration row still covers the
-/// file, so a failure leaves it (and SECRET-03's exclusion) in place.
-#[derive(Debug)]
+/// when `fresh` — created by this attempt, so no durable row records its
+/// identity, and a failed row write, lease write, or commit never strands
+/// plaintext no row can clean. The removal is the identity-checked one
+/// teardown uses. A replace that wrote into the registered file is never the
+/// guard's to remove: the live registration row still covers it.
 pub(super) struct SecretFileGuard {
-    path: PathBuf,
+    #[cfg(unix)]
+    target: written::Target,
+    #[cfg(not(unix))]
+    path: std::path::PathBuf,
+    identity: FileIdentity,
     fresh: bool,
     armed: bool,
 }
 
+impl std::fmt::Debug for SecretFileGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretFileGuard")
+            .field("identity", &self.identity)
+            .field("fresh", &self.fresh)
+            .field("armed", &self.armed)
+            .finish_non_exhaustive()
+    }
+}
+
 impl SecretFileGuard {
-    fn new(path: &Path, fresh: bool) -> Self {
-        Self {
-            path: path.to_path_buf(),
-            fresh,
-            armed: true,
-        }
+    /// The identity of the file this attempt wrote, for the registration row.
+    pub(super) fn identity(&self) -> FileIdentity {
+        self.identity
     }
 
     /// The registration committed durable: the row owns the file now.
@@ -94,53 +85,100 @@ impl SecretFileGuard {
 impl Drop for SecretFileGuard {
     fn drop(&mut self) {
         if self.armed && self.fresh {
+            #[cfg(unix)]
+            let _ = self.target.remove(self.identity);
+            #[cfg(not(unix))]
             let _ = fs::remove_file(&self.path);
         }
     }
 }
 
-/// Writes the value file for a T2 registration under
-/// [`check_secret_file_policy`] and returns its armed guard. Owner-only
-/// permissions BEFORE the first byte: creation carries `mode(0o600)` (the
-/// umask can only narrow), and a replace re-asserts the mode through the
-/// open handle (fchmod — no path race) ahead of the new bytes. The file
-/// holds plaintext and the vault's at-rest DEK plane does not extend to
-/// the filesystem, so the declared path gets the tightest default the
-/// platform gives us. `O_NOFOLLOW` underpins the policy check against a
-/// check-to-open symlink swap.
+/// Writes the value file for a T2 registration and returns its armed guard.
+///
+/// `registered` is the identity the lease's live registration row holds:
+/// `None` for a fresh registration, which creates the file and never clobbers
+/// an occupant; `Some` for same-path re-materialization, which writes only
+/// into that file. A registered file that is gone is created again (S4
+/// recovery) and gets a new identity; an occupant that is not the registered
+/// file, or that file under a second name (a hard link would receive the
+/// value too), is refused before any byte lands.
+///
+/// Owner-only permissions BEFORE the first byte: creation carries
+/// `mode(0o600)` (the umask can only narrow), and a replace re-asserts the
+/// mode through the open handle (fchmod) ahead of the new bytes. The file
+/// holds plaintext and the vault's at-rest DEK plane does not extend to the
+/// filesystem, so the declared path gets the tightest default the platform
+/// gives us.
 #[cfg(unix)]
 pub(super) fn write_secret_file(
     target_path: &Path,
     value: &[u8],
-    replace: bool,
+    registered: Option<FileIdentity>,
 ) -> Result<SecretFileGuard> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-    check_secret_file_policy(target_path, replace)?;
+    let target = written::Target::open(target_path)?;
     #[cfg(test)]
     path_swap_hook::fire();
-    let mut options = fs::OpenOptions::new();
-    options
-        .write(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW);
-    if replace {
-        // Same-path re-materialization: truncate the file this lease's
-        // registration covers, or recreate it when lost (S4 recovery).
-        options.create(true).truncate(true);
-    } else {
-        // Fresh registration: create_new is the atomic no-clobber guard —
-        // anything that appeared at the target after the policy check
-        // fails the open instead of being overwritten.
-        options.create_new(true);
-    }
-    let mut file = options.open(target_path)?;
-    let guard = SecretFileGuard::new(target_path, !replace);
-    if replace {
-        file.set_permissions(fs::Permissions::from_mode(0o600))?;
-    }
+    let (mut file, fresh) = match registered {
+        None => match target.create() {
+            Ok(file) => (file, true),
+            Err(error) => {
+                return Err(refuse_occupant(
+                    target_path,
+                    error,
+                    "target file exists with no live registration under this lease",
+                ));
+            }
+        },
+        Some(expected) => match target.open_for_write() {
+            Ok(file) => {
+                let metadata = file.metadata()?;
+                if !metadata.is_file()
+                    || FileIdentity::of(&metadata) != expected
+                    || metadata.nlink() != 1
+                {
+                    return Err(refused(
+                        target_path,
+                        "target is not the file this lease registered",
+                    ));
+                }
+                // fchmod also fails on a file another user owns, so an inode
+                // number reused under another owner is refused here too.
+                file.set_permissions(fs::Permissions::from_mode(0o600))?;
+                file.set_len(0)?;
+                (file, false)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // The registered file is lost: S4 recovery writes it anew.
+                match target.create() {
+                    Ok(file) => (file, true),
+                    Err(error) => {
+                        return Err(refuse_occupant(
+                            target_path,
+                            error,
+                            "target is not the file this lease registered",
+                        ));
+                    }
+                }
+            }
+            Err(error) => {
+                return Err(refuse_occupant(
+                    target_path,
+                    error,
+                    "target is not the file this lease registered",
+                ));
+            }
+        },
+    };
+    let identity = FileIdentity::of(&file.metadata()?);
+    let guard = SecretFileGuard {
+        target,
+        identity,
+        fresh,
+        armed: true,
+    };
     #[cfg(test)]
     if file_write_fault_hook::take_file_write_failure() {
         return Err(std::io::Error::other("injected file-write failure").into());
@@ -150,26 +188,216 @@ pub(super) fn write_secret_file(
     Ok(guard)
 }
 
-/// The non-unix fallback: the same policy and no-clobber create; the
-/// platform gives no owner-only mode or no-follow open flag.
+/// Removes the registered T2 file: `Ok` when it is gone (removed now, or
+/// already absent), an error when it could not be removed or when something
+/// other than the registered file answers to the path, which is left as it is.
+#[cfg(unix)]
+pub(super) fn remove_secret_file(target_path: &Path, registered: FileIdentity) -> Result<()> {
+    let target = match written::Target::open(target_path) {
+        Ok(target) => target,
+        Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    match target.remove(registered) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(refused(
+            target_path,
+            "target is not the file this lease registered",
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(unix)]
+mod written {
+    //! Descriptor-relative access to a T2 target.
+
+    use std::ffi::{CString, OsStr};
+    use std::fs::File;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::{Component, Path, PathBuf};
+
+    use super::{FileIdentity, refused};
+    use crate::error::Result;
+
+    /// A T2 target held by descriptor: its directory, and the file's name in it.
+    pub(super) struct Target {
+        dir: File,
+        leaf: CString,
+    }
+
+    impl Target {
+        /// Walks to the target's directory one component at a time, each
+        /// opened through the descriptor of the one before with `O_NOFOLLOW`.
+        /// No ancestor is resolved by path after this, so swapping one for a
+        /// symlink later moves nothing the vault writes; a symlink met during
+        /// the walk is refused.
+        pub(super) fn open(target_path: &Path) -> Result<Self> {
+            let leaf = match target_path.file_name() {
+                Some(name) => c_name(target_path, name)?,
+                None => return Err(refused(target_path, "target names no file")),
+            };
+            let mut walked = PathBuf::new();
+            let mut dir: Option<File> = None;
+            for component in target_path.parent().unwrap_or(Path::new("")).components() {
+                let name = match component {
+                    Component::RootDir => {
+                        walked.push(component);
+                        dir = Some(open_directory(None, c"/")?);
+                        continue;
+                    }
+                    Component::CurDir => continue,
+                    Component::ParentDir | Component::Normal(_) | Component::Prefix(_) => {
+                        component.as_os_str()
+                    }
+                };
+                walked.push(name);
+                let opened = open_directory(dir.as_ref(), &c_name(&walked, name)?);
+                dir = Some(opened.map_err(|error| refuse_ancestor(&walked, error))?);
+            }
+            let dir = match dir {
+                Some(dir) => dir,
+                None => open_directory(None, c".")?,
+            };
+            Ok(Self { dir, leaf })
+        }
+
+        /// Creates the file, never through or over an occupant.
+        pub(super) fn create(&self) -> std::io::Result<File> {
+            self.open_leaf(libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL)
+        }
+
+        /// Opens an existing file for writing without truncating it, so its
+        /// identity is checked before any byte changes. `O_NONBLOCK` keeps a
+        /// planted FIFO from parking the writer.
+        pub(super) fn open_for_write(&self) -> std::io::Result<File> {
+            self.open_leaf(libc::O_WRONLY | libc::O_NONBLOCK)
+        }
+
+        /// Unlinks the leaf when it is the file with `identity`. `Ok(false)`
+        /// leaves a different occupant in place. The leaf is checked through
+        /// the held directory and unlinked from it, so only a process that
+        /// swaps the leaf itself between the check and the unlink is outside
+        /// this check.
+        pub(super) fn remove(&self, identity: FileIdentity) -> std::io::Result<bool> {
+            let occupant = match self.open_leaf(libc::O_RDONLY | libc::O_NONBLOCK) {
+                Ok(file) => file.metadata()?,
+                Err(error) if error.raw_os_error() == Some(libc::ELOOP) => return Ok(false),
+                Err(error) => return Err(error),
+            };
+            if !occupant.is_file() || FileIdentity::of(&occupant) != identity {
+                return Ok(false);
+            }
+            // SAFETY: `self.dir` holds a live directory descriptor and
+            // `self.leaf` is a NUL-terminated single component that lives
+            // through the call; unlinkat transfers no descriptor ownership.
+            if unsafe { libc::unlinkat(self.dir.as_raw_fd(), self.leaf.as_ptr(), 0) } < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(true)
+        }
+
+        fn open_leaf(&self, flags: libc::c_int) -> std::io::Result<File> {
+            // SAFETY: `self.dir` holds a live directory descriptor and
+            // `self.leaf` is a NUL-terminated single component that lives
+            // through the call; `adopt` owns only a successfully opened fd.
+            let fd = unsafe {
+                libc::openat(
+                    self.dir.as_raw_fd(),
+                    self.leaf.as_ptr(),
+                    flags | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                    0o600,
+                )
+            };
+            adopt(fd)
+        }
+    }
+
+    /// A symlinked ancestor is the refusal; any other failure is the open's.
+    fn refuse_ancestor(walked: &Path, error: std::io::Error) -> crate::error::Error {
+        match std::fs::symlink_metadata(walked) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                refused(walked, "ancestor is a symlink (the vault never follows)")
+            }
+            _ => error.into(),
+        }
+    }
+
+    fn c_name(path: &Path, name: &OsStr) -> Result<CString> {
+        CString::new(name.as_bytes()).map_err(|_| refused(path, "target path contains a NUL byte"))
+    }
+
+    /// Opens one directory component relative to `at` (the working directory
+    /// when `None`), never following a symlink.
+    fn open_directory(at: Option<&File>, name: &std::ffi::CStr) -> std::io::Result<File> {
+        let at = at.map_or(libc::AT_FDCWD, AsRawFd::as_raw_fd);
+        // SAFETY: `at` is AT_FDCWD or a live directory descriptor borrowed for
+        // this call, and `name` is NUL-terminated and lives through it;
+        // `adopt` owns only a successfully opened fd.
+        let fd = unsafe {
+            libc::openat(
+                at,
+                name.as_ptr(),
+                libc::O_DIRECTORY | libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        adopt(fd)
+    }
+
+    fn adopt(fd: libc::c_int) -> std::io::Result<File> {
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: `fd` is a non-negative descriptor just returned by `openat`
+        // and held by no other owner, so this `File` closes it exactly once.
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
+}
+
+/// The non-unix fallback: path-based, with the same no-clobber create. The
+/// platform gives no owner-only mode, no no-follow open, and no file identity,
+/// so a registration there records none and teardown removes by path.
 #[cfg(not(unix))]
 pub(super) fn write_secret_file(
     target_path: &Path,
     value: &[u8],
-    replace: bool,
+    registered: Option<FileIdentity>,
 ) -> Result<SecretFileGuard> {
     use std::io::Write;
 
-    check_secret_file_policy(target_path, replace)?;
+    match fs::symlink_metadata(target_path) {
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            return Err(refused(
+                target_path,
+                "target exists and is not a regular file",
+            ));
+        }
+        Ok(_) if registered.is_none() => {
+            return Err(refused(
+                target_path,
+                "target file exists with no live registration under this lease",
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
     let mut options = fs::OpenOptions::new();
     options.write(true);
-    if replace {
+    if registered.is_some() {
         options.create(true).truncate(true);
     } else {
         options.create_new(true);
     }
     let mut file = options.open(target_path)?;
-    let guard = SecretFileGuard::new(target_path, !replace);
+    let guard = SecretFileGuard {
+        path: target_path.to_path_buf(),
+        identity: FileIdentity::UNBOUND,
+        fresh: registered.is_none(),
+        armed: true,
+    };
     #[cfg(test)]
     if file_write_fault_hook::take_file_write_failure() {
         return Err(std::io::Error::other("injected file-write failure").into());
@@ -177,6 +405,16 @@ pub(super) fn write_secret_file(
     file.write_all(value)?;
     file.flush()?;
     Ok(guard)
+}
+
+/// The non-unix teardown: removes by path.
+#[cfg(not(unix))]
+pub(super) fn remove_secret_file(target_path: &Path, _registered: FileIdentity) -> Result<()> {
+    match fs::remove_file(target_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 #[cfg(test)]
