@@ -1215,16 +1215,18 @@ impl AgentVerbDoor for LaneDoor {
 }
 
 /// `holder`'s agent credential, narrowed to `facets`, as the key a door
-/// admits a run's calls with.
+/// admits a run's calls with. Each `name` mints its own slip: the authority
+/// log refuses a second slip under one id.
 fn facet_reader(
     vault: &Vault,
     holder: EntityId,
+    name: &str,
     facets: crate::federation::ScopeAxis<crate::federation::ScopeId>,
 ) -> Result<crate::claim::ScopedReadActorKey> {
     let tag = b"code-run facet placement";
     let issuer = crate::authority::HostSlipIssuer::from_secret(tag)?;
     let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;
-    claims.slip_id = *blake3::hash(tag).as_bytes();
+    claims.slip_id = *blake3::hash(name.as_bytes()).as_bytes();
     claims.parent_id = None;
     claims.holder_ref = holder.to_hex();
     claims.actor_class = Some("agent".into());
@@ -1269,6 +1271,7 @@ fn a_door_credential_stamps_only_a_row_it_reads_into_its_own_facets() -> Result<
     .with_agent_verb_door(std::sync::Arc::new(LaneDoor(facet_reader(
         &vault,
         actor,
+        "work and home",
         [work, home]
             .into_iter()
             .map(crate::federation::ScopeId)
@@ -1315,6 +1318,7 @@ fn a_door_credential_stamps_only_a_row_it_reads_into_its_own_facets() -> Result<
     .with_agent_verb_door(std::sync::Arc::new(LaneDoor(facet_reader(
         &vault,
         actor,
+        "every facet",
         crate::federation::ScopeAxis::All,
     )?)));
     // The wide key reads a NOTE its holder wrote, and may place it again in
