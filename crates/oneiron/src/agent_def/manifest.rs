@@ -374,6 +374,9 @@ pub(crate) fn seed_system_agent_definitions(
     text_index_trusted: bool,
 ) -> Result<()> {
     let manifest = parse_system_agent_definition_manifest(SYSTEM_AGENT_DEFINITIONS_V1_JSON)?;
+    // Rows older than the pin are pinned before anything can delete one, and
+    // before a deleted seeded row re-seeds within its pin (H215).
+    super::id_pin::pin_stored_rows_in_txn(store, wtxn)?;
     reconcile_system_agent_definitions_in(
         store,
         config,

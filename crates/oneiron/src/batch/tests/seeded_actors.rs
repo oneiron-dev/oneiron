@@ -509,6 +509,17 @@ fn a_deleted_agent_id_cannot_come_back_as_another_type() -> Result<()> {
     Ok(())
 }
 
+/// The embedded owner's proof, as a native host authenticates it.
+fn owner_proof(vault: &Vault) -> Result<crate::consent::AuthenticatedOwner> {
+    let actor = vault.ensure_embedded_owner_actor().expect("owner actor");
+    vault.authenticate_owner(
+        actor,
+        &actor.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )
+}
+
 /// H215 keeps the owner's capability: the one door that widens an agent's
 /// ceiling is the owner's, and it rechecks the owner's proof. It widens a
 /// seeded row and an owner's own agent, the gate reads the wider bound, and
@@ -523,8 +534,7 @@ fn only_the_owners_door_widens_an_agent_and_the_pin_follows() -> Result<()> {
 
     let (_dir, vault) = open_test_vault();
     put_actor_ceiling_manifest(&vault, 0x2E, vec![agent_class_auto_row()])?;
-    let actor = vault.ensure_embedded_owner_actor().expect("owner actor");
-    let owner = vault.authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())?;
+    let owner = owner_proof(&vault)?;
     let stranger = crate::test_util::entity(0x47);
     vault.put_entity(
         &stranger,
@@ -620,10 +630,19 @@ fn only_the_owners_door_widens_an_agent_and_the_pin_follows() -> Result<()> {
     Ok(())
 }
 
+/// A header-only row of `entity_type`, the shape a retained shell carries.
+fn header_row(entity_type: u8) -> Vec<u8> {
+    let mut row = vec![entity_type];
+    for stamp in [2_u64, 2, 2] {
+        row.extend_from_slice(&stamp.to_be_bytes());
+    }
+    row
+}
+
 /// H215, round 2: a retained soft-delete shell a sync window carries is
 /// installed header-only, never through a put. A shell of another type at an
-/// agent id is refused there too, and whatever row another writer leaves at
-/// an agent id, the gate holds the agent there at `Proposed`.
+/// agent id is refused there too.
+#[cfg(feature = "sync")]
 #[test]
 fn a_retained_shell_cannot_retype_an_agent_id() -> Result<()> {
     use crate::deletion::{TombstoneReason, TombstoneValueV2};
@@ -632,13 +651,6 @@ fn a_retained_shell_cannot_retype_an_agent_id() -> Result<()> {
     put_actor_ceiling_manifest(&vault, 0x2E, vec![agent_class_auto_row()])?;
     let (custom_id, _) = custom_agent(&vault, crate::agent_def::AgentCeiling::Proposed)?;
     vault.batch().delete(&custom_id).commit()?;
-    let header = |entity_type: u8| {
-        let mut row = vec![entity_type];
-        for stamp in [2_u64, 2, 2] {
-            row.extend_from_slice(&stamp.to_be_bytes());
-        }
-        row
-    };
     let tombstone = TombstoneValueV2 {
         reason: TombstoneReason::UserDelete,
         deleted_at: 2,
@@ -651,7 +663,7 @@ fn a_retained_shell_cannot_retype_an_agent_id() -> Result<()> {
                 &vault,
                 txn,
                 &custom_id,
-                &header(ENTITY_TYPE_PERSON),
+                &header_row(ENTITY_TYPE_PERSON),
                 &tombstone,
             )
         })
@@ -659,9 +671,19 @@ fn a_retained_shell_cannot_retype_an_agent_id() -> Result<()> {
     assert_eq!(err.kind(), ErrorKind::EntityTypeImmutable, "{err:?}");
     assert!(vault.get_raw(&custom_id)?.is_none());
     auto_write_is_held(&vault, custom_id, 0x4C, 10)?;
+    Ok(())
+}
 
-    // The gate's own floor, for a writer no door knows of yet.
-    let mut person = header(ENTITY_TYPE_PERSON);
+/// H215, round 2: whatever row a writer no door knows of leaves at an agent
+/// id, the gate holds the agent there at `Proposed` rather than reading no
+/// bound off a row that is not its definition.
+#[test]
+fn an_agent_id_holding_another_row_stays_held() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    put_actor_ceiling_manifest(&vault, 0x2E, vec![agent_class_auto_row()])?;
+    let (custom_id, _) = custom_agent(&vault, crate::agent_def::AgentCeiling::Auto)?;
+    vault.batch().delete(&custom_id).commit()?;
+    let mut person = header_row(ENTITY_TYPE_PERSON);
     person.extend_from_slice(b"planted");
     vault.with_write_txn(|txn| {
         vault
@@ -704,27 +726,39 @@ fn a_person_substrate_cannot_land_on_an_agent_id() -> Result<()> {
     Ok(())
 }
 
+/// The backup at `image` restored over `vault`, keeping its authority.
+fn restore_keeping_authority(
+    vault: &Vault,
+    image: &std::path::Path,
+    destination: &std::path::Path,
+) -> Result<Vault> {
+    Vault::restore_checkpoint_keeping_authority(
+        image,
+        destination,
+        vault.config.clone(),
+        vault,
+        1_000,
+    )
+    .map(|(restored, _)| restored)
+}
+
 /// H215, round 2: an agent id's pin is live authority, so a restore that
 /// keeps authority keeps it. An agent born and deleted since the backup
 /// leaves its id pinned in the restored vault: a wider recreate or a PERSON
 /// there is refused as in the live vault, and one within the pin lands.
 #[test]
 fn a_restore_keeps_every_agent_id_pin() -> Result<()> {
+    use crate::agent_def::AgentCeiling;
+
     let (_dir, vault) = open_test_vault();
     let backups = tempfile::tempdir()?;
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
-    let (custom_id, custom) = custom_agent(&vault, crate::agent_def::AgentCeiling::Proposed)?;
+    let (custom_id, custom) = custom_agent(&vault, AgentCeiling::Proposed)?;
     vault.batch().delete(&custom_id).commit()?;
-    let (restored, _) = Vault::restore_checkpoint_keeping_authority(
-        &image,
-        &backups.path().join("restored"),
-        vault.config.clone(),
-        &vault,
-        1_000,
-    )?;
+    let restored = restore_keeping_authority(&vault, &image, &backups.path().join("restored"))?;
     let mut wider = custom.clone();
-    wider.ceiling = crate::agent_def::AgentCeiling::Auto;
+    wider.ceiling = AgentCeiling::Auto;
     refused_as_body(
         restored.put_agent_definition(&custom_id, &wider, test_time_range(3, 3), 3),
         "wider recreate after the restore",
@@ -740,5 +774,153 @@ fn a_restore_keeps_every_agent_id_pin() -> Result<()> {
         .expect_err("a PERSON at the agent id after the restore");
     assert_eq!(err.kind(), ErrorKind::EntityTypeImmutable, "{err:?}");
     restored.put_agent_definition(&custom_id, &custom, test_time_range(4, 4), 4)?;
+    Ok(())
+}
+
+/// H215, round 3: a row a restore brings back narrower than its live pin
+/// narrows the pin, as a put of it would. An agent the owner widened since
+/// the backup, then deleted, comes back at the backup's ceiling and cannot
+/// widen itself back without the owner.
+#[test]
+fn a_restored_row_narrows_its_pin() -> Result<()> {
+    use crate::agent_def::AgentCeiling;
+
+    let (_dir, vault) = open_test_vault();
+    let (kept_id, kept) = custom_agent(&vault, AgentCeiling::Proposed)?;
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100)?;
+    let mut widened = kept.clone();
+    widened.version = "2".to_owned();
+    widened.ceiling = AgentCeiling::Auto;
+    vault.update_agent_definition_as(
+        &owner_proof(&vault)?,
+        &kept_id,
+        &widened,
+        test_time_range(2, 2),
+        2,
+    )?;
+    vault.batch().delete(&kept_id).commit()?;
+    let restored = restore_keeping_authority(&vault, &image, &backups.path().join("restored"))?;
+    assert_eq!(restored.get_agent_definition(&kept_id)?, Some(kept));
+    refused_as_body(
+        restored.update_agent_definition(&kept_id, &widened, test_time_range(5, 5), 5),
+        "the restored row widened back without the owner",
+    );
+    Ok(())
+}
+
+/// H215, round 3: a pin a restore cannot read is no pin to pass. An agent
+/// narrowed and deleted since the backup, whose live pin no longer reads, is
+/// not brought back at the backup's wider ceiling: the restore refuses.
+#[test]
+fn a_restore_refuses_past_a_pin_it_cannot_read() -> Result<()> {
+    use crate::agent_def::AgentCeiling;
+
+    let (_dir, vault) = open_test_vault();
+    let (agent_id, agent) = custom_agent(&vault, AgentCeiling::Auto)?;
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100)?;
+    let mut narrowed = agent;
+    narrowed.version = "2".to_owned();
+    narrowed.ceiling = AgentCeiling::Proposed;
+    vault.update_agent_definition(&agent_id, &narrowed, test_time_range(2, 2), 2)?;
+    vault.batch().delete(&agent_id).commit()?;
+    let pin_key = [&b"agent_def/id-pin/v1\0"[..], agent_id.as_bytes()].concat();
+    vault.with_write_txn(|txn| {
+        vault.store.vault_meta.put(txn, &pin_key, &[2])?;
+        Ok(())
+    })?;
+    let destination = backups.path().join("restored");
+    assert!(restore_keeping_authority(&vault, &image, &destination).is_err());
+    assert!(!destination.exists());
+    Ok(())
+}
+
+/// H215, round 3: a restore that keeps a live vault's authority can bring
+/// back a definition that vault never held, so no pin of its own comes with
+/// it. The restore pins it as a put would have: deleted, it comes back no
+/// wider and as nothing else.
+#[test]
+fn a_restore_pins_a_definition_its_live_vault_never_held() -> Result<()> {
+    use crate::agent_def::AgentCeiling;
+    use crate::recovery::checkpoint::RestoreReason;
+
+    let (_dir, vault) = open_test_vault();
+    let backups = tempfile::tempdir()?;
+    let before = backups.path().join("before");
+    vault.snapshot_checkpoint(&before, 100)?;
+    let (custom_id, custom) = custom_agent(&vault, AgentCeiling::Proposed)?;
+    let after = backups.path().join("after");
+    vault.snapshot_checkpoint(&after, 200)?;
+    let (rolled_back, _) = Vault::restore_checkpoint(
+        &before,
+        &backups.path().join("rolled-back"),
+        vault.config.clone(),
+        RestoreReason::Restore,
+        1_000,
+    )?;
+    let restored =
+        restore_keeping_authority(&rolled_back, &after, &backups.path().join("restored"))?;
+    assert_eq!(
+        restored.get_agent_definition(&custom_id)?,
+        Some(custom.clone())
+    );
+    restored.batch().delete(&custom_id).commit()?;
+    let mut wider = custom.clone();
+    wider.ceiling = AgentCeiling::Auto;
+    refused_as_body(
+        restored.put_agent_definition(&custom_id, &wider, test_time_range(3, 3), 3),
+        "wider recreate of a restored definition",
+    );
+    let err = restored
+        .put_entity(
+            &custom_id,
+            ENTITY_TYPE_PERSON,
+            test_time_range(3, 3),
+            3,
+            b"p",
+        )
+        .expect_err("a PERSON at a restored agent id");
+    assert_eq!(err.kind(), ErrorKind::EntityTypeImmutable, "{err:?}");
+    Ok(())
+}
+
+/// H215, round 3: a row older than the pin holds no pin until something pins
+/// it, and could be deleted and come back wider or as another type. The next
+/// open pins it before any caller holds the vault.
+#[test]
+fn an_open_pins_a_row_older_than_the_pin() -> Result<()> {
+    use crate::agent_def::AgentCeiling;
+
+    let (dir, vault) = open_test_vault();
+    let (custom_id, custom) = custom_agent(&vault, AgentCeiling::Proposed)?;
+    // The row as a build without the pin left it: no pin row at its id.
+    let pin_key = [&b"agent_def/id-pin/v1\0"[..], custom_id.as_bytes()].concat();
+    vault.with_write_txn(|txn| {
+        vault.store.vault_meta.delete(txn, &pin_key)?;
+        Ok(())
+    })?;
+    drop(vault);
+    let vault = Vault::open(dir.path(), embedding_test_config())?;
+    vault.batch().delete(&custom_id).commit()?;
+    let mut wider = custom.clone();
+    wider.ceiling = AgentCeiling::Auto;
+    refused_as_body(
+        vault.put_agent_definition(&custom_id, &wider, test_time_range(3, 3), 3),
+        "wider recreate of a row older than the pin",
+    );
+    let err = vault
+        .put_entity(
+            &custom_id,
+            ENTITY_TYPE_PERSON,
+            test_time_range(3, 3),
+            3,
+            b"p",
+        )
+        .expect_err("a PERSON at the id of a row older than the pin");
+    assert_eq!(err.kind(), ErrorKind::EntityTypeImmutable, "{err:?}");
+    vault.put_agent_definition(&custom_id, &custom, test_time_range(4, 4), 4)?;
     Ok(())
 }

@@ -620,6 +620,9 @@ impl Vault {
                     h.learned_at,
                 )?;
             }
+            // Rows came back without a put: each definition pins its id as a
+            // put of it would have (H215).
+            crate::agent_def::pin_stored_rows_in_txn(&vault.store, txn)?;
             Ok(())
         })?;
         drop(vault);

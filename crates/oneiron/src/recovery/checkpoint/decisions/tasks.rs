@@ -310,7 +310,10 @@ impl Decision for AgentCeilings {
 /// authority (`restore_class`), so the restored vault holds the live vault's,
 /// but a restore writes rows without a put: a row it brings back from before
 /// a narrowing, to an id the live vault deleted it from, would bound the
-/// agent there by a ceiling it no longer holds. Asked of every agent id.
+/// agent there by a ceiling it no longer holds. Asked of every agent id. A
+/// restored row off its pin refuses the restore whatever the live vault
+/// holds, and a pin that does not read refuses it too: the gate would still
+/// read a readable definition's ceiling past it.
 pub(super) struct AgentIdPins;
 
 impl Decision for AgentIdPins {
@@ -331,18 +334,14 @@ impl Decision for AgentIdPins {
         subjects: &BTreeSet<Self::Subject>,
     ) -> Result<Vec<Option<Self::Answer>>> {
         let txn = vault.store.env.read_txn()?;
-        Ok(subjects
+        subjects
             .iter()
-            .map(|id| crate::agent_def::row_within_pin_in_txn(&vault.store, &txn, id).ok())
-            .collect())
+            .map(|id| crate::agent_def::row_within_pin_in_txn(&vault.store, &txn, id).map(Some))
+            .collect()
     }
 
-    fn loosens(live: &bool, restored: &bool) -> bool {
-        *live && !*restored
-    }
-
-    fn refusal() -> Option<bool> {
-        Some(true)
+    fn loosens(_live: &bool, restored: &bool) -> bool {
+        !*restored
     }
 }
 

@@ -33,8 +33,8 @@ side_tables! {
     AGENT_DEF_BIRTH_INPUT: VaultMeta b"agent_def/birth-input/v1\0" Raw;
     /// Empty marker: an agent's birth source has been retired. Key: id16.
     AGENT_DEF_BIRTH_RETIRED: VaultMeta b"agent_def/birth-retired/v1\0" Raw;
-    /// What an agent id answers to on every later put, across a delete: the narrowest ceiling a
-    /// row at the id has held (one byte, 0 proposed, 1 auto), then the 16-byte parent row it was
+    /// What an agent id answers to on every later put, across a delete: the widest ceiling a
+    /// row at the id may hold (one byte, 0 proposed, 1 auto), then the 16-byte parent row it was
     /// born forked from, if any. Key: id16.
     AGENT_DEF_ID_PIN: VaultMeta b"agent_def/id-pin/v1\0" Raw;
     /// Frozen source-tree identity (source id + skill content hash, 48 raw bytes) recorded at an
