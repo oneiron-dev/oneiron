@@ -56,7 +56,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/tests_jsonl_contract.rs` | src | m | 2 crate-vis | — | JSONL contract tests |
 | `src/beam/tests_judge_cost.rs` | src | s | 1 crate-vis | — | Judge and cost tests |
 | `src/beam/tests_ppr_vad.rs` | src | s | 2 crate-vis | — | PPR-VAD tests |
-| `src/beam/tests_smoke_manifest.rs` | src | s | 1 crate-vis | — | Smoke and manifest tests |
+| `src/beam/tests_smoke_manifest.rs` | src | m | 1 crate-vis | — | Smoke and manifest tests |
 | `src/beam/tiers.rs` | src | s | 6 crate-vis | — | Dataset graduation: no-regression at the previous rung, explicit gated cells |
 | `src/beam/util.rs` | src | s | 18 crate-vis | — | Hex, hash, base64, and id-set helpers |
 | `src/beam/validate.rs` | src | m | 9 crate-vis | — | Fixture and manifest validators |

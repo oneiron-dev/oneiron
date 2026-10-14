@@ -152,7 +152,7 @@ fn through_the_entry(vault: &Arc<Vault>, values: &WindowValues) -> Result<Vec<Ro
     assert!(values.tombstones.is_empty(), "the entry ingests entities");
     let before = dump_rows(vault);
     let doc = create_window_doc("remote", &WindowKey::new(WINDOW));
-    let tombstones = doc.get_map("tombstones");
+    let tombstones = crate::sync::loro_support::TombstoneIndex::build(&doc.get_map("tombstones"));
     let ingest = IngestCtx::new(
         vault,
         WINDOW,

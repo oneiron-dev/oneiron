@@ -4029,7 +4029,7 @@
      "path": "src/blob_artifact/lifecycle.rs",
      "purpose": "Blob artifact delete path: version-chain, head, and asset-ref cleanup",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -4039,7 +4039,7 @@
      "path": "src/blob_artifact/mod.rs",
      "purpose": "ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "mod": 1,
       "re-export": 4
      }
@@ -4057,6 +4057,24 @@
       "enum": 1,
       "fn": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/references.rs",
+     "purpose": "Which artifacts hold which version bytes, on every vault (H125)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/blob_artifact/references/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -4151,7 +4169,7 @@
      "path": "src/bm25/index.rs",
      "purpose": "Index/deindex mutation paths plus the missing-posting repair proof",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -4172,7 +4190,7 @@
      "path": "src/bm25/query.rs",
      "purpose": "Query-side: term collection, prefix expansion, search entry points, hint collapse",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -12426,7 +12444,7 @@
      "path": "src/context_pack/hydration.rs",
      "purpose": "Turns raw store bytes into hydrated [`super::types::ContextEntity`] rows and JSON field payloads",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -19717,7 +19735,7 @@
      "path": "src/git_wire/repo.rs",
      "purpose": "Proven repository identity plus the cross-thread, cross-process repository lock",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 6,
       "struct": 2
      }
@@ -23948,6 +23966,7 @@
       "RecallRerank",
       "RecallRerankHost",
       "RerankDocument",
+      "RerankEgress",
       "RerankReport",
       "RerankScores",
       "RerankSkip"
@@ -23957,7 +23976,8 @@
      "surface": {
       "crate-vis": 2,
       "enum": 3,
-      "struct": 2,
+      "fn": 2,
+      "struct": 3,
       "trait": 1
      }
     },
@@ -24318,6 +24338,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/tests_regressions/recall/device_local_order.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/tests_regressions/recall/mod.rs",
      "purpose": "BRIDGE-02 retrieval surface regressions: BM25, neighbors, recall packs, scope honesty, limits",
      "surface": {}
@@ -24335,6 +24363,14 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/paid_rerank.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/tests_regressions/recall/paid_rerank_egress.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -25450,7 +25486,7 @@
      "purpose": "Vault-scoped FastCDC/BLAKE3 object plane over ordinary ASSET storage",
      "surface": {
       "crate-vis": 3,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -25521,7 +25557,7 @@
      "surface": {
       "const": 5,
       "crate-vis": 7,
-      "fn": 12,
+      "fn": 13,
       "struct": 2
      }
     },
@@ -25540,6 +25576,7 @@
      "path": "src/origin/lfs/upload.rs",
      "purpose": "Bounded streaming ingress: validate before publishing, then commit small chunk transactions",
      "surface": {
+      "const": 1,
       "crate-vis": 2,
       "fn": 2
      }
@@ -25603,6 +25640,7 @@
      "path": "src/origin/publication/publication_protocol.rs",
      "purpose": "Public protocol surface: pin/unpin, publish_origin_ref, reconcile census driver, reads and advertisement…",
      "surface": {
+      "crate-vis": 1,
       "fn": 8
      }
     },
@@ -25746,7 +25784,7 @@
      "path": "src/origin/smart_http/door_window.rs",
      "purpose": "The quarantine-window protocol: hook request and blob parsing, ref-name pre-check, seam scan, verdict publish",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -25780,13 +25818,39 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/exchange_idle.rs",
+     "purpose": "An exchange's idle limit: a clock of the last byte it moved in either direction, the request body and…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/origin/smart_http/exchange_tests.rs",
+     "purpose": "One exchange's lifetime: a push whose client is gone before its response begins, or whose exchange unwinds…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/origin/smart_http/history_scan_tests.rs",
+     "purpose": "The door scans every blob a push makes reachable, not only the tip diff (H263): a secret one commit adds and…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "DoorHooksDir"
      ],
      "path": "src/origin/smart_http/hooks.rs",
      "purpose": "The per-request door-owned hook directory and the vetted pre-receive script it carries",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 1
      }
@@ -25865,8 +25929,8 @@
      "path": "src/origin/smart_http/paths.rs",
      "purpose": "Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and…",
      "surface": {
-      "const": 10,
-      "crate-vis": 10,
+      "const": 11,
+      "crate-vis": 17,
       "fn": 3
      }
     },
@@ -25881,13 +25945,13 @@
      "purpose": "One-request orchestration: coordinator lock, reconcile, threaded exchange, finish",
      "surface": {
       "crate-vis": 4,
-      "fn": 3,
+      "fn": 4,
       "struct": 1,
       "trait": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ServeChild",
@@ -25897,7 +25961,7 @@
      "path": "src/origin/smart_http/serve_cmd.rs",
      "purpose": "The frozen `git http-backend` invocation: typed request, closed argv/env command, and the running child handle",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 7,
       "fn": 12,
       "struct": 3
      }
@@ -26982,13 +27046,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/pipeline/budget.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -27000,7 +27064,7 @@
      "path": "src/pipeline/builder/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 39,
       "struct": 1
      }
@@ -27054,7 +27118,7 @@
      "path": "src/pipeline/channels.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -27314,6 +27378,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "src/pipeline/tests/fusion_lists.rs",
+     "purpose": "EMBED-PACK (owner ruling, 2026-10-14): the engine's merge rule stays (each channel's list z-scored on its…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "src/pipeline/tests/mod.rs",
      "purpose": "—",
      "surface": {
@@ -27345,6 +27417,14 @@
      "surface": {
       "crate-vis": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/pipeline/tests/rerank_words.rs",
+     "purpose": "A reranker that binds words scores the words a row's pin holds, and the run serves those words (Sol R31 F1…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -30367,7 +30447,7 @@
      "purpose": "Per-request retrieval deadlines: stage boundaries, in-stage checkpoints and the share of the budget the…",
      "surface": {
       "crate-vis": 6,
-      "fn": 7,
+      "fn": 8,
       "struct": 3
      }
     },
@@ -30955,13 +31035,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_lease/files.rs",
-     "purpose": "T2 file policy, owner-only write, and the armed cleanup guard",
+     "purpose": "T2 file policy, owner-only write, the armed cleanup guard, and teardown",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 21
      }
     },
     {
@@ -30986,7 +31066,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/secret_lease/tests.rs",
@@ -31008,7 +31088,7 @@
      "purpose": "Lease/registration/receipt row types, VaultInstant clock, key prefixes",
      "surface": {
       "const": 4,
-      "crate-vis": 4,
+      "crate-vis": 7,
       "re-export": 1,
       "struct": 6
      }
@@ -35432,13 +35512,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/loro_support.rs",
      "purpose": "Loro-native helpers for the sync layer",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 25,
       "fn": 1
      }
     },
@@ -36101,7 +36181,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 6,
       "mod": 1,
       "re-export": 6,
@@ -36140,12 +36220,20 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/sync/window/tombstone_index_tests.rs",
+     "purpose": "H15: a sync pass reads a peer-sized tombstones map once, not once per carrier it checks",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/tombstones.rs",
      "purpose": "Tombstone apply/export/replay plus window rebuild from updates",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 3
      }
     },
@@ -37871,7 +37959,7 @@
      "path": "src/vault/mod.rs",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 6,
       "struct": 1
      }
@@ -37986,7 +38074,8 @@
      "path": "src/vault/vector_evidence.rs",
      "purpose": "Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it",
      "surface": {
-      "fn": 2
+      "crate-vis": 6,
+      "fn": 3
      }
     },
     {
@@ -39782,6 +39871,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it_sync/sync_blob_artifact_delete.rs",
+     "purpose": "H125: a deleted blob artifact's version bytes leave every replica, while any artifact that still holds the…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -40172,7 +40269,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 43,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40872,7 +40969,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 111,
+     "files": 113,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40900,7 +40997,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "origin": {
-     "files": 47,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40963,7 +41060,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 54,
+     "files": 56,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -41292,7 +41389,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 119,
+     "files": 120,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -41441,8 +41538,8 @@
    },
    "over_bar": 38,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2512,
-   "test_files": 808
+   "source_files": 2516,
+   "test_files": 815
   },
   "oneiron-android": {
    "files": [
@@ -42260,7 +42357,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/beam/tests_smoke_manifest.rs",
@@ -48677,7 +48774,7 @@
      "path": "src/fusion.rs",
      "purpose": "Score fusion: the linear-log blend of channel relevance with the recency, salience, confidence and gravity…",
      "surface": {
-      "const": 2,
+      "const": 3,
       "crate-vis": 2,
       "fn": 5,
       "struct": 2
@@ -49509,6 +49606,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/admission.rs",
+     "purpose": "Finite admission for work a remote caller can start",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/code_mode.rs",
      "purpose": "MCP `execute_code` on the served vault: the checked-in QuickJS component, run by the engine executor on the…",
      "surface": {
@@ -49524,6 +49631,14 @@
      "surface": {
       "crate-vis": 6
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ai_host/compaction/tests.rs",
+     "purpose": "A compaction pass is bounded work: it outlives the call that started it, so its thread holds a permit of its…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -50434,6 +50549,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/git_http/tests_lifetime.rs",
+     "purpose": "The lifetime of one git exchange (C5), end to end over the real routes and a real `git http-backend`: a…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -50488,7 +50611,7 @@
      "path": "src/api/git_lfs/streaming.rs",
      "purpose": "Async HTTP bodies bridged to blocking vault IO with bounded backpressure",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -50498,11 +50621,11 @@
      "path": "src/api/git_lfs/support.rs",
      "purpose": "LFS size, href, time, and JSON helpers",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/git_lfs/tests.rs",
@@ -50732,7 +50855,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -51091,6 +51214,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "src/api/tests/mcp_code_admission.rs",
+     "purpose": "`execute_code` admission (C10): a distinct run past the bound is refused with `code_run_saturated` while a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "src/api/tests/mcp_code_check.rs",
      "purpose": "Done-means (TSC-WIRE): shadow mode changes no program's behaviour or result",
      "surface": {}
@@ -51254,7 +51385,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/recall_rerank.rs",
@@ -51370,6 +51501,16 @@
      "path": "src/api/tests/vad_and_error_mapping.rs",
      "purpose": "Turn/message VAD annotate routes plus core-engine-error to HTTP status mapping matrix",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/transfer.rs",
+     "purpose": "Bounded transfers between an HTTP body and a blocking worker, shared by the git smart-HTTP and LFS bridges",
+     "surface": {
+      "crate-vis": 11
+     }
     },
     {
      "bucket": "m",
@@ -51780,6 +51921,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "src/commands/unauthenticated_bind_tests.rs",
+     "purpose": "Unauthenticated mode (`--insecure-allow-unauthenticated` with no `auth_secret`) admits a request with no…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "src/commands/writer_lease_tests.rs",
      "purpose": "—",
      "surface": {}
@@ -51890,6 +52039,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "LimitsConfig"
+     ],
+     "path": "src/config/limits.rs",
+     "purpose": "The `[limits]` section: the bounds on work a remote caller can start at this server",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/config/lookup.rs",
      "purpose": "Leaf config helpers: env lookups, value parsing, and secret redaction",
@@ -51920,7 +52082,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 9,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -52584,6 +52746,24 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/http_listener.rs",
+     "purpose": "The TCP accept loop the server and the embedder endpoint serve through",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/http_listener/tests.rs",
+     "purpose": "The listener's admission, end to end over real sockets (C4): headers that never finish are closed at the…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -53113,6 +53293,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CodeRunLimits",
       "McpCodeExecutionError",
       "McpCodeExecutionHost",
       "McpCodeExecutionRequest",
@@ -53124,7 +53305,7 @@
      "surface": {
       "enum": 1,
       "fn": 6,
-      "struct": 2,
+      "struct": 3,
       "trait": 2,
       "type": 1
      }
@@ -53409,7 +53590,7 @@
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
       "crate-vis": 4,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -54073,7 +54254,7 @@
      "path": "src/server/recall_rerank.rs",
      "purpose": "The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -54614,15 +54795,22 @@
      "layout": "file",
      "purpose": "Host-bound UI and agent action executor over the engine's one verb registry"
     },
+    "admission": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Finite admission for work a remote caller can start"
+    },
     "ai_host": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 186,
+     "files": 189,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54650,14 +54838,14 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54704,6 +54892,13 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "WebSocket upgrade handler and connection lifecycle"
+    },
+    "http_listener": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file+dir",
+     "purpose": "The TCP accept loop the server and the embedder endpoint serve through"
     },
     "idempotency": {
      "files": 2,
@@ -54841,8 +55036,8 @@
    },
    "over_bar": 11,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 339,
-   "test_files": 152
+   "source_files": 344,
+   "test_files": 156
   },
   "oneiron-spawn": {
    "files": [

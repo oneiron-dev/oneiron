@@ -114,6 +114,7 @@ pub struct ServeArgs {
     pub oauth_resource_indicator: Option<String>,
 
     /// Insecure local/dev escape hatch: allow requests without auth_secret.
+    /// Serve refuses it unless the listener is loopback.
     #[arg(
         long = "insecure-allow-unauthenticated",
         num_args = 0..=1,
@@ -204,7 +205,7 @@ pub struct ServeArgs {
     #[arg(long)]
     pub max_entity_blob: Option<usize>,
 
-    /// Optional maximum bytes per LFS upload object.
+    /// Maximum bytes per LFS upload object (default 2 GiB).
     #[arg(long)]
     pub max_lfs_object_bytes: Option<u64>,
 
