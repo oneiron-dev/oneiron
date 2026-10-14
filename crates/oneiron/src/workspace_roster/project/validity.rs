@@ -99,11 +99,6 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         Ok(verdict)
     }
 
-    /// How often the depth guard has refused so far.
-    pub(super) fn refusals(&self) -> u64 {
-        self.refusals.get()
-    }
-
     /// The verified signer of a valid signed revision or resolution.
     pub(super) fn signer(&self, hash: &ProjectRevisionHash) -> Option<String> {
         self.signers.borrow().get(hash).cloned()
@@ -432,14 +427,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
     /// stands: its prior closure, and every child that closure names but its
     /// own successor. `branch.rs` judges which one stands.
     pub(super) fn settlements(&self, node: ProjectRevisionHash) -> Result<Vec<Settlement>> {
-        let mut valid = BTreeMap::new();
-        for hash in self.held.resolutions_at(&node) {
-            if let Some(ProjectRevision::Resolution { resolution, .. }) = self.row(hash)
-                && self.verdict(*hash)? == ProjectVerdict::Visible
-            {
-                valid.insert(*hash, resolution);
-            }
-        }
+        let valid = self.valid_resolutions_at(node)?;
         let settlement = |tip: ProjectRevisionHash, keep: ProjectRevisionHash| {
             let mut closure = BTreeSet::new();
             let mut todo = vec![tip];
@@ -480,17 +468,56 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         &self,
         anchor: ProjectRevisionHash,
     ) -> Result<Vec<ProjectRevisionHash>> {
-        let mut valid = BTreeSet::new();
-        let mut named = BTreeSet::new();
-        for hash in self.held.resolutions_at(&anchor) {
-            if let Some(ProjectRevision::Resolution { resolution, .. }) = self.row(hash)
-                && self.verdict(*hash)? == ProjectVerdict::Visible
-            {
-                valid.insert(*hash);
-                named.extend(resolution.prior.iter().copied());
+        let valid = self.valid_resolutions_at(anchor)?;
+        let named: BTreeSet<ProjectRevisionHash> = (valid.values())
+            .flat_map(|resolution| resolution.prior.iter().copied())
+            .collect();
+        Ok(valid
+            .keys()
+            .filter(|hash| !named.contains(hash))
+            .copied()
+            .collect())
+    }
+
+    /// The valid resolutions at `node`. Each is judged after every prior it
+    /// names there, as seals are, so a chain of any length never meets the
+    /// depth guard and every pass over the node judges it alike (Sol #1434
+    /// r11 F2).
+    pub(super) fn valid_resolutions_at(
+        &self,
+        node: ProjectRevisionHash,
+    ) -> Result<BTreeMap<ProjectRevisionHash, &'r ProjectResolution>> {
+        let held: BTreeMap<ProjectRevisionHash, &'r ProjectResolution> = (self.held)
+            .resolutions_at(&node)
+            .filter_map(|hash| match self.row(hash) {
+                Some(ProjectRevision::Resolution { resolution, .. }) => Some((*hash, resolution)),
+                _ => None,
+            })
+            .collect();
+        let mut judged = BTreeSet::new();
+        let mut valid = BTreeMap::new();
+        for start in held.keys() {
+            let mut todo = vec![(*start, false)];
+            while let Some((hash, priors_judged)) = todo.pop() {
+                if judged.contains(&hash) {
+                    continue;
+                }
+                if !priors_judged {
+                    todo.push((hash, true));
+                    todo.extend(
+                        (held[&hash].prior.iter())
+                            .filter(|prior| held.contains_key(*prior) && !judged.contains(*prior))
+                            .map(|prior| (*prior, false)),
+                    );
+                    continue;
+                }
+                judged.insert(hash);
+                if self.verdict(hash)? == ProjectVerdict::Visible {
+                    valid.insert(hash, held[&hash]);
+                }
             }
         }
-        Ok(valid.difference(&named).copied().collect())
+        Ok(valid)
     }
 
     /// The valid seals no valid seal supersedes.

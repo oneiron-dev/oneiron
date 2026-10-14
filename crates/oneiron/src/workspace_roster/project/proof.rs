@@ -102,18 +102,23 @@ pub(crate) fn validate_transition(
                 }
             }
             ProjectDisposition::Fork {
+                anchor,
                 rank: ProjectRank::Board,
                 ..
             } => {
                 // Only `resolve_project_fork`, whose envelope this
-                // transaction already holds, names the candidate.
-                let named = held.resolutions.values().flatten().any(|hash| {
-                    matches!(
-                        held.get(hash).map(|row| &row.revision),
-                        Some(ProjectRevision::Resolution { resolution, .. })
-                            if resolution.next == candidate
-                    )
-                });
+                // transaction already holds, names the candidate: a valid
+                // resolution of this fork's anchor (Sol #1434 r11 F1).
+                let mut named = false;
+                for hash in held.resolutions_at(anchor) {
+                    if let Some(ProjectRevision::Resolution { resolution, .. }) = cx.row(hash)
+                        && resolution.next == candidate
+                        && cx.verdict(*hash)? == ProjectVerdict::Visible
+                    {
+                        named = true;
+                        break;
+                    }
+                }
                 if !named {
                     return Err(unresolved(id, "a board fork needs a board resolution"));
                 }

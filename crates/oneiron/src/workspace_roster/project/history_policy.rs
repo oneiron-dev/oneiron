@@ -174,6 +174,17 @@ pub(super) fn frozen_frontier(
     };
     let narrowed = record.frozen.is_some_and(|freeze| freeze.narrowed);
     let mut verified = record.witness.is_some() && record.effective.is_some();
+    // Each node's resolutions are judged priors first, as the fold judges
+    // them, so a long chain reads the same here.
+    let anchors: BTreeSet<ProjectRevisionHash> = (record.dependencies.all())
+        .filter_map(|hash| match cx.row(hash) {
+            Some(ProjectRevision::Resolution { resolution, .. }) => Some(resolution.anchor),
+            _ => None,
+        })
+        .collect();
+    for anchor in anchors {
+        cx.valid_resolutions_at(anchor)?;
+    }
     for hash in record.dependencies.all() {
         if !verified {
             break;

@@ -3,7 +3,10 @@
 //! replica installs it in any arrival order.
 use super::super::revision::{ProjectRevision, project_revision_type, revision_entity_id};
 use super::super::*;
-use super::authority::{FIXTURE_HOST, holder_key, replay_authority, replay_project, replay_rows};
+use super::authority::{
+    FIXTURE_HOST, holder_key, replay_authority, replay_project, replay_rows, root_leader,
+    spawn_signed,
+};
 use super::history::{
     board_signed_s0, copy_of, head_of, ids, open, seats_of, signed_over, without,
 };
@@ -578,5 +581,148 @@ fn an_excluded_act_never_unsettles_a_resolution_in_either_order() -> Result<()> 
         }
         board_tie_keeps_x_out(&replica, &project, x, anchor)?;
     }
+    Ok(())
+}
+
+/// Bug repro (Sol #1434 r11 F1): B1 removes X (A) and B2 removes Y (C) over
+/// S0, a board fork, and B1 lowers A's depth (D). B3 signs N over S0,
+/// dropping B1 and B2 from the board, and a resolution for N naming A and D;
+/// D is no child of S0, so that resolution is quarantined. An ordinary put
+/// of N is still refused at the board fork, and the seats stay its meet.
+#[cfg(feature = "sync")]
+#[test]
+fn a_quarantined_resolution_never_opens_a_board_fork_to_an_ordinary_write() -> Result<()> {
+    let (b1, b2, b3, x, y) = (
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+    );
+    let dir = tempfile::tempdir()?;
+    let vault = open(&dir)?;
+    let project = board_signed_s0(&vault, &[x, y], &[b1, b2, b3], |_| {})?;
+    let (id, s0) = (project.id, &project.s0);
+    let a = signed_over(&vault, id, s0, b1, without(x))?;
+    vault.put_project(id, &a, 3)?;
+    let d = signed_over(&vault, id, &a, b1, |row| row.depth_remaining -= 1)?;
+    vault.put_project(id, &d, 4)?;
+    let c = signed_over(&vault, id, s0, b2, without(y))?;
+    replay_project(&vault, id, &c, 5)?;
+    let board_fork = |vault: &Vault| -> Result<bool> {
+        Ok(matches!(
+            vault
+                .project_frontier(id)?
+                .map(|frontier| frontier.disposition),
+            Some(ProjectDisposition::Fork {
+                rank: ProjectRank::Board,
+                ..
+            })
+        ))
+    };
+    assert!(board_fork(&vault)?);
+    let seats = seats_of(&vault, id);
+    let n = signed_over(&vault, id, s0, b3, |row| {
+        off_board(b1)(row);
+        off_board(b2)(row);
+    })?;
+    let stranger = resolution(
+        &vault,
+        id,
+        b3,
+        head_of(id, s0)?,
+        vec![],
+        sorted(vec![head_of(id, &a)?, head_of(id, &d)?]),
+        head_of(id, &n)?,
+    )?;
+    put_companion(&vault, &envelope(id, stranger), 6)?;
+    assert!(
+        vault.put_project(id, &n, 7).is_err(),
+        "an ordinary write left a board fork"
+    );
+    assert!(board_fork(&vault)?);
+    assert_eq!(seats_of(&vault, id), seats);
+    Ok(())
+}
+
+/// Bug repro (Sol #1434 r11 F2): the board holder H leaves the birth tied
+/// between W (seats X and Y) and N (seats Y), then resolves that tie in one
+/// chain of 258 resolutions, every link for W but the last, which is for N.
+/// The last link reaches past the fold's depth guard; judged before its
+/// priors (it sorts first) it was refused in one pass and stood in the next,
+/// so the served seats came from W while the witness named N. Each
+/// resolution is judged after its priors now, and the chain settles for N.
+#[cfg(feature = "sync")]
+#[test]
+fn a_resolution_chain_past_the_depth_guard_settles_for_its_last_link() -> Result<()> {
+    let (x, y) = (EntityId::now(), EntityId::now());
+    let dir = tempfile::tempdir()?;
+    let vault = open(&dir)?;
+    let (root_id, root, holder) = root_leader(&vault)?;
+    let (id, leader) = (EntityId::now(), EntityId::now());
+    let birth = spawn_signed(&vault, root_id, id, holder, leader, root.slice, 1)?;
+    let w = signed_over(&vault, id, &birth, holder, |row| {
+        row.roster.extend([x.to_hex(), y.to_hex()]);
+    })?;
+    let n = signed_over(&vault, id, &birth, holder, |row| {
+        row.roster.push(y.to_hex())
+    })?;
+    replay_project(&vault, id, &w, 2)?;
+    replay_project(&vault, id, &n, 3)?;
+    let (anchor, hw, hn) = (head_of(id, &birth)?, head_of(id, &w)?, head_of(id, &n)?);
+    let contenders = sorted(vec![hw, hn]);
+    let mut chain: Vec<ProjectRevision> = Vec::new();
+    for _ in 0..257 {
+        let prior = match chain.last() {
+            Some(link) => vec![link.hash()?],
+            None => vec![],
+        };
+        let link = resolution(&vault, id, holder, anchor, prior, contenders.clone(), hw)?;
+        chain.push(envelope(id, link));
+    }
+    let first = (chain.iter())
+        .map(ProjectRevision::hash)
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .min()
+        .ok_or_else(invalid)?;
+    let prior = vec![chain.last().ok_or_else(invalid)?.hash()?];
+    let last = loop {
+        let link = envelope(
+            id,
+            resolution(
+                &vault,
+                id,
+                holder,
+                anchor,
+                prior.clone(),
+                contenders.clone(),
+                hn,
+            )?,
+        );
+        if link.hash()? < first {
+            break link;
+        }
+    };
+    chain.push(last);
+    let kind = project_revision_type(&vault.store).ok_or_else(invalid)?;
+    vault.with_write_txn(|txn| {
+        let mut batch = vault.batch_in();
+        for (at, link) in (10..).zip(&chain) {
+            batch = batch.put_replicated(
+                &revision_entity_id(link.hash()?)?,
+                kind,
+                TimeRange { start: at, end: at },
+                at,
+                &link.canonical_bytes()?,
+            );
+        }
+        batch.apply(txn)
+    })?;
+    let served = vault.project_frontier(id)?.ok_or(Error::EntityNotFound)?;
+    assert_eq!(served.disposition, ProjectDisposition::Settled);
+    assert_eq!(served.witness.map(|witness| witness.head), Some(hn));
+    assert!(seats_of(&vault, id).contains(&y));
+    assert!(!seats_of(&vault, id).contains(&x));
     Ok(())
 }

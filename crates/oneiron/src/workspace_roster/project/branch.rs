@@ -88,8 +88,9 @@ struct Resolver {
 }
 
 impl FoldCx<'_, '_, '_> {
-    /// How `node` folds in the tree below `root`. Memoized unless a depth
-    /// refusal shaped it.
+    /// How `node` folds in the tree below `root`, memoized for the fold, so
+    /// the walk, the served view and the dependencies rest on one labelling
+    /// even where the depth guard refused (Sol #1434 r11 F2).
     pub(super) fn fork(
         &self,
         root: ProjectRevisionHash,
@@ -98,28 +99,22 @@ impl FoldCx<'_, '_, '_> {
         if let Some(known) = self.forks.borrow().get(&(root, node)) {
             return Ok(Rc::clone(known));
         }
-        let refusals = self.refusals();
         let fork = Rc::new(self.fold_fork(root, node)?);
-        if self.refusals() == refusals {
-            self.forks
-                .borrow_mut()
-                .insert((root, node), Rc::clone(&fork));
-        }
+        self.forks
+            .borrow_mut()
+            .insert((root, node), Rc::clone(&fork));
         Ok(fork)
     }
 
-    /// The exclusions of the tree below `root`, memoized the same way.
+    /// The labelling of the tree below `root`, memoized the same way.
     pub(super) fn exclusion(&self, root: ProjectRevisionHash) -> Result<Rc<Exclusion>> {
         if let Some(known) = self.exclusions.borrow().get(&root) {
             return Ok(Rc::clone(known));
         }
-        let refusals = self.refusals();
         let exclusion = Rc::new(self.exclude(root)?);
-        if self.refusals() == refusals {
-            self.exclusions
-                .borrow_mut()
-                .insert(root, Rc::clone(&exclusion));
-        }
+        self.exclusions
+            .borrow_mut()
+            .insert(root, Rc::clone(&exclusion));
         Ok(exclusion)
     }
 
