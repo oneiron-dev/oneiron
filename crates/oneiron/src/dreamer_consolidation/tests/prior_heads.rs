@@ -686,6 +686,38 @@ fn exact_persisted_head_attaches_evidence_without_judge_or_duplicate_and_survive
     Ok(())
 }
 
+/// F26 H327: an evidence attachment is an Auto write by the Dreamer actor, so
+/// it counts on that actor's own-rate window like a promoted claim; past the
+/// threshold it leaves the typed check and still lands. It used to write no
+/// count at all.
+#[test]
+fn an_evidence_attachment_counts_on_the_agents_auto_write_rate() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = fixture(&vault)?;
+    let actor = fx.run.agent_actor.entity_ref();
+    let kind = crate::own_rate::OwnRateKind::AutoWrite;
+    assert!(vault.own_rate_check(actor, kind)?.is_none());
+    crate::own_rate::set_auto_write_threshold_for_test(Some(0));
+    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Oleksii"))]);
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    let executed = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone());
+    crate::own_rate::set_auto_write_threshold_for_test(None);
+    assert!(matches!(
+        executed?,
+        DreamerAttemptExecution::Completed { .. }
+    ));
+    assert_eq!(
+        vault.sources(&fx.head, EdgeKind::Supports, None)?,
+        vec![fx.turn],
+        "the attachment landed"
+    );
+    assert!(
+        vault.own_rate_check(actor, kind)?.is_some(),
+        "FAILBEFORE H327: an evidence attachment left no Auto-write count"
+    );
+    Ok(())
+}
+
 /// Sol review #1364 round 2: a branch bound to another project never moves
 /// default-project evidence into that project (ONE-1592 P3). The turn and
 /// the head sit in the default project, so nothing lands and nothing

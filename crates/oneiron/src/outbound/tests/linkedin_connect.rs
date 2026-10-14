@@ -732,6 +732,17 @@ fn an_aged_out_retry_meets_todays_cap() -> std::result::Result<(), Box<dyn std::
             1,
             "one connect today"
         );
+        if !retry_first {
+            assert_eq!(
+                second
+                    .receipt
+                    .fields
+                    .get("intent_state")
+                    .map(String::as_str),
+                Some(crate::outbound_intent_ledger::IntentState::Pending.as_str()),
+                "the held retry is still the Pending row it was"
+            );
+        }
     }
     Ok(())
 }

@@ -71,10 +71,13 @@ fn ceiling_hold(
 }
 
 /// An exact retry keeps its paid admission while the ceiling's window still
-/// counts it. A Pending retry whose admission aged out of that window is a
-/// send in today's window: it is held at a full ceiling, and otherwise renewed
-/// under this writer lock before transport, so a concurrent send counts it.
-/// Returns the hold, or `None` with the transaction settled.
+/// counts it. A Pending retry whose admission aged out of that window, and
+/// whose replay will enter transport, is a send in today's window: it is held
+/// at a full ceiling, and otherwise renewed under this writer lock before
+/// transport, so a concurrent send counts it. A held retry keeps the row's
+/// Pending state and resolution. A replay that never sends (an outcome-free
+/// row that cannot be resent) is left to its own settlement. Returns the
+/// hold, or `None` with the transaction settled.
 fn renew_aged_admission(
     vault: &Vault,
     mut wtxn: heed::RwTxn<'_>,
@@ -83,8 +86,14 @@ fn renew_aged_admission(
     intent_id: crate::outbound_intent_ledger::IntentId,
     now_ms: u64,
 ) -> Result<Option<OutboundEffectResult>, OutboundEffectError> {
+    let resends = match record.recorded_outcome {
+        Some(RecordedOutboundOutcome::DefiniteNonDelivery) => true,
+        None => record.idempotency_supported,
+        Some(_) => false,
+    };
     if let OutboundEffectCommand::New(prepared) = command
         && record.state == IntentState::Pending
+        && resends
         && let Some(ceiling) = prepared.admission_ceiling
         && record.created_ms.max(record.updated_ms) < ceiling.since_ms
     {
@@ -98,7 +107,11 @@ fn renew_aged_admission(
         )?;
         let count = ceiling.prior.max(admitted);
         if count >= ceiling.cap {
-            return ceiling_hold(vault, wtxn, intent_id, prepared, count).map(Some);
+            let mut held = ceiling_hold(vault, wtxn, intent_id, prepared, count)?;
+            let pending = effect_result(record, None, true, None);
+            held.resolution = pending.resolution;
+            held.dispatch = pending.dispatch;
+            return Ok(Some(held));
         }
         crate::outbound_intent_ledger::renew_admission_in_txn(vault, &mut wtxn, record, now_ms)?;
         wtxn.commit().map_err(Error::from)?;
