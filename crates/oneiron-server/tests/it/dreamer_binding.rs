@@ -139,6 +139,16 @@ fn follows_the_prompt(case: &Case) -> Reply {
     }))
 }
 
+/// Stops the server gracefully off this test's runtime thread: the fake
+/// model runs on that thread, and a call a pass makes after the signal is
+/// answered while the pass finishes. Blocking the thread in [`stop`] left
+/// that call unanswered and the server waiting for it.
+async fn stop_serving(child: std::process::Child) {
+    tokio::task::spawn_blocking(move || stop(child))
+        .await
+        .unwrap();
+}
+
 /// Serves until the model has heard `calls` requests and then a quiet spell,
 /// then stops gracefully.
 async fn serve_until(config: &Path, fake: &FakeLlm, calls: usize) {
@@ -157,7 +167,7 @@ async fn serve_until(config: &Path, fake: &FakeLlm, calls: usize) {
         }
         heard = now;
     }
-    stop(child);
+    stop_serving(child).await;
 }
 
 fn claims_on(
@@ -294,7 +304,7 @@ async fn binds_once(case: Case) {
     let calls = fake.seen().len();
     let child = serve(&config);
     tokio::time::sleep(Duration::from_secs(5)).await;
-    stop(child);
+    stop_serving(child).await;
     assert_eq!(fake.seen().len(), calls, "a finished pass makes no call");
     held(&Vault::open_owned(&vault_path, vault_config()).unwrap());
 }

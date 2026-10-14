@@ -118,11 +118,14 @@ impl Vault {
     /// The level a call outside any seat birth carries for `purpose` on
     /// `model`: the vault's authored default, composed as a birth composes
     /// it, else `fallback`, on the model's ladder as a birth reads it (the
-    /// description policy's row first) and under the vault ceiling. A level
-    /// the ladder does not admit comes down to its highest admitted rung
-    /// below that level, else up to its lowest admitted rung; that is the
-    /// vault's word, so it comes back as authored. With no rung admitted
-    /// (a ceiling below the whole ladder) the call carries `none`.
+    /// description policy's row first, refused when it disagrees with the
+    /// registry) and under the vault ceiling. A model without reasoning or on
+    /// the Gemini wire carries `none`, as a birth allows it. A level the
+    /// ladder does not admit comes down to its highest admitted rung below
+    /// that level, else up to its lowest admitted rung unless that widens an
+    /// authored level under narrow-only precedence; that is the vault's word,
+    /// so it comes back as authored. With no rung admitted (a ceiling below
+    /// the whole ladder) the call carries `none`.
     pub fn purpose_effort(
         &self,
         purpose: &super::CallPurpose,
@@ -137,15 +140,23 @@ impl Vault {
         let described = descriptions
             .as_ref()
             .and_then(|row| row.models.iter().find(|row| &row.model == model));
-        let ladder = match described {
-            Some(row) => row.effort_ladder.clone(),
-            None => {
-                let wire = self
-                    .model_registry_row(model)?
-                    .map_or(ModelWireFormat::OpenaiCompat, |row| row.wire);
-                policy.ladder(model, wire, reasoning)
-            }
-        };
+        let registered = self.model_registry_row(model)?;
+        if let (Some(row), Some(registered)) = (described, &registered)
+            && (row.wire != registered.wire || row.locality != registered.catalog.locality)
+        {
+            return Err(invalid("description policy disagrees with model catalog"));
+        }
+        let wire = registered
+            .map(|row| row.wire)
+            .or_else(|| described.map(|row| row.wire))
+            .unwrap_or(ModelWireFormat::OpenaiCompat);
+        if !reasoning || wire == ModelWireFormat::Gemini {
+            return Ok(PurposeEffort::Authored(ReasoningEffort::None));
+        }
+        let ladder = described.map_or_else(
+            || policy.ladder(model, wire, reasoning),
+            |row| row.effort_ladder.clone(),
+        );
         let wanted = composed.unwrap_or(fallback);
         if policy.admits(wanted, &ladder) {
             return Ok(match composed {
@@ -160,13 +171,21 @@ impl Vault {
                 .copied()
                 .filter(|rung| policy.admits(*rung, &ladder))
         };
-        Ok(PurposeEffort::Authored(
-            admitted()
-                .filter(|rung| rank(*rung) <= rank(wanted))
-                .max_by_key(|rung| rank(*rung))
-                .or_else(|| admitted().min_by_key(|rung| rank(*rung)))
-                .unwrap_or(ReasoningEffort::None),
-        ))
+        if let Some(lower) = admitted()
+            .filter(|rung| rank(*rung) <= rank(wanted))
+            .max_by_key(|rung| rank(*rung))
+        {
+            return Ok(PurposeEffort::Authored(lower));
+        }
+        let Some(higher) = admitted().min_by_key(|rung| rank(*rung)) else {
+            return Ok(PurposeEffort::Authored(ReasoningEffort::None));
+        };
+        if composed.is_some() && policy.precedence == SeatPrecedence::NarrowOnly {
+            return Err(invalid(
+                "authored effort has no rung at or below it on the model ladder",
+            ));
+        }
+        Ok(PurposeEffort::Authored(higher))
     }
 
     /// Set a revision-pinned description for a registered MODEL identity.

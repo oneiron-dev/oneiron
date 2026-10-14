@@ -3319,6 +3319,10 @@ fn a_reply_one_brace_short_is_mended_and_one_two_short_is_refused_and_asked_agai
     execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
     let requests = backend.requests.lock().unwrap();
     assert_eq!(requests.len(), 3, "the refused reply was asked again");
-    assert!(message_text(&requests[2].messages[1]).contains("Alex"));
+    let verdict: String = requests[2].messages.iter().map(message_text).collect();
+    assert!(
+        verdict.contains("\"Alex\""),
+        "the mended reply's candidate reaches the verdict: {verdict}"
+    );
     Ok(())
 }
