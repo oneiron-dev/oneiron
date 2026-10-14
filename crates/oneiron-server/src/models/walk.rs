@@ -33,15 +33,12 @@ pub(super) enum Passed {
 pub(super) struct Walk {
     pub(super) passed: Vec<(usize, Passed)>,
     pub(super) last: Option<LlmError>,
-    /// When a call that waited for its first offer back woke: that offer is
-    /// back then, whatever the clock reads. Zero until it waits.
-    pub(super) woke: u64,
 }
 
 impl Walk {
     /// Records what the call met on the rung at `index`, unless that is the
-    /// state the rung was last found in.
-    pub(super) fn note(&mut self, index: usize, passed: Passed) {
+    /// state the rung was last found in. Whether it was news.
+    pub(super) fn note(&mut self, index: usize, passed: Passed) -> bool {
         let same = self
             .latest()
             .get(&index)
@@ -49,6 +46,7 @@ impl Walk {
         if !same {
             self.passed.push((index, passed));
         }
+        !same
     }
 
     /// The state each rung was last found in.

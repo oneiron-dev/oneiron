@@ -384,7 +384,8 @@ fn check_status(status: StatusCode) -> LlmResult<()> {
         429 => RetryableLlmError::RateLimited {
             retry_after: None,
             resets_at: Vec::new(),
-        }.into(),
+        }
+        .into(),
         500..=599 => RetryableLlmError::ServerError.into(),
         _ => FatalLlmError::InvalidRequest.into(),
     })

@@ -49,11 +49,12 @@ rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
     ))
 }
 
-fn kept(config: &ModelsConfig, vault: &Arc<Vault>) -> ModelRuntime {
+/// A runtime whose rests are kept in `vault`, on `clock`.
+fn kept(config: &ModelsConfig, vault: &Arc<Vault>, clock: &Arc<ManualClock>) -> ModelRuntime {
     ModelRuntime::build_hosted(
         Some(config),
         None,
-        OfferCooldowns::in_vault(Arc::clone(vault)),
+        OfferCooldowns::in_vault_on(Arc::clone(vault), Arc::clone(clock)),
     )
 }
 
@@ -135,7 +136,7 @@ async fn a_quota_refusal_answers_from_the_next_offer_which_serves_until_the_rese
     let second = FakeLlm::start(vec![], Some(Reply::text("from second"))).await;
     let (dir, clock) = (tempfile::tempdir().unwrap(), ManualClock::new(T0));
     let vault = clocked_vault(dir.path(), &clock);
-    let runtime = kept(&two_offers(&first, &second, ""), &vault);
+    let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
 
     let answer = ask(seat)
@@ -245,7 +246,7 @@ async fn the_rest_ends_at_the_errors_reset_time_else_at_its_wait_else_at_the_def
     let second = FakeLlm::start(vec![], Some(Reply::text("from second"))).await;
     let (dir, clock) = (tempfile::tempdir().unwrap(), ManualClock::new(T0));
     let vault = clocked_vault(dir.path(), &clock);
-    let runtime = kept(&two_offers(&first, &second, ""), &vault);
+    let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
     for (number, (_, now, until, reset)) in cases.iter().enumerate() {
         clock.set(*now);
@@ -293,14 +294,14 @@ async fn a_rest_survives_a_restart_and_ends_by_itself() {
     let (dir, clock) = (tempfile::tempdir().unwrap(), ManualClock::new(T0));
     {
         let vault = clocked_vault(dir.path(), &clock);
-        let runtime = kept(&models, &vault);
+        let runtime = kept(&models, &vault, &clock);
         let seat = runtime.seat(ModelRole::Checker).expect("seat");
         let answer = ask(seat).await.expect("the next offer answers");
         assert_eq!(text_of(&answer.message), "from second");
     }
     // A new process: the vault reopens and the runtime is built afresh.
     let vault = clocked_vault(dir.path(), &clock);
-    let runtime = kept(&models, &vault);
+    let runtime = kept(&models, &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
     clock.set(T0 + 299);
     let answer = ask(seat).await.expect("the next offer answers");
@@ -339,7 +340,7 @@ async fn a_quota_error_as_the_first_stream_event_hands_the_stream_to_the_next_of
     .await;
     let (dir, clock) = (tempfile::tempdir().unwrap(), ManualClock::new(T0));
     let vault = clocked_vault(dir.path(), &clock);
-    let runtime = kept(&two_offers(&first, &second, ""), &vault);
+    let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
     for passed in ["refused", "cooling_down"] {
         let mut events = seat
@@ -385,7 +386,7 @@ async fn a_bad_request_passes_through_unchanged_and_rests_nothing() {
     let second = FakeLlm::start(vec![], Some(Reply::text("from second"))).await;
     let (dir, clock) = (tempfile::tempdir().unwrap(), ManualClock::new(T0));
     let vault = clocked_vault(dir.path(), &clock);
-    let runtime = kept(&two_offers(&first, &second, ""), &vault);
+    let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
     for _ in 0..2 {
         let error = ask(seat).await.expect_err("a request error ends the call");
@@ -444,7 +445,7 @@ rungs = [{{ model = "anthropic:small" }}, {{ model = "second:big" }}]
 "#,
         streamed.base_url, anthropic.base_url, second.base_url
     ));
-    let runtime = kept(&models, &vault);
+    let runtime = kept(&models, &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
     let mut events = seat
         .ladder
@@ -483,6 +484,7 @@ async fn work_kept_on_the_device_never_falls_back_off_it() {
     let runtime = kept(
         &two_offers(&first, &second, "leave_device = \"never\""),
         &vault,
+        &clock,
     );
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
     assert_eq!(seat.locality, ModelLocality::OwnServer);
@@ -496,7 +498,7 @@ async fn work_kept_on_the_device_never_falls_back_off_it() {
         FakeLlm::start(vec![limit()], None).await,
         FakeLlm::start(vec![], Some(Reply::text("from the cloud"))).await,
     );
-    let runtime = kept(&two_offers(&other_first, &other_second, ""), &vault);
+    let runtime = kept(&two_offers(&other_first, &other_second, ""), &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
     let mut private = request(&seat.model, "about the private world");
     private.envelope.scope.world = Some(world);
@@ -538,10 +540,11 @@ async fn work_kept_on_the_device_never_falls_back_off_it() {
         FakeLlm::start(vec![wait("3600")], None).await,
         FakeLlm::start(vec![wait("2"), wait("2")], None).await,
     );
-    let runtime = kept(&two_offers(&local, &cloud, ""), &vault);
+    let runtime = kept(&two_offers(&local, &cloud, ""), &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
     let error = ask(seat).await.expect_err("both offers refused");
-    assert_eq!(error, limited(2, T0 + 2));
+    // It waited two seconds; the cloud offer's second refusal rests it two more.
+    assert_eq!(error, limited(2, T0 + 4));
     assert_eq!(cloud.seen().len(), 2, "the portable call waited for it");
     let mut private = request(&seat.model, "about the private world");
     private.envelope.scope.world = Some(world);
@@ -550,13 +553,13 @@ async fn work_kept_on_the_device_never_falls_back_off_it() {
         .generate(&test_run(), private.clone(), None)
         .await
         .expect_err("the private call waits for nothing it may not use");
-    assert_eq!(error, limited(3600, T0 + 3600));
+    assert_eq!(error, limited(3598, T0 + 3600));
     let refused = seat
         .ladder
         .stream(&test_run(), private, None)
         .err()
         .expect("refused before the stream starts");
-    assert_eq!(refused, limited(3600, T0 + 3600));
+    assert_eq!(refused, limited(3598, T0 + 3600));
     assert_eq!(cloud.seen().len(), 2, "the world's text never went out");
 }
 
@@ -580,7 +583,7 @@ leave_device = "never"
     ));
     let (dir, clock) = (tempfile::tempdir().unwrap(), ManualClock::new(T0));
     let vault = clocked_vault(dir.path(), &clock);
-    let runtime = kept(&models, &vault);
+    let runtime = kept(&models, &vault, &clock);
     assert!(runtime.seat(ModelRole::Checker).is_none());
     let borrowed = runtime
         .seat(ModelRole::GenerativeReasoner)
@@ -613,7 +616,7 @@ async fn a_cooling_chain_waits_for_its_first_offer_back_within_the_longest_wait(
     let second = FakeLlm::start(vec![short("2")], None).await;
     let (dir, clock) = (tempfile::tempdir().unwrap(), ManualClock::new(T0));
     let vault = clocked_vault(dir.path(), &clock);
-    let runtime = kept(&two_offers(&first, &second, ""), &vault);
+    let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
     let answer = ask(seat).await.expect("the call waited, then answered");
     assert_eq!(text_of(&answer.message), "first after the wait");
@@ -650,7 +653,7 @@ rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
     let (dir, clock) = (tempfile::tempdir().unwrap(), ManualClock::new(T0));
     let vault = clocked_vault(dir.path(), &clock);
     let world = private_world(&vault);
-    let runtime = kept(&models, &vault);
+    let runtime = kept(&models, &vault, &clock);
     let seat = runtime
         .seat(ModelRole::Checker)
         .expect("the cloud offer serves");
@@ -691,7 +694,7 @@ async fn after_its_one_wait_a_call_tries_every_offer_back_and_names_the_current_
     let second = FakeLlm::start(vec![wait("1")], Some(Reply::text("second after the wait"))).await;
     let (dir, clock) = (tempfile::tempdir().unwrap(), ManualClock::new(T0));
     let vault = clocked_vault(dir.path(), &clock);
-    let runtime = kept(&two_offers(&first, &second, ""), &vault);
+    let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
 
     // Both rest a second. The offer waited for refuses again; the other,
@@ -700,7 +703,7 @@ async fn after_its_one_wait_a_call_tries_every_offer_back_and_names_the_current_
     assert_eq!(text_of(&answer.message), "second after the wait");
     assert_eq!((first.seen().len(), second.seen().len()), (2, 2));
     let passed = &answer.usage.raw_provider["passed_over"];
-    assert_eq!(passed[2]["cooldown_until"], json!(T0 + 120));
+    assert_eq!(passed[2]["cooldown_until"], json!(T0 + 1 + 120));
 
     // The same in a stream whose first offer refuses as it opens.
     clock.set(T0 + 200);
@@ -718,7 +721,7 @@ async fn after_its_one_wait_a_call_tries_every_offer_back_and_names_the_current_
         second.push(wait("1"));
     }
     let error = ask(seat).await.expect_err("each refused twice");
-    assert_eq!(error, limited(1, T0 + 401));
+    assert_eq!(error, limited(1, T0 + 402));
     first.push(wait("120"));
     assert_eq!(streamed(seat).await, "second after the wait");
     assert_eq!((first.seen().len(), second.seen().len()), (7, 7));
@@ -731,6 +734,6 @@ async fn after_its_one_wait_a_call_tries_every_offer_back_and_names_the_current_
     }
     second.push(wait("2"));
     let error = ask(seat).await.expect_err("nothing is back");
-    assert_eq!(error, limited(2, T0 + 602));
+    assert_eq!(error, limited(1, T0 + 602));
     assert_eq!((first.seen().len(), second.seen().len()), (9, 8));
 }

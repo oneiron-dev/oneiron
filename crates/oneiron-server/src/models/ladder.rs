@@ -292,23 +292,30 @@ impl OfferLadder {
     /// waits for.
     fn passes_over(&self, index: usize, request: &LlmRequest, walk: &mut Walk) -> bool {
         let rung = &self.rungs[index];
-        let passed = if self.kept_on_device(index, request) {
+        let kept = self.kept_on_device(index, request);
+        let passed = if kept {
+            Passed::KeptOnDevice
+        } else if let Some(until) = self.rests.resting(&rung.offer.binding, &rung.wire_model) {
+            Passed::Resting { until }
+        } else {
+            return false;
+        };
+        if walk.note(index, passed) && kept {
             tracing::info!(
                 rung = rung.position,
                 reason = "world_stays_on_device",
                 "a fallback would take the work off the device; passed over"
             );
-            Passed::KeptOnDevice
-        } else if let Some(until) =
-            self.rests
-                .resting(&rung.offer.binding, &rung.wire_model, walk.woke)
-        {
-            Passed::Resting { until }
-        } else {
-            return false;
-        };
-        walk.note(index, passed);
+        }
         true
+    }
+
+    /// The first rung in order that this pass of the call has not `sent`
+    /// and can use now. Each is asked again every time, so a rung whose rest
+    /// ended while a later one was sent is the next one used.
+    fn next_rung(&self, request: &LlmRequest, sent: &[bool], walk: &mut Walk) -> Option<usize> {
+        (0..self.rungs.len())
+            .find(|index| !sent[*index] && !self.passes_over(*index, request, walk))
     }
 
     /// Rests the offer at `index` when `error` is a limit refusal, until the
@@ -429,23 +436,24 @@ impl OfferLadder {
     ) -> LlmResult<LlmResponse> {
         self.admits(&request)?;
         let mut walk = Walk::default();
-        // The chain, then, when only rests stopped it, the chain once more
-        // after one wait for its first offer back.
+        // The chain, each rung at most once, then, when only rests stopped
+        // it, the chain once more after one wait for its first offer back.
         for waited in [false, true] {
             if waited {
                 let Some(back) = self.waits_for(&walk).filter(|_| may_send()) else {
                     break;
                 };
-                tokio::time::sleep(back.wait).await;
-                walk.woke = back.at;
+                self.rests.wait(back.wait, back.at).await;
             }
-            for index in 0..self.rungs.len() {
+            let mut sent = vec![false; self.rungs.len()];
+            loop {
                 if !may_send() {
                     return Err(self.unanswered(walk));
                 }
-                if self.passes_over(index, &request, &mut walk) {
-                    continue;
-                }
+                let Some(index) = self.next_rung(&request, &sent, &mut walk) else {
+                    break;
+                };
+                sent[index] = true;
                 match self
                     .send(run, index, &request, selector, may_send, &mut walk)
                     .await?
@@ -561,8 +569,7 @@ impl OfferLadder {
             },
         };
         if let Some(back) = back {
-            tokio::time::sleep(back.wait).await;
-            walk.woke = back.at;
+            self.rests.wait(back.wait, back.at).await;
             if let Flow::Ended = self
                 .stream_pass(run, request, selector, &mut held, &mut walk, events)
                 .await
@@ -576,10 +583,11 @@ impl OfferLadder {
         let _ = events.send(Err(self.unanswered(walk))).await;
     }
 
-    /// One pass of a stream's chain: each rung the call can use, in order,
-    /// until one ends the call. `held` is the rung admitted before the
-    /// stream started: the pass sends it when it reaches it in use, and
-    /// settles it unsent, for nothing, before it sends another.
+    /// One pass of a stream's chain: each rung the call can use, first in
+    /// order first and each at most once, until one ends the call. `held` is
+    /// the rung admitted before the stream started: the pass sends it when it
+    /// comes to it, and settles it unsent, for nothing, before it sends
+    /// another.
     async fn stream_pass(
         &self,
         run: &RunAdmission,
@@ -589,10 +597,9 @@ impl OfferLadder {
         walk: &mut Walk,
         events: &Sender<LlmResult<LlmStreamEvent>>,
     ) -> Flow {
-        for index in 0..self.rungs.len() {
-            if self.passes_over(index, request, walk) {
-                continue;
-            }
+        let mut sent = vec![false; self.rungs.len()];
+        while let Some(index) = self.next_rung(request, &sent, walk) {
+            sent[index] = true;
             let next = match held.take() {
                 Some((at, first)) if at == index => first,
                 other => {

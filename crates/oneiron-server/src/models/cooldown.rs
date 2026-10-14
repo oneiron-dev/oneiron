@@ -3,6 +3,7 @@
 //! in rotation by itself once that time passes. Nothing here retries: the
 //! ladder hands the call on, once per offer.
 use std::sync::Arc;
+use std::time::Duration;
 
 use oneiron::llm::run_admission::OfferBinding;
 use oneiron::{LlmRequest, ModelLocality, Vault};
@@ -44,26 +45,66 @@ pub(super) struct Rest {
 /// hands its call on, and the next call starts fresh.
 pub struct OfferCooldowns {
     vault: Option<Arc<Vault>>,
+    /// A test's vault clock, which a call's wait moves to the end it waited
+    /// for, as time would.
+    #[cfg(test)]
+    waits_move: Option<Arc<oneiron::store::ports::ManualClock>>,
 }
 
 impl OfferCooldowns {
     #[must_use]
     pub fn unkept() -> Arc<Self> {
-        Arc::new(Self { vault: None })
+        Arc::new(Self {
+            vault: None,
+            #[cfg(test)]
+            waits_move: None,
+        })
     }
 
     /// Rests kept in `vault`'s side table, on its clock, judged by its
     /// world settings.
     #[must_use]
     pub fn in_vault(vault: Arc<Vault>) -> Arc<Self> {
-        Arc::new(Self { vault: Some(vault) })
+        Arc::new(Self {
+            vault: Some(vault),
+            #[cfg(test)]
+            waits_move: None,
+        })
     }
 
+    /// [`Self::in_vault`] for a vault on the test's `clock`: a call that
+    /// waits for an offer back finds the clock at that offer's end.
+    #[cfg(test)]
+    pub(super) fn in_vault_on(
+        vault: Arc<Vault>,
+        clock: Arc<oneiron::store::ports::ManualClock>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            vault: Some(vault),
+            waits_move: Some(clock),
+        })
+    }
+
+    /// Waits `wait`, for the offer back `at` then.
+    pub(super) async fn wait(&self, wait: Duration, at: u64) {
+        tokio::time::sleep(wait).await;
+        self.waited_until(at);
+    }
+
+    #[cfg(test)]
+    fn waited_until(&self, at: u64) {
+        if let Some(clock) = &self.waits_move {
+            clock.set(at);
+        }
+    }
+
+    #[cfg(not(test))]
+    fn waited_until(&self, _at: u64) {}
+
     /// When the offer serving `wire_model` is back in rotation, while it
-    /// rests past both now and `woke` (when a call that waited for an offer
-    /// back woke, else zero). An unreadable row leaves the offer in rotation:
-    /// the worst it costs is one more refusal.
-    pub(super) fn resting(&self, offer: &OfferBinding, wire_model: &str, woke: u64) -> Option<u64> {
+    /// rests. An unreadable row leaves the offer in rotation: the worst it
+    /// costs is one more refusal.
+    pub(super) fn resting(&self, offer: &OfferBinding, wire_model: &str) -> Option<u64> {
         let vault = self.vault.as_ref()?;
         let rest = match vault.sync_state_get(&key(offer, wire_model)) {
             Ok(Some(bytes)) => rmp_serde::from_slice::<Rest>(&bytes).ok(),
@@ -76,7 +117,7 @@ impl OfferCooldowns {
                 None
             }
         }?;
-        (rest.until > vault.now_recorded_at().max(woke)).then_some(rest.until)
+        (rest.until > vault.now_recorded_at()).then_some(rest.until)
     }
 
     /// Rests the offer serving `wire_model` after a limit refusal: until the
