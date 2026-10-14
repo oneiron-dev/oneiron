@@ -12,9 +12,14 @@ use serde::{Deserialize, Serialize};
 const PAIRING_PENDING: SideTable<String, PairingPending, LegacyJson> =
     SideTable::new(&side_table::AUTHORITY_PAIRING_PENDING);
 /// The facet a paired credential's writes are born in, as the owner named it
-/// on the link. Key: the slip id.
-const PAIRED_WRITE_FACET: SideTable<[u8; 32], crate::EntityId, Raw> =
+/// on the link. Key: the slip id as hex64 (a SyncState key is text).
+const PAIRED_WRITE_FACET: SideTable<String, crate::EntityId, Raw> =
     SideTable::new(&side_table::AUTHORITY_PAIRING_WRITE_FACET);
+
+/// The [`PAIRED_WRITE_FACET`] key of a slip id.
+fn write_facet_key(slip_id: &[u8; 32]) -> String {
+    slip_id.iter().map(|byte| format!("{byte:02x}")).collect()
+}
 /// Immutable one-time organization-administration power grant. Key: hex32 (org_ref).
 const ORG_ADMIN_POLICY: SideTable<String, OrgAdminPolicy, LegacyJson> =
     SideTable::new(&side_table::ORG_ADMIN_POLICY);
@@ -377,7 +382,12 @@ impl Vault {
         };
         let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
         if let Some(facet) = write_facet {
-            PAIRED_WRITE_FACET.put(&self.store, &mut txn, &slip.claims.slip_id, &facet)?;
+            PAIRED_WRITE_FACET.put(
+                &self.store,
+                &mut txn,
+                &write_facet_key(&slip.claims.slip_id),
+                &facet,
+            )?;
         }
         let machine = match (pending.machine, request) {
             (Some(answer), Some(request)) => {
@@ -403,7 +413,7 @@ impl Vault {
     /// named it there: `None` for a link that named none.
     pub fn paired_write_facet(&self, slip_id: &[u8; 32]) -> Result<Option<crate::EntityId>> {
         let txn = self.store.env.read_txn()?;
-        PAIRED_WRITE_FACET.get(&self.store, &txn, slip_id)
+        PAIRED_WRITE_FACET.get(&self.store, &txn, &write_facet_key(slip_id))
     }
     /// A facet limit is for agents and rooms, never the owner (owner ruling
     /// FACET-READ = A): a link held by the vault owner's person takes none,

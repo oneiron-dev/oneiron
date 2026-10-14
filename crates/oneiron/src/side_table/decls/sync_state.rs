@@ -40,7 +40,7 @@ side_tables! {
     /// Host-signed mesh binding projection keyed by hex32 MACHINE id.
     AUTHORITY_MESH_MACHINE: SyncState b"authority:mesh-machine:v1:" Named;
     /// The facet a paired credential's writes are born in, as the owner named it on the link
-    /// (raw id). Key: the slip id (raw 32 bytes).
+    /// (raw id). Key: hex64 (the slip id).
     AUTHORITY_PAIRING_WRITE_FACET: SyncState b"authority:pairing-write-facet:v1:" Raw;
     /// One outstanding single-use pairing/enrollment link, keyed by a keyed-hash of its typed code.
     /// Key: hex64.
