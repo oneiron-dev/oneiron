@@ -528,6 +528,52 @@ fn long_documents_reach_an_oneiron_endpoint_in_several_requests() {
     }
 }
 
+/// Each request an embedder off this device sends leaves only once the rows
+/// it carries are released (DEC-0005): one the release refuses is never sent,
+/// and no request after it either.
+#[test]
+fn each_remote_request_is_sent_only_once_its_rows_are_released() {
+    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
+    let embedder = mock.embedder();
+    let rows: Vec<oneiron::EntityId> = (1..=3_u8)
+        .map(|seed| {
+            let mut bytes = [0x7e; 16];
+            bytes[1] = seed;
+            oneiron::EntityId::from_bytes(bytes).expect("entity id")
+        })
+        .collect();
+    let inputs: Vec<_> = ["a", "b", "c"]
+        .iter()
+        .zip(&rows)
+        .map(|(word, row)| oneiron::embed::PendingEmbeddingInput {
+            entity_id: *row,
+            ..summary_input(&format!("{word} ").repeat(10 * 1024))
+        })
+        .collect();
+    let released = Mutex::new(Vec::new());
+    let kept = rows[1];
+    let answer = oneiron::embed::Embedder::embed_released(embedder.as_ref(), &inputs, &|batch| {
+        released.lock().expect("released lock").push(batch.to_vec());
+        if batch.contains(&kept) {
+            return Err(oneiron::Error::InvalidConfig(
+                "kept on this device".to_owned(),
+            ));
+        }
+        Ok(())
+    });
+    assert!(answer.is_err());
+    assert_eq!(
+        *released.lock().expect("released lock"),
+        vec![vec![rows[0]], vec![rows[1]]],
+        "one release per request, its own rows"
+    );
+    assert_eq!(
+        mock.requests().len(),
+        1,
+        "only the released request was sent"
+    );
+}
+
 /// The vault holds `embedder serve` to the transform it admitted for as long
 /// as it runs: a listing that fails is not taken for a plain OpenAI server, a
 /// server restarted with other settings fills and answers nothing, and once

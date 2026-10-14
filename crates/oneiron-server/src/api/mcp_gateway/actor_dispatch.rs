@@ -18,10 +18,13 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::sync::Arc;
 
+/// The caller a registered MCP credential names, with its verified auth at
+/// `locality`, where the request's connection sits.
 pub(crate) async fn resolve_mcp_gateway_actor(
     mode: McpSurfaceMode,
     request_id: &str,
     headers: &HeaderMap,
+    locality: oneiron::claim::CallerLocality,
     server: &Arc<SyncServer>,
 ) -> Result<McpCallContext, McpGatewayError> {
     let credential = mcp_connector_credential(headers)?;
@@ -99,7 +102,7 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     {
         return Err(mcp_proof_error());
     }
-    actor.auth = Some(auth);
+    actor.auth = Some(auth.at(locality));
     Ok(McpCallContext {
         actor,
         mode,

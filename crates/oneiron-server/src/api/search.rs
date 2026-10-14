@@ -5,6 +5,7 @@ use super::memory_reason::{
 };
 use super::query_params;
 use super::scoped_read_for_legacy_api;
+use crate::auth::Locality;
 use crate::embedder::EmbedQueryRefusal;
 use crate::error::ApiError;
 use crate::projection;
@@ -170,11 +171,12 @@ pub(crate) type SearchResponse = PaginatedResponse<Value>;
 )]
 pub(crate) async fn search_vector(
     headers: HeaderMap,
+    Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<VectorSearchQuery>, QueryRejection>,
 ) -> Result<Json<ScopedSearchResponse>, ApiError> {
     let arrived = Instant::now();
-    let auth = check_api_auth(&headers, &server)?;
+    let auth = check_api_auth(&headers, &server)?.at(locality);
     let params = query_params(query)?;
     let deadline = search_deadline(params.deadline_ms)?;
     let view = params.view.unwrap_or(View::Summary);
@@ -314,11 +316,12 @@ pub(crate) struct TextSearchQuery {
 )]
 pub(crate) async fn search_text(
     headers: HeaderMap,
+    Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<TextSearchQuery>, QueryRejection>,
 ) -> Result<Json<ScopedSearchResponse>, ApiError> {
     let arrived = Instant::now();
-    let auth = check_api_auth(&headers, &server)?;
+    let auth = check_api_auth(&headers, &server)?.at(locality);
     let params = query_params(query)?;
     let deadline = search_deadline(params.deadline_ms)?;
     let page = SearchPage {
@@ -635,11 +638,12 @@ pub(crate) struct SemanticSearchRequest {
 )]
 pub(crate) async fn search_semantic(
     headers: HeaderMap,
+    Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     body: Result<Json<SemanticSearchRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let arrived = Instant::now();
-    let auth = check_api_auth(&headers, &server)?;
+    let auth = check_api_auth(&headers, &server)?.at(locality);
     let Json(params) = body.map_err(|rejection| {
         ApiError::bad_request(format!("invalid semantic search body: {rejection}"), None)
     })?;

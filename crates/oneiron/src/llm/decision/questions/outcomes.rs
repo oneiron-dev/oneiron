@@ -36,12 +36,16 @@ pub fn project_bound_outcomes(
 
 /// Labels are observations of immutable answer receipts. Current facts and
 /// authority are checked again within one read snapshot before returning them.
+/// A caller at `locality` gets no pair derived from a row a device-local
+/// world keeps from it, and each pair names the rows it was derived from.
 pub fn calibration_pairs(
     vault: &Vault,
     principal: EntityId,
     question: EntityId,
+    locality: crate::claim::CallerLocality,
 ) -> Result<Vec<CalibrationPair>> {
     let txn = vault.store.env.read_txn()?;
+    let kept = crate::settings::device_local_worlds_at(&vault.store, &txn, locality)?;
     let Some(head) = QUESTION_HEAD.get(&vault.store, &txn, &HeadKey(question))? else {
         return Ok(Vec::new());
     };
@@ -105,6 +109,10 @@ pub fn calibration_pairs(
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             true,
         )?;
+        let derived_from = derived_rows(question, answer, outcome.fact, &body);
+        if !kept.is_empty() && kept_any(vault, &txn, &kept, &derived_from)? {
+            continue;
+        }
         let fact = super::arrival::Fact {
             id: outcome.fact,
             body: &body,
@@ -123,7 +131,40 @@ pub fn calibration_pairs(
             prediction: answer.decision.answer.clone(),
             probability,
             outcome,
+            derived_from,
         });
     }
     Ok(pairs)
+}
+
+/// The rows a pair is derived from: the question, the answer and the unit
+/// it binds, the outcome fact and the fact's subject and edge endpoint.
+fn derived_rows(
+    question: EntityId,
+    answer: &AnswerRecord,
+    fact: EntityId,
+    body: &crate::claim::ClaimBody,
+) -> Vec<EntityId> {
+    let (subject, endpoint) = match body.subject {
+        crate::claim::ClaimSubject::Entity(id) => (id, None),
+        crate::claim::ClaimSubject::Edge { source, target, .. } => (source, Some(target)),
+    };
+    [question, answer.claim, answer.unit, fact, subject]
+        .into_iter()
+        .chain(endpoint)
+        .collect()
+}
+
+fn kept_any(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    kept: &std::collections::BTreeSet<EntityId>,
+    rows: &[EntityId],
+) -> Result<bool> {
+    for id in rows {
+        if crate::settings::device_local_keeps_among(&vault.store, txn, kept, id)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

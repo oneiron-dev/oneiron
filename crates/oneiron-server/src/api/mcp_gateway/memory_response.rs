@@ -14,11 +14,13 @@ use std::sync::Arc;
 
 /// All observations are staged from typed, post-limit results. No failed
 /// adapter call, encoding failure, or partial batch commits a read-set event.
+/// Beside the output it returns every row the read derived it from, the ones
+/// a query counts past its page among them (DEC-0005).
 pub(super) async fn execute(
     server: &Arc<SyncServer>,
     args: &McpVerbToolArgs,
     actor: &McpResolvedActor,
-) -> Result<(Value, Vec<CapabilityHit>), McpGatewayError> {
+) -> Result<(Value, Vec<CapabilityHit>, Vec<oneiron::EntityId>), McpGatewayError> {
     let mut produced = execute_read(server, args, actor)?;
     if !produced.served.is_empty() {
         let mut target = super::board_observations::read_set(server, actor).await;
@@ -59,7 +61,7 @@ pub(super) async fn execute(
         }
         *target = staged;
     }
-    Ok((produced.output, produced.capabilities))
+    Ok((produced.output, produced.capabilities, produced.producers))
 }
 
 /// The observation reads answer to the same actor as the served read, so
@@ -89,6 +91,7 @@ struct MemoryRead {
     output: Value,
     served: Vec<ReadObservation>,
     capabilities: Vec<CapabilityHit>,
+    producers: Vec<oneiron::EntityId>,
 }
 
 fn execute_read(
@@ -104,7 +107,9 @@ fn execute_read(
             .with_field("arguments.request")
     })?;
     let reader = mcp_scoped_read(&server.vault, actor)?;
-    let adapter = InProcessVaultReadAdapter::new(&server.vault, reader.actor_key().clone());
+    let producers = oneiron::memory::ProducerRows::default();
+    let adapter = InProcessVaultReadAdapter::new(&server.vault, reader.actor_key().clone())
+        .listing_producers(&producers);
     let mut served = Vec::new();
     let mut capabilities = Vec::new();
     macro_rules! call {
@@ -173,6 +178,7 @@ fn execute_read(
         output,
         served,
         capabilities,
+        producers: producers.take(),
     })
 }
 

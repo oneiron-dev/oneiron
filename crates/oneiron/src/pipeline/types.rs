@@ -227,6 +227,11 @@ pub(super) struct PipelineFilterConfig<'a> {
     /// `AnyOf` fails the run closed before the first candidate is scanned and
     /// the candidate-scan twin stays a pure predicate.
     pub(super) corpus_scope: &'a CorpusScope,
+    /// The device-local worlds, read once per run, when the run reads for a
+    /// caller off this device: no candidate a device-local world keeps enters
+    /// the run (DEC-0005), so no count, reason or budget sees it. `None` for
+    /// a caller on this device.
+    pub(super) device_local: Option<&'a BTreeSet<EntityId>>,
     /// The run's deadline. While a channel stage is open every candidate the
     /// scope gate reads is one of its checkpoints.
     pub(super) deadline: Option<&'a crate::retrieval_depth::RetrievalDeadline>,
@@ -256,6 +261,11 @@ pub(super) struct ClaimStatusGateCache {
     pub(super) include_stale: bool,
     /// Authenticated, transaction-local diary admission for this retrieval run.
     pub(super) private_note_ids: Option<std::sync::Arc<crate::claim::ScopedDiaryCandidates>>,
+    /// The device-local worlds a caller off this device reads nothing of. A
+    /// row they keep is no claim-status decision of this run: it is dropped
+    /// before the gate reads it, memoized nowhere and counted nowhere
+    /// (DEC-0005).
+    pub(super) device_local: Option<std::sync::Arc<BTreeSet<EntityId>>>,
     pub(super) decisions: HashMap<EntityId, Option<ClaimBody>>,
     #[cfg(test)]
     pub(super) body_loads: usize,
@@ -310,19 +320,53 @@ pub struct RetrievalWithPendingVectors<T> {
     pub run_id: Option<RetrievalRunId>,
 }
 
+impl ClaimStatusGateCache {
+    /// Whether a device-local world keeps `id` from this run.
+    pub(super) fn keeps_device_local(
+        &self,
+        store: &StoreRead<'_>,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        match self.device_local.as_deref() {
+            Some(flagged) => crate::settings::device_local_keeps_among(store, txn, flagged, id),
+            None => Ok(false),
+        }
+    }
+
+    /// A gate of its own for a probe or a bounded scan, under this run's
+    /// stale, diary and device-local terms, with no decision carried over.
+    pub(super) fn fresh(&self, include_stale: bool) -> Self {
+        Self {
+            include_stale,
+            private_note_ids: self.private_note_ids.clone(),
+            device_local: self.device_local.clone(),
+            ..Self::default()
+        }
+    }
+}
+
 impl EntityMetadataCache {
     /// A suppressed private NOTE or pair grant contributes no observable
     /// receipt count, even when a pipeline probe rejected it before the
     /// scoped caller's final admission gate. Nor does a TASK outside the
-    /// worlds or facets of the `credential` the run retrieves under.
+    /// worlds or facets of the `credential` the run retrieves under, nor a
+    /// row of the `device_local` worlds a caller off this device reads
+    /// nothing of.
     pub(super) fn countable_suppressed(
         &self,
         store: &StoreRead<'_>,
         txn: &RoTxn<'_>,
         credential: Option<&crate::federation::Scope>,
+        device_local: Option<&std::collections::BTreeSet<EntityId>>,
     ) -> Result<usize> {
         let mut count = 0;
         for id in &self.read_suppressed {
+            if let Some(flagged) = device_local
+                && crate::settings::device_local_keeps_among(store, txn, flagged, id)?
+            {
+                continue;
+            }
             let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
                 continue;
             };

@@ -9,12 +9,18 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, HexId, Named, Raw, RawValue, SideTable};
 use crate::store::Store;
 
+mod device_local;
 mod device_only;
 pub mod model_versioning;
 
-pub(crate) use device_only::{
-    CarriedWorlds, carried_worlds_in, device_only_withholds, minted_worlds_in,
+pub(crate) use device_local::{
+    device_local_keeps_among, device_local_keeps_in, device_local_worlds_at,
 };
+pub(crate) use device_only::{
+    CarriedWorlds, carried_worlds_in, device_only_withholds, device_only_withholds_raw,
+    minted_worlds_in,
+};
+
 pub use model_versioning::{
     DEFAULT_MODEL_STACK_CURRENT_ID, DEFAULT_MODEL_STACK_V1_ID, ModelStack, ModelStackDeprecation,
     ModelStackDeprecationStage, ModelStackDeprecationStatus, ModelStackDisclosure, ModelStackId,
@@ -495,12 +501,6 @@ impl Vault {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Whether `world` is flagged device-only on this device.
-    pub fn world_is_device_only(&self, world: EntityId) -> Result<bool> {
-        let rtxn = self.store.env.read_txn()?;
-        DEVICE_ONLY_WORLD.contains(&self.store, &rtxn, &HexId(world))
-    }
-
     /// Reads the persisted customization settings, or the default four-layer model.
     pub fn customization_settings(&self) -> Result<CustomizationSettings> {
         let rtxn = self.store.env.read_txn()?;
@@ -636,8 +636,10 @@ fn validate_label(field: &'static str, value: &str) -> Result<()> {
 #[cfg(test)]
 mod tests;
 
-/// Every world flagged device-only on this device.
-pub(crate) fn device_only_worlds_in(
+/// Every world flagged device-only on this device. Only
+/// [`device_local_worlds_at`] reads it: every door asks that one function
+/// which worlds a caller's rows are withheld from.
+fn device_only_worlds_in(
     store: &Store,
     txn: &RoTxn<'_>,
 ) -> Result<std::collections::BTreeSet<EntityId>> {

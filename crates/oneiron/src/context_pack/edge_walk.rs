@@ -6,7 +6,7 @@
 use crate::ports::EdgeStoreRead;
 #[cfg(test)]
 use std::cell::Cell;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use heed::RoTxn;
 
@@ -109,6 +109,9 @@ pub(super) struct EdgeWalkOptions<'a> {
     /// `None` because naming a dead world is a request to read it, and the
     /// caller marks what comes back instead of hiding it.
     pub(super) stale_worlds: Option<&'a BTreeMap<EntityId, crate::federation::WorldStaleStamp>>,
+    /// The device-local worlds, for a pack read off this device: a row one
+    /// keeps is never admitted as a neighbor nor traversed through (DEC-0005).
+    pub(super) device_local: Option<&'a BTreeSet<EntityId>>,
     /// The same resolved type floor and explicit kind names as primary retrieval.
     pub(super) type_filter: &'a crate::gate::ResolvedRetrievalFilter,
     pub(super) named_types: Option<&'a [u8]>,
@@ -127,6 +130,7 @@ pub(super) fn walk_edges(
         exclude,
         clamp,
         stale_worlds,
+        device_local,
         type_filter,
         named_types,
     } = options;
@@ -199,6 +203,16 @@ pub(super) fn walk_edges(
                 if let Some(stale) = stale_worlds
                     && record_world_by_id(store, rtxn, &edge.target)?
                         .is_some_and(|world| stale.contains_key(&world))
+                {
+                    continue;
+                }
+                if let Some(flagged) = device_local
+                    && crate::settings::device_local_keeps_among(
+                        store,
+                        rtxn,
+                        flagged,
+                        &edge.target,
+                    )?
                 {
                     continue;
                 }

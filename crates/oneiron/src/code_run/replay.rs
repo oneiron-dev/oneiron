@@ -508,6 +508,27 @@ impl CodeRunReplayRecord {
     pub fn generation(&self) -> Result<CodeRunReplayGeneration> {
         CodeRunReplayGeneration::for_record(self)
     }
+
+    /// The rows this run's verb calls listed as served, kept beside each
+    /// answer it recorded (DEC-0005). `None` when an answer was recorded with
+    /// no row set, or does not decode: no caller off this device is released
+    /// such a run's answers.
+    #[must_use]
+    pub fn agent_verb_rows(&self) -> Option<Vec<EntityId>> {
+        let mut rows = Vec::new();
+        let verb_calls = self
+            .bridge_calls
+            .iter()
+            .filter(|call| call.effect == SelfEffect::AgentVerb);
+        for call in verb_calls {
+            if let SelfDispatchOutcome::AgentVerb(answer) =
+                decode_self_dispatch_outcome(&call.outcome).ok()?
+            {
+                rows.extend(answer.rows?);
+            }
+        }
+        Some(rows)
+    }
 }
 
 /// Returns the default ABI/layout checks recorded with v1 replay records.

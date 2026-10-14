@@ -29,6 +29,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod control_keys;
+mod device_local;
 mod embedder;
 pub mod error;
 pub mod feedback_delivery;

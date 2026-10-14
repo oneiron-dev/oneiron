@@ -15,7 +15,8 @@ fn describe_card_direct_lookup_survives_board_scan_cap() {
     let beyond_hex = beyond_prefix.to_hex();
 
     // The bounded board really does stop before it.
-    let snapshot = task_presence_with_limits(&vault, 1, 1).expect("one-row board prefix");
+    let snapshot = task_presence_with_limits(&vault, 1, 1, crate::claim::CallerLocality::OnDevice)
+        .expect("one-row board prefix");
     assert!(!snapshot.source_exhausted);
     assert!(
         !snapshot
@@ -82,7 +83,8 @@ fn tasks_update_direct_lookup_survives_board_scan_cap() {
         }
     }
 
-    let snapshot = task_presence_with_limits(&vault, 1, 1).expect("one-row board prefix");
+    let snapshot = task_presence_with_limits(&vault, 1, 1, crate::claim::CallerLocality::OnDevice)
+        .expect("one-row board prefix");
     assert!(!snapshot.source_exhausted);
     assert!(
         !snapshot
@@ -154,7 +156,8 @@ fn truncated_task_scan_still_renders_provably_dangling_prefix_job_once() {
     // page_size=2, scan_cap=4 → inspect created[0..2] and the Owner fact each
     // one minted; the cursor lands past created[1]; source_exhausted=false
     // because created[2] remains beyond the cap.
-    let snapshot = task_presence_with_limits(&vault, 2, 4).expect("truncated presence");
+    let snapshot = task_presence_with_limits(&vault, 2, 4, crate::claim::CallerLocality::OnDevice)
+        .expect("truncated presence");
 
     assert!(!snapshot.source_exhausted);
     assert_eq!(snapshot.scanned_task_entities, 4);
@@ -170,7 +173,8 @@ fn truncated_task_scan_still_renders_provably_dangling_prefix_job_once() {
     );
 
     // Jobs owned by the unscanned third TASK must still not leak as bare.
-    let whole = task_presence_with_limits(&vault, 8, 64).expect("full presence");
+    let whole = task_presence_with_limits(&vault, 8, 64, crate::claim::CallerLocality::OnDevice)
+        .expect("full presence");
     let beyond_job_ids: Vec<&str> = whole
         .intents
         .iter()
@@ -230,7 +234,8 @@ fn deferred_task_read_failure_is_reported_without_poisoning_section() {
         )
         .expect("put malformed connector task");
 
-    let snapshot = task_presence_with_limits(&vault, 2, 32).expect("section survives");
+    let snapshot = task_presence_with_limits(&vault, 2, 32, crate::claim::CallerLocality::OnDevice)
+        .expect("section survives");
     assert!(
         snapshot
             .intents

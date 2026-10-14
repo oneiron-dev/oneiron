@@ -439,6 +439,19 @@ pub struct SelfAgentVerbCall {
     pub input: serde_json::Value,
 }
 
+/// A verb call's answer, as the host door gives it and the run records it:
+/// the verb's JSON output, exactly as its other doors return it, and the rows
+/// the door listed as served in producing it (DEC-0005), ids only. The record
+/// keeps the rows beside the output, so a re-entered run's replayed answers
+/// are released by the rows that produced them. A door always lists them;
+/// `None` is only an answer recorded with no set, which no caller off this
+/// device is released.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentVerbAnswer {
+    pub output: serde_json::Value,
+    pub rows: Option<Vec<EntityId>>,
+}
+
 /// A verb call the bound door refused or could not run, as the guest sees it:
 /// a stable code, never prose. Agent-facing words are configuration, so the
 /// host or prompt layer supplies any wording for a code.
@@ -463,13 +476,14 @@ pub const AGENT_VERB_SESSION_BOUND: &str = "agent_verb_session_bound";
 ///
 /// The door binds `origin` onto the memory surface the verb runs on, so the
 /// verb's claims carry the run's `Generated` source, lineage and provenance,
-/// never a source the guest's input names.
+/// never a source the guest's input names. Its answer lists the rows the
+/// verb served, as its other doors list them for release.
 pub trait AgentVerbDoor: Send + Sync {
     fn call(
         &self,
         call: &SelfAgentVerbCall,
         origin: &crate::memory::HostWriteOrigin,
-    ) -> std::result::Result<serde_json::Value, AgentVerbRefusal>;
+    ) -> std::result::Result<AgentVerbAnswer, AgentVerbRefusal>;
 
     /// Admits one call the run serves itself, before it runs. The host's
     /// ceiling and credential bind these as they bind [`Self::call`], so a run
@@ -519,8 +533,8 @@ pub enum SelfDispatchOutcome {
     InferenceDefaults(String),
     /// The authorized v1 policy row that was persisted in the vault.
     WakePolicyWritten(crate::dreamer_wake::DreamerWakePolicy),
-    /// The verb's JSON output, exactly as its other doors return it.
-    AgentVerb(serde_json::Value),
+    /// The verb's answer: its JSON output and the rows that produced it.
+    AgentVerb(AgentVerbAnswer),
 }
 
 /// Result of one `self.speak`/`self.think`/`self.express` call.

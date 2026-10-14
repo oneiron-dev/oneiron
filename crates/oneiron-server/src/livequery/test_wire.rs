@@ -73,6 +73,7 @@ pub(crate) struct Collector {
 }
 impl Collector {
     pub(crate) fn feed(&mut self, bytes: &[u8]) -> Option<Value> {
+        let bytes = super::routing::unwrapped(bytes);
         let tag = bytes[0];
         let e: wire::Envelope<serde::de::IgnoredAny> = wire::decode(&bytes[1..]).unwrap();
         if e.kind == "sub.eose" {

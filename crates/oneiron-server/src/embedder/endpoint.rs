@@ -709,10 +709,41 @@ impl Embedder for HttpEmbedder {
         &self,
         inputs: &[PendingEmbeddingInput],
     ) -> oneiron::Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
+        self.embed_documents(inputs, &|_| Ok(()))
+    }
+
+    fn embed_released(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+        release: &dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()>,
+    ) -> oneiron::Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
+        self.embed_documents(inputs, release)
+    }
+    /// An answer that does not name its device was computed on one the vault
+    /// does not see; it is named as an offer, model at place. The URL holds no
+    /// credential or query ([`Self::from_config`] refuses one).
+    fn provenance(&self) -> EmbeddingProvenance {
+        EmbeddingProvenance::new(
+            EmbeddingDevice::Remote,
+            format!("{}@{}", self.model_key, self.endpoint),
+        )
+    }
+}
+
+impl HttpEmbedder {
+    /// Embeds `inputs` as documents, one request or several, each sent only
+    /// once `release` lets the rows it carries leave, and each vector marked
+    /// with the device and runtime that computed it.
+    fn embed_documents(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+        release: &dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()>,
+    ) -> oneiron::Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
         if inputs.is_empty() {
             return Ok(Vec::new());
         }
         let wire = self.wire()?;
+        let rows: Vec<oneiron::EntityId> = inputs.iter().map(|input| input.entity_id).collect();
         let texts: Vec<String> = inputs
             .iter()
             .map(|input| {
@@ -724,29 +755,25 @@ impl Embedder for HttpEmbedder {
             .collect::<oneiron::Result<_>>()?;
         let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
         match wire {
-            Wire::OpenAi => Ok(self.marked(self.post_embeddings(&refs, Side::default())?)),
+            Wire::OpenAi => {
+                release(&rows)?;
+                Ok(self.marked(self.post_embeddings(&refs, Side::default())?))
+            }
             Wire::Oneiron => {
                 let side = Side {
                     input_type: Some("document"),
                     instruction: None,
                 };
                 let mut vectors = Vec::with_capacity(refs.len());
+                let mut sent = 0;
                 for request in requests(&refs, ONEIRON_REQUEST_BYTES) {
+                    release(&rows[sent..sent + request.len()])?;
+                    sent += request.len();
                     vectors.extend(self.marked(self.post_embeddings(request, side)?));
                 }
                 Ok(vectors)
             }
         }
-    }
-
-    /// An answer that does not name its device was computed on one the vault
-    /// does not see; it is named as an offer, model at place. The URL holds no
-    /// credential or query ([`Self::from_config`] refuses one).
-    fn provenance(&self) -> EmbeddingProvenance {
-        EmbeddingProvenance::new(
-            EmbeddingDevice::Remote,
-            format!("{}@{}", self.model_key, self.endpoint),
-        )
     }
 }
 

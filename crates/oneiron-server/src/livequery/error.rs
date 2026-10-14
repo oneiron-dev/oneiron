@@ -70,6 +70,15 @@ impl AppError {
     pub(super) fn internal_server_error(message: impl Into<String>) -> Self {
         ApiError::internal_server_error(message).into()
     }
+
+    /// A read whose result changed before all of it was sent.
+    pub(super) fn result_changed() -> Self {
+        Self::new(
+            "RESULT_CHANGED",
+            "the result changed before it was sent",
+            ["Repeat the read."],
+        )
+    }
 }
 
 impl From<ApiError> for AppError {

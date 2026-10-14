@@ -1,6 +1,5 @@
 //! Path-routing readdir, readdir_bytes, read_file and read_link, fixed pages, world, entity and claim listdir helpers.
 
-use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 use std::ops::Bound;
 
@@ -377,12 +376,24 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     /// `rtxn`: its own lane and each peer lane its reads conjoin
     /// ([`crate::claim::ScopedRead::with_peer_reads`]) must each walk there
     /// ([`lane_walks_world`]), as each must admit a row it serves (Sol R5-006).
+    /// Off this device no reader walks into a world a device-local flag keeps
+    /// (DEC-0005).
     pub(super) fn world_visible(
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         world: Option<EntityId>,
     ) -> Result<bool> {
+        if let Some(world) = world
+            && self.scoped_read.off_device()
+            && crate::settings::device_local_keeps_in(
+                &self.scoped_read.vault().store,
+                rtxn,
+                &world,
+            )?
+        {
+            return Ok(false);
+        }
         self.scoped_read
             .every_lane_in(rtxn, |lane| lane_walks_world(lane, rtxn, policy, world))
     }
@@ -400,13 +411,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             after: cursor.map(TemporalCursor::port_position),
             ..Default::default()
         };
-        for (scanned, entry) in self
-            .scoped_read
-            .vault()
-            .store
-            .port_entity_timeline(&rtxn, query)?
-            .enumerate()
-        {
+        for (scanned, entry) in self.admitted_timeline(&rtxn, query)?.enumerate() {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
                 // Sealed: the last scanned row may be one the walk passed over.
                 next_cursor = last_scanned.map(|cursor| scope.seal(&cursor));
@@ -455,13 +460,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             after: cursor.map(TemporalCursor::port_position),
             ..Default::default()
         };
-        for (scanned, entry) in self
-            .scoped_read
-            .vault()
-            .store
-            .port_entity_timeline(&rtxn, query)?
-            .enumerate()
-        {
+        for (scanned, entry) in self.admitted_timeline(&rtxn, query)?.enumerate() {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
                 // Sealed: the last scanned row may be one the walk passed over.
                 next_cursor = last_scanned.map(|cursor| scope.seal(&cursor));
@@ -514,18 +513,13 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.live_policy_manifest_in(&rtxn)?;
-        for (scanned, entry) in self
-            .scoped_read
-            .vault()
-            .store
-            .port_edge_cursor(
-                &rtxn,
-                target,
-                crate::ports::EdgeDirection::In,
-                after.map(EdgeCursor::port_position),
-            )?
-            .enumerate()
-        {
+        let edges = self.admitted_edges(
+            &rtxn,
+            target,
+            crate::ports::EdgeDirection::In,
+            after.map(EdgeCursor::port_position),
+        )?;
+        for (scanned, entry) in edges.enumerate() {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
                 // Sealed: the last scanned edge may be one the walk passed over.
                 next_cursor = last_scanned
@@ -584,13 +578,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             after,
             day_listed: after.is_some_and(|after| Some(day_of(after)) == listed),
         };
-        for (scanned, entry) in self
-            .scoped_read
-            .vault()
-            .store
-            .port_entity_timeline(&rtxn, query)?
-            .enumerate()
-        {
+        for (scanned, entry) in self.admitted_timeline(&rtxn, query)?.enumerate() {
             if scanned >= max_scan_rows {
                 // Sealed: the last scanned row may be one the walk passed over.
                 next_cursor = Some(scope.seal(&resume(last_scanned, listed)));
@@ -650,13 +638,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             after: cursor.map(TemporalCursor::port_position),
             ..Default::default()
         };
-        for (scanned, entry) in self
-            .scoped_read
-            .vault()
-            .store
-            .port_entity_timeline(&rtxn, query)?
-            .enumerate()
-        {
+        for (scanned, entry) in self.admitted_timeline(&rtxn, query)?.enumerate() {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
                 // Sealed: the last scanned row may be one the walk passed over.
                 next_cursor = last_scanned.map(|cursor| scope.seal(&cursor));

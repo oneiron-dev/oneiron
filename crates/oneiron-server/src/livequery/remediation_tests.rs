@@ -137,7 +137,7 @@ async fn socket_delivery_is_disabled_until_an_open_and_after_close() {
     let mut connection = connection::Connection::new(hub, 9);
     assert!(!connection.has_active_subscriptions());
     let auth = crate::test_credentials::authenticate(&server, &production_tests::token("human"));
-    connection
+    let opened = connection
         .control(
             &auth,
             SubRequest::Open {
@@ -150,21 +150,16 @@ async fn socket_delivery_is_disabled_until_an_open_and_after_close() {
         )
         .unwrap();
     assert!(connection.has_active_subscriptions());
-    let private = routing::wrap(9, 1, vec![TAG_SUB, 0x80]);
-    assert!(connection.receive_broadcast(&private).is_some());
-    assert!(
-        connection
-            .receive_broadcast(&routing::wrap(10, 1, vec![TAG_SUB, 0x80]))
-            .is_none()
-    );
-    assert!(
-        connection
-            .receive_broadcast(&routing::wrap(9, 2, vec![TAG_SUB, 0x80]))
-            .is_none()
-    );
+    let incarnation = routing::addressed(&opened[0], 9).unwrap().incarnation;
+    let routed = |conn, id| routing::wrap(conn, id, incarnation, Some(&[]), vec![TAG_SUB, 0x80]);
+    let locality = auth.locality();
+    let private = routed(9, 1);
+    assert!(connection.release(locality, &private).is_some());
+    assert!(connection.release(locality, &routed(10, 1)).is_none());
+    assert!(connection.release(locality, &routed(9, 2)).is_none());
     connection
         .control(&auth, SubRequest::Close { subscription_id: 1 })
         .unwrap();
     assert!(!connection.has_active_subscriptions());
-    assert!(connection.receive_broadcast(&private).is_none());
+    assert!(connection.release(locality, &private).is_none());
 }

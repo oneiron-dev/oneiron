@@ -97,6 +97,43 @@ fn recalled_and_context_packed_message_carries_its_grouped_reactions() {
     );
 }
 
+/// Sol R9 F3: a recalled message's reaction lines are derived from the
+/// reaction claims they count, so recall lists each one among the rows its
+/// pack was derived from, at every effort (DEC-0005).
+#[test]
+fn a_recall_lists_the_reaction_claims_its_lines_count() {
+    let room = room();
+    let counted = [
+        react(&room, room.bob, "👍").id,
+        react(&room, room.erin, "🎉").id,
+    ];
+    for effort in [Effort::Light, Effort::Medium] {
+        let producers = crate::memory::ProducerRows::default();
+        let pack = room
+            .vault
+            .memory(room.alice, EdgeActorClass::Human)
+            .listing_producers(&producers)
+            .recall(
+                "Friday plan",
+                effort,
+                &RecallScope::default(),
+                20,
+                None,
+                None,
+            )
+            .unwrap();
+        assert!(
+            pack.items.iter().any(|item| !item.reactions.is_empty()),
+            "{effort:?}"
+        );
+        let listed = producers.take();
+        assert!(
+            counted.iter().all(|claim| listed.contains(claim)),
+            "{effort:?}: {listed:?}"
+        );
+    }
+}
+
 #[test]
 fn a_direct_query_finds_a_reaction() {
     let room = reacted_room();

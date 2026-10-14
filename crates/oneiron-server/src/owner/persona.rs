@@ -7,6 +7,7 @@
 //! owner did not see. A handed copy is a copy: revoking means not issuing
 //! another.
 
+use oneiron::claim::CallerLocality;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::persona_snapshot::{
     PersonaSnapshotCompile, PersonaSnapshotCompileOptions, PersonaSnapshotStrikeList,
@@ -75,8 +76,12 @@ pub(crate) struct Exported {
     pub(crate) stale_after_secs: u64,
 }
 
-pub(crate) fn preview(vault: &Vault, subject: &str) -> OwnerResult<Preview> {
-    let compile = compile(vault, subject)?;
+pub(crate) fn preview(
+    vault: &Vault,
+    subject: &str,
+    locality: CallerLocality,
+) -> OwnerResult<Preview> {
+    let compile = compile(vault, subject, locality)?;
     Ok(Preview {
         subject: compile.subject_ref.to_hex(),
         stamp: compile.stamp.identity(),
@@ -102,8 +107,9 @@ pub(crate) fn export(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     request: &ExportRequest,
+    locality: CallerLocality,
 ) -> OwnerResult<Exported> {
-    let compile = compile(vault, &request.subject)?;
+    let compile = compile(vault, &request.subject, locality)?;
     let strikes = PersonaSnapshotStrikeList {
         strike: request.strike.iter().cloned().collect(),
         unstrike: request.unstrike.iter().cloned().collect(),
@@ -133,10 +139,19 @@ pub(crate) fn export(
 }
 
 /// The owner's own compile: no audience clamp beyond Tier A, agent takes off.
-fn compile(vault: &Vault, subject: &str) -> OwnerResult<PersonaSnapshotCompile> {
+/// Off this device no claim a device-local world keeps enters it.
+fn compile(
+    vault: &Vault,
+    subject: &str,
+    locality: CallerLocality,
+) -> OwnerResult<PersonaSnapshotCompile> {
     let subject_id = entity_id("subject", subject)?;
+    let options = PersonaSnapshotCompileOptions {
+        locality,
+        ..PersonaSnapshotCompileOptions::default()
+    };
     vault
-        .compile_persona_snapshot(&subject_id, &PersonaSnapshotCompileOptions::default())
+        .compile_persona_snapshot(&subject_id, &options)
         .map_err(|error| match error.kind() {
             ErrorKind::EntityNotFound => OwnerError::NotFound("person", subject.to_owned()),
             ErrorKind::InvalidPersonaSnapshot | ErrorKind::InvalidEntityType => {

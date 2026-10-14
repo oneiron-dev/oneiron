@@ -22,6 +22,9 @@ struct Entry {
     cursor: Cursor,
     kind: String,
     result: Option<Value>,
+    /// Hex ids of the rows the result was derived from.
+    #[serde(default)]
+    rows: Vec<String>,
 }
 
 impl History {
@@ -56,6 +59,7 @@ impl History {
                 cursor: push.cursor.clone(),
                 kind: push.kind.to_owned(),
                 result: push.result.clone(),
+                rows: push.rows.iter().map(oneiron::EntityId::to_hex).collect(),
             })
             .map_err(|_| error())?;
             rows.push((format!("{}:{}", push.cursor.batch, push.kind), bytes));
@@ -162,11 +166,17 @@ impl History {
                     "gap" => "gap",
                     _ => return Err(error()),
                 };
+                let rows = entry
+                    .rows
+                    .iter()
+                    .map(|row| oneiron::EntityId::from_hex(row).map_err(|_| error()))
+                    .collect::<Result<_, _>>()?;
                 Ok(Push {
                     subscription_id: id,
                     cursor: entry.cursor,
                     kind,
                     result: entry.result,
+                    rows,
                 })
             })
             .collect::<Result<Vec<_>, _>>()

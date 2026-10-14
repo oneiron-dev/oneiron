@@ -3,6 +3,7 @@ mod admission;
 mod board_observations;
 mod board_setup;
 mod code_mode_verbs;
+mod device_release;
 mod envelope;
 mod exec_board_verbs;
 mod memory_response;
@@ -24,6 +25,9 @@ use self::board_setup::{
     mcp_current_board, mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page,
     mcp_resolve_page,
 };
+use self::device_release::mcp_release_result;
+#[cfg(test)]
+pub(crate) use self::device_release::release_hook;
 use self::envelope::mcp_request_id;
 pub(crate) use self::envelope::{
     MCP_CREDENTIAL_HEADER, McpCallContext, McpGatewayError, McpToolCallParams, mcp_gateway,

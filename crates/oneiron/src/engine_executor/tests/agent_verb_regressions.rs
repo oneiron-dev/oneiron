@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use super::*;
 use crate::code_run::{
-    AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfMemorySearchCall,
+    AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall,
+    SelfMemorySearchCall,
 };
 use crate::memory::HostWriteOrigin;
 use crate::task_verb::sdk::{AgentVerb, TaskCreateRequest};
@@ -57,7 +58,7 @@ impl AgentVerbDoor for TaskCreateDoor {
         &self,
         call: &SelfAgentVerbCall,
         origin: &HostWriteOrigin,
-    ) -> std::result::Result<serde_json::Value, AgentVerbRefusal> {
+    ) -> std::result::Result<AgentVerbAnswer, AgentVerbRefusal> {
         self.admits()?;
         let refused = || AgentVerbRefusal {
             code: "engine_error".to_owned(),
@@ -73,7 +74,10 @@ impl AgentVerbDoor for TaskCreateDoor {
         if let Some(fields) = answer.as_object_mut() {
             fields.extend(self.extra.clone());
         }
-        Ok(answer)
+        Ok(AgentVerbAnswer {
+            output: answer,
+            rows: Some(Vec::new()),
+        })
     }
 
     fn admit_run_call(
@@ -727,7 +731,7 @@ impl AgentVerbDoor for ClosingDoor {
         &self,
         _: &SelfAgentVerbCall,
         _: &HostWriteOrigin,
-    ) -> std::result::Result<serde_json::Value, AgentVerbRefusal> {
+    ) -> std::result::Result<AgentVerbAnswer, AgentVerbRefusal> {
         Err(AgentVerbRefusal {
             code: crate::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
         })
@@ -874,7 +878,7 @@ impl AgentVerbDoor for GateWordDoor {
         &self,
         _: &SelfAgentVerbCall,
         _: &HostWriteOrigin,
-    ) -> std::result::Result<serde_json::Value, AgentVerbRefusal> {
+    ) -> std::result::Result<AgentVerbAnswer, AgentVerbRefusal> {
         Err(AgentVerbRefusal {
             code: crate::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
         })

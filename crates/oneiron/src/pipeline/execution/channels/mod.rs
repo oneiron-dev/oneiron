@@ -186,10 +186,12 @@ impl PipelineBuilder<'_> {
                 temporal_now,
             )?;
             let corpus_filter = CorpusFilter::new(&self.corpus_scope)?;
+            let device_local = self.device_local_worlds(rtxn)?;
             let mut filter_config = corpus_filter.config(self, occurred_range, authority_filter);
             filter_config.world_active_set = world_authority
                 .as_ref()
                 .map(|resolved| &resolved.active_set);
+            filter_config.device_local = device_local.as_ref();
             // Ordinary text uses D19 widening; candidate-filtered text instead
             // applies D19 during bounded scoring and needs no corpus-sized probe.
             let claim_gate_text_widening_active = self.claim_gate_text_widening_probe(
@@ -421,6 +423,7 @@ impl PipelineBuilder<'_> {
                         &self.read,
                         rtxn,
                         authority_filter.credential.as_ref(),
+                        filter_config.device_local,
                     )?,
                     deferred_ppr_cache_writes: Vec::new(),
                     cosine_ghosts_dampened: 0,
@@ -772,6 +775,7 @@ impl PipelineBuilder<'_> {
                     &self.read,
                     rtxn,
                     authority_filter.credential.as_ref(),
+                    filter_config.device_local,
                 )?,
                 deferred_ppr_cache_writes,
                 cosine_ghosts_dampened,
@@ -809,10 +813,16 @@ impl PipelineBuilder<'_> {
             self.result_limit,
             filter.include_stale,
         );
+        let device_local = self.device_local_worlds(rtxn)?.map(std::sync::Arc::new);
         accumulator.trace_claim_gate.private_note_ids = private_note_ids.clone();
+        accumulator
+            .trace_claim_gate
+            .device_local
+            .clone_from(&device_local);
         let new_gate = || ClaimStatusGateCache {
             include_stale: filter.include_stale,
             private_note_ids: private_note_ids.clone(),
+            device_local: device_local.clone(),
             ..ClaimStatusGateCache::default()
         };
         let claim_gate = new_gate();

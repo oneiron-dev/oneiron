@@ -7,7 +7,7 @@ use crate::code_run::payload::decode_self_dispatch_outcome;
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord};
 use crate::code_run::storage::{ExecutorStorage, derived_executor_id};
 use crate::code_run::types::{
-    AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbRefusal, RunCall,
+    AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbRefusal, RunCall,
     SelfAgentVerbCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfEffect,
 };
 use crate::error::{Error, Result};
@@ -287,7 +287,7 @@ fn kept_refusal(row: &CodeRunBridgeCall) -> Result<SelfDeniedResult> {
 /// A refusal reaches the guest as its stable code alone; the host or prompt
 /// layer words it.
 fn answered(
-    outcome: std::result::Result<serde_json::Value, AgentVerbRefusal>,
+    outcome: std::result::Result<AgentVerbAnswer, AgentVerbRefusal>,
 ) -> SelfDispatchOutcome {
     outcome.map_or_else(
         |refusal| {

@@ -311,7 +311,7 @@ impl oneiron::code_run::AgentVerbDoor for OracleNoVerbs {
         &self,
         _: &oneiron::code_run::SelfAgentVerbCall,
         _: &oneiron::memory::HostWriteOrigin,
-    ) -> Result<serde_json::Value, oneiron::code_run::AgentVerbRefusal> {
+    ) -> Result<oneiron::code_run::AgentVerbAnswer, oneiron::code_run::AgentVerbRefusal> {
         Err(oneiron::code_run::AgentVerbRefusal {
             code: oneiron::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
         })

@@ -188,7 +188,11 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
         .unwrap();
     let short_id = oneiron::retrieval_depth::short_ref_or_hex(&server.vault, &inside).unwrap();
     let pinned_ref = server.vault.pinned_short_ref(&inside).unwrap();
-    let scoped = crate::api::scoped_auth::scoped_read_for_host_root(&server).unwrap();
+    let scoped = crate::api::scoped_auth::scoped_read_for_host_root(
+        &server,
+        oneiron::claim::CallerLocality::OnDevice,
+    )
+    .unwrap();
     let unscoped = scoped.search_text("launch", 2, None).unwrap();
     // ONE-2702: a two-row pool z-normalizes relevance to +1 and -1, so the scores are e and 1/e.
     assert_eq!(

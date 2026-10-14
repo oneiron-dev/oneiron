@@ -85,25 +85,7 @@ impl LiveQueries {
             if !affected {
                 continue;
             }
-            if let Some(cursor) = sub
-                .ring
-                .back()
-                .map(|p| p.cursor.clone())
-                .or_else(|| sub.acked.clone())
-            {
-                sub.ring.clear();
-                sub.coalesced.clear();
-                sub.coalesced_bytes = 0;
-                sub.ring.push_back(Push {
-                    subscription_id: *id,
-                    cursor,
-                    kind: "gap",
-                    result: None,
-                });
-                sub.bytes = push_bytes(sub.ring.make_contiguous()).unwrap_or(4096);
-                let _ = sub.budget.resize(sub.metadata_bytes + sub.bytes.max(4096));
-            }
-            sub.needs_resync = true;
+            sub.resync(*id);
         }
     }
 
@@ -117,25 +99,7 @@ impl LiveQueries {
     fn require_resync(&self) {
         if let Ok(mut state) = self.state.lock() {
             for (id, sub) in &mut state.subs {
-                if let Some(cursor) = sub
-                    .ring
-                    .back()
-                    .map(|p| p.cursor.clone())
-                    .or_else(|| sub.acked.clone())
-                {
-                    sub.ring.clear();
-                    sub.coalesced.clear();
-                    sub.coalesced_bytes = 0;
-                    sub.ring.push_back(Push {
-                        subscription_id: *id,
-                        cursor,
-                        kind: "gap",
-                        result: None,
-                    });
-                    sub.bytes = push_bytes(sub.ring.make_contiguous()).unwrap_or(4096);
-                    let _ = sub.budget.resize(sub.metadata_bytes + sub.bytes.max(4096));
-                }
-                sub.needs_resync = true;
+                sub.resync(*id);
             }
         }
     }

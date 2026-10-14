@@ -15,7 +15,7 @@ fn reply_with_cache(
     params: Value,
     cache: &mut Option<ResidenceIndexCache>,
 ) -> Value {
-    let frames = run(
+    let answer = run(
         server,
         auth,
         RpcRequest {
@@ -26,7 +26,7 @@ fn reply_with_cache(
         cache,
     )
     .unwrap();
-    test_wire::reply(&frames)
+    test_wire::reply(&answer.queued(0))
 }
 
 #[tokio::test]

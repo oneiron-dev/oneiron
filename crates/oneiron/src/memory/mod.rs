@@ -44,6 +44,7 @@ mod export;
 mod expression_preference;
 pub mod extraction;
 mod key_value;
+mod locality;
 mod machine_write;
 mod notes;
 mod outbound;
@@ -91,6 +92,7 @@ pub use key_value::{
     KeyValueAddress, KeyValueDeleteReceipt, KeyValueItem, KeyValueNamespaces, KeyValuePut,
     KeyValuePutReceipt, KeyValueSearch,
 };
+pub use locality::ProducerRows;
 pub use oneiron_contracts::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,

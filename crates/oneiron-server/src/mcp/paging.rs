@@ -392,6 +392,10 @@ pub(crate) struct McpPageSnapshot {
     pub(crate) source: McpPageSource,
     pub(crate) health: McpRetrievalHealth,
     pub(crate) keyframe: Option<BoardStreamFrame>,
+    /// The rows the producer derived `output` and `keyframe` from, listed
+    /// when it produced them. A continuation is released off this device
+    /// only while every one of them may leave it (DEC-0005).
+    pub(crate) rows: Vec<oneiron::EntityId>,
 }
 
 /// The state returned after a valid cursor is consumed before any producer or

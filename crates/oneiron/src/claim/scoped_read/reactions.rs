@@ -10,9 +10,19 @@ impl ScopedRead<'_> {
     /// The current reactions on one conversation record this read may see,
     /// one grouped line per glyph (`👍×8 (Anna, Ben, +6)`), first put first.
     pub fn reaction_lines(&self, record: &EntityId) -> Result<Vec<String>> {
+        self.reaction_lines_counting(record, &mut Vec::new())
+    }
+
+    /// [`Self::reaction_lines`], adding to `counted` each reaction claim its
+    /// lines count.
+    pub(crate) fn reaction_lines_counting(
+        &self,
+        record: &EntityId,
+        counted: &mut Vec<EntityId>,
+    ) -> Result<Vec<String>> {
         let rtxn = self.grant_read_txn()?;
         let policy = self.live_policy_manifest_in(&rtxn)?;
-        self.reaction_lines_in(&rtxn, &policy, None, record)
+        self.reaction_lines_in(&rtxn, &policy, None, record, counted)
     }
 
     fn reaction_lines_in(
@@ -21,12 +31,15 @@ impl ScopedRead<'_> {
         policy: &PolicyManifestResolution,
         disclosure: Option<&DisclosureContext>,
         record: &EntityId,
+        counted: &mut Vec<EntityId>,
     ) -> Result<Vec<String>> {
         crate::reaction::grouped_lines_in(self.vault, rtxn, *record, |row| {
-            Ok(
-                self.is_entity_readable_with_policy_in(rtxn, policy, &row.id)?
-                    && self.disclosed_in(rtxn, disclosure, &row.id)?,
-            )
+            let admitted = self.is_entity_readable_with_policy_in(rtxn, policy, &row.id)?
+                && self.disclosed_in(rtxn, disclosure, &row.id)?;
+            if admitted {
+                counted.push(row.id);
+            }
+            Ok(admitted)
         })
     }
 
@@ -68,17 +81,19 @@ impl ScopedRead<'_> {
         pack: &mut ContextPack,
         disclosure: Option<&DisclosureContext>,
     ) -> Result<()> {
-        self.attach_reactions_quoting(pack, &HashMap::new(), disclosure)
+        self.attach_reactions_quoting(pack, &HashMap::new(), disclosure, &mut Vec::new())
     }
 
     /// [`Self::attach_reactions_under`] for a pack whose TURNs took the place
     /// of matched messages (`quoted`, per TURN): a TURN's lines are followed
-    /// by those of each message it quotes that this read may see.
+    /// by those of each message it quotes that this read may see. Each
+    /// reaction claim a line counts is added to `counted`.
     pub(crate) fn attach_reactions_quoting(
         &self,
         pack: &mut ContextPack,
         quoted: &HashMap<EntityId, Vec<EntityId>>,
         disclosure: Option<&DisclosureContext>,
+        counted: &mut Vec<EntityId>,
     ) -> Result<()> {
         let rtxn = self.grant_read_txn()?;
         let policy = self.live_policy_manifest_in(&rtxn)?;
@@ -86,12 +101,15 @@ impl ScopedRead<'_> {
             if !matches!(entity.entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
                 continue;
             }
-            let mut lines = self.reaction_lines_in(&rtxn, &policy, disclosure, &entity.id)?;
+            let mut lines =
+                self.reaction_lines_in(&rtxn, &policy, disclosure, &entity.id, counted)?;
             for message in quoted.get(&entity.id).into_iter().flatten() {
                 if self.is_entity_readable_with_policy_in(&rtxn, &policy, message)?
                     && self.disclosed_in(&rtxn, disclosure, message)?
                 {
-                    lines.extend(self.reaction_lines_in(&rtxn, &policy, disclosure, message)?);
+                    lines.extend(
+                        self.reaction_lines_in(&rtxn, &policy, disclosure, message, counted)?,
+                    );
                 }
             }
             if let (Some(fields), false) = (entity.fields.as_mut(), lines.is_empty()) {

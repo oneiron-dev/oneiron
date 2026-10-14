@@ -11,15 +11,18 @@ use std::sync::Arc;
 use axum::extract::FromRequestParts;
 use axum::http::header::AUTHORIZATION;
 use axum::http::{HeaderMap, request::Parts};
+use oneiron::claim::CallerLocality;
 
 use crate::config::SyncServerConfig;
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
 mod binding_admission;
+mod locality;
 mod machine_proof;
 mod slips;
 pub(crate) use binding_admission::admit_http_binding;
+pub(crate) use locality::{Locality, caller_locality};
 pub(crate) use slips::{BindingProof, parse_signature, parse_slip_id};
 
 const IMPLICIT_ALL_IDEMPOTENCY_SCOPES: &str = "__implicit_all_scopes__";
@@ -253,6 +256,10 @@ pub(crate) struct CoreAuth {
     verified_slip: Option<oneiron::authority::VerifiedSlip>,
     /// Exact authenticated instrument, independent of the verifier's remaining TTL.
     instrument: Option<[u8; 32]>,
+    /// Where the connection this caller reached the server on sits. Off this
+    /// device until the request's own connection says otherwise; see
+    /// [`caller_locality`].
+    locality: CallerLocality,
 }
 
 impl CoreAuth {
@@ -315,6 +322,7 @@ impl CoreAuth {
             org_ref: None,
             verified_slip: None,
             instrument: None,
+            locality: CallerLocality::OffDevice,
         })
     }
 
@@ -330,6 +338,7 @@ impl CoreAuth {
             org_ref: None,
             verified_slip: None,
             instrument: None,
+            locality: CallerLocality::OffDevice,
         }
     }
 
@@ -357,6 +366,18 @@ impl CoreAuth {
 
     pub(crate) fn verified_slip(&self) -> Option<&oneiron::authority::VerifiedSlip> {
         self.verified_slip.as_ref()
+    }
+
+    /// Where this caller's connection sits; every read it makes reads there.
+    pub(crate) fn locality(&self) -> CallerLocality {
+        self.locality
+    }
+
+    /// This caller, as the request's connection at `locality` places it.
+    #[must_use]
+    pub(crate) fn at(mut self, locality: CallerLocality) -> Self {
+        self.locality = locality;
+        self
     }
 
     pub(crate) fn principal(&self) -> &str {
@@ -412,10 +433,13 @@ impl CoreAuth {
         self.implicit_all_scopes && (self.verified_slip.is_some() || self.principal_ref.is_none())
     }
 
-    /// Reconnect matches the exact verified instrument and projected principal.
-    /// Holder proofs have fresh nonces; verification-time remaining TTL can change.
+    /// Reconnect matches the exact verified instrument and projected principal,
+    /// from the same side of this device: an off-device socket never resumes
+    /// a session an on-device one read. Holder proofs have fresh nonces;
+    /// verification-time remaining TTL can change.
     pub(crate) fn same_authority(&self, other: &Self) -> bool {
-        self.instrument.is_some()
+        self.locality == other.locality
+            && self.instrument.is_some()
             && self.instrument == other.instrument
             && self.principal == other.principal
             && self.principal_ref == other.principal_ref
@@ -466,7 +490,9 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
         parts: &mut Parts,
         server: &Arc<SyncServer>,
     ) -> Result<Self, Self::Rejection> {
-        Self::for_server(&parts.headers, server).map_err(Into::into)
+        Self::for_server(&parts.headers, server)
+            .map(|auth| auth.at(caller_locality(&parts.headers, &parts.extensions)))
+            .map_err(Into::into)
     }
 }
 
@@ -601,6 +627,7 @@ fn core_auth_for_live_claims(
         org_ref: claims.org_ref,
         verified_slip: None,
         instrument: None,
+        locality: CallerLocality::OffDevice,
     })
 }
 

@@ -1,5 +1,6 @@
 //! Board state, setup grammar, and page preflight.
 
+use super::device_release::{mcp_carrier_releases, mcp_release_result, mcp_snapshot_releases};
 use super::stream_reads::{mcp_live_task_lines, mcp_own_task_lines};
 use super::{
     McpCallContext, McpGatewayError, mcp_actor_result, mcp_credential_reads, mcp_engine_error,
@@ -87,19 +88,30 @@ pub(super) async fn mcp_endpoint_result(
             }
         }
     };
+    // A queued frame derived from a row a device-local world keeps now
+    // stays here.
+    let carrier = carrier.filter(|frame| mcp_carrier_releases(server, actor, frame, &[]));
     let carrier = carrier.and_then(|frame| mcp_live_task_lines(server, actor, frame));
     // Never turn lifecycle movement into a push. A narrowed connector never
     // reaches the rider and an empty queue remains empty.
-    let carrier = if actor.scope.is_narrow() || !actor.has_unrestricted_record_scope() {
-        carrier.and_then(mcp_own_task_lines)
+    let (carrier, rider_rows) = if actor.scope.is_narrow() || !actor.has_unrestricted_record_scope()
+    {
+        (carrier.and_then(mcp_own_task_lines), Vec::new())
     } else if carrier.is_some() {
         let original = carrier.clone();
-        super::board_observations::ride(server, actor, carrier, &capabilities)
-            .await
-            .unwrap_or(original)
+        match super::board_observations::ride(server, actor, carrier, &capabilities).await {
+            Ok(Some((frame, rows))) => (Some(frame), rows),
+            Ok(None) => (None, Vec::new()),
+            Err(_) => (original, Vec::new()),
+        }
     } else {
-        None
+        (None, Vec::new())
     };
+    #[cfg(test)]
+    super::device_release::release_hook::run(server);
+    // Judged again once the call has nothing left to wait on, for every
+    // result: the rows it was derived from may all still leave this device.
+    let carrier = carrier.filter(|frame| mcp_carrier_releases(server, actor, frame, &rider_rows));
     let mut result = json!({
         "content": mcp_negotiated_content(message.into(), &structured),
         "structuredContent": structured,
@@ -164,6 +176,9 @@ pub(super) struct McpBoardState {
     /// The monotonic snapshot epoch this exact state owns (ONE-1704 M5).
     pub(super) epoch: u64,
     pub(super) changes: oneiron::context_board::ChangedLine,
+    /// Every row the sections and the changed line were derived from: what a
+    /// retained page of this board is judged by again at release.
+    pub(super) rows: Vec<oneiron::EntityId>,
     /// TASKS rows the credential's REQUESTED SCOPE withheld inside its own
     /// world and facet (`mcp_scoped_tasks_section`).
     scope_omitted: usize,
@@ -202,7 +217,10 @@ pub(super) async fn mcp_current_board(
     actor: &McpCallContext,
 ) -> Result<McpBoardState, McpGatewayError> {
     let (observations, changes, board) = super::board_observations::state(server, actor).await?;
-    let (mut sections, omissions) = mcp_board_sections(server, actor)?;
+    let mut rows = Vec::new();
+    let (mut sections, omissions) = mcp_board_sections(server, actor, &mut rows)?;
+    rows.extend(crate::device_local::changed_line_rows(&changes));
+    rows.extend(crate::device_local::changed_line_rows(&board));
     sections.push(
         oneiron::context_board::SkillsSection::project(&[], &observations)
             .board_section()
@@ -228,6 +246,7 @@ pub(super) async fn mcp_current_board(
         scope_label,
         epoch,
         changes,
+        rows,
         scope_omitted: omissions.scope_omitted,
         window_truncated: omissions.window_truncated,
         source_exhausted: omissions.source_exhausted,
@@ -291,6 +310,7 @@ fn mcp_board_state_rows(sections: &[oneiron::context_board::BoardSection]) -> Ve
 fn mcp_board_sections(
     server: &Arc<SyncServer>,
     actor: &McpResolvedActor,
+    served: &mut Vec<oneiron::EntityId>,
 ) -> Result<(Vec<oneiron::context_board::BoardSection>, McpBoardOmissions), McpGatewayError> {
     let verbs = crate::mcp::generated_verb_tools().map_err(mcp_surface_construction_error)?;
     let verb_section = crate::mcp::mcp_verb_board_section(&verbs).map_err(mcp_board_frame_error)?;
@@ -300,9 +320,10 @@ fn mcp_board_sections(
         actor.actor_ref,
         actor.actor_class,
     )
+    .at(actor.locality())
     .describe_rows()
     .map_err(mcp_facade_error)?;
-    let (tasks, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows)?;
+    let (tasks, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows, served)?;
     // The engine's own footer states the render WINDOW's truncation and
     // whether its scan was exhausted. That is a different fact from the scope
     // filtering above, and the two are carried separately from here on.
@@ -344,7 +365,7 @@ fn mcp_board_sections(
         )
         .map_err(mcp_board_frame_error)?,
     );
-    sections.extend(mcp_pack_sections(server, actor)?);
+    sections.extend(mcp_pack_sections(server, actor, served)?);
     Ok((sections, omissions))
 }
 
@@ -384,6 +405,7 @@ pub(super) fn mcp_visible_pack_inventory(
 fn mcp_pack_sections(
     server: &Arc<SyncServer>,
     actor: &McpResolvedActor,
+    served: &mut Vec<oneiron::EntityId>,
 ) -> Result<Vec<oneiron::context_board::BoardSection>, McpGatewayError> {
     use oneiron::context_board::{
         PluginSectionRegistry, PluginSectionRow, PluginSectionSnapshot, SectionId,
@@ -430,6 +452,7 @@ fn mcp_pack_sections(
             {
                 continue;
             }
+            served.push(id);
             rows.push(PluginSectionRow {
                 row_id: id.to_hex(),
                 cells: vec![
@@ -572,10 +595,17 @@ pub(super) async fn mcp_preflight_page(
             cursor,
         )
         .map_err(mcp_page_cursor_error)?;
-    if state.snapshot.is_none() {
+    let Some(snapshot) = state.snapshot.as_ref() else {
         // Registry-only callers may mint an old position-only handle, but the
         // gateway cannot safely dispatch it: without the retained producer set
         // there is no exact continuation to return.
+        return Err(mcp_page_cursor_error(
+            crate::mcp::McpPageCursorError::SnapshotMismatch,
+        ));
+    };
+    // A retained page derived from a row a device-local world keeps now
+    // never leaves this device again: the caller starts over from page one.
+    if !mcp_snapshot_releases(server, actor, snapshot)? {
         return Err(mcp_page_cursor_error(
             crate::mcp::McpPageCursorError::SnapshotMismatch,
         ));
@@ -709,6 +739,7 @@ pub(crate) async fn execute_mcp_setup(
             source,
             health,
             keyframe: Some(keyframe.clone()),
+            rows: board.rows.clone(),
         };
         rider = Some((board.changes, board.epoch));
         (structured, keyframe, health, snapshot, Some(board.epoch))
@@ -755,12 +786,16 @@ pub(crate) async fn execute_mcp_setup(
     if let Some((rider, epoch)) = &rider {
         super::board_observations::delivered(server, actor, rider, true, *epoch).await;
     }
-    Ok(mcp_endpoint_result(
+    #[cfg(test)]
+    super::device_release::release_hook::run(server);
+    let continued = dispatch.continuation.is_some();
+    let result = mcp_endpoint_result(
         server,
         actor,
         "board keyframe, verb grammar, and instructions returned",
         structured,
         carrier_policy,
     )
-    .await)
+    .await;
+    mcp_release_result(server, actor, &snapshot.rows, continued, result)
 }

@@ -112,8 +112,12 @@ pub(super) fn validate_scope_identity(id: EntityId) -> Result<()> {
 pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
     let mut txn = store.env.write_txn()?;
     let scope_done = SCOPE_STAMP_SWEEP_DONE.contains(store, &txn, &())?;
+    // Version 3 of the sweep also settles every unstamped TASK in base reality.
+    let tasks_done = SCOPE_STAMP_SWEEP_DONE
+        .get(store, &txn, &())?
+        .is_some_and(|[version]| version >= 3);
     let policy_done = SCOPE_POLICY_SWEEP_DONE.contains(store, &txn, &())?;
-    if scope_done && policy_done {
+    if scope_done && tasks_done && policy_done {
         return Ok(());
     }
     let rows = crate::ports::EntityStoreRead::port_entity_raw_records(store, &txn)?
@@ -170,6 +174,14 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                 header.entity_type,
                 &bytes,
                 false,
+            )?;
+        }
+        if !tasks_done && header.entity_type == crate::registry::ENTITY_TYPE_TASK {
+            crate::federation::record_scope::backfill_task_base(
+                store,
+                &mut txn,
+                id,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
             )?;
         }
         // The policy migration has its own marker: vaults that already ran the
@@ -249,7 +261,7 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
             )?;
         }
     }
-    SCOPE_STAMP_SWEEP_DONE.put(store, &mut txn, &(), &[2])?;
+    SCOPE_STAMP_SWEEP_DONE.put(store, &mut txn, &(), &[3])?;
     SCOPE_POLICY_SWEEP_DONE.put(store, &mut txn, &(), &[1])?;
     txn.commit()?;
     Ok(())

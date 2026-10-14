@@ -60,6 +60,9 @@ pub(super) fn claim_status_gate_allows(
     metadata_cache: &mut EntityMetadataCache,
     gate: &mut ClaimStatusGateCache,
 ) -> Result<bool> {
+    if gate.keeps_device_local(store, rtxn, id)? {
+        return Ok(false);
+    }
     if crate::vault_cleanup::is_archived_in_txn(store, rtxn, id)? {
         metadata_cache.read_suppressed.insert(*id);
         return Ok(false);
@@ -578,6 +581,11 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     if let Some(deadline) = filters.deadline {
         deadline.checkpoint()?;
     }
+    if let Some(flagged) = filters.device_local
+        && crate::settings::device_local_keeps_among(store, rtxn, flagged, id)?
+    {
+        return Ok(false);
+    }
     if let Some(filter) = filters.candidate_filter
         && !filter(store, rtxn, id)?
     {
@@ -585,11 +593,7 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     }
     // Scoped text scans can visit the whole corpus. Do not memoize that corpus.
     let mut local_metadata = EntityMetadataCache::default();
-    let mut local_gate = ClaimStatusGateCache {
-        include_stale: filters.authority_filter.include_stale,
-        private_note_ids: claim_gate.private_note_ids.clone(),
-        ..ClaimStatusGateCache::default()
-    };
+    let mut local_gate = claim_gate.fresh(filters.authority_filter.include_stale);
     let (metadata_cache, claim_gate) = if filters.candidate_filter.is_some() {
         (&mut local_metadata, &mut local_gate)
     } else {

@@ -13,6 +13,10 @@ impl ScopedRead<'_> {
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
             return Ok(None);
         };
+        // A caller off this device learns no state of a device-local row.
+        if self.device_withholds_in(&txn, id, Some(&raw))? {
+            return Ok(None);
+        }
         if raw.len() == ENTITY_METADATA_HEADER_LEN
             || self.vault.archive_tombstone_in_txn(&txn, id)?.is_some()
         {
