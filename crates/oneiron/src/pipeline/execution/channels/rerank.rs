@@ -266,7 +266,7 @@ impl PipelineBuilder<'_> {
             if text.as_ref().is_some_and(|text| {
                 text.messages
                     .iter()
-                    .any(|(_, words)| write_door_refuses_body(words.as_bytes()))
+                    .any(|(_, words, _)| write_door_refuses_body(words.as_bytes()))
             }) {
                 return Ok(BoundWords {
                     unscored: true,

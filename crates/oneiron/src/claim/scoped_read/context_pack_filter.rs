@@ -317,9 +317,8 @@ impl ScopedRead<'_> {
             return Ok(true);
         };
         let revision = served.revision;
-        let messages = served.released(&store, rtxn, |message| {
-            self.is_entity_readable_with_policy_in(rtxn, policy, message)
-        })?;
+        let messages = served
+            .released(|message| self.is_entity_readable_with_policy_in(rtxn, policy, message))?;
         if let Some(text) = crate::embed::joined_turn_text(&messages) {
             fields.insert("txt".to_owned(), serde_json::Value::String(text));
             if entity.source_revision_ref.is_some() {

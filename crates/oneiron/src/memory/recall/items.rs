@@ -38,7 +38,7 @@ impl Memory<'_> {
                 // Every message the turn reads its text from, a hidden or
                 // empty one too, which may show text after its next change.
                 let mut members = Vec::new();
-                for (message, _) in
+                for (message, ..) in
                     crate::tagging::turn_members_in_txn(self.vault, &content, txn, id)?
                         .unwrap_or_default()
                 {
@@ -51,7 +51,7 @@ impl Memory<'_> {
                 )? {
                     Some(text) => {
                         let revision = text.revision;
-                        let messages = text.released(&content, txn, readable)?;
+                        let messages = text.released(readable)?;
                         Some((messages, Some(revision), members))
                     }
                     None => Some((Vec::new(), None, members)),

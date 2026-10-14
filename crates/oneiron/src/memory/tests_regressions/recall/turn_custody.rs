@@ -1,7 +1,8 @@
 // A TURN's words are its MESSAGEs' without the rest of their bodies: each
-// door that joins them withholds a message whose stored body the write door
-// refuses, as a lossy door withholds a refused body whole, and words the
-// write door's text rules refuse.
+// door that joins them withholds a message whose body the write door refuses
+// (the body its words are read from, its document's text in it), as a lossy
+// door withholds a refused body whole, and words the write door's text rules
+// refuse.
 
 const CUSTODY_PHRASE: &str =
     "legal winner thank year wave sausage worth useful legal winner thank yellow";
@@ -67,6 +68,144 @@ fn a_turn_gives_no_words_of_a_message_whose_body_holds_a_secret() {
     assert_eq!(refused_message_bodies(&vault, &turn), [true, false]);
     let item = recalled_turn(&facade, "porch", &MEANING);
     turn_doors_serve(&vault, &facade, &turn, &item, &MEANING, kept, "stove");
+}
+
+/// Astra on #1433 (P2), ruled FIX (Engine, 2026-10-14): a message whose text
+/// lives in its entity document is judged by the body its words are read
+/// from, that text in it, not by its pointer row. Its content's MessagePack
+/// length header reads `_p` before `assword=`, so the write door refuses the
+/// body while the words alone read clean. Bug repro: every door that joins
+/// the turn's words served them.
+#[cfg(feature = "sync")]
+#[test]
+fn a_turn_gives_no_words_of_a_document_message_whose_body_the_write_door_refuses() {
+    const MEANING: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
+    let (_dir, vault, owner) = scan_off_embedding_vault();
+    let facade = facade_for(&vault, owner);
+    let kept = "the garden gate creaks";
+    let turn = witness_turn(&facade, 0xDD, &[&length_spelled_assignment(), kept], 1_900);
+    fill_turn(&vault, &turn, &MEANING);
+    let message = move_first_message_into_its_document(&vault, owner, &turn);
+    assert_eq!(refused_message_bodies(&vault, &turn), [false, false]);
+    assert!(document_body_refused(&vault, &message));
+    let item = recalled_turn(&facade, "garden", &MEANING);
+    turn_doors_serve(&vault, &facade, &turn, &item, &MEANING, kept, "assword");
+}
+
+/// The state a pin read (Astra on #1433): a reference recalled while the
+/// message's document held that text, which a later edit made clean. The
+/// pinned doors read the words of the document state the reference was
+/// served with, and that state's body, its text in it, is refused.
+#[cfg(feature = "sync")]
+#[test]
+fn a_turn_pinned_before_its_document_was_made_clean_gives_none_of_its_words() {
+    use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb};
+    const MEANING: [f32; 4] = [1.0, 1.0, 0.0, 0.0];
+    let (_dir, vault, owner) = scan_off_embedding_vault();
+    let facade = facade_for(&vault, owner);
+    let kept = "the window rattles in the wind";
+    let turn = witness_turn(&facade, 0xDE, &[&length_spelled_assignment(), kept], 1_900);
+    fill_turn(&vault, &turn, &MEANING);
+    let message = move_first_message_into_its_document(&vault, owner, &turn);
+    let pinned = recalled_turn(&facade, "window", &MEANING);
+    let authenticated = vault
+        .authenticate_owner(
+            owner,
+            "principal:turn-custody-test",
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner");
+    let end = vault.entity_text(&message).expect("text").chars().count();
+    let whole = vault.entity_text_anchor(&message, 0, end).expect("anchor");
+    vault
+        .edit_entity_text(
+            &message,
+            &[AnchoredEdit {
+                actor: Some(crate::write_envelope::WriteActor::new(
+                    owner,
+                    EdgeActorClass::Human,
+                )),
+                verb: EditVerb::ReplaceQuotedSpan {
+                    span: whole,
+                    text: "the stove ticks softly".into(),
+                },
+            }],
+            &DocAuthorization::Owner(&authenticated),
+            2_000,
+        )
+        .expect("edit the message");
+    assert!(!document_body_refused(&vault, &message));
+    turn_doors_serve(&vault, &facade, &turn, &pinned, &MEANING, kept, "assword");
+}
+
+/// The control: a message whose text lives in its document, and whose body,
+/// that text in it, the write door accepts, still gives its words.
+#[cfg(feature = "sync")]
+#[test]
+fn a_turn_gives_the_words_of_a_document_message_the_write_door_accepts() {
+    const MEANING: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
+    let (_dir, vault, owner) = scan_off_embedding_vault();
+    let facade = facade_for(&vault, owner);
+    let kept = "the bread rises by morning";
+    let turn = witness_turn(&facade, 0xDF, &[kept, "the oven clicks off"], 1_900);
+    fill_turn(&vault, &turn, &MEANING);
+    let message = move_first_message_into_its_document(&vault, owner, &turn);
+    assert!(!document_body_refused(&vault, &message));
+    let item = recalled_turn(&facade, "bread", &MEANING);
+    turn_doors_serve(&vault, &facade, &turn, &item, &MEANING, kept, "assword");
+}
+
+/// Message text whose MessagePack length header spells `_p` before
+/// `assword=` (Astra on #1433): a str 16 of 0x5f70 bytes, `da 5f 70`. A body
+/// holding it reads as a `_password` assignment, which the write door
+/// refuses; the text alone reads as none.
+#[cfg(feature = "sync")]
+fn length_spelled_assignment() -> String {
+    let mut text = "assword=t7Rk2pLq9WzX\n".to_owned();
+    text.extend(std::iter::repeat_n('z', 0x5f70 - text.len()));
+    text
+}
+
+/// Moves the text of `turn`'s first message into its entity document, as
+/// the owner may, and returns the message.
+#[cfg(feature = "sync")]
+fn move_first_message_into_its_document(
+    vault: &crate::Vault,
+    owner: EntityId,
+    turn: &EntityId,
+) -> EntityId {
+    let message = first_message(vault, turn);
+    let authenticated = vault
+        .authenticate_owner(
+            owner,
+            "principal:turn-custody-test",
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner");
+    vault
+        .migrate_entity_text(
+            &message,
+            &crate::entity_doc::TextField::MapField("content".into()),
+            crate::write_envelope::WriteActor::new(owner, EdgeActorClass::Human),
+            &crate::entity_doc::DocAuthorization::Owner(&authenticated),
+        )
+        .expect("move the message's text into its document");
+    message
+}
+
+/// Whether the write door refuses `message`'s body with its document's text
+/// in it, as the turn's words are read from it.
+#[cfg(feature = "sync")]
+fn document_body_refused(vault: &crate::Vault, message: &EntityId) -> bool {
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let body = vault
+        .live_entity_in_txn(&vault.store, &rtxn, message)
+        .expect("live read")
+        .expect("a live message")
+        .body;
+    crate::batch::export::write_door_refuses_body(&body)
 }
 
 /// Rewrites the stored body of `turn`'s first message with `edit`, as a

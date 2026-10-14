@@ -158,8 +158,9 @@ pub(crate) fn turn_messages_in_txn(
 }
 
 /// A live MESSAGE child of a turn, with the text it shows there
-/// ([`shown_message_text`]): `None` for a hidden or empty one.
-pub(crate) type TurnMember = (EntityId, Option<String>);
+/// ([`shown_message_text`]): `None` for a hidden or empty one; and the body
+/// that text is read from, its entity document's text in it.
+pub(crate) type TurnMember = (EntityId, Option<String>, Vec<u8>);
 
 /// Every live MESSAGE child of a live TURN, in message order. `None` for a
 /// turn [`turn_messages_in_txn`] reads as gone.
@@ -175,17 +176,19 @@ pub(crate) fn turn_members_in_txn(
     Ok(members_in_txn(vault, store, txn, turn)?.map(|members| {
         members
             .into_iter()
-            .map(|member| (member.id, member.text))
+            .map(|member| (member.id, member.text, member.body))
             .collect()
     }))
 }
 
-/// A live MESSAGE child of a turn: its text as [`TurnMember`] has it, and
-/// its stored author's bytes (empty when it names none as a string).
+/// A live MESSAGE child of a turn: its text as [`TurnMember`] has it, its
+/// stored author's bytes (empty when it names none as a string), and the
+/// body both are read from.
 struct Member {
     id: EntityId,
     text: Option<String>,
     author: Vec<u8>,
+    body: Vec<u8>,
 }
 
 impl Member {
@@ -239,7 +242,7 @@ fn members_in_txn(
             Some(rmpv::Value::String(author)) => author.as_bytes().to_vec(),
             _ => Vec::new(),
         };
-        rows.push((message.order, id, message.shown(), author));
+        rows.push((message.order, id, message.shown(), author, body));
     }
     rows.sort_by(|left, right| {
         left.0
@@ -248,7 +251,12 @@ fn members_in_txn(
     });
     Ok(Some(
         rows.into_iter()
-            .map(|(_, id, text, author)| Member { id, text, author })
+            .map(|(_, id, text, author, body)| Member {
+                id,
+                text,
+                author,
+                body,
+            })
             .collect(),
     ))
 }
