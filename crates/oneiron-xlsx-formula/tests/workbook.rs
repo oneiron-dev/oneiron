@@ -796,12 +796,18 @@ fn a_long_local_formula_with_structured_references_stays_editable_beside_a_link(
     let long = sum("Prices[Price]", 130);
     let longer = sum("Prices[Price]", 131);
     let quoted = format!("{long}+LEN(\"[linked.xlsx]S!A1\")");
+    // Excel brackets a column header holding `!` twice: `Prices[[Cost!USD]]`.
+    let header = sum("Prices[[Cost!USD]]", 130);
     let xml = limits().xml;
-    for formula in [&long, &quoted] {
+    for formula in [&long, &quoted, &header] {
         assert!(route_workbook([], [], [formula.as_str()], xml).is_in_process());
     }
     // Over the bound, a workbook qualifier in any reference still routes out.
-    for link in ["'[linked.xlsx]S'!A1", "[1]S!A1:B2", "[1]!Rate"] {
+    for link in [
+        "'[linked.xlsx]S'!A1",
+        "[1]S!A1:B2",
+        "SUM('C:\\dir\\[linked.xlsx]S'!B9)",
+    ] {
         let formula = format!("{long}+{link}");
         assert!(!route_workbook([], [], [formula.as_str()], xml).is_in_process());
     }

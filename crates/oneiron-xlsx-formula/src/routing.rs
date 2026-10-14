@@ -11,14 +11,14 @@
 //!   `TargetMode` is `External`;
 //! - any formula whose parsed AST contains `ReferenceType::External` (a
 //!   `[book]Sheet!A1` reference, quoted or bracket-pathed), or, over the
-//!   parser's token bound, any token that may hold one;
+//!   parser's token bound, any range operand whose own reference is one;
 //! - anything else is local.
 //!
 //! The router only reads; it never rewrites parts and never discards unknown
 //! XML. Detection failures fail closed toward the fallback.
 
 use formualizer_parse::parser::{ASTNodeType, ReferenceType};
-use formualizer_parse::{TokenStream, TokenSubType};
+use formualizer_parse::{TokenStream, TokenSubType, TokenType};
 
 use oneiron_docedit::retained_opc::{Limits, Package, XmlLimits};
 
@@ -130,7 +130,7 @@ fn rels_has_external_target(xml: &[u8], limits: XmlLimits) -> bool {
 /// local unparsed, however long. Any other formula goes through the crate's
 /// bounded parser (byte and token limits, the mandatory leading `=`) and its
 /// AST is walked without recursion, so no chain of operators builds a deep
-/// AST here. One over the token bound is classified from its tokens
+/// AST here. One over the token bound is classified operand by operand
 /// ([`may_name_a_workbook`]); any other parse failure is `Err` and fails
 /// closed.
 fn has_external_reference(formula: &str) -> std::result::Result<bool, ()> {
@@ -171,13 +171,13 @@ fn has_external_reference(formula: &str) -> std::result::Result<bool, ()> {
     Ok(false)
 }
 
-/// Whether a formula too long to parse may name another workbook, from its
-/// tokens alone, so a long local formula (`SUM(Prices[Price],...)` with a
-/// hundred arguments) is not frozen as a link. The parser builds an external
-/// reference only from a sheet qualifier holding a `[book]` token, and a
-/// qualifier is text before a `!` within one token. So any token but a text
-/// literal with a `[` before its last `!` counts, a superset of what the
-/// parser builds. A tokenizer error fails closed.
+/// Whether a formula too long to parse may name another workbook, read one
+/// range operand at a time, so a long local formula (`SUM(Prices[Price],...)`
+/// with a hundred arguments) is not frozen as a link. The parser builds every
+/// reference from one range operand's text alone
+/// (`ReferenceType::from_string`), so each operand holding a `[` goes through
+/// that reader, and no formula AST is built. An operand the reader refuses,
+/// or a tokenizer error, fails closed.
 fn may_name_a_workbook(formula: &str) -> std::result::Result<bool, ()> {
     let expression = if formula.starts_with('=') {
         std::borrow::Cow::Borrowed(formula)
@@ -185,13 +185,21 @@ fn may_name_a_workbook(formula: &str) -> std::result::Result<bool, ()> {
         std::borrow::Cow::Owned(format!("={formula}"))
     };
     let tokens = TokenStream::new(&expression).map_err(|_| ())?;
-    Ok((0..tokens.len()).any(|index| {
-        tokens.get(index).is_none_or(|token| {
-            token.span.subtype != TokenSubType::Text
-                && token
-                    .value
-                    .rfind('!')
-                    .is_some_and(|bang| token.value[..bang].contains('['))
-        })
-    }))
+    for index in 0..tokens.len() {
+        let token = tokens.get(index).ok_or(())?;
+        if token.span.token_type != TokenType::Operand
+            || token.span.subtype != TokenSubType::Range
+            || !token.value.contains('[')
+        {
+            continue;
+        }
+        let external = match ReferenceType::from_string(token.value) {
+            Ok(reference) => matches!(reference, ReferenceType::External(_)),
+            Err(_) => true,
+        };
+        if external {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
