@@ -82,7 +82,7 @@ pub(super) fn fold_as_install(
                     || machine.admitter_unsettled
                     || no_vouch
                         .as_ref()
-                        .is_some_and(|no_vouch| no_vouch.uncounts(**id, machine))
+                        .is_some_and(|no_vouch| no_vouch.uncounts(&fold, **id, machine))
             })
             .map(|(id, _)| *id)
             .collect();
@@ -136,12 +136,14 @@ pub(super) fn fold_authority_log_with_machine_standing(
 /// floor would refuse, the vouch changes nothing, and nothing is bounded.
 struct NoVouch {
     fold: AuthorityFold,
-    /// The rows a candidate handoff precedes.
+    /// The candidate handoffs, and the rows they precede.
+    handoffs: BTreeSet<AuthorityEntryHash>,
     after: BTreeSet<AuthorityEntryHash>,
     /// The machine revisions and world edits that land restriction only
     /// here: each one that fold holds back or only the vouch admits, unless
     /// a candidate handoff precedes it. A fresh row after a handoff is judged
-    /// here alone, on its own floors.
+    /// here alone, on its own floors; while a candidate stays in conflict no
+    /// machine counts here at all.
     held: BTreeSet<AuthorityEntryHash>,
     /// The first still-future second at which that fold changes.
     deadline: Option<u64>,
@@ -224,17 +226,29 @@ impl NoVouch {
         });
         Some(Self {
             fold,
+            handoffs: handoffs.clone(),
             after,
             held,
             deadline,
         })
     }
 
+    /// Whether `row` comes after a handoff that settled in `fold`. While a
+    /// candidate stays in conflict no root settles, and nothing is fresh (the
+    /// Engine's pin on the exemption).
+    fn fresh(&self, fold: &AuthorityFold, row: &AuthorityEntryHash) -> bool {
+        self.after.contains(row)
+            && self
+                .handoffs
+                .iter()
+                .all(|handoff| fold.valid_entries.contains(handoff))
+    }
+
     /// This install counts a machine only when the fold with no vouch counts
-    /// it live under the same revision, or a revision after a candidate
+    /// it live under the same revision, or a revision after a settled
     /// handoff heads it (Wonder P2 round 12, W2).
-    fn uncounts(&self, id: crate::EntityId, machine: &FoldedMachine) -> bool {
-        !self.after.contains(&machine.entry)
+    fn uncounts(&self, fold: &AuthorityFold, id: crate::EntityId, machine: &FoldedMachine) -> bool {
+        !self.fresh(fold, &machine.entry)
             && self
                 .fold
                 .machines
@@ -244,11 +258,19 @@ impl NoVouch {
 
     /// Holds every machine this install does not count, and reads each world
     /// as the meet of both folds' settings, a world no edit reaches here
-    /// included, unless only edits after a candidate handoff stand in it.
+    /// included, unless only edits after a settled handoff stand in it.
     fn cap(&self, fold: &mut AuthorityFold) {
         fold.install.no_vouch_deadline = self.deadline;
-        for (id, machine) in &mut fold.machines {
-            machine.floor_held |= self.uncounts(*id, machine);
+        let uncounted: BTreeSet<_> = fold
+            .machines
+            .iter()
+            .filter(|(id, machine)| self.uncounts(fold, **id, machine))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &uncounted {
+            if let Some(machine) = fold.machines.get_mut(id) {
+                machine.floor_held = true;
+            }
         }
         let worlds: BTreeSet<_> = fold
             .worlds
@@ -256,18 +278,25 @@ impl NoVouch {
             .chain(self.fold.worlds.keys())
             .copied()
             .collect();
-        for world in worlds {
-            let folded = fold.worlds.entry(world).or_insert_with(|| FoldedWorld {
+        let fresh: BTreeSet<_> = worlds
+            .iter()
+            .filter(|world| {
+                fold.worlds.get(*world).is_some_and(|folded| {
+                    !folded.live.is_empty() && folded.live.keys().all(|edit| self.fresh(fold, edit))
+                })
+            })
+            .copied()
+            .collect();
+        for world in worlds.difference(&fresh) {
+            let folded = fold.worlds.entry(*world).or_insert_with(|| FoldedWorld {
                 live: BTreeMap::new(),
                 effective: EffectiveWorldPrivacy::default(),
                 roster_read: EffectiveWorldPrivacy::default().read,
             });
-            if folded.live.is_empty() || !folded.live.keys().all(|edit| self.after.contains(edit)) {
-                folded.effective = super::world_privacy::meet_effective(
-                    &folded.effective,
-                    &self.fold.world_privacy(world),
-                );
-            }
+            folded.effective = super::world_privacy::meet_effective(
+                &folded.effective,
+                &self.fold.world_privacy(*world),
+            );
         }
     }
 }

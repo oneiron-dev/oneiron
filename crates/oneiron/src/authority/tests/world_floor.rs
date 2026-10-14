@@ -751,7 +751,9 @@ impl Start {
 
     /// The same start once the host's history holds `rows`.
     fn landed(mut self, rows: &[AuthorityLogEntry]) -> Self {
-        land(&self.host, rows);
+        if !rows.is_empty() {
+            land(&self.host, rows);
+        }
         self.fold = self.host.vault.authority_fold().unwrap();
         self.seq = self.fold.append_sequences[&self.host.issuer.public_key()];
         self
@@ -871,7 +873,8 @@ impl Start {
             held: Some(self.laptop.0),
             _dir: dir,
             replica,
-            re_root,
+            vouch: re_root.into_iter().collect(),
+            contested: false,
             host: self.host,
         }
     }
@@ -893,7 +896,11 @@ struct MarkPastFloor {
     held: Option<EntityId>,
     _dir: tempfile::TempDir,
     replica: Vault,
-    re_root: Option<AuthorityLogEntry>,
+    /// The rows that bring the vouch, stored in one write; none is the
+    /// host's own re-root.
+    vouch: Vec<AuthorityLogEntry>,
+    /// The vouch leaves its handoffs in conflict, so none of them stands.
+    contested: bool,
 }
 
 impl MarkPastFloor {
@@ -908,20 +915,38 @@ impl MarkPastFloor {
         }
     }
 
-    /// Stores the handoff in a write of its own. A hand-signed re-root must
-    /// stand, as a handoff that vouches for its line.
+    /// The same replica, whose vouch also brings `rows` in its write and
+    /// leaves its handoffs in conflict.
+    fn contested(mut self, rows: Vec<AuthorityLogEntry>) -> Self {
+        self.vouch.extend(rows);
+        self.contested = true;
+        self
+    }
+
+    /// Stores the vouch in a write of its own. A hand-signed re-root must
+    /// stand, as a handoff that vouches for its line, unless it is contested.
     fn hand_off(&self) {
-        let Some(re_root) = &self.re_root else {
-            let next = HostSlipIssuer::from_secret(b"world floor successor root").unwrap();
-            self.replica.re_root_host(&self.host.issuer, &next).unwrap();
-            return;
-        };
-        self.replica
-            .put_authority_log_entry(re_root, TimeRange { start: 3, end: 3 }, 3)
-            .unwrap();
+        let at = TimeRange { start: 3, end: 3 };
+        match self.vouch.as_slice() {
+            [] => {
+                let next = HostSlipIssuer::from_secret(b"world floor successor root").unwrap();
+                self.replica.re_root_host(&self.host.issuer, &next).unwrap();
+                return;
+            }
+            [row] => {
+                self.replica.put_authority_log_entry(row, at, 3).unwrap();
+            }
+            rows => {
+                let rows: Vec<_> = rows.iter().map(|row| (row.clone(), at, 3)).collect();
+                self.replica.put_authority_log_entries(&rows).unwrap();
+            }
+        }
         let fold = self.replica.authority_fold().unwrap();
-        if matches!(re_root.op, AuthorityOp::ReRoot { .. }) {
-            assert!(fold.valid_entries.contains(&hash(re_root)), "{}", self.name);
+        for row in &self.vouch {
+            if matches!(row.op, AuthorityOp::ReRoot { .. }) {
+                let stands = fold.valid_entries.contains(&hash(row));
+                assert_eq!(stands, !self.contested, "{}", self.name);
+            }
         }
     }
 
@@ -1076,8 +1101,15 @@ fn retired_permission() -> MarkPastFloor {
 /// own floor): the desk holds the world on itself alone, and an owner row
 /// only a re-root's vouch admits demotes it. Another machine of the owner's
 /// re-picks the world as an orphan over that demotion. With no vouch that
-/// edit is valid without effect, so it grants nothing here.
-fn refused_repick(seed: u8, demoted_at: u64, re_root_at: u64) -> MarkPastFloor {
+/// edit is valid without effect, so it grants nothing here. Over a false
+/// handoff (the Engine's pin): the re-pick stands on a re-root the laptop's
+/// key signs, which is no candidate, so nothing after it counts as fresh.
+fn refused_repick(
+    seed: u8,
+    demoted_at: u64,
+    re_root_at: u64,
+    over_a_false_handoff: bool,
+) -> MarkPastFloor {
     let start = Start::new(seed);
     let other = other_machine(
         &start.host,
@@ -1107,26 +1139,48 @@ fn refused_repick(seed: u8, demoted_at: u64, re_root_at: u64) -> MarkPastFloor {
             BTreeSet::new(),
         ),
     );
-    let repick = edit_on(
+    let mut over = hash(&demotion);
+    let mut rows = vec![later.clone(), refused, demotion];
+    if over_a_false_handoff {
+        let key = &start.laptop.1;
+        let next = HostSlipIssuer::from_secret(&[seed; 9]).unwrap();
+        let false_handoff = sign_ed(
+            unsigned_entry(
+                Some(start.host.vault_id),
+                1,
+                vec![over],
+                AuthorityOp::ReRoot {
+                    new_device: next.root_device(),
+                },
+                authority_key_from_ed(key),
+                2,
+            ),
+            key,
+        );
+        over = hash(&false_handoff);
+        rows.push(false_handoff);
+    }
+    rows.push(edit_on(
         &start.host,
         (other.0, &other.1),
         start.world,
         1,
-        vec![hash(&demotion), hash(&holding)],
+        vec![over, hash(&holding)],
         ReadLocation::Everywhere,
-    );
+    ));
     let re_root = start.re_root(
         start.seq + re_root_at,
-        vec![hash(&demotion), hash(&later)],
+        vec![hash(&rows[2]), hash(&later)],
         &[seed; 8],
     );
     let world = start.world;
+    let name = if over_a_false_handoff {
+        "re-pick over a false handoff"
+    } else {
+        "refused re-pick"
+    };
     start
-        .replica(
-            "refused re-pick",
-            &[&later, &refused, &demotion, &repick],
-            Some(re_root),
-        )
+        .replica(name, &rows.iter().collect::<Vec<_>>(), Some(re_root))
         .expecting(world, EffectiveRead::OneMachine(desk), None)
 }
 
@@ -1252,17 +1306,82 @@ fn voided_narrowing() -> MarkPastFloor {
         .expecting(fresh, EffectiveRead::MyMachines, None)
 }
 
+/// The Engine's pin on the exemption (#1430): a handoff left in conflict
+/// settles no root, so nothing after it is fresh. The desk narrows a fresh
+/// world to itself over its own demotion, which only a re-root's vouch
+/// admits. Two re-roots of the one root over that demotion arrive together
+/// with another machine's widening after the first of them.
+fn contested_handoff() -> MarkPastFloor {
+    let start = Start::new(138);
+    let other = other_machine(
+        &start.host,
+        140,
+        MachineRole::Owned(MachineOwnership::Yours),
+    );
+    let start = start.landed(&[]);
+    let fresh = world_row(&start.host);
+    let desk = start.desk.0;
+    let later = start.revoke(start.seq + 4, start.heads(), 38);
+    let refused = start.revoke(start.seq, start.below_heads(), 39);
+    let mut parents = start.heads();
+    parents.push(hash(&refused));
+    let demotion = start.owner_row(
+        start.seq + 5,
+        parents,
+        start.answer(
+            desk,
+            MachineRole::Owned(MachineOwnership::WorkSchool),
+            1,
+            BTreeSet::new(),
+        ),
+    );
+    let narrowing = edit_on(
+        &start.host,
+        (desk, &start.desk.1),
+        fresh,
+        2,
+        vec![hash(&demotion)],
+        ReadLocation::OneMachine(desk),
+    );
+    let line = vec![hash(&demotion), hash(&later)];
+    let first = start.re_root(
+        start.seq + 6,
+        line.clone(),
+        b"world floor first contested root",
+    );
+    let second = start.re_root(start.seq + 7, line, b"world floor second contested root");
+    let widening = edit_on(
+        &start.host,
+        (other.0, &other.1),
+        fresh,
+        1,
+        vec![hash(&first)],
+        ReadLocation::Everywhere,
+    );
+    start
+        .replica(
+            "contested handoff",
+            &[&later, &refused, &demotion, &narrowing],
+            Some(first),
+        )
+        .contested(vec![second, widening])
+        .expecting(fresh, EffectiveRead::OneMachine(desk), None)
+}
+
 /// Every graph a review of #1430's vouch found (Wonder P2 rounds 9-12, Sol P2
-/// rounds 17-18), and the narrowing a vouched demotion voids: in each, a
-/// vouch rescues a row its floor refuses.
+/// rounds 17-18), the narrowing a vouched demotion voids, and re-picks over a
+/// false and a contested handoff: in each, a vouch rescues a row its floor
+/// refuses.
 fn vouched_graphs() -> Vec<MarkPastFloor> {
     vec![
         vouch_over_a_refused_row(),
         two_step_repair(),
         rescued_successor(),
         retired_permission(),
-        refused_repick(118, 5, 6),
-        refused_repick(122, 1, 5),
+        refused_repick(118, 5, 6, false),
+        refused_repick(122, 1, 5, false),
+        refused_repick(134, 5, 6, true),
+        contested_handoff(),
         removal_vouch(),
         fenced_held_head(),
         voided_narrowing(),
@@ -1298,8 +1417,18 @@ fn a_permission_only_the_vouch_gives_repairs_no_floor() {
 
 #[test]
 fn an_edit_valid_without_effect_gains_none_through_the_vouch() {
-    refused_repick(118, 5, 6).assert_held_through_the_handoff();
-    refused_repick(122, 1, 5).assert_held_through_the_handoff();
+    refused_repick(118, 5, 6, false).assert_held_through_the_handoff();
+    refused_repick(122, 1, 5, false).assert_held_through_the_handoff();
+}
+
+#[test]
+fn only_a_standing_handoff_makes_what_follows_it_fresh() {
+    refused_repick(134, 5, 6, true).assert_held_through_the_handoff();
+}
+
+#[test]
+fn a_contested_handoff_makes_nothing_after_it_fresh() {
+    contested_handoff().assert_held_through_the_handoff();
 }
 
 #[test]
@@ -1397,9 +1526,11 @@ pub(super) fn vouch_widenings(vault: &Vault) -> (bool, Vec<String>) {
         .copied()
         .collect();
     for world in &worlds {
-        if vouched.worlds.get(world).is_some_and(|folded| {
-            !folded.live.is_empty() && folded.live.keys().all(|edit| after_handoff(edit))
-        }) {
+        if vouched
+            .worlds
+            .get(world)
+            .is_some_and(|folded| !folded.live.is_empty() && folded.live.keys().all(&after_handoff))
+        {
             continue;
         }
         for destination in &destinations {
