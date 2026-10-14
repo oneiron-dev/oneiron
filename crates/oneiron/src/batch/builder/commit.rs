@@ -63,6 +63,18 @@ impl BatchBuilder<'_> {
         self.commit_inner(Some(checker), |_| Ok(()), after_apply)
     }
 
+    /// [`Self::commit_with_checker_and_then`], with `before_apply` reading the
+    /// writer snapshot first, in the same transaction, before policy
+    /// preflight. It mutates nothing.
+    pub(crate) fn commit_with_checker_guard_and_then(
+        self,
+        checker: &BoundedAutoChecker,
+        before_apply: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+        after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
+        self.commit_inner(Some(checker), before_apply, after_apply)
+    }
+
     fn commit_inner(
         mut self,
         checker: Option<&BoundedAutoChecker>,

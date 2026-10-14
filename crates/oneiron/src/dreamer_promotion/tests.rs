@@ -380,6 +380,32 @@ fn an_auto_write_burst_stays_auto_and_leaves_a_typed_check() -> Result<()> {
     Ok(())
 }
 
+// F26 H327, rule D: the public unscoped door replays a claim that already
+// stands Auto exactly as it was; the replay lands nothing new, so the
+// Dreamer's window counts that claim once.
+#[test]
+fn an_exact_promotion_replay_counts_its_auto_write_once() -> Result<()> {
+    let (_dir, vault) = open_auto_vault();
+    let fixture = fixture(&vault)?;
+    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let claim_id = promoted.claim_id;
+    let _ = crate::own_rate::take_counted_auto_writes();
+    for pass in ["first pass", "exact replay"] {
+        let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted.clone()])?;
+        assert_eq!(
+            outcome.landed,
+            vec![claim_id],
+            "{pass}: the claim stands Auto"
+        );
+    }
+    assert_eq!(
+        crate::own_rate::take_counted_auto_writes(),
+        vec![crate::own_rate::AutoWriteDoor::Promotion],
+        "FAILBEFORE H327: the exact replay counted the claim's Auto write again"
+    );
+    Ok(())
+}
+
 #[test]
 fn promotion_rejects_rather_than_pends_without_an_auto_permit() -> Result<()> {
     // No policy manifest at all: the gate cannot grant Auto. ONE-1710 turns

@@ -384,6 +384,15 @@ fn promote_one(
     // GATE-007 (Generated over UserStated) is rechecked on closure.
     // Read on the calling thread: a grouped commit may run the closure elsewhere.
     let auto_write_rate = crate::own_rate::auto_write_rate();
+    // The claim's bytes before this write, read in its own transaction: an
+    // exact replay of a claim that already stands Auto lands nothing new, so
+    // it counts nothing.
+    let prior = std::cell::RefCell::new(None);
+    let read_prior = |txn: &heed::RoTxn<'_>| -> crate::Result<()> {
+        *prior.borrow_mut() =
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &candidate.claim_id)?;
+        Ok(())
+    };
     let finish_promotion = |wtxn: &mut heed::RwTxn<'_>| {
         if let Some(fence) = fence {
             fence.validate_in_txn(vault, wtxn)?;
@@ -427,7 +436,19 @@ fn promote_one(
         }
         // An Auto write counts on the agent's own-rate window. Its first
         // crossing leaves a typed check; the write itself stays Auto.
-        if landed.approval == ClaimApprovalStatus::Auto {
+        let replayed = match prior.borrow().as_deref() {
+            Some(before) => {
+                crate::ports::EntityStoreRead::port_entity_raw(
+                    &vault.store,
+                    wtxn,
+                    &candidate.claim_id,
+                )?
+                .as_deref()
+                    == Some(before)
+            }
+            None => false,
+        };
+        if landed.approval == ClaimApprovalStatus::Auto && !replayed {
             crate::own_rate::count_in_txn(
                 &vault.store,
                 wtxn,
@@ -458,10 +479,11 @@ fn promote_one(
                 candidate.occurred,
                 candidate.learned_at,
             )
-            .commit_with_checker_and_then(checker, finish_promotion)
+            .commit_with_checker_guard_and_then(checker, read_prior, finish_promotion)
     } else {
         // Preserve the original single-pass transaction for every None caller.
         vault.with_write_txn_grouped(|wtxn| {
+            read_prior(wtxn)?;
             vault
                 .batch_in()
                 .claim_candidate(

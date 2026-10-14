@@ -886,121 +886,161 @@ enum CeilingPath {
     AgedResend,
 }
 
-/// F26 H359, the ceiling's invariant: a cap only adds a hold to a send
-/// governance would let out. Every path that meets the ceiling, under live
-/// governance that allows it or denies it (a suspended connector key), with
-/// today's cap of one full or not: a denial is the gate-denied suppression it
-/// is everywhere, never a retryable hold; a full cap holds an allowed send,
-/// and a held retry stays the Pending row it was; room lets it out. Nothing
-/// held or denied reaches the provider.
-#[test]
-fn a_ceiling_only_holds_a_send_governance_lets_out()
--> std::result::Result<(), Box<dyn std::error::Error>> {
+/// What live governance says to the connect.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Governance {
+    Allows,
+    /// The owner suspended the seat's connector key.
+    SuspendedKey,
+    /// The key's charter puts the verb on its never-list.
+    NeverList,
+}
+
+/// What one connect came to.
+#[derive(Debug, PartialEq, Eq)]
+struct CeilingAttempt {
+    outcome: OutboundDispatchOutcome,
+    suppression: Option<String>,
+    intent_state: Option<String>,
+    sent: bool,
+}
+
+/// One connect to Jane on `path` under `governance`, with today's cap of one
+/// already spent by a connect to John when `full`.
+fn connect_at_ceiling(
+    path: CeilingPath,
+    governance: Governance,
+    full: bool,
+) -> std::result::Result<CeilingAttempt, Box<dyn std::error::Error>> {
     let jane = "linkedin:member:jane-doe";
     let john = "linkedin:member:john-roe";
     let today = 1_060 + 86_401;
+    let (_tmp, vault, actor) = connect_fixture()?;
+    let key_id = entity(0xC5);
+    vault.register_connector_key(
+        &key_id,
+        crate::connector_key::ConnectorKeyRecord::active(LINKEDIN_CHANNEL, None, Vec::new(), 1_000),
+    )?;
+    if let CeilingPath::AgedResend = path {
+        let mut failing = LinkedInMcpVerifiedConnectSink::new(
+            linkedin_adapter()?,
+            ConnectTransport {
+                calls: Vec::new(),
+                reads: Vec::new(),
+                observations: [Err("profile_read_down".to_owned())].into(),
+                send_result: Ok(serde_json::json!({"success": true})),
+            },
+        )
+        .with_plan(
+            "intent:cl:jane",
+            LinkedInVerifiedConnectPlan::new(jane, None)?.with_max_observation_attempts(1)?,
+        )?;
+        let _first_try = connect_dispatch_at(
+            &vault,
+            actor.clone(),
+            "receipt:cl:jane:first",
+            "intent:cl:jane",
+            jane,
+            &mut failing,
+            Some(daily_connect_cap_of_one()?),
+            1_060,
+        );
+        assert!(failing.transport().calls.is_empty());
+    }
+    if full {
+        let mut filler = capped_connect_sink("intent:cl:john", john)?;
+        let filled = connect_dispatch_at(
+            &vault,
+            actor.clone(),
+            "receipt:cl:john",
+            "intent:cl:john",
+            john,
+            &mut filler,
+            Some(daily_connect_cap_of_one()?),
+            today,
+        )?;
+        assert_ne!(filled.outcome, OutboundDispatchOutcome::Held);
+        assert_eq!(filler.transport().calls.len(), 1, "today's cap is full");
+    }
+    match governance {
+        Governance::Allows => {}
+        Governance::SuspendedKey => {
+            vault.suspend_connector_key(&key_id, "owner paused the seat", today)?;
+        }
+        Governance::NeverList => {
+            let pending = vault.propose_connector_charter(
+                &key_id,
+                "never connect_request on linkedin",
+                today,
+            )?;
+            vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", today)?;
+        }
+    }
+    let mut sink = capped_connect_sink("intent:cl:jane", jane)?;
+    let result = connect_dispatch_at(
+        &vault,
+        actor,
+        "receipt:cl:jane:retry",
+        "intent:cl:jane",
+        jane,
+        &mut sink,
+        Some(daily_connect_cap_of_one()?),
+        today + 1,
+    )?;
+    let field = |name: &str| result.receipt.fields.get(name).cloned();
+    Ok(CeilingAttempt {
+        outcome: result.outcome,
+        suppression: field("suppression"),
+        intent_state: field("intent_state"),
+        sent: !sink.transport().calls.is_empty(),
+    })
+}
+
+/// F26 H359, the ceiling's invariant: a cap only adds a hold to a send
+/// governance would let out. Every path that meets the ceiling (a fresh send,
+/// and an aged retry that resends) runs under governance that allows it, a
+/// suspended connector key and a charter never-list, once below today's cap
+/// and once with it full. Where the send goes out below the cap, a full cap
+/// holds it, and a held retry stays the Pending row it was. Where governance
+/// stops it, a full cap gives exactly the answer the send gets below it: a
+/// never-list stays the gate-denied suppression, never a retryable hold.
+#[test]
+fn a_ceiling_only_holds_a_send_governance_lets_out()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
     for path in [CeilingPath::FreshSend, CeilingPath::AgedResend] {
-        for denied in [false, true] {
-            for full in [false, true] {
-                let (_tmp, vault, actor) = connect_fixture()?;
-                let key_id = entity(0xC5);
-                vault.register_connector_key(
-                    &key_id,
-                    crate::connector_key::ConnectorKeyRecord::active(
-                        LINKEDIN_CHANNEL,
-                        None,
-                        Vec::new(),
-                        1_000,
-                    ),
-                )?;
+        for governance in [
+            Governance::Allows,
+            Governance::SuspendedKey,
+            Governance::NeverList,
+        ] {
+            let case = format!("{path:?} under {governance:?}");
+            let below = connect_at_ceiling(path, governance, false)?;
+            let full = connect_at_ceiling(path, governance, true)?;
+            assert_eq!(
+                below.sent,
+                governance == Governance::Allows,
+                "{case}: below the cap, only an allowed send goes out: {below:?}"
+            );
+            assert!(!full.sent, "{case}: a full cap let a send out");
+            if below.sent {
+                assert_eq!(full.outcome, OutboundDispatchOutcome::Held, "{case}");
                 if let CeilingPath::AgedResend = path {
-                    let mut failing = LinkedInMcpVerifiedConnectSink::new(
-                        linkedin_adapter()?,
-                        ConnectTransport {
-                            calls: Vec::new(),
-                            reads: Vec::new(),
-                            observations: [Err("profile_read_down".to_owned())].into(),
-                            send_result: Ok(serde_json::json!({"success": true})),
-                        },
-                    )
-                    .with_plan(
-                        "intent:cl:jane",
-                        LinkedInVerifiedConnectPlan::new(jane, None)?
-                            .with_max_observation_attempts(1)?,
-                    )?;
-                    let _first_try = connect_dispatch_at(
-                        &vault,
-                        actor.clone(),
-                        "receipt:cl:jane:first",
-                        "intent:cl:jane",
-                        jane,
-                        &mut failing,
-                        Some(daily_connect_cap_of_one()?),
-                        1_060,
-                    );
-                    assert!(failing.transport().calls.is_empty());
-                }
-                if full {
-                    let mut filler = capped_connect_sink("intent:cl:john", john)?;
-                    let filled = connect_dispatch_at(
-                        &vault,
-                        actor.clone(),
-                        "receipt:cl:john",
-                        "intent:cl:john",
-                        john,
-                        &mut filler,
-                        Some(daily_connect_cap_of_one()?),
-                        today,
-                    )?;
-                    assert_ne!(filled.outcome, OutboundDispatchOutcome::Held);
-                    assert_eq!(filler.transport().calls.len(), 1, "today's cap is full");
-                }
-                if denied {
-                    vault.suspend_connector_key(&key_id, "owner paused the seat", today)?;
-                }
-                let mut sink = capped_connect_sink("intent:cl:jane", jane)?;
-                let result = connect_dispatch_at(
-                    &vault,
-                    actor.clone(),
-                    "receipt:cl:jane:retry",
-                    "intent:cl:jane",
-                    jane,
-                    &mut sink,
-                    Some(daily_connect_cap_of_one()?),
-                    today + 1,
-                )?;
-                let case = format!("{path:?}, denied: {denied}, full: {full}");
-                let field = |name: &str| result.receipt.fields.get(name).map(String::as_str);
-                match (denied, full) {
-                    (true, _) => {
-                        assert_eq!(
-                            result.outcome,
-                            OutboundDispatchOutcome::Suppressed,
-                            "FAILBEFORE H359 ({case}): a live denial came back as a retryable hold"
-                        );
-                        assert_eq!(field("suppression"), Some("gate_denied"), "{case}");
-                    }
-                    (false, true) => {
-                        assert_eq!(result.outcome, OutboundDispatchOutcome::Held, "{case}");
-                        if let CeilingPath::AgedResend = path {
-                            assert_eq!(
-                                field("intent_state"),
-                                Some(crate::outbound_intent_ledger::IntentState::Pending.as_str()),
-                                "{case}: the held retry is still the Pending row it was"
-                            );
-                        }
-                    }
-                    (false, false) => {
-                        assert_ne!(result.outcome, OutboundDispatchOutcome::Held, "{case}");
-                        assert_eq!(sink.transport().calls.len(), 1, "{case}: room lets it out");
-                    }
-                }
-                if denied || full {
-                    assert!(
-                        sink.transport().calls.is_empty(),
-                        "{case}: nothing reached the provider"
+                    assert_eq!(
+                        full.intent_state.as_deref(),
+                        Some(crate::outbound_intent_ledger::IntentState::Pending.as_str()),
+                        "{case}: the held retry is still the Pending row it was"
                     );
                 }
+            } else {
+                assert_eq!(
+                    (&full.outcome, &full.suppression),
+                    (&below.outcome, &below.suppression),
+                    "FAILBEFORE H359 ({case}): the cap changed governance's answer"
+                );
+            }
+            if governance == Governance::NeverList {
+                assert_eq!(full.outcome, OutboundDispatchOutcome::Suppressed, "{case}");
+                assert_eq!(full.suppression.as_deref(), Some("gate_denied"), "{case}");
             }
         }
     }

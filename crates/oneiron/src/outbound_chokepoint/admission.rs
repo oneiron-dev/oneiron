@@ -73,56 +73,54 @@ fn ceiling_hold(
 }
 
 /// An exact retry keeps its paid admission while the ceiling's window still
-/// counts it. A Pending retry whose admission aged out of that window, and
-/// whose replay will enter transport, is a send in today's window: it is held
-/// at a full ceiling, and otherwise renewed under this writer lock before
-/// transport, so a concurrent send counts it. A held retry keeps the row's
-/// Pending state and resolution; a live denial is not held, and takes the
-/// rejection path every other denial takes. A replay that never sends (an
-/// outcome-free row that cannot be resent) is left to its own settlement.
-/// Returns the hold or denial, or `None` with the transaction settled.
-fn renew_aged_admission(
+/// counts it. A Pending retry whose admission aged out of that window is a
+/// send in today's window, so once governance has let it out, under the same
+/// writer lock, it meets the ceiling: held at a full ceiling, keeping its
+/// Pending row, and otherwise renewed before transport, so a concurrent send
+/// counts it. Governance answers first, so the ceiling only ever adds a hold
+/// to a send that would go out; a send governance stops gets the same answer
+/// at a full ceiling as below it. Returns the hold, or `None` with the
+/// transaction settled.
+pub(super) fn aged_admission_ceiling(
     vault: &Vault,
     mut wtxn: heed::RwTxn<'_>,
-    command: &OutboundEffectCommand,
+    prepared: &PreparedEffect,
     record: &crate::outbound_intent_ledger::IntentLedgerRecord,
-    intent_id: crate::outbound_intent_ledger::IntentId,
     now_ms: u64,
 ) -> Result<Option<OutboundEffectResult>, OutboundEffectError> {
-    let resends = match record.recorded_outcome {
-        Some(RecordedOutboundOutcome::DefiniteNonDelivery) => true,
-        None => record.idempotency_supported,
-        Some(_) => false,
+    let Some(ceiling) = prepared.admission_ceiling else {
+        return Ok(None);
     };
-    if let OutboundEffectCommand::New(prepared) = command
-        && record.state == IntentState::Pending
-        && resends
-        && let Some(ceiling) = prepared.admission_ceiling
-        && record.created_ms.max(record.updated_ms) < ceiling.since_ms
+    // The row as it stands under this lock, not the snapshot the replay
+    // began from: a renewal rewrites it.
+    let Some(stored) = read_intent_record_in_txn(vault, &wtxn, &record.id)? else {
+        return Ok(None);
+    };
+    if stored.state != IntentState::Pending
+        || stored.created_ms.max(stored.updated_ms) >= ceiling.since_ms
     {
-        let admitted = crate::outbound_intent_ledger::admitted_calls_since_in_txn(
-            vault,
-            &wtxn,
-            &prepared.server,
-            &prepared.tool,
-            ceiling.since_ms,
-            Some(record.attempt_id),
-        )?;
-        let count = ceiling.prior.max(admitted);
-        if count >= ceiling.cap {
-            let mut held = ceiling_hold(vault, wtxn, intent_id, prepared, count)?;
-            if held.ceiling_count.is_some() {
-                let pending = effect_result(record, None, true, None);
-                held.resolution = pending.resolution;
-                held.dispatch = pending.dispatch;
-            }
-            return Ok(Some(held));
-        }
-        crate::outbound_intent_ledger::renew_admission_in_txn(vault, &mut wtxn, record, now_ms)?;
-        wtxn.commit().map_err(Error::from)?;
         return Ok(None);
     }
-    drop(wtxn);
+    let admitted = crate::outbound_intent_ledger::admitted_calls_since_in_txn(
+        vault,
+        &wtxn,
+        &prepared.server,
+        &prepared.tool,
+        ceiling.since_ms,
+        Some(stored.attempt_id),
+    )?;
+    let count = ceiling.prior.max(admitted);
+    if count >= ceiling.cap {
+        let mut held = ceiling_hold(vault, wtxn, stored.id, prepared, count)?;
+        if held.ceiling_count.is_some() {
+            let pending = effect_result(&stored, None, true, None);
+            held.resolution = pending.resolution;
+            held.dispatch = pending.dispatch;
+        }
+        return Ok(Some(held));
+    }
+    crate::outbound_intent_ledger::renew_admission_in_txn(vault, &mut wtxn, &stored, now_ms)?;
+    wtxn.commit().map_err(Error::from)?;
     Ok(None)
 }
 
@@ -184,10 +182,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         {
             validate_new_replay(&record, prepared)?;
         }
-        if let Some(held) = renew_aged_admission(vault, wtxn, &command, &record, intent_id, now_ms)?
-        {
-            return Ok(held);
-        }
+        drop(wtxn);
         force_sync(vault)?;
         if let OutboundEffectCommand::Park(prepared) = &command
             && record.state == IntentState::Pending

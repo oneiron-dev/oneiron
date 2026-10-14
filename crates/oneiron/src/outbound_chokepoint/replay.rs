@@ -195,6 +195,14 @@ fn send_pending_with_gate<T: OutboundTransport>(
             result.dispatch.replayed = replayed;
             return Ok(result);
         }
+        // Governance lets this Pending send out; only now does an aged
+        // admission meet its ceiling, under this same writer lock.
+        if let Some(mut held) =
+            super::admission::aged_admission_ceiling(vault, wtxn, prepared, &record, now_ms)?
+        {
+            held.dispatch.replayed = replayed;
+            return Ok(held);
+        }
     } else if crate::llm::StepEffectBinding::from_frozen_payload(record.payload())?.is_some() {
         // Engine-owned Resume has no PreparedEffect. Its frozen step identity
         // still rechecks the resident restriction before a Pending live send.
