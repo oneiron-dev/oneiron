@@ -14014,7 +14014,7 @@
      "path": "src/dreamer_consolidation/executor/extraction.rs",
      "purpose": "Extraction request/response projection for one admitted branch",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 7
      }
     },
     {
@@ -14034,7 +14034,7 @@
      "path": "src/dreamer_consolidation/extracted_people.rs",
      "purpose": "Explicit PERSON outputs from the production extraction response",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1
      }
     },
     {
@@ -14234,6 +14234,7 @@
      "purpose": "The Dreamer's model roles, and the backend each one calls out on",
      "surface": {
       "const": 4,
+      "crate-vis": 1,
       "fn": 3,
       "struct": 3
      }
@@ -22835,6 +22836,7 @@
       "DescriptionSource",
       "ModelDescription",
       "ModelSeat",
+      "PurposeEffort",
       "SeatCandidate",
       "SeatChoiceReceipt",
       "SeatJudge",
@@ -22846,8 +22848,8 @@
      "path": "src/llm/seat.rs",
      "purpose": "Seat-birth model routing above the raw LLM call seam",
      "surface": {
-      "enum": 2,
-      "fn": 17,
+      "enum": 3,
+      "fn": 18,
       "re-export": 1,
       "struct": 8,
       "trait": 1
@@ -22870,7 +22872,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/llm/seat/tests.rs",
@@ -22895,7 +22897,7 @@
      "purpose": "Durable step execution: memo/admission/deadline orchestration with retry and lease settlement",
      "surface": {
       "crate-vis": 5,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -23041,7 +23043,7 @@
       "enum": 5,
       "fn": 3,
       "struct": 2,
-      "type": 1
+      "type": 2
      }
     },
     {
@@ -46793,6 +46795,7 @@
      "path": "src/llm/catalog.rs",
      "purpose": "Capability catalog: flags, entries with supports/require, costs, and reasoning effort",
      "surface": {
+      "const": 1,
       "enum": 2,
       "fn": 4,
       "struct": 2
