@@ -125,7 +125,8 @@ impl Vault {
     /// * `OffRecord -> OnRecord` is refused here, alone or in a room: on
     ///   record, later turns land in this vault, which is the owner's consent
     ///   to give. Only the owner's proof-bound door,
-    ///   [`OffRecordSession::flip_on_record_as`], puts a stretch on record.
+    ///   [`OffRecordSession::flip_on_record_as`](crate::off_record::OffRecordSession::flip_on_record_as),
+    ///   puts a stretch on record.
     /// * `OnRecord -> OffRecord` REARMS the overlay (`Sealed` -> `Live`). New
     ///   writes route to the overlay again. Pre-flip turns stay overlay-only
     ///   and base-invisible throughout; rearm reopens the write door and
