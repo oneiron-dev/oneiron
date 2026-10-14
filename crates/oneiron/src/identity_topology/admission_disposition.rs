@@ -469,7 +469,7 @@ impl Vault {
                     continue;
                 }
                 if let Some(actor) =
-                    super::effective_author_in_txn(&self.store, wtxn, event.event_id)?
+                    super::admitted_author_in_txn(&self.store, wtxn, event.event_id)?
                 {
                     let Some(actor_kind) = super::store_entity_helpers::identity_topology_entity_type_for_store_in_txn(
                         &self.store, wtxn, &actor.entity_ref(),

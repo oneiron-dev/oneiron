@@ -3,6 +3,9 @@
 //! A decision's body is never rewritten for erasure. Its author lives in a
 //! separate type-76 carrier, and a permanent actorless redaction fact defeats
 //! every attribution for the same decision/digest, regardless of arrival order.
+//!
+//! Carriers are unsigned, so a peer's carrier is display and erasure input
+//! only. Admission reads only the carriers this vault wrote itself.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -11,6 +14,7 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT;
+use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -25,9 +29,22 @@ use super::{
 /// could fill with a different decision. This is also the redaction join key.
 pub(crate) type AttributionKey = (EntityId, [u8; 32]);
 
+/// The author carriers this vault wrote itself, by carrier row: a digest of
+/// the row's body. Local truth that never replicates, so no peer can make its
+/// own carrier read as this vault's.
+const AUTHORED_HERE: SideTable<HexId, [u8; 32], Raw> =
+    SideTable::new(&side_table::IDENTITY_TOPOLOGY_AUTHORED_HERE);
+
+struct Carrier {
+    id: EntityId,
+    actor: WriteActor,
+    /// Whether this vault wrote the carrier itself.
+    here: bool,
+}
+
 #[derive(Default)]
 struct AttributionState {
-    carriers: BTreeMap<AttributionKey, Vec<(EntityId, WriteActor)>>,
+    carriers: BTreeMap<AttributionKey, Vec<Carrier>>,
     redacted: BTreeSet<AttributionKey>,
 }
 
@@ -48,18 +65,23 @@ fn scan_in_txn(store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<AttributionState
         if header.entity_type != ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
             return Err(Error::CorruptedIndex("identity attribution type"));
         }
-        let record = decode_identity_topology_event_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        let record = decode_identity_topology_event_body(body)
             .map_err(|_| Error::CorruptedIndex("identity attribution body"))?;
         match record.action {
             StoredIdentityOpAction::AuthorAttribution {
                 target,
                 core_digest,
                 actor,
-            } => state
-                .carriers
-                .entry((target, core_digest))
-                .or_default()
-                .push((id, actor)),
+            } => {
+                let here = AUTHORED_HERE.get(store, rtxn, &HexId(id))?
+                    == Some(*blake3::hash(body).as_bytes());
+                state
+                    .carriers
+                    .entry((target, core_digest))
+                    .or_default()
+                    .push(Carrier { id, actor, here });
+            }
             StoredIdentityOpAction::AuthorRedaction {
                 target,
                 core_digest,
@@ -86,7 +108,7 @@ pub(crate) fn scrub_redacted_attributions_in_txn(
         .iter()
         .filter_map(|key| state.carriers.get(key))
         .flatten()
-        .map(|(id, _)| *id)
+        .map(|carrier| carrier.id)
         .collect::<Vec<_>>();
     scrub_carriers_in_txn(vault, wtxn, &ids)?;
     Ok(ids)
@@ -100,18 +122,42 @@ fn scrub_carriers_in_txn(
     for id in ids {
         // Deindex removes the current body, type-index entry, and every
         // revision (including pre-erasure versions). No core row is touched.
+        // The marker goes too: its digest of the body could confirm a guess.
         crate::vault::entity_revision::remove_entity_revisions(&vault.store, wtxn, id)?;
         crate::batch::deindex_entity(&vault.store, wtxn, id)?;
+        AUTHORED_HERE.delete(&vault.store, wtxn, &HexId(*id))?;
     }
     Ok(())
 }
 
-/// Read-only author hydration. A decision with multiple distinct unredacted
-/// stamps is corrupt, not arbitrarily selected by index iteration order.
+/// Read-only author hydration for display and erasure: every carrier counts.
+/// Distinct unredacted stamps are never selected by index iteration order:
+/// with a peer's carrier among them the author reads as unknown, and only
+/// this vault's own carriers disagreeing is corruption.
 pub(crate) fn effective_author_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
     target: EntityId,
+) -> Result<Option<WriteActor>> {
+    author_in_txn(store, rtxn, target, false)
+}
+
+/// The author admission reads (the fold's actor check, refusal mints, the
+/// batch hooks): only a carrier this vault wrote itself names one. A peer's
+/// unsigned carrier can neither veto a decision nor fail the fold.
+pub(crate) fn admitted_author_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    target: EntityId,
+) -> Result<Option<WriteActor>> {
+    author_in_txn(store, rtxn, target, true)
+}
+
+fn author_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    target: EntityId,
+    own_only: bool,
 ) -> Result<Option<WriteActor>> {
     let Some(raw) = store.entities.get(rtxn, target.as_bytes())? else {
         return Ok(None);
@@ -128,12 +174,21 @@ pub(crate) fn effective_author_in_txn(
     if state.redacted.contains(&key) {
         return Ok(None);
     }
-    let Some(carriers) = state.carriers.get(&key) else {
+    let carriers: Vec<&Carrier> = state
+        .carriers
+        .get(&key)
+        .into_iter()
+        .flatten()
+        .filter(|carrier| carrier.here || !own_only)
+        .collect();
+    let Some(actor) = carriers.first().map(|carrier| carrier.actor) else {
         return Ok(None);
     };
-    let actor = carriers[0].1;
-    if carriers.iter().any(|(_, other)| *other != actor) {
-        return Err(Error::CorruptedIndex("conflicting identity attribution"));
+    if carriers.iter().any(|carrier| carrier.actor != actor) {
+        if carriers.iter().all(|carrier| carrier.here) {
+            return Err(Error::CorruptedIndex("conflicting identity attribution"));
+        }
+        return Ok(None);
     }
     Ok(Some(actor))
 }
@@ -148,6 +203,7 @@ fn write_sidecar_in_txn(
     now: u64,
 ) -> Result<EntityId> {
     let id = vault.store.clock.entity_id()?;
+    let attribution = matches!(action, StoredIdentityOpAction::AuthorAttribution { .. });
     let record = StoredIdentityOpEvent {
         seq: vault.next_identity_topology_seq_in_txn(wtxn)?,
         validated_at_write: true,
@@ -160,6 +216,15 @@ fn write_sidecar_in_txn(
         evidence: None,
         action,
     };
+    let data = encode_identity_topology_event_body(&record)?;
+    if attribution {
+        AUTHORED_HERE.put(
+            &vault.store,
+            wtxn,
+            &HexId(id),
+            blake3::hash(&data).as_bytes(),
+        )?;
+    }
     apply_ops(
         &vault.store,
         &vault.config,
@@ -173,7 +238,7 @@ fn write_sidecar_in_txn(
                 end: now,
             },
             learned_at: now,
-            data: encode_identity_topology_event_body(&record)?,
+            data,
             allow_maintenance: true,
             allow_reserved_predicate: false,
             hub_sync_imported: false,
@@ -245,9 +310,15 @@ pub(crate) fn redact_author_attribution_in_txn(
     let key = (target, core_digest);
     let state = scan_in_txn(&vault.store, wtxn)?;
     if !state.redacted.contains(&key) {
-        if let Some(carriers) = state.carriers.get(&key) {
-            for (_, actor) in carriers {
-                vault.record_actor_disposition_before_redaction_in_txn(wtxn, target, *actor)?;
+        // A refusal is admission: only an author this vault stamped itself
+        // can earn one. A peer's carrier is erased below all the same.
+        for carrier in state.carriers.get(&key).into_iter().flatten() {
+            if carrier.here {
+                vault.record_actor_disposition_before_redaction_in_txn(
+                    wtxn,
+                    target,
+                    carrier.actor,
+                )?;
             }
         }
         write_sidecar_in_txn(
@@ -266,7 +337,7 @@ pub(crate) fn redact_author_attribution_in_txn(
         .get(&key)
         .into_iter()
         .flatten()
-        .map(|(id, _)| *id)
+        .map(|carrier| carrier.id)
         .collect::<Vec<_>>();
     scrub_carriers_in_txn(vault, wtxn, &ids)?;
     Ok(ids)
@@ -284,7 +355,11 @@ pub(crate) fn redact_actor_in_txn(
     let targets: BTreeSet<_> = state
         .carriers
         .iter()
-        .filter(|(_, carriers)| carriers.iter().any(|(_, a)| a.entity_ref() == actor))
+        .filter(|(_, carriers)| {
+            carriers
+                .iter()
+                .any(|carrier| carrier.actor.entity_ref() == actor)
+        })
         .map(|(key, _)| key.0)
         .collect();
     let mut scrubbed = Vec::new();

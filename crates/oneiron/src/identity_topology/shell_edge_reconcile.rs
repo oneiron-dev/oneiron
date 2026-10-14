@@ -323,7 +323,7 @@ pub(crate) fn reconcile_identity_topology_for_materialized_entities_in_txn(
         };
         let record = identity_topology_event_for_store_in_txn(store, &*wtxn, &event.event_id)?
             .ok_or(Error::CorruptedIndex("identity topology event index"))?;
-        let actor_relevant = super::effective_author_in_txn(store, wtxn, event.event_id)?
+        let actor_relevant = super::admitted_author_in_txn(store, wtxn, event.event_id)?
             .or(record.actor)
             .is_some_and(|actor| materialized.contains(&actor.entity_ref()));
         if action_relevant || actor_relevant {

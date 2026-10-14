@@ -4779,8 +4779,14 @@ fn deferred_cancellation_target_materializes_as_person_without_poisoning_deletes
     );
 }
 
-fn assert_deferred_merge_actor_mismatch_survives_erasure(validated_at_write: bool) {
-    use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
+/// A peer's author carrier is display and erasure input only (H161,
+/// sidecars). One naming a wrong-class actor neither vetoes the merge its
+/// seal binds nor stands in for a seal an unsealed one lacks, and erasing the
+/// actor still scrubs the carrier without minting a refusal from it.
+fn assert_peer_actor_stamp_is_display_only(validated_at_write: bool) {
+    use crate::identity_topology::{
+        AdmissionVerdict, StoredIdentityOpAction, StoredIdentityOpEvent,
+    };
     let vault = test_vault();
     let doc = LoroDoc::new();
     let entities = doc.get_map("entities");
@@ -4838,16 +4844,15 @@ fn assert_deferred_merge_actor_mismatch_survives_erasure(validated_at_write: boo
         crate::write_envelope::WriteActor::new(actor, EdgeActorClass::System),
     );
     if validated_at_write {
-        // A signed producer fact does not override a locally observed wrong
-        // actor class or let erasure resurrect that decision.
         deliver_signed_admission_for_test(&vault, &doc, event_id, &record);
     }
-    assert!(vault.identity_topology_event(&event_id).unwrap().is_some());
-    assert!(
-        !vault
+    let merged = || {
+        vault
             .edge_exists(&source, crate::edge::EdgeKind::MergedInto, &survivor)
             .unwrap()
-    );
+    };
+    assert!(vault.identity_topology_event(&event_id).unwrap().is_some());
+    assert_eq!(merged(), validated_at_write);
     map_insert_bytes(
         &entities,
         &actor.to_hex(),
@@ -4867,27 +4872,34 @@ fn assert_deferred_merge_actor_mismatch_survives_erasure(validated_at_write: boo
         vault.get_entity_type(&actor).unwrap(),
         Some(crate::registry::ENTITY_TYPE_PERSON)
     );
-    assert!(
-        !vault
-            .edge_exists(&source, crate::edge::EdgeKind::MergedInto, &survivor)
-            .unwrap()
-    );
-    assert_eq!(
-        vault.entity_lifecycle_state(&source).unwrap(),
-        crate::identity_topology::EntityLifecycleState::Active
-    );
-    // Hard erasure removes personal attribution, not the fact that the
-    // observed PERSON failed the stamped System actor-class check.
-    vault
-        .delete_entity_with_reason(&actor, crate::deletion::DeleteReason::GdprDelete)
-        .expect("erase invalid actor");
     assert_eq!(
         vault
             .identity_topology_event(&event_id)
             .unwrap()
             .unwrap()
             .actor,
-        None
+        Some(crate::write_envelope::WriteActor::new(
+            actor,
+            EdgeActorClass::System
+        )),
+        "the peer's stamp still reads as the author"
+    );
+    assert_eq!(
+        merged(),
+        validated_at_write,
+        "a peer's stamp vetoes nothing"
+    );
+    vault
+        .delete_entity_with_reason(&actor, crate::deletion::DeleteReason::GdprDelete)
+        .expect("erase the stamped actor");
+    assert_eq!(
+        vault
+            .identity_topology_event(&event_id)
+            .unwrap()
+            .unwrap()
+            .actor,
+        None,
+        "erasure still scrubs the peer's carrier"
     );
     vault
         .put_entity(
@@ -4901,20 +4913,19 @@ fn assert_deferred_merge_actor_mismatch_survives_erasure(validated_at_write: boo
             &task_body(),
         )
         .expect("refresh participant through the shared materialization hook");
-    assert!(
-        !vault
-            .edge_exists(&source, crate::edge::EdgeKind::MergedInto, &survivor)
-            .unwrap(),
-        "erasing an invalid actor must never authorize the merge"
-    );
-    assert_eq!(
-        vault.entity_lifecycle_state(&source).unwrap(),
-        crate::identity_topology::EntityLifecycleState::Active
-    );
-    // The local veto is not an export carrier. Reverse-materialize a missing
-    // event into an outbound window, then ingest it through Observer B on a
-    // fresh replica with live participants. Its canonical body must carry the
-    // non-personal invalid disposition even after the actor stamp was erased.
+    assert_eq!(merged(), validated_at_write);
+    let refused = vault
+        .entities_by_type(crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+        .unwrap()
+        .into_iter()
+        .filter_map(|id| vault.identity_topology_event(&id).unwrap())
+        .any(|row| {
+            matches!(row.action,
+                StoredIdentityOpAction::AdmissionDisposition(fact)
+                if fact.target == event_id && fact.verdict == AdmissionVerdict::RefusedActorClass)
+        });
+    assert!(!refused, "no refusal is minted from a peer's stamp");
+    // The scrubbed core still mirrors out byte-identical and actorless.
     let key = crate::sync::types::WindowKey::from_timestamp(record.at);
     let outbound = crate::sync::schema::create_window_doc("source", &key);
     crate::sync::window::reverse_rematerialize(&vault, &outbound, &key)
@@ -4922,11 +4933,6 @@ fn assert_deferred_merge_actor_mismatch_survives_erasure(validated_at_write: boo
     let carrier =
         crate::sync::loro_support::map_get_bytes(&outbound.get_map("entities"), &event_id.to_hex())
             .expect("reverse-rematerialized event carrier");
-    let header = crate::batch::EntityMetadataHeader::parse(&carrier).expect("event header");
-    assert_eq!(
-        header.entity_type,
-        crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
-    );
     let mirrored = crate::identity_topology::decode_identity_topology_event_body(
         &carrier[crate::batch::ENTITY_METADATA_HEADER_LEN..],
     )
@@ -4936,75 +4942,246 @@ fn assert_deferred_merge_actor_mismatch_survives_erasure(validated_at_write: boo
         !mirrored.invalidated,
         "immutable core never changes disposition bytes"
     );
-    let mut outbound_refusal = false;
-    outbound.get_map("entities").for_each(|_, value| {
-        if let loro::ValueOrContainer::Value(loro::LoroValue::Binary(raw)) = value
-            && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
-            && header.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
-            && let Ok(row) = crate::identity_topology::decode_identity_topology_event_body(
-                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-            )
-            && matches!(row.action,
-                StoredIdentityOpAction::AdmissionDisposition(fact)
-                if fact.target == event_id && fact.verdict ==
-                    crate::identity_topology::AdmissionVerdict::RefusedActorClass)
-        {
-            outbound_refusal = true;
-        }
-    });
-    assert!(
-        outbound_refusal,
-        "outbound history carries the signed refusal fact"
-    );
-    let update = crate::sync::window::export_window_updates_since(
-        &vault,
-        &key,
-        &outbound,
-        &loro::VersionVector::default().encode(),
-    )
-    .expect("export recovered window");
-    let peer = test_vault();
-    for participant in [&survivor, &source] {
-        peer.put_entity(
-            participant,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 1, end: 1 },
-            1,
-            &task_body(),
-        )
-        .expect("materialize peer participant");
+}
+
+/// The flip of the old actor-mismatch veto, accepted for H161: a peer's
+/// unsigned stamp is no admission input, with or without a producer seal.
+#[test]
+fn a_peer_actor_stamp_vetoes_nothing_and_erasure_still_scrubs_it() {
+    for validated_at_write in [false, true] {
+        assert_peer_actor_stamp_is_display_only(validated_at_write);
     }
-    let peer_doc = LoroDoc::new();
-    let peer_materializer = Arc::new(Materializer::new());
-    let _peer_subs = register_observer_b(&peer_doc, &peer, &peer_materializer, key.as_str());
-    import_doc(&peer_doc, &update).expect("ingest outbound update through Observer B");
-    assert_eq!(
-        peer.identity_topology_event(&event_id)
-            .unwrap()
-            .expect("peer event")
-            .actor,
-        None
-    );
-    assert_eq!(
-        peer.entity_lifecycle_state(&source).unwrap(),
-        crate::identity_topology::EntityLifecycleState::Active
-    );
-    assert_eq!(
-        peer.entity_lifecycle_state(&source).unwrap(),
-        crate::identity_topology::EntityLifecycleState::Active
-    );
+}
+
+fn put_test_person(vault: &Vault, id: &EntityId) {
+    vault
+        .put_entity(
+            id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+            b"person fixture",
+        )
+        .unwrap();
+}
+
+/// `loser` merged into `survivor` through this vault's own door, stamped by
+/// `actor` when given; the decision's id.
+fn merge_here(
+    vault: &Vault,
+    loser: EntityId,
+    survivor: EntityId,
+    actor: Option<EntityId>,
+) -> EntityId {
+    use crate::identity_topology::{
+        IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
+        SurvivorshipPlan,
+    };
+    let mut write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    if let Some(actor) = actor {
+        write = write.with_actor(crate::write_envelope::WriteActor::new(
+            actor,
+            EdgeActorClass::Human,
+        ));
+    }
+    match vault
+        .apply_identity_topology_op(
+            &IdentityTopologyOp::Merge(MergeOp {
+                sources: vec![loser],
+                survivor,
+                evidence: IdentityOpEvidence::default(),
+                survivorship_plan: SurvivorshipPlan::ReadThrough,
+            }),
+            &write,
+            200,
+        )
+        .unwrap()
+    {
+        IdentityOpOutcome::Applied { event, .. } => event,
+        outcome => panic!("a local merge applies, got {outcome:?}"),
+    }
+}
+
+/// A peer's author carrier for `core`, naming `actor`, as its replicated blob.
+fn peer_author_carrier(
+    target: EntityId,
+    core: &crate::identity_topology::StoredIdentityOpEvent,
+    actor: EntityId,
+) -> Vec<u8> {
+    use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
+    let row = StoredIdentityOpEvent {
+        seq: core.seq + 1,
+        validated_at_write: false,
+        invalidated: false,
+        at: core.at,
+        actor: None,
+        source: core.source,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::AuthorAttribution {
+            target,
+            core_digest: crate::identity_topology::core_digest(core).unwrap(),
+            actor: crate::write_envelope::WriteActor::new(actor, EdgeActorClass::Human),
+        },
+    };
+    entity_blob(
+        crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        TimeRange {
+            start: row.at,
+            end: row.at,
+        },
+        row.at,
+        &crate::identity_topology::encode_identity_topology_event_body(&row).unwrap(),
+    )
+}
+
+/// One peer type-76 row through the shared ingest ladder: it must land.
+fn deliver_peer_row(vault: &Vault, id: &EntityId, blob: &[u8]) {
+    let doc = LoroDoc::new();
+    let tombstones = doc.get_map("tombstones");
+    let step = vault
+        .with_write_txn(|wtxn| ingest_peer_blob(vault, wtxn, &tombstones, id, blob))
+        .expect("a peer's row never fails the ingest");
     assert!(
-        !peer
-            .edge_exists(&source, crate::edge::EdgeKind::MergedInto, &survivor)
-            .unwrap(),
-        "scrubbed invalid history must not authorize a peer shell"
+        matches!(step, EntityStep::Protected { wrote: true, .. }),
+        "{step:?}"
     );
 }
 
+/// Two peer carriers naming different authors for one decision used to fail
+/// the fold with a corruption error, so the window carrying the second never
+/// applied. Both now land, the author reads as unknown, and the vault keeps
+/// writing, whether the decision is this vault's own merge or a peer's merge
+/// arriving after them.
 #[test]
-fn deferred_merge_actor_mismatch_stays_invalid_after_erasure_with_or_without_producer_stamp() {
-    for validated_at_write in [false, true] {
-        assert_deferred_merge_actor_mismatch_survives_erasure(validated_at_write);
+fn conflicting_peer_author_carriers_leave_the_vault_writable() {
+    use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
+    for core_first in [true, false] {
+        let vault = test_vault();
+        let (loser, survivor) = (EntityId::now(), EntityId::now());
+        put_test_person(&vault, &loser);
+        put_test_person(&vault, &survivor);
+        let (event, core) = if core_first {
+            let event = merge_here(&vault, loser, survivor, None);
+            (
+                event,
+                vault.identity_topology_event(&event).unwrap().unwrap(),
+            )
+        } else {
+            let core = StoredIdentityOpEvent {
+                seq: 50,
+                validated_at_write: false,
+                invalidated: false,
+                at: 200,
+                actor: None,
+                source: ClaimSource::Inferred,
+                approval: ClaimApprovalStatus::Proposed,
+                confidence: 1.0,
+                evidence: None,
+                action: StoredIdentityOpAction::Merge {
+                    sources: vec![loser],
+                    survivor,
+                },
+            };
+            (EntityId::now(), core)
+        };
+        for actor in [EntityId::now(), EntityId::now()] {
+            deliver_peer_row(
+                &vault,
+                &EntityId::now(),
+                &peer_author_carrier(event, &core, actor),
+            );
+        }
+        if !core_first {
+            let body =
+                crate::identity_topology::encode_identity_topology_event_body(&core).unwrap();
+            let blob = entity_blob(
+                crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+                TimeRange {
+                    start: core.at,
+                    end: core.at,
+                },
+                core.at,
+                &body,
+            );
+            deliver_peer_row(&vault, &event, &blob);
+        }
+        assert_eq!(
+            vault
+                .identity_topology_event(&event)
+                .unwrap()
+                .unwrap()
+                .actor,
+            None,
+            "a conflict among peer stamps reads as an unknown author"
+        );
+        assert_eq!(
+            vault
+                .edge_exists(&loser, crate::edge::EdgeKind::MergedInto, &survivor)
+                .unwrap(),
+            core_first
+        );
+
+        let (other, head, gone) = (EntityId::now(), EntityId::now(), EntityId::now());
+        for id in [&other, &head, &gone] {
+            put_test_person(&vault, id);
+        }
+        merge_here(&vault, other, head, None);
+        assert!(vault.delete_entity(&gone).unwrap());
+        vault
+            .receipts(crate::receipt::ReceiptQuery::new(10))
+            .expect("receipts still read");
+    }
+}
+
+/// A peer's carrier naming an actor this vault never saw does not park a
+/// merge this vault sealed. This vault's own stamp is still the author
+/// admission reads, and the peer's still shows where no own stamp exists.
+#[test]
+fn a_peer_carrier_naming_a_missing_actor_never_parks_a_sealed_merge() {
+    for stamped in [false, true] {
+        let vault = test_vault();
+        let (loser, survivor, own) = (EntityId::now(), EntityId::now(), EntityId::now());
+        for id in [&loser, &survivor, &own] {
+            put_test_person(&vault, id);
+        }
+        let event = merge_here(&vault, loser, survivor, stamped.then_some(own));
+        let core = vault.identity_topology_event(&event).unwrap().unwrap();
+        let ghost = EntityId::now();
+        deliver_peer_row(
+            &vault,
+            &EntityId::now(),
+            &peer_author_carrier(event, &core, ghost),
+        );
+
+        assert!(
+            vault
+                .edge_exists(&loser, crate::edge::EdgeKind::MergedInto, &survivor)
+                .unwrap(),
+            "stamped: {stamped}"
+        );
+        assert_eq!(
+            vault.entity_lifecycle_state(&loser).unwrap(),
+            crate::identity_topology::EntityLifecycleState::Merged
+        );
+        let human = |id| crate::write_envelope::WriteActor::new(id, EdgeActorClass::Human);
+        let rtxn = vault.store.env.read_txn().unwrap();
+        assert_eq!(
+            crate::identity_topology::admitted_author_in_txn(&vault.store, &rtxn, event).unwrap(),
+            stamped.then_some(human(own))
+        );
+        assert_eq!(
+            vault
+                .identity_topology_event(&event)
+                .unwrap()
+                .unwrap()
+                .actor,
+            (!stamped).then_some(human(ghost))
+        );
     }
 }
 

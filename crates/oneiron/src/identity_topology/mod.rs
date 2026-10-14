@@ -98,8 +98,8 @@ pub(crate) use attribution::{
     reconcile_author_attribution_in_txn, redacted_keys_in_txn, redaction_carrier_key,
 };
 pub(crate) use attribution::{
-    effective_author_in_txn, record_author_attribution_in_txn, redact_actor_in_txn,
-    redact_author_attribution_in_txn,
+    admitted_author_in_txn, effective_author_in_txn, record_author_attribution_in_txn,
+    redact_actor_in_txn, redact_author_attribution_in_txn,
 };
 pub use distinct_claim::distinct_pair_key;
 pub use ledger_fold::{

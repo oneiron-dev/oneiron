@@ -363,11 +363,12 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
             }
         };
         // The author is not embedded in the immutable decision. A bound
-        // attribution that later materializes with the wrong class is an
-        // observed admission failure, even if its producer supplied a signed
-        // positive fact. A missing actor is historical only when the same
-        // replica has deletion evidence; a merely late actor still defers.
-        let actor = super::effective_author_in_txn(store, rtxn, event.event_id)?.or(record.actor);
+        // attribution this vault wrote that later materializes with the wrong
+        // class is an observed admission failure, even if its producer
+        // supplied a signed positive fact. A missing actor is historical only
+        // when the same replica has deletion evidence; a merely late actor
+        // still defers. A peer's unsigned carrier is no admission input.
+        let actor = super::admitted_author_in_txn(store, rtxn, event.event_id)?.or(record.actor);
         let actor_complete = match actor {
             None => true,
             Some(actor) => match identity_topology_entity_type_for_store_in_txn(
