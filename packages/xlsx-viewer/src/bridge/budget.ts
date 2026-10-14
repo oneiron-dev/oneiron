@@ -167,14 +167,6 @@ function latin1(bytes: Uint8Array, start: number, length: number): string {
   return text;
 }
 
-/**
- * The name SheetJS looks a part up by: lower case, without the `Root Entry/`
- * prefix its container gives every path.
- */
-function lookupName(path: string): string {
-  return path.toLowerCase().replace(/^root entry\//, "");
-}
-
 /** Parts SheetJS reads as another format before it looks for `[Content_Types].xml`. */
 const OTHER_FORMATS = ["meta-inf/manifest.xml", "objectdata.xml", "index/document.iwa"];
 
@@ -229,7 +221,12 @@ export function preflightPackage(bytes: Uint8Array, budget: PreviewBudget = PREV
   const records: [start: number, end: number, centralName: number, nameLength: number, extra: number][] = [];
   let expandedTotal = 0;
   let copyTotal = 0;
+  // Every part SheetJS can look up, by the name it looks it up by, and the
+  // files among them. With no `Root Entry` folder in the package, SheetJS
+  // files each part under `Root Entry/` plus its name and looks it up by that
+  // name in lower case.
   const names = new Set<string>();
+  const files = new Set<string>();
   let at = directory;
   for (let index = 0; index < count; index += 1) {
     if (u32(bytes, at) !== CENTRAL) {
@@ -249,21 +246,28 @@ export function preflightPackage(bytes: Uint8Array, budget: PreviewBudget = PREV
       throw structure("central directory overruns its end record");
     }
     // The engine's OPC part-name rules: a directory entry is empty, and no
-    // two parts share a name however SheetJS looks it up.
+    // two parts share a name, here as SheetJS compares names.
     const entryName = latin1(bytes, name, nameLength);
-    const path = entryName.endsWith("/") ? entryName.slice(0, -1) : entryName;
+    const directoryEntry = entryName.endsWith("/");
+    const path = directoryEntry ? entryName.slice(0, -1) : entryName;
+    const key = path.toLowerCase();
     if (
-      (path !== entryName && expanded !== 0) ||
+      (directoryEntry && expanded !== 0) ||
       path === "" ||
       path.startsWith("/") ||
       path.includes("\\") ||
       path.includes("\0") ||
       path.split("/").some((segment) => segment === "" || segment === "." || segment === "..") ||
-      names.has(lookupName(path))
+      key === "root entry" ||
+      key.startsWith("root entry/") ||
+      names.has(key)
     ) {
       throw structure("unsafe or duplicate part name");
     }
-    names.add(lookupName(path));
+    names.add(key);
+    if (!directoryEntry) {
+      files.add(key);
+    }
     if (flags & ENCRYPTED) {
       throw structure("encrypted entry");
     }
@@ -336,10 +340,10 @@ export function preflightPackage(bytes: Uint8Array, budget: PreviewBudget = PREV
   if (at !== end) {
     throw structure("central directory size disagrees with its entries");
   }
-  if (!names.has("[content_types].xml")) {
+  if (!files.has("[content_types].xml")) {
     throw structure("not a workbook package: no [Content_Types].xml");
   }
-  if (OTHER_FORMATS.some((other) => names.has(other))) {
+  if (OTHER_FORMATS.some((other) => files.has(other))) {
     throw structure("a part SheetJS reads as another format");
   }
   // Apart, the local names and extra fields together stay within the package,

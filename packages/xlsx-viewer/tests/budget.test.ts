@@ -349,6 +349,11 @@ describe("preview budgets: a package is refused from its ZIP records, before She
     const inner = workbook(zeros(Math.ceil((PREVIEW_BUDGET.entryBytes + 1) / 258)));
     refusedWith("entryBytes", () => preflightPackage(inner));
     refusedWith("structure", () => readWorkbookOutline(zip([{ name: "Index.zip", body: inner }])));
+    // Round 3: neither a Root Entry folder nor a directory entry is the part.
+    for (const decoy of ["root entry/[Content_Types].xml", "[Content_Types].xml/"]) {
+      const parts = [{ name: decoy, body: new Uint8Array(0) }, { name: "Index.zip", body: inner }];
+      refusedWith("structure", () => readWorkbookOutline(zip(parts)));
+    }
     // OpenDocument, Numbers and the like are read before [Content_Types].xml.
     const types = { name: "[Content_Types].xml", body: text("<Types/>") };
     for (const other of ["META-INF/manifest.xml", "Root Entry/objectdata.xml", "Index/Document.iwa"]) {
