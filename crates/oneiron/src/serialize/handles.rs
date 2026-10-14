@@ -4,10 +4,15 @@ use crate::context_pack::ContextPack;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
+/// An alias's entity: its short id, its name, and its source id.
+type Handle = (String, String, [u8; 16]);
+
 #[derive(Default)]
 pub(super) struct Handles {
-    aliases: HashMap<String, (String, String)>,
+    aliases: HashMap<String, Handle>,
     seen: HashSet<String>,
+    /// Each row's short ref (a serialized row's `id`), and its source id.
+    rows: HashMap<String, [u8; 16]>,
 }
 impl Handles {
     pub(super) fn new(pack: &ContextPack, prepared: &mut PreparedPack) -> Self {
@@ -31,33 +36,32 @@ impl Handles {
             })
             .collect();
         let mut aliases = HashMap::new();
-        // Each entity's own aliases: its id, and its identity key.
-        let mut own = HashMap::new();
+        // Each entity's aliases: its id, and its identity key.
         for entity in pack.results.iter().chain(&pack.neighbors) {
             if entity.short_id.is_empty() {
                 continue;
             }
             let name = names.get(entity.id.as_bytes()).map_or("", String::as_str);
-            let handle = (entity.short_id.clone(), name.to_owned());
-            let key = entity
+            let handle = (
+                entity.short_id.clone(),
+                name.to_owned(),
+                *entity.id.as_bytes(),
+            );
+            aliases.insert(entity.id.to_hex(), handle.clone());
+            if let Some(key) = entity
                 .fields
                 .as_ref()
                 .and_then(|f| f.get("identity_key"))
                 .and_then(Value::as_str)
-                .filter(|s| !s.is_empty());
-            // An alias that is its own short id is none: the own pass below
-            // could not render it as anything else.
-            let mine: Vec<String> = std::iter::once(entity.id.to_hex())
-                .chain(key.map(str::to_owned))
-                .filter(|alias| *alias != entity.short_id)
-                .collect();
-            for alias in &mine {
-                aliases.insert(alias.clone(), handle.clone());
+                .filter(|s| !s.is_empty())
+            {
+                aliases.insert(key.into(), handle);
             }
-            own.insert(*entity.id.as_bytes(), (handle, mine));
         }
-        for (_, rows) in prepared.results.iter_mut().chain(&mut prepared.neighbors) {
-            for row in rows {
+        let mut rows = HashMap::new();
+        for (_, group) in prepared.results.iter_mut().chain(&mut prepared.neighbors) {
+            for row in group {
+                rows.insert(row.id.clone(), row.source_id);
                 let identity = row
                     .source_id
                     .iter()
@@ -65,18 +69,6 @@ impl Handles {
                     .collect::<String>();
                 // Identity-key fields are engine lookup metadata, not context.
                 row.fields.retain(|(key, _)| key != "identity_key");
-                // An entity's own id or identity key in its own fields stands
-                // as its short id alone: its name, set beside its own words,
-                // could finish a phrase they begin that no read of it saw.
-                if let Some((handle, mine)) = own.get(&row.source_id) {
-                    let mut mine: Vec<_> = mine.iter().map(|alias| (alias, handle)).collect();
-                    mine.sort_by_key(|(alias, _)| std::cmp::Reverse(alias.len()));
-                    for (key, value) in &mut row.fields {
-                        if !matches!(key.as_str(), "name" | "display_name") {
-                            walk(value, &mut |text| own_pass(text, &mine));
-                        }
-                    }
-                }
                 if aliases.contains_key(&identity) {
                     for (key, value) in &mut row.fields {
                         if matches!(key.as_str(), "name" | "display_name") && value.is_string() {
@@ -89,14 +81,26 @@ impl Handles {
         Self {
             aliases,
             seen: HashSet::new(),
+            rows,
         }
     }
-    fn text(&mut self, text: &str) -> String {
+    /// `text` with each alias rendered: as its entity's name and short id at
+    /// its first mention, as the short id after. In a row's own fields
+    /// (`own`: its source id, and the field), its own id or identity key
+    /// stands as its short id alone, but in its name: its name, set beside
+    /// its own words, could finish a phrase they begin that no read of it
+    /// saw. One pass reads the text once, so no render is read again.
+    fn text(&mut self, text: &str, own: Option<([u8; 16], &str)>) -> String {
         let mut aliases = self.aliases.iter().collect::<Vec<_>>();
         aliases.sort_by_key(|(alias, _)| std::cmp::Reverse(alias.len()));
         let seen = &mut self.seen;
-        substitute(text, &aliases, |(id, name)| {
-            if seen.insert(id.clone()) && !name.is_empty() {
+        let own = own
+            .filter(|(_, field)| !matches!(*field, "name" | "display_name"))
+            .map(|(row, _)| row);
+        substitute(text, &aliases, |(id, name, entity)| {
+            if own == Some(*entity) {
+                id.clone()
+            } else if seen.insert(id.clone()) && !name.is_empty() {
                 format!("{name} ({id})")
             } else {
                 id.clone()
@@ -104,7 +108,7 @@ impl Handles {
         })
     }
     pub(super) fn value(&mut self, value: &mut Value) {
-        walk(value, &mut |text| self.text(text));
+        self.walk(value, None);
     }
     pub(super) fn rows(&mut self, groups: &mut super::pack_entry::PreparedGroups, table: bool) {
         for (_, rows) in groups {
@@ -121,60 +125,48 @@ impl Handles {
             for row in rows {
                 if table {
                     for column in &columns {
-                        if let Some((_, value)) =
+                        if let Some((key, value)) =
                             row.fields.iter_mut().find(|(key, _)| key == column)
                         {
-                            self.value(value);
+                            self.walk(value, Some((row.source_id, key.as_str())));
                         }
                     }
                 } else {
-                    for (_, value) in &mut row.fields {
-                        self.value(value);
+                    for (key, value) in &mut row.fields {
+                        self.walk(value, Some((row.source_id, key.as_str())));
                     }
                 }
             }
         }
     }
-}
 
-/// Each string in `value` through `text`.
-fn walk(value: &mut Value, text: &mut impl FnMut(&str) -> String) {
-    match value {
-        Value::String(string) => *string = text(string),
-        Value::Array(values) => {
-            for value in values {
-                walk(value, text);
-            }
-        }
-        Value::Object(map) => {
-            for (key, value) in map {
-                // Never substitute a short ref in a citation: its content-hash
-                // suffix is the revision gate.
-                if key != "stats" && key != "id" {
-                    walk(value, text);
+    /// Each string in `value` through [`Self::text`]. A serialized row (an
+    /// object whose `id` is a row's short ref) reads each of its fields as
+    /// that row's own.
+    fn walk(&mut self, value: &mut Value, own: Option<([u8; 16], &str)>) {
+        match value {
+            Value::String(string) => *string = self.text(string, own),
+            Value::Array(values) => {
+                for value in values {
+                    self.walk(value, own);
                 }
             }
+            Value::Object(map) => {
+                let row = map
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .and_then(|id| self.rows.get(id))
+                    .copied();
+                for (key, value) in map {
+                    // Never substitute a short ref in a citation: its
+                    // content-hash suffix is the revision gate.
+                    if key != "stats" && key != "id" {
+                        self.walk(value, row.map(|row| (row, key.as_str())).or(own));
+                    }
+                }
+            }
+            _ => {}
         }
-        _ => {}
-    }
-}
-
-/// `text` with each of its entity's own `aliases` rendered as its short id,
-/// until none stands. A render is the short id, a word whose neighbours are
-/// what bounded the alias, so a later pass finds only an alias that holds
-/// the short id, spelled again by renders (`-as01as01-` from two abutting
-/// ones), which the global pass would render as the entity's name. Such an
-/// alias is longer than the short id, so each later render shortens the
-/// text and this ends. Once no own alias stands, none stands for the global
-/// pass either: it sees each place with the boundaries this pass saw.
-fn own_pass(text: &str, aliases: &[(&String, &(String, String))]) -> String {
-    let mut text = text.to_owned();
-    loop {
-        let next = substitute(&text, aliases, |(id, _)| id.clone());
-        if next == text {
-            return text;
-        }
-        text = next;
     }
 }
 
@@ -182,8 +174,8 @@ fn own_pass(text: &str, aliases: &[(&String, &(String, String))]) -> String {
 /// the first of `aliases` that matches taken.
 fn substitute(
     text: &str,
-    aliases: &[(&String, &(String, String))],
-    mut render: impl FnMut(&(String, String)) -> String,
+    aliases: &[(&String, &Handle)],
+    mut render: impl FnMut(&Handle) -> String,
 ) -> String {
     let mut output = String::with_capacity(text.len());
     let mut tail = text;

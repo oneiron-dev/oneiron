@@ -561,7 +561,11 @@ fn an_entitys_own_alias_in_its_own_fields_never_becomes_its_name() {
     for (identity_key, alias, rendered) in [
         ("zq9", "zq9".to_owned(), "as01"),
         ("as01", id.to_hex(), "as01"),
-        ("-as01as01-", "--as01as01--as01as01--".to_owned(), "as01"),
+        (
+            "-as01as01-",
+            "--as01as01--as01as01--".to_owned(),
+            "-as01as01-",
+        ),
     ] {
         let headline = format!("{} {alias}", words[..6].join(" "));
         let body = rmpv::Value::Map(vec![

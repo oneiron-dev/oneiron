@@ -650,13 +650,12 @@ pub(super) fn cut_assignment(
         Some(head) => {
             // A key cut in the middle is longer than any name, so only its
             // ending can read as one, once its own ends are trimmed as whole.
-            let start = head
-                .trim_start()
-                .trim_start_matches("export ")
-                .trim_start()
-                .trim_start_matches(['"', '\'']);
+            // A head left as the start of another `export ` may strip on past
+            // the cut.
+            let exported = head.trim_start().trim_start_matches("export ");
+            let start = exported.trim_start().trim_start_matches(['"', '\'']);
             let ending = key.trim_end().trim_end_matches(['"', '\'']);
-            if start.is_empty() || ending.len() < KEY_ENDING {
+            if "export ".starts_with(exported) || start.is_empty() || ending.len() < KEY_ENDING {
                 return None;
             }
             sensitive_key(ending)
