@@ -106,6 +106,39 @@ pub(super) fn named_directory_identity(root: &Path) -> Result<Option<FileIdentit
     }
 }
 
+/// Makes the directory `path` names, through a descriptor of the directory
+/// holding it, and returns the identity of the one made, read through that
+/// same descriptor. With `private`, that parent must be this user's and
+/// writable by no group or other, so no one else can move an entry in or out
+/// of it: the identity returned stays the one its name there holds.
+pub(super) fn make_directory(path: &Path, private: bool) -> Result<FileIdentity> {
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return Err(Error::InvalidConfig(
+            "a directory to make needs a parent and a name".to_owned(),
+        ));
+    };
+    let parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    let parent =
+        File::from(rustix::fs::open(parent, flags, Mode::empty()).map_err(std::io::Error::from)?);
+    if private {
+        let metadata = parent.metadata()?;
+        if metadata.uid() != rustix::process::geteuid().as_raw() || metadata.mode() & 0o022 != 0 {
+            return Err(Error::InvalidConfig(
+                "a replacing restore is built only where no one else may write".to_owned(),
+            ));
+        }
+    }
+    rustix::fs::mkdirat(&parent, name, Mode::from_raw_mode(0o777)).map_err(std::io::Error::from)?;
+    let made = openat(&parent, name, flags | OFlags::NOFOLLOW, Mode::empty())
+        .map_err(std::io::Error::from)?;
+    Ok(file_identity(&File::from(made).metadata()?))
+}
+
 /// Removes the directory `path` names, with everything in it, only while
 /// that name holds the very directory `held` has open. A name that holds
 /// another directory, a link or nothing is refused, and both are left as

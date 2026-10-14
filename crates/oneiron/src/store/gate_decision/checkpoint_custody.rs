@@ -21,7 +21,7 @@ use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, Raw, SideKey, SideTable};
 #[cfg(unix)]
 use crate::store::root_directory::{
-    FileIdentity, file_identity, named_directory_identity, remove_held_directory,
+    FileIdentity, file_identity, make_directory, named_directory_identity, remove_held_directory,
 };
 use crate::store::{Store, read_existing_vault_meta};
 
@@ -181,6 +181,53 @@ fn names(path: &Path, opened: &FileIdentity) -> Result<bool> {
 #[cfg(not(unix))]
 fn names(_: &Path, (): &()) -> Result<bool> {
     Ok(true)
+}
+
+/// The directory a restore made for its copy. Each open of the copy goes by
+/// name, and is checked against the directory made: rows are written into,
+/// and a mark lifted from, only that one, never a directory moved in under
+/// its name since.
+pub(crate) struct MadeDestination {
+    #[cfg(unix)]
+    made: FileIdentity,
+}
+
+impl MadeDestination {
+    /// Makes `destination`, which must not exist yet. A copy that will
+    /// replace a live vault (`private`) is made only in a directory of this
+    /// user's that no one else may write, so its name there cannot be
+    /// exchanged for another vault's between the checks and the writes.
+    pub(crate) fn make(destination: &Path, private: bool) -> Result<Self> {
+        #[cfg(unix)]
+        let made = make_directory(destination, private)?;
+        #[cfg(not(unix))]
+        {
+            let _ = private;
+            std::fs::create_dir(destination)?;
+        }
+        #[cfg(test)]
+        if let Some(callback) = AFTER_RESTORE_DESTINATION_MADE.with(|slot| slot.borrow_mut().take())
+        {
+            callback();
+        }
+        Ok(Self {
+            #[cfg(unix)]
+            made,
+        })
+    }
+
+    /// Refuses unless `store` is open on the directory made.
+    pub(crate) fn holds(&self, store: &Store) -> Result<()> {
+        #[cfg(unix)]
+        if opened_directory(store)? != self.made {
+            return Err(Error::InvalidConfig(
+                "a restore's copy no longer sits where it was made".into(),
+            ));
+        }
+        #[cfg(not(unix))]
+        let _ = store;
+        Ok(())
+    }
 }
 
 /// Drops `vault`, the copy a refused restore made at `destination`, and
@@ -402,9 +449,8 @@ impl Store {
     /// writer, and this handle is sealed before any other writer begins. So
     /// whichever of the two sits at the path is the one live vault on the
     /// custody they share, at every instant and after a crash anywhere. A
-    /// swap that fails lifts the mark again and changes nothing; one that
-    /// returns without each directory found at the other's path is refused
-    /// and leaves both marks as they are. Once the
+    /// swap that fails, or returns without each directory found at the
+    /// other's path, is refused and leaves both marks as they are. Once the
     /// swap is on disk, this vault is archived wherever it goes and the
     /// replacement's mark is lifted; a failure there is only logged, both
     /// marks already saying the same, and the replacement keeps its mark,
@@ -447,17 +493,10 @@ impl Store {
         ARCHIVED.put(self, &mut wtxn, &(), &mark)?;
         self.env.seal();
         wtxn.commit()?;
-        if let Err(err) = swap() {
-            // A failed swap is not proof that nothing moved: the mark is
-            // lifted only while this vault still sits at its path, and one
-            // moved off it stays live only there.
-            if matches!(names(self.env.path(), &live_dir), Ok(true))
-                && let Err(lift) = self.put_archive_mark(None)
-            {
-                tracing::warn!(error = %lift, "a failed swap left its vault marked live only where it is");
-            }
-            return Err(err.into());
-        }
+        // A failed swap is no proof that nothing moved, and a name checked
+        // now could move before a lift commits: the mark stays, and whichever
+        // of the two sits at the path is still the one live vault.
+        swap()?;
         let exchanged =
             names(self.env.path(), &replacement_dir)? && names(replacement.env.path(), &live_dir)?;
         if !exchanged {
@@ -591,6 +630,8 @@ impl Store {
 thread_local! {
     static BEFORE_ACTIVATION_FORK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         std::cell::RefCell::new(None);
+    static AFTER_RESTORE_DESTINATION_MADE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
 }
 
 /// Runs `callback` once, the next time this thread activates an archived
@@ -598,4 +639,11 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn arm_before_activation_fork(callback: impl FnOnce() + 'static) {
     BEFORE_ACTIVATION_FORK.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
+/// Runs `callback` once, the next time this thread makes a restore's
+/// destination, between making it and opening the copy in it.
+#[cfg(test)]
+pub(crate) fn arm_after_restore_destination_made(callback: impl FnOnce() + 'static) {
+    AFTER_RESTORE_DESTINATION_MADE.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
 }

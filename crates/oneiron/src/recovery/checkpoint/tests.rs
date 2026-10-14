@@ -1051,38 +1051,119 @@ fn a_swap_that_strands_the_set_aside_vault_is_refused() {
         .expect("the vault in place erases");
 }
 
-/// C8 review r1 (Astra F1): a swap that fails is no proof that nothing
-/// moved. A vault moved off its path before the exchange failed keeps its
-/// mark, so it opens archived anywhere but there. Control: a failed swap with
-/// the vault in place lifts the mark, and the vault still erases.
+/// C8 reviews r1 (Astra F1) and r2 (Sol F2, Astra F2): a swap that fails is
+/// no proof that nothing moved, so the vault keeps its mark and stays live
+/// only at its path. Moved off it while the exchange failed, or set aside
+/// after it with the replacement put in its place, it opens archived and an
+/// erase in it is refused; the replacement at the path is the live one.
+/// Control: a failed swap with the vault in place leaves it erasing there.
 #[cfg(unix)]
 #[test]
-fn a_failed_swap_lifts_the_mark_only_from_a_vault_still_in_place() {
-    for moved_off in [true, false] {
+fn a_failed_swap_keeps_the_vault_live_only_at_its_path() {
+    for case in [
+        "in place",
+        "moved while the exchange failed",
+        "set aside after",
+    ] {
         let root = tempfile::tempdir().unwrap();
         let vault_path = root.path().join("vault");
         let (source, replacement, claim, _) = replacement_for(root.path());
         let moved = root.path().join("moved");
         let refused = source.swap_in_replacement(&replacement, || {
-            if moved_off {
+            if case == "moved while the exchange failed" {
                 std::fs::rename(&vault_path, &moved)?;
             }
             Err(std::io::ErrorKind::NotFound.into())
         });
-        assert!(refused.is_err(), "{refused:?}");
+        assert!(refused.is_err(), "{case}: {refused:?}");
         drop((source, replacement));
-        let erased = Vault::open(
-            if moved_off { &moved } else { &vault_path },
-            VaultConfig::device(),
-        )
-        .unwrap()
-        .delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete);
-        if moved_off {
-            assert!(archived(erased), "the moved vault stays archived");
-        } else {
-            erased.expect("the vault in place erases");
+        if case == "set aside after" {
+            std::fs::rename(&vault_path, &moved).unwrap();
+            std::fs::rename(root.path().join("staged"), &vault_path).unwrap();
+        }
+        let erase_at = |path: &Path| {
+            Vault::open(path, VaultConfig::device())
+                .unwrap()
+                .delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
+        };
+        if case == "in place" {
+            erase_at(&vault_path).expect("the vault in place erases");
+            continue;
+        }
+        assert!(
+            archived(erase_at(&moved)),
+            "{case}: the vault off its path stays archived"
+        );
+        if case == "set aside after" {
+            erase_at(&vault_path).expect("the replacement in its place is the live one");
         }
     }
+}
+
+/// C8 review r2 (Sol F1, Astra F1): a replacing restore makes its copy's
+/// directory, then opens the copy there by name. Another vault moved in under
+/// the staging name between the two is never taken for the copy: the restore
+/// is refused before any row is written, and that vault keeps its rows. A
+/// staging directory others may write is refused before anything is made.
+/// Control: with nothing moved, the copy is built in the directory made.
+#[cfg(unix)]
+#[test]
+fn a_replacing_restore_writes_only_into_the_directory_it_made() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let vault = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let (claim, _) = claim_with_receipt(&vault);
+    let image = root.path().join("image");
+    vault.snapshot_checkpoint(&image, 100).expect("image");
+    let directory = |name: &str, mode: u32| {
+        let dir = root.path().join(name);
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode)).unwrap();
+        dir
+    };
+    let restore = |staging: &Path| {
+        Vault::restore_checkpoint_replacing(
+            &image,
+            &staging.join("vault"),
+            VaultConfig::device(),
+            &vault,
+            120,
+        )
+    };
+
+    let other = directory("other", 0o700);
+    let kept =
+        claim_with_receipt(&Vault::open(other.join("vault"), VaultConfig::device()).unwrap()).0;
+    let staging = directory("staging", 0o700);
+    crate::store::arm_after_restore_destination_made({
+        let (staging, other, aside) = (staging.clone(), other, root.path().join("aside"));
+        move || {
+            std::fs::rename(&staging, aside).unwrap();
+            std::fs::rename(other, &staging).unwrap();
+        }
+    });
+    let refused = restore(&staging);
+    assert!(refused.is_err(), "{:?}", refused.map(|_| ()));
+    let moved_in = Vault::open(staging.join("vault"), VaultConfig::device()).unwrap();
+    assert!(
+        moved_in.get(&kept).unwrap().is_some(),
+        "the vault moved in keeps its rows"
+    );
+    assert!(
+        moved_in.get(&claim).unwrap().is_none(),
+        "no row of the image lands in it"
+    );
+    drop(moved_in);
+
+    let shared = directory("shared", 0o777);
+    assert!(restore(&shared).is_err());
+    assert!(
+        !shared.join("vault").exists(),
+        "nothing is made where others write"
+    );
+
+    let (replacement, _) = restore(&directory("fresh", 0o700)).expect("restore");
+    assert!(replacement.get(&claim).unwrap().is_some());
 }
 
 /// An activation commits only once every receipt it keeps reads under its

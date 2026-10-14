@@ -221,6 +221,7 @@ fn a_restore_whose_swap_cannot_be_confirmed_removes_nothing() {
 /// after it is made. A directory moved in under that name before the open is
 /// held only if it could be the one made, empty and owner-only; any other is
 /// refused and left whole, so no removal reaches what the restore never made.
+/// Review r2 (Sol F5, Astra F4): one that does not open is left too.
 #[cfg(unix)]
 #[test]
 fn a_directory_moved_in_before_the_open_is_never_held() {
@@ -242,6 +243,12 @@ fn a_directory_moved_in_before_the_open_is_never_held() {
     let shared = private("shared", 0o755);
     assert!(Owned::hold(shared.clone()).is_err());
     assert!(shared.is_dir(), "a refused directory is left");
+    if !rustix::process::geteuid().is_root() {
+        let locked = private("locked", 0o000);
+        assert!(Owned::hold(locked.clone()).is_err());
+        assert!(locked.is_dir(), "a directory that does not open is left");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
 
     // Control: an empty owner-only directory is held, and removed.
     let fresh = private("fresh", 0o700);
@@ -287,7 +294,7 @@ fn a_failed_swap_removes_only_the_staging_directory_it_made() {
         )
         .expect_err("the swap failed");
         assert!(
-            format!("{error:#}").contains("nothing was changed"),
+            format!("{error:#}").contains("nothing was moved"),
             "{occupant}: {error:#}"
         );
         let staging = staging.into_inner();

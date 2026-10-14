@@ -342,20 +342,19 @@ impl Owned {
     /// Opens the directory `create` just made. The open goes through its name
     /// again, so a directory moved in under that name meanwhile is held only
     /// if it could be the one made here: empty, this process's and owner-only.
-    /// Removal then reaches nothing this call did not put there. Any other
-    /// directory is refused and left as it is.
+    /// That is a fitness test, not proof this call made it, but removal then
+    /// reaches nothing this call did not put there. Any other directory, or
+    /// one that does not open, is refused and left as it is.
     fn hold(dir: PathBuf) -> anyhow::Result<Self> {
         #[cfg(unix)]
         let held = {
             use rustix::fs::{Mode, OFlags};
             let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-            let held = match rustix::fs::open(&dir, flags, Mode::empty()) {
-                Ok(held) => std::fs::File::from(held),
-                Err(error) => {
-                    let _ = std::fs::remove_dir(&dir);
-                    anyhow::bail!("open {}: {error}", dir.display());
-                }
-            };
+            let held = rustix::fs::open(&dir, flags, Mode::empty())
+                .map(std::fs::File::from)
+                .map_err(|error| {
+                    anyhow::anyhow!("open {}: {error}; it is left as it is", dir.display())
+                })?;
             anyhow::ensure!(
                 fresh_private_directory(&held)?,
                 "{} is not the directory this call made; it is left as it is",
@@ -551,7 +550,8 @@ fn restore_over_syncing(
         }
         staging.remove();
         anyhow::bail!(
-            "cannot swap the restored copy into {} ({error}); nothing was changed",
+            "cannot swap the restored copy into {} ({error}); nothing was moved, and the vault \
+             there stays live only at that path",
             vault_path.display()
         );
     }

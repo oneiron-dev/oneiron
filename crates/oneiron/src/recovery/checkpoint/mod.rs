@@ -575,9 +575,10 @@ impl Vault {
             crate::store::refuse_custody_beside(destination)?;
         }
         // Existing content is never replaced or partially restored over.
-        std::fs::create_dir(destination)?;
+        let made = crate::store::MadeDestination::make(destination, home.is_some())?;
         let mut forked = ForkedCustody(None);
         let vault = Self::open_owned(destination, config.clone())?;
+        made.holds(&vault.store)?;
         vault.with_write_txn_grouped(|txn| {
             for entry in DB_MANIFEST {
                 let db = vault
@@ -624,6 +625,7 @@ impl Vault {
         drop(vault);
         // Re-open through all ABI, model, analyzer and manifest gates before rebuilding.
         let vault = Self::open_owned(destination, config)?;
+        made.holds(&vault.store)?;
         if let Some(home) = home {
             vault.store.unseal_replacement(home)?;
         }
