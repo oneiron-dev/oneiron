@@ -300,12 +300,14 @@ fn a_body_the_write_door_refuses_is_withheld_whole_from_every_context_output() -
         .map(|(at, word)| field(format!("PROSE{:02}", at + 1), word))
         .collect();
     keyed.push(field("password".into(), PHRASE));
-    // A body the write door refuses only in the bytes it was stored as: the
-    // length header of a 0x5f70-byte string, `da 5f 70`, spells `_p` before
-    // its `assword=`. The context writers read hydrated fields as their text,
-    // which reads as no secret, so only hydration's read of the stored bytes
+    // Sol R12: a body the release doors refuse only in the bytes it was
+    // stored as. The length header of a 0x5f70-byte string, `da 5f 70`,
+    // spells `_p` before its `assword=changeme`: a stand-in the write door
+    // allows under a credential name, and every release door clears. The
+    // context writers read hydrated fields as their text, which names no
+    // credential, so only hydration's release read of the stored bytes
     // withholds it.
-    let mut spelled = "assword=t7Rk2pLq9WzX\n".to_owned();
+    let mut spelled = "assword=changeme\n".to_owned();
     spelled.extend(std::iter::repeat_n('z', 0x5f70 - spelled.len()));
     // Bodies the write door accepts: a credential field holding a stand-in
     // the write door allows and every release door still clears.
@@ -320,7 +322,7 @@ fn a_body_the_write_door_refuses_is_withheld_whole_from_every_context_output() -
         (rmpv::Value::Map(keyed.clone()), true),
         (
             rmpv::Value::Map(vec![field("content".into(), &spelled)]),
-            true,
+            false,
         ),
         (accepted("kept asset words"), false),
     ];
@@ -387,7 +389,6 @@ fn a_body_the_write_door_refuses_is_withheld_whole_from_every_context_output() -
         let text = String::from_utf8(full().format(format).run_serialized()?).unwrap();
         assert!(!text.contains("sausage"), "{format:?}: {text}");
         assert!(!text.contains("changeme"), "{format:?}: {text}");
-        assert!(!text.contains("t7Rk2pLq9WzX"), "{format:?}: {text}");
         assert!(text.contains("kept asset words"), "{format:?}: {text}");
         assert!(text.contains("kept claim words"), "{format:?}: {text}");
     }
