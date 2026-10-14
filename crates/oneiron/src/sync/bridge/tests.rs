@@ -752,6 +752,92 @@ fn a_window_holding_an_authority_row_over_a_planted_fence_snapshots_and_recovers
     Ok(())
 }
 
+/// Bug repro (review round 5, Astra F2): a replica refuses a row a key a
+/// handoff retired signs that arrives after the handoff, unless the row is
+/// in its line. The order put a handoff first among the rows ready, as a
+/// consent row, so a window holding an owner's row beside the other owner's
+/// handoff, both stored at the source, never recovered. A handoff now goes
+/// after every row beside it.
+#[cfg(feature = "sync")]
+#[test]
+fn a_window_with_a_row_beside_a_handoff_recovers() -> Result<()> {
+    let source = test_vault();
+    let owner = authority_test_key(67);
+    let genesis = authority_genesis_fixture(67);
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    let enroll = authority_enroll_fixture(vault_id, &genesis, &owner, 0x7a, 1);
+    let other = authority_test_key(0x7a);
+    let beside = authority_bind_owner_fixture(
+        vault_id,
+        &enroll,
+        &other,
+        EntityId::from_bytes_unchecked([0x7a; 16]),
+        1,
+    );
+    let successor = authority_key_from_signing(&authority_test_key(0x7b));
+    let mut handoff = authority_child_fixture(
+        vault_id,
+        &enroll,
+        &owner,
+        2,
+        3,
+        crate::authority::AuthorityOp::ReRoot {
+            new_device: authority_test_device(successor),
+        },
+    );
+    let other_key = authority_key_from_signing(&other);
+    handoff.cosigns.push(crate::authority::AuthoritySignature {
+        suite: other_key.suite(),
+        public_key: other_key,
+        signature: vec![0; 64],
+    });
+    let transcript = crate::authority::authority_transcript(&handoff)?;
+    handoff.signer.signature = owner.sign(&transcript).to_bytes().to_vec();
+    handoff.cosigns[0].signature = other.sign(&transcript).to_bytes().to_vec();
+    source.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let rows = [&genesis, &enroll, &beside, &handoff];
+    for entry in &rows[1..] {
+        source.put_authority_log_entry(entry, TimeRange { start: 2, end: 2 }, 2)?;
+    }
+    let fold = source.authority_fold()?;
+    assert!(
+        fold.valid_entries
+            .contains(&crate::authority::authority_entry_hash(&handoff)?),
+        "the handoff stands at the source: {:?}",
+        fold.issues
+    );
+
+    let window = crate::deletion::window_label_from_timestamp(2);
+    let doc = LoroDoc::new();
+    let ids = rows
+        .iter()
+        .map(|entry| crate::authority::authority_log_entity_id(entry))
+        .collect::<Result<Vec<_>>>()?;
+    for entity in &ids {
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &entity.to_hex(),
+            &source.get_raw_unsealed(entity)?.unwrap(),
+        )?;
+    }
+    doc.commit();
+    let snapshot = crate::recovery::capture_canonical_window(&source, &window, &doc)?;
+    let target = test_vault();
+    target.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let dir = tempfile::tempdir()?;
+    crate::recovery::recover_vault_window(
+        &target,
+        &Materializer::new(),
+        dir.path().join("manifest"),
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    for entity in &ids {
+        assert!(target.live_entity_row(entity)?.is_live());
+    }
+    Ok(())
+}
+
 /// H72 (the Engine's census): canonical-window recovery's preflight walked
 /// a window's rows in entity-id order, so a row could come before the
 /// enrollment in the same window that admits its signer. The door held it,

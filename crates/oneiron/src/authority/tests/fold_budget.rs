@@ -1156,6 +1156,99 @@ fn a_binding_beside_a_misordered_sibling_imports_in_any_order() {
     }
 }
 
+/// Bug repro (review round 5, Astra F4): when every row left waited on an
+/// edge, the import took the lowest sequence a sequence edge alone held
+/// back, ahead of a lower one a parent edge held back too. An agent's
+/// binding so staged after the agent's next row and folded as a rollback,
+/// and the import still succeeded, without the binding. The order now takes
+/// the lowest sequence either way, and the import folds as the source does.
+#[test]
+fn a_binding_held_by_both_edges_imports_before_its_signers_later_rows() {
+    let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
+    let [owner, first, second, admin] = [150, 151, 152, 153].map(ed_key);
+    let genesis = genesis_entry(150, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let signed = |signer: &SigningKey, seq, parent, op, cosigner: Option<&SigningKey>| {
+        let entry = unsigned_entry(
+            Some(id),
+            seq,
+            vec![parent],
+            op,
+            authority_key_from_ed(signer),
+            10 + seq,
+        );
+        match cosigner {
+            Some(cosigner) => cosign_ed(entry, signer, cosigner),
+            None => sign_ed(entry, signer),
+        }
+    };
+    let enroll = |key: &SigningKey, roles| AuthorityOp::EnrollDevice {
+        device: device(authority_key_from_ed(key), roles, AuthorityTier::Software),
+    };
+    let revoke = |seed| AuthorityOp::RevokeActor {
+        authority_key: authority_key_from_ed(&ed_key(seed)),
+        epoch: 1,
+    };
+    let enroll_first = signed(&owner, 1, hash(&genesis), enroll(&first, ROLE_AGENT), None);
+    let enroll_second = signed(
+        &owner,
+        2,
+        hash(&enroll_first),
+        enroll(&second, ROLE_AGENT),
+        None,
+    );
+    let base = hash(&enroll_second);
+    let other = signed(&second, 4, base, revoke(160), Some(&owner));
+    let bind = signed(
+        &first,
+        2,
+        hash(&other),
+        AuthorityOp::BindActor {
+            authority_key: authority_key_from_ed(&first),
+            actor_ref: EntityId::from_bytes([0x73; 16]).unwrap(),
+            actor_class: "system".into(),
+            epoch: 1,
+        },
+        Some(&owner),
+    );
+    let later = signed(&first, 3, base, revoke(161), Some(&owner));
+    let admits = signed(&first, 5, base, enroll(&admin, ROLE_ADMIN), Some(&owner));
+    let early_first = signed(&first, 1, base, revoke(162), Some(&admin));
+    let early_second = signed(&second, 1, base, revoke(163), Some(&admin));
+
+    let dir = tempfile::tempdir().unwrap();
+    let source = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    let at = TimeRange { start: 1, end: 1 };
+    for entry in [
+        &genesis,
+        &enroll_first,
+        &enroll_second,
+        &other,
+        &bind,
+        &later,
+        &admits,
+        &early_first,
+        &early_second,
+    ] {
+        source.put_authority_log_entry(entry, at, 1).unwrap();
+    }
+    let expected = source.authority_fold().unwrap();
+    assert!(expected.valid_entries.contains(&hash(&bind)));
+
+    let history = source.export_signed_authority_history().unwrap();
+    let mut reversed = history.clone();
+    reversed.reverse();
+    for history in [history, reversed] {
+        let fold = imported(&history);
+        assert!(
+            fold.valid_entries.contains(&hash(&bind)),
+            "the binding folded as a rollback: {:?}",
+            fold.issues
+        );
+        assert_eq!(fold.valid_entries, expected.valid_entries);
+    }
+}
+
 /// H72 (the Engine's census): the public batch door staged rows in the
 /// caller's order, so a batch that gave a row before the enrollment that
 /// admits its signer, or before its genesis, was held whole. It stages them
@@ -1288,7 +1381,10 @@ fn a_cosigned_handoff_imports_after_its_signers_admission() {
 /// and a counted row of the same sequence imported demotion first, as the
 /// import put every machine revision ahead. The demotion took the last
 /// slot, the counted row met the bound, and the import aborted. A revision
-/// that may restrict past the bound now stages last among its equals.
+/// that may restrict past the bound now stages last among its equals. An
+/// admission another admitter signs on the demotion once pulled the
+/// demotion, but not its counted sibling, ahead (review round 5, Astra F3);
+/// the sibling now goes with it.
 #[test]
 fn a_demotion_and_its_counted_sibling_import_at_the_bound() {
     const BOUND: usize = 16;
@@ -1313,6 +1409,17 @@ fn a_demotion_and_its_counted_sibling_import_at_the_bound() {
         )
         .unwrap()
     };
+    let admin = ed_key(77);
+    let admit = |key: &SigningKey| AuthorityOp::EnrollDevice {
+        device: device(
+            authority_key_from_ed(key),
+            ROLE_ADMIN,
+            AuthorityTier::Software,
+        ),
+    };
+    host.vault
+        .put_authority_log_entry(&next(admit(&admin)), at, 1)
+        .unwrap();
     with_rows_per_signer_for_test(BOUND, || {
         let current = fold().machine(request.machine).unwrap().profile.clone();
         let demote = AuthorityOp::MachineProfile(MachineProfile {
@@ -1334,6 +1441,20 @@ fn a_demotion_and_its_counted_sibling_import_at_the_bound() {
         let demotion = sibling.expect("the owner's bound left room for a row");
         host.vault
             .put_authority_log_entry(&demotion, at, 1)
+            .unwrap();
+        let on_demotion = sign_ed(
+            unsigned_entry(
+                Some(host.vault_id),
+                1,
+                vec![authority_entry_hash(&demotion).unwrap()],
+                admit(&ed_key(78)),
+                authority_key_from_ed(&admin),
+                2,
+            ),
+            &admin,
+        );
+        host.vault
+            .put_authority_log_entry(&on_demotion, at, 1)
             .unwrap();
         let history = host.vault.export_signed_authority_history().unwrap();
         let mut reversed = history.clone();

@@ -8,9 +8,11 @@
 //! parents, unless only a parent edge stands in the way: then the parent
 //! edge gives way first, and a sequence edge only after it, lowest sequence
 //! first. Among the rows ready, the consent structure's rows (genesis, owner
-//! and admin admissions) and every row they wait for go first, and owned but
-//! not "yours" machine revisions, which may land past their signer's bound
-//! as restrictions, go last; then the order given.
+//! and admin admissions) and every row they wait for go first, with the rows
+//! of the same signer and sequence as any of them; owned but not "yours"
+//! machine revisions, which may land past their signer's bound as
+//! restrictions, go after the rest, and a handoff, which retires the keys
+//! before it, after every row beside it; then the order given.
 //!
 //! An import is one write that aborts on the first held row, so it also
 //! stages each row after the rows that let a key vouch for it, and a handoff
@@ -33,6 +35,12 @@ fn is_consent_row(op: &AuthorityOp) -> bool {
 /// A row the door's structure reads: a consent row or a machine revision.
 fn is_structural(op: &AuthorityOp) -> bool {
     is_consent_row(op) || matches!(op, AuthorityOp::MachineProfile(_))
+}
+
+/// A handoff: a replica refuses a row a key it retires signs that arrives
+/// after it, unless the row is in its line.
+fn is_handoff(op: &AuthorityOp) -> bool {
+    matches!(op, AuthorityOp::ReRoot { .. })
 }
 
 /// An owned but not "yours" machine revision.
@@ -119,8 +127,11 @@ fn stage_order<'r>(
 
 /// A queued row's place: its tier (the consent structure's rows and what
 /// they wait for, then the rest; rows that may restrict past the bound last
-/// in each), then the order given.
+/// in each; handoffs last of all), then the order given.
 type Turn = (u8, usize);
+
+/// A handoff's tier, after every other row.
+const HANDOFF_TIER: u8 = 4;
 
 /// Which of its edges still hold a row a key vouches for back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -219,26 +230,34 @@ impl<'r> Stager<'r> {
             }
         }
         // The consent structure's rows, and every row they wait for, by
-        // parent or by sequence, go first; in each tier, the rows that may
-        // restrict past the bound go last.
+        // parent or by sequence, go first, with their signer's other rows of
+        // the same sequence, so a row that may restrict never passes a
+        // counted one there (review round 5, Astra F3). In each tier, the
+        // rows that may restrict past the bound go last. A handoff goes after
+        // every row beside it, so a row its predecessors signed beside it
+        // lands before it retires them (review round 5, Astra F2).
         let mut tier: Vec<u8> = entries
             .iter()
-            .map(|(_, entry)| 2 + u8::from(may_restrict(&entry.op)))
+            .map(|(_, entry)| match &entry.op {
+                op if is_handoff(op) => HANDOFF_TIER,
+                op => 2 + u8::from(may_restrict(op)),
+            })
             .collect();
         let mut expanded = vec![false; levels.len()];
         let mut stack: Vec<_> = (0..count)
             .filter(|index| is_consent_row(&entries[*index].1.op))
             .collect();
         while let Some(index) = stack.pop() {
-            if tier[index] < 2 {
+            if !(2..HANDOFF_TIER).contains(&tier[index]) {
                 continue;
             }
             tier[index] -= 2;
             stack.extend(parents(index));
-            if let Some(below) = previous_level[level_of[index]]
-                && !std::mem::replace(&mut expanded[below], true)
-            {
-                stack.extend(levels[below].iter().copied());
+            let level = level_of[index];
+            for level in std::iter::once(level).chain(previous_level[level]) {
+                if !std::mem::replace(&mut expanded[level], true) {
+                    stack.extend(levels[level].iter().copied());
+                }
             }
         }
         Self {
@@ -266,15 +285,28 @@ impl<'r> Stager<'r> {
     }
 
     /// The next row to stage: a ready one, else one only a parent edge
-    /// holds back, else the lowest sequence a sequence edge holds back.
+    /// holds back, else the lowest sequence a sequence edge holds back,
+    /// whether a parent edge holds it too or not (review round 5, Astra F4).
     fn next(&mut self) -> Option<usize> {
-        let index = self
+        let (_, index) = match self
             .ready
             .pop_first()
             .or_else(|| self.by_parent.pop_first())
-            .or_else(|| self.by_sequence.pop_first().map(|(_, turn)| turn))
-            .or_else(|| self.by_both.pop_first().map(|(_, turn)| turn))
-            .map(|(_, index)| index)?;
+        {
+            Some(turn) => turn,
+            None => {
+                let both_lower = match (self.by_sequence.first(), self.by_both.first()) {
+                    (Some(alone), Some(both)) => both < alone,
+                    (alone, _) => alone.is_none(),
+                };
+                let queue = if both_lower {
+                    &mut self.by_both
+                } else {
+                    &mut self.by_sequence
+                };
+                queue.pop_first()?.1
+            }
+        };
         self.held[index] = None;
         Some(index)
     }
