@@ -49,12 +49,17 @@ fn put_twice(vault: &Vault, id: EntityId, entity_type: u8, old: &[u8], new: &[u8
 }
 
 fn claim_body(value: &str) -> Vec<u8> {
+    claim_body_at(value, ClaimApprovalStatus::Auto)
+}
+
+/// [`claim_body`] under `approval`.
+fn claim_body_at(value: &str, approval: ClaimApprovalStatus) -> Vec<u8> {
     let body = ClaimBody::new(
         "test.rerank_words",
         ClaimSubject::Entity(entity_id(0x7C)),
         rmpv::Value::from(value),
         0.9,
-        ClaimApprovalStatus::Auto,
+        approval,
         ClaimLifecycleStatus::Active,
     )
     .unwrap();
@@ -571,7 +576,9 @@ fn an_unchanged_claim_holding_a_nan_is_served() -> Result<()> {
 /// Wonder R15 on this branch: a pack read live serves a word-bound claim at
 /// its pin, while the disclosure clamp judged the claim on the body the gate
 /// read live. Pinned words of a Tier-A predicate, behind a live body a guest
-/// may read, reached the guest. The body served is judged.
+/// may read, reached the guest. The body served is judged. The reranker is
+/// still handed those words: they are surfaceable, and the clamp sweeps what
+/// the pack serves after ranking, a live row's words too.
 #[test]
 fn a_clamped_pack_serves_no_tier_a_words_a_pin_holds() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -624,5 +631,56 @@ fn a_clamped_pack_serves_no_tier_a_words_a_pin_holds() -> Result<()> {
             .all(|row| row.id != id),
         "{pack:?}"
     );
+    Ok(())
+}
+
+/// CodeRabbit on #1426: a binding reranker was handed a claim's body at its
+/// pin whenever it decoded, though the gate judged the live body. Pinned
+/// words that are Rejected or Proposed, behind a live body that surfaces,
+/// left for the reranker, and hydration withheld the row only after. They
+/// leave no more: the row is not reranked, and the pack serves what it
+/// serves with no reranker.
+#[test]
+fn a_binding_reranker_is_handed_no_pinned_claim_the_run_withholds() -> Result<()> {
+    for approval in [ClaimApprovalStatus::Rejected, ClaimApprovalStatus::Proposed] {
+        for read_mode in [ReadMode::Indexed, ReadMode::Live] {
+            let (_dir, vault) = open_test_vault();
+            put_subject(&vault)?;
+            let id = entity_id(0x6E);
+            put_twice(
+                &vault,
+                id,
+                ENTITY_TYPE_CLAIM,
+                &claim_body_at("old-words", approval),
+                &claim_body("new-words"),
+            )?;
+            let reranker = ClaimKeepingReranker::default();
+
+            let pack = scored_pack(&vault, &reranker, read_mode)?;
+            let unreranked = vault
+                .context_pack()
+                .read_mode(read_mode)
+                .search_text("lantern", 10)
+                .run()?;
+
+            let served = |pack: &crate::ContextPack| {
+                pack.results
+                    .iter()
+                    .chain(&pack.neighbors)
+                    .map(|row| (row.id, row.fields.clone()))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                *reranker.claims.lock().unwrap(),
+                Vec::<rmpv::Value>::new(),
+                "{approval:?} at {read_mode:?}"
+            );
+            assert_eq!(
+                served(&pack),
+                served(&unreranked),
+                "{approval:?} at {read_mode:?}"
+            );
+        }
+    }
     Ok(())
 }

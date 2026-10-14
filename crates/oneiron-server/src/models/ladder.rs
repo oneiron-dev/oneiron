@@ -90,7 +90,9 @@ fn falls_through(error: &LlmError) -> bool {
     !matches!(error, LlmError::BudgetDenied(_))
 }
 
-/// A started rung that failed keeps its reservation as spend; a settlement
+/// Settles a rung that did not answer. One that started keeps its
+/// reservation as spend; one admitted and never sent never started its
+/// lease, so its reservation is released and it pays nothing. A settlement
 /// the meter refuses is on the run's `Settled` row.
 fn settle_failed(permit: RunPermit) {
     if let Err(denied) = permit.settle(CallOutcome::Failed) {
@@ -259,6 +261,7 @@ impl OfferLadder {
             }
             let (call, permit) = self.admit(run, rung, &request, selector, false)?;
             if !may_send() {
+                // Unsent: only the gate starts a lease, so this pays nothing.
                 settle_failed(permit);
                 break;
             }

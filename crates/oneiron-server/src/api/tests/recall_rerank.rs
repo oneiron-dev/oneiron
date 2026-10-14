@@ -830,18 +830,23 @@ rerank_budget_units = 32000
 
 /// A run receipt sink that flags a world device-only when the recall's
 /// rerank call is admitted, as a flag that commits while admission waits on
-/// the host's receipts. Given its vault and world once they exist.
+/// the host's receipts. Given its vault and world once they exist. It keeps
+/// every receipt.
 #[derive(Default)]
-struct FlagOnAdmission(Mutex<Option<(Arc<oneiron::Vault>, oneiron::EntityId)>>);
+struct FlagOnAdmission {
+    flag: Mutex<Option<(Arc<oneiron::Vault>, oneiron::EntityId)>>,
+    receipts: MemoryReceipts,
+}
 
 impl RunReceiptSink for FlagOnAdmission {
     fn record(&self, receipt: RunReceipt) {
         if receipt.run.starts_with("recall-rerank:")
             && matches!(receipt.event, RunEvent::Admitted(_))
-            && let Some((vault, world)) = self.0.lock().unwrap().take()
+            && let Some((vault, world)) = self.flag.lock().unwrap().take()
         {
             vault.set_world_device_only(world, true).unwrap();
         }
+        self.receipts.record(receipt);
     }
 }
 
@@ -849,6 +854,8 @@ impl RunReceiptSink for FlagOnAdmission {
 /// admission, which waits on the host's receipt sink, and then sent the
 /// words of a row a world flagged meanwhile keeps. It asks again once the
 /// rung is admitted: nothing is sent, and the recall ranks by fusion.
+/// Bugbot on #1426: the admitted rung, never sent, settles for nothing, and
+/// the line's balance is unchanged.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_world_flagged_while_a_rung_is_admitted_reaches_no_rung() {
     const KEPT: &str = "the lantern key is under the mat";
@@ -862,14 +869,33 @@ async fn a_world_flagged_while_a_rung_is_admitted_reaches_no_rung() {
         let (_dir, server, _host) = served_with(Some(&models), flag.clone()).await;
         let actor = reader(&server, "rerank-admitted").await;
         let world = world_with(server.vault(), actor, KEPT);
-        *flag.0.lock().unwrap() = Some((Arc::clone(server.vault()), world));
+        *flag.flag.lock().unwrap() = Some((Arc::clone(server.vault()), world));
 
         let pack = recall_spec_from(&server, "rerank-admitted", actor, high_in(world), on_device)
             .await
             .unwrap();
 
-        assert!(flag.0.lock().unwrap().is_none(), "the rung was admitted");
+        assert!(flag.flag.lock().unwrap().is_none(), "the rung was admitted");
         assert_eq!(fake.calls(), 0, "the rung was not sent");
+        let runs = recall_runs(&flag.receipts);
+        let settled: Vec<_> = runs
+            .iter()
+            .filter_map(|row| match &row.event {
+                RunEvent::Settled {
+                    units,
+                    allocation_units,
+                    error,
+                    ..
+                } => Some((*units, allocation_units.unwrap_or(0), error.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(settled, [(0, 0, None)], "on device {on_device}: {runs:?}");
+        assert!(
+            runs.iter()
+                .all(|row| !matches!(row.event, RunEvent::Dispatched { .. })),
+            "on device {on_device}: {runs:?}"
+        );
         assert_eq!(
             pack["retrieval_meta"]["rerank"],
             json!({"status": "skipped", "reason": reason}),

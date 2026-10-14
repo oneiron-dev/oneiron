@@ -2,7 +2,8 @@
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::batch::export::write_door_refuses_body;
-use crate::claim::ClaimBody;
+use crate::claim::{ClaimBody, claim_surfaceable};
+use crate::context_pack::same_claim_body;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::builder::PipelineBuilder;
@@ -57,8 +58,10 @@ struct BoundWords {
     /// moved into its entity document, a TURN whose messages show none, a
     /// MESSAGE that folds into such a TURN, or a row with no revision at all;
     /// or a row with words the write door refuses (stored while the owner's
-    /// secret scan was off). Its words would be read later, at whatever they
-    /// had become, so no model is sent them. The run does not rerank it.
+    /// secret scan was off), or a claim whose pinned body the run would not
+    /// serve. Its words would be read later, at whatever they had become, or
+    /// are words the run withholds, so no model is sent them. The run does
+    /// not rerank it.
     unscored: bool,
 }
 
@@ -324,12 +327,13 @@ impl PipelineBuilder<'_> {
         if body.is_some_and(write_door_refuses_body) {
             return Ok(BoundWords::UNSCORED);
         }
-        // A claim is scored at the body its pin holds (Sol R31 F1); one that
-        // does not decode there is not reranked.
+        // A claim is scored at the body its pin holds (Sol R31 F1). One that
+        // does not decode there, or whose body there the run would not serve
+        // (CodeRabbit on #1426), is not reranked: its words go to no model.
         let claim = if kind == Some(ENTITY_TYPE_CLAIM) {
             match body.and_then(|body| crate::claim::decode_claim_body(body, true).ok()) {
-                Some(claim) => Some(claim),
-                None => return Ok(BoundWords::UNSCORED),
+                Some(claim) if self.pin_served(rtxn, id, &claim, claim_gate)? => Some(claim),
+                _ => return Ok(BoundWords::UNSCORED),
             }
         } else {
             None
@@ -362,6 +366,26 @@ impl PipelineBuilder<'_> {
             None => return Ok(BoundWords::UNSCORED),
         }
         Ok(words)
+    }
+
+    /// Whether the run serves claim `id` at `pinned`, its body at its pin,
+    /// as hydration judges a pin: the body the gate admitted, or another that
+    /// is surfaceable with live support, behind an admitted body that is
+    /// surfaceable too.
+    fn pin_served(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        pinned: &ClaimBody,
+        claim_gate: &ClaimStatusGateCache,
+    ) -> Result<bool> {
+        let admitted = claim_gate.decisions.get(id).and_then(Option::as_ref);
+        if admitted.is_some_and(|admitted| same_claim_body(admitted, pinned)) {
+            return Ok(true);
+        }
+        Ok(admitted.is_none_or(claim_surfaceable)
+            && claim_surfaceable(pinned)
+            && crate::claim::has_live_support_in_txn(&self.read, rtxn, pinned)?)
     }
 
     /// The words `turn` holds in this transaction, under the text revision

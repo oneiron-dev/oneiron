@@ -91,7 +91,7 @@ pub(crate) fn context_entity_matches_read_snapshot(
 /// for -0.0, so floats are compared by their bits and every other field as
 /// derived. An encoding is no witness: a string that is not UTF-8 encodes as
 /// a binary of its bytes.
-fn same_claim_body(left: &ClaimBody, right: &ClaimBody) -> bool {
+pub(crate) fn same_claim_body(left: &ClaimBody, right: &ClaimBody) -> bool {
     use rmpv::Value;
     let rest = |body: &ClaimBody| ClaimBody {
         value: Value::Nil,
