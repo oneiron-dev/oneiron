@@ -233,6 +233,46 @@ fn implicit_l2_nulls_credentials_before_caching_and_in_every_output() -> Result<
     Ok(())
 }
 
+/// The cache is the vault's and outlives any room. A pack that read a room
+/// computes its summary and keeps none, so the next pack on base renders its
+/// own, and base packs after it share that one.
+#[test]
+fn a_pack_over_a_room_keeps_no_summary_in_the_vaults_cache() -> Result<()> {
+    let (_dir, vault, subject) = fixture();
+    claim(
+        &vault,
+        crate::test_util::entity(0x31),
+        subject,
+        "a preference",
+    )?;
+    let session = vault.off_record_session_vault().enter(
+        "sess-l2-room",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    let view = session.read_view()?;
+    let in_room = assembly(&vault, subject).reading(view.read()).run()?;
+    drop(view);
+    let on_base = assembly(&vault, subject).run()?;
+    let again = assembly(&vault, subject).run()?;
+    let body = |pack: &crate::context_pack::ContextPack| {
+        pack.l2_base
+            .as_ref()
+            .expect("the pack carries its summary")
+            .body
+            .clone()
+    };
+    assert!(
+        !Arc::ptr_eq(&body(&in_room), &body(&on_base)),
+        "the room's summary was not kept"
+    );
+    assert!(
+        Arc::ptr_eq(&body(&on_base), &body(&again)),
+        "a base pack keeps its own"
+    );
+    session.close()?;
+    Ok(())
+}
+
 /// The public BIP39 test vector, as a recovery phrase's words.
 const PHRASE: &str = "legal winner thank year wave sausage worth useful legal winner thank yellow";
 

@@ -13,8 +13,9 @@ use super::*;
 /// One entry-progress rule for the ordinary fold and signed-branch proof.
 /// During normal rounds no ancestry is bypassed. After a full stalled round,
 /// only a signed withdrawal may cross proven-rejected permissive parents: a
-/// RevokeActor, or a slip revoke or consume (the ordinary fold passes only
-/// retired client enrollments; the signed-branch proof rescues only revokes).
+/// RevokeActor, a machine removal, or a slip revoke or consume (the ordinary
+/// fold passes only retired client enrollments; the signed-branch proof
+/// rescues only these withdrawals).
 pub(super) enum EvaluationPhase<'a> {
     Normal,
     Stalled(&'a BTreeSet<AuthorityEntryHash>),
@@ -42,13 +43,23 @@ pub(super) fn evaluate_entry(
 /// Rejected entries may only be crossed when they are permissive. The
 /// caller's diagnostic set is not enough to bypass an arbitrary operation.
 pub(super) fn skippable_permissive(op: &AuthorityOp) -> bool {
-    matches!(
-        op,
+    match op {
         AuthorityOp::BindActor { .. }
-            | AuthorityOp::RebindActor { .. }
-            | AuthorityOp::EnrollDevice { .. }
-            | AuthorityOp::FederationLifecycle(_)
-    )
+        | AuthorityOp::RebindActor { .. }
+        | AuthorityOp::EnrollDevice { .. }
+        | AuthorityOp::FederationLifecycle(_) => true,
+        // Grants that change neither the roster nor a machine's standing, and
+        // the retired ceiling, which changes nothing: a removal is judged
+        // without them as with them, and a withdrawal that needs one fails
+        // closed without it (Wonder #1423 r2 W2, Sol #1423 r9).
+        AuthorityOp::SlipMint(_)
+        | AuthorityOp::FederationConfirm(_)
+        | AuthorityOp::CriticalWriteConfirm(_)
+        | AuthorityOp::RetiredCeiling { .. } => true,
+        // A profile grants standing; a removal withdraws it and never is.
+        AuthorityOp::MachineProfile(profile) => profile.role != MachineRole::Removed,
+        _ => false,
+    }
 }
 
 /// Try a stalled withdrawal against explicitly rejected parents, which
@@ -61,12 +72,7 @@ fn stalled_actor_revoke(
     rejected: &BTreeSet<AuthorityEntryHash>,
     context: FoldContext<'_>,
 ) -> Option<FoldState> {
-    if !matches!(
-        entry.op,
-        AuthorityOp::RevokeActor { .. }
-            | AuthorityOp::SlipRevoke { .. }
-            | AuthorityOp::SlipConsume { .. }
-    ) {
+    if !super::revoke_proof::restrictive_withdrawal(&entry.op) {
         return None;
     }
     let mut scratch = states.clone();
@@ -111,8 +117,10 @@ fn parent_outcome<'a>(
 }
 
 /// Resolve every branch to real folded evidence. An otherwise rejected grant
-/// is skipped and its op never applies. Missing or cyclic history and
-/// incompatible vault roots refuse the whole restrictive proof.
+/// is skipped and its op never applies, but its signer's sequence still
+/// counts, so a withdrawal must rise above it as it would in the fold (Sol
+/// #1423 r9). Missing or cyclic history and incompatible vault roots refuse
+/// the whole restrictive proof.
 fn resolve_parent(
     start: AuthorityEntryHash,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
@@ -124,6 +132,7 @@ fn resolve_parent(
     let mut frontier = vec![start];
     let mut merged: Option<FoldState> = None;
     let mut crossed_vaults = Vec::new();
+    let mut crossed_seqs = BTreeMap::<AuthorityKey, u64>::new();
     while let Some(hash) = frontier.pop() {
         if !visited.insert(hash) {
             continue;
@@ -149,6 +158,10 @@ fn resolve_parent(
                     return None;
                 }
                 crossed_vaults.push(entry.vault_id);
+                crossed_seqs
+                    .entry(entry.signer_key().clone())
+                    .and_modify(|seq| *seq = (*seq).max(entry.seq))
+                    .or_insert(entry.seq);
                 frontier.extend(entry.parent_hashes.iter().copied());
             }
             ParentOutcome::Unavailable => return None,
@@ -160,5 +173,10 @@ fn resolve_parent(
     {
         return None;
     }
-    merged
+    let mut merged = merged?;
+    for (key, crossed) in crossed_seqs {
+        let seq = merged.seqs.entry(key).or_insert(crossed);
+        *seq = (*seq).max(crossed);
+    }
+    Some(merged)
 }

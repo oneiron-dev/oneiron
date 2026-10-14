@@ -41,6 +41,19 @@ struct CheckpointImage {
     created_at: u64,
     databases: BTreeMap<String, CanonicalRows>,
 }
+
+impl CheckpointImage {
+    /// A direct restore may land on any install, so the image's machine
+    /// identity stays with the install that minted it: the restored vault
+    /// joins as a new machine. So does a copy served beside a live vault,
+    /// whose authority it keeps; only a restore that takes that vault's
+    /// place carries its identity (`restore_class`).
+    fn drop_machine_identity(&mut self) {
+        if let Some(rows) = self.databases.get_mut("sync_state") {
+            rows.retain(|(key, _)| !crate::identity::is_machine_identity_row(key));
+        }
+    }
+}
 /// Whose exterior key custody a restored vault holds (ARCH-0038
 /// #erasure-completeness, "Key custody in a side restore").
 #[derive(Clone, Copy)]
@@ -341,7 +354,8 @@ impl Vault {
         reason: RestoreReason,
         restored_at: u64,
     ) -> Result<(Self, RestoreReport)> {
-        let (image, checkpoint_id) = read_image(path)?;
+        let (mut image, checkpoint_id) = read_image(path)?;
+        image.drop_machine_identity();
         let (vault, report, forked) = Self::restore_image(
             image,
             checkpoint_id,
@@ -369,7 +383,8 @@ impl Vault {
         restored_at: u64,
     ) -> Result<(Self, RestoreReport)> {
         let live = source.capture()?;
-        let (image, checkpoint_id) = read_image(path)?;
+        let (mut image, checkpoint_id) = read_image(path)?;
+        image.drop_machine_identity();
         let (vault, report, forked) = Self::restore_image(
             image,
             checkpoint_id,
@@ -427,7 +442,8 @@ impl Vault {
     /// receipts under it are dropped, and from then on an erase or age sweep
     /// in either vault never reaches the other's keys. Every receipt it
     /// keeps is read under its own keys before the activation commits; when
-    /// this returns `Ok` it is done, and the vault opens live. Refuses a vault
+    /// this returns `Ok` it is done, and the vault opens live, joining as a
+    /// new machine: its replacement is the machine it was. Refuses a vault
     /// that is not archived, and a `source` whose custody is not the one it
     /// binds; a refusal leaves it archived, as it was.
     pub fn activate_archived(
@@ -454,6 +470,7 @@ impl Vault {
     /// Key custody forks as in [`Vault::restore_checkpoint_beside`]. A key
     /// retirement `current` has committed, its key not yet destroyed, counts
     /// as done: the copy never holds a key its source has committed to destroy.
+    /// The copy joins as a new machine; `current` stays the machine it is.
     pub fn restore_checkpoint_keeping_authority(
         path: &Path,
         destination: &Path,
@@ -504,6 +521,10 @@ impl Vault {
         let (mut image, checkpoint_id) = read_image(path)?;
         // The carried rows hold `current`'s custody binding and retirements.
         authority_plane::carry_current_authority(&mut image.databases, current)?;
+        // Two live vaults never answer as one machine (wp-keys I7).
+        if let Custody::Fork(_) = custody {
+            image.drop_machine_identity();
+        }
         let (vault, report, forked) = Self::restore_image(
             image,
             checkpoint_id,

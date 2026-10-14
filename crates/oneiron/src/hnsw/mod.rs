@@ -21,7 +21,7 @@ pub(crate) use self::keys::COUNT_KEY;
 pub(crate) use self::rebuild::{
     build_hnsw_graph_from_snapshot, clear_hnsw_graph_in_txn, collect_vector_ids, write_rebuilt_hnsw,
 };
-pub(crate) use self::search::hnsw_search;
+pub(crate) use self::search::{exact_score, hnsw_search};
 pub(crate) use self::slim_drop::{drop_rebuildable_hnsw, hnsw_is_dropped};
 pub(crate) use self::storage::{
     has_population, hnsw_entity_count, increment_embedding_model_epoch, increment_vector_version,
@@ -37,7 +37,7 @@ pub(crate) use self::insert::hnsw_insert;
 #[cfg(test)]
 pub(crate) use self::keys::DROPPED_REBUILDABLE_KEY;
 #[cfg(test)]
-use self::keys::SYMMETRIC_LINKS_KEY;
+pub(crate) use self::keys::SYMMETRIC_LINKS_KEY;
 
 #[cfg(test)]
 mod tests;

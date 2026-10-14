@@ -52,7 +52,7 @@ impl PipelineBuilder<'_> {
         let before_filters = scores.len();
         apply_filters(
             scores,
-            &self.vault.store,
+            &self.read,
             rtxn,
             inputs.filter_config,
             metadata_cache,
@@ -61,7 +61,7 @@ impl PipelineBuilder<'_> {
             scores,
             inputs.authority_filter,
             self.type_filter.as_deref(),
-            &self.vault.store,
+            &self.read,
             rtxn,
             metadata_cache,
             claim_gate,
@@ -103,7 +103,7 @@ impl PipelineBuilder<'_> {
             boost_contiguity(
                 scores,
                 self.temporal_search.as_ref(),
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 metadata_cache,
             )?;
@@ -111,7 +111,7 @@ impl PipelineBuilder<'_> {
                 boost_contiguity(
                     ladder_scores,
                     self.temporal_search.as_ref(),
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     metadata_cache,
                 )?;
@@ -123,18 +123,11 @@ impl PipelineBuilder<'_> {
         // consume `result_limit` slots.
         if let Some((facet_id, mode)) = self.facet_filter {
             let before_facet = scores.len();
-            apply_facet_filter(
-                scores,
-                &self.vault.store,
-                rtxn,
-                metadata_cache,
-                &facet_id,
-                mode,
-            )?;
+            apply_facet_filter(scores, &self.read, rtxn, metadata_cache, &facet_id, mode)?;
             if let Some(ladder_scores) = rerank_ladder_scores.as_mut() {
                 apply_facet_filter(
                     ladder_scores,
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     metadata_cache,
                     &facet_id,
@@ -153,7 +146,7 @@ impl PipelineBuilder<'_> {
         let before_world = scores.len();
         apply_world_filter(
             scores,
-            &self.vault.store,
+            &self.read,
             rtxn,
             &self.world_scope,
             inputs.filter_config.world_active_set,
@@ -164,7 +157,7 @@ impl PipelineBuilder<'_> {
 
         empty_reason = inputs.corpus_filter.apply(
             scores,
-            &self.vault.store,
+            &self.read,
             rtxn,
             metadata_cache,
             claim_gate,
@@ -174,7 +167,7 @@ impl PipelineBuilder<'_> {
             let before_relationship = scores.len();
             apply_relationship_filter(
                 scores,
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 metadata_cache,
                 &relationship,
