@@ -114,10 +114,18 @@ pub fn retrieval_candidates_from_ranked_lists(
             if sparse.contains(&index) {
                 // RESEARCH-1216 measured z over all 80 clips, a hit among
                 // non-hits (DESIGN §1.5 item 5); the fusion length stands in
-                // for that pool, as for every other list.
+                // for that pool, as for every other list: the best hits,
+                // then non-hits at 0, to exactly that length. A pool of
+                // equal hits alone keeps them at z 0 and a non-hit below, on
+                // the spread one more place, a non-hit, would give it.
                 let mut pool: Vec<f64> = by_id.values().copied().collect();
-                pool.resize(pool.len().max(FUSION_LIST_LENGTH), 0.0);
-                let scale = spread(&pool);
+                pool.sort_unstable_by(|left, right| right.total_cmp(left));
+                pool.resize(FUSION_LIST_LENGTH, 0.0);
+                let scale = spread(&pool).or_else(|| {
+                    let top = *pool.first().filter(|top| **top > 0.0)?;
+                    pool.push(0.0);
+                    Some((top, spread(&pool)?.1))
+                });
                 let z = |score: f64| scale.map_or(0.0, |(mean, stddev)| (score - mean) / stddev);
                 for value in by_id.values_mut() {
                     *value = z(*value);

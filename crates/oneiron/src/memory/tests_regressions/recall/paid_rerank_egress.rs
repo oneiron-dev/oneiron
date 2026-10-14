@@ -393,6 +393,8 @@ fn a_claim_moved_out_of_a_device_only_world_is_judged_at_its_pin() {
     let (world, _, _) = device_only_world(&vault, owner);
     crate::test_util::publish_seeded_revisions(&vault);
     let moved = crate::test_util::entity(0x64);
+    // Indexed under the same words both times, so the index keeps the first
+    // body until it publishes the second.
     for (in_world, words) in [
         (Some(world), "the lantern shed is painted blue"),
         (None, "a lantern by the door"),
@@ -409,18 +411,30 @@ fn a_claim_moved_out_of_a_device_only_world_is_judged_at_its_pin() {
         claim.source = Some(crate::claim::ClaimSource::UserStated);
         claim.world = in_world;
         vault
-            .batch()
-            .put(
+            .put_claim(
                 &moved,
-                crate::registry::ENTITY_TYPE_CLAIM,
+                &claim,
                 crate::temporal::TimeRange { start: 10, end: 10 },
                 10,
-                &crate::claim::encode_claim_body(&claim).expect("encode the claim"),
             )
+            .expect("store the claim");
+        vault
+            .batch()
             .text(&moved, &[("body", "a lantern note")])
             .commit()
-            .expect("store the claim");
+            .expect("index the claim");
     }
+    let holds = |mode: crate::vault::ReadMode, words: &[u8]| {
+        vault
+            .get_raw_with_mode(&moved, mode)
+            .expect("a revision")
+            .is_some_and(|raw| raw.windows(words.len()).any(|window| window == words))
+    };
+    assert!(
+        holds(crate::vault::ReadMode::Indexed, b"painted blue")
+            && holds(crate::vault::ReadMode::Live, b"by the door"),
+        "the index still holds the kept body"
+    );
     let sent = std::sync::Mutex::new(Vec::new());
     let score = |_: usize, text: &str| {
         sent.lock().unwrap().push(text.to_owned());

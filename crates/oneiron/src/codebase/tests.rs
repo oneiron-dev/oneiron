@@ -1407,21 +1407,24 @@ fn codebase_filters_apply_before_channel_top_k_limits() -> Result<()> {
         .text(&id_a, &[("body", "needle needle needle needle")])
         .text(&id_b, &[("body", "needle")])
         .vector(&id_a, &[1.0, 0.0, 0.0, 0.0])
-        .vector(&id_b, &[0.0, 1.0, 0.0, 0.0])
+        .vector(&id_b, &[0.5, 0.0, 0.0, 0.866])
         .commit()?;
     // EMBED-PACK: a channel fetches its fusion list length whatever it is
     // asked for. More rows than that, in no project, outrank id_b on both
     // channels and not id_a, so id_b is in a channel's top only when the
-    // filter runs first; the pack's limit caps the results.
+    // filter runs first; the pack's limit caps the results. Their vectors
+    // differ, at 0.98 to the query, so the vector index holds them apart.
     let mut outside = vault.batch();
     for index in 0..=crate::fusion::FUSION_LIST_LENGTH {
+        let index = u8::try_from(index).expect("a small index");
         let mut bytes = [0x5A; 16];
-        bytes[15] = u8::try_from(index).expect("a small index");
+        bytes[15] = index;
         let id = EntityId::from_bytes(bytes)?;
+        let angle = std::f32::consts::TAU * f32::from(index) / 81.0;
         outside = outside
             .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"payload")
             .text(&id, &[("body", "needle needle")])
-            .vector(&id, &[0.99, 0.141, 0.0, 0.0]);
+            .vector(&id, &[0.98, 0.199 * angle.cos(), 0.199 * angle.sin(), 0.0]);
     }
     outside.commit()?;
 

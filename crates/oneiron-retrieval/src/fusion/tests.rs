@@ -118,3 +118,39 @@ fn a_sparse_list_scores_as_a_full_list_whatever_the_others_return() {
         "{inputs:?}"
     );
 }
+
+/// Sol R3 on this branch: a sparse pool of 80 equal hits had no non-hit
+/// place left to give it a spread, so its hits scored z 0, as a candidate
+/// it missed did, and the non-hit won the id order. The non-hit stays below.
+#[test]
+fn a_full_sparse_list_of_equal_hits_keeps_a_non_hit_below() {
+    let non_hit = [0; 16];
+    let hits: Vec<ScoredEntity> = (1..=FUSION_LIST_LENGTH)
+        .map(|rank| scored([u8::try_from(rank).unwrap(); 16], 1.0))
+        .collect();
+    let mut text = hits.clone();
+    text.push(scored(non_hit, 1.0));
+    let inputs = retrieval_candidates_from_ranked_lists(&[hits, text], &[0]);
+
+    assert!(
+        relevance_of(&inputs, non_hit) < relevance_of(&inputs, [1; 16]),
+        "{inputs:?}"
+    );
+}
+
+/// Sol R3 on this branch: a sparse list longer than the fusion length was
+/// scaled over every hit, so a hit's z grew as matching rows accumulated. It
+/// is scaled by its best hits, as a dense list is.
+#[test]
+fn a_sparse_list_is_scaled_by_its_best_hits_however_many_follow() {
+    let best = [0xF0; 16];
+    let list = |hits: u8| {
+        let mut list = vec![scored(best, 2.4)];
+        list.extend((1..=hits).map(|hit| scored([hit; 16], 1.0)));
+        list
+    };
+    let short = retrieval_candidates_from_ranked_lists(&[list(79)], &[0]);
+    let long = retrieval_candidates_from_ranked_lists(&[list(159)], &[0]);
+
+    assert_eq!(relevance_of(&short, best), relevance_of(&long, best));
+}
