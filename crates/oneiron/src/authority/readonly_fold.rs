@@ -41,6 +41,9 @@ pub(crate) struct AuthorityCacheKey {
     now_secs: u64,
     posture: HostingPrivacyPosture,
     policy: AuthorityObservationPolicy,
+    /// This install's pin, read in the same snapshot: a pin write also moves
+    /// the generation, and the committed-fold probe rebuilds this key.
+    pin: Option<PinnedRoot>,
 }
 
 /// An immutable verified fold attached to one authority generation. The
@@ -77,6 +80,7 @@ impl AuthorityCachedFold {
         self.key.generation == key.generation
             && self.key.posture == key.posture
             && self.key.policy == key.policy
+            && self.key.pin == key.pin
             && key.now_secs >= self.key.now_secs
             && self
                 .next_deadline_secs
@@ -97,6 +101,7 @@ fn authority_cache_key(
         now_secs: authority_observation_secs(store, floor, store.clock.now_recorded_at()),
         posture,
         policy: authority_observation_policy_in_txn(store, txn)?,
+        pin: super::pinned_root::read_pinned_root_in_txn(store, txn)?,
     })
 }
 
@@ -225,6 +230,7 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
         &peer_consent_roots,
         &observations,
         posture,
+        key.pin.as_ref(),
     );
     // The fold's only clock-sensitive transition is stale-roster approval
     // expiry. Slip TTL is checked by each caller against its own snapshot

@@ -18,6 +18,7 @@
 
 mod machine;
 mod root;
+mod root_issue;
 mod state;
 mod vault_doors;
 mod wrap;
@@ -27,6 +28,7 @@ mod tests;
 
 pub use self::machine::{machine_encryption_key, machine_secret};
 pub use self::root::{RecoveryRoot, RecoveryRootId, RecoveryRootSeed};
+pub use self::root_issue::PreparedRoot;
 pub use self::state::{WorldRecoveryState, recovery_state};
 pub use self::wrap::{open_world_key, seal_world_key};
 

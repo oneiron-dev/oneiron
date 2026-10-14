@@ -229,7 +229,12 @@ impl Vault {
             )?;
             pending.push(genesis);
             // Only bootstrap on no records, never on a confused/invalid fold.
-            fold = super::fold_engine::fold_own_authority_log(&pending, self.privacy_posture());
+            let pin = super::pinned_root::read_pinned_root_in_txn(&self.store, txn)?;
+            fold = super::fold_engine::fold_own_authority_log(
+                &pending,
+                self.privacy_posture(),
+                pin.as_ref(),
+            );
         }
         require_host(&fold, issuer)?;
         if let Some(token) = HOST_ROOT_SLIP_CACHE.get(&self.store, txn, &cache_key)? {

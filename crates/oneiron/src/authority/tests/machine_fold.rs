@@ -660,6 +660,7 @@ fn a_custodians_successor_never_vouches_for_a_machine() {
         super::super::fold_engine::fold_own_authority_log(
             &entries,
             crate::HostingPrivacyPosture::Hosted,
+            None,
         ),
     ] {
         assert!(

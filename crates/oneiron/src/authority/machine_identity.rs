@@ -22,6 +22,7 @@ const MACHINE_CONNECTION_DOMAIN: &[u8] = b"oneiron/machine-proof/v1\0";
 pub const MACHINE_PROOF_HEADER: &str = "x-oneiron-machine";
 /// An empty MessagePack map: a MACHINE row the enrolment had to create.
 const EMPTY_MACHINE_BODY: &[u8] = &[0x80];
+const REQUEST_CODE_CONTEXT: &str = "oneiron/machine-request-code/v1";
 
 /// What a machine sends to join a vault: its row, its keys, and its own
 /// signature over them for that vault.
@@ -32,6 +33,34 @@ pub struct MachineEnrolmentRequest {
     pub machine_key: [u8; 32],
     pub encryption_key: MachineEncryptionKey,
     pub machine_proof: [u8; 64],
+}
+
+/// What a new machine shows the owner, as a QR code or 26 base32 characters,
+/// for the owner to scan or type on the machine that approves its request. It
+/// commits to every field of the request, so a host that relays the request
+/// cannot swap in its own with the same code: at 128 bits it cannot grind one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RequestCode(pub [u8; 16]);
+
+impl MachineEnrolmentRequest {
+    /// The first 16 bytes of `BLAKE3-derive_key("oneiron/machine-request-code/v1",
+    /// vault_id ‖ machine ‖ machine_key ‖ suite (u16 BE) ‖ key length (u32 BE) ‖ key
+    /// ‖ machine_proof)`.
+    #[must_use]
+    pub fn code(&self) -> RequestCode {
+        let key = &self.encryption_key.key;
+        let mut hasher = blake3::Hasher::new_derive_key(REQUEST_CODE_CONTEXT);
+        hasher.update(&self.vault_id);
+        hasher.update(self.machine.as_bytes());
+        hasher.update(&self.machine_key);
+        hasher.update(&self.encryption_key.suite.to_be_bytes());
+        hasher.update(&u32::try_from(key.len()).unwrap_or(u32::MAX).to_be_bytes());
+        hasher.update(key);
+        hasher.update(&self.machine_proof);
+        let mut code = [0; 16];
+        code.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+        RequestCode(code)
+    }
 }
 
 /// This install's machine.

@@ -59,6 +59,9 @@ struct FoldLocalInputs<'a> {
     /// The handoffs valid on their own rows; only these settle. None settles
     /// every handoff the fold holds.
     handoff_candidates: Option<&'a BTreeSet<AuthorityEntryHash>>,
+    /// This install's pin, on a fold of its own vault's log. It moves trust
+    /// only, never which entries are valid; a peer's log folds with none.
+    pin: Option<&'a PinnedRoot>,
 }
 
 impl FoldLocalInputs<'_> {
@@ -68,6 +71,7 @@ impl FoldLocalInputs<'_> {
         pre_handoff_entries: None,
         hosted: false,
         handoff_candidates: None,
+        pin: None,
     };
 }
 
@@ -113,6 +117,7 @@ fn fold_authority_log_inner(
                     pre_handoff_entries: Some(&allowed),
                     hosted: local.hosted,
                     handoff_candidates: Some(&handoffs),
+                    pin: local.pin,
                 },
             );
             // A handoff in conflict keeps its standing here: its fence stays
@@ -153,6 +158,13 @@ fn fold_authority_log_inner(
         now_secs,
         stale_roster_window_secs,
     );
+    // The pin counts only while the fold holds its root: the pinned anchor
+    // signed that id here.
+    fold.pinned_root = local.pin.copied().filter(|pin| {
+        fold.root_anchors
+            .get(&pin.anchor_key)
+            .is_some_and(|ids| ids.contains(&pin.id))
+    });
     fold.append_heads = fold.valid_entries.clone();
     for entry in entries {
         // Advance beyond even a signed rejected local entry. A new local write

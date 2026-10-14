@@ -22,6 +22,7 @@
 //! | `entry_transition` | per-entry transition and consent/quorum predicates |
 //! | `anchor_fold` | owner roots and an anchor's machine marks, before the roster |
 //! | `machine_profile` | per-admitter machine chains and the trusted projection |
+//! | `pinned_root` / `owner_roots` | this install's pin, and the stored roots it reads |
 //! | `op_apply` | applies one op to a fold state |
 //! | `wire_encode` / `wire_decode` | the `rmpv` codec, edited in lockstep |
 //! | `vault_api` | `impl Vault` read/write doors |
@@ -50,6 +51,8 @@ mod machine_write;
 mod mesh_machine;
 mod observation_policy;
 mod op_apply;
+mod owner_roots;
+mod pinned_root;
 mod readonly_fold;
 mod retired_signers;
 mod revoke_proof;
@@ -113,7 +116,7 @@ pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
 pub use machine_identity::{
-    LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine,
+    LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine, RequestCode,
     machine_connection_transcript, machine_proof_header_value,
 };
 pub use machine_profile::{
@@ -122,6 +125,8 @@ pub use machine_profile::{
 pub use machine_write::machine_claim_transcript;
 pub use mesh_machine::{MeshMachineAddress, MeshMachineAddressEnvelope};
 pub use observation_policy::*;
+pub use owner_roots::OwnerRootView;
+pub(crate) use owner_roots::anchor_signed_entry;
 pub use slip::*;
 pub use slip_pairing::{
     PairingDescriptor, PairingLink, PairingPrincipal, format_pairing_link,
@@ -139,6 +144,9 @@ pub(crate) use claim_write::{
 };
 pub(crate) use first_seen_clock::*;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
+#[cfg(test)]
+pub(crate) use pinned_root::write_pinned_root_in_txn;
+pub(crate) use pinned_root::{drop_pinned_root_in_txn, is_pinned_root_row};
 pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
 use readonly_fold::authority_view_readonly_for_store_in_txn;

@@ -44,8 +44,8 @@ struct CheckpointImage {
 
 impl CheckpointImage {
     /// A direct restore may land on any install, so the image's machine
-    /// identity stays with the install that minted it: the restored vault
-    /// joins as a new machine. So does a copy served beside a live vault,
+    /// identity, and the root it pins, stay with the install that minted it:
+    /// the restored vault joins as a new machine and opens unpinned. So does a copy served beside a live vault,
     /// whose authority it keeps; only a restore that takes that vault's
     /// place carries its identity (`restore_class`).
     fn drop_machine_identity(&mut self) {

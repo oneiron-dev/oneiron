@@ -112,33 +112,49 @@ pub(crate) fn fold_authority_log_with_peer_consent_roots(
     )
 }
 
-/// [`fold_authority_log`] under this vault's hosting posture: the fold a door of the
-/// vault's own log uses when it has no seen-times. A Hosted root is cloud-stamped, and
-/// the self-host arm would refuse that genesis.
-pub(crate) fn fold_own_authority_log(
-    entries: &[AuthorityLogEntry],
+/// The consent arm and local inputs of a fold of this vault's own log under
+/// its hosting posture and pin. Relay and self-host keep owner-device consent;
+/// only managed hosts may treat a cloud key as root.
+fn own_log_inputs(
     posture: crate::HostingPrivacyPosture,
-) -> AuthorityFold {
-    let consent = if posture == crate::HostingPrivacyPosture::Hosted {
+    pin: Option<&PinnedRoot>,
+) -> (fn(&FoldedDevice) -> bool, FoldLocalInputs<'_>) {
+    let hosted = posture == crate::HostingPrivacyPosture::Hosted;
+    let consent = if hosted {
         folded_host_device_can_consent
     } else {
         folded_device_can_authority_consent
     };
+    let local = FoldLocalInputs {
+        hosted,
+        pin,
+        ..FoldLocalInputs::VAULT_DOOR
+    };
+    (consent, local)
+}
+
+/// [`fold_authority_log`] under this vault's hosting posture and pin: the fold
+/// a door of the vault's own log uses when it has no seen-times. A Hosted root
+/// is cloud-stamped, and the self-host arm would refuse that genesis.
+pub(crate) fn fold_own_authority_log(
+    entries: &[AuthorityLogEntry],
+    posture: crate::HostingPrivacyPosture,
+    pin: Option<&PinnedRoot>,
+) -> AuthorityFold {
+    let (consent, local) = own_log_inputs(posture, pin);
     fold_authority_log_inner(
         entries,
         &BTreeMap::new(),
         None,
         &BTreeMap::new(),
         consent,
-        FoldLocalInputs {
-            hosted: posture == crate::HostingPrivacyPosture::Hosted,
-            ..FoldLocalInputs::VAULT_DOOR
-        },
+        local,
     )
 }
 
-/// Folds under the vault's explicit hosting posture. Relay and self-host retain
-/// owner-device consent; only managed hosts may treat a cloud key as root.
+/// Folds under the vault's explicit hosting posture, with no pin: the pure
+/// reference. A door of the vault's own log passes its pin through
+/// `fold_pinned_authority_log_for_posture`.
 pub fn fold_authority_log_for_posture(
     entries: &[AuthorityLogEntry],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
@@ -146,21 +162,33 @@ pub fn fold_authority_log_for_posture(
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
     posture: crate::HostingPrivacyPosture,
 ) -> AuthorityFold {
-    let consent = if posture == crate::HostingPrivacyPosture::Hosted {
-        folded_host_device_can_consent
-    } else {
-        folded_device_can_authority_consent
-    };
+    fold_pinned_authority_log_for_posture(
+        entries,
+        first_seen_at_secs,
+        now_secs,
+        peer_consent_roots,
+        posture,
+        None,
+    )
+}
+
+/// [`fold_authority_log_for_posture`] under this install's pin.
+pub(crate) fn fold_pinned_authority_log_for_posture(
+    entries: &[AuthorityLogEntry],
+    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
+    now_secs: u64,
+    peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
+    posture: crate::HostingPrivacyPosture,
+    pin: Option<&PinnedRoot>,
+) -> AuthorityFold {
+    let (consent, local) = own_log_inputs(posture, pin);
     fold_authority_log_inner(
         entries,
         first_seen_at_secs,
         Some(now_secs),
         peer_consent_roots,
         consent,
-        FoldLocalInputs {
-            hosted: posture == crate::HostingPrivacyPosture::Hosted,
-            ..FoldLocalInputs::VAULT_DOOR
-        },
+        local,
     )
 }
 
@@ -188,7 +216,7 @@ pub fn fold_peer_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
 }
 
 /// The reference fold under the vault's local observations (sequence floors
-/// and observation policy) and hosting posture.
+/// and observation policy), hosting posture and pin.
 pub(in crate::authority) fn fold_authority_log_with_local_observations_and_posture(
     entries: &[AuthorityLogEntry],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
@@ -196,12 +224,9 @@ pub(in crate::authority) fn fold_authority_log_with_local_observations_and_postu
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
     observations: &AuthorityLocalObservations,
     posture: crate::HostingPrivacyPosture,
+    pin: Option<&PinnedRoot>,
 ) -> AuthorityFold {
-    let consent = if posture == crate::HostingPrivacyPosture::Hosted {
-        folded_host_device_can_consent
-    } else {
-        folded_device_can_authority_consent
-    };
+    let (consent, local) = own_log_inputs(posture, pin);
     fold_authority_log_inner(
         entries,
         first_seen_at_secs,
@@ -210,8 +235,7 @@ pub(in crate::authority) fn fold_authority_log_with_local_observations_and_postu
         consent,
         FoldLocalInputs {
             observations: Some(observations),
-            hosted: posture == crate::HostingPrivacyPosture::Hosted,
-            ..FoldLocalInputs::VAULT_DOOR
+            ..local
         },
     )
 }
