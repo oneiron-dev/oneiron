@@ -989,6 +989,44 @@ fn a_peer_replay_cannot_rewrite_a_custody_record() -> crate::Result<()> {
 }
 
 #[test]
+fn a_peer_tombstone_cannot_erase_a_custody_record() -> crate::Result<()> {
+    // C1 review: a peer's tombstone proves no owner intent either. A soft
+    // delete would truncate the value away and a hard one purge the record.
+    use crate::deletion::{TombstoneReason, TombstoneValueV2};
+    for reason in [TombstoneReason::UserDelete, TombstoneReason::GdprDelete] {
+        let (_dir, vault) = temp_vault();
+        let id = vault.register_secret(record(
+            "erased",
+            CustodyClass::CustodyPortable,
+            b"owner-value",
+            vec![binding("door:owner", CustodyTier::T0Doored)],
+        ))?;
+        let before = vault.get_raw_unsealed(&id)?;
+        let tombstone = TombstoneValueV2 {
+            reason,
+            deleted_at: 10,
+            request_id: *EntityId::now().as_bytes(),
+        }
+        .encode();
+        let err = vault
+            .apply_replayed_tombstone(&id, &tombstone)
+            .expect_err("a replayed tombstone never erases a credential");
+        assert!(
+            matches!(err, Error::Secret(SecretError::InvalidSecretCustodyBody(_))),
+            "{reason:?}: {err:?}"
+        );
+        assert_eq!(vault.get_raw_unsealed(&id)?, before, "{reason:?}");
+        assert_eq!(vault.resolve_secret_ref("erased")?, Some(id));
+        let txn = vault.store.env.write_txn()?;
+        assert_eq!(
+            vault.get_secret_value_in_txn(&txn, &id, "door:owner")?,
+            Some(b"owner-value".to_vec())
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn bulk_body_readers_never_hand_out_a_custody_row() {
     use crate::federation::Scope;
     use crate::federation::record_scope::ScopeView;

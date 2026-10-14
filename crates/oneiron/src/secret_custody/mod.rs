@@ -75,7 +75,7 @@ mod floor_keys {
     pub(super) const ENV_BINDINGS: &str = "secret.custody.env_bindings";
 }
 
-pub(crate) use self::codec::reject_secret_custody_byte;
+pub(crate) use self::codec::{CUSTODY_SEAL_REASON, reject_secret_custody_byte};
 pub use self::codec::{decode_secret_custody_body, encode_secret_custody_body};
 pub(crate) use self::doors::{
     SecretCustodyAdmission, put_secret_custody_in_txn, read_secret_custody_admission_in_txn,

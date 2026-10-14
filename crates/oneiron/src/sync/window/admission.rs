@@ -8,15 +8,16 @@ use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
 use crate::EntityId;
 use crate::batch::EntityMetadataHeader;
 use crate::error::SyncError;
-use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
+use crate::registry::{ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_SECRET_CUSTODY};
 use crate::sync::loro_support::{map_for_each_value_bytes, map_get_bytes};
 use crate::{Error, Result};
 
-/// Refuses diagnostic carriers before a full-window update can mutate the
-/// live document, materialize rows, persist bytes or fan out to another peer.
+/// Refuses diagnostic and secret-custody carriers before a full-window update
+/// can mutate the live document, materialize rows, persist bytes or fan out to
+/// another peer.
 ///
 /// Inspect the incoming operation range, not just final map state: a put
-/// followed by a delete still carries the diagnostic body in wire history.
+/// followed by a delete still carries the refused body in wire history.
 /// A snapshot also carries live state outside its retained operation range.
 /// Missing causal dependencies are refused rather than relaying uninspected
 /// pending operations; a peer can negotiate the missing prefix and retry.
@@ -84,9 +85,14 @@ fn validate_window_update(
         }
         candidate
     };
-    let is_diagnostic = |blob: &[u8]| {
-        EntityMetadataHeader::parse(blob)
-            .is_some_and(|header| header.entity_type == ENTITY_TYPE_DIAGNOSTIC)
+    let local_only = |blob: &[u8]| {
+        EntityMetadataHeader::parse(blob).and_then(|header| match header.entity_type {
+            ENTITY_TYPE_DIAGNOSTIC => Some(Error::InvalidConfig(
+                "diagnostic observations are local-only".into(),
+            )),
+            ENTITY_TYPE_SECRET_CUSTODY => Some(crate::secret_custody::reject_secret_custody_byte()),
+            _ => None,
+        })
     };
     if let Some(key) = key {
         let witnesses = candidate.get_map("retained_claim_worlds");
@@ -134,10 +140,12 @@ fn validate_window_update(
         }
     }
     if metadata.mode.is_snapshot() {
-        let mut diagnostic = false;
+        let mut refused = None;
         let mut misplaced = false;
         map_for_each_value_bytes(&candidate.get_map("entities"), |_, blob| {
-            diagnostic |= blob.is_some_and(is_diagnostic);
+            if refused.is_none() {
+                refused = blob.and_then(local_only);
+            }
             misplaced |= key.is_some_and(|key| {
                 blob.is_none_or(|blob| {
                     !(crate::sync::types::entity_belongs_to_window(blob, key)
@@ -149,10 +157,8 @@ fn validate_window_update(
                 })
             });
         });
-        if diagnostic {
-            return Err(Error::InvalidConfig(
-                "diagnostic observations are local-only".into(),
-            ));
+        if let Some(error) = refused {
+            return Err(error);
         }
         if misplaced {
             return Err(Error::InvalidConfig(
@@ -239,10 +245,8 @@ fn validate_window_update(
         } else if op.container == entities {
             match value {
                 LoroValue::Binary(blob) => {
-                    if is_diagnostic(&blob) {
-                        return Err(Error::InvalidConfig(
-                            "diagnostic observations are local-only".into(),
-                        ));
+                    if let Some(error) = local_only(&blob) {
+                        return Err(error);
                     }
                     if key.is_some_and(|key| {
                         !(crate::sync::types::entity_belongs_to_window(&blob, key)

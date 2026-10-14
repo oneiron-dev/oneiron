@@ -3232,6 +3232,32 @@ fn forward_remat_aborts_on_corrupted_endpoint_header_instead_of_quarantining() -
 /// Builds a live custody record in the vault via the door and returns its raw
 /// stored bytes (header + body), mirrored exactly as `reverse_rematerialize`
 /// would read them back.
+#[test]
+fn forward_remat_quarantines_a_peer_tombstone_over_local_custody() -> Result<()> {
+    // C1 review: a peer that knows a credential's id files a tombstone for it.
+    // The replay refuses it as a remote rejection, keeps the credential, and
+    // the pass goes on.
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let (custody_id, raw) = seed_secret_custody(&vault, &window_key, "tombstoned", b"owner")?;
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::GdprDelete,
+        deleted_at: 10,
+        request_id: *EntityId::now().as_bytes(),
+    }
+    .encode();
+    let doc = create_window_doc("hostile", &window_key);
+    map_insert_bytes(&doc.get_map("tombstones"), &custody_id.to_hex(), &tombstone)?;
+    doc.commit();
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert_eq!(vault.get_raw_unsealed(&custody_id)?, Some(raw));
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(quarantined[0].1.container, QuarantineContainer::Tombstones);
+    assert_eq!(quarantined[0].1.reason_code, "InvalidSecretCustodyBody");
+    Ok(())
+}
+
 fn seed_secret_custody(
     vault: &Vault,
     window_key: &WindowKey,
@@ -3821,44 +3847,50 @@ fn diagnostic_carriers_never_leave_window_in_live_state_or_history() -> Result<(
 }
 
 #[test]
-fn diagnostic_update_admission_is_side_effect_free_and_checks_hidden_history() -> Result<()> {
+fn local_only_update_admission_is_side_effect_free_and_checks_hidden_history() -> Result<()> {
+    // C1: a peer's custody carrier is refused like a diagnostic one, before
+    // the update is imported, persisted or relayed raw to another device.
     let key = WindowKey::new("2026-03");
     let doc = create_window_doc("receiver", &key);
     map_insert_bytes(&doc.get_map("entities"), "ordinary", b"previously accepted")?;
     doc.commit();
     let before = doc.oplog_vv();
+    let refused = |result: Result<()>| {
+        matches!(
+            result,
+            Err(Error::InvalidConfig(_)
+                | Error::Secret(crate::error::SecretError::InvalidSecretCustodyBody(_)))
+        )
+    };
     let diagnostic = make_entity_blob(crate::registry::ENTITY_TYPE_DIAGNOSTIC, 1, b"private");
-    for malformed_key in [false, true] {
+    let custody = make_entity_blob(ENTITY_TYPE_SECRET_CUSTODY, 1, b"placeholder custody body");
+    for (blob, malformed_key) in [
+        (&diagnostic, false),
+        (&diagnostic, true),
+        (&custody, false),
+        (&custody, true),
+    ] {
         let source = doc.fork();
         let id = EntityId::from_bytes([0x71; 16])?.to_hex();
         let raw_key = if malformed_key {
-            "malformed-diagnostic-id"
+            "malformed-local-only-id"
         } else {
             &id
         };
-        map_insert_bytes(&source.get_map("entities"), raw_key, &diagnostic)?;
+        map_insert_bytes(&source.get_map("entities"), raw_key, blob)?;
         source.commit();
         let live = source.export(loro::ExportMode::updates(&before)).unwrap();
-        assert!(matches!(
-            validate_window_update_locality(&doc, &live),
-            Err(Error::InvalidConfig(_))
-        ));
+        assert!(refused(validate_window_update_locality(&doc, &live)));
         let shallow = source
             .export(loro::ExportMode::shallow_snapshot(
                 &source.oplog_frontiers(),
             ))
             .unwrap();
-        assert!(matches!(
-            validate_window_update_locality(&doc, &shallow),
-            Err(Error::InvalidConfig(_))
-        ));
+        assert!(refused(validate_window_update_locality(&doc, &shallow)));
         map_delete(&source.get_map("entities"), raw_key)?;
         source.commit();
         let hidden = source.export(loro::ExportMode::updates(&before)).unwrap();
-        assert!(matches!(
-            validate_window_update_locality(&doc, &hidden),
-            Err(Error::InvalidConfig(_))
-        ));
+        assert!(refused(validate_window_update_locality(&doc, &hidden)));
         assert_eq!(doc.oplog_vv(), before);
         assert!(map_get_bytes(&doc.get_map("entities"), raw_key).is_none());
     }

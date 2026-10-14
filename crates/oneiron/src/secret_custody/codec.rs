@@ -35,15 +35,23 @@ pub(super) fn invalid_body(reason: &'static str) -> Error {
 ///   would otherwise carry `value_bytes` in the clear — the ONLY sanctioned
 ///   value read is [`Vault::get_secret_value_in_txn`];
 /// * the export scrub's malformed-key arm ([`crate::sync::window`]), which
-///   quarantines a custody carrier filed under a non-canonical peer key.
+///   quarantines a custody carrier filed under a non-canonical peer key;
+/// * replayed tombstones (`replayed_tombstone_protection_in_txn`): a peer's
+///   delete proves no owner intent, so a credential leaves only through the
+///   local revoke door.
 ///
 /// The SILENT doors are deliberately not errors: the sync selector
 /// ([`crate::sync::selector`]) drops the byte from the export set, and reverse
 /// rematerialization and window egress skip-and-scrub it. None has a caller
 /// to fail.
 pub(crate) fn reject_secret_custody_byte() -> Error {
-    invalid_body("secret custody is not eligible for this raw or sync door")
+    invalid_body(CUSTODY_SEAL_REASON)
 }
+
+/// The seal's reason, for a caller that tells the seal apart from a decode
+/// failure of the same error variant.
+pub(crate) const CUSTODY_SEAL_REASON: &str =
+    "secret custody is not eligible for this raw or sync door";
 
 fn tier_band_to_value(band: &TierBand) -> Value {
     Value::Map(vec![
