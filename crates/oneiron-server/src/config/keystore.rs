@@ -74,6 +74,30 @@ impl KeystoreConfig {
         let keystore = oneiron_keystore::platform_keystore(service, &dir, &[vault_path])?;
         Ok(Some(keystore))
     }
+
+    /// Installs this platform's keystore on `vault`, opened at `vault_path`.
+    /// A platform with none does not stop serve: only the world-key doors need
+    /// one, and they answer `KeystoreUnavailable` without it. True when one
+    /// was installed.
+    pub fn install_on(&self, vault: &oneiron::Vault, vault_path: &Path) -> bool {
+        match self.open(vault_path) {
+            Ok(Some(keystore)) => {
+                vault.install_device_keystore(keystore);
+                true
+            }
+            Ok(None) => {
+                tracing::info!("keystore backend is off; world-key doors are unavailable");
+                false
+            }
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "no this-device-only keystore; world-key doors are unavailable"
+                );
+                false
+            }
+        }
+    }
 }
 
 /// `$XDG_STATE_HOME/oneiron/keys`, else `$HOME/.local/state/oneiron/keys`. Unset,

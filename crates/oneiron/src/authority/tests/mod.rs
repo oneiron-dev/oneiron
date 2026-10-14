@@ -41,6 +41,7 @@ mod checkpoint;
 mod handoff_arrival_order;
 mod handoff_settlement;
 mod history_transfer;
+mod host_node;
 mod host_re_root;
 mod machine_fold;
 mod machine_identity;

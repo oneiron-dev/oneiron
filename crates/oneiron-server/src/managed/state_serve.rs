@@ -549,6 +549,14 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     vault.ensure_host_root_slip(&issuer)?;
     // The engine's MACHINE writers sign with host-held keys (ONE-1634).
     vault.provision_engine_machine_identities(&issuer)?;
+    // This install's key slots, after the open gates and only where the
+    // supervisor put them. With them, the host's own node enters the roster:
+    // never the owner's, never a world key's recipient.
+    if config.keystore.install_on(&vault, &managed.data_dir)
+        && let Err(error) = vault.provision_host_node(&issuer)
+    {
+        tracing::warn!(%error, "this host's node is not in the roster; serving on");
+    }
     let mut sync_server = SyncServer::new(Arc::clone(&vault), server_config)
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?;
     sync_server.managed_issuer = Some(issuer);

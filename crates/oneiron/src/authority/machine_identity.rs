@@ -200,6 +200,46 @@ impl Vault {
         Ok(folded)
     }
 
+    /// The host's own node: this install's machine in the roster as a
+    /// `HostedNode`, signed by the host root, which may register its own node
+    /// but never vouch for a machine as the owner's. The node is never mine
+    /// and never a wrap recipient; its profile names the machine and its keys
+    /// so a connection can prove it. No owner answered here, so the profile
+    /// names the vault's owner PERSON. A restart reuses the profile only when
+    /// it names this install's id, both keys and the `HostedNode` role; a node
+    /// the owner removed or answered for otherwise is never enrolled again.
+    pub fn provision_host_node(&self, issuer: &HostSlipIssuer) -> Result<FoldedMachine> {
+        let vault_id = self
+            .authority_fold()?
+            .vault_id
+            .ok_or_else(invalid_authority)?;
+        let encryption_key = self.machine_encryption_key(vault_id)?;
+        let request = self.machine_enrolment_request(vault_id, encryption_key)?;
+        let mut txn = self.store.env.write_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        if let Some(folded) = fold.machine(request.machine)
+            && let Some(roster) = &folded.roster
+        {
+            let same = roster.is_live()
+                && roster.profile.role == MachineRole::HostedNode
+                && roster.profile.machine_key == request.machine_key
+                && roster.profile.encryption_key == request.encryption_key;
+            return if same {
+                Ok(folded.clone())
+            } else {
+                Err(invalid_authority())
+            };
+        }
+        let owner = crate::policy_model::owners_in_txn(self, &txn)?
+            .first()
+            .copied()
+            .ok_or_else(invalid_authority)?;
+        let folded =
+            self.enroll_machine_in_txn(&mut txn, issuer, owner, &request, MachineRole::HostedNode)?;
+        txn.commit()?;
+        Ok(folded)
+    }
+
     /// The owner changes a machine's answer or removes it, in the roster's
     /// chain. Removal is terminal there. An anchor's chain is the anchor's.
     pub fn set_machine_role(

@@ -16,20 +16,6 @@ use crate::server::SyncServer;
 /// How long open connections get to finish after a stop is requested.
 const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Installs this install's this-device-only keystore on the vault. A platform with
-/// none does not stop serve: only the world-key doors need one, and they answer
-/// `KeystoreUnavailable` without it.
-fn install_keystore(vault: &oneiron::Vault, config: &ServeConfig) {
-    match config.keystore.open(&config.vault_path) {
-        Ok(Some(keystore)) => vault.install_device_keystore(keystore),
-        Ok(None) => tracing::info!("keystore backend is off; world-key doors are unavailable"),
-        Err(error) => tracing::warn!(
-            %error,
-            "no this-device-only keystore; world-key doors are unavailable"
-        ),
-    }
-}
-
 pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     use oneiron_vault_contract::host::{Host, HostLimits};
 
@@ -54,7 +40,7 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
     let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(reembed::with_model_change_remedy)?;
     managed::warn_if_reader_table_short(&vault);
-    install_keystore(&vault, &config);
+    config.keystore.install_on(&vault, &config.vault_path);
 
     let server_config = config.sync_server_config();
     match server_config.auth_secret.as_deref() {

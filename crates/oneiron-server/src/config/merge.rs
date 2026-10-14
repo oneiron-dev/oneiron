@@ -831,7 +831,13 @@ impl From<&ServeArgs> for PartialServeConfig {
             backup: None,
             feedback: None,
             recall: None,
-            keystore: None,
+            keystore: value
+                .keystore_dir
+                .clone()
+                .map(|dir| KeystoreConfigOverride {
+                    dir: Some(dir),
+                    ..KeystoreConfigOverride::default()
+                }),
             import: None,
             models: None,
             privacy_posture: value.privacy_posture,
