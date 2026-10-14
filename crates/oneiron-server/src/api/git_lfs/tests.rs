@@ -742,6 +742,19 @@ fn chunk_want(server: &Arc<SyncServer>, bytes: &[u8]) -> (Vec<u8>, String, oneir
     (want, token, world)
 }
 
+/// `len` bytes that content-defined chunking cuts into many chunks.
+fn varied_bytes(len: usize) -> Vec<u8> {
+    let mut seed = 0x9e37_79b9_u32;
+    (0..len)
+        .map(|_| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed.to_le_bytes()[0]
+        })
+        .collect()
+}
+
 /// Round 3 (Sol): a chunk reply keeps its transfer permit until it has been
 /// taken, and gives it back once its client has stopped reading for the
 /// idle limit.
@@ -757,15 +770,7 @@ async fn a_chunk_reply_nobody_reads_gives_its_permit_back_at_the_idle_limit() {
     };
     let (_dir, server) = test_server(config);
     // Many times the pieces a reply has in flight.
-    let mut seed = 0x9e37_79b9_u32;
-    let bytes = (0..1_000_000)
-        .map(|_| {
-            seed ^= seed << 13;
-            seed ^= seed >> 17;
-            seed ^= seed << 5;
-            seed.to_le_bytes()[0]
-        })
-        .collect::<Vec<u8>>();
+    let bytes = varied_bytes(1_000_000);
     let (want, token, _) = chunk_want(&server, &bytes);
     let exchange = |body: Vec<u8>| {
         crate::test_credentials::bind_request(
@@ -817,6 +822,44 @@ async fn a_chunk_reply_nobody_reads_gives_its_permit_back_at_the_idle_limit() {
         .unwrap();
     let body = to_bytes(read.into_body(), usize::MAX).await.expect("reply");
     assert!(body.len() == declared && declared > bytes.len());
+}
+
+/// Round 4 (Sol): a streamed chunk reply is judged again as each piece is
+/// released, so a device-only flag committed after its head went out stops
+/// the pieces still to come.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_chunk_reply_stops_at_a_device_only_flag_set_while_it_streams() {
+    let (_dir, server) = test_server(secret_config());
+    let bytes = varied_bytes(1_000_000);
+    let (want, token, world) = chunk_want(&server, &bytes);
+    let request = crate::test_credentials::bind_request(
+        &server,
+        request(
+            "POST",
+            &format!("/git/{REPO}/info/lfs/chunks"),
+            Some(&token),
+            Body::from(want),
+        ),
+    );
+    let response = lfs_routes()
+        .with_state(Arc::clone(&server))
+        .oneshot(request)
+        .await
+        .expect("route response");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    server
+        .vault()
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            world,
+            true,
+        )
+        .unwrap();
+    assert!(
+        to_bytes(response.into_body(), usize::MAX).await.is_err(),
+        "no piece is released once the world is kept on this device"
+    );
 }
 
 // -- storage admission (C6): finite by default, held by the worker ---------

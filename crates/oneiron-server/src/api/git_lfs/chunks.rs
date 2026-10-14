@@ -10,7 +10,8 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use futures_util::stream;
-use oneiron::origin::lfs::LFS_CHUNK_MAX;
+use oneiron::Vault;
+use oneiron::origin::lfs::{LFS_CHUNK_MAX, LfsOid};
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
@@ -59,7 +60,13 @@ pub(super) async fn exchange(
             (header::CONTENT_TYPE, "application/vnd.oneiron.chunks"),
             (header::CONTENT_LENGTH, length.as_str()),
         ],
-        reply(bytes, permit, server.transfers.idle),
+        reply(
+            Arc::clone(&server.vault),
+            object,
+            bytes,
+            permit,
+            server.transfers.idle,
+        ),
     )
         .into_response())
 }
@@ -67,7 +74,13 @@ pub(super) async fn exchange(
 /// The reply, handed out a piece at a time by a task that holds the transfer
 /// permit until the last piece is taken, or until the client has taken none
 /// for `idle`. Only the pieces already handed out outlive it.
-fn reply(bytes: Vec<u8>, permit: Permit<String>, idle: Duration) -> Body {
+fn reply(
+    vault: Arc<Vault>,
+    object: LfsOid,
+    bytes: Vec<u8>,
+    permit: Permit<String>,
+    idle: Duration,
+) -> Body {
     let (pieces, receiver) = mpsc::channel::<Bytes>(2);
     tokio::spawn(async move {
         let _permit = permit;
@@ -78,9 +91,22 @@ fn reply(bytes: Vec<u8>, permit: Permit<String>, idle: Duration) -> Body {
             }
         }
     });
-    Body::from_stream(stream::unfold(receiver, |mut receiver| async move {
-        let piece = receiver.recv().await?;
-        Some((Ok::<_, io::Error>(piece), receiver))
+    // Each piece is released only while no device-only world keeps the
+    // object; a flag set mid-reply ends the body with an error.
+    Body::from_stream(stream::unfold(receiver, move |mut receiver| {
+        let vault = Arc::clone(&vault);
+        async move {
+            let piece = receiver.recv().await?;
+            if oneiron::sync::chunks::lfs_object_withheld(&vault, object).unwrap_or(true) {
+                receiver.close();
+                let kept = io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "lfs object kept on this device",
+                );
+                return Some((Err(kept), receiver));
+            }
+            Some((Ok(piece), receiver))
+        }
     }))
 }
 
