@@ -744,10 +744,12 @@ fn a_stale_claim_the_filter_admits_is_handed_to_no_reranker() -> Result<()> {
     };
     let reranker = ClaimKeepingReranker::default();
 
+    // Past the vault's own seeded rows, which the temporal channel finds too.
     let found = vault
         .query()
         .authority_filter(with_stale())
-        .search_temporal(1, 1, 10)
+        .search_temporal(1, 1, 100)
+        .limit(100)
         .run()?;
     let pack = vault
         .context_pack()
