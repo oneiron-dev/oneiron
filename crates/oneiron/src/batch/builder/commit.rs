@@ -54,18 +54,9 @@ impl BatchBuilder<'_> {
     /// same transaction as the claim. Errors during batch apply or `after_apply`
     /// roll back those writes and their allow receipts. Full landed verification
     /// of predicate, source, and taint runs after commit; its failures cannot
-    /// roll back the committed transaction.
-    pub(crate) fn commit_with_checker_and_then(
-        self,
-        checker: &BoundedAutoChecker,
-        after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
-    ) -> Result<()> {
-        self.commit_inner(Some(checker), |_| Ok(()), after_apply)
-    }
-
-    /// [`Self::commit_with_checker_and_then`], with `before_apply` reading the
-    /// writer snapshot first, in the same transaction, before policy
-    /// preflight. It mutates nothing.
+    /// roll back the committed transaction. `before_apply` reads the writer
+    /// snapshot first, in the same transaction, before policy preflight; it
+    /// mutates nothing.
     pub(crate) fn commit_with_checker_guard_and_then(
         self,
         checker: &BoundedAutoChecker,
@@ -73,6 +64,16 @@ impl BatchBuilder<'_> {
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
         self.commit_inner(Some(checker), before_apply, after_apply)
+    }
+
+    /// [`Self::commit_with_checker_guard_and_then`] with nothing read first.
+    #[cfg(test)]
+    pub(crate) fn commit_with_checker_and_then(
+        self,
+        checker: &BoundedAutoChecker,
+        after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
+        self.commit_inner(Some(checker), |_| Ok(()), after_apply)
     }
 
     fn commit_inner(
