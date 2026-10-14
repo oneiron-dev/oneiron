@@ -279,7 +279,8 @@ impl RestoredKitSecret {
     /// piece beside a genuine one would have to match the genuine tag: 2^72 work. With one,
     /// the passphrase supplied the other point and the tag checked is that piece's own, so
     /// anyone who knows the passphrase could have written the piece for a secret they chose.
-    /// Match such a secret against the vault's signed record before trusting it.
+    /// Nothing in the kit authenticates such a secret; it needs confirmation from outside,
+    /// such as a root this install already pins, a machine that pins it, or the owner.
     pub fn stored_pieces(&self) -> u8 {
         self.stored_pieces
     }

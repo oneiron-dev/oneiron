@@ -487,19 +487,23 @@ fn a_code_forged_by_someone_who_knows_the_passphrase_counts_one_stored_piece() {
     // Astra's fixture on #1424 (Engine ruling 2026-10-14): whoever knows the passphrase
     // can write a code for a secret they chose, and with one stored piece the only tag is
     // theirs. Restore cannot refuse it; it must say only one stored piece vouches, so the
-    // caller matches the vault's signed record. Same synthetic kit as above.
+    // caller seeks confirmation from outside the kit. A copy of the forged code is still
+    // one stored piece. Same synthetic kit as above.
     let vault_id: [u8; 32] = std::array::from_fn(|i| i as u8 + 1);
     let genuine: [u8; 32] = std::array::from_fn(|i| i as u8 + 0x40);
     let chosen: [u8; 32] = std::array::from_fn(|i| i as u8 + 0xa0);
     let passphrase = KitPassphrase::new("placeholder vector cafe\u{301}").unwrap();
     let kind = KitSecretKind::RecoveryRoot;
-    let forged = KitPiece::from_recovery_code(
-        "BNHG-M2RC-1QNY-JDPS-XJQN-EPKH-SP4F-FRVB-P4BD-HCRN-13EX-F672-PZEP-QXMK-AC14-MFV1-TFBW-G9WJ-0AZK-5FEV",
-    )
-    .unwrap();
-    let restored = restore_kit(vault_id, kind, &[&forged], Some(&passphrase)).unwrap();
-    assert_eq!(*restored.as_bytes(), chosen);
-    assert_eq!(restored.stored_pieces(), 1);
+    let forged = "BNHG-M2RC-1QNY-JDPS-XJQN-EPKH-SP4F-FRVB-P4BD-HCRN-13EX-F672-PZEP-QXMK-AC14-MFV1-TFBW-G9WJ-0AZK-5FEV";
+    let forged = [
+        KitPiece::from_recovery_code(forged).unwrap(),
+        KitPiece::from_recovery_code(forged).unwrap(),
+    ];
+    for given in [&[&forged[0]][..], &[&forged[0], &forged[1]][..]] {
+        let restored = restore_kit(vault_id, kind, given, Some(&passphrase)).unwrap();
+        assert_eq!(*restored.as_bytes(), chosen);
+        assert_eq!(restored.stored_pieces(), 1);
+    }
     let request = issue(
         [PieceHome::ThisMachine, PAPER, PieceHome::Passphrase],
         vault_id,
