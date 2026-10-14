@@ -320,6 +320,24 @@ fn a_malformed_tool_call_never_decodes_as_a_finished_answer() {
         );
     }
 
+    // Choices or a delta of a shape the stream cannot walk, after text already
+    // streamed, are no Stop either (Astra, round 8).
+    let call = json!([{ "index": 0, "id": "call-1", "type": "function",
+        "function": { "name": "check_policy", "arguments": "{}" } }]);
+    for chunk in [
+        json!({ "choices": [{ "index": 0, "delta": [{ "tool_calls": call }], "finish_reason": "stop" }] }),
+        json!({ "choices": { "0": { "delta": { "tool_calls": call } } } }),
+    ] {
+        let mut stream = super::stream::OpenAiCompatStreamAccumulator::new();
+        stream
+            .push_chunk(json!({ "choices": [{ "index": 0, "delta": { "content": allow } }] }))
+            .expect("the answer's text streams");
+        assert!(
+            stream.push_chunk(chunk.clone()).is_err(),
+            "H122: a streamed {chunk} left the text a tool-free answer"
+        );
+    }
+
     // The controls.
     let answer = buffered(serde_json::Value::Null).expect("a tool-free answer decodes");
     assert_eq!(answer.finish_reason, oneiron::FinishReason::Stop);

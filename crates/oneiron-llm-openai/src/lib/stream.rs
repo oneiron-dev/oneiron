@@ -41,11 +41,15 @@ impl OpenAiCompatStreamAccumulator {
             self.usage = Some(parse_openai_usage(usage));
         }
         let mut events = Vec::new();
-        let Some(choice) = chunk
-            .get("choices")
-            .and_then(JsonValue::as_array)
-            .and_then(|v| v.first())
-        else {
+        // A chunk this decoder cannot walk could hold a tool request behind
+        // the text before it, so choices or a delta of any other shape fail
+        // the stream rather than read as empty.
+        let choices = match chunk.get("choices") {
+            None | Some(JsonValue::Null) => None,
+            Some(JsonValue::Array(choices)) => choices.first(),
+            Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+        };
+        let Some(choice) = choices else {
             return if self.usage.is_some() {
                 self.finish_eof()
             } else {
@@ -59,7 +63,10 @@ impl OpenAiCompatStreamAccumulator {
         {
             return Err(FatalLlmError::InvalidRequest.into());
         }
-        if let Some(delta) = choice.get("delta") {
+        if let Some(delta) = choice.get("delta").filter(|delta| !delta.is_null()) {
+            if !delta.is_object() {
+                return Err(FatalLlmError::InvalidRequest.into());
+            }
             if let Some(text) = delta
                 .get("content")
                 .and_then(JsonValue::as_str)
