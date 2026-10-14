@@ -321,6 +321,47 @@ pub(crate) fn claim_consolidatable(body: &ClaimBody) -> bool {
             && body.approval != ClaimApprovalStatus::Approved)
 }
 
+/// Provisional standing (Engine ruling 2026-10-12): a first-party generated
+/// `Auto` claim a later correction may close. [`claim_consolidatable`]
+/// declines it for its generated origin alone; every other reason that
+/// predicate declines a claim declines it here too:
+///
+/// * not surfaceable (exact-store data, neither `Auto` nor `Approved`, closed,
+///   or stale);
+/// * a blocking evidence taint (`tool_output`, `imported`, or a malformed
+///   stamp, which reads as `imported`): an `Auto` claim never takes the
+///   `Approved` exit;
+/// * a generated origin that arrived by federation: any
+///   `federated_original_source` marker, readable or not, keeps the head on
+///   the existing path (a restamped row is `src = imported` besides).
+///
+/// GATE-11 holds because closing the head is all this permits. A correction
+/// replaces it through the deferred grant door, which judges the replacement
+/// on its own evidence, and a closed head only loses standing. Nothing
+/// attaches to it, it never corroborates, and it is never extraction evidence
+/// ([`claim_evidence_admissible`] still refuses it), so no claim gains trust
+/// from it. Approved generated heads and consolidatable heads keep their path:
+/// the two predicates never both hold.
+pub(crate) fn claim_correctable_generated(body: &ClaimBody) -> bool {
+    body.approval == ClaimApprovalStatus::Auto
+        && body.source == Some(ClaimSource::Generated)
+        && !claim_has_federated_origin_marker(body)
+        && claim_surfaceable(body)
+        && !claim_evidence_taint(body).is_some_and(evidence_taint_blocks_consolidation)
+}
+
+/// Whether the scope map carries a federated origin marker at all, however
+/// it reads.
+fn claim_has_federated_origin_marker(body: &ClaimBody) -> bool {
+    let Some(Value::Map(entries)) = &body.scope else {
+        return false;
+    };
+    !matches!(
+        single_map_value(entries, CLAIM_SCOPE_FEDERATED_ORIGINAL_SOURCE_KEY),
+        MapValue::Missing
+    )
+}
+
 /// GATE-11: a generated-origin claim may never serve as extraction evidence
 /// or corroboration for another first-party write — generated output must
 /// never corroborate itself into higher trust. Reads declared source AND

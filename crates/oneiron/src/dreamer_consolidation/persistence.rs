@@ -138,6 +138,19 @@ pub fn close_persistent_conflict(
     resolution: Value,
     evidence_refs: Vec<EntityId>,
 ) -> Result<crate::dreamer_promotion::PromotionOutcome> {
+    let close = conflict_close_candidate(vault, run, open, resolution, evidence_refs)?;
+    crate::dreamer_promotion::promote_consolidated_claims(vault, run, vec![close])
+}
+
+/// The close [`close_persistent_conflict`] promotes, for a door that writes
+/// it under its own fence.
+pub(crate) fn conflict_close_candidate(
+    vault: &Vault,
+    run: &crate::dreamer_promotion::DreamerRunContext,
+    open: EntityId,
+    resolution: Value,
+    evidence_refs: Vec<EntityId>,
+) -> Result<PromotionCandidate> {
     let body = vault
         .get_claim(&open)?
         .ok_or(invalid_consolidation("conflict marker not found"))?;
@@ -216,21 +229,17 @@ pub fn close_persistent_conflict(
     if let Some(world) = body.world {
         candidate = candidate.with_world(world);
     }
-    crate::dreamer_promotion::promote_consolidated_claims(
-        vault,
-        run,
-        vec![PromotionCandidate {
-            claim_id,
-            candidate,
-            evidence_turn_refs: evidence_refs,
-            provenance_chain: Vec::new(),
-            supersedes: None,
-            evidence_meet: meet,
-            occurred: crate::TimeRange {
-                start: run.now_ms,
-                end: run.now_ms,
-            },
-            learned_at: run.now_ms,
-        }],
-    )
+    Ok(PromotionCandidate {
+        claim_id,
+        candidate,
+        evidence_turn_refs: evidence_refs,
+        provenance_chain: Vec::new(),
+        supersedes: None,
+        evidence_meet: meet,
+        occurred: crate::TimeRange {
+            start: run.now_ms,
+            end: run.now_ms,
+        },
+        learned_at: run.now_ms,
+    })
 }
