@@ -400,11 +400,12 @@ impl HeldStamp {
         super::bridge::format_edge_key(&self.src, EdgeKind::FacetOf, &self.tgt)
     }
 
-    /// `stamps` as the record a staged receipt keeps of them: each stamp's
-    /// source, target, its value's length (u64 BE) and its value.
-    pub(super) fn record<'a>(stamps: impl Iterator<Item = &'a Self>) -> Vec<u8> {
+    /// The stamps of each of `groups` as the record a staged receipt keeps of
+    /// them: each stamp's source, target, its value's length (u64 BE) and its
+    /// value.
+    pub(super) fn record(groups: &[&[Self]]) -> Vec<u8> {
         let mut record = Vec::new();
-        for stamp in stamps {
+        for stamp in groups.iter().copied().flatten() {
             record.extend_from_slice(stamp.src.as_bytes());
             record.extend_from_slice(stamp.tgt.as_bytes());
             record.extend_from_slice(&(stamp.value.len() as u64).to_be_bytes());

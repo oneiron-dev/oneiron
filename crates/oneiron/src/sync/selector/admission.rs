@@ -162,7 +162,7 @@ impl AdmittedUpdate {
     /// The record of every stamp [`Self::hold_staged`] holds, which the
     /// receipt keeps while it is Pending.
     pub(crate) fn staged_stamps(&self) -> Vec<u8> {
-        HeldStamp::record(self.early.held.iter().chain(&self.early.with_birth))
+        HeldStamp::record(&[&self.early.held, &self.early.with_birth])
     }
 
     /// The rows the update brings whose births its import must watch, each
