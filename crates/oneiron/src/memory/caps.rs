@@ -55,6 +55,13 @@ pub const MAX_REMOTE_REQUEST_BYTES: usize = 64 * 1024 * 1024;
 /// Maximum remote SUCCESS body read, in bytes: 64 MiB.
 pub const MAX_REMOTE_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 
+/// Maximum remote EXPORT body read, in bytes: 2 GiB.
+///
+/// A full-vault export is one document and may pass the ordinary success
+/// ceiling, so it has its own; it is still finite, and the client stops
+/// reading one byte past it.
+pub const MAX_REMOTE_EXPORT_BYTES: usize = 2 * 1024 * 1024 * 1024;
+
 /// Rejects an over-long query before it reaches retrieval.
 pub fn check_query(query: &str) -> Result<(), MemoryError> {
     if query.len() > MAX_QUERY_BYTES {

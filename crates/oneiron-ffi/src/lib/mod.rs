@@ -8,6 +8,58 @@
 //! Sync entry points are intentionally absent here and on the N-API surface
 //! while shared multi-vault sync is disabled.
 //! The core read/write N-API vault surface is mirrored by this C ABI.
+//!
+//! # Safety
+//!
+//! Every entry point is an `unsafe extern "C" fn` with a `# Safety` section:
+//! its arguments are raw pointers only the caller can vouch for, so a Rust
+//! caller writes `unsafe` and takes on the same contract a C or Swift caller
+//! takes on from the header.
+//!
+//! ```
+//! let mut vault = std::ptr::null_mut();
+//! // SAFETY: a null path is refused before any read, and `vault` is writable.
+//! let status = unsafe {
+//!     oneiron_ffi::oneiron_vault_open(std::ptr::null(), 0, 0, std::ptr::null(), 0, &mut vault)
+//! };
+//! assert_eq!(status, oneiron_ffi::OneironStatus::NullArg);
+//! ```
+//!
+//! Safe Rust cannot make the same call:
+//!
+//! ```compile_fail,E0133
+//! let mut vault = std::ptr::null_mut();
+//! oneiron_ffi::oneiron_vault_open(std::ptr::null(), 0, 0, std::ptr::null(), 0, &mut vault);
+//! ```
+//!
+//! The owning descriptors move rather than copy, so one value reaches its
+//! free function once. Borrowed inputs stay `Copy`:
+//!
+//! ```
+//! fn copy<T: Copy>() {}
+//! copy::<oneiron_ffi::OneironByteSlice>();
+//! copy::<oneiron_ffi::OneironEntityInput>();
+//! ```
+//!
+//! ```compile_fail,E0277
+//! # fn copy<T: Copy>() {}
+//! copy::<oneiron_ffi::OneironBuffer>();
+//! ```
+//!
+//! ```compile_fail,E0277
+//! # fn copy<T: Copy>() {}
+//! copy::<oneiron_ffi::OneironEdgeInfoArray>();
+//! ```
+//!
+//! ```compile_fail,E0277
+//! # fn copy<T: Copy>() {}
+//! copy::<oneiron_ffi::OneironScoredEntityArray>();
+//! ```
+//!
+//! ```compile_fail,E0277
+//! # fn copy<T: Copy>() {}
+//! copy::<oneiron_ffi::OneironSubtreeEntryArray>();
+//! ```
 
 mod alloc;
 mod entity;
