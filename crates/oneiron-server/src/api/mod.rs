@@ -98,6 +98,8 @@ mod facade;
 // `oneiron::origin::smart_http`.
 mod git_http;
 mod git_lfs;
+mod transfer;
+pub(crate) use self::transfer::Transfers;
 mod lease;
 mod llm;
 mod mcp_gateway;

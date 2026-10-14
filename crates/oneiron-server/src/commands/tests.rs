@@ -134,6 +134,36 @@ async fn revoke_command_refuses_missing_vault_path_without_creating_storage() {
     );
 }
 
+/// W1b T3: while a running server holds the vault the CLI cannot revoke, and
+/// its refusal names what works: the online route, or stopping the server.
+#[tokio::test]
+async fn revoke_command_names_the_online_path_while_a_server_holds_the_vault() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault_path = dir.path().join("vault");
+    let mut vault_config = oneiron::VaultConfig::server();
+    vault_config.dimensions = 32;
+    vault_config.map_size = 64 * 1024 * 1024;
+    drop(oneiron::Vault::open(&vault_path, vault_config).unwrap());
+    let _server = oneiron::VaultWriterLease::acquire(&vault_path).unwrap();
+
+    let err = revoke(RevokeArgs {
+        client: "0123456789abcdef".to_string(),
+        serve: ServeArgs {
+            vault_path: Some(vault_path),
+            dimensions: Some(32),
+            map_size: Some(64 * 1024 * 1024),
+            dict_search_paths: Some(Vec::new()),
+            ..Default::default()
+        },
+    })
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("POST /api/lease/revoke"), "{err}");
+    assert!(err.contains("stop the server"), "{err}");
+}
+
 #[tokio::test]
 async fn revoke_command_flips_existing_binding_and_preserves_pubkey_floor() {
     use ed25519_dalek::{Signer, SigningKey};

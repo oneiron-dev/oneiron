@@ -125,22 +125,25 @@ pub(super) fn evaluate_seat_policy(
     verb_contract: &OutboundVerbContract,
     ledger: SeatLedgerCount,
 ) -> Option<SeatPolicyDecision> {
-    request.linkedin_sandbox_policy.as_ref().map(|policy| {
-        let policy = &ledger.raise(policy);
-        let send_decision = policy.evaluate_outbound(
-            &request.intent.channel,
-            &verb_contract.kind,
-            request.occurred_at,
-        );
-        if request.intent.channel == LINKEDIN_CHANNEL
-            && verb_contract.kind == LINKEDIN_CONNECT_REQUEST_VERB
-            && matches!(send_decision.action, LinkedInSeatPolicyAction::Allow)
-        {
-            let read_decision = policy.evaluate_profile_read();
-            if !matches!(read_decision.action, LinkedInSeatPolicyAction::Allow) {
-                return read_decision.into();
-            }
+    // The channel as the capability lookup read it: a spelling that lookup
+    // accepts cannot step around the seat wall.
+    let channel = crate::outbound::capability::normalize_key(&request.intent.channel);
+    let Some(policy) = request.linkedin_sandbox_policy.as_ref() else {
+        // A LinkedIn effect with no seat verdict is held, never executed.
+        return (channel == LINKEDIN_CHANNEL)
+            .then(|| LinkedInSeatPolicyDecision::seat_policy_missing().into());
+    };
+    let policy = &ledger.raise(policy);
+    let send_decision =
+        policy.evaluate_outbound(&channel, &verb_contract.kind, request.occurred_at);
+    if channel == LINKEDIN_CHANNEL
+        && verb_contract.kind == LINKEDIN_CONNECT_REQUEST_VERB
+        && matches!(send_decision.action, LinkedInSeatPolicyAction::Allow)
+    {
+        let read_decision = policy.evaluate_profile_read();
+        if !matches!(read_decision.action, LinkedInSeatPolicyAction::Allow) {
+            return Some(read_decision.into());
         }
-        send_decision.into()
-    })
+    }
+    Some(send_decision.into())
 }
