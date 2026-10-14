@@ -199,7 +199,7 @@ impl Vault {
                     .filter_map(&head)
                     .collect();
                 let authors: BTreeSet<_> = authors.into_iter().filter_map(&head).collect();
-                if rows.len() + authors.len() <= MAX_PARENTS / 2 {
+                if rows.union(&authors).count() <= MAX_PARENTS / 2 {
                     rows.extend(authors);
                 }
                 rows

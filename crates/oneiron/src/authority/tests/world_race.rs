@@ -1094,14 +1094,19 @@ fn a_custodial_mark_acknowledges_no_widening() {
     assert!(!fold.world_readable_on(world, Destination::Unknown));
 }
 
-/// A widening signed under a "yours" revision that turns out to have a
-/// divergent sibling never counts, whoever removes the machine and whatever
-/// the removal lists: from the owner's door once both siblings are in, crafted
-/// on both, or signed on the widening's own sibling before the other arrives
-/// (Wonder P2 round 2, W2; round 3, W2; Sol P2 round 7, F2).
+/// A removal never acknowledges a widening through a "yours" revision that
+/// turns out to have a divergent sibling: neither one the widening was signed
+/// under nor one the removal took away (the widening signed before the
+/// siblings). It narrows whoever removes the machine and whatever the removal
+/// lists: the owner's door once both siblings are in, crafted on both, or
+/// signed on one sibling before the other arrives (Wonder P2 round 2, W2;
+/// round 3, W2; Sol P2 round 7, F2; round 8, F2).
 #[test]
 fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
-    for removal in ["door", "crafted", "on one sibling"] {
+    for (removal, widen_first) in ["door", "crafted", "on one sibling"]
+        .into_iter()
+        .flat_map(|removal| [(removal, false), (removal, true)])
+    {
         let host = host();
         let world = world_row(&host);
         let (laptop, laptop_key) =
@@ -1114,6 +1119,13 @@ fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
             settings(ReadLocation::OneMachine(laptop)),
         );
         land(&host, std::slice::from_ref(&narrow));
+        let first = edit_by(
+            &host,
+            laptop,
+            &laptop_key,
+            world,
+            settings(ReadLocation::Everywhere),
+        );
         let fold = host.vault.authority_fold().unwrap();
         let current = fold.machine(laptop).unwrap().profile.clone();
         let sibling = |seen_world_edits| {
@@ -1129,12 +1141,13 @@ fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
             sibling(BTreeSet::from([authority_entry_hash(&narrow).unwrap()])),
         ];
         land(&host, &siblings);
-        // The laptop widens on one sibling, where it is still the owner's.
+        // The laptop widens before the siblings, or on one of them, where it
+        // is still the owner's.
         let mut parents: Vec<_> = [&siblings[0], &narrow]
             .map(|entry| authority_entry_hash(entry).unwrap())
             .into();
         parents.sort();
-        let widen = sign_ed(
+        let on_sibling = sign_ed(
             unsigned_entry(
                 fold.vault_id,
                 2,
@@ -1150,6 +1163,7 @@ fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
             ),
             &laptop_key,
         );
+        let widen = if widen_first { first } else { on_sibling };
         let seen = BTreeSet::from([authority_entry_hash(&widen).unwrap()]);
         land(&host, std::slice::from_ref(&widen));
         assert!(

@@ -82,6 +82,9 @@ pub(super) struct Revision {
     profile: MachineProfile,
     signer: AuthorityKey,
     owner_held: bool,
+    /// The "yours" revision this one replaced, if the head it replaced said
+    /// "yours".
+    replaced_mark: Option<AuthorityEntryHash>,
 }
 
 impl FoldedMachine {
@@ -182,6 +185,9 @@ pub(super) fn apply_machine_profile(
             profile: profile.clone(),
             signer: signer.clone(),
             owner_held: signer_class == SignerClass::OwnerHeld,
+            replaced_mark: head
+                .filter(|folded| folded.profile.says_mine())
+                .map(|folded| folded.entry),
         }),
     );
     let folded = FoldedMachine {
@@ -254,10 +260,11 @@ pub(super) fn revision_entries(
 /// this history: its signer in no host's custody, and no divergent revision
 /// of its number. Every revision this history holds outside the edit's own
 /// past (`prior`) that leaves the machine not the owner's must have been
-/// signed by a key the owner holds and have seen the edit, and there must be
+/// signed by a key the owner holds, have seen the edit, and, when it took a
+/// "yours" revision away, have taken one that still stands; and there must be
 /// one. A revision that saw nothing, a host's removal, or a mark found later
 /// not to stand narrows the edit; a "yours" text or the order in which
-/// branches meet changes nothing (Sol P2 round 7).
+/// branches meet changes nothing (Sol P2 rounds 7-8, Engine ruling E8).
 pub(super) fn acknowledged(
     state: &FoldState,
     machine: EntityId,
@@ -269,24 +276,27 @@ pub(super) fn acknowledged(
         return false;
     };
     let custodial = |key: &AuthorityKey| state.hosted && in_host_custody(state, key);
-    let Some(marked) = chain.revisions.get(mark) else {
-        return false;
+    let stands = |mark: &AuthorityEntryHash| {
+        chain.revisions.get(mark).is_some_and(|marked| {
+            !custodial(&marked.signer)
+                && !chain.revisions.values().any(|other| {
+                    other.profile.revision == marked.profile.revision
+                        && other.profile != marked.profile
+                })
+        })
     };
-    let mark_stands = !custodial(&marked.signer)
-        && !chain.revisions.values().any(|other| {
-            other.profile.revision == marked.profile.revision && other.profile != marked.profile
-        });
     let mut takers = chain
         .revisions
         .iter()
         .filter(|(hash, revision)| !prior.contains(*hash) && !revision.profile.says_mine())
         .peekable();
-    mark_stands
+    stands(mark)
         && takers.peek().is_some()
         && takers.all(|(_, revision)| {
             revision.owner_held
                 && !custodial(&revision.signer)
                 && revision.profile.seen_world_edits.contains(edit)
+                && revision.replaced_mark.as_ref().is_none_or(&stands)
         })
 }
 
