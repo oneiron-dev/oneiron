@@ -5955,11 +5955,11 @@ fn a_summary_of_a_summary_rewritten_as_no_epoch_is_withdrawn() -> crate::Result<
             b"a summary written by hand",
         )
         .commit()?;
-    let mut base_only = Scope::top();
+    let mut base_only = crate::federation::Scope::top();
     base_only.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(
         crate::claim::base_world_id(),
     )]));
-    let top = Scope::top();
+    let top = crate::federation::Scope::top();
     let exported = vault.export_records_in_scope(&base_only, &top, &top)?;
     assert!(
         !exported.iter().any(|record| record.id == nested),
