@@ -16,7 +16,8 @@ pub use self::call_mode::{DEFAULT_CALL_MODE_DEADLINE, RecallEffort, resolve_reca
 #[cfg(test)]
 pub(super) use self::paid::PREPARED_SCORES_TAKEN;
 pub use self::paid::{
-    RecallRerank, RecallRerankHost, RerankDocument, RerankReport, RerankScores, RerankSkip,
+    RecallRerank, RecallRerankHost, RerankDocument, RerankEgress, RerankReport, RerankScores,
+    RerankSkip,
 };
 
 use self::presentation::{hedge_bucket_for, value_text_of};
@@ -755,7 +756,12 @@ impl Memory<'_> {
                     .world(world_scope)
                     .retrieval_effort(effective, &seeds)
                     .authority_filter(plan_filter.clone());
-                pipeline = pipeline.filter_candidates(&admitted);
+                // A caller off this device: no row a device-local world
+                // keeps enters a list, as on the pack route below, or it
+                // would scale the scores of the rows the caller reads.
+                pipeline = pipeline
+                    .filter_candidates(&admitted)
+                    .caller_off_device(lane.off_device());
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     pipeline = pipeline.in_session(telemetry);
                 }
