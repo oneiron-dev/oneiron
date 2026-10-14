@@ -395,30 +395,24 @@ fn parse_optional_oid(value: &str) -> Result<Option<GitOid>> {
     Ok(Some(GitOid::parse_hex(value.to_ascii_lowercase())?))
 }
 
-/// Reads the length-framed blob stream the vetted hook emitted inside the
-/// quarantine window.
+/// Reads one length-framed blob stream the vetted hook emitted inside the
+/// quarantine window, charging each blob's lines to `lines` before they are
+/// split.
 ///
 /// One record is `blob <oid> <bytes> <path>\n` followed by exactly `<bytes>`
 /// raw bytes. There is no patch grammar here on purpose: the framing is what
-/// makes the extraction TOTAL. Every added or modified blob the raw diff named
-/// is present with its complete post-image content, so a binary blob, a blob
-/// carrying NUL, and a line beginning `++` or `+++ b/...` are all just bytes —
-/// none of them can look like a header and none of them can go unscanned.
+/// makes the extraction TOTAL. Every blob the hook named is present with its
+/// complete content, so a binary blob, a blob carrying NUL, and a line
+/// beginning `++` or `+++ b/...` are all just bytes — none of them can look
+/// like a header and none of them can go unscanned. The history stream
+/// (`terminated`) carries the same records, each followed by the one `\n`
+/// `git cat-file --batch` writes after an object's bytes.
 ///
-/// The door is handed the blob's whole content, one line per element, because
-/// the entire post-image of an added or modified blob is what the push would
-/// make durable. Content the door cannot scan (binary, invalid UTF-8) is the
-/// door's own rejection, and a stream this function cannot read whole is a
-/// refusal at the window — never a silently empty scan.
-pub(super) fn parse_pushed_blobs(framed: &[u8]) -> Result<Vec<PushedBlob>> {
-    let mut lines = DOOR_MAX_SCAN_LINES;
-    parse_framed_blobs(framed, false, &mut lines)
-}
-
-/// Reads one stream, charging each blob's lines to `lines` before they are
-/// split. The history stream (`terminated`) carries the same records, each
-/// followed by the one `\n` `git cat-file --batch` writes after an object's
-/// bytes; a record without it is a stream this cannot read whole.
+/// The door is handed each blob's whole content, one line per element, because
+/// the whole blob is what the push would make durable. Content the door cannot
+/// scan (binary, invalid UTF-8) is the door's own rejection, and a stream this
+/// function cannot read whole is a refusal at the window — never a silently
+/// empty scan.
 fn parse_framed_blobs(
     framed: &[u8],
     terminated: bool,
