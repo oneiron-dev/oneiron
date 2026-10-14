@@ -622,3 +622,24 @@ fn check_claim_policy_for_write_with_record_inner(
     let actor_ref = write_envelope_actor_ref(envelope);
     check_claim_source_trust(body, actor_ref.as_deref(), policy, lineage)
 }
+
+/// Whether the source-trust step this door ends on would let `body` land
+/// `Auto` from `envelope` under `policy`. A writer asks before it requests
+/// `Auto`, so a source the policy does not trust stays where it landed
+/// instead of failing the write.
+pub(crate) fn claim_source_trust_admits_auto(
+    body: &ClaimBody,
+    envelope: &WriteEnvelope,
+    policy: &PolicyManifestResolution,
+) -> bool {
+    let mut auto = body.clone();
+    auto.approval = ClaimApprovalStatus::Auto;
+    let actor_ref = write_envelope_actor_ref(Some(envelope));
+    check_claim_source_trust(
+        &auto,
+        actor_ref.as_deref(),
+        policy,
+        Some(envelope.lineage()),
+    )
+    .is_ok()
+}

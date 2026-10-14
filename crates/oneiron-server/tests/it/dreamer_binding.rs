@@ -77,9 +77,9 @@ struct Case {
     /// The first turn, and the value on `predicate` it holds.
     first: (&'static str, &'static str),
     /// Who holds that value: the first pass, as its own unvetted claim, or
-    /// the owner, as an observed claim stated once the first pass has met
-    /// the person (a Dreamer claim in a critical class lands Proposed and is
-    /// never listed).
+    /// the owner, as an observed claim stated in person once the first pass
+    /// has met the person (a Dreamer claim in a critical class lands Proposed
+    /// and is never listed).
     owner_states_first: bool,
     second: (&'static str, &'static str),
     seeded_before_critical_classes: bool,
@@ -254,8 +254,19 @@ async fn binds_once(case: Case) {
                 "confidence": 1.0, "source": "observed",
             }))
             .unwrap();
+            // The owner states it in person, so the critical claim carries
+            // its own confirmation and the next pass may list it.
+            let authenticated = vault
+                .authenticate_owner(
+                    owner,
+                    &owner.to_hex(),
+                    true,
+                    oneiron::store::GateDecisionId::now(),
+                )
+                .unwrap();
             vault
                 .memory(owner, EdgeActorClass::Human)
+                .with_owner_authorship(&authenticated)
                 .claim_upsert(&input)
                 .unwrap();
         }

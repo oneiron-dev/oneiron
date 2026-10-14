@@ -65,7 +65,7 @@ use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::llm::BoundedAutoChecker;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
 use crate::write_envelope::{SourceLineage, WriteActor, WriteEnvelope, WriteProvenance};
 
 // PromotionCandidate is DEFINED by its producer (dreamer_consolidation,
@@ -581,14 +581,14 @@ fn verify_landed(
     Ok(body.approval)
 }
 
-/// True when the evidence ref may corroborate: a TURN passes; a type-0 CLAIM
+/// True when the evidence ref may corroborate: a PERSON or a SESSION names
+/// who spoke or where, not anything said, so it never does; a type-0 CLAIM
 /// must pass `claim_evidence_admissible` (GATE-11 — Generated-origin claims
-/// contribute zero) and have no owner confirmation outstanding; every other
-/// type, and an unresolvable ref, is dropped fail-closed. The same two kinds the sealed path verifies: a PERSON or a
-/// SESSION is not something a person said.
+/// contribute zero) and have no owner confirmation outstanding; a TURN and
+/// every other source row pass; an unresolvable ref is dropped fail-closed.
 fn evidence_ref_admissible(vault: &Vault, entry: &EntityId) -> Result<bool> {
     match vault.get_entity_type(entry)? {
-        Some(ENTITY_TYPE_TURN) => Ok(true),
+        None | Some(ENTITY_TYPE_PERSON | ENTITY_TYPE_SESSION) => Ok(false),
         Some(ENTITY_TYPE_CLAIM) => {
             if !vault
                 .get_claim(entry)?
@@ -599,7 +599,7 @@ fn evidence_ref_admissible(vault: &Vault, entry: &EntityId) -> Result<bool> {
             let txn = vault.store.env.read_txn()?;
             crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, &txn, entry)
         }
-        _ => Ok(false),
+        Some(_) => Ok(true),
     }
 }
 

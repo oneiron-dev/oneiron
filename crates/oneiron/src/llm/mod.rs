@@ -73,7 +73,6 @@ pub(crate) use oneiron_model::llm::{BudgetPolicyRow, BudgetPolicySelector, Budge
 
 pub use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
 
-pub(crate) use self::autocheck::truncate_on_char_boundary;
 pub use self::autocheck::{
     AUTO_CHECK_VALUE_PREVIEW_BYTES, AUTO_CHECKER_DEADLINE_MS, AutoCheckCandidate,
     AutoCheckCandidateOwned, AutoCheckOutcome, AutoCheckSignals, AutoChecker, BoundedAutoChecker,

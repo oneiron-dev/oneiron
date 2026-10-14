@@ -753,8 +753,9 @@ fn thin_docs_wait_for_authorized_read_or_explicit_deep_trigger() -> Result<()> {
     let claim_id = EntityId::from_hex(&deep.claim_refs[0])?;
     let claim = vault.get_claim(&claim_id)?.unwrap();
     assert_eq!(claim.source, Some(crate::claim::ClaimSource::Imported));
-    // This fixture loads no policy manifest, so its Gate admits the claim.
-    assert_eq!(claim.approval, crate::claim::ClaimApprovalStatus::Auto);
+    // This fixture grants imported claims no `Auto` permit, so the derived
+    // claim stays `Proposed`.
+    assert_eq!(claim.approval, crate::claim::ClaimApprovalStatus::Proposed);
     assert_eq!(claim.subject, crate::claim::ClaimSubject::Entity(asset));
     let evidence = claim.evidence.as_ref().unwrap();
     let candidate = field(

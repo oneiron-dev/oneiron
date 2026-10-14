@@ -1,9 +1,6 @@
 use rmpv::Value;
 
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimSource, DreamerIsolationClass, claim_evidence_admissible,
-    decode_claim_body,
-};
+use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, DreamerIsolationClass};
 use crate::compaction::turn_session_membership_in_txn;
 use crate::dreamer_consolidation::decode_consolidation_evidence;
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
@@ -16,7 +13,9 @@ use crate::gate::constants::{
 };
 use crate::gate::decision::{GateDecision, GateReasonCode};
 use crate::gate::dreamer_precommit::{DreamerPrecommitInput, validate_dreamer_precommit};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
+};
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::{WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteEnvelope};
@@ -117,12 +116,12 @@ fn dreamer_run_id_from_provenance(value: &Value) -> Option<String> {
 /// a live zero-byte payload, which carries no deletion metadata, also still
 /// resolves.
 ///
-/// A live ref counts only when it is something a person said: a TURN, or a
-/// CLAIM that [`claim_evidence_admissible`] admits (GATE-11: a Generated-origin
-/// claim contributes nothing) and whose owner confirmation, if it is critical,
-/// is settled. A PERSON or a SESSION resolves but is not evidence, and an
-/// unreadable claim body is not either. Promotion reads the same rule, so every
-/// Dreamer door holds one floor.
+/// A live PERSON or SESSION resolves but is not evidence: it names who spoke or
+/// where, not anything said. A CLAIM counts only once any critical owner
+/// confirmation on it is settled. Every other live row a Dreamer writer cites
+/// (a TURN, an edit record, a commitment instance, an imported source) still
+/// counts: this door serves every Dreamer writer, and promotion adds GATE-11's
+/// claim admissibility on top.
 pub(super) fn dreamer_precommit_denial(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -131,19 +130,16 @@ pub(super) fn dreamer_precommit_denial(
     let resolves = |id: &EntityId| -> Result<bool> {
         Ok(match live_entity_row_in_txn(store, txn, id)? {
             LiveEntityRow::Live {
-                entity_type: ENTITY_TYPE_TURN,
+                entity_type: ENTITY_TYPE_PERSON | ENTITY_TYPE_SESSION,
                 ..
-            } => true,
+            }
+            | LiveEntityRow::Absent
+            | LiveEntityRow::DeletedShell => false,
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_CLAIM,
-                body,
-            } => {
-                decode_claim_body(&body, true).is_ok_and(|claim| claim_evidence_admissible(&claim))
-                    && crate::gate::claim_critical_confirm_settled_in_txn(store, txn, id)?
-            }
-            LiveEntityRow::Live { .. } | LiveEntityRow::Absent | LiveEntityRow::DeletedShell => {
-                false
-            }
+                ..
+            } => crate::gate::claim_critical_confirm_settled_in_txn(store, txn, id)?,
+            LiveEntityRow::Live { .. } => true,
         })
     };
 
