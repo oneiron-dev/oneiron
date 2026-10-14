@@ -105,7 +105,9 @@ impl<'a> ContextPackBuilder<'a> {
         lane: &crate::claim::ScopedRead<'_>,
     ) -> Result<(crate::claim::ScopedReadResult<ContextPack>, PackRunStatus)> {
         let disclosure = self.disclosure.clone();
-        let run = self.run_unfinalized()?;
+        let run = self
+            .caller_off_device(lane.off_device())
+            .run_unfinalized()?;
         let status = PackRunStatus {
             vector_completed: run.vector_completed,
             temporal_hints: run.temporal_hints,
@@ -407,6 +409,15 @@ impl<'a> ContextPackBuilder<'a> {
             let stale_neighbor_exclusion = (!stale_worlds.is_empty()
                 && matches!(self.world_scope, WorldScope::All | WorldScope::Base))
             .then_some(&stale_worlds);
+            let device_local = if self.off_device {
+                Some(crate::settings::device_local_worlds_at(
+                    &self.vault.store,
+                    &rtxn,
+                    crate::claim::CallerLocality::OffDevice,
+                )?)
+            } else {
+                None
+            };
             let edge_walk = if let Some(neighbor_pipeline) = neighbor_pipeline.as_ref() {
                 let (neighbor_filter, named_types) =
                     neighbor_pipeline.neighbor_type_policy(&rtxn)?;
@@ -420,6 +431,7 @@ impl<'a> ContextPackBuilder<'a> {
                         exclude: &result_ids,
                         clamp,
                         stale_worlds: stale_neighbor_exclusion,
+                        device_local: device_local.as_ref(),
                         type_filter: &neighbor_filter,
                         named_types,
                     },

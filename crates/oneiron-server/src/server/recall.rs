@@ -21,8 +21,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use oneiron::authority::VerifiedSlip;
+use oneiron::claim::CallerLocality;
 use oneiron::memory::{
-    Effort, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryPack, MemoryResult, RecallEffort,
+    Effort, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryPack, MemoryResult, ProducerRows,
+    RecallEffort,
 };
 use oneiron::task_verb::sdk::{RecallDoor, RecallRequest};
 use oneiron::{EdgeActorClass, EntityId};
@@ -64,9 +66,10 @@ impl SyncServer {
         move |query| embeds.then(|| self.recall_query_vector(query)).flatten()
     }
 
-    /// [`Self::recall`] for `actor` under the slip it presented, on the
-    /// blocking pool. When the request names a room turn, every read recall
-    /// makes runs inside that room (ARCH-0067 §8).
+    /// [`Self::recall`] for `actor` under the slip it presented, from where
+    /// its connection sits, on the blocking pool. When the request names a
+    /// room turn, every read recall makes runs inside that room (ARCH-0067
+    /// §8).
     ///
     /// A request with a deadline answers by it whatever the blocking work is
     /// doing: past it, the door returns the last pack recall published (before
@@ -78,49 +81,76 @@ impl SyncServer {
         actor: EntityId,
         class: EdgeActorClass,
         proof: Option<VerifiedSlip>,
+        locality: CallerLocality,
         room: Option<EntityId>,
         input: RecallRequest,
     ) -> MemoryResult<MemoryPack> {
-        let arrived = Instant::now();
-        let (effort, budget) = oneiron::memory::resolve_recall_dial(
-            input.effort,
-            input.deadline_ms,
-            self.vault.call_mode_deadline(),
-        )?;
-        let rerank = self.door_rerank(effort, actor, class)?;
-        let ready = CutSlot::default();
-        let publish = ready.clone();
-        let server = Arc::clone(self);
-        let task = tokio::task::spawn_blocking(move || {
-            let publish = move |pack| publish.put(pack);
-            let door = RecallDoor {
-                arrived,
-                on_cut: budget.map(|_| &publish as &(dyn Fn(MemoryPack) + Sync)),
-                rerank: rerank.engine(),
-            };
-            let memory = reader(&server.vault, actor, class, proof.as_ref());
-            let embed = server.recall_embed(input.effort);
-            match room {
-                Some(room) => memory
-                    .for_room_turn(room)?
-                    .recall_at_door(input, embed, &door),
-                None => oneiron::task_verb::sdk::recall_at_door(&memory, input, embed, &door),
-            }
-        });
-        let joined = match budget {
-            None => task.await,
-            Some(budget) => {
-                let due = tokio::time::Instant::from_std(arrived + budget);
-                match tokio::time::timeout_at(due, task).await {
-                    Ok(joined) => joined,
-                    Err(_) => return ready.take(),
+        self.recall_off_runtime_listing(actor, class, proof, locality, room, input)
+            .await
+            .0
+    }
+
+    /// [`Self::recall_off_runtime`], with each row the pack is derived from
+    /// without naming it (a reaction claim a line counts) as recall read it,
+    /// for a door that judges the pack again before it leaves this device
+    /// (DEC-0005). A pack cut at its deadline comes with the rows read by then.
+    pub(crate) async fn recall_off_runtime_listing(
+        self: &Arc<Self>,
+        actor: EntityId,
+        class: EdgeActorClass,
+        proof: Option<VerifiedSlip>,
+        locality: CallerLocality,
+        room: Option<EntityId>,
+        input: RecallRequest,
+    ) -> (MemoryResult<MemoryPack>, Vec<EntityId>) {
+        let producers = Arc::new(ProducerRows::default());
+        let listing = Arc::clone(&producers);
+        let pack: MemoryResult<MemoryPack> = async move {
+            let arrived = Instant::now();
+            let (effort, budget) = oneiron::memory::resolve_recall_dial(
+                input.effort,
+                input.deadline_ms,
+                self.vault.call_mode_deadline(),
+            )?;
+            let rerank = self.door_rerank(effort, actor, class)?;
+            let ready = CutSlot::default();
+            let publish = ready.clone();
+            let server = Arc::clone(self);
+            let task = tokio::task::spawn_blocking(move || {
+                let publish = move |pack| publish.put(pack);
+                let door = RecallDoor {
+                    arrived,
+                    on_cut: budget.map(|_| &publish as &(dyn Fn(MemoryPack) + Sync)),
+                    rerank: rerank.engine(),
+                };
+                let memory = reader(&server.vault, actor, class, proof.as_ref())
+                    .at(locality)
+                    .listing_producers(&listing);
+                let embed = server.recall_embed(input.effort);
+                match room {
+                    Some(room) => memory
+                        .for_room_turn(room)?
+                        .recall_at_door(input, embed, &door),
+                    None => oneiron::task_verb::sdk::recall_at_door(&memory, input, embed, &door),
                 }
-            }
-        };
-        joined.unwrap_or_else(|error| {
-            tracing::warn!(panicked = error.is_panic(), "recall task failed to join");
-            Err(recall_did_not_finish())
-        })
+            });
+            let joined = match budget {
+                None => task.await,
+                Some(budget) => {
+                    let due = tokio::time::Instant::from_std(arrived + budget);
+                    match tokio::time::timeout_at(due, task).await {
+                        Ok(joined) => joined,
+                        Err(_) => return ready.take(),
+                    }
+                }
+            };
+            joined.unwrap_or_else(|error| {
+                tracing::warn!(panicked = error.is_panic(), "recall task failed to join");
+                Err(recall_did_not_finish())
+            })
+        }
+        .await;
+        (pack, producers.take())
     }
 
     /// [`Self::recall`] for `actor` at a synchronous door (the WebSocket read
@@ -130,12 +160,31 @@ impl SyncServer {
     /// answer is due, then answers with the last pack recall published. Above
     /// light the query embeds on the server's embedder first, so such a
     /// deadline keeps the engine's cooperative cut.
+    ///
+    /// Beside the pack come the rows it is derived from without naming them,
+    /// as [`Self::recall_off_runtime_listing`] lists them.
     pub(crate) fn recall_at_sync_door(
         &self,
         actor: EntityId,
         class: EdgeActorClass,
         proof: Option<VerifiedSlip>,
+        locality: CallerLocality,
         input: RecallRequest,
+    ) -> (MemoryResult<MemoryPack>, Vec<EntityId>) {
+        let producers = Arc::new(ProducerRows::default());
+        let pack =
+            self.recall_at_sync_door_listing(actor, class, proof, locality, input, &producers);
+        (pack, producers.take())
+    }
+
+    fn recall_at_sync_door_listing(
+        &self,
+        actor: EntityId,
+        class: EdgeActorClass,
+        proof: Option<VerifiedSlip>,
+        locality: CallerLocality,
+        input: RecallRequest,
+        producers: &Arc<ProducerRows>,
     ) -> MemoryResult<MemoryPack> {
         let arrived = Instant::now();
         let (effort, budget) = oneiron::memory::resolve_recall_dial(
@@ -144,12 +193,15 @@ impl SyncServer {
             self.vault.call_mode_deadline(),
         )?;
         let Some(budget) = budget.filter(|_| effort == Effort::Light) else {
-            let memory = reader(&self.vault, actor, class, proof.as_ref());
+            let memory = reader(&self.vault, actor, class, proof.as_ref())
+                .at(locality)
+                .listing_producers(producers);
             return blocking(|| self.recall(&memory, actor, class, input));
         };
         let ready = CutSlot::default();
         let publish = ready.clone();
         let vault = Arc::clone(&self.vault);
+        let listing = Arc::clone(producers);
         let (sender, answer) = std::sync::mpsc::sync_channel(1);
         std::thread::Builder::new()
             .name("oneiron-recall".to_owned())
@@ -160,7 +212,9 @@ impl SyncServer {
                     on_cut: Some(&publish),
                     rerank: oneiron::memory::RecallRerank::Required,
                 };
-                let memory = reader(&vault, actor, class, proof.as_ref());
+                let memory = reader(&vault, actor, class, proof.as_ref())
+                    .at(locality)
+                    .listing_producers(&listing);
                 // Light effort embeds no query (ARCH-0044 S6).
                 let answer =
                     oneiron::task_verb::sdk::recall_at_door(&memory, input, |_| None, &door);

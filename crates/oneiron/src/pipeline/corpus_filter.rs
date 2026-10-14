@@ -41,6 +41,7 @@ impl CorpusFilter {
             world_scope: &builder.world_scope,
             world_active_set: None,
             corpus_scope: &self.0,
+            device_local: None,
             deadline: builder.deadline,
         }
     }

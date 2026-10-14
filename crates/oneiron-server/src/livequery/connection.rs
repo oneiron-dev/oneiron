@@ -220,8 +220,17 @@ pub(crate) struct Connection {
     hub: Arc<Hub>,
     conn_id: u32,
     session: Option<Arc<Session>>,
-    active: BTreeSet<u64>,
+    /// Each open subscription and its incarnation. A frame queued for an
+    /// earlier incarnation of the same id is never sent.
+    active: BTreeMap<u64, u64>,
+    incarnations: u64,
     sent: BTreeMap<u64, (u64, BTreeSet<&'static str>)>,
+    /// Subscriptions whose queued body the release withheld: nothing more
+    /// of theirs leaves before the gap that retires them.
+    withheld: BTreeSet<u64>,
+    /// Requests whose result the release refused: no later chunk of it
+    /// leaves.
+    refused: BTreeSet<u64>,
 }
 
 impl Connection {
@@ -230,8 +239,11 @@ impl Connection {
             hub,
             conn_id,
             session: None,
-            active: BTreeSet::new(),
+            active: BTreeMap::new(),
+            incarnations: 0,
             sent: BTreeMap::new(),
+            withheld: BTreeSet::new(),
+            refused: BTreeSet::new(),
         }
     }
 
@@ -269,7 +281,7 @@ impl Connection {
         {
             return Err(AppError::unauthorized());
         }
-        if !opening && !self.active.contains(&id) {
+        if !opening && !self.active.contains_key(&id) {
             return Err(AppError::not_found("subscription", None));
         }
         let closing = matches!(&request, SubRequest::Close { .. });
@@ -311,20 +323,34 @@ impl Connection {
             request => session.queries.control(request)?,
         };
         if opening {
-            self.active.insert(id);
+            self.incarnations += 1;
+            self.active.insert(id, self.incarnations);
             self.sent.remove(&id);
+            self.withheld.remove(&id);
         }
         if closing {
             self.active.remove(&id);
             self.sent.remove(&id);
+            self.withheld.remove(&id);
         }
         Ok(pushes)
     }
 
+    /// Each push's frames, routed to this socket's release with the
+    /// subscription's incarnation and the rows the push was derived from.
     fn frames(&mut self, pushes: Vec<Push>) -> Result<Vec<Vec<u8>>, ProtocolError> {
         let mut frames = Vec::new();
         for push in pushes {
-            frames.extend(push.encode()?);
+            let incarnation = self.active.get(&push.subscription_id).copied();
+            frames.extend(push.encode()?.into_iter().map(|frame| {
+                super::routing::wrap(
+                    self.conn_id,
+                    push.subscription_id,
+                    incarnation.unwrap_or_default(),
+                    Some(push.rows.as_slice()),
+                    frame,
+                )
+            }));
             let entry = self
                 .sent
                 .entry(push.subscription_id)
@@ -337,30 +363,107 @@ impl Connection {
         Ok(frames)
     }
 
+    pub(crate) const fn conn_id(&self) -> u32 {
+        self.conn_id
+    }
+
     pub(crate) fn is_scoped_broadcast(data: &[u8]) -> bool {
         super::routing::is_routed(data)
     }
 
-    pub(crate) fn receive_broadcast(&self, data: &[u8]) -> Option<Vec<u8>> {
-        let (id, frame) = super::routing::addressed(data, self.conn_id)?;
+    /// The frame a queued app frame releases to this socket, judged at its
+    /// last door before the send (DEC-0005), whether it was queued as a
+    /// reply or as a broadcast copy.
+    ///
+    /// A subscription frame of a closed or reopened incarnation is dropped:
+    /// a replacement is never judged in its place. A body that names a row
+    /// a device-local world keeps from a caller at `locality` now, by the
+    /// rows its producer listed, stays unsent. Its subscription is retired
+    /// for a gap and sends nothing more before it, and a read result is
+    /// refused. A body whose producer could not list its rows fails closed.
+    pub(crate) fn release(
+        &mut self,
+        locality: oneiron::claim::CallerLocality,
+        data: &[u8],
+    ) -> Option<Vec<u8>> {
+        let routed = super::routing::addressed(data, self.conn_id)?;
+        let envelope = super::wire::decode::<serde::de::IgnoredAny>(&routed.frame[1..]).ok();
+        if routed.frame[0] == crate::protocol::TAG_RPC {
+            return self.release_reply(locality, &routed, envelope.as_ref());
+        }
         let session = self.session.as_ref()?;
-        (self.active.contains(&id) && session.attached.load(Ordering::Acquire) == self.conn_id)
-            .then(|| frame.to_vec())
+        if self.active.get(&routed.id) != Some(&routed.incarnation)
+            || session.attached.load(Ordering::Acquire) != self.conn_id
+        {
+            return None;
+        }
+        let kind = envelope.as_ref().map(|envelope| envelope.kind.as_str());
+        if self.withheld.contains(&routed.id) {
+            if kind != Some("sub.gap") {
+                return None;
+            }
+            self.withheld.remove(&routed.id);
+        } else if kind.is_none_or(|kind| matches!(kind, "sub.data" | "sub.snapshot"))
+            && self.withholds(locality, routed.rows.as_deref(), routed.frame)
+        {
+            if session.queries.retire(routed.id).is_err() {
+                tracing::warn!("live-query retirement refused; resync required");
+            }
+            self.withheld.insert(routed.id);
+            return None;
+        }
+        Some(routed.frame.to_vec())
+    }
+
+    /// A read result's chunk, or the refusal that replaces the rest of it.
+    fn release_reply(
+        &mut self,
+        locality: oneiron::claim::CallerLocality,
+        routed: &super::routing::Routed<'_>,
+        envelope: Option<&super::wire::Envelope<serde::de::IgnoredAny>>,
+    ) -> Option<Vec<u8>> {
+        let last = envelope.is_none_or(|envelope| envelope.last);
+        if self.refused.contains(&routed.id) {
+            if last {
+                self.refused.remove(&routed.id);
+            }
+            return None;
+        }
+        if !self.withholds(locality, routed.rows.as_deref(), routed.frame) {
+            return Some(routed.frame.to_vec());
+        }
+        if !last {
+            self.refused.insert(routed.id);
+        }
+        super::rpc_error(routed.id, AppError::result_changed())
+            .ok()?
+            .pop()
+    }
+
+    /// Whether a queued body stays on this device: see [`Self::release`].
+    fn withholds(
+        &self,
+        locality: oneiron::claim::CallerLocality,
+        rows: Option<&[oneiron::EntityId]>,
+        frame: &[u8],
+    ) -> bool {
+        if locality == oneiron::claim::CallerLocality::OnDevice {
+            return false;
+        }
+        let (Some(rows), Some(server)) = (rows, self.hub.server.upgrade()) else {
+            return true;
+        };
+        crate::device_local::withholds_retained(server.vault(), locality, rows, frame)
+            .unwrap_or(true)
     }
 
     pub(crate) fn replay_after_lag(&mut self) {
         self.sent.clear();
     }
 
+    /// What [`Self::delivery`] routes through the shared broadcast channel.
     pub(crate) fn broadcast_delivery(&mut self) -> Result<Vec<Vec<u8>>, ProtocolError> {
-        self.delivery()?
-            .into_iter()
-            .map(|frame| {
-                let envelope: super::wire::Envelope<serde::de::IgnoredAny> =
-                    super::wire::decode(&frame[1..])?;
-                Ok(super::routing::wrap(self.conn_id, envelope.id, frame))
-            })
-            .collect()
+        self.delivery()
     }
 
     pub(crate) fn has_active_subscriptions(&self) -> bool {
@@ -381,7 +484,7 @@ impl Connection {
         let pushes = buffered
             .into_iter()
             .filter(|push| {
-                self.active.contains(&push.subscription_id)
+                self.active.contains_key(&push.subscription_id)
                     && self
                         .sent
                         .get(&push.subscription_id)

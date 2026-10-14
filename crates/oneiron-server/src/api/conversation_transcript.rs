@@ -87,8 +87,9 @@ pub(crate) async fn get_core_conversation_transcript(
     let query = super::query_params(query)?;
     let (actor, class) = reader(&auth)?;
     let proof = auth.verified_slip().cloned();
+    let locality = auth.locality();
     let read = tokio::task::spawn_blocking(move || {
-        let memory = server.vault.memory(actor, class);
+        let memory = server.vault.memory(actor, class).at(locality);
         let memory = match &proof {
             Some(proof) => memory.with_read_proof(proof),
             None => memory,

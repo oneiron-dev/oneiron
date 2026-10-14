@@ -51,6 +51,7 @@ pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
 async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
+    crate::auth::Locality(locality): crate::auth::Locality,
     machine: Option<axum::Extension<oneiron::authority::PeerMachine>>,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<impl IntoResponse, StatusCode> {
@@ -73,7 +74,9 @@ async fn ws_upgrade_handler(
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
-        .on_upgrade(move |socket| handle_connection(socket, server, conn_id, session_jti, machine)))
+        .on_upgrade(move |socket| {
+            handle_connection(socket, server, conn_id, session_jti, locality, machine)
+        }))
 }
 
 /// Whether this socket's credential has since been revoked.
@@ -120,6 +123,7 @@ async fn handle_connection(
     server: Arc<SyncServer>,
     conn_id: u32,
     session_jti: Option<String>,
+    locality: oneiron::claim::CallerLocality,
     machine: oneiron::authority::PeerMachine,
 ) {
     // Every frame this connection ever writes goes through here, and each one
@@ -193,6 +197,7 @@ async fn handle_connection(
     // Channel for direct responses (e.g. VV_REQUEST replies sent only to requester)
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = ConnState::new(protocol_version).with_peer_machine(machine);
+    conn_state.locality = locality;
     tracing::debug!(
         conn_id,
         machine = ?conn_state.peer_machine(server.vault()),
@@ -263,7 +268,8 @@ async fn handle_connection(
                 match broadcast_result {
                     Ok(Some(data)) => {
                         if crate::livequery::connection::Connection::is_scoped_broadcast(&data) {
-                            let Some(frame) = app_connection.receive_broadcast(&data) else {
+                            let Some(frame) = app_connection.release(conn_state.locality, &data)
+                            else {
                                 continue;
                             };
                             let Ok(auth) = require_bound_app_auth(&server, &conn_state) else {
@@ -390,6 +396,16 @@ async fn handle_connection(
                     break;
                 };
                 let mut data = data;
+                // A queued app body is judged again at its last door before
+                // the send, by the rows it carries (DEC-0005).
+                if crate::livequery::connection::Connection::is_scoped_broadcast(&data) {
+                    #[cfg(test)]
+                    crate::livequery::release_hook::run(&server);
+                    let Some(frame) = app_connection.release(conn_state.locality, &data) else {
+                        continue;
+                    };
+                    data = frame;
+                }
                 let app_frame = matches!(
                     data.first().copied(),
                     Some(
