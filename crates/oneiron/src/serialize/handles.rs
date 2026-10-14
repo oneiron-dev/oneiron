@@ -31,6 +31,8 @@ impl Handles {
             })
             .collect();
         let mut aliases = HashMap::new();
+        // Each entity's own aliases: its id, and its identity key.
+        let mut own = HashMap::new();
         for entity in pack.results.iter().chain(&pack.neighbors) {
             if entity.short_id.is_empty() {
                 continue;
@@ -38,6 +40,7 @@ impl Handles {
             let name = names.get(entity.id.as_bytes()).map_or("", String::as_str);
             let handle = (entity.short_id.clone(), name.to_owned());
             aliases.insert(entity.id.to_hex(), handle.clone());
+            let mut mine = vec![entity.id.to_hex()];
             if let Some(key) = entity
                 .fields
                 .as_ref()
@@ -45,8 +48,10 @@ impl Handles {
                 .and_then(Value::as_str)
                 .filter(|s| !s.is_empty())
             {
-                aliases.insert(key.into(), handle);
+                aliases.insert(key.into(), handle.clone());
+                mine.push(key.into());
             }
+            own.insert(*entity.id.as_bytes(), (handle, mine));
         }
         for (_, rows) in prepared.results.iter_mut().chain(&mut prepared.neighbors) {
             for row in rows {
@@ -57,6 +62,20 @@ impl Handles {
                     .collect::<String>();
                 // Identity-key fields are engine lookup metadata, not context.
                 row.fields.retain(|(key, _)| key != "identity_key");
+                // An entity's own id or identity key in its own fields stands
+                // as its short id alone: its name, set beside its own words,
+                // could finish a phrase they begin that no read of it saw.
+                if let Some((handle, mine)) = own.get(&row.source_id) {
+                    let mut mine: Vec<_> = mine.iter().map(|alias| (alias, handle)).collect();
+                    mine.sort_by_key(|(alias, _)| std::cmp::Reverse(alias.len()));
+                    for (key, value) in &mut row.fields {
+                        if !matches!(key.as_str(), "name" | "display_name") {
+                            walk(value, &mut |text| {
+                                substitute(text, &mine, |(id, _)| id.clone())
+                            });
+                        }
+                    }
+                }
                 if aliases.contains_key(&identity) {
                     for (key, value) in &mut row.fields {
                         if matches!(key.as_str(), "name" | "display_name") && value.is_string() {
@@ -74,62 +93,17 @@ impl Handles {
     fn text(&mut self, text: &str) -> String {
         let mut aliases = self.aliases.iter().collect::<Vec<_>>();
         aliases.sort_by_key(|(alias, _)| std::cmp::Reverse(alias.len()));
-        let mut output = String::with_capacity(text.len());
-        let mut tail = text;
-        let mut left_boundary = true;
-        let is_word = |c: char| c.is_alphanumeric() || c == '_';
-        while !tail.is_empty() {
-            let matched = aliases.iter().find_map(|(alias, handle)| {
-                if !left_boundary {
-                    return None;
-                }
-                let rest = tail.strip_prefix(alias.as_str())?;
-                rest.chars()
-                    .next()
-                    .is_none_or(|c| !is_word(c))
-                    .then_some((alias, handle, rest))
-            });
-            if let Some((alias, (id, name), rest)) = matched {
-                if self.seen.insert(id.clone()) && !name.is_empty() {
-                    output.push_str(name);
-                    output.push_str(" (");
-                    output.push_str(id);
-                    output.push(')');
-                } else {
-                    output.push_str(id);
-                }
-                left_boundary = alias.chars().next_back().is_none_or(|c| !is_word(c));
-                tail = rest;
+        let seen = &mut self.seen;
+        substitute(text, &aliases, |(id, name)| {
+            if seen.insert(id.clone()) && !name.is_empty() {
+                format!("{name} ({id})")
             } else {
-                let mut chars = tail.chars();
-                if let Some(c) = chars.next() {
-                    output.push(c);
-                    left_boundary = !is_word(c);
-                }
-                tail = chars.as_str();
+                id.clone()
             }
-        }
-        output
+        })
     }
     pub(super) fn value(&mut self, value: &mut Value) {
-        match value {
-            Value::String(text) => *text = self.text(text),
-            Value::Array(values) => {
-                for value in values {
-                    self.value(value);
-                }
-            }
-            Value::Object(map) => {
-                for (key, value) in map {
-                    // Never substitute a short ref in a citation: its content-hash
-                    // suffix is the revision gate.
-                    if key != "stats" && key != "id" {
-                        self.value(value);
-                    }
-                }
-            }
-            _ => {}
-        }
+        walk(value, &mut |text| self.text(text));
     }
     pub(super) fn rows(&mut self, groups: &mut super::pack_entry::PreparedGroups, table: bool) {
         for (_, rows) in groups {
@@ -160,4 +134,64 @@ impl Handles {
             }
         }
     }
+}
+
+/// Each string in `value` through `text`.
+fn walk(value: &mut Value, text: &mut impl FnMut(&str) -> String) {
+    match value {
+        Value::String(string) => *string = text(string),
+        Value::Array(values) => {
+            for value in values {
+                walk(value, text);
+            }
+        }
+        Value::Object(map) => {
+            for (key, value) in map {
+                // Never substitute a short ref in a citation: its content-hash
+                // suffix is the revision gate.
+                if key != "stats" && key != "id" {
+                    walk(value, text);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `text` with each alias that stands as a whole word rendered by `render`,
+/// the first of `aliases` that matches taken.
+fn substitute(
+    text: &str,
+    aliases: &[(&String, &(String, String))],
+    mut render: impl FnMut(&(String, String)) -> String,
+) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut tail = text;
+    let mut left_boundary = true;
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    while !tail.is_empty() {
+        let matched = aliases.iter().find_map(|(alias, handle)| {
+            if !left_boundary {
+                return None;
+            }
+            let rest = tail.strip_prefix(alias.as_str())?;
+            rest.chars()
+                .next()
+                .is_none_or(|c| !is_word(c))
+                .then_some((alias, handle, rest))
+        });
+        if let Some((alias, handle, rest)) = matched {
+            output.push_str(&render(handle));
+            left_boundary = alias.chars().next_back().is_none_or(|c| !is_word(c));
+            tail = rest;
+        } else {
+            let mut chars = tail.chars();
+            if let Some(c) = chars.next() {
+                output.push(c);
+                left_boundary = !is_word(c);
+            }
+            tail = chars.as_str();
+        }
+    }
+    output
 }

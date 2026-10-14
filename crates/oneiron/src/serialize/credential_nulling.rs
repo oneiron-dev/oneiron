@@ -1,6 +1,7 @@
 //! Unconditional credential removal before any context/export format writer.
 use crate::batch::secret_scan::{
-    release_credential_field, release_joined_json, release_reads_whole_json, scan_file_content,
+    release_credential_field, release_joined_json, release_reads_json_text,
+    release_reads_whole_json, scan_file_content,
 };
 use serde_json::{Map, Value};
 
@@ -48,8 +49,21 @@ fn writer_credential_key(key: &str) -> bool {
 /// A structure that still reads as a secret once its parts are judged, read
 /// whole as the release walks read it, is nulled whole.
 pub(crate) fn null_credentials(key: &str, value: &Value) -> Value {
+    null_whole(key, value, release_reads_whole_json)
+}
+
+/// [`null_credentials`] for the context writers. Their fields were hydrated
+/// from bodies read in the encoding they were stored in, before the JSON
+/// projection dropped each number's width, so the whole read takes the JSON's
+/// text and no MessagePack form the body never had: a float read at a width
+/// it was not stored at is other bytes.
+pub(super) fn null_context_credentials(key: &str, value: &Value) -> Value {
+    null_whole(key, value, release_reads_json_text)
+}
+
+fn null_whole(key: &str, value: &Value, reads_whole: fn(&Value) -> bool) -> Value {
     let nulled = null_at_depth(key, value, 0, false);
-    if matches!(nulled, Value::Array(_) | Value::Object(_)) && release_reads_whole_json(&nulled) {
+    if matches!(nulled, Value::Array(_) | Value::Object(_)) && reads_whole(&nulled) {
         return Value::Null;
     }
     nulled

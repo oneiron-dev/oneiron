@@ -157,6 +157,7 @@ impl Memory<'_> {
             refs,
             &targets,
             "does not resolve at requested revision",
+            false,
         )
     }
 
@@ -164,6 +165,24 @@ impl Memory<'_> {
     /// entity views. Unresolvable refs are typed errors — hydrate is the
     /// OF-096 round-trip contract — and that `NOT_FOUND` carries the receipt.
     pub fn hydrate(&self, refs: &[String]) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
+        self.hydrate_reading(refs, false)
+    }
+
+    /// [`Self::hydrate`] for a door that renders the views through a pack
+    /// writer: a body the write door refuses is withheld whole
+    /// ([`Self::read_views_whole_body`]).
+    pub(super) fn hydrate_whole_body(
+        &self,
+        refs: &[String],
+    ) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
+        self.hydrate_reading(refs, true)
+    }
+
+    fn hydrate_reading(
+        &self,
+        refs: &[String],
+        whole_body: bool,
+    ) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let targets = refs
             .iter()
@@ -175,7 +194,7 @@ impl Memory<'_> {
                 None => self.read_target(reference, crate::vault::ReadMode::Live),
             })
             .collect::<MemoryResult<Vec<_>>>()?;
-        self.hydrated(&lane, refs, &targets, "does not resolve")
+        self.hydrated(&lane, refs, &targets, "does not resolve", whole_body)
     }
 
     /// One hydrate read: every view, or `NOT_FOUND` naming the first ref that
@@ -186,8 +205,13 @@ impl Memory<'_> {
         refs: &[String],
         targets: &[ReadTargetSlot],
         unresolved: &str,
+        whole_body: bool,
     ) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
-        let ScopedReadResult { value, receipt } = self.read_views(lane, targets)?;
+        let ScopedReadResult { value, receipt } = if whole_body {
+            self.read_views_whole_body(lane, targets)?
+        } else {
+            self.read_views(lane, targets)?
+        };
         let mut views = Vec::with_capacity(value.len());
         for (reference, view) in refs.iter().zip(value) {
             let Some(view) = view else {

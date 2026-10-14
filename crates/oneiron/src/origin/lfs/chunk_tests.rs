@@ -363,6 +363,38 @@ fn an_object_within_the_bound_is_read_whole_however_a_peer_cuts_it() {
 }
 
 #[test]
+fn padding_never_carries_a_key_away_from_its_value_across_a_seam() {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    // CodeRabbit on #1403: above the whole-read bound only the seam reads a
+    // chunk edge, and a peer pads the key or the value past what it keeps.
+    let key: &[u8] = b"password=";
+    let value: &[u8] = b"t7Rk2pLq9WzX\n";
+    let spaces = [b' '; 1100];
+    let mixed = b" \t".repeat(600);
+    let cases: [[Vec<u8>; 2]; 3] = [
+        [[key, &spaces[..]].concat(), value.to_vec()],
+        [key.to_vec(), [&spaces[..], value].concat()],
+        [[key, &mixed[..]].concat(), [&mixed[..], value].concat()],
+    ];
+    let mut installed = Vec::new();
+    for (case, [first, second]) in cases.iter().enumerate() {
+        let parts: [&[u8]; 2] = [first, second];
+        match install_parts_within(&vault, &parts, Some(0)) {
+            Ok(_) => installed.push(case),
+            Err(error) => {
+                refused_as_sensitive(Err(error));
+                let oid = LfsOid::digest(&parts.concat());
+                assert!(vault.lfs_object(oid).unwrap().is_none());
+            }
+        }
+    }
+    assert_eq!(installed, Vec::<usize>::new(), "padded splits installed");
+    // A stand-in the write door allows still installs past the same padding.
+    let allowed: [&[u8]; 2] = [&[key, &spaces[..]].concat(), b"changeme\n"];
+    install_parts_within(&vault, &allowed, Some(0)).unwrap();
+}
+
+#[test]
 fn a_stored_chunk_is_read_again_when_another_object_reuses_it() {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let stored: &[u8] = b"password=t7Rk2pLq9WzX\n";
@@ -474,45 +506,113 @@ fn a_repeated_chunk_is_supplied_from_the_store_once_it_landed() {
     assert_eq!(fetched, 1);
 }
 
+/// Each generic reader that finds a chunk of `wanted`, with the chunk's index.
+/// Each reader that guards an unpublished chunk is read through apart from
+/// the others, so no guard stands in for another one taken away.
+fn readers_finding(vault: &Vault, wanted: &[&[u8]]) -> BTreeSet<(&'static str, usize)> {
+    let ids: Vec<EntityId> = wanted
+        .iter()
+        .map(|part| chunks::chunk_id(blake3::hash(part).as_bytes()).unwrap())
+        .collect();
+    let mut found = BTreeSet::new();
+    let mut hit = |reader: &'static str, id: &EntityId| {
+        if let Some(at) = ids.iter().position(|wanted| wanted == id) {
+            found.insert((reader, at));
+        }
+    };
+    for (id, _, _) in vault
+        .latest_entity_bodies_by_type(ENTITY_TYPE_ASSET, 64, 4096)
+        .unwrap()
+    {
+        hit("latest_entity_bodies_by_type", &id);
+    }
+    let top = crate::federation::Scope::top();
+    let debug = crate::federation::record_scope::ScopeView::Debug;
+    for row in vault.records_in_scope(&top, &top, &top, debug).unwrap() {
+        hit("records_in_scope", &row.id);
+    }
+    for row in vault.export_records_in_scope(&top, &top, &top).unwrap() {
+        hit("export_records_in_scope", &row.id);
+    }
+    let export = vault
+        .export_whole_vault(crate::context_pack::PackFormat::Json)
+        .unwrap();
+    let document: serde_json::Value = serde_json::from_slice(export.bytes()).unwrap();
+    let bundle: serde_json::Value =
+        serde_json::from_slice(&vault.export_entity_bundle_json(&ids).unwrap()).unwrap();
+    for (reader, rows) in [
+        (
+            "export_whole_vault",
+            &document["evidence_ledger"]["entities"],
+        ),
+        ("export_entity_bundle_json", &bundle["entities"]),
+    ] {
+        for row in rows.as_array().into_iter().flatten() {
+            if let Some(id) = row["id"]
+                .as_str()
+                .and_then(|id| EntityId::from_hex(id).ok())
+            {
+                hit(reader, &id);
+            }
+        }
+    }
+    // A scoped read's admission of a candidate, which reads no revision.
+    let scoped = vault.scoped_read(crate::claim::ScopedReadActorKey::new("lfs-reader").unwrap());
+    let candidates = ids
+        .iter()
+        .map(|id| crate::pipeline::ScoredEntity {
+            id: *id,
+            score: 1.0,
+        })
+        .collect();
+    for row in scoped.filter_scored_entities(candidates).unwrap().value {
+        hit("filter_scored_entities", &row.id);
+    }
+    for id in &ids {
+        // `get` reads through the entity port, `get_raw_with_mode` through
+        // the revision reader.
+        if vault.get(id).unwrap().is_some() {
+            hit("get", id);
+        }
+        if vault
+            .get_raw_with_mode(id, crate::vault::ReadMode::Live)
+            .unwrap()
+            .is_some()
+        {
+            hit("get_raw_with_mode", id);
+        }
+        if vault.get_raw(id).unwrap().is_some() {
+            hit("get_raw", id);
+        }
+    }
+    found
+}
+
+/// The readers [`readers_finding`] reads through.
+const GENERIC_READERS: usize = 9;
+
 #[test]
 fn no_generic_reader_returns_a_chunk_before_its_object_is_published() {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    crate::test_util::authorize_readers(&vault, &["lfs-reader"]);
     // Each chunk passes alone; the object they make is refused when read whole.
     let parts: [&[u8]; 3] = [br#"{"pass\u0077ord":"#, br#""private fixture"}"#, b"\n"];
-    let id = |part: &[u8]| chunks::chunk_id(blake3::hash(part).as_bytes()).unwrap();
-    let read = |vault: &Vault, wanted: &[&[u8]]| -> Vec<Vec<u8>> {
-        let mut bodies: Vec<Vec<u8>> = vault
-            .latest_entity_bodies_by_type(ENTITY_TYPE_ASSET, 64, 4096)
-            .unwrap()
-            .into_iter()
-            .map(|(_, _, body)| body)
-            .collect();
-        for &part in wanted {
-            bodies.extend(vault.get(&id(part)).unwrap());
-            bodies.extend(
-                vault
-                    .get_raw(&id(part))
-                    .unwrap()
-                    .map(|raw| raw[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec()),
-            );
-        }
-        bodies.retain(|body| wanted.contains(&body.as_slice()));
-        bodies
-    };
-    let mut paused = Vec::new();
+    let mut paused = BTreeSet::new();
     refused_as_sensitive(install_parts_with(&vault, &parts, None, |index| {
         if index == 2 {
             // The first two chunks have landed; the third is on its way.
-            assert!(vault.get_raw_unsealed(&id(parts[1])).unwrap().is_some());
-            paused = read(&vault, &parts[..2]);
+            let landed = chunks::chunk_id(blake3::hash(parts[1]).as_bytes()).unwrap();
+            assert!(vault.get_raw_unsealed(&landed).unwrap().is_some());
+            paused = readers_finding(&vault, &parts[..2]);
         }
     }));
     assert!(paused.is_empty(), "read before publication: {paused:?}");
-    assert!(read(&vault, &parts[..]).is_empty());
-    // A published object's chunks read as any ASSET does.
+    assert!(readers_finding(&vault, &parts[..]).is_empty());
+    // A published object's chunks read as any ASSET does, through each reader.
     let published: [&[u8]; 2] = [b"host = db.internal\n", b"port = 5432\n"];
     install_parts(&vault, &published).unwrap();
-    assert_eq!(read(&vault, &published[..]).len(), 3 * published.len());
+    let found = readers_finding(&vault, &published[..]);
+    assert_eq!(found.len(), GENERIC_READERS * published.len(), "{found:?}");
 }
 
 struct RepeatingReader {

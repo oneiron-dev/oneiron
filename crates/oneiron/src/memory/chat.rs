@@ -357,7 +357,10 @@ impl Memory<'_> {
     }
 
     /// The [`ChatScope::Documents`] evidence: the caller's own refs, read
-    /// through the existing [`Memory::hydrate`] surface and nothing else.
+    /// through the existing [`Memory::hydrate`] surface and nothing else. The
+    /// pack writers lay a document's fields out in their own rows, which no
+    /// read follows exactly, so a document whose stored body the write door
+    /// refuses is withheld whole, as context hydration withholds it.
     ///
     /// Refs are deduped on first appearance and read in that order up to
     /// `limit`. A well-formed ref that resolves to nothing is a gap rather
@@ -393,7 +396,7 @@ impl Memory<'_> {
                 }
                 break;
             }
-            match self.hydrate(std::slice::from_ref(*reference)) {
+            match self.hydrate_whole_body(std::slice::from_ref(*reference)) {
                 Ok(hydrated) => {
                     super::read_lane::fold_receipt(&mut narrowing, hydrated.receipt);
                     views.extend(hydrated.value);

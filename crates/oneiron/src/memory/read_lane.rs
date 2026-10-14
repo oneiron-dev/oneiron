@@ -210,12 +210,34 @@ impl Memory<'_> {
         self.read_views_after(lane, targets, || {})
     }
 
+    /// [`Self::read_views`] for a door whose output no read can follow
+    /// exactly (a pack writer lays a body's fields out in its own rows): a
+    /// body the write door refuses, stored while the owner's scan was off, is
+    /// withheld whole, as one no decoder reads is, whatever the switch is now.
+    pub(super) fn read_views_whole_body(
+        &self,
+        lane: &ScopedRead<'_>,
+        targets: &[ReadTargetSlot],
+    ) -> MemoryResult<ScopedReadResult<Vec<Option<EntityView>>>> {
+        self.read_views_in(lane, targets, true, || {})
+    }
+
     /// The callback is a test seam for a write between row admission and
     /// projection; production callers pass an empty callback.
     pub(super) fn read_views_after(
         &self,
         lane: &ScopedRead<'_>,
         targets: &[ReadTargetSlot],
+        after_read: impl FnOnce(),
+    ) -> MemoryResult<ScopedReadResult<Vec<Option<EntityView>>>> {
+        self.read_views_in(lane, targets, false, after_read)
+    }
+
+    fn read_views_in(
+        &self,
+        lane: &ScopedRead<'_>,
+        targets: &[ReadTargetSlot],
+        whole_body: bool,
         after_read: impl FnOnce(),
     ) -> MemoryResult<ScopedReadResult<Vec<Option<EntityView>>>> {
         let reads: Vec<_> = targets
@@ -230,7 +252,18 @@ impl Memory<'_> {
             for target in targets {
                 let view = match target {
                     Some((_, mode)) => match rows.next().flatten() {
-                        Some(row) => self.entity_view_of_in_txn(lane, txn, row, *mode)?,
+                        Some(row) => {
+                            let refused = whole_body
+                                && row
+                                    .body
+                                    .as_deref()
+                                    .is_some_and(crate::batch::export::write_door_refuses_body);
+                            self.entity_view_of_in_txn(lane, txn, row, *mode)?
+                                .map(|view| EntityView {
+                                    body: view.body.filter(|_| !refused),
+                                    ..view
+                                })
+                        }
                         None => None,
                     },
                     None => None,

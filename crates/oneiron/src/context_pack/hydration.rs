@@ -446,8 +446,8 @@ fn decode_entity_fields(
     let mut cursor = Cursor::new(payload);
     let value = rmpv::decode::read_value(&mut cursor).ok()?;
     // A body that reads as a secret whole, before this projection drops a
-    // float's width, hydrates no field.
-    if crate::batch::secret_scan::release_parts_read_whole(&[&value]) {
+    // float's width and in the bytes it was stored as, hydrates no field.
+    if crate::batch::secret_scan::release_body_reads_whole_as_stored(&value, payload) {
         return Some(HashMap::new());
     }
     let rmpv::Value::Map(entries) = value else {

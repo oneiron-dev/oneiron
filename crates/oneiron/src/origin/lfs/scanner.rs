@@ -16,33 +16,50 @@ pub(super) struct CredentialStream {
     seam: Option<Seam>,
 }
 
-/// The longest run of one segment a seam keeps on either side of an edge.
+/// The most of one segment a seam keeps on either side of an edge, once its
+/// padding is squeezed.
 const SEAM_MAX: usize = 1024;
+
+/// How much of a run of one repeated character a seam keeps: as much as the
+/// longest token any text rule measures (a stream keeps 128 bytes of one too),
+/// so the run reads as it did.
+const RUN_KEEP: usize = 128;
 
 /// The write door's text rules across a feed edge. A batch scan reads each
 /// chunk alone, so a `password=` at one chunk's end and its value at the
 /// next one's start meet nowhere else: the segment an edge splits (the text
 /// between `\n`, `\r`, `,`, `;`, `{` and `}`, as the assignment rule splits
-/// it) is read whole. A segment longer than [`SEAM_MAX`] before the edge is
-/// not carried: the chunk that holds its start holds its key and value too.
+/// it) is read whole. A peer chooses the edges, and padding must not carry a
+/// key away from its value: each run of whitespace reads as one space and
+/// each run of one other character as at most [`RUN_KEEP`] of it. A segment
+/// still longer than [`SEAM_MAX`] keeps its two ends, the key's side and the
+/// side that meets the edge.
 #[derive(Default)]
 struct Seam {
+    /// The start of a segment cut to its two ends.
+    front: Vec<u8>,
+    /// The segment's text up to the edge (its last part, once cut).
     tail: Vec<u8>,
-    overlong: bool,
 }
 
 impl Seam {
     fn feed(&mut self, bytes: &[u8]) -> Result<()> {
-        let head_end = bytes.iter().position(|byte| segment_break(*byte));
-        if !self.tail.is_empty() && !self.overlong {
-            let head = &bytes[..head_end.unwrap_or(bytes.len()).min(SEAM_MAX)];
-            let joined = [self.tail.as_slice(), head].concat();
+        if !self.tail.is_empty() {
+            let head_end = bytes
+                .iter()
+                .position(|byte| segment_break(*byte))
+                .unwrap_or(bytes.len());
+            let mut head = squeeze(&bytes[..head_end]);
+            if head.len() > SEAM_MAX {
+                head.drain(SEAM_MAX / 2..head.len() - SEAM_MAX / 2);
+            }
+            let joined = [self.front.as_slice(), &self.tail, &head].concat();
             crate::batch::secret_scan::scan_write_seam(&String::from_utf8_lossy(&joined))?;
         }
         match bytes.iter().rposition(|byte| segment_break(*byte)) {
             Some(at) => {
+                self.front.clear();
                 self.tail.clear();
-                self.overlong = false;
                 self.carry(&bytes[at + 1..]);
             }
             None => self.carry(bytes),
@@ -51,13 +68,41 @@ impl Seam {
     }
 
     fn carry(&mut self, run: &[u8]) {
-        if self.overlong || self.tail.len() + run.len() > SEAM_MAX {
-            self.tail.clear();
-            self.overlong = true;
-        } else {
-            self.tail.extend_from_slice(run);
+        self.tail.extend_from_slice(run);
+        self.tail = squeeze(&self.tail);
+        if self.front.len() + self.tail.len() > SEAM_MAX {
+            if self.front.is_empty() {
+                self.front = self.tail[..SEAM_MAX / 2].to_vec();
+            }
+            self.tail.drain(..self.tail.len() - SEAM_MAX / 2);
         }
     }
+}
+
+/// `bytes` with their padding squeezed: each run of whitespace (every
+/// character the assignment rule trims) to one space, and each run of one
+/// other character past [`RUN_KEEP`] to that many. Bytes that are not text
+/// (a character an edge cut in two) stay as they are.
+fn squeeze(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut previous = None;
+    let mut run = 0;
+    for chunk in bytes.utf8_chunks() {
+        for ch in chunk.valid().chars() {
+            let ch = if ch.is_whitespace() { ' ' } else { ch };
+            run = if previous == Some(ch) { run + 1 } else { 1 };
+            previous = Some(ch);
+            let keep = if ch == ' ' { 1 } else { RUN_KEEP };
+            if run <= keep {
+                out.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
+            }
+        }
+        if !chunk.invalid().is_empty() {
+            out.extend_from_slice(chunk.invalid());
+            previous = None;
+        }
+    }
+    out
 }
 
 fn segment_break(byte: u8) -> bool {

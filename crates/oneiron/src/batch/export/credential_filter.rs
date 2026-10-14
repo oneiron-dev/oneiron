@@ -22,13 +22,14 @@ pub fn redact_messagepack_credentials(value: &mut rmpv::Value) -> bool {
 
 /// Whether the parts a reader serves from one claim (its predicate, value,
 /// evidence and scope) read as a secret together, in their MessagePack form
-/// and before any projection; a reader then serves none of them.
+/// and before any projection; a reader then serves none of them. A reader
+/// serves the predicate as the text it is, so it is read as that text.
 pub fn claim_reads_as_secret(body: &crate::claim::ClaimBody) -> bool {
     let predicate = rmpv::Value::from(body.predicate.as_str());
-    let mut parts = vec![&predicate, &body.value];
+    let mut parts = vec![&body.value];
     parts.extend(body.evidence.as_ref());
     parts.extend(body.scope.as_ref());
-    crate::batch::secret_scan::release_parts_read_whole(&parts)
+    crate::batch::secret_scan::release_parts_read_whole(&[&predicate], &parts)
 }
 
 /// Whether the write door, scanning On, refuses these stored body bytes. A
@@ -54,16 +55,34 @@ pub fn write_door_refuses_claim(body: &crate::claim::ClaimBody) -> bool {
 /// repeated key folded, each number at its width), is read as the JSON it
 /// becomes; then that JSON's text, for a credential the projection spells.
 pub(crate) fn served_messagepack_json(value: rmpv::Value) -> Value {
-    released_messagepack_json(value, false).0
+    released_messagepack_json(value, None, false).0
+}
+
+/// [`served_messagepack_json`] over a body decoded from `stored`: its
+/// encoding is read as it was stored, where a re-encoding would write each
+/// number at its narrowest width.
+pub(crate) fn served_stored_messagepack_json(stored: &[u8], value: rmpv::Value) -> Value {
+    released_messagepack_json(value, Some(stored), false).0
 }
 
 /// [`served_messagepack_json`] with nulls in place of markers when `null`
 /// (the export representation), and whether anything was removed.
-fn released_messagepack_json(mut value: rmpv::Value, null: bool) -> (Value, bool) {
-    use crate::batch::secret_scan::{sanitize_messagepack_credentials, sanitize_read_credentials};
-    let mut removed = sanitize_messagepack_credentials(&mut value, null);
+fn released_messagepack_json(
+    mut value: rmpv::Value,
+    stored: Option<&[u8]>,
+    null: bool,
+) -> (Value, bool) {
+    use crate::batch::secret_scan::{
+        Encoding, sanitize_messagepack_credentials_in, sanitize_read_credentials,
+    };
+    let original = stored.map(|bytes| (value.clone(), bytes));
+    let encoding = match &original {
+        Some((original, bytes)) => Encoding::Stored { original, bytes },
+        None => Encoding::Own,
+    };
+    let mut removed = sanitize_messagepack_credentials_in(&mut value, encoding, null);
     let mut projected = crate::companion::companion_value_projection(&value);
-    removed |= sanitize_messagepack_credentials(&mut projected, null);
+    removed |= sanitize_messagepack_credentials_in(&mut projected, encoding, null);
     let mut json = crate::companion::companion_value_to_json(&projected);
     removed |= sanitize_read_credentials(&mut json, null);
     (json, removed)
@@ -71,11 +90,13 @@ fn released_messagepack_json(mut value: rmpv::Value, null: bool) -> (Value, bool
 
 /// Filter a legacy raw transport without changing safe payload bytes or types.
 pub fn redacted_memory_payload(bytes: Vec<u8>) -> Result<Vec<u8>> {
+    use crate::batch::secret_scan::{Encoding, sanitize_messagepack_credentials_in};
     // The original bytes go back only when no member of them is redacted: a
     // JSON map keeps only the last of two equal keys, so JSON is judged as a
     // tree that keeps every member, its keys included.
+    // Text that never was MessagePack has no encoding but its text to read.
     if let Ok(mut value) = serde_json::from_slice::<rmpv::Value>(&bytes) {
-        if !redact_messagepack_credentials(&mut value) {
+        if !sanitize_messagepack_credentials_in(&mut value, Encoding::Text, false) {
             return Ok(unchanged_or_marker(bytes, br#""[redacted]""#));
         }
         return serde_json::to_vec(&value)
@@ -85,14 +106,20 @@ pub fn redacted_memory_payload(bytes: Vec<u8>) -> Result<Vec<u8>> {
     if let Ok(mut value) = rmpv::decode::read_value(&mut cursor)
         && cursor.position() == bytes.len() as u64
     {
-        if !crate::batch::secret_scan::sanitize_messagepack_credentials(&mut value, false) {
+        let original = value.clone();
+        let stored = Encoding::Stored {
+            original: &original,
+            bytes: &bytes,
+        };
+        if !sanitize_messagepack_credentials_in(&mut value, stored, false) {
             // `[redacted]` as a MessagePack string.
             return Ok(unchanged_or_marker(bytes, b"\xaa[redacted]"));
         }
-        let mut output = Vec::new();
-        rmpv::encode::write_value(&mut output, &value)
-            .map_err(|_| Error::InvariantViolation("redacted MessagePack encode failed"))?;
-        return Ok(output);
+        // What is still as it was stored goes out in its stored bytes: the
+        // encoding the whole read took.
+        return crate::batch::secret_scan::encode_as_stored(&value, &original, &bytes).ok_or(
+            Error::InvariantViolation("redacted MessagePack encode failed"),
+        );
     }
     if crate::batch::secret_scan::scan_undecoded_body(&bytes).is_some() {
         Ok(b"[redacted]".to_vec())
@@ -120,7 +147,7 @@ pub fn redacted_memory_body(bytes: &[u8]) -> Value {
     if let Ok(value) = rmpv::decode::read_value(&mut cursor)
         && cursor.position() == bytes.len() as u64
     {
-        return served_messagepack_json(value);
+        return served_stored_messagepack_json(bytes, value);
     }
     let mut value = if let Ok(value) = serde_json::from_slice(bytes) {
         value
@@ -179,7 +206,7 @@ impl Vault {
             } else if let Ok(value) = rmpv::decode::read_value(&mut cursor)
                 && cursor.position() == bytes.len() as u64
             {
-                let (value, removed) = released_messagepack_json(value, true);
+                let (value, removed) = released_messagepack_json(value, Some(bytes), true);
                 nulled |= removed;
                 value
             } else if let Ok(mut value) = serde_json::from_slice(bytes) {
@@ -490,16 +517,10 @@ mod tests {
             // A reader that projects it to JSON redacts the projection.
             let mut projected = crate::companion::companion_value_to_json(&value);
             redact_credentials(&mut projected);
-            let written = crate::serialize::null_credentials(
-                "",
-                &crate::companion::companion_value_to_json(&value),
+            assert!(
+                !carries_sausage(projected.to_string().as_bytes()),
+                "projected: {projected}"
             );
-            for output in [projected, written] {
-                assert!(
-                    !carries_sausage(output.to_string().as_bytes()),
-                    "projected: {output}"
-                );
-            }
             bodies.push(body);
         }
         let wrapped: Vec<Vec<&[u8]>> = words.iter().map(|word| vec![*word]).collect();
@@ -507,12 +528,6 @@ mod tests {
             serde_json::json!({ "words": words }),
             serde_json::json!(wrapped),
         ] {
-            // The context writers' walk reads the same values.
-            let written = crate::serialize::null_credentials("", &value);
-            assert!(
-                !carries_sausage(written.to_string().as_bytes()),
-                "{written}"
-            );
             bodies.push(
                 serde_json::to_vec(&value)
                     .map_err(|_| Error::InvariantViolation("fixture JSON"))?,
@@ -537,6 +552,36 @@ mod tests {
                 !carries_sausage(emitted.as_bytes()),
                 "bundle export: {emitted}"
             );
+        }
+        // The context writers read what hydration hands them: of a body the
+        // write door refuses, nothing. A body it accepts still hydrates.
+        let mut kept = Vec::new();
+        rmpv::encode::write_value(
+            &mut kept,
+            &rmpv::Value::Map(vec![("title".into(), "kept asset words".into())]),
+        )
+        .unwrap();
+        put_asset(&vault, &kept)?;
+        for format in [
+            crate::context_pack::PackFormat::Json,
+            crate::context_pack::PackFormat::Yaml,
+            crate::context_pack::PackFormat::Toon,
+            crate::context_pack::PackFormat::Markdown,
+            crate::context_pack::PackFormat::Plaintext,
+        ] {
+            let pack = vault
+                .context_pack()
+                .search_temporal(1, 1, 64)
+                .filter_types(&[crate::registry::ENTITY_TYPE_ASSET])
+                .field_profile(crate::context_pack::FieldProfile::Full)
+                .token_budget(0)
+                .max_field_chars(0)
+                .max_item_tokens(0)
+                .format(format)
+                .run_serialized()?;
+            let text = String::from_utf8_lossy(&pack);
+            assert!(text.contains("kept asset words"), "{format:?}: {text}");
+            assert!(!carries_sausage(&pack), "{format:?}: {text}");
         }
         Ok(())
     }
