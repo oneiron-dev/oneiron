@@ -205,7 +205,7 @@ pub(crate) mod release_hook {
             server
                 .vault
                 .keep_world_on_this_machine_under_for_test(
-                    &crate::test_credentials::host_issuer(&server),
+                    &crate::test_credentials::host_issuer(server),
                     world,
                     true,
                 )
