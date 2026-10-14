@@ -1104,9 +1104,9 @@ fn the_same_words_index_the_same_in_one_field_or_many() -> Result<()> {
 
     let rtxn = vault.store.env.read_txn()?;
     for db in [
-        vault.store.text_forward,
-        vault.store.text_meta,
-        vault.store.text_doc_field_lengths,
+        &vault.store.text_forward,
+        &vault.store.text_meta,
+        &vault.store.text_doc_field_lengths,
     ] {
         assert_eq!(
             db.get(&rtxn, one.as_bytes())?,
