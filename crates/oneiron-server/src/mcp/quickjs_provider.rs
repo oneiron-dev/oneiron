@@ -1,16 +1,17 @@
 //! Production MCP provider over the hash-pinned engine QuickJS component.
 
-use super::McpCodeModeProvider;
+use super::{McpCodeModeProvider, RunCompactionSeat};
 use oneiron::code_run::CodeRunDeterminism;
 use oneiron::code_sandbox::quickjs::QuickJsRuntimeFactory;
 use oneiron::code_sandbox::wasmtime_runtime::ComponentBudget;
 use oneiron::engine_executor::{
     EngineExecutorConfig, JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
+    RunCompaction,
 };
 use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::run_admission::RunReceiptSink;
 use oneiron::llm::seat::SeatJudge;
-use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError, Vault};
+use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError, Vault, WriteActor};
 use oneiron_code_check::ShadowCheck;
 use std::sync::Arc;
 
@@ -63,6 +64,8 @@ pub struct McpQuickJsProvider {
     backend: Arc<dyn LlmBackend>,
     lease: BudgetLease,
     config: EngineExecutorConfig,
+    /// Builds each run's compaction seat; none keeps every window raw.
+    compaction: Option<RunCompactionSeat>,
     seat_router: Option<(Arc<dyn SeatJudge>, String)>,
     /// Each run's clock is frozen at its first start, and a resumed run keeps
     /// it; otherwise every run shares the configured frozen clock.
@@ -110,6 +113,7 @@ impl McpQuickJsProvider {
             backend,
             lease,
             config,
+            compaction: None,
             seat_router: None,
             clock_from_first_start: false,
             injected: None,
@@ -135,6 +139,14 @@ impl McpQuickJsProvider {
     #[must_use]
     pub fn with_clock_from_first_start(mut self) -> Self {
         self.clock_from_first_start = true;
+        self
+    }
+
+    /// Each run's window compacts by itself on a seat `seat` builds
+    /// (agent-runtime-v1 §d7).
+    #[must_use]
+    pub fn with_compaction(mut self, seat: RunCompactionSeat) -> Self {
+        self.compaction = Some(seat);
         self
     }
 
@@ -173,6 +185,9 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     }
     fn backend(&self) -> &dyn LlmBackend {
         self.backend.as_ref()
+    }
+    fn compaction(&self, byline: WriteActor) -> Option<RunCompaction> {
+        self.compaction.as_ref().map(|seat| seat(byline))
     }
     fn lease(&self) -> &BudgetLease {
         &self.lease

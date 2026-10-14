@@ -13,7 +13,7 @@ oneiron init ~/oneiron/vault --config ~/.config/oneiron/oneiron.toml --embedder 
 oneiron serve --config ~/.config/oneiron/oneiron.toml
 ```
 
-`GET /api/health` reports `"ai": {"dreamer": "idle", "dreamer_reason": "no_model_configured"}`.
+`GET /api/health` reports `"ai": {"dreamer": "idle", "dreamer_reason": "no_model_configured", "compaction": "off", "compaction_reason": "no_model_configured"}`.
 Chat answers `503 no_model_configured`, and nothing that needs no model waits on one.
 
 ## 2. Point a seat at a model
@@ -332,6 +332,47 @@ starts, so a run resumed after a restart keeps its clock and refuses another
 task. A vault with a model
 manifest needs a seat judge this server does not bind yet, so its runs are
 refused with `code_run_binding_failed`.
+
+A long run compacts its own window (agent-runtime-v1 §d7). Once a step's
+request comes within a margin of the window (the tokens the run adds while
+one summary is written, measured as it runs; never more than half the
+window), the steps behind the newest `hot_steps` are summarized in the
+background while the run keeps working. The summary
+replaces them only after the engine's six checks: the reply stopped
+naturally, it is the requested JSON, it is smaller than the steps and above
+a floor, it keeps every failed step's first line word for word, it does not
+loop, and it covers exactly the requested steps. The next request holds one
+`<compacted epoch="n" steps="a-b">` frame with the summary and a
+`sandbox.fs.read_file` handle to each original output. A failed check is
+retried, naming the check, up to `tries` times; after that the run keeps its
+raw window. A run that reaches its window with no accepted summary stops
+with `"status": "window_full"` and a typed reason, and the next call goes on.
+Erasing a record the run was served withdraws the summary's words; the
+steps stay covered by their handles.
+
+```toml
+[models.code_mode.compaction]   # optional; on by default when code mode is served
+enabled = true
+role = "checker"        # default: checker when its rungs take a whole window, else generative_reasoner
+window_tokens = 96000   # default: the smallest context the code-mode seat's rungs leave for input
+hot_steps = 2           # newest steps that never compact
+tries = 3
+```
+
+The summary prompt is `blocks/engine-executor-compaction.md` in the same
+prompt package as the wire prompt. Its user message is one JSON object
+(`from`, `through`, `max_summary_tokens`, `pins`, `retry`, `steps`) and the
+reply is `{"from", "through", "summary"}`; the test package's block,
+`crates/oneiron/tests/fixtures/prompts/blocks/engine-executor-compaction.md`,
+is a working example. Passes are metered on `budget_units`. Without the
+block, a seat for the role, or `[models]`, compaction is off and never calls
+a model; `GET /api/health` says `"compaction": "off"` with the reason
+(`no_model_configured`, `no_compaction_prompt`, `no_compaction_seat`,
+`compaction_seat_too_small` when the role's smallest rung leaves less input
+room than `window_tokens`, `disabled`, or `code_mode_off`). Each `execute_code` result carries the run's
+`compaction` object: `used_tokens`, `compact_at`, `window_tokens`,
+`in_flight`, `last_swap`, and `suppressed` (`auth`, `no_credit`,
+`turn_scoped` with the failed `check`, or `sticky` with `why`).
 
 ### Type check (shadow mode)
 
