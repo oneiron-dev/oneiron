@@ -346,7 +346,7 @@ fn an_update_never_widens_an_agent_ceiling() -> Result<()> {
     narrowed.version = "2".to_owned();
     narrowed.ceiling = AgentCeiling::Proposed;
     vault.update_agent_definition(&scout_id, &narrowed, test_time_range(5, 5), 5)?;
-    auto_write_is_held(&vault, scout_id, 0x42, 14)?;
+    auto_write_is_held(&vault, scout_id, 0x52, 14)?;
     // Its seed allows Auto, but the row it is now does not: no widening back.
     let mut rewidened = narrowed.clone();
     rewidened.version = "3".to_owned();
@@ -535,7 +535,7 @@ fn only_the_owners_door_widens_an_agent_and_the_pin_follows() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     put_actor_ceiling_manifest(&vault, 0x2E, vec![agent_class_auto_row()])?;
     let owner = owner_proof(&vault)?;
-    let stranger = crate::test_util::entity(0x47);
+    let stranger = crate::test_util::entity(0x57);
     vault.put_entity(
         &stranger,
         ENTITY_TYPE_PERSON,
@@ -671,6 +671,55 @@ fn a_retained_shell_cannot_retype_an_agent_id() -> Result<()> {
     assert_eq!(err.kind(), ErrorKind::EntityTypeImmutable, "{err:?}");
     assert!(vault.get_raw(&custom_id)?.is_none());
     auto_write_is_held(&vault, custom_id, 0x4C, 10)?;
+    Ok(())
+}
+
+/// H215 (Sol R4 F2, Astra R4 F4): a retained definition shell a sync window
+/// carries may be the first this vault learns of an agent id. The shell
+/// keeps no body to bound the id by, so it pins the id at `Proposed`:
+/// deleted, the id comes back no wider and as nothing else, without waiting
+/// for the next open, and within its pin it still comes back.
+#[cfg(feature = "sync")]
+#[test]
+fn a_first_seen_definition_shell_pins_its_id() -> Result<()> {
+    use crate::agent_def::AgentCeiling;
+    use crate::deletion::{TombstoneReason, TombstoneValueV2};
+
+    let (_dir, vault) = open_test_vault();
+    put_actor_ceiling_manifest(&vault, 0x2E, vec![agent_class_auto_row()])?;
+    let shell_id = crate::test_util::entity(0x5A);
+    let tombstone = TombstoneValueV2 {
+        reason: TombstoneReason::UserDelete,
+        deleted_at: 2,
+        request_id: [8; 16],
+    }
+    .encode();
+    vault.with_write_txn(|txn| {
+        crate::batch::restore_recovery_shell_in_txn(
+            &vault,
+            txn,
+            &shell_id,
+            &header_row(ENTITY_TYPE_AGENT_DEF),
+            &tombstone,
+        )
+    })?;
+    vault.batch().delete(&shell_id).commit()?;
+    refused_as_body(
+        custom_agent_at(&vault, shell_id, AgentCeiling::Auto).map(drop),
+        "an Auto definition where a shell stood",
+    );
+    let err = vault
+        .put_entity(
+            &shell_id,
+            ENTITY_TYPE_PERSON,
+            test_time_range(3, 3),
+            3,
+            b"p",
+        )
+        .expect_err("a PERSON where a definition shell stood");
+    assert_eq!(err.kind(), ErrorKind::EntityTypeImmutable, "{err:?}");
+    custom_agent_at(&vault, shell_id, AgentCeiling::Proposed)?;
+    auto_write_is_held(&vault, shell_id, 0x5B, 10)?;
     Ok(())
 }
 
@@ -845,24 +894,21 @@ fn a_restore_refuses_past_a_pin_it_cannot_read() -> Result<()> {
 #[test]
 fn a_restore_pins_a_definition_its_live_vault_never_held() -> Result<()> {
     use crate::agent_def::AgentCeiling;
-    use crate::recovery::checkpoint::RestoreReason;
 
     let (_dir, vault) = open_test_vault();
-    let backups = tempfile::tempdir()?;
-    let before = backups.path().join("before");
-    vault.snapshot_checkpoint(&before, 100)?;
     let (custom_id, custom) = custom_agent(&vault, AgentCeiling::Proposed)?;
-    let after = backups.path().join("after");
-    vault.snapshot_checkpoint(&after, 200)?;
-    let (rolled_back, _) = Vault::restore_checkpoint(
-        &before,
-        &backups.path().join("rolled-back"),
-        vault.config.clone(),
-        RestoreReason::Restore,
-        1_000,
-    )?;
-    let restored =
-        restore_keeping_authority(&rolled_back, &after, &backups.path().join("restored"))?;
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("image");
+    vault.snapshot_checkpoint(&image, 100)?;
+    // The live vault as one that never held the definition: no row at its
+    // id, and no pin.
+    let pin_key = [&b"agent_def/id-pin/v1\0"[..], custom_id.as_bytes()].concat();
+    vault.with_write_txn(|txn| {
+        crate::batch::deindex_entity_for_test(&vault.store, txn, &custom_id)?;
+        vault.store.vault_meta.delete(txn, &pin_key)?;
+        Ok(())
+    })?;
+    let restored = restore_keeping_authority(&vault, &image, &backups.path().join("restored"))?;
     assert_eq!(
         restored.get_agent_definition(&custom_id)?,
         Some(custom.clone())

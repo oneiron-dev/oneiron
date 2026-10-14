@@ -35,8 +35,8 @@ pub(crate) use self::codec::{
 #[cfg(feature = "sync")]
 pub(crate) use self::id_pin::validate_put_at_seeded_id;
 pub(crate) use self::id_pin::{
-    agent_id_pin_for_put_in_txn, agent_ids_in_txn, is_agent_id_in_txn, pin_stored_rows_in_txn,
-    refuse_agent_id_retype_in_txn, row_within_pin_in_txn,
+    agent_id_pin_for_put_in_txn, agent_ids_in_txn, is_agent_id_in_txn, pin_stored_row_in_txn,
+    pin_stored_rows_in_txn, refuse_agent_id_retype_in_txn, row_within_pin_in_txn,
 };
 pub(crate) use self::manifest::{
     seed_system_agent_definitions, system_export_identity, validate_reserved_logical_id,

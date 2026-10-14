@@ -83,6 +83,23 @@ impl Drop for ForkedCustody {
         }
     }
 }
+/// The destination a restore created, removed on drop unless kept: a restore
+/// refused after it made its destination leaves nothing there, and the same
+/// destination can take a later restore. Held before the vault opened in
+/// it, so the vault closes first.
+struct CreatedDestination<'a>(Option<&'a Path>);
+impl CreatedDestination<'_> {
+    fn keep(mut self) {
+        self.0 = None;
+    }
+}
+impl Drop for CreatedDestination<'_> {
+    fn drop(&mut self) {
+        if let Some(destination) = self.0.take() {
+            let _ = std::fs::remove_dir_all(destination);
+        }
+    }
+}
 /// The vault a side restore copies. Each restore reads its live key-custody
 /// state when it starts: where its custody is, and the key retirements it
 /// has committed. The copy never holds a key that state says is destroyed or
@@ -577,6 +594,7 @@ impl Vault {
         }
         // Existing content is never replaced or partially restored over.
         std::fs::create_dir(destination)?;
+        let created = CreatedDestination(Some(destination));
         let mut forked = ForkedCustody(None);
         let vault = Self::open_owned(destination, config.clone())?;
         vault.with_write_txn_grouped(|txn| {
@@ -666,6 +684,7 @@ impl Vault {
             rebuilt_text_documents,
             pending_embeddings,
         };
+        created.keep();
         Ok((vault, report, forked))
     }
     pub fn restore_epochs(&self) -> Result<Vec<RestoreEpoch>> {

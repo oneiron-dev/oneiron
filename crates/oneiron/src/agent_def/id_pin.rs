@@ -268,37 +268,48 @@ pub(crate) fn agent_ids_in_txn(
     Ok(ids)
 }
 
-/// Pins every stored definition as a put of it would have: a row narrower
-/// than its id's pin narrows the pin, and a row whose id holds no pin is
-/// pinned at its own ceiling and lineage (no wider than its seed), or at
-/// `Proposed` when it does not decode. Rows reach the store without a put
-/// two ways: a restore writes them raw, and a row older than the pin was put
-/// before the pin existed. Unpinned, such a row could be deleted and come
-/// back wider or as another type, so the restore calls this in the
-/// transaction that writes its rows, and every seeded open calls it before
-/// any caller holds the vault. A row wider than its pin, or off its lineage,
-/// stays for a restore's decisions to refuse.
+/// Pins every stored definition as [`pin_stored_row_in_txn`] pins one. Rows
+/// reach the store without a put two ways: a restore writes them raw, and a
+/// row older than the pin was put before the pin existed. So the restore
+/// calls this in the transaction that writes its rows, and every seeded open
+/// calls it before any caller holds the vault.
 pub(crate) fn pin_stored_rows_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>) -> Result<()> {
     let ids = store
         .port_entity_ids_by_type(wtxn, ENTITY_TYPE_AGENT_DEF, None)?
         .collect::<Result<Vec<_>>>()?;
     for id in ids {
-        let row = stored_row_pin(store, wtxn, &id)?;
-        let pin = match (PIN.get(store, wtxn, &id)?, row) {
-            (Some(pin), Some(row)) if pin.ceiling.widens_beyond(row.ceiling) => AgentIdPin {
-                ceiling: row.ceiling,
-                ..pin
-            },
-            (Some(_), _) => continue,
-            (None, Some(row)) => bound_in_txn(store, wtxn, &id)?.unwrap_or(row),
-            (None, None) => AgentIdPin {
-                ceiling: AgentCeiling::Proposed,
-                forked_from: None,
-            },
-        };
-        PIN.put(store, wtxn, &id, &pin)?;
+        pin_stored_row_in_txn(store, wtxn, &id)?;
     }
     Ok(())
+}
+
+/// Pins the definition stored at `id` as a put of it would have: a row
+/// narrower than its id's pin narrows the pin, and a row whose id holds no
+/// pin is pinned at its own ceiling and lineage (no wider than its seed), or
+/// at `Proposed` when it does not decode (a retained shell keeps no body).
+/// Unpinned, a row that reached the store without a put could be deleted and
+/// come back wider or as another type; so the shell door pins what it
+/// writes, and a delete pins the row it removes. A row wider than its pin,
+/// or off its lineage, stays for a restore's decisions to refuse.
+pub(crate) fn pin_stored_row_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let row = stored_row_pin(store, wtxn, id)?;
+    let pin = match (PIN.get(store, wtxn, id)?, row) {
+        (Some(pin), Some(row)) if pin.ceiling.widens_beyond(row.ceiling) => AgentIdPin {
+            ceiling: row.ceiling,
+            ..pin
+        },
+        (Some(_), _) => return Ok(()),
+        (None, Some(row)) => bound_in_txn(store, wtxn, id)?.unwrap_or(row),
+        (None, None) => AgentIdPin {
+            ceiling: AgentCeiling::Proposed,
+            forked_from: seeded_pin(id)?.and_then(|seed| seed.forked_from),
+        },
+    };
+    PIN.put(store, wtxn, id, &pin)
 }
 
 /// Whether the row at agent id `id` answers to the id's pin: absent, or a

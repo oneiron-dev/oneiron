@@ -79,12 +79,32 @@ enum AgentBearing {
     NonAgent,
 }
 
+/// `Bound(Proposed)` when `entity_ref` is an agent id, or its pin does not
+/// read; `None` for an id that never was an agent.
+fn agent_id_held(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entity_ref: EntityId,
+) -> Option<AgentBearing> {
+    match crate::agent_def::is_agent_id_in_txn(store, txn, &entity_ref) {
+        Ok(false) => None,
+        Ok(true) => Some(AgentBearing::Bound(PolicyApprovalCeiling::Proposed)),
+        Err(_) => {
+            tracing::warn!(
+                actor_entity_id = %entity_ref.to_hex(),
+                "agent id pin read failed; failing closed to proposed",
+            );
+            Some(AgentBearing::Bound(PolicyApprovalCeiling::Proposed))
+        }
+    }
+}
+
 /// Classifies a governing entity id from stored state — READ-ONLY, and from
 /// the ROW alone: no compiled table confers authority on any id, so a pinned
-/// system-agent actor id classifies exactly like any other id (no row →
-/// `Absent`, which both consumers map to `Proposed`). The one exception only
-/// narrows: a row of another type at an agent id is no agent's definition,
-/// and holds the agent there at `Proposed` rather than lifting its bound
+/// system-agent actor id classifies exactly like any other id. The one
+/// exception only narrows: an agent id (pinned, or a seed's) holding no
+/// definition, nothing or a row of another type, holds the agent there at
+/// `Proposed` under any class asserted for it, rather than lifting its bound
 /// (H215). Read failures resolve fail-closed to `Bound(Proposed)`.
 fn agent_bearing_for_entity(
     store: &Store,
@@ -96,7 +116,9 @@ fn agent_bearing_for_entity(
         .map(|row| row.map(|row| row.encode()))
     {
         Ok(Some(raw)) => raw,
-        Ok(None) => return AgentBearing::Absent,
+        Ok(None) => {
+            return agent_id_held(store, txn, entity_ref).unwrap_or(AgentBearing::Absent);
+        }
         Err(error) => {
             tracing::warn!(
                 actor_entity_id = %entity_ref.to_hex(),
@@ -114,17 +136,7 @@ fn agent_bearing_for_entity(
         return AgentBearing::Bound(PolicyApprovalCeiling::Proposed);
     };
     if header.entity_type != ENTITY_TYPE_AGENT_DEF {
-        return match crate::agent_def::is_agent_id_in_txn(store, txn, &entity_ref) {
-            Ok(false) => AgentBearing::NonAgent,
-            Ok(true) => AgentBearing::Bound(PolicyApprovalCeiling::Proposed),
-            Err(_) => {
-                tracing::warn!(
-                    actor_entity_id = %entity_ref.to_hex(),
-                    "agent id pin read failed; failing closed to proposed",
-                );
-                AgentBearing::Bound(PolicyApprovalCeiling::Proposed)
-            }
-        };
+        return agent_id_held(store, txn, entity_ref).unwrap_or(AgentBearing::NonAgent);
     }
     match decode_agent_definition(&raw[ENTITY_METADATA_HEADER_LEN..]) {
         Ok(def) => {

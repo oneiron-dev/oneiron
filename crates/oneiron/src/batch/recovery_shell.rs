@@ -67,6 +67,12 @@ pub(crate) fn restore_recovery_shell_in_txn(
         None
     };
     crate::ports::EntityStoreMaintenance::port_retained_shell_restore(&vault.store, txn, id, blob)?;
+    // A definition's shell keeps no body to bound its id by: it pins the id
+    // at `Proposed` (on its seed's lineage) unless the id already answers to
+    // a pin, so deleting the shell cannot reopen the id wider (H215).
+    if header.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF {
+        crate::agent_def::pin_stored_row_in_txn(&vault.store, txn, id)?;
+    }
     stage_entity_index_rows(
         &vault.store,
         txn,
