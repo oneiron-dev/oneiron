@@ -173,17 +173,18 @@ pub(super) fn hydrate_entity(
             .get(ENTITY_METADATA_HEADER_LEN..)
             .and_then(|body| crate::claim::decode_claim_body(body, true).ok());
         // The gate's verdict stands for the body in hand only when it is the
-        // body the gate read: retrieval read its own snapshot, and the row
-        // may have been written since, or its pin may hold other words.
-        let gated = options
-            .claim_bodies
-            .and_then(|cache| cache.get(&id))
-            .filter(|cached| decoded_here.as_ref() == Some(*cached));
-        match (gated, &decoded_here) {
+        // body the gate read, in retrieval's own snapshot. A pin's words, or
+        // a row no verdict covers (a neighbor), are judged here. An unpinned
+        // row whose body is another was written since retrieval read it, and
+        // no verdict in this run stands for it: it is not served.
+        let cached = options.claim_bodies.and_then(|cache| cache.get(&id));
+        let judged_here = cached.is_none() || options.words_pinned || raw != live_raw;
+        match (cached, &decoded_here) {
             // Pipeline-gated result: the body the gate admitted.
-            (Some(body), _) => gated_claim_body = Some(body),
-            // A neighbor, or a body the gate never read.
-            (None, Some(body)) if claim_surfaceable(body) => gated_claim_body = Some(body),
+            (Some(cached), Some(body)) if cached == body => gated_claim_body = Some(cached),
+            (_, Some(body)) if judged_here && claim_surfaceable(body) => {
+                gated_claim_body = Some(body);
+            }
             _ => {
                 *claims_suppressed += 1;
                 return Ok(None);

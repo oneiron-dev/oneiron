@@ -396,10 +396,12 @@ fn a_claim_whose_source_is_deleted_while_it_is_scored_is_not_served() -> Result<
 /// read live, took the gate's cached body whenever the live row equalled the
 /// row read, though the gate read an older row. Rewritten while scored to
 /// words citing only a source that is gone, it was served on its old words
-/// and their source. The gate's verdict stands only for the body it read;
-/// the body in hand is judged here.
+/// and their source. The gate's verdict stands only for the body it read; a
+/// row written since, unpinned, has no verdict in this run and is not
+/// served (Sol R14: judging the new body here would serve words that the
+/// rest of the pack's assembly never read).
 #[test]
-fn a_claim_rewritten_while_it_is_scored_is_judged_on_its_new_body() -> Result<()> {
+fn a_claim_rewritten_while_it_is_scored_is_not_served_on_its_old_verdict() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     put_subject(&vault)?;
     let kept = entity_id(0x7F);
