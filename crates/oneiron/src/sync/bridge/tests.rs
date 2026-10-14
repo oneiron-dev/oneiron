@@ -5295,7 +5295,8 @@ fn the_generic_sync_state_door_cannot_mark_a_carrier_as_written_here() {
 /// A restore keeping this vault's authority takes which carriers this vault
 /// wrote from this vault, never from the image: a checkpoint's checksum is
 /// unkeyed, so whoever hands one in could mark a peer's carrier as written
-/// here or unmark this vault's own.
+/// here or unmark this vault's own. Nor does it keep a mark for a carrier
+/// written after the image, which no erasure in the copy could reach.
 #[test]
 fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
     /// A checkpoint image's wire shape.
@@ -5323,6 +5324,18 @@ fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
     let marks = vault.sync_state_keys_with_prefix("it:authored:").unwrap();
     let image = root.path().join("image");
     vault.snapshot_checkpoint(&image, 300).unwrap();
+    let (later, head, author) = (EntityId::now(), EntityId::now(), EntityId::now());
+    for id in [&later, &head, &author] {
+        put_test_person(&vault, id);
+    }
+    merge_here(&vault, later, head, Some(author));
+    assert_eq!(
+        vault
+            .sync_state_keys_with_prefix("it:authored:")
+            .unwrap()
+            .len(),
+        2
+    );
 
     let bytes = std::fs::read(&image).unwrap();
     let mut forged: Image = rmp_serde::from_slice(&bytes[41..]).unwrap();

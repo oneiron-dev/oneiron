@@ -32,7 +32,8 @@ pub(crate) type AttributionKey = (EntityId, [u8; 32]);
 /// The author carriers this vault wrote itself, by carrier row: a digest of
 /// the row's body. Local truth that never replicates, so no peer can make its
 /// own carrier read as this vault's. A restore keeping this vault's authority
-/// takes it from this vault, never from the image (`restore_class`).
+/// takes it from this vault, never from the image (`restore_class`), and keeps
+/// only the marks whose carrier the restored vault holds.
 const AUTHORED_HERE: SideTable<HexId, [u8; 32], Raw> =
     SideTable::new(&side_table::IDENTITY_TOPOLOGY_AUTHORED_HERE);
 
@@ -133,6 +134,31 @@ fn scrub_carriers_in_txn(
         crate::vault::entity_revision::remove_entity_revisions(&vault.store, wtxn, id)?;
         crate::batch::deindex_entity(&vault.store, wtxn, id)?;
         AUTHORED_HERE.delete(&vault.store, wtxn, &HexId(*id))?;
+    }
+    Ok(())
+}
+
+/// Drops every written-here mark whose carrier this vault does not hold with
+/// the exact body the mark binds. A restore runs it once its rows are in: a
+/// mark carried from the live vault for a carrier the image predates would be
+/// a digest of an author's carrier that no erasure could reach.
+pub(crate) fn drop_unheld_author_marks_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    let mut unheld = Vec::new();
+    for row in AUTHORED_HERE.iter_from(store, wtxn, &[])? {
+        let (HexId(id), digest) = row?;
+        let held = store.entities.get(wtxn, id.as_bytes())?.is_some_and(|raw| {
+            raw.get(ENTITY_METADATA_HEADER_LEN..)
+                .is_some_and(|body| *blake3::hash(body).as_bytes() == digest)
+        });
+        if !held {
+            unheld.push(id);
+        }
+    }
+    for id in unheld {
+        AUTHORED_HERE.delete(store, wtxn, &HexId(id))?;
     }
     Ok(())
 }
