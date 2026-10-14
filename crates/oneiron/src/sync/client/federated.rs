@@ -8,6 +8,7 @@ use crate::error::SyncProtocolValidation;
 use crate::sync::federation_burst::{
     FederationBurstDecision, WorkKind, admit_work, record_outcome,
 };
+use crate::sync::ingest::watch_births;
 use crate::sync::selector::{
     AdmittedUpdate, FederationAdmissionRole, SyncSelector, admit_peer_window_update,
     encode_selector_vv_request, revalidate_admitted_facet_stamps,
@@ -284,9 +285,15 @@ impl SyncClient {
         )
         .map_err(map_federated_admission_err)?;
         let window = self.ensure_window(&durable.window_key)?;
-        self.import_accepted_window_update(&durable.window_key, &window, &staged.admitted_update)?;
+        let born = watch_births(births.birth_rows(), || {
+            self.import_accepted_window_update(
+                &durable.window_key,
+                &window,
+                &staged.admitted_update,
+            )
+        })?;
         let released = births
-            .release(&self.vault, &admission_key)
+            .release(&self.vault, &admission_key, &born)
             .map_err(map_federated_admission_err)?;
         self.import_released_stamps(&durable.window_key, released)?;
         let expected_receipt = durable;
@@ -325,7 +332,8 @@ impl SyncClient {
 impl SyncClient {
     /// Imports an update a federation peer sent under `grant`: holds the
     /// facet stamps it sent ahead of their rows, imports it, then releases
-    /// each stamp whose row that import birthed from the peer's bytes.
+    /// each stamp whose row that import's entity door birthed from the peer's
+    /// bytes.
     pub(super) fn import_peer_update(
         &mut self,
         window_key: &str,
@@ -337,9 +345,11 @@ impl SyncClient {
             .hold_from_peer(&self.vault, key, grant)
             .map_err(map_federated_admission_err)?;
         let window = self.ensure_window(window_key)?;
-        self.import_accepted_window_update(window_key, &window, admitted.bytes())?;
+        let born = watch_births(admitted.birth_rows(), || {
+            self.import_accepted_window_update(window_key, &window, admitted.bytes())
+        })?;
         let released = admitted
-            .release(&self.vault, key)
+            .release(&self.vault, key, &born)
             .map_err(map_federated_admission_err)?;
         self.import_released_stamps(window_key, released)
     }

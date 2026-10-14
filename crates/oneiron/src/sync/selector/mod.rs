@@ -16,6 +16,7 @@ pub(in crate::sync) use document_admission::{
 };
 #[cfg(feature = "sync")]
 mod edge;
+mod held_retire;
 mod note_admission;
 mod scope;
 pub(crate) use note_admission::admit_note_in_txn;
@@ -36,7 +37,6 @@ pub(in crate::sync) use self::admission::{
     revalidate_admitted_federated_claims, staged_births,
 };
 pub use self::authorize::authorize_sync_selector;
-pub(crate) use self::authorize::retire_held_facet_stamps;
 pub(in crate::sync) use self::codec::granted_window_doc;
 pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
@@ -45,6 +45,7 @@ pub use self::codec::{
     guest_share_envelope_body,
 };
 pub(crate) use self::edge::ReleasedStamps;
+pub(crate) use self::held_retire::retire_held_facet_stamps;
 
 #[cfg(test)]
 use self::{authorize::*, codec::*};

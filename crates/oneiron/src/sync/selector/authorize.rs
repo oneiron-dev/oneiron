@@ -68,47 +68,27 @@ pub(super) fn authorize_sync_selector_at(
 /// authority on its own.
 fn live_federation_grant(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
     let txn = vault.store.env.read_txn()?;
+    live_federation_grant_in(vault, &txn, id)
+}
+
+/// [`live_federation_grant`], read in `txn`.
+pub(super) fn live_federation_grant_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<u8>> {
     let raw = vault
-        .get_raw_in(&txn, id)?
+        .get_raw_in(txn, id)?
         .ok_or_else(|| selector_err(SelectorError::GrantNotFound))?;
     let header = EntityMetadataHeader::parse(&raw)
         .ok_or_else(|| selector_err(SelectorError::GrantHeader))?;
     if header.entity_type != ENTITY_TYPE_FEDERATION_GRANT {
         return Err(selector_err(SelectorError::GrantWrongType));
     }
-    if !crate::vault::live_entity_row_in_txn(&vault.store, &txn, id)?.is_live() {
+    if !crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live() {
         return Err(selector_err(SelectorError::GrantNotFound));
     }
     Ok(raw)
-}
-
-/// Whether the grant `grant_id` still confers at `now_secs`: stored, live,
-/// not made inactive by a pact, and not expired. Scope and member checks
-/// belong to the selector a peer sends, not to the grant.
-fn grant_confers(vault: &Vault, grant_id: &EntityId, now_secs: u64) -> Result<bool> {
-    let raw = match live_federation_grant(vault, grant_id) {
-        Ok(raw) => raw,
-        Err(Error::Sync(SyncError::SyncProtocolError { .. })) => return Ok(false),
-        Err(local) => return Err(local),
-    };
-    let Ok(grant) = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]) else {
-        return Ok(false);
-    };
-    let fold = vault.authority_fold()?;
-    Ok(grant.confers_at(now_secs)
-        && !matches!(
-            federation_grant_activation(&fold, grant_id),
-            FederationGrantActivation::Inactive(_)
-        ))
-}
-
-/// Retires the facet stamps held 30 days or more and those held under a
-/// grant that no longer confers (Astra-b F2 on #1432); returns how many went.
-pub(crate) fn retire_held_facet_stamps(vault: &Vault) -> Result<u64> {
-    let now = vault.store.clock.now_recorded_at();
-    crate::federation::facet_read::retire_held_stamps(vault, now, |grant| {
-        grant_confers(vault, grant, now)
-    })
 }
 
 /// [`authorize_sync_selector`], plus the resolved position the export path

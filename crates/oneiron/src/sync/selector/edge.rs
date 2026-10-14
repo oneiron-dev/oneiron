@@ -241,13 +241,15 @@ pub(super) fn pending_births(
             rows.push(id);
         }
     });
+    // One lookup per row, not a scan of every stamp (Astra R10 F1 on #1432).
+    let stamped: std::collections::BTreeSet<_> = with_birth.iter().map(|stamp| stamp.src).collect();
     let rtxn = vault.store.env.read_txn()?;
     let mut births = Vec::new();
     for src in rows {
         if crate::batch::stored_entity_type(&vault.store, &rtxn, &src)?.is_some() {
             continue;
         }
-        if (with_birth.iter().any(|stamp| stamp.src == src)
+        if (stamped.contains(&src)
             || !facet_read::parked_under(&vault.store, &rtxn, src, lane)?.is_empty())
             && let Some(blob) = super::loro_support::map_get_bytes(brought, &src.to_hex())
         {
@@ -281,31 +283,40 @@ impl ReleasedStamps {
 }
 
 /// After an update's import, the stamps on each of its `births` that the
-/// import birthed: a row stored now with exactly the bytes the update brought
-/// for it, absent before. Its stamps are the update's own (`with_birth`) and
-/// those `lane` holds. A row the write door refused, or one another writer
-/// stored, releases nothing, so no stamp of it enters the window ahead of
-/// its sender's birth (Astra-b F1 on #1432). A released stamp the type table
-/// now proves off-table, its row born typed, is dropped with typed evidence
-/// instead. `None` when nothing is released.
+/// import birthed: a row the import's entity door wrote where none was stored
+/// (`born`, [`crate::sync::ingest::watch_births`]), and that stores exactly
+/// the bytes the update brought for it. Its stamps are the update's own
+/// (`with_birth`) and those `lane` holds. A row the write door refused, or
+/// one another writer stored first, releases nothing, so no stamp of it
+/// enters the window ahead of its sender's birth (Astra-b F1, Sol R10 F2 on
+/// #1432). A released stamp the type table now proves off-table, its row born
+/// typed, is dropped with typed evidence instead. `None` when nothing is
+/// released.
 #[cfg(feature = "sync")]
 pub(super) fn release_born_stamps(
     vault: &Vault,
     key: &WindowKey,
     lane: &str,
     births: &[(EntityId, Vec<u8>)],
+    born: &std::collections::BTreeSet<EntityId>,
     with_birth: &[HeldStamp],
 ) -> Result<Option<ReleasedStamps>> {
+    let mut by_row = std::collections::BTreeMap::<_, Vec<_>>::new();
+    for stamp in with_birth {
+        by_row.entry(stamp.src).or_default().push(stamp);
+    }
     let rtxn = vault.store.env.read_txn()?;
     let mut stamps = std::collections::BTreeMap::new();
     for (src, blob) in births {
-        if vault.store.entities.get(&rtxn, src.as_bytes())?.as_deref() != Some(blob.as_slice()) {
+        if !born.contains(src)
+            || vault.store.entities.get(&rtxn, src.as_bytes())?.as_deref() != Some(blob.as_slice())
+        {
             continue;
         }
         for (tgt, value) in facet_read::parked_under(&vault.store, &rtxn, *src, lane)? {
             stamps.insert((*src, tgt), value);
         }
-        for stamp in with_birth.iter().filter(|stamp| stamp.src == *src) {
+        for stamp in by_row.get(src).into_iter().flatten() {
             stamps.insert((stamp.src, stamp.tgt), stamp.value.clone());
         }
     }

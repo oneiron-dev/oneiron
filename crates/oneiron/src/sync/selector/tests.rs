@@ -1510,9 +1510,13 @@ fn import_from_peer(
 ) {
     let admitted = admit_peer_window_update(vault, window_key, update, role, peer).unwrap();
     admitted.hold_from_peer(vault, window_key, grant).unwrap();
-    doc.import(admitted.bytes()).unwrap();
-    rematerialize(vault, doc, window_key);
-    if let Some(released) = admitted.release(vault, window_key).unwrap() {
+    let born = crate::sync::ingest::watch_births(admitted.birth_rows(), || {
+        doc.import(admitted.bytes()).unwrap();
+        rematerialize(vault, doc, window_key);
+        Ok::<_, ()>(())
+    })
+    .unwrap();
+    if let Some(released) = admitted.release(vault, window_key, &born).unwrap() {
         if let Some(update) = &released.update {
             doc.import(update).unwrap();
             rematerialize(vault, doc, window_key);
@@ -1610,9 +1614,8 @@ fn a_stamp_ahead_of_its_row_stays_out_of_the_window_when_another_writer_brings_t
 /// The positive control, on the production client: the same peer sends the
 /// stamp first and the row second. The stamp enters the window once the
 /// row's birth applies, so a reader narrowed to the stamped facet reads the
-/// row, and the stamp
-/// seeds a facet-limited export, on this vault and on the owner's other
-/// device alike (H2).
+/// row, and the stamp seeds a facet-limited export, on this vault and on the
+/// owner's other device alike (H2).
 #[test]
 fn a_peer_that_brings_its_row_after_the_stamp_puts_it_in_the_stamped_facet() {
     for (role, seed) in [
@@ -2089,6 +2092,87 @@ fn a_stamp_whose_row_the_write_door_refused_never_places_a_later_row() {
     }
 }
 
+/// Sol R10 F2 on #1432: between a peer update's admission and its import,
+/// another writer stores the peer's row first, with the very bytes the peer
+/// brings (here the owner's other device relays it), and the owner stamps it
+/// `private`. The peer's copy is then an idempotent skip, not its birth, so
+/// it releases no stamp: not one sent with the row, nor one held from before.
+/// A reader narrowed to `work` does not read the row.
+#[test]
+fn a_peer_copy_of_a_row_another_writer_stored_first_releases_no_stamp() {
+    let window_key = WindowKey::new("2026-05");
+    for (leg, seed) in [("with the row", 0x40_u8), ("held", 0x48_u8)] {
+        let (_dir, vault, grant_id) = test_vault_with_grant(entity_id(seed));
+        let [peer, work, private, row] = [1, 2, 3, 4].map(|n| entity_id(seed + n));
+        for facet in [work, private] {
+            put_row(&vault, facet, ENTITY_TYPE_FACET);
+        }
+        let live = create_window_doc("local", &window_key);
+        let role = FederationAdmissionRole::Member;
+        let blob = entity_blob(ENTITY_TYPE_EVENT, b"row");
+        let frame = create_window_doc("federation-peer", &window_key);
+        insert_edge(&frame, row, EdgeKind::FacetOf, work);
+        let birth = if leg == "held" {
+            frame.commit();
+            let update = frame.export(ExportMode::all_updates()).unwrap();
+            import_from_peer(&vault, &live, &window_key, &update, (peer, grant_id), role);
+            create_window_doc("federation-peer", &window_key)
+        } else {
+            frame
+        };
+        insert_blob(&birth, row, &blob);
+        birth.commit();
+        let update = birth.export(ExportMode::all_updates()).unwrap();
+        let admitted = admit_peer_window_update(&vault, &window_key, &update, role, peer).unwrap();
+        admitted
+            .hold_from_peer(&vault, &window_key, grant_id)
+            .unwrap();
+
+        let relay = create_window_doc("device", &window_key);
+        insert_blob(&relay, row, &blob);
+        relay.commit();
+        rematerialize(&vault, &relay, &window_key);
+        vault
+            .put_edge(&row, EdgeKind::FacetOf, &private, 1.0)
+            .unwrap();
+        let born = crate::sync::ingest::watch_births(admitted.birth_rows(), || {
+            live.import(admitted.bytes()).unwrap();
+            rematerialize(&vault, &live, &window_key);
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+        assert!(
+            born.is_empty(),
+            "{leg}: the peer's copy counted as its birth"
+        );
+        if let Some(released) = admitted.release(&vault, &window_key, &born).unwrap() {
+            if let Some(update) = &released.update {
+                live.import(update).unwrap();
+                rematerialize(&vault, &live, &window_key);
+            }
+            released.discard(&vault).unwrap();
+        }
+
+        assert!(
+            map_get_bytes(
+                &live.get_map("edges"),
+                &edge_key(row, EdgeKind::FacetOf, work)
+            )
+            .is_none(),
+            "{leg}: the peer's copy of a stored row released its stamp"
+        );
+        assert!(!stamp_stored(&vault, row, work), "{leg}");
+        assert!(
+            !vault.row_in_facets(&row, &facet_set(work)).unwrap(),
+            "{leg}: a work reader reads the row"
+        );
+        assert!(
+            vault.row_in_facets(&row, &facet_set(private)).unwrap(),
+            "{leg}"
+        );
+    }
+}
+
 /// Astra-b F2 on #1432: a peer sends ten times the cap of stamps onto rows it
 /// never brings, one stamp per row. Each update is charged for the stamps it
 /// holds, so it is deferred, and a deferred update holds nothing. Replayed,
@@ -2106,12 +2190,14 @@ fn a_peer_holds_a_charged_capped_number_of_stamps_until_its_grant_goes() {
     let lane = format!("p{}", member.to_hex());
     let held = |vault: &Vault| {
         let txn = vault.store.env.read_txn().unwrap();
-        let rows =
+        let stored =
             crate::federation::facet_read::held_rows_under(&vault.store, &txn, &lane).unwrap();
-        let (counted, _) =
-            crate::federation::facet_read::held_by(&vault.store, &txn, &lane).unwrap();
-        assert_eq!(counted, rows, "the lane's usage row counts its rows");
-        rows
+        let counted = crate::federation::facet_read::held_by(&vault.store, &txn, &lane).unwrap();
+        assert_eq!(
+            counted, stored,
+            "the lane's usage row counts its rows and their stored bytes"
+        );
+        stored.0
     };
     let cap = crate::federation::facet_read::MAX_HELD_PER_SENDER;
     for frame in 0..10_u32 {
@@ -2159,6 +2245,47 @@ fn a_peer_holds_a_charged_capped_number_of_stamps_until_its_grant_goes() {
     let report = vault.maintain().run().unwrap();
     assert_eq!(report.held_facet_stamps_retired, cap);
     assert_eq!(held(vault), 0, "a revoked grant's stamps are retired");
+}
+
+/// Sol R10 F3 on #1432: maintain scans a held stamp while its grant does not
+/// confer, and the grant confers again before the stamp is removed (a pact
+/// healed, the peer holding the stamp again). The removal judges the grant
+/// again in its own transaction, so the live hold stays.
+#[test]
+fn a_hold_whose_grant_confers_again_before_its_removal_stays() {
+    let window_key = WindowKey::new("2026-05");
+    let (_dir, vault, grant_id) = test_vault_with_grant(entity_id(0x50));
+    let [peer, facet, row] = [1, 2, 3].map(|n| entity_id(0x50 + n));
+    put_row(&vault, facet, ENTITY_TYPE_FACET);
+    let live = create_window_doc("local", &window_key);
+    let ahead = create_window_doc("federation-peer", &window_key);
+    insert_edge(&ahead, row, EdgeKind::FacetOf, facet);
+    ahead.commit();
+    let update = ahead.export(ExportMode::all_updates()).unwrap();
+    let role = FederationAdmissionRole::Member;
+    import_from_peer(&vault, &live, &window_key, &update, (peer, grant_id), role);
+    let lane = format!("p{}", peer.to_hex());
+    let held = || {
+        let txn = vault.store.env.read_txn().unwrap();
+        crate::federation::facet_read::held_rows_under(&vault.store, &txn, &lane)
+            .unwrap()
+            .0
+    };
+    assert_eq!(held(), 1, "precondition: the stamp is held");
+
+    let judged = std::cell::Cell::new(0);
+    let now = vault.store.clock.now_recorded_at();
+    let retired = crate::federation::facet_read::retire_held_stamps(&vault, now, |_, grants| {
+        judged.set(judged.get() + 1);
+        Ok(if judged.get() == 1 {
+            std::collections::BTreeSet::new()
+        } else {
+            grants.clone()
+        })
+    })
+    .unwrap();
+    assert_eq!(retired, 0, "a hold whose grant confers again was retired");
+    assert_eq!(held(), 1);
 }
 
 /// OUT-OF-ORDER RESIDUE — the leg the admission drop alone cannot close, and

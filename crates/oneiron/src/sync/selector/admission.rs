@@ -1,5 +1,7 @@
 //! Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone rejection.
 
+use std::collections::BTreeSet;
+
 use loro::{CommitOptions, ExportMode, LoroDoc};
 #[cfg(feature = "sync")]
 use xxhash_rust::xxh3::xxh3_64;
@@ -157,12 +159,22 @@ impl AdmittedUpdate {
         hold_stamps(vault, key, (lane, None), &self.early.with_birth, false)
     }
 
-    /// After the update's import, the stamps whose rows it birthed
-    /// ([`release_born_stamps`]).
-    pub(crate) fn release(&self, vault: &Vault, key: &WindowKey) -> Result<Option<ReleasedStamps>> {
+    /// The rows the update brings whose births its import must watch.
+    pub(crate) fn birth_rows(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.births.iter().map(|(row, _)| *row)
+    }
+
+    /// After the update's import, the stamps on the rows that import birthed
+    /// (`born`, [`release_born_stamps`]).
+    pub(crate) fn release(
+        &self,
+        vault: &Vault,
+        key: &WindowKey,
+        born: &BTreeSet<EntityId>,
+    ) -> Result<Option<ReleasedStamps>> {
         match &self.lane {
             Some(lane) => {
-                release_born_stamps(vault, key, lane, &self.births, &self.early.with_birth)
+                release_born_stamps(vault, key, lane, &self.births, born, &self.early.with_birth)
             }
             None => Ok(None),
         }
@@ -180,9 +192,20 @@ pub(crate) struct StagedBirths {
 
 #[cfg(feature = "sync")]
 impl StagedBirths {
-    /// After the confirmation's import, the stamps whose rows it birthed.
-    pub(crate) fn release(&self, vault: &Vault, key: &WindowKey) -> Result<Option<ReleasedStamps>> {
-        release_born_stamps(vault, key, &self.lane, &self.births, &[])
+    /// The rows the confirmation's import must watch.
+    pub(crate) fn birth_rows(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.births.iter().map(|(row, _)| *row)
+    }
+
+    /// After the confirmation's import, the stamps on the rows that import
+    /// birthed (`born`).
+    pub(crate) fn release(
+        &self,
+        vault: &Vault,
+        key: &WindowKey,
+        born: &BTreeSet<EntityId>,
+    ) -> Result<Option<ReleasedStamps>> {
+        release_born_stamps(vault, key, &self.lane, &self.births, born, &[])
     }
 }
 

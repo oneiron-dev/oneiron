@@ -514,7 +514,8 @@ impl<'a> ExecutorStorage<'a> {
 /// A facet stamp puts its source in front of every reader narrowed to the
 /// facet, so a door's credential places only a row its lane reads, in a facet
 /// its Scope holds, judged in `txn`, the edge's own write transaction (Astra
-/// on #1432). Any other source is refused as a missing one is.
+/// on #1432). Any other stamp is refused naming no endpoint type, so the
+/// refusal says nothing about a target the lane may not read (Astra R9 F2).
 pub(crate) fn require_facet_placement_in(
     vault: &Vault,
     reader: &ScopedReadActorKey,
@@ -533,19 +534,15 @@ pub(crate) fn require_facet_placement_in(
     {
         return Ok(());
     }
-    Err(unplaceable(
-        src,
-        tgt,
-        crate::batch::stored_entity_type(&vault.store, txn, &tgt)?,
-    ))
+    Err(unplaceable(src, tgt))
 }
 
-/// The refusal a facet stamp onto a missing source gets.
-pub(crate) fn unplaceable(src: EntityId, tgt: EntityId, tgt_type: Option<u8>) -> crate::Error {
+/// The refusal a facet stamp a door's credential may not place gets.
+pub(crate) fn unplaceable(src: EntityId, tgt: EntityId) -> crate::Error {
     crate::Error::Registry(crate::error::RegistryError::InvalidFacetOfEdge {
         src,
         src_type: None,
         tgt,
-        tgt_type,
+        tgt_type: None,
     })
 }

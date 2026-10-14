@@ -1239,8 +1239,10 @@ fn facet_reader(
 /// of every reader narrowed to the facet, so a run whose door binds a
 /// credential over {work, home} places only a row that credential reads, in
 /// one of its own facets. It stamps a work EVENT into home, and neither a
-/// private EVENT into work nor the work EVENT into private: each is refused
-/// as a stamp onto a missing row is.
+/// private EVENT into work nor the work EVENT into private. Each refusal
+/// names no endpoint type, alike for a stored target and a missing one, so
+/// it tells the run nothing about a row its lane may not read (Astra R9 F2,
+/// R10 F2).
 #[test]
 fn a_door_credential_stamps_only_a_row_it_reads_into_its_own_facets() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -1279,13 +1281,20 @@ fn a_door_credential_stamps_only_a_row_it_reads_into_its_own_facets() -> Result<
     };
 
     stamp(shared, home)?;
-    for (src, tgt) in [(held, work), (shared, private)] {
+    let absent = EntityId::from_bytes([0xD5; 16]).expect("id");
+    for (src, tgt) in [
+        (held, work),
+        (shared, private),
+        (absent, work),
+        (absent, absent),
+    ] {
         let refused = stamp(src, tgt).expect_err("an unplaceable stamp is refused");
         assert!(
             matches!(
                 refused,
                 Error::Registry(crate::error::RegistryError::InvalidFacetOfEdge {
                     src_type: None,
+                    tgt_type: None,
                     ..
                 })
             ),

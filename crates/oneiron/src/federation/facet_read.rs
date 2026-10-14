@@ -4,6 +4,9 @@
 //! in one of them. MCP and every read lane judge a row here, so the two never
 //! disagree.
 
+#[cfg(feature = "sync")]
+use std::collections::BTreeSet;
+
 use super::record_scope::{MachineHistoryScope, scope_for_blob};
 use super::{ScopeAxis, ScopeId};
 use crate::batch::EntityMetadataHeader;
@@ -160,9 +163,10 @@ fn read_held(value: &[u8]) -> Option<(u64, Option<EntityId>, &[u8])> {
     Some((u64::from_be_bytes(*held_at), grant, edge))
 }
 
-/// The bytes one held row takes: its key and its value.
+/// The bytes one held row takes: its whole stored key, the table's prefix
+/// included, and its value (Sol R10 F1 on #1432).
 fn row_bytes(lane: &str, value: &[u8]) -> u64 {
-    (64 + lane.len() + value.len()) as u64
+    (PARKED_STAMP.decl().prefix.len() + 64 + lane.len() + value.len()) as u64
 }
 
 /// The rows `lane` holds and the bytes they take.
@@ -324,72 +328,88 @@ pub(crate) fn held_by(
     lane_usage(dbs, txn, lane)
 }
 
-/// Every held row under `lane`, counted one by one.
+/// Every held row under `lane`, counted one by one, and the bytes their
+/// stored keys and values take.
 #[cfg(all(test, feature = "sync"))]
 pub(crate) fn held_rows_under(
     dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
     lane: &str,
-) -> Result<u64> {
+) -> Result<(u64, u64)> {
     Ok(PARKED_STAMP
-        .scan_keys(dbs, txn, &[])?
+        .scan(dbs, txn)?
         .into_iter()
-        .filter(|key| key.2 == lane)
-        .count() as u64)
+        .filter(|(key, _)| key.2 == lane)
+        .fold((0, 0), |(rows, bytes), (key, value)| {
+            let stored = PARKED_STAMP.key_bytes(&key).len() + value.len();
+            (rows + 1, bytes + stored as u64)
+        }))
 }
 
 /// Retires each held stamp held [`HELD_STAMP_TTL_SECS`] or longer by `now`,
-/// held under a grant `confers` finds no longer conferring, or whose row does
-/// not decode; returns how many went. A row held again since the scan keeps
-/// its new hold.
+/// held under a grant `conferring` no longer returns, or whose row does not
+/// decode; returns how many went. Each is judged again, with its grant, in
+/// the transaction that removes it, so a hold renewed since the scan under a
+/// grant that confers again stays (Sol R10 F3 on #1432).
 #[cfg(feature = "sync")]
 pub(crate) fn retire_held_stamps(
     vault: &Vault,
     now: u64,
-    mut confers: impl FnMut(&EntityId) -> Result<bool>,
+    conferring: impl Fn(&heed::RoTxn<'_>, &BTreeSet<EntityId>) -> Result<BTreeSet<EntityId>>,
 ) -> Result<u64> {
-    let held = {
+    let candidates = {
         let txn = vault.store.env.read_txn()?;
-        PARKED_STAMP.scan(&vault.store, &txn)?
+        retiring(
+            &txn,
+            now,
+            PARKED_STAMP.scan(&vault.store, &txn)?,
+            &conferring,
+        )?
     };
-    let mut verdicts = std::collections::BTreeMap::new();
-    let mut retired = Vec::new();
-    for (key, value) in held {
-        let retire = match read_held(&value) {
-            None => true,
-            Some((held_at, grant, _)) => {
-                now.saturating_sub(held_at) >= HELD_STAMP_TTL_SECS
-                    || match grant {
-                        Some(grant) => match verdicts.get(&grant) {
-                            Some(known) => !known,
-                            None => {
-                                let verdict = confers(&grant)?;
-                                verdicts.insert(grant, verdict);
-                                !verdict
-                            }
-                        },
-                        None => false,
-                    }
-            }
-        };
-        if retire {
-            retired.push((key, value));
-        }
-    }
-    if retired.is_empty() {
+    if candidates.is_empty() {
         return Ok(0);
     }
     vault.with_write_txn_grouped(|wtxn| {
+        let mut rows = Vec::new();
+        for key in candidates {
+            if let Some(value) = PARKED_STAMP.get(&vault.store, wtxn, &key)? {
+                rows.push((key, value));
+            }
+        }
         let mut count = 0;
-        for (key, value) in &retired {
-            if PARKED_STAMP.get(&vault.store, wtxn, key)?.as_ref() == Some(value)
-                && remove_held(&vault.store, wtxn, key)?
-            {
+        for key in retiring(wtxn, now, rows, &conferring)? {
+            if remove_held(&vault.store, wtxn, &key)? {
                 count += 1;
             }
         }
         Ok(count)
     })
+}
+
+/// The keys among `rows` that retire by `now`, their grants judged in `txn`.
+#[cfg(feature = "sync")]
+fn retiring(
+    txn: &heed::RoTxn<'_>,
+    now: u64,
+    rows: Vec<((HexId, HexId, String), Vec<u8>)>,
+    conferring: &impl Fn(&heed::RoTxn<'_>, &BTreeSet<EntityId>) -> Result<BTreeSet<EntityId>>,
+) -> Result<Vec<(HexId, HexId, String)>> {
+    let grants = rows
+        .iter()
+        .filter_map(|(_, value)| read_held(value)?.1)
+        .collect();
+    let live = conferring(txn, &grants)?;
+    Ok(rows
+        .into_iter()
+        .filter(|(_, value)| match read_held(value) {
+            None => true,
+            Some((held_at, grant, _)) => {
+                now.saturating_sub(held_at) >= HELD_STAMP_TTL_SECS
+                    || grant.is_some_and(|grant| !live.contains(&grant))
+            }
+        })
+        .map(|(key, _)| key)
+        .collect())
 }
 
 impl Vault {

@@ -342,7 +342,7 @@ impl HostSelfDispatcher<'_> {
             // A room's rows include overlay rows a door's lane cannot name, so
             // a session-bound run places no facet stamp on a door's key, as
             // its narrowed search is refused.
-            return Err(unplaceable(call.src, call.tgt, None));
+            return Err(unplaceable(call.src, call.tgt));
         }
         let admission = self.non_candidate_code_emission_admission()?;
         if matches!(
