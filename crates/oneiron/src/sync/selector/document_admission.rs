@@ -231,6 +231,14 @@ impl StoredSelection<'_, '_> {
         else {
             return Ok(None);
         };
+        if !super::scope::settled_position_selected(
+            &id,
+            &raw,
+            &record,
+            self.admission.position.as_scope(),
+        )? {
+            return Ok(None);
+        }
         // Role verbs gate peer writes on top of the stored authority scope.
         if self.admission.verb == "write"
             && !crate::federation::grant_allows_content_write(&self.admission.grant, &record)
