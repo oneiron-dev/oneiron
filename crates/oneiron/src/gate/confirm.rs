@@ -315,6 +315,12 @@ impl Vault {
                         .delete_pending_gate_consent_in_txn(wtxn, &binding.claim_id)?;
                     self.store
                         .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
+                    crate::reaction::release_cleared_reaction_in_txn(
+                        self,
+                        wtxn,
+                        binding.claim_id,
+                        &body,
+                    )?;
                     Ok(Ok(CriticalWriteConfirmResolution::Cleared))
                 }
                 CriticalWriteConfirmDisposition::Decline => {
