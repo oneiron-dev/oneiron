@@ -43,13 +43,16 @@ pub(super) fn fold_entry_state(
     // have separate hashes and fold under their own ancestry, not a fork alarm.
     // A machine removal is terminal on every replica: a sibling that arrived
     // first never refuses it, so it stands in the log, where a later edit
-    // finds it among its parents (Sol P2 round 3, F3).
-    if !super::revoke_proof::removes_machine(&entry.op)
-        && context
-            .sequence_floors
-            .and_then(|floors| floors.get(&hash))
-            .is_some_and(|floor| entry.seq < *floor)
-    {
+    // finds it among its parents (Sol P2 round 3, F3). A restriction still
+    // lands (Astra #1430): a revision that leaves a known machine not the
+    // owner's, and a world edit, keep their restrictive effect when a later
+    // row of their signer arrived first, as restriction only.
+    let floor_refused = context
+        .sequence_floors
+        .and_then(|floors| floors.get(&hash))
+        .is_some_and(|floor| entry.seq < *floor);
+    let restriction_only = floor_refused && !super::revoke_proof::removes_machine(&entry.op);
+    if restriction_only && !lands_restriction_only(&entry.op) {
         return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
 
@@ -150,9 +153,14 @@ pub(super) fn fold_entry_state(
     // Signed by a machine's install key, never a roster key: the owner's
     // signed "yours" mark is what makes the machine speak for the owner.
     if let AuthorityOp::WorldPrivacy(edit) = &entry.op {
-        if let Err(issue) =
-            apply_world_privacy(&mut state, entry, edit, hash, context.machine_standing)
-        {
+        if let Err(issue) = apply_world_privacy(
+            &mut state,
+            entry,
+            edit,
+            hash,
+            context.machine_standing,
+            restriction_only,
+        ) {
             return EntryFold::Invalid(issue);
         }
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
@@ -244,7 +252,14 @@ pub(super) fn fold_entry_state(
         return EntryFold::Ready(state);
     }
     if let AuthorityOp::MachineProfile(profile) = &entry.op {
-        if let Err(issue) = apply_machine_profile(&mut state, &signer, profile, hash, context) {
+        if let Err(issue) = apply_machine_profile(
+            &mut state,
+            &signer,
+            profile,
+            hash,
+            context,
+            restriction_only,
+        ) {
             return EntryFold::Invalid(issue);
         }
         state.seqs.insert(signer, entry.seq);
@@ -290,6 +305,16 @@ pub(super) fn fold_entry_state(
 /// them: it is the host enrolling an engine MACHINE writer (ARCH-0053 seeds
 /// system actors through the authority registry at bootstrap), and an agent
 /// key holds no consent, so it widens no authority.
+/// A row a sequence floor refuses only to restriction: a world edit, or a
+/// machine revision that leaves the machine not the owner's (Astra #1430).
+fn lands_restriction_only(op: &AuthorityOp) -> bool {
+    match op {
+        AuthorityOp::WorldPrivacy(_) => true,
+        AuthorityOp::MachineProfile(profile) => !profile.says_mine(),
+        _ => false,
+    }
+}
+
 pub(super) fn op_is_retired_device_op(op: &AuthorityOp) -> bool {
     match op {
         AuthorityOp::EnrollDevice { device } => device.roles != ROLE_AGENT,

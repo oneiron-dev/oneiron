@@ -379,6 +379,9 @@ pub(super) struct FrontierEdit {
     mark: AuthorityEntryHash,
     /// The machine's revisions in its mark's own past.
     prior: Arc<BTreeSet<AuthorityEntryHash>>,
+    /// A later row of its signer reached this replica first, so it landed as
+    /// restriction only: it never counts at full strength (Astra #1430).
+    restriction_only: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -418,14 +421,16 @@ fn is_mine(state: &FoldState, machine: EntityId) -> bool {
 /// and this install counted the machine when the edit was made. A head that
 /// still says "yours" took nothing away: when it stops standing for another
 /// reason (its signer found in a host's custody) it acknowledges no edit (Sol
-/// P2 round 3, F2).
+/// P2 round 3, F2). An edit that landed as restriction only past a sequence
+/// floor never counts at full strength (Astra #1430).
 fn full_strength(
     state: &FoldState,
     hash: &AuthorityEntryHash,
     edit: &FrontierEdit,
     counting: Counting,
 ) -> bool {
-    (counting == Counting::Roster || !edit.narrow_only)
+    !edit.restriction_only
+        && (counting == Counting::Roster || !edit.narrow_only)
         && derived_machine(state, edit.machine).is_some_and(|folded| {
             folded.is_mine()
                 || (!folded.conflicted
@@ -507,6 +512,7 @@ pub(super) fn apply_world_privacy(
     edit: &WorldPrivacyEdit,
     hash: AuthorityEntryHash,
     standing: MachineStanding<'_>,
+    restriction_only: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     if !entry.cosigns.is_empty() || edit.world == crate::claim::base_world_id() {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
@@ -554,6 +560,7 @@ pub(super) fn apply_world_privacy(
             narrow_only,
             mark,
             prior,
+            restriction_only,
         }),
     );
     Ok(())

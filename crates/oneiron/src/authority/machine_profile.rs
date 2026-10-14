@@ -87,6 +87,9 @@ pub(super) struct Revision {
     replaced_mark: Option<AuthorityEntryHash>,
     /// The machine's revisions in this one's own past.
     past: Arc<BTreeSet<AuthorityEntryHash>>,
+    /// Whether it may acknowledge an edit: not when it landed past this
+    /// replica's sequence floor as restriction only (Astra #1430).
+    acknowledges: bool,
 }
 
 impl Revision {
@@ -106,6 +109,7 @@ impl Revision {
                 && left.replaced_mark == right.replaced_mark,
             replaced_mark: left.replaced_mark.min(right.replaced_mark),
             past: Arc::new(left.past.intersection(&right.past).copied().collect()),
+            acknowledges: left.acknowledges && right.acknowledges,
         })
     }
 }
@@ -166,6 +170,7 @@ pub(super) fn apply_machine_profile(
     profile: &MachineProfile,
     hash: AuthorityEntryHash,
     context: FoldContext<'_>,
+    restriction_only: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let Some(device) = state
         .roster
@@ -191,6 +196,10 @@ pub(super) fn apply_machine_profile(
         return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     let chain = roster_chain(state, profile.machine);
+    // What a revision past the floor restricts is a machine already known.
+    if restriction_only && chain.is_none() {
+        return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
+    }
     let head = chain.map(|chain| &chain.head);
     if key_is_authority(state, &profile.machine_key)
         || machine_is_actor(state, profile.machine)
@@ -213,6 +222,7 @@ pub(super) fn apply_machine_profile(
                 .filter(|folded| folded.profile.says_mine())
                 .map(|folded| folded.entry),
             past,
+            acknowledges: !restriction_only,
         }),
     );
     let folded = FoldedMachine {
@@ -290,7 +300,8 @@ pub(super) fn mark_past(
 /// this history: its signer in no host's custody, and no divergent revision
 /// of its number. Every revision this history holds outside the mark's own
 /// past (`prior`) that leaves the machine not the owner's must have been
-/// signed by a key the owner holds, have seen the edit, and, when it took a
+/// signed by a key the owner holds, have landed in full rather than as
+/// restriction only past a sequence floor, have seen the edit, and, when it took a
 /// "yours" revision away, have taken one that still stands; and there must be
 /// one. A revision that saw nothing, a host's removal, or a mark found later
 /// not to stand narrows the edit; a "yours" text or the order in which
@@ -323,7 +334,8 @@ pub(super) fn acknowledged(
     stands(mark)
         && takers.peek().is_some()
         && takers.all(|(_, revision)| {
-            revision.owner_held
+            revision.acknowledges
+                && revision.owner_held
                 && !custodial(&revision.signer)
                 && revision.profile.seen_world_edits.contains(edit)
                 && revision.replaced_mark.as_ref().is_none_or(&stands)
