@@ -1397,6 +1397,14 @@ fn ask_authority_schema_matches_the_serialized_scope_not_its_private_fields() ->
 /// Agent A, an auto-ceiling asker holding one live TASK whose spec binds the
 /// fixture's governance class over both people.
 fn governed_agent(fixture: &RuledAskFixture) -> Result<(EntityId, TaskAskClass)> {
+    governed_agent_in(fixture, None)
+}
+
+/// An auto-ceiling agent assigned one governed TASK, born in `world`.
+fn governed_agent_in(
+    fixture: &RuledAskFixture,
+    world: Option<EntityId>,
+) -> Result<(EntityId, TaskAskClass)> {
     let agent = EntityId::now();
     fixture.vault.put_entity(
         &agent,
@@ -1420,7 +1428,7 @@ fn governed_agent(fixture: &RuledAskFixture) -> Result<(EntityId, TaskAskClass)>
         &rmp_serde::to_vec_named(&manifest)?,
     )?;
     let class = fixture.policy(true);
-    assign_governed_task(fixture, agent, &class)?;
+    assign_governed_task(fixture, agent, &class, world)?;
     Ok((agent, class))
 }
 
@@ -1428,20 +1436,26 @@ fn assign_governed_task(
     fixture: &RuledAskFixture,
     agent: EntityId,
     class: &TaskAskClass,
+    world: Option<EntityId>,
 ) -> Result<()> {
     let value = rmpv::decode::read_value(&mut rmp_serde::to_vec_named(class)?.as_slice())?;
-    fixture
-        .vault
-        .memory(fixture.owner, EdgeActorClass::Human)
-        .tasks_create(
-            &TaskCreateSpec::new(
-                rmpv::Value::Map(vec![(rmpv::Value::from("ask_class"), value)]),
-                None,
-                None,
-                Some(1_000),
-            )
-            .with_assignee(TaskAssignee::Peer { actor_ref: agent }),
-        )?;
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let memory = match world {
+        Some(world) => memory.with_birth_position(crate::federation::record_scope::BirthPosition {
+            world: Some(world),
+            facet: None,
+        }),
+        None => memory,
+    };
+    memory.tasks_create(
+        &TaskCreateSpec::new(
+            rmpv::Value::Map(vec![(rmpv::Value::from("ask_class"), value)]),
+            None,
+            None,
+            Some(1_000),
+        )
+        .with_assignee(TaskAssignee::Peer { actor_ref: agent }),
+    )?;
     Ok(())
 }
 
@@ -1509,7 +1523,7 @@ fn omitted_task_ref_cannot_admit_proceed_on_a_governed_task() -> Result<()> {
 fn omitted_task_ref_is_refused_when_two_governed_tasks_could_bind() -> Result<()> {
     let fixture = RuledAskFixture::new(2)?;
     let (agent, class) = governed_agent(&fixture)?;
-    assign_governed_task(&fixture, agent, &class)?;
+    assign_governed_task(&fixture, agent, &class, None)?;
     let mut spec = fixture.all();
     spec.default = TaskAskDefault::Hold;
     let refused = fixture
@@ -3296,6 +3310,62 @@ fn an_ask_off_this_device_reads_no_device_local_context_claim() -> Result<()> {
         .at(CallerLocality::OffDevice)
         .tasks_ask(&with_context("context-again"));
     assert!(asked.is_err(), "{asked:?}");
+    Ok(())
+}
+
+/// Wonder R10 F1: an ask that omits `task_ref` takes its class from the
+/// caller's governed TASK, so its group keeps that TASK and each read of the
+/// ask through its handle lists it. Once the TASK's world is device-local, a
+/// caller off this device reads the ask as no ask; on this device it still
+/// reads it.
+#[test]
+fn an_ask_off_this_device_takes_no_class_from_a_device_local_governed_task() -> Result<()> {
+    use crate::claim::CallerLocality;
+    let fixture = RuledAskFixture::new(2)?;
+    let world = EntityId::now();
+    fixture.vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"world",
+    )?;
+    let (agent, class) = governed_agent_in(&fixture, Some(world))?;
+    let mut spec = fixture.all();
+    spec.default = TaskAskDefault::Hold;
+    let receipt = fixture
+        .vault
+        .memory(agent, EdgeActorClass::Agent)
+        .tasks_ask(&spec)?;
+    let txn = fixture.vault.store.env.read_txn()?;
+    let group = super::ask_record::read_group(&fixture.vault, &txn, receipt.handle.group_ref)?
+        .ok_or("stored ask group")?;
+    drop(txn);
+    assert_eq!(group.context_class, Some(class));
+    let governed = group.governed_task.ok_or("the governed TASK is kept")?;
+    let status = |locality| {
+        let producers = crate::memory::ProducerRows::default();
+        let status = fixture
+            .vault
+            .memory(agent, EdgeActorClass::Agent)
+            .at(locality)
+            .listing_producers(&producers)
+            .tasks_ask_status(receipt.handle);
+        (
+            status.map_err(|error| format!("{error:?}")),
+            producers.take(),
+        )
+    };
+    let (portable, listed) = status(CallerLocality::OffDevice);
+    let portable = portable?;
+    assert!(listed.contains(&governed), "{listed:?}");
+
+    fixture.vault.set_world_device_only(world, true)?;
+    let (kept, listed) = status(CallerLocality::OffDevice);
+    assert!(kept.is_err(), "{kept:?}");
+    assert!(listed.contains(&governed), "{listed:?}");
+    let (here, _) = status(CallerLocality::OnDevice);
+    assert_eq!(here?, portable);
     Ok(())
 }
 

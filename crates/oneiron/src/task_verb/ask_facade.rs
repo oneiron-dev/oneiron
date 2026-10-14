@@ -38,7 +38,8 @@ impl Memory<'_> {
             }
             // Revocation and admission observe the SAME snapshot.
             let holders = self.ask_holders_in_txn(txn, input)?;
-            let context_class = self.ask_class_in_txn(txn, input.task_ref)?;
+            let bound = self.ask_class_in_txn(txn, input.task_ref)?;
+            let context_class = bound.as_ref().map(|(_, class)| class.clone());
             let effective = input.effective(
                 &holders.iter().copied().collect(),
                 now,
@@ -167,6 +168,9 @@ impl Memory<'_> {
                 requested: input.clone(),
                 effective,
                 context_class,
+                governed_task: bound
+                    .filter(|_| input.task_ref.is_none())
+                    .map(|(task, _)| task),
                 question_digest,
                 link_verify_key: ask_record::mint_link_key(self.vault(), txn, group_ref)?,
                 members,
@@ -283,11 +287,13 @@ impl Memory<'_> {
         principal.ok_or_else(|| MemoryError::bad_request("agent has no verified human principal"))
     }
 
+    /// The class an ask naming `task` binds, with the TASK it came from:
+    /// `task`, or this actor's governed TASK when the ask omits it.
     pub(super) fn ask_class_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         task: Option<EntityId>,
-    ) -> MemoryResult<Option<TaskAskClass>> {
+    ) -> MemoryResult<Option<(EntityId, TaskAskClass)>> {
         let task = match task {
             Some(task) => task,
             None => match self.governed_task_in_txn(txn)? {
@@ -326,7 +332,7 @@ impl Memory<'_> {
         let bytes = rmp_serde::to_vec_named(value)
             .map_err(|_| MemoryError::bad_request("invalid task ask class binding"))?;
         rmp_serde::from_slice(&bytes)
-            .map(Some)
+            .map(|class| Some((task, class)))
             .map_err(|_| MemoryError::bad_request("invalid task ask class binding"))
     }
 

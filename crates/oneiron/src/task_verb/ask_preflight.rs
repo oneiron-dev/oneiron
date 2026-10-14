@@ -21,7 +21,8 @@ impl Memory<'_> {
         let effective = input.effective(
             &holders.iter().copied().collect(),
             now,
-            self.ask_class_in_txn(&txn, input.task_ref)?,
+            self.ask_class_in_txn(&txn, input.task_ref)?
+                .map(|(_, class)| class),
         )?;
         self.ask_question_in(&txn, &effective.what)?;
         if super::rate_limit::task_actor_ceiling(

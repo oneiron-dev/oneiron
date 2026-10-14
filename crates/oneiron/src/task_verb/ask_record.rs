@@ -54,6 +54,9 @@ pub(super) struct AskGroup {
     pub requested: super::TaskAskSpec,
     pub effective: super::TaskAskSpec,
     pub context_class: Option<super::TaskAskClass>,
+    /// The governed TASK an ask that omits `task_ref` took its class from.
+    #[serde(default)]
+    pub governed_task: Option<EntityId>,
     pub question_digest: [u8; 32],
     pub link_verify_key: [u8; 32],
     pub members: Vec<AskMember>,
@@ -284,7 +287,8 @@ impl crate::memory::Memory<'_> {
     /// each member TASK, the TASK its class came from and its question and
     /// context rows are listed as producers of what the call answers from the
     /// group. Off this device a group with any such row a device-local world
-    /// keeps reads as no group.
+    /// keeps reads as no group, and so does one whose class came from a
+    /// governed TASK it never recorded while any world is device-local.
     pub(super) fn ask_group_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -299,6 +303,7 @@ impl crate::memory::Memory<'_> {
             .iter()
             .filter_map(|member| EntityId::from_hex(&member.task).ok())
             .chain(group.requested.task_ref)
+            .chain(group.governed_task)
             .chain(
                 std::iter::once(what.reference)
                     .chain(what.context_refs.iter().copied())
@@ -308,6 +313,12 @@ impl crate::memory::Memory<'_> {
         self.produced_from(rows.iter().copied());
         let store = &self.vault().store;
         let kept = crate::settings::device_local_worlds_at(store, txn, self.locality())?;
+        let unrecorded = group.context_class.is_some()
+            && group.requested.task_ref.is_none()
+            && group.governed_task.is_none();
+        if unrecorded && !kept.is_empty() {
+            return Ok(None);
+        }
         for row in &rows {
             if crate::settings::device_local_keeps_among(store, txn, &kept, row)? {
                 return Ok(None);
