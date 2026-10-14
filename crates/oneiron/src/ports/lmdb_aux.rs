@@ -16,7 +16,14 @@ impl DependencyIndex for Vault {
         regenerated_at: u64,
         sources: &[SourceSpan],
     ) -> Result<bool> {
-        super::regeneration::complete(&self.store, txn, dependent, regenerated_at, sources)
+        let cleared =
+            super::regeneration::complete(&self.store, txn, dependent, regenerated_at, sources)?;
+        // A stale mark ran the Dreamer's erase hook; the row it clears says
+        // its words again, a publication of them.
+        if cleared {
+            crate::dreamer_wake::mark_on_publication_in_txn(&self.store, txn, dependent)?;
+        }
+        Ok(cleared)
     }
 
     fn port_dependency_put(

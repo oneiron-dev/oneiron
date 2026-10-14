@@ -291,7 +291,7 @@ fn worlds_readdir_off_this_device_names_no_device_local_world() -> Result<()> {
         test_id(0x91),
         encode_policy_manifest(vec![core_read_world_grant("reader", world)]),
     )?;
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
 
     let names = |locality| -> Result<String> {
         let reader = vault.scoped_read(

@@ -11,6 +11,7 @@ mod tombstone_pass;
 use std::collections::HashSet;
 
 use super::bridge::Materializer;
+use super::loro_support::TombstoneIndex;
 use super::quarantine;
 use super::queue::scrub_receiver_outbox_on_remote_hard_delete_in_txn;
 use super::types::WindowKey;
@@ -29,7 +30,8 @@ struct RematCtx<'a> {
     trusted: Option<&'a crate::recovery::CanonicalSnapshot>,
     entities_map: LoroMap,
     edges_map: LoroMap,
-    tombstones_map: LoroMap,
+    /// The tombstones map indexed once for every pass of this rematerialization (H15).
+    tombstones: TombstoneIndex,
 }
 
 /// Cross-pass mutable ledgers: the `marked` snapshot plus the accumulators
@@ -79,6 +81,7 @@ fn forward_with_recovery(
     window_key: &WindowKey,
     trusted: Option<&crate::recovery::CanonicalSnapshot>,
 ) -> Result<u32> {
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     if window_key.world().is_some() {
         let mut witnesses = Vec::new();
         doc.get_map("retained_claim_worlds").for_each(|raw, value| {
@@ -105,6 +108,7 @@ fn forward_with_recovery(
                 vault,
                 &txn,
                 doc,
+                &tombstones,
                 &id,
                 &blob,
                 window_key,
@@ -145,7 +149,6 @@ fn forward_with_recovery(
     let lease_vault_id = materializer.lease_vault_id();
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
-    let tombstones_map = doc.get_map("tombstones");
 
     // Entity-scoped retry markers pending for this window, loaded up front:
     // the entity/edge passes discharge a marker only via an actual healing
@@ -163,7 +166,7 @@ fn forward_with_recovery(
         trusted,
         entities_map,
         edges_map,
-        tombstones_map,
+        tombstones,
     };
     let mut ledger = RematLedger {
         marked,
@@ -208,6 +211,7 @@ fn forward_with_recovery(
                     vault,
                     txn,
                     doc,
+                    &ctx.tombstones,
                     &id,
                     &blob,
                     window_key,
@@ -226,7 +230,7 @@ fn forward_with_recovery(
             Ok(())
         })?;
     }
-    crate::recovery::materialize_retained_shells(vault, doc)?;
+    crate::recovery::materialize_retained_shells(vault, doc, &ctx.tombstones)?;
     if let Some(snapshot) = trusted.filter(|_| window_key.world().is_some()) {
         // The validated canonical artifact binds every retained soft shell
         // to this world. Persist that address before the edge pass and the

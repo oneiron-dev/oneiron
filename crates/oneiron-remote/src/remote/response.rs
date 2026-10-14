@@ -79,6 +79,41 @@ pub(super) fn read_capped(
     Ok(buffer)
 }
 
+/// Decodes an export straight from the wire, reading at most `limit` bytes.
+///
+/// An export is one document that may pass the ordinary success ceiling, so
+/// it streams into its typed result with no second whole-body buffer. It is
+/// still finite: a `Content-Length` over `limit` is refused before the body
+/// is read, and the body goes through `take(limit + 1)`, so a peer that keeps
+/// sending is cut off one byte past the limit whatever its header said.
+pub(super) fn read_export<R: DeserializeOwned>(
+    response: reqwest::blocking::Response,
+    status: reqwest::StatusCode,
+    limit: usize,
+) -> Result<R, MemoryError> {
+    let too_large = || {
+        transport_error(format!(
+            "the server's export exceeded the {limit}-byte read ceiling"
+        ))
+    };
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(too_large());
+    }
+    let mut reader = response.take(limit as u64 + 1);
+    let decoded = serde_json::from_reader(&mut reader);
+    if reader.limit() == 0 {
+        return Err(too_large());
+    }
+    decoded.map_err(|error| {
+        transport_error(format!(
+            "the server answered {status} for export with an incomplete or invalid export: {error}"
+        ))
+    })
+}
+
 /// Rebuilds the engine's refusal from a failing response, losslessly.
 ///
 /// A body that does not parse as the envelope becomes a transport error whose

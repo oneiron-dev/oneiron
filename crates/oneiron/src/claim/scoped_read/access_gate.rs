@@ -7,6 +7,7 @@ use crate::error::Result;
 use crate::federation::Scope;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY};
 use crate::store::Store;
+use std::cell::RefCell;
 
 fn private_scope(scope: Option<&rmpv::Value>) -> bool {
     let Some(scope) = scope else { return false };
@@ -31,7 +32,13 @@ pub(crate) fn claim_access_axes(body: &ClaimBody) -> (Option<EntityId>, bool) {
     (body.rel, private_scope(body.scope.as_ref()))
 }
 
-impl ScopedRead<'_> {
+/// The relationship authority the row checks of one read share in its one
+/// snapshot: loaded at the first row that needs it, then reused, so a batch
+/// read resolves the reader's grants and memberships once, not per row.
+#[derive(Default)]
+pub(super) struct HeldAuthority<'v>(RefCell<Option<AccessContext<'v>>>);
+
+impl<'v> ScopedRead<'v> {
     /// Persist grant time before the read snapshot, never inside it. Inside
     /// a room turn, or with peer reads, each peer's access grants are judged
     /// at that time too, and the snapshot may hold a member who joined after
@@ -88,6 +95,7 @@ impl ScopedRead<'_> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
+        authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
         if !self.relationship_gated_in(txn)? {
             return Ok(true);
@@ -102,8 +110,14 @@ impl ScopedRead<'_> {
         if let RelationshipRead::Decided(allowed) = read {
             return Ok(allowed);
         }
-        let context = AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?;
-        Ok(read.allowed_by(&context))
+        let mut held = authority.0.borrow_mut();
+        let context = match held.take() {
+            Some(context) => context,
+            None => AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?,
+        };
+        let allowed = read.allowed_by(&context);
+        *held = Some(context);
+        Ok(allowed)
     }
 }
 
