@@ -259,7 +259,7 @@ impl AiHandle {
                     Ok(pass) if pass.more => {}
                     Ok(_) => break,
                     Err(error) => {
-                        tracing::warn!(%error, "sieve backlog pass failed");
+                        tracing::warn!(kind = ?error.kind(), "sieve backlog pass failed");
                         break;
                     }
                 }
@@ -405,7 +405,10 @@ impl AiHost {
         if let Some(drain) = sieve
             && let Err(error) = drain.task.await
         {
-            tracing::warn!(%error, "sieve backlog drain did not stop cleanly");
+            tracing::warn!(
+                panicked = error.is_panic(),
+                "sieve backlog drain did not stop cleanly"
+            );
         }
         self.handle.status.update(|status| {
             for work in [&mut status.dreamer, &mut status.workflows] {
