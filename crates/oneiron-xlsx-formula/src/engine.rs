@@ -45,6 +45,13 @@ pub const CORPUS_SHEET: &str = "S";
 /// workbook materializes it, whoever the caller is.
 pub const MAX_READ_RANGE_CELLS: usize = 4096;
 
+/// The largest sheet extent (last row times last column) one
+/// [`RecalcEngine::evaluate`] may stage its anchor and setup cells in. The
+/// workbook allocates storage for the whole rectangle up to the farthest cell
+/// it writes, so one cell at `XFD1048576` would cost gigabytes; the formula
+/// corpus stays within 128 cells.
+pub const MAX_STAGED_EXTENT_CELLS: u64 = 1 << 20;
+
 pub use crate::calc::{
     CalcReport as RecalcReport, CalcSetup as StagedValue, CalcValue as CellValue, EngineId,
     RecalcEngine,
@@ -113,6 +120,7 @@ impl RecalcEngine for FormualizerEngine {
         anchor: &str,
         read_range: Option<&str>,
     ) -> Result<RecalcReport> {
+        check_addresses(setup, anchor, read_range)?;
         crate::context::inspect_formula(formula)?;
         for value in setup.values() {
             if let StagedValue::Formula(expression) = value {
@@ -158,23 +166,7 @@ impl RecalcEngine for FormualizerEngine {
             .map_err(|error| FormulaError::Engine(error.to_string()))?;
         let grid = read_range
             .map(|range| {
-                let (start, end) = range
-                    .split_once(':')
-                    .ok_or(FormulaError::InvalidAddress("bad read range"))?;
-                let (start_row, start_col, _, _) = parse_a1_1based(start)
-                    .map_err(|_| FormulaError::InvalidAddress("bad read range"))?;
-                let (end_row, end_col, _, _) = parse_a1_1based(end)
-                    .map_err(|_| FormulaError::InvalidAddress("bad read range"))?;
-                let address =
-                    RangeAddress::new(CORPUS_SHEET, start_row, start_col, end_row, end_col)
-                        .map_err(|_| FormulaError::InvalidAddress("bad read range"))?;
-                if u64::from(address.width()) * u64::from(address.height())
-                    > MAX_READ_RANGE_CELLS as u64
-                {
-                    return Err(FormulaError::InvalidAddress(
-                        "read range over the cell limit",
-                    ));
-                }
+                let address = read_range_address(range)?;
                 Ok::<_, FormulaError>(
                     workbook
                         .read_range(&address)
@@ -190,6 +182,50 @@ impl RecalcEngine for FormualizerEngine {
             grid,
         })
     }
+}
+
+/// Check every address before a workbook exists: the anchor and setup cells
+/// must parse and stay within [`MAX_STAGED_EXTENT_CELLS`], and the read range
+/// within [`MAX_READ_RANGE_CELLS`].
+fn check_addresses(
+    setup: &BTreeMap<String, StagedValue>,
+    anchor: &str,
+    read_range: Option<&str>,
+) -> Result<()> {
+    let cell = |address: &str, reason| {
+        parse_a1_1based(address)
+            .map(|(row, col, _, _)| (row, col))
+            .map_err(|_| FormulaError::InvalidAddress(reason))
+    };
+    let (mut rows, mut cols) = cell(anchor, "bad anchor cell")?;
+    for address in setup.keys() {
+        let (row, col) = cell(address, "bad setup cell")?;
+        rows = rows.max(row);
+        cols = cols.max(col);
+    }
+    if u64::from(rows) * u64::from(cols) > MAX_STAGED_EXTENT_CELLS {
+        return Err(FormulaError::InvalidAddress(
+            "staged cells over the extent limit",
+        ));
+    }
+    read_range.map(read_range_address).transpose()?;
+    Ok(())
+}
+
+/// The read range's address, refused over [`MAX_READ_RANGE_CELLS`].
+fn read_range_address(range: &str) -> Result<RangeAddress> {
+    let bad = || FormulaError::InvalidAddress("bad read range");
+    let (start, end) = range.split_once(':').ok_or_else(bad)?;
+    let (start_row, start_col, _, _) = parse_a1_1based(start).map_err(|_| bad())?;
+    let (end_row, end_col, _, _) = parse_a1_1based(end).map_err(|_| bad())?;
+    let address = RangeAddress::new(CORPUS_SHEET, start_row, start_col, end_row, end_col)
+        .map_err(|_| bad())?;
+    if u64::from(address.width()) * u64::from(address.height()) > MAX_READ_RANGE_CELLS as u64 {
+        return Err(FormulaError::InvalidAddress(
+            "read range over the cell limit",
+        ));
+    }
+    Ok(address)
 }
 
 /// Stage one literal setup cell, mapping upstream failures to the seam error.
@@ -261,6 +297,52 @@ mod tests {
             let cells: usize = grid.expect("grid").iter().map(Vec::len).sum();
             assert_eq!(cells, MAX_READ_RANGE_CELLS);
         }
+    }
+
+    #[test]
+    fn evaluate_refuses_a_far_cell_before_the_workbook_allocates_up_to_it() {
+        // C11 (Sol r1): one cell at the sheet's far corner made the workbook
+        // allocate every row of every column up to it, 16 GiB, before the
+        // read range was checked.
+        let mut engine = FormualizerEngine::new();
+        let over = Err(FormulaError::InvalidAddress(
+            "staged cells over the extent limit",
+        ));
+        let far = BTreeMap::from([("XFD1048576".to_owned(), StagedValue::Number(1.0))]);
+        assert_eq!(engine.evaluate(&far, "=1", "A1", Some("A1:A1")), over);
+        assert_eq!(
+            engine.evaluate(&BTreeMap::new(), "=1", "XFD1048576", None),
+            over
+        );
+        assert_eq!(
+            engine.evaluate(&BTreeMap::new(), "=1", "B1048576", None),
+            over
+        );
+        // A sheet as wide or as tall as Excel's still stages its far cell.
+        for anchor in ["A1048576", "XFD64"] {
+            let report = engine.evaluate(&BTreeMap::new(), "=1", anchor, None);
+            assert_eq!(
+                report.expect("within the extent").value,
+                CellValue::Number(1.0)
+            );
+        }
+        // The corpus case with the widest extent (WRAPROWS_2: 31 rows by 4
+        // columns) still evaluates and reads back its spill.
+        let setup = BTreeMap::from(
+            [("A1", 1.0), ("B1", 2.0), ("C1", 3.0), ("D1", 4.0)]
+                .map(|(cell, value)| (cell.to_owned(), StagedValue::Number(value))),
+        );
+        let report = engine
+            .evaluate(&setup, "=WRAPROWS(A1:D1,2)", "A30", Some("A30:B31"))
+            .expect("corpus case");
+        let number = CellValue::Number;
+        assert_eq!(
+            report.grid,
+            Some(vec![
+                vec![number(1.0), number(2.0)],
+                vec![number(3.0), number(4.0)]
+            ])
+        );
     }
 
     #[test]
