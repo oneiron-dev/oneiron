@@ -6,12 +6,19 @@
 //! and route, so a host may serve each on its own backend, under its own run.
 //! A role the host routes nowhere calls the executor's own backend, as a
 //! one-model host does.
+//!
+//! Every call of a role names its reasoning level, never "no level": a local
+//! server reads an absent level as its own default, its highest.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use crate::Vault;
+use crate::error::Result;
 use crate::llm::manifest::ModelRole;
+use crate::llm::seat::PurposeEffort;
 use crate::llm::{
-    ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext, LlmBackend, ModelId,
+    ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext, LlmBackend,
+    LlmCapability, LlmRequest, ModelId, REASONING_BUDGET_PARAM, ReasoningEffort,
 };
 
 /// Transcript extraction.
@@ -85,4 +92,41 @@ impl<'r> RoleCall<'r> {
             },
         }
     }
+}
+
+/// The level a Dreamer call carries when the vault authors none, and the
+/// thinking budget that goes with it: the pair measured best for extraction.
+const DEFAULT_EFFORT: ReasoningEffort = ReasoningEffort::Medium;
+const DEFAULT_BUDGET_TOKENS: u64 = 4_096;
+
+/// Pins `request`'s reasoning level, for the backend that will serve it: the
+/// vault's authored level for the call's purpose, else medium with its
+/// thinking budget, each within what the model's ladder takes. A backend
+/// that takes no reasoning controls for the model is pinned to `none`, the
+/// only level it can be sent.
+pub(super) fn bind_reasoning(
+    vault: &Vault,
+    backend: &dyn LlmBackend,
+    request: &mut LlmRequest,
+) -> Result<()> {
+    request.params.remove(REASONING_BUDGET_PARAM);
+    if !backend.supports(&request.model, LlmCapability::Reasoning) {
+        request.envelope.seat_effort = Some(ReasoningEffort::None);
+        return Ok(());
+    }
+    match vault.purpose_effort(
+        &request.envelope.purpose,
+        &request.model,
+        true,
+        DEFAULT_EFFORT,
+    )? {
+        PurposeEffort::Authored(effort) => request.envelope.seat_effort = Some(effort),
+        PurposeEffort::Fallback(effort) => {
+            request.envelope.seat_effort = Some(effort);
+            request
+                .params
+                .insert(REASONING_BUDGET_PARAM.into(), DEFAULT_BUDGET_TOKENS.into());
+        }
+    }
+    Ok(())
 }

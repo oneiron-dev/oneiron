@@ -1562,7 +1562,8 @@ fn a_held_restatement_keeps_its_head_on_the_verdict_path() -> Result<()> {
 
 /// Sol r4: a correction that names no value, or a null one, carries no
 /// claim. It is not written, and its head stays. Before, the bound
-/// correction replaced the head with a Null-valued claim.
+/// correction replaced the head with a Null-valued claim. Since Bugbot on
+/// #1427 the step refuses such a reply as off its contract.
 #[test]
 fn a_correction_that_names_no_value_writes_nothing() -> Result<()> {
     for value in [None, Some(serde_json::Value::Null)] {
@@ -1588,7 +1589,7 @@ fn a_correction_that_names_no_value_writes_nothing() -> Result<()> {
             Ok(text_response("{\"resolution\":\"escalate\"}".into())),
         ]);
         let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
-        execute_at_pin(
+        let refused = execute_at_pin(
             &vault,
             &fx,
             &backend,
@@ -1596,6 +1597,11 @@ fn a_correction_that_names_no_value_writes_nothing() -> Result<()> {
             fx.scope.clone(),
             Some(&pin),
         )?;
+        assert!(
+            matches!(&refused, DreamerAttemptExecution::ParkWithSpend { reason, .. }
+                if reason.ends_with("breaks its contract at value")),
+            "{value:?}: {refused:?}"
+        );
         assert!(
             sink.outcome.landed.is_empty(),
             "{value:?}: {:?}",
@@ -2014,7 +2020,7 @@ fn saved_execution_scope_pins_claim_across_retry_wakes() -> Result<()> {
     let response = text_response(
         serde_json::json!({"candidates":[{
             "subject":fx.subject.to_hex(), "predicate":"profile.nickname", "value":"Lex",
-            "evidence_refs":[
+            "confidence": 0.5, "evidence_refs":[
                 {"source_id":fx.turn.to_hex(),"byte_range":[0,1]},
                 {"source_id":fx.head.to_hex(),"claim_id":fx.head.to_hex()}
             ]
@@ -2154,7 +2160,7 @@ fn wrapper_first_wake_consumes_explicit_host_claim_scope() -> Result<()> {
     let backend = ScriptedBackend::new(vec![Ok(text_response(
         serde_json::json!({"candidates":[{
             "subject":fx.subject.to_hex(), "predicate":"profile.nickname", "value":"Lex",
-            "evidence_refs":[
+            "confidence": 0.5, "evidence_refs":[
                 {"source_id":fx.turn.to_hex(),"byte_range":[0,1]},
                 {"source_id":fx.head.to_hex(),"claim_id":fx.head.to_hex()}
             ]
@@ -2519,9 +2525,9 @@ fn claim_cited_conflict_meets_taint_and_preserves_gap_and_survivor() -> Result<(
         let extraction = text_response(
             serde_json::json!({"candidates":[
                 {"subject":fx.subject.to_hex(), "predicate":"profile.name", "value":"Alex",
-                 "evidence_refs":[{"source_id":cited.to_hex(), "claim_id":cited.to_hex()}]},
+                 "confidence": 0.5, "evidence_refs":[{"source_id":cited.to_hex(), "claim_id":cited.to_hex()}]},
                 {"subject":fx.subject.to_hex(), "predicate":"profile.tone", "value":"warm",
-                 "evidence_refs":[{"source_id":fx.turn.to_hex(), "byte_range":[0,1]}]}
+                 "confidence": 0.5, "evidence_refs":[{"source_id":fx.turn.to_hex(), "byte_range":[0,1]}]}
             ]})
             .to_string(),
         );
@@ -3111,5 +3117,318 @@ fn generated_support_refuses_a_source_and_head_in_different_projects() -> Result
             "derived support crosses projects"
         ))
     ));
+    Ok(())
+}
+
+/// A backend that records every request and takes reasoning controls for
+/// any model, as a local thinking server does.
+struct ReasoningBackend {
+    inner: ScriptedBackend,
+    requests: Mutex<Vec<LlmRequest>>,
+}
+impl LlmBackend for ReasoningBackend {
+    fn supports(&self, _: &crate::ModelId, capability: crate::LlmCapability) -> bool {
+        capability == crate::LlmCapability::Reasoning
+    }
+    fn generate<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        self.requests.lock().unwrap().push(request.clone());
+        self.inner.generate(request, lease)
+    }
+    fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        self.inner.stream(request, lease)
+    }
+}
+
+fn message_text(message: &LlmMessage) -> String {
+    message
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            ContentPart::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// DREAMER-SEAT done-means (owner ruling A, 2026-10-14): both seat kinds,
+/// extraction and the conflict verdict, send reasoning `medium` with a
+/// 4,096-token budget when the vault configures no level, and the
+/// extraction asks with no schema. A level the vault authors for a purpose
+/// replaces that default for its calls. The extraction prompt carries the
+/// output contract, the predicate rule and the layout rule, and its worked
+/// examples are placeholders: well-formed under that contract, naming no
+/// id, value or predicate a real answer could hold.
+#[test]
+fn every_dreamer_call_names_medium_with_its_budget_unless_the_vault_authors_a_level() -> Result<()>
+{
+    use crate::llm::{REASONING_BUDGET_PARAM, ReasoningEffort, ResponseFormat};
+    for authored in [false, true] {
+        let (_dir, vault) = open_vault();
+        let fx = fixture(&vault)?;
+        if authored {
+            vault.set_description_policy(&crate::llm::routing::DescriptionPolicy {
+                models: vec![crate::llm::routing::ModelDescription {
+                    model: crate::ModelId::new("test/model@r1").unwrap(),
+                    wire: crate::llm::registry::ModelWireFormat::OpenaiCompat,
+                    locality: crate::ModelLocality::OwnServer,
+                    owner: None,
+                    public_benchmark: Some("placeholder benchmark".into()),
+                    vendor: None,
+                    effort_ladder: vec![ReasoningEffort::Low, ReasoningEffort::Medium],
+                }],
+                contradiction_margin_millionths: 0,
+                vault_effort: None,
+                purpose_effort: [("extraction".to_owned(), ReasoningEffort::Low)].into(),
+                global_effort: None,
+            })?;
+        }
+        let backend = ReasoningBackend {
+            inner: ScriptedBackend::new(vec![
+                Ok(extract(&fx, "Alex")),
+                Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+            ]),
+            requests: Mutex::new(Vec::new()),
+        };
+        let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+        execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
+        let requests = backend.requests.lock().unwrap();
+        let [extraction, verdict] = requests.as_slice() else {
+            panic!("one extraction and one verdict call: {}", requests.len());
+        };
+        let budget = serde_json::json!(4_096);
+        assert_eq!(extraction.envelope.response_format, ResponseFormat::Text);
+        if authored {
+            assert_eq!(extraction.envelope.seat_effort, Some(ReasoningEffort::Low));
+            assert_eq!(extraction.params.get(REASONING_BUDGET_PARAM), None);
+        } else {
+            assert_eq!(
+                extraction.envelope.seat_effort,
+                Some(ReasoningEffort::Medium)
+            );
+            assert_eq!(extraction.params.get(REASONING_BUDGET_PARAM), Some(&budget));
+        }
+        // The verdict's purpose has no authored level in either arm.
+        assert_eq!(verdict.envelope.seat_effort, Some(ReasoningEffort::Medium));
+        assert_eq!(verdict.params.get(REASONING_BUDGET_PARAM), Some(&budget));
+
+        let roles: Vec<_> = extraction.messages.iter().map(|m| m.role).collect();
+        assert_eq!(
+            roles,
+            [
+                LlmMessageRole::System,
+                LlmMessageRole::User,
+                LlmMessageRole::Assistant,
+                LlmMessageRole::User,
+                LlmMessageRole::Assistant,
+                LlmMessageRole::User,
+            ]
+        );
+        let system = message_text(&extraction.messages[0]);
+        for rule in [
+            "OUTPUT CONTRACT",
+            "\"evidence_refs\"",
+            "PREDICATE RULE",
+            "two or more lowercase English words joined by dots",
+            "LAYOUT",
+            "The last line is exactly ]}",
+            "\"persons\"",
+        ] {
+            assert!(system.contains(rule), "the system text names {rule}");
+        }
+        let transcript = message_text(&extraction.messages[5]);
+        assert!(transcript.contains(&fx.turn.to_hex()));
+        for pair in extraction.messages[1..5].chunks(2) {
+            let (input, answer) = (message_text(&pair[0]), message_text(&pair[1]));
+            assert!(!input.contains(&fx.turn.to_hex()) && !input.contains(&fx.subject.to_hex()));
+            let lines: Vec<_> = answer.lines().collect();
+            assert_eq!(lines.first(), Some(&"{\"candidates\": ["));
+            assert_eq!(lines.last(), Some(&"]}"));
+            let example = text_response(answer.clone());
+            crate::dreamer_consolidation::executor::extraction::check_extraction_reply(&example)
+                .expect("the example meets the contract");
+            let reply =
+                crate::dreamer_consolidation::executor::extraction::extraction_reply(&example)?;
+            let added: Vec<_> = reply.persons.iter().map(|person| &person.id).collect();
+            assert_eq!(
+                reply.candidates.len() + reply.persons.len() + usize::from(!added.is_empty()),
+                lines.len() - 2,
+                "one per line"
+            );
+            for person in &reply.persons {
+                assert!(person.name.starts_with("Placeholder") && input.contains(&person.name));
+                assert!(person.id.starts_with(&person.id[..1].repeat(28)));
+            }
+            for candidate in &reply.candidates {
+                let predicate = candidate["predicate"].as_str().unwrap();
+                assert!(predicate.starts_with("placeholder."), "{predicate}");
+                crate::claim::validate_predicate(predicate, false)?;
+                for id in ["subject", "corrects"].map(|key| candidate.get(key)) {
+                    let Some(id) = id.and_then(serde_json::Value::as_str) else {
+                        continue;
+                    };
+                    assert!(
+                        (input.contains(id) || added.iter().any(|added| *added == id))
+                            && id.starts_with(&id[..1].repeat(28))
+                    );
+                }
+                let cited = &candidate["evidence_refs"][0];
+                let turn = cited["source_id"].as_str().unwrap();
+                let line = input
+                    .lines()
+                    .find_map(|line| line.strip_prefix(&format!("[{turn} user] ")))
+                    .expect("the example cites one of its own user turns");
+                let [start, end] = [0, 1].map(|i| cited["byte_range"][i].as_u64().unwrap());
+                assert!(
+                    line.get(start as usize..end as usize)
+                        .is_some_and(|said| said.len() > 10)
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// DREAMER-SEAT done-means: a reply that stopped exactly one `}` short is
+/// mended and lands; one two short is refused: the attempt parks with the
+/// call's spend (Sol r1 F2), and the reply is not memoized, so the next run
+/// asks the model again.
+#[test]
+fn a_reply_one_brace_short_is_mended_and_one_two_short_is_refused_and_asked_again() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = fixture(&vault)?;
+    let full = message_text(&extract(&fx, "Alex").message);
+    let open = full.strip_suffix('}').expect("the reply closes its object");
+    assert!(open.ends_with(']'));
+    let two_short = format!("{open}, \"note\": {{\"seen\": []");
+    let backend = ReasoningBackend {
+        inner: ScriptedBackend::new(vec![
+            Ok(text_response(two_short)),
+            Ok(text_response(open.to_owned())),
+            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+        ]),
+        requests: Mutex::new(Vec::new()),
+    };
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    let refused = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
+    assert!(
+        matches!(
+            &refused,
+            DreamerAttemptExecution::ParkWithSpend { reason, completed_units: 50, .. }
+                if reason.starts_with("extraction reply refused")
+        ),
+        "two short is refused and its spend kept: {refused:?}"
+    );
+    assert_eq!(names(&vault, fx.subject)?, vec![fx.head]);
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
+    let requests = backend.requests.lock().unwrap();
+    assert_eq!(requests.len(), 3, "the refused reply was asked again");
+    let verdict: String = requests[2].messages.iter().map(message_text).collect();
+    assert!(
+        verdict.contains("\"Alex\""),
+        "the mended reply's candidate reaches the verdict: {verdict}"
+    );
+    Ok(())
+}
+
+/// Bugbot on #1427 (Engine ruling FIX, 2026-10-14): a reply whose candidate
+/// lacks a field decode needs, here a mended one with no `evidence_refs`, is
+/// refused at the step and never memoized, so the next run asks again.
+/// Before, the step stored it, decode failed the whole partition, and every
+/// resume replayed the stored reply instead of asking.
+#[test]
+fn a_mended_reply_whose_candidate_lacks_a_field_is_refused_and_asked_again() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = fixture(&vault)?;
+    let mut lacking = serde_json::json!({"candidates": [{
+        "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": "Alex",
+        "confidence": 0.8,
+    }]})
+    .to_string();
+    // One `}` short, so the step mends it before the check reads it.
+    assert_eq!(lacking.pop(), Some('}'));
+    let backend = ReasoningBackend {
+        inner: ScriptedBackend::new(vec![
+            Ok(text_response(lacking)),
+            Ok(extract(&fx, "Alex")),
+            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+        ]),
+        requests: Mutex::new(Vec::new()),
+    };
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    let refused = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
+    assert!(
+        matches!(&refused, DreamerAttemptExecution::ParkWithSpend { reason, .. }
+            if reason.ends_with("breaks its contract at evidence_refs")),
+        "{refused:?}"
+    );
+    assert_eq!(names(&vault, fx.subject)?, vec![fx.head]);
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    let done = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
+    assert!(
+        matches!(done, DreamerAttemptExecution::Completed { .. }),
+        "{done:?}"
+    );
+    assert_eq!(
+        backend.requests.lock().unwrap().len(),
+        3,
+        "the refused reply was asked again"
+    );
+    assert_eq!(names(&vault, fx.subject)?.len(), 2);
+    Ok(())
+}
+
+/// Bugbot on #1427 (Engine ruling FIX, 2026-10-14): a stored reply decode
+/// cannot wholly take never wedges a resume. One candidate cites a turn the
+/// branch never admitted and one names no relationship id; each is skipped
+/// and counted, and the rest of the reply lands, on the first run and on a
+/// replay of the stored reply. Before, decode failed the whole partition on
+/// the first such candidate, and every resume replayed the same reply.
+#[test]
+fn a_stored_reply_decode_cannot_wholly_take_never_wedges_a_resume() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = fixture(&vault)?;
+    let candidate = |value: &str, source: EntityId| {
+        serde_json::json!({
+            "subject": fx.subject.to_hex(), "predicate": "profile.name", "value": value,
+            "confidence": 0.8,
+            "evidence_refs": [{"source_id": source.to_hex(), "byte_range": [0, 1]}],
+        })
+    };
+    let mut unrelated = candidate("Kit", fx.turn);
+    unrelated["rel"] = "no relationship id".into();
+    let reply = serde_json::json!({"candidates": [
+        candidate("Alex", fx.turn),
+        candidate("Sam", EntityId::now()),
+        unrelated,
+    ]});
+    let backend = ReasoningBackend {
+        inner: ScriptedBackend::new(vec![
+            Ok(text_response(reply.to_string())),
+            Ok(text_response("{\"resolution\":\"accumulate\"}".into())),
+        ]),
+        requests: Mutex::new(Vec::new()),
+    };
+    for run in ["first run", "replay"] {
+        let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+        let done = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
+        assert!(
+            matches!(done, DreamerAttemptExecution::Completed { .. }),
+            "{run}: {done:?}"
+        );
+        assert_eq!(names(&vault, fx.subject)?.len(), 2, "{run}");
+    }
+    let requests = backend.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2, "the replay asked no model");
+    let verdict: String = requests[1].messages.iter().map(message_text).collect();
+    assert!(verdict.contains("\"Alex\""), "{verdict}");
+    assert!(
+        !verdict.contains("\"Sam\"") && !verdict.contains("\"Kit\""),
+        "{verdict}"
+    );
     Ok(())
 }

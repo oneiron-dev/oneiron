@@ -72,7 +72,9 @@ pub use self::call::{
     CallClass, CallEnvelope, CallPurpose, DeterministicFallback, LlmRole, ModelLocality,
     ModelTierRef, PinnedConfigViolation, PinnedModelConfig, ResponseFormat, TierPrecedence,
 };
-pub use self::catalog::{LlmCapability, LlmCatalogCost, LlmCatalogEntry, ReasoningEffort};
+pub use self::catalog::{
+    LlmCapability, LlmCatalogCost, LlmCatalogEntry, REASONING_BUDGET_PARAM, ReasoningEffort,
+};
 pub use self::error::{
     BudgetDenied, FatalLlmError, LlmError, RetryableLlmError, UnsupportedCapability,
 };

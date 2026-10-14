@@ -3052,16 +3052,16 @@ fn shared_schema_shim_contains_encoded_and_draft4_reference_traps() {
         let mut request = request_fixture();
         request.envelope.response_format = ResponseFormat::Json { schema };
         assert!(matches!(
-            super::schema::validate_fallback(&request, &response_fixture(output)),
+            super::schema::validate_fallback(&request, &response_fixture(output), None),
             Err(DurableStepError::SchemaValidation { attempts: 1, .. })
         ));
     }
     let schema = json!({"$defs":{"a":{"type":"integer"}},"$ref":"#/$defs/%61"});
     let mut request = request_fixture();
     request.envelope.response_format = ResponseFormat::Json { schema };
-    assert!(super::schema::validate_fallback(&request, &response_fixture("3")).is_ok());
+    assert!(super::schema::validate_fallback(&request, &response_fixture("3"), None).is_ok());
     assert!(matches!(
-        super::schema::validate_fallback(&request, &response_fixture("\"bad\"")),
+        super::schema::validate_fallback(&request, &response_fixture("\"bad\""), None),
         Err(DurableStepError::SchemaValidation { attempts: 1, .. })
     ));
     assert!(super::validate_json_schema(&json!({"type":"integer"}), &json!(3)).is_ok());

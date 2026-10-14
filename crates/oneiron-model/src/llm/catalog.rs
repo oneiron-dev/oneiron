@@ -132,3 +132,8 @@ pub enum ReasoningEffort {
     #[serde(rename = "xhigh")]
     XHigh,
 }
+
+/// The request param that carries a thinking budget, in tokens, beside a
+/// seat's effort pin. An OpenAI-compatible own server (llama.cpp) reads it
+/// per request; an adapter whose wire has no such field drops it.
+pub const REASONING_BUDGET_PARAM: &str = "reasoning_budget_tokens";

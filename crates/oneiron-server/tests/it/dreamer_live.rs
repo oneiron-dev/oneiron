@@ -241,7 +241,12 @@ async fn forward(
     relay.calls.lock().unwrap().push(Call {
         phase: relay.phase.lock().unwrap().clone(),
         system: message(0),
-        input: message(1),
+        // The transcript is the last turn, after any worked examples.
+        input: message(
+            request["messages"]
+                .as_array()
+                .map_or(1, |messages| messages.len().saturating_sub(1)),
+        ),
         status,
         response_format: request.get("response_format").is_some(),
         served: served

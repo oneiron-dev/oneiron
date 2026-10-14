@@ -173,3 +173,43 @@ fn an_option_the_adapter_rejects_is_refused_before_the_permit_starts() {
     assert_eq!(*sent.lock().expect("sent"), 1);
     assert_eq!((run.read().used_units, run.read().reserved_units), (4, 0));
 }
+
+/// A seat's level reaches an own server where llama.cpp reads it per request
+/// (`reasoning_effort`, `chat_template_kwargs`, `reasoning_budget_tokens`; an
+/// exllamav3 server renders only the template arguments). A hosted API takes
+/// the effort alone: it refuses request fields it does not know.
+#[test]
+fn an_own_server_gets_the_level_in_its_template_with_the_budget_and_a_hosted_api_the_effort_alone()
+{
+    for locality in [ModelLocality::OwnServer, ModelLocality::ThirdParty] {
+        let config = OpenAiCompatConfig::from_catalog([LlmCatalogEntry {
+            model: ModelId::new(MODEL).expect("model"),
+            display_name: "teacher".to_owned(),
+            locality,
+            context_window_tokens: 8_192,
+            max_output_tokens: None,
+            cost: None,
+            capabilities: vec![oneiron::LlmCapability::Reasoning],
+            metadata: BTreeMap::new(),
+        }]);
+        let mut call = request();
+        call.envelope.locality = locality;
+        call.envelope.seat_effort = Some(oneiron::llm::ReasoningEffort::Medium);
+        call.params
+            .insert(oneiron::llm::REASONING_BUDGET_PARAM.into(), json!(4_096));
+        let body = super::build_openai_chat_request(&config, &call, false)
+            .expect("request")
+            .body;
+        assert_eq!(body["reasoning_effort"], "medium", "{body}");
+        if locality == ModelLocality::OwnServer {
+            assert_eq!(
+                body["chat_template_kwargs"],
+                json!({"reasoning_effort": "medium"})
+            );
+            assert_eq!(body["reasoning_budget_tokens"], 4_096);
+        } else {
+            assert_eq!(body.get("chat_template_kwargs"), None, "{body}");
+            assert_eq!(body.get("reasoning_budget_tokens"), None, "{body}");
+        }
+    }
+}
