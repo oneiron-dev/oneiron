@@ -97,14 +97,8 @@ impl RecoveryRootSeed {
     /// The owner anchor's signing key.
     #[must_use]
     pub fn anchor(&self) -> ed25519_dalek::SigningKey {
-        let mut hasher = blake3::Hasher::new_derive_key(ANCHOR_CONTEXT);
-        hasher.update(&self.bytes[..]);
-        let mut digest = hasher.finalize();
-        let key = ed25519_dalek::SigningKey::from_bytes(digest.as_bytes());
-        // The hasher's block buffer still holds the seed, and the digest is the
-        // anchor's secret (Wonder W2-F2).
-        zeroize::Zeroize::zeroize(&mut hasher);
-        zeroize::Zeroize::zeroize(&mut digest);
+        let key = anchor_key(&self.bytes);
+        zeroize::zeroize_stack::<ANCHOR_STACK_WIPE>();
         key
     }
 
@@ -118,6 +112,30 @@ impl RecoveryRootSeed {
             anchor_key,
         })
     }
+}
+
+/// Stack bytes wiped after the owner anchor's key is built or signs: Ed25519 expands its
+/// secret in plain stack arrays (Wonder code-R4 W4-F1). Sized as `oneiron-crypto`'s
+/// Ed25519 signer wipe, whose stack painting covers a whole signature, this expansion
+/// included: 152,728 bytes below its caller in a dev build and 62,248 in a release build.
+pub(crate) const ANCHOR_STACK_WIPE: usize = if cfg!(debug_assertions) {
+    256 * 1024
+} else {
+    128 * 1024
+};
+
+/// Out of line, so the wipe in [`RecoveryRootSeed::anchor`] covers its frames.
+#[inline(never)]
+fn anchor_key(seed: &[u8; 32]) -> ed25519_dalek::SigningKey {
+    let mut hasher = blake3::Hasher::new_derive_key(ANCHOR_CONTEXT);
+    hasher.update(seed);
+    let mut digest = hasher.finalize();
+    let key = ed25519_dalek::SigningKey::from_bytes(digest.as_bytes());
+    // The hasher's block buffer still holds the seed, and the digest is the anchor's
+    // secret (Wonder W2-F2).
+    zeroize::Zeroize::zeroize(&mut hasher);
+    zeroize::Zeroize::zeroize(&mut digest);
+    key
 }
 
 /// A root's public half: what the vault stores and replicates.

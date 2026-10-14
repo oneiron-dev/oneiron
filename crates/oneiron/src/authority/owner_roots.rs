@@ -150,9 +150,14 @@ pub(crate) fn anchor_signed_entry(
         cosigns: Vec::new(),
         ts: now,
     };
-    entry.signer.signature = signer
-        .sign(&authority_transcript(&entry)?)
-        .to_bytes()
-        .to_vec();
+    entry.signer.signature = anchor_signature(signer, &authority_transcript(&entry)?);
+    zeroize::zeroize_stack::<{ crate::world_keys::ANCHOR_STACK_WIPE }>();
     Ok(entry)
+}
+
+/// Out of line, so the wipe after it covers the signer's expansion of the anchor's
+/// secret (Wonder code-R4 W4-F1).
+#[inline(never)]
+fn anchor_signature(signer: &SigningKey, transcript: &[u8]) -> Vec<u8> {
+    signer.sign(transcript).to_bytes().to_vec()
 }
