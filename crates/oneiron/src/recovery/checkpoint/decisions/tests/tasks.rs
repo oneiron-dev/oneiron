@@ -25,7 +25,7 @@ use std::collections::BTreeSet;
 
 /// A vault as the engine opens one, its shipped policy manifest in force.
 fn open_vault() -> (tempfile::TempDir, Vault) {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = crate::test_support::restore_tempdir();
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
     (dir, vault)
 }

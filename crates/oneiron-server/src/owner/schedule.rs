@@ -181,8 +181,8 @@ mod tests {
         every: Duration,
         keep: usize,
     ) -> (tempfile::TempDir, tempfile::TempDir, Arc<SyncServer>) {
-        let dir = tempfile::tempdir().unwrap();
-        let backups = tempfile::tempdir().unwrap();
+        let dir = oneiron::test_support::restore_tempdir();
+        let backups = oneiron::test_support::restore_tempdir();
         let vault =
             Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
         let host = OwnerHost {
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn a_backup_waits_for_the_rehearsal_of_the_file_it_would_prune() {
-        let (_dir, _backups, server) = scheduled_server(Duration::from_secs(3_600), 1);
+        let (_dir, backups, server) = scheduled_server(Duration::from_secs(3_600), 1);
         let host = Arc::clone(server.owner_host.as_ref().unwrap());
         let only = host.take(server.vault(), None).unwrap().backup;
         let rehearsal = host
@@ -257,8 +257,13 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(500));
                 assert!(!racing.is_finished(), "the backup waited");
                 let source = server.vault().side_restore_source()?;
-                let rehearsal =
-                    backup::rehearse(&chosen.path, host.vault_config.clone(), None, &source);
+                let rehearsal = backup::rehearse_in(
+                    backups.path(),
+                    &chosen.path,
+                    host.vault_config.clone(),
+                    None,
+                    &source,
+                );
                 Ok((rehearsal?, racing))
             })
             .unwrap();

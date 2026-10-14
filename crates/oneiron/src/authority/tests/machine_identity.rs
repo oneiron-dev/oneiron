@@ -438,7 +438,7 @@ fn joins_as_a_new_machine(copy: &Vault, vault: &Vault, request: &MachineEnrolmen
 #[test]
 fn a_restored_image_never_carries_the_machine_to_another_install() {
     let (_dir, vault, request) = enrolled_machine(host());
-    let backups = tempfile::tempdir().unwrap();
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("image");
     vault.snapshot_checkpoint(&image, 100).unwrap();
 
@@ -488,7 +488,7 @@ fn a_restored_image_never_carries_the_machine_to_another_install() {
 fn an_activated_archive_joins_as_a_new_machine() {
     let (_dir, vault, request) = enrolled_machine(host());
     let home = vault.store.env.path().to_path_buf();
-    let backups = tempfile::tempdir().unwrap();
+    let backups = crate::test_support::restore_tempdir();
     let (image, staged) = (backups.path().join("image"), backups.path().join("staged"));
     vault.snapshot_checkpoint(&image, 100).unwrap();
     let (replacement, _) =

@@ -267,7 +267,7 @@ pub(crate) fn embedding_test_config() -> VaultConfig {
 /// Opens a temporary vault with the supplied config. Returns the
 /// `TempDir` so callers keep the directory alive for the vault's lifetime.
 pub(crate) fn open_test_vault_with(cfg: VaultConfig) -> (tempfile::TempDir, Vault) {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = crate::test_support::restore_tempdir();
     let vault = Vault::open(dir.path(), cfg).expect("open vault");
     clear_default_policy_manifest_for_legacy_tests(&vault);
     (dir, vault)

@@ -8,7 +8,7 @@ fn audience_admits(vault: &Vault, record: EntityId, person: EntityId) -> Result<
 }
 
 fn fixture() -> (tempfile::TempDir, Vault, WriteActor, EntityId, EntityId) {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_support::restore_tempdir();
     let config = VaultConfig {
         embedding_model: Some("test/model@v1".to_owned()),
         ..VaultConfig::default()

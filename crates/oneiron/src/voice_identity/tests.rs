@@ -11,7 +11,7 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
 }
 
 fn temp_ref_vault() -> (tempfile::TempDir, Vault) {
-    let dir = tempfile::tempdir().expect("ref vault directory");
+    let dir = crate::test_support::restore_tempdir();
     let vault = Vault::open(dir.path(), crate::config::VaultConfig::default())
         .expect("open seeded ref vault");
     (dir, vault)
@@ -2461,7 +2461,7 @@ fn a_restore_never_undoes_a_voice_consent_withdrawal() -> Result<()> {
         200,
     );
     vault.enroll_voice_print(&enrolled)?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 300)?;
     vault.withdraw_voice_consent(&VoiceWithdrawalRequest {

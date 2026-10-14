@@ -63,7 +63,7 @@ fn take_prunes_to_keep_and_leaves_other_files_alone() {
 
 #[test]
 fn rehearsal_reports_the_backup_and_restore_brings_it_back() {
-    let root = tempfile::tempdir().unwrap();
+    let root = oneiron::test_support::restore_tempdir();
     let vault_path = root.path().join("vault");
     let plan = plan(root.path(), 7);
     let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
@@ -74,7 +74,14 @@ fn rehearsal_reports_the_backup_and_restore_brings_it_back() {
     drop(vault);
 
     let source = SideRestoreSource::read(&vault_path).unwrap();
-    let rehearsal = rehearse(&outcome.backup.path, VaultConfig::default(), None, &source).unwrap();
+    let rehearsal = rehearse_in(
+        root.path(),
+        &outcome.backup.path,
+        VaultConfig::default(),
+        None,
+        &source,
+    )
+    .unwrap();
     assert!(rehearsal.verified);
     assert!(!rehearsal.kept);
     assert_eq!(rehearsal.checkpoint_id, outcome.checkpoint_id);
@@ -353,7 +360,7 @@ fn vaults_sharing_a_backup_directory_never_prune_each_other() {
 
 #[test]
 fn a_failed_rehearsal_removes_only_what_it_created() {
-    let root = tempfile::tempdir().unwrap();
+    let root = oneiron::test_support::restore_tempdir();
     let scratch = root.path().join("scratch");
     // Custody left by an earlier vault of the same name is not the rehearsal's.
     let custody = root.path().join(".scratch.gate-decision-keys");

@@ -15,7 +15,7 @@ const STAMP: u8 = 0x53;
 const OTHER_PAGE: u8 = 0x54;
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
-    let dir = tempfile::tempdir().expect("temp dir");
+    let dir = crate::test_support::restore_tempdir();
     let vault =
         Vault::open(dir.path(), crate::VaultConfig::default()).expect("open anti-abuse vault");
     (dir, vault)
@@ -1938,7 +1938,7 @@ fn a_restore_goes_ahead_past_a_submission_quarantined_since() {
             b"booking page fixture",
         )
         .expect("page entity");
-    let backups = tempfile::tempdir().expect("backups");
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 1).expect("backup");
 

@@ -34,7 +34,7 @@ fn person(vault: &Vault, body: &[u8]) -> EntityId {
 
 #[test]
 fn restore_keeps_live_revocations_and_slips_but_returns_old_content() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
     let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
     let revoked_later = child_slip(&live, &issuer, 7);
@@ -83,7 +83,7 @@ fn restore_keeps_live_revocations_and_slips_but_returns_old_content() {
 
 #[test]
 fn restore_refuses_to_roll_back_a_guarded_grant_before_creating_anything() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
     let owner_id = person(&live, b"owner");
     let image = root.path().join("backup");
@@ -118,7 +118,7 @@ fn restore_refuses_to_roll_back_a_guarded_grant_before_creating_anything() {
 
 #[test]
 fn restore_refuses_another_vaults_checkpoint() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     // Neither vault has an authority log yet: the store id alone tells them apart.
     let other = Vault::open(root.path().join("other"), VaultConfig::device()).unwrap();
     person(&other, b"another vault's content");
@@ -144,7 +144,7 @@ fn restore_never_revives_a_spent_approval() {
     use crate::consent::{
         ComposedEffect, EffectFacts, approve_once_authorization_in_txn, spend_approve_once_in_txn,
     };
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
     let owner_id = person(&live, b"owner");
     let owner = live
@@ -179,7 +179,7 @@ fn restore_never_revives_a_spent_approval() {
 
 #[test]
 fn restore_refuses_to_revive_an_owner_deleted_since() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
     let owner = live.ensure_embedded_owner_actor().unwrap();
     let image = root.path().join("backup");
@@ -208,7 +208,7 @@ fn restore_refuses_to_revive_an_owner_deleted_since() {
 #[cfg(unix)]
 #[test]
 fn a_refused_restore_removes_only_the_copy_it_made() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
     let owner = live.ensure_embedded_owner_actor().unwrap();
     let image = root.path().join("backup");
@@ -258,7 +258,7 @@ fn a_refused_restore_removes_only_the_copy_it_made() {
 #[test]
 fn restore_keeps_the_secret_scan_the_owner_switched_on_since() {
     use crate::policy_model::SecretScanMode;
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
     let owner_id = live.ensure_embedded_owner_actor().unwrap();
     let owner = live
@@ -305,7 +305,7 @@ fn restore_keeps_the_secret_scan_the_owner_switched_on_since() {
 /// before it must not undo.
 #[test]
 fn restore_refuses_to_bring_back_a_relationship_participant_removed_since() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
     let participant = person(&live, b"participant");
     let relationship = EntityId::now();
@@ -351,7 +351,7 @@ fn restore_refuses_to_bring_back_a_relationship_participant_removed_since() {
 /// not block a restore over the vault.
 #[test]
 fn restore_goes_ahead_past_an_ordinary_project_edit() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
     let project = live.root_project().unwrap();
     let image = root.path().join("backup");
@@ -377,7 +377,7 @@ fn restore_goes_ahead_past_an_ordinary_project_edit() {
 /// refused like any unclassified kind.
 #[test]
 fn restore_refuses_a_changed_row_of_another_packs_kind_under_an_engine_prefix() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
     let kind = (crate::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_START
         ..=crate::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
@@ -430,7 +430,7 @@ fn restore_refuses_to_return_a_stale_plugin_install_withdrawn_since() {
     // gate's criticality floor would park both the approved body and its
     // retraction for an owner ceremony this fixture does not stage.
     let (_dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
-    let backups = tempfile::tempdir().unwrap();
+    let backups = crate::test_support::restore_tempdir();
     let hub = person(&live, b"hub");
     let mut install = ClaimBody::new(
         crate::context_board::PREDICATE_PLUGIN_SECTION_INSTALL,
@@ -545,7 +545,7 @@ fn enroll(live: &Vault, recipient: EntityId) -> EntityId {
 fn restore_refuses_to_roll_back_a_recipient_jurisdiction_moved_since() {
     // No policy manifest, as the other restore regressions run.
     let (_dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
-    let backups = tempfile::tempdir().unwrap();
+    let backups = crate::test_support::restore_tempdir();
     let recipient = person(&live, b"recipient");
     let bystander = person(&live, b"bystander");
     enroll(&live, recipient);
@@ -596,7 +596,7 @@ fn restore_refuses_to_roll_back_a_recipient_jurisdiction_moved_since() {
 #[test]
 fn restore_refuses_to_reopen_a_jurisdiction_claim_made_private_since() {
     let (_dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
-    let backups = tempfile::tempdir().unwrap();
+    let backups = crate::test_support::restore_tempdir();
     let recipient = person(&live, b"recipient");
     let older = EntityId::now();
     for (id, observed_at) in [(older, 10), (EntityId::now(), 20)] {
@@ -650,7 +650,7 @@ fn restore_refuses_to_reopen_a_jurisdiction_claim_made_private_since() {
 #[test]
 fn restore_reads_campaign_recipients_through_their_claim_of_edges() {
     let (_dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
-    let backups = tempfile::tempdir().unwrap();
+    let backups = crate::test_support::restore_tempdir();
     let recipient = person(&live, b"recipient");
     let other = person(&live, b"other");
     let member = enroll(&live, recipient);
@@ -697,7 +697,7 @@ fn restore_reads_campaign_recipients_through_their_claim_of_edges() {
 #[test]
 fn restore_goes_ahead_past_a_moved_jurisdiction_of_a_non_person() {
     let (_dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
-    let backups = tempfile::tempdir().unwrap();
+    let backups = crate::test_support::restore_tempdir();
     let org = EntityId::now();
     live.put_entity(
         &org,
@@ -741,7 +741,7 @@ fn restore_goes_ahead_past_a_moved_jurisdiction_of_a_non_person() {
 #[test]
 fn restore_compares_only_the_read_scope_of_a_claim_rewritten_into_a_jurisdiction() {
     let (_dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
-    let backups = tempfile::tempdir().unwrap();
+    let backups = crate::test_support::restore_tempdir();
     let subject = person(&live, b"subject");
     let claim = EntityId::now();
     let mut ordinary = jurisdiction_observation(subject, "UK", 10);
@@ -785,7 +785,7 @@ fn restore_compares_only_the_read_scope_of_a_claim_rewritten_into_a_jurisdiction
 /// still refuses an authority-keeping restore that would revive it.
 #[test]
 fn restore_refuses_to_revive_a_grant_deleted_since() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
     let grant = EntityId::now();
     live.create_access_grant(
@@ -848,7 +848,7 @@ fn restore_refuses_to_revive_a_relationship_deleted_since() {
         .unwrap();
         fact.rel = Some(relationship);
         live.put_claim(&EntityId::now(), &fact, at, 1).unwrap();
-        let backups = tempfile::tempdir().unwrap();
+        let backups = crate::test_support::restore_tempdir();
         let image = backups.path().join("backup");
         live.snapshot_checkpoint(&image, 100).unwrap();
         if applied {

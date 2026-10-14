@@ -4,7 +4,7 @@ use crate::{EntityId, temporal::TimeRange};
 #[test]
 fn checkpoint_restore_binds_live_exterior_claim_keys_across_paths() {
     use crate::store::{GateDecisionId, GateDecisionRecord};
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let source_path = root.path().join("source");
     let source = Vault::open(&source_path, VaultConfig::device()).unwrap();
     let claim_id = [0xC1; 16];
@@ -84,7 +84,7 @@ fn checkpoint_restore_binds_live_exterior_claim_keys_across_paths() {
 #[test]
 fn erase_destroys_the_claim_key_so_a_pre_erase_image_restores_without_its_receipts() {
     use crate::store::{GateDecisionId, GateDecisionRecord};
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
     let erased = EntityId::now();
     let kept = EntityId::now();
@@ -191,7 +191,7 @@ fn erase_destroys_the_claim_key_so_a_pre_erase_image_restores_without_its_receip
 #[test]
 fn a_hold_after_an_erase_commits_never_keeps_its_receipts_readable() {
     use crate::store::{GateDecisionId, GateDecisionRecord};
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let source = std::sync::Arc::new(
         Vault::open(root.path().join("source"), VaultConfig::device()).unwrap(),
     );
@@ -393,7 +393,7 @@ fn side_copy(
 #[test]
 fn an_erase_in_a_side_copy_never_reaches_its_source() {
     for side in SIDES {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::restore_tempdir();
         let (source, copy, claim, receipt) = side_copy(root.path(), side);
         copy.delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
             .expect("erase in the copy");
@@ -418,7 +418,7 @@ fn an_erase_in_a_side_copy_never_reaches_its_source() {
 #[test]
 fn an_erase_in_the_source_never_reaches_its_side_copy() {
     for side in SIDES {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::restore_tempdir();
         let (source, copy, claim, receipt) = side_copy(root.path(), side);
         source
             .delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
@@ -440,7 +440,7 @@ fn an_erase_in_the_source_never_reaches_its_side_copy() {
 fn a_side_restore_copies_no_key_the_source_destroyed_or_committed_to_destroy() {
     let hex = |claim: &EntityId| crate::entity_id::bytes_to_hex_lower(claim.as_bytes());
     for side in SIDES {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::restore_tempdir();
         let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
         let (live, live_receipt) = claim_with_receipt(&source);
         let (destroyed, destroyed_receipt) = claim_with_receipt(&source);
@@ -479,7 +479,7 @@ fn a_side_restore_copies_no_key_the_source_destroyed_or_committed_to_destroy() {
 /// custody it forked goes with the destination it removes.
 #[test]
 fn a_refused_side_restore_leaves_no_forked_key_behind() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
     let owner = source.ensure_embedded_owner_actor().unwrap();
     claim_with_receipt(&source);
@@ -510,7 +510,7 @@ fn a_refused_side_restore_leaves_no_forked_key_behind() {
 /// restored image carries an erase its source committed but did not finish.
 #[test]
 fn a_restore_never_shreds_custody_its_vault_is_not_bound_to() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
     let (claim, receipt) = claim_with_receipt(&source);
     let image = root.path().join("image");
@@ -561,7 +561,7 @@ fn refused_as_no_vault<T>(result: Result<T>) -> bool {
 /// no key is copied.
 #[test]
 fn a_side_restore_refuses_a_source_it_cannot_read() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
     let (claim, _) = claim_with_receipt(&source);
     let image = root.path().join("image");
@@ -596,7 +596,7 @@ fn a_side_restore_refuses_a_source_it_cannot_read() {
 fn each_side_restore_reads_its_source_when_it_starts() {
     let hex = |claim: &EntityId| crate::entity_id::bytes_to_hex_lower(claim.as_bytes());
     for side in [Side::Open, Side::Disk] {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::restore_tempdir();
         let source_path = root.path().join("source");
         let source = Vault::open(&source_path, VaultConfig::device()).unwrap();
         let (claim, receipt) = claim_with_receipt(&source);
@@ -664,7 +664,7 @@ fn each_side_restore_reads_its_source_when_it_starts() {
 /// rely on (Astra re-check R5).
 #[test]
 fn a_side_restore_source_never_reopens_a_vault_this_process_holds() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
     let reader = source.store.env.read_txn().unwrap();
     let locks = |dir: &str| lmdb_locks_held(&root.path().join(dir).join("lock.mdb"));
@@ -741,7 +741,7 @@ fn lmdb_locks_held(lock_file: &Path) -> usize {
 /// stand in for the source's live state (Astra re-check R2).
 #[test]
 fn a_side_restore_source_read_off_disk_is_that_vault_only() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let source_path = root.path().join("source");
     let source = Vault::open(&source_path, VaultConfig::device()).unwrap();
     let (claim, _) = claim_with_receipt(&source);
@@ -807,7 +807,7 @@ fn replacement_for(root: &Path) -> (Vault, Vault, EntityId, crate::store::GateDe
 /// in it no longer reaches the replacement.
 #[test]
 fn a_vault_a_restore_replaced_is_archived_until_activated() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let (vault_path, previous_path) = (root.path().join("vault"), root.path().join("previous"));
     let (source, replacement, claim, receipt) = replacement_for(root.path());
     // Until it is in the vault's place, the replacement mints no key there.
@@ -878,7 +878,7 @@ fn a_vault_a_restore_replaced_is_archived_until_activated() {
 /// (Astra re-check R1).
 #[test]
 fn a_restore_that_dies_mid_swap_leaves_one_live_vault() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let (vault_path, staged) = (root.path().join("vault"), root.path().join("staged"));
     let (source, replacement, claim, receipt) = replacement_for(root.path());
     let died = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -912,7 +912,7 @@ fn a_restore_that_dies_mid_swap_leaves_one_live_vault() {
 /// (Astra re-check R4).
 #[test]
 fn a_writer_waiting_through_a_swap_is_refused() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let (vault_path, staged) = (root.path().join("vault"), root.path().join("staged"));
     let (source, replacement, claim, receipt) = replacement_for(root.path());
     let (source, replacement) = (std::rc::Rc::new(source), std::rc::Rc::new(replacement));
@@ -956,7 +956,7 @@ fn a_writer_waiting_through_a_swap_is_refused() {
 /// R1: a symlinked vault path).
 #[test]
 fn a_swap_that_leaves_the_vault_in_place_is_refused() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let (source, replacement, claim, _) = replacement_for(root.path());
     assert!(matches!(
         source.swap_in_replacement(&replacement, || Ok(())),
@@ -983,7 +983,7 @@ fn a_swap_that_leaves_the_vault_in_place_is_refused() {
 #[test]
 fn a_swap_whose_vault_moved_off_its_path_refuses_with_nothing_marked() {
     for occupant in ["directory", "link"] {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::restore_tempdir();
         let (vault_path, staged) = (root.path().join("vault"), root.path().join("staged"));
         let (source, replacement, claim, _) = replacement_for(root.path());
         let moved = root.path().join("moved");
@@ -1022,7 +1022,7 @@ fn a_swap_whose_vault_moved_off_its_path_refuses_with_nothing_marked() {
 #[cfg(unix)]
 #[test]
 fn a_swap_that_strands_the_set_aside_vault_is_refused() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let (vault_path, staged) = (root.path().join("vault"), root.path().join("staged"));
     let (source, replacement, claim, receipt) = replacement_for(root.path());
     let moved = root.path().join("moved");
@@ -1065,7 +1065,7 @@ fn a_failed_swap_keeps_the_vault_live_only_at_its_path() {
         "moved while the exchange failed",
         "set aside after",
     ] {
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::restore_tempdir();
         let vault_path = root.path().join("vault");
         let (source, replacement, claim, _) = replacement_for(root.path());
         let moved = root.path().join("moved");
@@ -1114,7 +1114,7 @@ fn a_failed_swap_keeps_the_vault_live_only_at_its_path() {
 #[test]
 fn a_replacing_restore_writes_only_into_the_directory_it_made() {
     use std::os::unix::fs::PermissionsExt;
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let vault = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
     let (claim, _) = claim_with_receipt(&vault);
     let image = root.path().join("image");
@@ -1239,7 +1239,7 @@ fn a_replacing_restore_writes_only_into_the_directory_it_made() {
 #[cfg(unix)]
 #[test]
 fn a_source_missing_at_its_admission_is_never_read() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let prepared = root.path().join("prepared");
     drop(Vault::open(&prepared, VaultConfig::device()).unwrap());
     let source = root.path().join("source");
@@ -1257,7 +1257,7 @@ fn a_source_missing_at_its_admission_is_never_read() {
 /// leaves the archive as it was, to be activated again (Astra re-check R3).
 #[test]
 fn an_activation_commits_only_receipts_its_forked_keys_read() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let (vault_path, previous_path) = (root.path().join("vault"), root.path().join("previous"));
     let (source, replacement, claim, receipt) = replacement_for(root.path());
     source
@@ -1296,7 +1296,7 @@ fn an_activation_commits_only_receipts_its_forked_keys_read() {
 
 #[test]
 fn canonical_snapshot_rebuilds_indexes_excludes_runtime_and_mints_epoch() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
     let id = EntityId::now();
     source
@@ -1429,7 +1429,7 @@ fn canonical_snapshot_rebuilds_indexes_excludes_runtime_and_mints_epoch() {
 }
 #[test]
 fn corrupt_checkpoint_and_existing_destination_are_refused_without_overwrite() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let vault = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
     let image = root.path().join("checkpoint");
     vault.snapshot_checkpoint(&image, 1).unwrap();
@@ -1465,7 +1465,7 @@ fn corrupt_checkpoint_and_existing_destination_are_refused_without_overwrite() {
 
 #[test]
 fn restore_rebuilds_pending_consent_indexes_and_preserves_insertion_order() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
     let mut expected = Vec::new();
     for _ in 0..2 {
@@ -1617,7 +1617,7 @@ fn restored_summary_is_reembedded_from_retained_prose_and_retrievable() -> Resul
             Ok(vec![vec![0.0, 1.0, 0.0, 0.0]])
         }
     }
-    let dir = tempfile::tempdir()?;
+    let dir = crate::test_support::restore_tempdir();
     let config = crate::test_util::embedding_test_config();
     let source = Vault::open(dir.path().join("source"), config.clone())?;
     let id = EntityId::now();
@@ -1695,7 +1695,7 @@ fn restored_summary_is_reembedded_from_retained_prose_and_retrievable() -> Resul
 #[test]
 fn restore_refuses_another_kinds_job_row_in_the_owner_retained_range() {
     use crate::attempt_queue::{AttemptId, AttemptQueue, EnqueueAttempt};
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let vault = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
     AttemptQueue::new(&vault)
         .enqueue(EnqueueAttempt {

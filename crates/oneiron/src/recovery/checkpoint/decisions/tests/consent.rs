@@ -55,7 +55,7 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
 
 /// A vault as a host opens one, with its seeded policy manifest.
 fn open_seeded() -> Result<(tempfile::TempDir, Vault)> {
-    let dir = tempfile::tempdir()?;
+    let dir = crate::test_support::restore_tempdir();
     let vault = Vault::open(dir.path(), config())?;
     Ok((dir, vault))
 }

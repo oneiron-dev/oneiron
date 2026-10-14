@@ -264,9 +264,20 @@ pub(crate) fn rehearse(
     keep_at: Option<&Path>,
     source: &SideRestoreSource,
 ) -> anyhow::Result<Rehearsal> {
+    rehearse_in(&std::env::temp_dir(), backup, config, keep_at, source)
+}
+
+/// [`rehearse`], with a scratch directory it does not keep made under `temp`.
+pub(crate) fn rehearse_in(
+    temp: &Path,
+    backup: &Path,
+    config: oneiron::VaultConfig,
+    keep_at: Option<&Path>,
+    source: &SideRestoreSource,
+) -> anyhow::Result<Rehearsal> {
     let scratch = match keep_at {
         Some(path) => path.to_path_buf(),
-        None => std::env::temp_dir().join(format!(
+        None => temp.join(format!(
             "oneiron-rehearse-{}-{}",
             file_stamp(now_unix_ms()),
             oneiron::EntityId::now().to_hex()

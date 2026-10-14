@@ -7,7 +7,7 @@ pub(crate) fn body(text: &str) -> Vec<u8> {
 }
 
 pub(crate) fn fixture() -> (tempfile::TempDir, Vault, EntityId, WriteActor) {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_support::restore_tempdir();
     let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
     let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
     vault
