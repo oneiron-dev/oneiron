@@ -134,6 +134,10 @@ pub(super) fn serve_idle() -> Error {
     Error::Code(CodeError::GitHttpExchangeIdle)
 }
 
+pub(super) fn repository_busy() -> Error {
+    Error::Code(CodeError::GitHttpRepositoryBusy)
+}
+
 /// Carries a door refusal out through the crate error surface without ever
 /// carrying a secret: the door's messages name paths and reason codes only.
 pub(super) fn door_refused(error: &CredentialDoorError) -> Error {

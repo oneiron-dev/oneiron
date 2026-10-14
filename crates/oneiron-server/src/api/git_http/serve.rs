@@ -226,6 +226,11 @@ pub(super) fn serve_failure(
             "git transfer moved no data within its idle limit; ref effects may be partial"
                 .to_owned(),
         ),
+        Ok(Err(oneiron::Error::Code(oneiron::error::CodeError::GitHttpRepositoryBusy))) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the repository is busy with another writer; nothing was received; retry later"
+                .to_owned(),
+        ),
         Ok(Err(
             oneiron::Error::ConcurrentWrite(_)
             | oneiron::Error::Code(oneiron::error::CodeError::RepoMutationFailed(_)),

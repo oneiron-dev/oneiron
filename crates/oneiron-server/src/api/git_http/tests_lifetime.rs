@@ -1,6 +1,7 @@
 //! The lifetime of one git exchange (C5), end to end over the real routes and
 //! a real `git http-backend`: a stalled push is ended at the idle limit and
-//! frees the repository coordinator for the next push, exchanges past the
+//! frees the repository coordinator for the next push, a push that finds the
+//! coordinator taken is refused rather than queued, exchanges past the
 //! bound are refused while a stalled one holds its permit, the permit returns
 //! once the stalled child is gone, and a slow transfer that keeps moving is
 //! never cut.
@@ -209,6 +210,25 @@ async fn a_stalled_push_is_ended_and_frees_the_repository_for_the_next() {
     let mut stalled = rpc(&origin, "git-receive-pack", 4_096, b"00").await;
     tokio::time::sleep(Duration::from_millis(300)).await;
 
+    // Meanwhile another push is refused with a retryable answer: it never
+    // waits on the coordinator while it holds an exchange permit.
+    let mut refused = rpc(&origin, "git-receive-pack", 4, b"0000").await;
+    let (status, body) = response(&mut refused).await;
+    assert_eq!(
+        status,
+        503,
+        "a push that finds the repository taken is refused, not queued: {}",
+        String::from_utf8_lossy(&body)
+    );
+
+    let (status, _) = response(&mut stalled).await;
+    assert_eq!(
+        status, 408,
+        "a push that stops sending ends at the idle limit"
+    );
+
+    // The stalled push's answer comes once its worker has let the
+    // coordinator go, so the next push lands.
     let url = format!("http://{}/git/demo.git", origin.addr);
     let source = origin.source.path().to_owned();
     let [token, binding] = origin.git_auth.clone();
@@ -230,12 +250,6 @@ async fn a_stalled_push_is_ended_and_frees_the_repository_for_the_next() {
         );
         stock_git(&source, &["rev-parse", "HEAD"])
     });
-
-    let (status, _) = response(&mut stalled).await;
-    assert_eq!(
-        status, 408,
-        "a push that stops sending ends at the idle limit"
-    );
     let pushed = tokio::time::timeout(PATIENCE, push)
         .await
         .expect("the next push gets the repository once the stalled one ends")

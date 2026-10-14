@@ -21,7 +21,8 @@ use super::intent::ReceivePackRefResult;
 use super::landing::ReceivePackLanding;
 use super::paths::{
     DOOR_WINDOW_TIMEOUT, SERVE_IDLE_TIMEOUT, SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES,
-    origin_door_root, origin_repo_dir, origin_serving_root, serve_failed, serve_idle,
+    origin_door_root, origin_repo_dir, origin_serving_root, repository_busy, serve_failed,
+    serve_idle,
 };
 use super::serve_cmd::{ServeChild, ServeCommand, ServeRequest};
 use crate::Vault;
@@ -29,7 +30,7 @@ use crate::codebase::RepoRef;
 use crate::credential_door::CredentialDoorService;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::lock_repository;
+use crate::git_wire::{lock_repository, try_lock_repository};
 use crate::origin::residence::{OriginAuthorityLease, OriginAuthorityStamp};
 
 /// Where a serve invocation writes its response.
@@ -115,9 +116,16 @@ pub fn serve(
     serve_with_provenance(vault, repo_name, request, seam, None, body, sink)
 }
 
-/// [`serve`] with its own idle limit in place of [`SERVE_IDLE_TIMEOUT`]. A
+/// [`serve`] for a transport that admits exchanges by permit.
+///
+/// It runs under its own idle limit in place of [`SERVE_IDLE_TIMEOUT`]: a
 /// transport whose body and sink bound their own waits passes the same limit,
-/// so whichever side sees the stall first ends the exchange the same way.
+/// so whichever side sees the stall first ends the exchange the same way. And
+/// it never waits for the repository: a push that finds the coordinator taken
+/// fails at once with [`CodeError::GitHttpRepositoryBusy`], so an admitted
+/// exchange never sits queued behind another push.
+///
+/// [`CodeError::GitHttpRepositoryBusy`]: crate::error::CodeError::GitHttpRepositoryBusy
 pub fn serve_bounded(
     vault: &Arc<Vault>,
     repo_name: &str,
@@ -131,6 +139,7 @@ pub fn serve_bounded(
         seam,
         authority: None,
         idle,
+        wait_for_repository: false,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }
@@ -156,6 +165,7 @@ pub fn serve_with_provenance(
         seam,
         authority: None,
         idle: SERVE_IDLE_TIMEOUT,
+        wait_for_repository: true,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }
@@ -176,16 +186,19 @@ pub fn serve_with_authority(
         seam,
         authority: Some(authority),
         idle: SERVE_IDLE_TIMEOUT,
+        wait_for_repository: true,
     };
     serve_request(vault, repo_name, request, terms, body, sink)
 }
 
 /// What one invocation runs under besides its request: the door seam, a lease
-/// from trusted host configuration, and the exchange's idle limit.
+/// from trusted host configuration, the exchange's idle limit, and whether a
+/// push waits for a repository another writer holds or is refused.
 struct ServeTerms<'a> {
     seam: DoorSeam,
     authority: Option<&'a OriginAuthorityLease>,
     idle: Duration,
+    wait_for_repository: bool,
 }
 
 fn serve_request(
@@ -200,6 +213,7 @@ fn serve_request(
         seam,
         authority,
         idle,
+        wait_for_repository,
     } = terms;
     let repo_dir = origin_repo_dir(vault, repo_name)?;
     let project_root = origin_serving_root(vault)?;
@@ -222,7 +236,12 @@ fn serve_request(
     let hooks = DoorHooksDir::materialize(&origin_door_root(vault)?)?;
     let command = ServeCommand::http_backend(&repo_dir, &project_root, hooks.path())?;
     let coordinator = if request.is_receive_pack() {
-        Some(lock_repository(&repo_common_dir(&repo_dir)?)?)
+        let common_dir = repo_common_dir(&repo_dir)?;
+        if wait_for_repository {
+            Some(lock_repository(&common_dir)?)
+        } else {
+            Some(try_lock_repository(&common_dir)?.ok_or_else(repository_busy)?)
+        }
     } else {
         // A fetch and an advertisement mutate nothing, so neither queues behind
         // a push and neither delays one.
@@ -440,14 +459,14 @@ fn run_exchange(
         sink,
         progress: &progress,
     };
-    let (done, done_watch) = std::sync::mpsc::channel::<()>();
+    let (watching, watched) = std::sync::mpsc::channel::<()>();
 
     std::thread::scope(|scope| {
         // Closed when this body returns, however it returns, so the
         // watchdog never outlives the exchange it watches.
-        let done = done;
+        let watching = watching;
         let clock = &progress;
-        let watchdog = scope.spawn(move || watch(clock, idle, &done_watch, child));
+        let watchdog = scope.spawn(move || watch(clock, idle, &watched, child));
         let pump = scope.spawn(move || pump_request_body(&mut body, stdin));
         let drain = scope.spawn(move || drain_stderr(stderr));
         let door = receive_pack.then(|| {
@@ -463,19 +482,29 @@ fn run_exchange(
             stream_response(stdout, &mut sink)
         };
         finished.store(true, Ordering::SeqCst);
-        drop(done);
+        if streamed.is_err() {
+            // Nothing more is wanted from the backend, and a push's hook may
+            // be waiting on a verdict the door window will now never give:
+            // end it, so the joins below see their ends.
+            let _ = watching.send(());
+        }
+        let pumped = join_thread(pump.join());
+        let stderr = drain.join().unwrap_or_default();
+        let door = match door {
+            Some(handle) => join_thread(handle.join()),
+            None => Ok(DoorWindowReport::not_invoked()),
+        };
+        // Disarmed only once every thread is joined: until then, a backend
+        // one of them still waited on was watched.
+        drop(watching);
         // A response cut short by the watchdog's kill reads as an ending; it
         // is the idle limit's, never a success.
         if join_thread(watchdog.join().map(Ok))? {
             return Err(serve_idle());
         }
         let (status, response_bytes) = streamed.map_err(stall_as_idle)?;
-        let request_bytes = join_thread(pump.join()).map_err(stall_as_idle)?;
-        let stderr = drain.join().unwrap_or_default();
-        let door = match door {
-            Some(handle) => join_thread(handle.join())?,
-            None => DoorWindowReport::not_invoked(),
-        };
+        let request_bytes = pumped.map_err(stall_as_idle)?;
+        let door = door?;
         Ok(ServeExchange {
             status,
             request_bytes,

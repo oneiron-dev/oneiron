@@ -75,14 +75,19 @@ impl ServeSink for ProgressSink<'_> {
 }
 
 /// Kills the backend once the exchange has moved no byte for `idle`, and
-/// says whether it did. Returns as soon as `done` closes.
+/// says whether it did. A message on `watched` kills it at once and is no
+/// idling: the exchange already failed, and nothing more is wanted from the
+/// backend. The watch ends when `watched` closes, which the exchange does
+/// only once every thread that reads the backend's pipes or answers its hook
+/// has been joined, so none of them waits on a backend nobody watches.
 ///
 /// The kill is what unblocks the exchange: the backend's pipes close with it,
-/// so the response reader sees its end and the body pump its broken pipe.
+/// so the response reader sees its end, the body pump its broken pipe, the
+/// stderr drain its end, and a hook waiting on a verdict dies with the rest.
 pub(super) fn watch(
     progress: &Progress,
     idle: Duration,
-    done: &Receiver<()>,
+    watched: &Receiver<()>,
     child: &mut ServeChild,
 ) -> bool {
     loop {
@@ -91,9 +96,13 @@ pub(super) fn watch(
             child.end();
             return true;
         }
-        match done.recv_timeout(idle - quiet) {
+        match watched.recv_timeout(idle - quiet) {
             Err(RecvTimeoutError::Timeout) => {}
-            Ok(()) | Err(RecvTimeoutError::Disconnected) => return false,
+            Ok(()) => {
+                child.end();
+                return false;
+            }
+            Err(RecvTimeoutError::Disconnected) => return false,
         }
     }
 }

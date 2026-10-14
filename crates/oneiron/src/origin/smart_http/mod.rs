@@ -110,6 +110,8 @@ mod door_serve_tests;
 #[cfg(test)]
 mod epoch_tests;
 #[cfg(test)]
+mod exchange_tests;
+#[cfg(test)]
 mod intent_recovery_tests;
 #[cfg(test)]
 mod landing_tests;
