@@ -1,7 +1,7 @@
 //! Grant-scoped binary have/want endpoint over the standing bearer identity.
 
 use super::gate::{LfsAccess, authorize};
-use super::support::lfs_saturated;
+use super::support::{lfs_object_withheld_now, lfs_saturated};
 use crate::admission::Permit;
 use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
@@ -97,7 +97,7 @@ fn reply(
         let vault = Arc::clone(&vault);
         async move {
             let piece = receiver.recv().await?;
-            if oneiron::sync::chunks::lfs_object_withheld(&vault, object).unwrap_or(true) {
+            if lfs_object_withheld_now(&vault, object).await {
                 receiver.close();
                 let kept = io::Error::new(
                     io::ErrorKind::PermissionDenied,

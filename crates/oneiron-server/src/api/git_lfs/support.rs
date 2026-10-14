@@ -12,10 +12,26 @@ use axum::http::header::RETRY_AFTER;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use oneiron::ErrorKind;
+use oneiron::Vault;
 use oneiron::origin::lfs::LFS_JSON_MEDIA_TYPE;
+use oneiron::origin::lfs::LfsOid;
 use serde::Serialize;
+use std::sync::Arc;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
+
+/// Whether a device-only world keeps `oid` from leaving, judged in the
+/// blocking pool: the judge takes the privacy lock and reads the vault, which
+/// a streaming body must never do on a runtime worker. A judge that cannot
+/// answer refuses.
+pub(super) async fn lfs_object_withheld_now(vault: &Arc<Vault>, oid: LfsOid) -> bool {
+    let vault = Arc::clone(vault);
+    tokio::task::spawn_blocking(move || {
+        oneiron::sync::chunks::lfs_object_withheld(&vault, oid).unwrap_or(true)
+    })
+    .await
+    .unwrap_or(true)
+}
 
 /// The media type a downloaded object body carries. LFS bytes are opaque: this
 /// origin never guesses a content type for content it stores as a digest.

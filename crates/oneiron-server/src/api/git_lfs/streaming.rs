@@ -1,6 +1,6 @@
 //! Async HTTP bodies bridged to blocking vault IO with bounded backpressure.
 
-use super::support::lfs_engine_error;
+use super::support::{lfs_engine_error, lfs_object_withheld_now};
 use crate::admission::Permit;
 use crate::api::transfer::{self, BodyReader, Reservation};
 use crate::error::ApiError;
@@ -124,18 +124,14 @@ pub(super) fn download(
         let vault = Arc::clone(&vault);
         async move {
             let item = receiver.recv().await?;
-            let item = match item {
-                Ok(_)
-                    if oneiron::sync::chunks::lfs_object_withheld(&vault, oid).unwrap_or(true) =>
-                {
-                    receiver.close();
-                    Err(io::Error::new(
-                        io::ErrorKind::PermissionDenied,
-                        "lfs object kept on this device",
-                    ))
-                }
-                item => item,
-            };
+            if item.is_ok() && lfs_object_withheld_now(&vault, oid).await {
+                receiver.close();
+                let kept = io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "lfs object kept on this device",
+                );
+                return Some((Err(kept), receiver));
+            }
             Some((item, receiver))
         }
     }))
