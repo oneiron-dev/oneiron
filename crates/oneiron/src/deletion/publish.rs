@@ -150,8 +150,8 @@ impl Vault {
         use crate::sync::schema::create_window_doc;
         use crate::sync::types::WindowKey;
         use crate::sync::window::{
-            apply_tombstone_to_window_doc, export_tombstone_commit_delta, load_window_from_state,
-            merge_persisted_state_into_doc,
+            apply_tombstone_to_window_doc, entity_carriers, export_tombstone_commit_delta,
+            load_window_from_state, merge_persisted_state_into_doc, note_removed_carriers_in_txn,
         };
         use loro::CommitOptions;
 
@@ -211,6 +211,7 @@ impl Vault {
                     gate,
                 )?;
                 let vv_before = window.doc.oplog_vv();
+                let carriers = entity_carriers(&window.doc, &[*id]);
                 let (delete_update, snapshot, vv) =
                     with_deletion_tombstone_observer_a_suppressed(|| -> Result<_> {
                         *doc_mutated = true;
@@ -228,6 +229,7 @@ impl Vault {
                 maybe_fail_live_tombstone_persist()?;
                 #[cfg(not(all(test, feature = "sync")))]
                 maybe_fail_live_tombstone_persist();
+                note_removed_carriers_in_txn(self, &mut wtxn, &carriers)?;
                 self.finish_crdt_tombstone_persist_in_txn(
                     &mut wtxn,
                     &window_key,
@@ -286,8 +288,10 @@ impl Vault {
             gate,
         )?;
         let vv_before = doc.oplog_vv();
+        let carriers = entity_carriers(&doc, &[*id]);
         apply_tombstone_to_window_doc(&doc, id, &value.encode())?;
         doc.commit();
+        note_removed_carriers_in_txn(self, &mut wtxn, &carriers)?;
         let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
 
         let snapshot = Self::export_window_snapshot_in_mode(&doc, history_free)?;

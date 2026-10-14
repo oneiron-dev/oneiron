@@ -586,6 +586,29 @@ pub(crate) fn note_suppressed_fact_in_txn(
     SUPPRESSED.put(store, wtxn, &fact.task_ref, &[1])
 }
 
+/// [`note_suppressed_fact_in_txn`] for a window document's entity carrier,
+/// header and body, that a local path removes because its id was deleted
+/// here: a fact the carrier holds that this vault never admitted marks its
+/// task, as admission would have.
+#[cfg(feature = "sync")]
+pub(crate) fn note_removed_carrier_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    carrier: &[u8],
+) -> Result<()> {
+    let Some(header) = EntityMetadataHeader::parse(carrier) else {
+        return Ok(());
+    };
+    note_suppressed_fact_in_txn(
+        store,
+        wtxn,
+        id,
+        header.entity_type,
+        &carrier[ENTITY_METADATA_HEADER_LEN..],
+    )
+}
+
 /// [`note_suppressed_fact_in_txn`] for a door with no tombstone map: the
 /// row was deleted here when its id is fenced, as a replicated put reads it.
 #[cfg(feature = "sync")]

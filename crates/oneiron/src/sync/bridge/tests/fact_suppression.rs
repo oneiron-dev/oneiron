@@ -279,3 +279,176 @@ fn a_fact_that_arrives_after_a_delete_precheck_is_never_erased() {
         "the fact row stays"
     );
 }
+
+/// The five local paths that remove a window carrier because its id was
+/// deleted here (Engine ruling, round 7) mark the task of an authority fact
+/// the carrier holds that this vault never admitted.
+mod removed_carriers {
+    use super::*;
+    use crate::sync::loro_support::{doc_version_vector, export_snapshot};
+    use crate::sync::schema::create_window_doc;
+    use crate::sync::types::WindowKey;
+    use crate::sync::window_rows::{PENDING_TOMBSTONE, WindowEntityHexKey};
+
+    /// A window document whose entities map holds `fact`, a cancellation of
+    /// `task`, that no observer ever ingested.
+    fn window_carrying(window: &str, fact: EntityId, task: EntityId, owner: EntityId) -> LoroDoc {
+        let doc = create_window_doc("local", &WindowKey::new(window));
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &fact.to_hex(),
+            &entity_blob(
+                ENTITY_TYPE_TASK,
+                at(),
+                LEARNED_AT,
+                &cancellation(task, owner),
+            ),
+        )
+        .unwrap();
+        doc.commit();
+        doc
+    }
+
+    fn persist(vault: &Vault, window: &str, doc: &LoroDoc) {
+        let snapshot = export_snapshot(doc).unwrap();
+        vault
+            .with_write_txn(|wtxn| {
+                crate::sync::window::persist_window_doc_in_txn(
+                    vault,
+                    wtxn,
+                    &WindowKey::new(window),
+                    &snapshot,
+                    &doc_version_vector(doc),
+                )
+            })
+            .unwrap();
+    }
+
+    fn assert_marked_and_control(vault: &Vault, owner: EntityId, tasks: &[(EntityId, EntityId)]) {
+        assert!(
+            reads_suppressed(vault, tasks[0].0),
+            "the removed fact's task reads as a refusal"
+        );
+        assert_eq!(
+            owner_and_cancelled(vault, tasks[1].0),
+            Some((owner, false)),
+            "positive control: a task with no suppressed fact still reads"
+        );
+    }
+
+    #[test]
+    fn a_replayed_pending_tombstone_marks_an_unadmitted_fact() {
+        let vault = test_vault();
+        let (owner, tasks) = owned_tasks_for_fact_replay(&vault, LEARNED_AT, 2);
+        let fact = EntityId::now();
+        let doc = window_carrying("2026-03", fact, tasks[0].0, owner);
+        vault
+            .with_write_txn(|wtxn| {
+                PENDING_TOMBSTONE.put(
+                    &vault.store,
+                    wtxn,
+                    &WindowEntityHexKey {
+                        window: "2026-03".to_owned(),
+                        id: fact,
+                    },
+                    &tombstone_value(TombstoneReason::UserDelete, LEARNED_AT),
+                )
+            })
+            .unwrap();
+
+        let replayed = crate::sync::window::replay_pending_tombstones(
+            &vault,
+            &doc,
+            &WindowKey::new("2026-03"),
+        )
+        .unwrap();
+        assert_eq!(replayed, 1);
+        assert_marked_and_control(&vault, owner, &tasks);
+    }
+
+    #[test]
+    fn a_reasserted_tombstone_marks_an_unadmitted_fact() {
+        let vault = test_vault();
+        let (owner, tasks) = owned_tasks_for_fact_replay(&vault, LEARNED_AT, 2);
+        let fact = EntityId::now();
+        persist(
+            &vault,
+            "2026-03",
+            &window_carrying("2026-03", fact, tasks[0].0, owner),
+        );
+        vault
+            .apply_replayed_tombstone(
+                &fact,
+                &tombstone_value(TombstoneReason::UserHardDelete, LEARNED_AT),
+            )
+            .unwrap();
+        assert!(
+            crate::sync::quarantine::enqueue_tombstone_reassert_marker(&vault, "2026-03", &fact)
+                .unwrap(),
+            "precondition: a hard delete here to reassert"
+        );
+
+        let manager = Arc::new(crate::sync::manager::WindowManager::new(
+            vault.clone(),
+            Arc::new(Materializer::new()),
+            "local",
+        ));
+        crate::sync::quarantine::drain_reassert_markers_for_window(
+            &vault,
+            "local",
+            &manager,
+            &WindowKey::new("2026-03"),
+        )
+        .unwrap();
+        assert_marked_and_control(&vault, owner, &tasks);
+    }
+
+    #[test]
+    fn the_withdrawn_delete_scrub_marks_an_unadmitted_fact() {
+        let vault = test_vault();
+        let (owner, tasks) = owned_tasks_for_fact_replay(&vault, LEARNED_AT, 2);
+        let fact = EntityId::now();
+        vault
+            .apply_replayed_tombstone(
+                &fact,
+                &tombstone_value(TombstoneReason::UserDelete, LEARNED_AT),
+            )
+            .unwrap();
+        let doc = window_carrying("2026-03", fact, tasks[0].0, owner);
+
+        crate::sync::window::export_scrubbed_window_snapshot(
+            &vault,
+            &WindowKey::new("2026-03"),
+            &doc,
+        )
+        .unwrap();
+        assert!(
+            doc.get_map("entities").get(&fact.to_hex()).is_none(),
+            "the scrub removed the carrier"
+        );
+        assert_marked_and_control(&vault, owner, &tasks);
+    }
+
+    #[test]
+    fn a_local_delete_publication_marks_an_unadmitted_fact() {
+        let vault = test_vault();
+        let (owner, tasks) = owned_tasks_for_fact_replay(&vault, LEARNED_AT, 2);
+        let fact = EntityId::now();
+        // A link to the id is local delete scope, so the delete publishes.
+        vault
+            .batch()
+            .edge(&tasks[1].0, crate::EdgeKind::DerivedFrom, &fact, 1.0)
+            .commit()
+            .unwrap();
+        let window =
+            crate::deletion::window_label_from_timestamp(vault.store.clock.now_recorded_at());
+        persist(
+            &vault,
+            &window,
+            &window_carrying(&window, fact, tasks[0].0, owner),
+        );
+
+        vault.delete_entity(&fact).unwrap();
+        assert_marked_and_control(&vault, owner, &tasks);
+    }
+}

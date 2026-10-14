@@ -4,7 +4,7 @@ use super::bridge::{self, BRIDGE_ORIGIN};
 use super::egress::export_scrubbed_window_snapshot;
 use super::loro_support::{
     TombstoneIndex, doc_version_vector, export_updates_from, import_doc, map_delete,
-    map_for_each_bytes, map_insert_bytes,
+    map_for_each_bytes, map_get_bytes, map_insert_bytes,
 };
 use super::schema::create_window_doc;
 use super::types::WindowKey;
@@ -40,6 +40,30 @@ use loro::{CommitOptions, LoroDoc};
 pub fn apply_tombstone_to_window_doc(doc: &LoroDoc, id: &EntityId, raw_value: &[u8]) -> Result<()> {
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     apply_tombstone_to_indexed_window_doc(doc, &tombstones, id, raw_value)
+}
+
+/// The entity carriers `ids` hold in `doc`, read before a local path removes
+/// them, so [`note_removed_carriers_in_txn`] can mark the task of an authority
+/// fact among them that this vault never admitted: removing its carrier
+/// before ingest saw it would otherwise read as a fact never made.
+pub(crate) fn entity_carriers(doc: &LoroDoc, ids: &[EntityId]) -> Vec<(EntityId, Vec<u8>)> {
+    let entities = doc.get_map("entities");
+    ids.iter()
+        .filter_map(|id| map_get_bytes(&entities, &id.to_hex()).map(|carrier| (*id, carrier)))
+        .collect()
+}
+
+/// Marks, in the transaction that persists their removal, the task of each
+/// removed carrier that holds an authority fact this vault never admitted.
+pub(crate) fn note_removed_carriers_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    carriers: &[(EntityId, Vec<u8>)],
+) -> Result<()> {
+    for (id, carrier) in carriers {
+        crate::task_authority::note_removed_carrier_in_txn(&vault.store, wtxn, id, carrier)?;
+    }
+    Ok(())
 }
 
 /// [`apply_tombstone_to_window_doc`] for a replay of many tombstones into one doc: `tombstones`
@@ -204,6 +228,8 @@ pub fn replay_pending_tombstones(
 
     let vv_before = doc.oplog_vv();
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
+    let ids: Vec<EntityId> = markers.iter().map(|(key, _)| key.id).collect();
+    let carriers = entity_carriers(doc, &ids);
     for (key, value) in &markers {
         apply_tombstone_to_indexed_window_doc(doc, &tombstones, &key.id, value)?;
     }
@@ -222,6 +248,7 @@ pub fn replay_pending_tombstones(
     let vv = doc_version_vector(doc);
     vault.with_write_txn_grouped(|wtxn| {
         persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv)?;
+        note_removed_carriers_in_txn(vault, wtxn, &carriers)?;
         if any_hard {
             crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, window_key.as_str())?;
             prune_subsumed_window_updates_in_txn(vault, wtxn, window_key, &merged_update_keys)?;

@@ -285,7 +285,7 @@ fn compact_window(
     // map. Remove every entities/edges key referencing an erased id —
     // across hex-casing aliases (fail closed). Tombstones map untouched
     // (permanent); receipt entities are receipt-ids, never erased ids.
-    scrub_erased_ids_from_doc(&doc, erased)?;
+    let carriers = scrub_erased_ids_from_doc(&doc, erased)?;
 
     // Shallow snapshot at the latest frontiers: live state byte-exact, op
     // history (the payload carrier) dropped, doc identity + VV preserved.
@@ -370,6 +370,7 @@ fn compact_window(
         WINDOW_STATE_VECTOR.put(&vault.store, wtxn, &window, &vv)?;
         WINDOW_UPDATE.delete_from(&vault.store, wtxn, update_prefix.as_bytes())?;
         WINDOW_SHALLOW_FENCE.put(&vault.store, wtxn, &window, &[1u8])?;
+        crate::sync::window::note_removed_carriers_in_txn(vault, wtxn, &carriers)?;
 
         // Wire/SLA pin: the swept window cannot serve pre-shallow deltas —
         // peers behind the shallow start must take a full window resync.
@@ -449,11 +450,14 @@ fn inject_race_before_compact_write(
 /// hex-casing alias), committing once if anything changed. The tombstones
 /// map is PERMANENT and untouched.
 #[cfg(feature = "sync")]
-fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -> Result<()> {
-    use crate::sync::loro_support::map_delete;
+fn scrub_erased_ids_from_doc(
+    doc: &loro::LoroDoc,
+    erased: &BTreeSet<EntityId>,
+) -> Result<Vec<(EntityId, Vec<u8>)>> {
+    use crate::sync::loro_support::{map_delete, map_get_bytes};
 
     if erased.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     let erased_hex: std::collections::HashSet<[u8; 32]> = erased
@@ -528,8 +532,19 @@ fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -
     });
 
     if doomed_entities.is_empty() && doomed_edges.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
+    // The erased ids' carriers, kept so the compaction's transaction can
+    // mark the task of an authority fact this vault never admitted.
+    let carriers = doomed_entities
+        .iter()
+        .filter_map(|key| {
+            let id = EntityId::from_hex(key)
+                .ok()
+                .filter(|id| erased.contains(id))?;
+            map_get_bytes(&entities, key).map(|carrier| (id, carrier))
+        })
+        .collect();
     for key in &doomed_entities {
         map_delete(&entities, key)?;
     }
@@ -537,7 +552,7 @@ fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -
         map_delete(&edges, key)?;
     }
     doc.commit();
-    Ok(())
+    Ok(carriers)
 }
 
 /// Deletion-only scan of the already-recognized birth-source namespace. It
@@ -567,6 +582,107 @@ mod scoped_update_tests {
     use crate::sync::types::WindowKey;
     use crate::sync::window_rows::WindowUpdateKey;
     use crate::test_util::{embedding_test_config, open_test_vault_with};
+
+    /// F24 round 7 (H219): compaction scrubs an erased id's window carrier,
+    /// and a carrier holding an authority fact this vault never admitted
+    /// marks the fact's task, which then reads as a refusal.
+    #[test]
+    fn compaction_marks_the_task_of_an_unadmitted_erased_fact() {
+        use crate::task_authority::{
+            TaskAuthorityFact, TaskAuthorityFactKind, encode_task_authority_fact_body,
+            put_task_authority_fact_in_txn,
+        };
+        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        let learned_at = 1_771_027_200u64;
+        let at = crate::temporal::TimeRange {
+            start: learned_at,
+            end: learned_at,
+        };
+        let fact_of = |task_ref, kind, actor_ref| TaskAuthorityFact {
+            task_ref,
+            kind,
+            actor_ref,
+            assigned_ref: None,
+            actor_generation: None,
+            assigned_generation: None,
+            occurred_at: learned_at,
+        };
+        let owner = EntityId::now();
+        vault
+            .put_entity(
+                &owner,
+                crate::registry::ENTITY_TYPE_PERSON,
+                at,
+                learned_at,
+                b"x",
+            )
+            .unwrap();
+        let tasks: Vec<EntityId> = (0..2).map(|_| EntityId::now()).collect();
+        for task in &tasks {
+            vault
+                .put_entity(
+                    task,
+                    crate::registry::ENTITY_TYPE_TASK,
+                    at,
+                    learned_at,
+                    &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
+                )
+                .unwrap();
+            vault
+                .with_write_txn(|wtxn| {
+                    put_task_authority_fact_in_txn(
+                        &vault,
+                        wtxn,
+                        fact_of(*task, TaskAuthorityFactKind::Owner, owner),
+                    )
+                })
+                .unwrap();
+        }
+        let fact = EntityId::now();
+        let mut carrier = vec![crate::registry::ENTITY_TYPE_TASK];
+        for field in [learned_at, learned_at, learned_at] {
+            carrier.extend_from_slice(&field.to_be_bytes());
+        }
+        carrier.extend_from_slice(&encode_task_authority_fact_body(&fact_of(
+            tasks[0],
+            TaskAuthorityFactKind::Cancelled,
+            owner,
+        )));
+        let key = WindowKey::from_timestamp(learned_at);
+        let doc = create_window_doc("local", &key);
+        doc.get_map("entities")
+            .insert(&fact.to_hex(), carrier.as_slice())
+            .unwrap();
+        doc.commit();
+        let snapshot = export_snapshot(&doc).unwrap();
+        vault
+            .with_write_txn(|txn| {
+                WINDOW_SNAPSHOT.put(&vault.store, txn, &key.to_string(), &snapshot)
+            })
+            .unwrap();
+
+        assert!(matches!(
+            compact_window(&vault, &key, &BTreeSet::from([fact])).unwrap(),
+            CompactOutcome::Compacted
+        ));
+        assert!(
+            matches!(
+                vault.task_authority_state(tasks[0]),
+                Err(crate::error::Error::InvariantViolation(
+                    "task authority fact suppressed"
+                ))
+            ),
+            "the erased fact's task reads as a refusal"
+        );
+        assert_eq!(
+            vault
+                .task_authority_state(tasks[1])
+                .unwrap()
+                .map(|state| (state.owner_ref, state.cancelled)),
+            Some((owner, false)),
+            "positive control: a task with no suppressed fact still reads"
+        );
+    }
 
     #[test]
     fn compact_window_ignores_prefix_colliding_update_and_preserves_it() {
