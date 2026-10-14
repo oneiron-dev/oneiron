@@ -87,6 +87,10 @@ fn an_unreadable_trusted_proxy_stops_startup() {
         "0.0.0.0/0",
         "::/0",
         "10.0.0.5/8",
+        // An IPv4-mapped block is read as written (C7 review r2): bits set
+        // past its IPv6 prefix, or the whole mapped range.
+        "::ffff:10.0.0.0/8",
+        "::ffff:10.0.0.0/96",
     ] {
         let env = EnvConfig::from_pairs([("ONEIRON_TRUSTED_PROXIES", entry)]).expect("env");
         assert!(
@@ -94,14 +98,19 @@ fn an_unreadable_trusted_proxy_stops_startup() {
             "{entry} must not start serve"
         );
     }
-    let env = EnvConfig::from_pairs([("ONEIRON_TRUSTED_PROXIES", "10.0.0.0/8, ::1")]).expect("env");
+    let env = EnvConfig::from_pairs([(
+        "ONEIRON_TRUSTED_PROXIES",
+        "10.0.0.0/8, ::1, ::ffff:192.0.2.0/120",
+    )])
+    .expect("env");
     let config =
         resolve_serve_config_with_sources(&ServeArgs::default(), env, None).expect("readable");
-    let [block, host] = config.trusted_proxies.as_slice() else {
-        panic!("two entries: {:?}", config.trusted_proxies);
+    let [block, host, mapped] = config.trusted_proxies.as_slice() else {
+        panic!("three entries: {:?}", config.trusted_proxies);
     };
     let ip = |text: &str| text.parse::<std::net::IpAddr>().expect("address");
     assert!(block.contains(ip("10.255.0.1")) && block.contains(ip("::ffff:10.0.0.9")));
     assert!(!block.contains(ip("11.0.0.1")) && !block.contains(ip("::a00:1")));
     assert!(host.contains(ip("::1")) && !host.contains(ip("::2")));
+    assert!(mapped.contains(ip("192.0.2.200")) && !mapped.contains(ip("192.0.3.1")));
 }

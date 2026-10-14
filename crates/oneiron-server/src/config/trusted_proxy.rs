@@ -57,10 +57,8 @@ impl FromStr for TrustedProxy {
             Some((address, prefix)) => (address, Some(prefix)),
             None => (value.trim(), None),
         };
-        let network = address
-            .parse::<IpAddr>()
-            .map_err(|_| unreadable())?
-            .to_canonical();
+        // The prefix is read in the family the address is written in.
+        let network = address.parse::<IpAddr>().map_err(|_| unreadable())?;
         let width = if network.is_ipv4() { 32 } else { 128 };
         let prefix = match prefix {
             Some(prefix) => prefix
@@ -77,7 +75,18 @@ impl FromStr for TrustedProxy {
                 "trusted proxy {value:?} has host bits set; write {masked}/{prefix} for the network or the address alone for one host"
             ));
         }
-        Ok(block)
+        // An IPv4-mapped block is the IPv4 block it covers. One reaching past
+        // the mapped range, or all of it, would be IPv4 /0 or wider.
+        match network.to_canonical() {
+            IpAddr::V4(ipv4) if network.is_ipv6() => Ok(Self {
+                network: IpAddr::V4(ipv4),
+                prefix: prefix
+                    .checked_sub(96)
+                    .filter(|prefix| *prefix > 0)
+                    .ok_or_else(unreadable)?,
+            }),
+            _ => Ok(block),
+        }
     }
 }
 
