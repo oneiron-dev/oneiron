@@ -234,6 +234,17 @@ pub fn adopt_listen_fd(fd: RawFd) -> Result<UnixListener, ManagedError> {
     // `ServeListener::bind`, so no second adoption can double-own the
     // descriptor, and the std listener below closes it on drop.
     let std_listener = unsafe { std::os::unix::net::UnixListener::from_raw_fd(fd) };
+    // The type above is only a claim about the descriptor. Tokio's accept does
+    // not check the family, and a TCP listener adopted here would hand network
+    // peers the managed socket's authority. So the family is read back from
+    // the socket before Tokio takes it: std's `local_addr` refuses an address
+    // that is not AF_UNIX, and a descriptor that is not a socket fails it too.
+    if std_listener.local_addr().is_err() {
+        return Err(ManagedError::ListenFdNotUnix {
+            env: HYPNOS_LISTEN_FD,
+            fd,
+        });
+    }
     std_listener.set_nonblocking(true)?;
     Ok(UnixListener::from_std(std_listener)?)
 }

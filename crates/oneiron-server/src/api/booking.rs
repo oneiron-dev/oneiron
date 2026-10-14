@@ -49,6 +49,7 @@ use oneiron::{EntityId, Vault};
 
 use super::booking_anti_abuse::{enforce_amend, enforce_book, enforce_hold, enforce_slot_list};
 use super::{check_api_auth, json_payload};
+use crate::auth::ClientAddress;
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
@@ -246,10 +247,11 @@ fn wants_html_fragment(headers: &HeaderMap) -> bool {
 pub(crate) async fn booking_availability(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
+    client: ClientAddress,
     Path(page_token): Path<String>,
     payload: Result<Json<BookingAvailabilityInput>, JsonRejection>,
 ) -> Result<Json<BookingOperationResponse>, ApiError> {
-    let transport = http_transport_context(&headers, &server)?;
+    let transport = http_transport_context(&headers, &server, client)?;
     let input = json_payload(payload)?;
     execute_booking_operation(
         &server,
@@ -285,10 +287,11 @@ pub(crate) async fn booking_availability(
 pub(crate) async fn booking_book(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
+    client: ClientAddress,
     Path(page_token): Path<String>,
     payload: Result<Json<BookingBookInput>, JsonRejection>,
 ) -> Result<Json<BookingOperationResponse>, ApiError> {
-    let transport = http_transport_context(&headers, &server)?;
+    let transport = http_transport_context(&headers, &server, client)?;
     let input = json_payload(payload)?;
     execute_booking_operation(
         &server,
@@ -319,10 +322,11 @@ pub(crate) async fn booking_book(
 pub(crate) async fn booking_reschedule(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
+    client: ClientAddress,
     Path(page_token): Path<String>,
     payload: Result<Json<BookingRescheduleInput>, JsonRejection>,
 ) -> Result<Json<BookingOperationResponse>, ApiError> {
-    let transport = http_transport_context(&headers, &server)?;
+    let transport = http_transport_context(&headers, &server, client)?;
     let input = json_payload(payload)?;
     execute_booking_operation(
         &server,
@@ -353,10 +357,11 @@ pub(crate) async fn booking_reschedule(
 pub(crate) async fn booking_cancel(
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
+    client: ClientAddress,
     Path(page_token): Path<String>,
     payload: Result<Json<BookingCancelInput>, JsonRejection>,
 ) -> Result<Json<BookingOperationResponse>, ApiError> {
-    let transport = http_transport_context(&headers, &server)?;
+    let transport = http_transport_context(&headers, &server, client)?;
     let input = json_payload(payload)?;
     execute_booking_operation(
         &server,

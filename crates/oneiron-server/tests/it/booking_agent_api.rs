@@ -220,8 +220,14 @@ async fn spawn(vault: Arc<Vault>) -> (SocketAddr, Arc<SyncServer>, tokio::task::
     let app = build_app(server.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    // As unmanaged serve does: admission keys each caller by its connection.
     let handle = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     (addr, server, handle)
 }
