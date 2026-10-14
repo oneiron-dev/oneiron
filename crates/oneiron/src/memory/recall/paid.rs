@@ -528,11 +528,10 @@ impl Memory<'_> {
     }
 
     /// Empties the text of each row a device-only world keeps: one the live
-    /// row's flag withholds, or one whose words, at the revision read, were
-    /// in a flagged world (a claim moved out of one is kept at a revision
-    /// that was in it). A flag commits under the write side of the store's
-    /// flag lock and this verdict reads under the read side, as a sync
-    /// release's does, so a flag committed before the verdict is one it
+    /// row's flag withholds, or one whose item, read at the revision scored,
+    /// names a flagged world. A flag commits under the write side of the
+    /// store's flag lock and this verdict reads under the read side, as a
+    /// sync release's does, so a flag committed before the verdict is one it
     /// read. It only reads the store while it holds the lock: a scoped read
     /// can take the writer, which a flag commit holds while it waits.
     fn withhold_device_only(
