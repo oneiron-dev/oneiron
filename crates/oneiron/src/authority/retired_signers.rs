@@ -23,7 +23,8 @@
 //!   installs nothing and retires nothing. The rest settle.
 //! - An owner anchor's entries, its root and its marks, rest on no roster
 //!   key, so no fence holds them, even when a roster enrolled the anchor's
-//!   public key: anyone may enrol a public key.
+//!   public key: anyone may enrol a public key. They are judged from the log
+//!   alone, so a removal only its own proof recovers is one too.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -33,7 +34,7 @@ use super::*;
 #[derive(Debug, Default)]
 pub(super) struct Retirements {
     fences: Vec<Fence>,
-    /// The entries that folded through an owner anchor's branch.
+    /// The entries an owner anchor signs on its own branch (`anchor_signed`).
     anchored: BTreeSet<AuthorityEntryHash>,
 }
 
@@ -241,9 +242,22 @@ fn close_fences(
     refused: &mut BTreeMap<AuthorityEntryHash, AuthorityFoldIssue>,
 ) -> Retirements {
     let gone = with_descendants(states, refused, ancestors);
-    let anchored: BTreeSet<_> = states
+    let roots: BTreeMap<_, _> = entries
         .iter()
-        .filter(|(hash, state)| state.anchor_entries.contains(*hash))
+        .filter_map(|(hash, entry)| match &entry.op {
+            AuthorityOp::OwnerRoot(record) => Some((*hash, record.anchor_key)),
+            _ => None,
+        })
+        .collect();
+    let anchored: BTreeSet<_> = entries
+        .iter()
+        .filter(|(hash, entry)| {
+            anchor_signed(entry, |key| {
+                ancestors
+                    .get(*hash)
+                    .is_some_and(|past| past.iter().any(|row| roots.get(row) == Some(key)))
+            })
+        })
         .map(|(hash, _)| *hash)
         .collect();
     let fences: Vec<Fence> = states
@@ -346,6 +360,19 @@ fn close_fences(
     retirements
 }
 
+/// Whether an owner anchor signs `entry` on its own branch, which reads no
+/// roster key: a root record, which its anchor signs for itself, or a machine
+/// mark signed alone by a key `anchor` names as the anchor of a root beneath
+/// the mark: the rows the anchor fold routes, judged from the log alone.
+pub(super) fn anchor_signed(entry: &AuthorityLogEntry, anchor: impl Fn(&[u8; 32]) -> bool) -> bool {
+    entry.cosigns.is_empty()
+        && match (&entry.op, &entry.signer.public_key) {
+            (AuthorityOp::OwnerRoot(_), _) => true,
+            (AuthorityOp::MachineProfile(_), AuthorityKey::Ed25519(key)) => anchor(key),
+            _ => false,
+        }
+}
+
 /// The primary signer and every co-signer of `entry`.
 pub(super) fn entry_signer_keys(entry: &AuthorityLogEntry) -> impl Iterator<Item = &AuthorityKey> {
     std::iter::once(&entry.signer.public_key)
@@ -391,54 +418,26 @@ pub(crate) fn authority_row_resident(
 }
 
 impl AuthorityFold {
-    /// Whether a row not yet in this fold is signed, as primary or co-signer,
-    /// by a key a handoff retired. Such a key keeps no standing: its rows that
-    /// stand are already here in a handoff's line, because a handoff folds
-    /// only once its whole ancestry does. Every door that admits signed
-    /// authority rows refuses one. An owner anchor's row is none: it folds on
-    /// the anchor's own branch, which reads no roster key.
-    pub(crate) fn signed_by_retired_key(
-        &self,
-        hash: &AuthorityEntryHash,
-        entry: &AuthorityLogEntry,
-    ) -> bool {
-        !self.valid_entries.contains(hash)
-            && !self.anchor_routed(entry)
-            && entry_signer_keys(entry).any(|key| self.retired_keys.contains(key))
-    }
-
-    /// Whether `entry` folds on an owner anchor's branch: a root record, or a
-    /// machine mark that the anchor of a root this fold holds signs alone. A
-    /// roster that enrolled the anchor's public key, and a handoff that then
-    /// retired it, take nothing from the owner.
-    fn anchor_routed(&self, entry: &AuthorityLogEntry) -> bool {
-        entry.cosigns.is_empty()
-            && match (&entry.op, &entry.signer.public_key) {
-                (AuthorityOp::OwnerRoot(_), _) => true,
-                (AuthorityOp::MachineProfile(_), AuthorityKey::Ed25519(key)) => {
-                    self.root_anchors.contains_key(key)
-                }
-                _ => false,
-            }
-    }
-
     /// Whether `entry` stands on a retired key: it, or a row in its ancestry
-    /// that this fold does not hold, is signed by a key a handoff retired.
-    /// The fold refuses such a row with its descendants, so a door refuses a
-    /// new row that descends from one, whoever signs it. `row` reads an
-    /// ancestor by hash, stored or arriving beside `entry`; the walk stops at
-    /// rows this fold holds, whose ancestry it holds too. An approval the
+    /// that this fold does not hold, is signed by a key a handoff retired. Such
+    /// a key keeps no standing: its rows that stand are already here in a
+    /// handoff's line, because a handoff folds only once its whole ancestry
+    /// does. The fold refuses such a row with its descendants, so a door
+    /// refuses a new row that descends from one, whoever signs it. `row` reads
+    /// an ancestor by hash, stored or arriving beside `entry`; the walk stops
+    /// at rows this fold holds, whose ancestry it holds too. An approval the
     /// stale-roster window expired counts as held here: it stood in the
     /// settled fold, so no fence refused it, though it approves nothing now.
+    ///
+    /// An owner anchor's row is none (`anchor_signed`): its anchor names a
+    /// root this fold holds or one arriving beneath it, so a root and its marks
+    /// pass together on their first arrival.
     pub(crate) fn stands_on_retired_key(
         &self,
         hash: &AuthorityEntryHash,
         entry: &AuthorityLogEntry,
         row: &mut dyn FnMut(&AuthorityEntryHash) -> crate::error::Result<Option<AuthorityLogEntry>>,
     ) -> crate::error::Result<bool> {
-        if self.signed_by_retired_key(hash, entry) {
-            return Ok(true);
-        }
         if self.retired_keys.is_empty() {
             return Ok(false);
         }
@@ -450,6 +449,7 @@ impl AuthorityFold {
                 _ => None,
             })
             .collect();
+        let mut arriving = vec![(*hash, entry.clone())];
         let mut seen = BTreeSet::new();
         let mut stack = entry.parent_hashes.clone();
         while let Some(parent) = stack.pop() {
@@ -462,11 +462,21 @@ impl AuthorityFold {
             let Some(ancestor) = row(&parent)? else {
                 continue;
             };
-            if self.signed_by_retired_key(&parent, &ancestor) {
-                return Ok(true);
-            }
             stack.extend(ancestor.parent_hashes.iter().copied());
+            arriving.push((parent, ancestor));
         }
-        Ok(false)
+        let anchors: BTreeSet<[u8; 32]> = arriving
+            .iter()
+            .filter_map(|(_, row)| match &row.op {
+                AuthorityOp::OwnerRoot(record) => Some(record.anchor_key),
+                _ => None,
+            })
+            .chain(self.root_anchors.keys().copied())
+            .collect();
+        Ok(arriving.iter().any(|(hash, row)| {
+            !self.valid_entries.contains(hash)
+                && !anchor_signed(row, |key| anchors.contains(key))
+                && entry_signer_keys(row).any(|key| self.retired_keys.contains(key))
+        }))
     }
 }

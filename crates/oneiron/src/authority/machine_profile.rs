@@ -259,15 +259,6 @@ impl FoldedMachine {
             .chain(self.anchored.values())
             .any(|chain| &chain.profile.machine_key == machine_key)
     }
-
-    /// Every revision this fold holds for the machine, for the post-fold
-    /// stale-roster pass.
-    pub(super) fn revisions_mut(&mut self) -> impl Iterator<Item = &mut MachineRevision> {
-        self.roster
-            .iter_mut()
-            .chain(self.roster_trusted.iter_mut())
-            .chain(self.anchored.values_mut())
-    }
 }
 
 impl AuthorityFold {
@@ -477,7 +468,7 @@ fn custodial_host_root(state: &FoldState, signer: &AuthorityKey, context: FoldCo
 }
 
 /// Whether `key`, or any key up its admitters, is marked as the host's.
-fn in_host_custody(state: &FoldState, key: &AuthorityKey) -> bool {
+pub(super) fn in_host_custody(state: &FoldState, key: &AuthorityKey) -> bool {
     let mut seen = BTreeSet::new();
     let mut pending = vec![key];
     while let Some(next) = pending.pop() {

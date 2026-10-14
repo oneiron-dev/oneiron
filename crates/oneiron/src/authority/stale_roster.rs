@@ -171,24 +171,31 @@ pub(super) fn apply_stale_roster_window(
     }
     // A machine stands on the revision that won. Once that revision is
     // stale it is not live here, until a key still on the roster signs the
-    // same standing again: a roster entry, never an anchor's copy of it.
-    for folded in fold
-        .machines
-        .values_mut()
-        .flat_map(FoldedMachine::revisions_mut)
-    {
-        if !expired.contains(&folded.entry) {
-            continue;
-        }
-        let reissued = entries.iter().any(|entry| {
-            matches!(&entry.op, AuthorityOp::MachineProfile(profile) if *profile == folded.profile)
+    // same standing again: a roster entry, never an anchor's copy of it, and
+    // for the trusted chain only a mark it accepts (Sol code-R2 S2-F1). An
+    // anchor's own chain rests on no roster key, so it never goes stale.
+    let renewed = |revision: &MachineRevision, trusted: bool| {
+        entries.iter().any(|entry| {
+            matches!(&entry.op, AuthorityOp::MachineProfile(profile) if *profile == revision.profile)
                 && authority_entry_hash(entry).is_ok_and(|hash| {
                     fold.valid_entries.contains(&hash)
                         && !expired.contains(&hash)
                         && !fold.anchor_entries.contains(&hash)
+                        && (!trusted || fold.accepted_roster_marks.contains(&hash))
                 })
-        });
-        folded.stale = !reissued;
+        })
+    };
+    for folded in fold.machines.values_mut() {
+        for (revision, trusted) in [
+            (folded.roster.as_mut(), false),
+            (folded.roster_trusted.as_mut(), true),
+        ] {
+            if let Some(revision) = revision
+                && expired.contains(&revision.entry)
+            {
+                revision.stale = !renewed(revision, trusted);
+            }
+        }
     }
     fold.critical_write_confirms
         .retain(|_, confirm| !expired.contains(&confirm.authority_entry_hash));
@@ -198,4 +205,33 @@ pub(super) fn apply_stale_roster_window(
             .push(AuthorityFoldIssue::StaleRosterApproval(hash));
     }
     fold
+}
+
+/// The valid roster marks a key P1 accepts for an owned mark signed: one the
+/// owner held as it signed, outside the host's custody on the merged history
+/// of a hosted fold. A key whose custody a later merge reaches renews nothing
+/// in the trusted roster chain, as it stands in none of it.
+pub(super) fn accepted_roster_marks(
+    state: &FoldState,
+    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    valid: &BTreeSet<AuthorityEntryHash>,
+) -> BTreeSet<AuthorityEntryHash> {
+    valid
+        .iter()
+        .filter(|hash| !state.anchor_entries.contains(*hash))
+        .filter(|hash| {
+            entries.get(*hash).is_some_and(|entry| {
+                let signer = entry.signer_key();
+                matches!(entry.op, AuthorityOp::MachineProfile(_))
+                    && state.roster.get(signer).is_some_and(|device| {
+                        folded_device_can_authority_consent(&FoldedDevice {
+                            revoked: false,
+                            ..device.clone()
+                        })
+                    })
+                    && !(state.hosted && super::machine_profile::in_host_custody(state, signer))
+            })
+        })
+        .copied()
+        .collect()
 }

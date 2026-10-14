@@ -12,7 +12,7 @@ use super::*;
 use crate::world_keys::{RecoveryRoot, RecoveryRootSeed};
 
 /// A hosted vault's genesis under the host's cloud root.
-fn hosted_genesis(cloud: &SigningKey) -> AuthorityLogEntry {
+pub(super) fn hosted_genesis(cloud: &SigningKey) -> AuthorityLogEntry {
     let key = authority_key_from_ed(cloud);
     sign_ed(
         unsigned_entry(
@@ -37,7 +37,7 @@ fn hosted_genesis(cloud: &SigningKey) -> AuthorityLogEntry {
     )
 }
 
-fn signed(
+pub(super) fn signed(
     id: AuthorityVaultId,
     parents: &[&AuthorityLogEntry],
     signer: &SigningKey,
@@ -73,7 +73,7 @@ fn root_record(root: &RecoveryRoot) -> OwnerRootRecord {
 }
 
 /// A root published by its own anchor on `parent`.
-fn publish(
+pub(super) fn publish(
     id: AuthorityVaultId,
     parent: &AuthorityLogEntry,
 ) -> (RecoveryRoot, SigningKey, AuthorityLogEntry) {
@@ -90,7 +90,11 @@ fn publish(
     (root, anchor, entry)
 }
 
-fn profile(request: &MachineEnrolmentRequest, role: MachineRole, revision: u64) -> AuthorityOp {
+pub(super) fn profile(
+    request: &MachineEnrolmentRequest,
+    role: MachineRole,
+    revision: u64,
+) -> AuthorityOp {
     AuthorityOp::MachineProfile(MachineProfile {
         machine: request.machine,
         owner: EntityId::now(),
@@ -102,14 +106,14 @@ fn profile(request: &MachineEnrolmentRequest, role: MachineRole, revision: u64) 
     })
 }
 
-fn pin(root: &RecoveryRoot) -> PinnedRoot {
+pub(super) fn pin(root: &RecoveryRoot) -> PinnedRoot {
     PinnedRoot {
         id: root.id,
         anchor_key: root.anchor_key,
     }
 }
 
-fn hosted_fold(entries: &[AuthorityLogEntry]) -> AuthorityFold {
+pub(super) fn hosted_fold(entries: &[AuthorityLogEntry]) -> AuthorityFold {
     fold_authority_log_for_posture(
         entries,
         &BTreeMap::new(),
@@ -119,7 +123,7 @@ fn hosted_fold(entries: &[AuthorityLogEntry]) -> AuthorityFold {
     )
 }
 
-const YOURS: MachineRole = MachineRole::Owned(MachineOwnership::Yours);
+pub(super) const YOURS: MachineRole = MachineRole::Owned(MachineOwnership::Yours);
 
 /// The owner's anchor marks machine M. The host then signs sibling revisions
 /// of M, each valid on its own: under a root of its own, a verbatim copy at
@@ -330,7 +334,7 @@ fn a_root_record_binds_its_vault_and_both_keys() {
 }
 
 /// Seen at 100 by this install, and folded at `now` under `posture`.
-fn fold_seen_at(
+pub(super) fn fold_seen_at(
     entries: &[AuthorityLogEntry],
     now: u64,
     posture: crate::HostingPrivacyPosture,
@@ -344,7 +348,7 @@ fn fold_seen_at(
 
 /// The host enrols a second key of its own, agent-only as the vault door
 /// still lands, on `parent`.
-fn agent(
+pub(super) fn agent(
     id: AuthorityVaultId,
     parent: &AuthorityLogEntry,
     cloud: &SigningKey,
@@ -366,7 +370,7 @@ fn agent(
 
 /// The host's roster enrols the anchor's public key as an agent, with its
 /// second key's cosign, on `parent`.
-fn enrol_anchor(
+pub(super) fn enrol_anchor(
     id: AuthorityVaultId,
     parent: &AuthorityLogEntry,
     (cloud, second): (&SigningKey, &SigningKey),
@@ -633,5 +637,120 @@ fn custody_reaching_a_later_signer_keeps_an_accepted_removal() {
     assert_eq!(trusted.signer, authority_key_from_ed(&root_key));
     assert!(folded.admits(&MachineAdmitter::Anchor(root.anchor_key)));
     assert!(!folded.is_mine(Some(&pin(&root))));
+    assert!(!folded.is_mine(None));
+}
+
+/// Owner-held keys A and B mark machine M with one profile on sibling
+/// branches; one of them (the winner) speaks for the trusted roster revision.
+/// A sibling branch then enrols the other for the cloud, and a handoff joins
+/// them, so custody reaches the loser on the merged history and retires both.
+/// Past the winner's stale-roster deadline, the loser's later copy renews
+/// nothing in the trusted chain: an unpinned install no longer counts M mine
+/// (Sol code-R2 S2-F1). Fails before: any valid roster copy renewed it.
+#[test]
+fn a_copy_custody_reached_never_renews_a_trusted_mark() {
+    let (root_key, next) = (ed_key(180), ed_key(183));
+    let genesis = genesis_entry(180, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let ordinary = |key: &SigningKey| {
+        device(
+            authority_key_from_ed(key),
+            ROLE_OWNER | ROLE_ADMIN,
+            AuthorityTier::Software,
+        )
+    };
+    let (a, b) = (ed_key(181), ed_key(182));
+    let enrol_a = signed(
+        id,
+        &[&genesis],
+        &root_key,
+        1,
+        AuthorityOp::EnrollDevice {
+            device: ordinary(&a),
+        },
+    );
+    let enrol_b = cosign_ed(
+        signed(
+            id,
+            &[&enrol_a],
+            &root_key,
+            2,
+            AuthorityOp::EnrollDevice {
+                device: ordinary(&b),
+            },
+        ),
+        &root_key,
+        &a,
+    );
+    let request = request_for(id, EntityId::now(), &ed_key(184));
+    let op = profile(&request, YOURS, 1);
+    let copy_a = signed(id, &[&enrol_b], &a, 1, op.clone());
+    let copy_b = signed(id, &[&enrol_b], &b, 1, op);
+    let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
+    let ((winner, winner_copy), (loser, loser_copy)) = if hash(&copy_a) < hash(&copy_b) {
+        ((&a, &copy_a), (&b, &copy_b))
+    } else {
+        ((&b, &copy_b), (&a, &copy_a))
+    };
+    let custody = signed(
+        id,
+        &[&genesis],
+        &root_key,
+        3,
+        AuthorityOp::EnrollDevice {
+            device: device(
+                authority_key_from_ed(loser),
+                ROLE_OWNER | ROLE_ADMIN | ROLE_CLOUD,
+                AuthorityTier::CloudCustodial,
+            ),
+        },
+    );
+    let handoff = cosign_ed(
+        signed(
+            id,
+            &[winner_copy, loser_copy, &custody],
+            &root_key,
+            4,
+            AuthorityOp::ReRoot {
+                new_device: ordinary(&next),
+            },
+        ),
+        &root_key,
+        winner,
+    );
+    let entries = [
+        genesis,
+        enrol_a,
+        enrol_b,
+        copy_a.clone(),
+        copy_b.clone(),
+        custody,
+        handoff.clone(),
+    ];
+    let mut first_seen: BTreeMap<_, _> = entries.iter().map(|entry| (hash(entry), 100)).collect();
+    first_seen.insert(hash(loser_copy), 150);
+    first_seen.insert(hash(&handoff), 200);
+    let fold_at = |now| {
+        fold_authority_log_for_posture(
+            &entries,
+            &first_seen,
+            now,
+            &BTreeMap::new(),
+            crate::HostingPrivacyPosture::Hosted,
+        )
+    };
+    let fold = fold_at(100);
+    assert!(fold.valid_entries.contains(&hash(&handoff)));
+    let folded = fold.machine(request.machine).unwrap();
+    assert_eq!(
+        folded.roster_trusted.as_ref().unwrap().entry,
+        hash(winner_copy)
+    );
+    assert!(folded.is_mine(None));
+    // The winner's approval is past its deadline; the loser's is not.
+    let fold = fold_at(120 + DEFAULT_STALE_ROSTER_WINDOW_SECS);
+    let folded = fold.machine(request.machine).unwrap();
+    assert!(folded.roster_trusted.as_ref().unwrap().stale);
+    assert!(!folded.roster_chain().stale);
     assert!(!folded.is_mine(None));
 }

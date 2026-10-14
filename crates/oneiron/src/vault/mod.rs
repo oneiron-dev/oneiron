@@ -64,6 +64,10 @@ pub struct Vault {
     /// Live seat prefixes are vault-owned, never process-global.
     pub(crate) model_seats: std::sync::Mutex<crate::llm::seat::SeatPool>,
     pub(crate) message_streams: crate::memory::MessageStreamRuntime,
+    /// This install's this-device-only keystore (world privacy P6b). The host installs
+    /// it after open; it is never persisted and never shared across vaults.
+    pub(crate) device_keystore:
+        std::sync::Mutex<Option<std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>>>,
     /// Serializes per-request voice-ref uploads with consent withdrawal.
     pub(crate) voice_ref_guard: std::sync::RwLock<()>,
     #[cfg(feature = "sync")]

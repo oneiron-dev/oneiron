@@ -15,7 +15,6 @@ impl Vault {
     /// calls it after each open, as it does `retain_machine_write_signer`.
     pub fn install_device_keystore(&self, keystore: Arc<dyn DeviceKeystore>) {
         *self
-            .store
             .device_keystore
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(keystore);
@@ -66,8 +65,7 @@ impl Vault {
     }
 
     pub(crate) fn device_keystore(&self) -> Result<Arc<dyn DeviceKeystore>> {
-        self.store
-            .device_keystore
+        self.device_keystore
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()

@@ -500,6 +500,7 @@ fn fold_authority_log_once(
             pinned_root: None,
             root_anchors: BTreeMap::new(),
             anchor_entries: BTreeSet::new(),
+            accepted_roster_marks: BTreeSet::new(),
             issues,
         };
     }
@@ -543,6 +544,9 @@ fn fold_authority_log_once(
         folded_actor_bindings(state, context.consent_arm)
     });
 
+    let accepted_roster_marks = merged.as_ref().map_or_else(BTreeSet::new, |state| {
+        super::stale_roster::accepted_roster_marks(state, &by_hash, &valid_entries)
+    });
     AuthorityFold {
         append_heads: BTreeSet::new(),
         append_sequences: BTreeMap::new(),
@@ -603,6 +607,7 @@ fn fold_authority_log_once(
         anchor_entries: merged
             .as_ref()
             .map_or_else(BTreeSet::new, |state| state.anchor_entries.clone()),
+        accepted_roster_marks,
         issues,
     }
 }

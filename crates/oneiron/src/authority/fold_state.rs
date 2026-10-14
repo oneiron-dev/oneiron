@@ -140,6 +140,9 @@ pub struct AuthorityFold {
     /// stale-roster window never expires them, and none renews a roster
     /// revision.
     pub(super) anchor_entries: BTreeSet<AuthorityEntryHash>,
+    /// The roster marks a key P1 accepts signed, judged on the merged
+    /// history: the only marks that renew a stale trusted roster revision.
+    pub(super) accepted_roster_marks: BTreeSet<AuthorityEntryHash>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
 }
