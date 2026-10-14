@@ -256,6 +256,17 @@ pub(crate) fn is_machine_identity_row(key: &[u8]) -> bool {
     key == side_table::IDENTITY_MACHINE_ID.prefix || key == side_table::IDENTITY_MACHINE_SK.prefix
 }
 
+/// Forgets this install's machine, so the vault joins as a new one: another
+/// live vault keeps the machine it was.
+pub(crate) fn drop_machine_identity_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    MACHINE_ID.delete(store, wtxn, &())?;
+    MACHINE_SK.delete(store, wtxn, &())?;
+    Ok(())
+}
+
 /// Own-txn wrapper around [`ensure_device_identity_in_txn`].
 #[cfg_attr(not(feature = "sync"), allow(dead_code))]
 pub(crate) fn ensure_device_identity(vault: &Vault) -> Result<DeviceIdentity> {

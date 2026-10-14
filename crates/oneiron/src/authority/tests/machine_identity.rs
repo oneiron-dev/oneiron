@@ -382,18 +382,15 @@ fn a_forged_mark_never_makes_a_machine_mine() {
     assert!(is_mine(&host.vault, machine));
 }
 
-/// A checkpoint restored directly may land on any install, so it never takes
-/// this machine's identity with it; a restore that keeps this vault's
-/// authority, on this install, keeps it.
-#[test]
-fn a_restored_image_never_carries_the_machine_to_another_install() {
+/// `vault`, enrolled as a machine of its own vault, with its request.
+fn enrolled_machine(host: Host) -> (tempfile::TempDir, Vault, MachineEnrolmentRequest) {
     let Host {
         _dir,
         vault,
         issuer,
         owner,
         vault_id,
-    } = host();
+    } = host;
     let request = vault
         .machine_enrolment_request(vault_id, encryption_key())
         .unwrap();
@@ -405,28 +402,72 @@ fn a_restored_image_never_carries_the_machine_to_another_install() {
             MachineRole::Owned(MachineOwnership::Yours),
         )
         .unwrap();
-    let local = |vault: &Vault| vault.local_machine().unwrap();
-    assert!(
-        local(&vault)
-            .is_some_and(|machine| machine.profile.is_some_and(|profile| profile.is_mine()))
+    assert!(vault.local_machine().unwrap().is_some_and(|machine| {
+        machine.id == request.machine && machine.profile.is_some_and(|profile| profile.is_mine())
+    }));
+    (_dir, vault, request)
+}
+
+/// `copy` is not the machine `request` enrolled: it holds no proof as that
+/// machine, and it joins as another one under another key, whose proof the
+/// machine's `vault` never takes for it.
+fn joins_as_a_new_machine(copy: &Vault, vault: &Vault, request: &MachineEnrolmentRequest) {
+    let proof = |vault: &Vault| vault.machine_connection_proof("token", 1, "nonce").unwrap();
+    assert_eq!(copy.local_machine().unwrap(), None);
+    assert_eq!(proof(copy), None);
+    let joined = copy
+        .machine_enrolment_request(request.vault_id, encryption_key())
+        .unwrap();
+    assert_ne!(joined.machine, request.machine);
+    assert_ne!(joined.machine_key, request.machine_key);
+    let (machine, signature) = proof(copy).unwrap();
+    assert_eq!(machine, joined.machine);
+    assert_eq!(
+        vault
+            .verify_machine_connection_proof(request.machine, &signature, "token", 1, "nonce")
+            .unwrap(),
+        PeerMachine::Unknown
     );
+}
+
+/// A checkpoint restored directly may land on any install, and a copy served
+/// beside the vault is another live vault, so neither takes this machine's
+/// identity with it; a restore that takes the vault's place, on this
+/// install, keeps it (wp-keys I7).
+#[test]
+fn a_restored_image_never_carries_the_machine_to_another_install() {
+    let (_dir, vault, request) = enrolled_machine(host());
     let backups = tempfile::tempdir().unwrap();
     let image = backups.path().join("image");
     vault.snapshot_checkpoint(&image, 100).unwrap();
 
-    let (here, _) = Vault::restore_checkpoint_keeping_authority(
+    let (replacement, _) = Vault::restore_checkpoint_replacing(
         &image,
-        &backups.path().join("here"),
+        &backups.path().join("replacement"),
         VaultConfig::default(),
         &vault,
         200,
     )
     .unwrap();
     assert_eq!(
-        local(&here).map(|machine| machine.id),
+        replacement
+            .local_machine()
+            .unwrap()
+            .map(|machine| machine.id),
         Some(request.machine)
     );
-    drop((here, vault));
+    drop(replacement);
+
+    let (beside, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("beside"),
+        VaultConfig::default(),
+        &vault,
+        250,
+    )
+    .unwrap();
+    joins_as_a_new_machine(&beside, &vault, &request);
+    drop(beside);
 
     let (elsewhere, _) = Vault::restore_checkpoint(
         &image,
@@ -436,13 +477,48 @@ fn a_restored_image_never_carries_the_machine_to_another_install() {
         300,
     )
     .unwrap();
-    assert_eq!(local(&elsewhere), None);
-    // It joins as a new machine, never with this one's key.
-    let joined = elsewhere
-        .machine_enrolment_request(vault_id, encryption_key())
+    joins_as_a_new_machine(&elsewhere, &vault, &request);
+}
+
+/// The vault a restore replaced, activated as a side vault of its
+/// replacement, is a second live vault: it joins as a new machine, and only
+/// the replacement answers as the machine both were (wp-keys I8).
+#[test]
+fn an_activated_archive_joins_as_a_new_machine() {
+    let (_dir, vault, request) = enrolled_machine(host());
+    let home = vault.store.env.path().to_path_buf();
+    let backups = tempfile::tempdir().unwrap();
+    let (image, staged) = (backups.path().join("image"), backups.path().join("staged"));
+    vault.snapshot_checkpoint(&image, 100).unwrap();
+    let (replacement, _) =
+        Vault::restore_checkpoint_replacing(&image, &staged, VaultConfig::default(), &vault, 200)
+            .unwrap();
+    // As `oneiron restore` exchanges the two directories.
+    vault
+        .swap_in_replacement(&replacement, || {
+            let between = home.with_extension("exchange");
+            std::fs::rename(&home, &between)?;
+            std::fs::rename(&staged, &home)?;
+            std::fs::rename(&between, &staged)
+        })
         .unwrap();
-    assert_ne!(joined.machine, request.machine);
-    assert_ne!(joined.machine_key, request.machine_key);
+    drop((vault, replacement));
+    let replacement = Vault::open(&home, VaultConfig::default()).unwrap();
+    Vault::activate_archived(
+        &staged,
+        VaultConfig::default(),
+        &replacement.side_restore_source().unwrap(),
+    )
+    .unwrap();
+    let side = Vault::open(&staged, VaultConfig::default()).unwrap();
+    joins_as_a_new_machine(&side, &replacement, &request);
+    assert_eq!(
+        replacement
+            .local_machine()
+            .unwrap()
+            .map(|machine| machine.id),
+        Some(request.machine)
+    );
 }
 
 /// The pairing ceremony for `machine`: the owner answers "yours" on the link,

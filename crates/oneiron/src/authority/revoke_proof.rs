@@ -117,7 +117,12 @@ pub(super) fn derive_revoke_facts(
             sequence_floors: exempt.as_ref().or(context.sequence_floors),
             ..context
         };
-        let Some(state) = verify_signed_branch(*hash, entries, ancestors, context, true) else {
+        // A removal's ancestry is the ancestry the fold accepted, siblings at
+        // one sequence included (Astra #1423b).
+        let refuse_equal_sequences = matches!(entry.op, AuthorityOp::RevokeActor { .. });
+        let Some(state) =
+            verify_signed_branch(*hash, entries, ancestors, context, refuse_equal_sequences)
+        else {
             continue;
         };
         let kind = match &entry.op {
@@ -235,9 +240,9 @@ impl RevokeFacts {
 /// The target's own folded state, proved over its signed ancestry alone.
 /// `refuse_equal_sequences` refuses a branch holding two entries of one signer
 /// at one sequence, as an actor revocation's proof always has. A slip
-/// restriction's proof follows the fold instead, which admits concurrent
-/// siblings at one sequence and refuses only a sequence that does not rise
-/// along the ancestry.
+/// restriction's or machine removal's proof follows the fold instead, which
+/// admits concurrent siblings at one sequence and refuses only a sequence
+/// that does not rise along the ancestry.
 fn verify_signed_branch(
     target: AuthorityEntryHash,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,

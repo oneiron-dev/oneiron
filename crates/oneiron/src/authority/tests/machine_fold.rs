@@ -783,65 +783,95 @@ fn a_forked_handoff_leaves_no_machine_standing() {
 
 /// A removal stands on every replica, whichever of its signer's rows arrived
 /// first: a sibling stored before it leaves the removal under this vault's
-/// sequence floor, and the removal still removes (Astra #1423 F3).
+/// sequence floor, and the removal still removes (Astra #1423 F3). The two
+/// may also share the merge of two rows at one sequence, which the fold
+/// accepts, so the removal's proof does too (Astra #1423b).
 #[test]
 fn a_removal_holds_whichever_sibling_arrived_first() {
-    let host = host();
-    let removed = request_for(host.vault_id, EntityId::now(), &ed_key(112));
-    host.vault
-        .enroll_machine(
-            &host.issuer,
-            &host.owner,
-            &removed,
-            MachineRole::Owned(MachineOwnership::Yours),
-        )
-        .unwrap();
-    let before = host.vault.authority_fold().unwrap();
-    let seq = before.append_sequences[&host.issuer.public_key()];
-    let removal = host_entry(
-        &host,
-        seq + 1,
-        &before.append_heads,
-        AuthorityOp::MachineProfile(MachineProfile {
-            role: MachineRole::Removed,
-            revision: 2,
-            ..before.machine(removed.machine).unwrap().profile.clone()
-        }),
-        None,
-    );
-    let node = EntityId::now();
-    let AuthorityOp::MachineProfile(profile) = profile_op(&host, node, &ed_key(113)) else {
-        unreachable!()
-    };
-    let sibling = host_entry(
-        &host,
-        seq + 2,
-        &before.append_heads,
-        AuthorityOp::MachineProfile(MachineProfile {
-            role: MachineRole::HostedNode,
-            ..profile
-        }),
-        None,
-    );
-    let dir = tempfile::tempdir().unwrap();
-    let replica = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
-    replica
-        .import_signed_authority_history(&host.vault.export_signed_authority_history().unwrap())
-        .unwrap();
-    for (vault, order) in [
-        (&host.vault, [&removal, &sibling]),
-        (&replica, [&sibling, &removal]),
-    ] {
-        for entry in order {
+    for merged in [false, true] {
+        let host = host();
+        let removed = request_for(host.vault_id, EntityId::now(), &ed_key(112));
+        host.vault
+            .enroll_machine(
+                &host.issuer,
+                &host.owner,
+                &removed,
+                MachineRole::Owned(MachineOwnership::Yours),
+            )
+            .unwrap();
+        let hosted_node = |seq, parents: &BTreeSet<AuthorityEntryHash>, key| {
+            let AuthorityOp::MachineProfile(profile) =
+                profile_op(&host, EntityId::now(), &ed_key(key))
+            else {
+                unreachable!()
+            };
+            host_entry(
+                &host,
+                seq,
+                parents,
+                AuthorityOp::MachineProfile(MachineProfile {
+                    role: MachineRole::HostedNode,
+                    ..profile
+                }),
+                None,
+            )
+        };
+        let store = |vault: &crate::Vault, entry: &AuthorityLogEntry| {
             vault
-                .put_authority_log_entries(&[((*entry).clone(), TimeRange { start: 3, end: 3 }, 3)])
+                .put_authority_log_entries(&[(entry.clone(), TimeRange { start: 3, end: 3 }, 3)])
                 .unwrap();
+        };
+        let before = host.vault.authority_fold().unwrap();
+        let mut seq = before.append_sequences[&host.issuer.public_key()];
+        let mut parents = before.append_heads.clone();
+        if merged {
+            seq += 1;
+            let pair = [
+                hosted_node(seq, &parents, 114),
+                hosted_node(seq, &parents, 115),
+            ];
+            for entry in &pair {
+                store(&host.vault, entry);
+            }
+            parents = pair
+                .iter()
+                .map(|entry| authority_entry_hash(entry).unwrap())
+                .collect();
         }
-        let fold = vault.authority_fold().unwrap();
-        assert!(
-            fold.machine(removed.machine)
-                .is_some_and(|folded| folded.removed && !folded.is_live())
+        let removal = host_entry(
+            &host,
+            seq + 1,
+            &parents,
+            AuthorityOp::MachineProfile(MachineProfile {
+                role: MachineRole::Removed,
+                revision: 2,
+                ..before.machine(removed.machine).unwrap().profile.clone()
+            }),
+            None,
         );
-        assert!(fold.machine(node).is_some_and(FoldedMachine::is_live));
+        let sibling = hosted_node(seq + 2, &parents, 113);
+        let AuthorityOp::MachineProfile(MachineProfile { machine: node, .. }) = sibling.op else {
+            unreachable!()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let replica = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+        replica
+            .import_signed_authority_history(&host.vault.export_signed_authority_history().unwrap())
+            .unwrap();
+        for (vault, order) in [
+            (&host.vault, [&removal, &sibling]),
+            (&replica, [&sibling, &removal]),
+        ] {
+            for entry in order {
+                store(vault, entry);
+            }
+            let fold = vault.authority_fold().unwrap();
+            assert!(
+                fold.machine(removed.machine)
+                    .is_some_and(|folded| folded.removed && !folded.is_live()),
+                "merged: {merged}"
+            );
+            assert!(fold.machine(node).is_some_and(FoldedMachine::is_live));
+        }
     }
 }
