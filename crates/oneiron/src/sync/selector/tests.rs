@@ -5930,6 +5930,67 @@ fn a_summary_of_a_summary_rewritten_as_no_epoch_keeps_its_world() -> crate::Resu
     Ok(())
 }
 
+/// Wonder P2-1: an epoch summary rewritten in place into a SUMMARY body that
+/// is no epoch no longer says what a summary written from it copied. That
+/// summary is withdrawn, so a base-only read, the scoped export and a Base
+/// selector take it no more than they took it before the rewrite.
+#[test]
+fn a_summary_of_a_summary_rewritten_as_no_epoch_is_withdrawn() -> crate::Result<()> {
+    let member = entity_id(0x32);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let (source, nested) = (entity_id(0x7b), entity_id(0x7c));
+    let (october, november) = (WindowKey::new("2026-10"), WindowKey::new("2026-11"));
+    summary_of_a_summary(&vault, source, &october, nested, &november)?;
+    let rewritten = october.start_timestamp().unwrap() + 120;
+    vault
+        .batch()
+        .put(
+            &source,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            TimeRange {
+                start: rewritten,
+                end: rewritten,
+            },
+            rewritten,
+            b"a summary written by hand",
+        )
+        .commit()?;
+    let mut base_only = Scope::top();
+    base_only.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(
+        crate::claim::base_world_id(),
+    )]));
+    let top = Scope::top();
+    let exported = vault.export_records_in_scope(&base_only, &top, &top)?;
+    assert!(
+        !exported.iter().any(|record| record.id == nested),
+        "the scoped export, a summary of a summary rewritten as no epoch"
+    );
+    let read = vault.records_in_scope(
+        &base_only,
+        &top,
+        &top,
+        crate::federation::record_scope::ScopeView::Normal,
+    )?;
+    assert!(
+        !read.iter().any(|record| record.id == nested),
+        "a base-only read, a summary of a summary rewritten as no epoch"
+    );
+    let november_doc = packed_window(&vault, &november)?;
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::Base, vec![], vec![]);
+    let selected = filtered_window_doc(
+        &vault,
+        &november_doc,
+        &november,
+        test_selector_scope(),
+        &selector,
+    )?;
+    assert!(
+        !import_ids(&selected.export(ExportMode::all_updates()).unwrap()).contains(&nested),
+        "a Base selector, a summary of a summary rewritten as no epoch"
+    );
+    Ok(())
+}
+
 /// Sol round 23: an owner's move of an epoch summary's text to the document
 /// plane leaves a pointer body. The summary is still an epoch to every reader
 /// (Astra 1384e), and the move records the worlds the old body carried, so a

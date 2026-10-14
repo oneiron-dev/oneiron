@@ -155,7 +155,11 @@ pub(crate) fn keep_deleted_worlds_in_txn(
 /// A put that rewrites epoch summary `id` into a SUMMARY body that is no
 /// epoch ends every walk at it: its edges stop saying where the words sat that
 /// a summary written from it still holds (Sol round 21). Its record keeps
-/// every world the old body carried, read before the new body lands.
+/// every world the old body carried, read before the new body lands. A body
+/// that is no epoch in any form (a pointer that keeps the keyframe still is
+/// one) changes the words each summary written from it copied, so each is
+/// withdrawn as a changed source withdraws it, for those worlds (Wonder
+/// P2-1): no reader then takes one through a walk that stops here.
 pub(crate) fn keep_worlds_of_unmade_epoch_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -163,10 +167,17 @@ pub(crate) fn keep_worlds_of_unmade_epoch_in_txn(
     entity_type: u8,
     body: &[u8],
 ) -> Result<()> {
-    if entity_type == crate::registry::ENTITY_TYPE_SUMMARY
-        && crate::compaction::decode_epoch_summary_body(body).is_err()
+    if entity_type != crate::registry::ENTITY_TYPE_SUMMARY
+        || crate::compaction::decode_epoch_summary_body(body).is_ok()
     {
-        keep_deleted_worlds_in_txn(store, txn, id)?;
+        return Ok(());
+    }
+    let unmade = epoch_summary_in(store, txn, id)?
+        && crate::compaction::stored_epoch_in(store, txn, id, body)?
+            == crate::compaction::StoredEpoch::No;
+    keep_deleted_worlds_in_txn(store, txn, id)?;
+    if unmade {
+        invalidate_source_in_txn(store, txn, id)?;
     }
     Ok(())
 }

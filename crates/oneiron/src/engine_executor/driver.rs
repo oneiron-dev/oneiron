@@ -155,7 +155,8 @@ impl<'a> EngineNativeExecutor<'a> {
     /// Land a gated compaction in the SAME output context used to build this
     /// executor's next model request. A rejected mint changes no output views.
     /// The request must be this run's own session, so no other run's
-    /// lineage can bind these steps.
+    /// lineage can bind these steps. The run's host door rules first, as it
+    /// does on the seat's landing (#1405, Wonder P3-1).
     pub fn integrate_compaction(
         &mut self,
         driver: &mut crate::compaction::CompactionDriver,
@@ -163,6 +164,7 @@ impl<'a> EngineNativeExecutor<'a> {
         gated: crate::compaction::GatedCompaction,
         accumulated: &[crate::compaction::CompactionWindowMessage],
     ) -> EngineExecutorResult<crate::compaction::SwapPlan> {
+        self.admit_compaction_read()?;
         let placement = crate::compaction::EpochPlacement::default();
         self.integrate_in(driver, byline, placement, gated, accumulated)
     }
