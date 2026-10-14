@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Stdio};
 
 use super::paths::serve_failed;
 use crate::error::Result;
@@ -173,7 +173,7 @@ impl ServeCommand {
 
     /// Spawns the backend with piped stdio and a cleared environment.
     pub fn spawn(&self, request: &ServeRequest) -> Result<ServeChild> {
-        let mut command = Command::new(&self.argv[0]);
+        let mut command = oneiron_spawn::command(&self.argv[0]);
         command
             .args(&self.argv[1..])
             .env_clear()

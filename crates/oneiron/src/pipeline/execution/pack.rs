@@ -36,6 +36,7 @@ impl PipelineBuilder<'_> {
             return Ok(PipelineOutput {
                 vector_completed: false,
                 revisions: HashMap::new(),
+                words_bound: Default::default(),
                 // No channel ran: an authority refusal is not a cache failure.
                 retrieval_quality: Default::default(),
                 scores: Vec::new(),
@@ -216,6 +217,7 @@ impl PipelineBuilder<'_> {
                     .succeeded
                     .contains(&RetrievalSignal::Vector),
                 revisions: HashMap::new(),
+                words_bound: Default::default(),
                 retrieval_quality: classify_retrieval_quality(&attempt.diagnostics),
                 scores: Vec::new(),
                 cited_messages: HashMap::new(),
@@ -237,6 +239,7 @@ impl PipelineBuilder<'_> {
         let mut scores = attempt.scores;
         let mut cited_messages = attempt.cited_messages;
         let mut revisions = attempt.revisions;
+        let mut words_bound = attempt.words_bound;
         let mut capabilities = attempt.capabilities;
         let mut pending_vectors = attempt.pending_vectors;
         let mut claim_gate = attempt.claim_gate;
@@ -312,6 +315,7 @@ impl PipelineBuilder<'_> {
                 scores = retry.scores;
                 cited_messages = retry.cited_messages;
                 revisions = retry.revisions;
+                words_bound = retry.words_bound;
                 capabilities = retry.capabilities;
                 pending_vectors = retry.pending_vectors;
                 claim_gate = retry.claim_gate;
@@ -391,10 +395,25 @@ impl PipelineBuilder<'_> {
             telemetry_signals.retain(|signal| *signal != RetrievalSignal::Ppr);
         }
         let retrieval_quality = classify_retrieval_quality(&diagnostics);
-        let capture = self.vault.store.retrieval_telemetry_capture_enabled();
+        // A run that read a room staging anything of its own may name its
+        // rows, or score by them, in its results, scores and trace. Base holds no reference to a live
+        // overlay row (ARCH-0052: the taint guard covers references), so such
+        // a run keeps its run row in the room alone: none once the room is on
+        // record, and none without a room to route it. On record its saver
+        // must still hold, as for the row it keeps out.
+        let capture_enabled = self.vault.store.retrieval_telemetry_capture_enabled();
+        let withheld = self
+            .session
+            .is_none_or(crate::off_record::SessionRetrievalTelemetry::writes_to_base)
+            && self.read.holds_room_rows();
+        let capture = capture_enabled && !withheld;
         let telemetry_run_id = if !capture {
             if let Some(session) = self.session {
-                session.revalidate_without_capture()?;
+                if capture_enabled {
+                    session.admit_withheld_write()?;
+                } else {
+                    session.revalidate_without_capture()?;
+                }
             }
             None
         } else {
@@ -464,6 +483,7 @@ impl PipelineBuilder<'_> {
         Ok(PipelineOutput {
             vector_completed: diagnostics.succeeded.contains(&RetrievalSignal::Vector),
             revisions,
+            words_bound,
             retrieval_quality,
             scores,
             cited_messages,

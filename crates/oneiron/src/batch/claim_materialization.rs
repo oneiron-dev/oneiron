@@ -220,6 +220,17 @@ impl ClaimMaterialization {
         )
     }
 
+    /// The writer's envelope for a stored claim, rebuilt from its private
+    /// authored digest; `None` when the claim carries none.
+    pub(crate) fn authored_envelope(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+    ) -> Result<Option<WriteEnvelope>> {
+        lifecycle_envelope(&vault.store, txn, id, body)
+    }
+
     /// Re-gate an exact parked replacement as Auto under its attested author.
     /// The caller checks the deferred content/frontier binding and performs
     /// closure in this same transaction. No arbitrary Put may use this path.

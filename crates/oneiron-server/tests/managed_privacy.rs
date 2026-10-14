@@ -1,4 +1,8 @@
 //! Privacy inputs must not be accepted and dropped by managed contract v1.
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;

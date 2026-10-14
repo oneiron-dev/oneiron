@@ -9,7 +9,7 @@ use crate::pipeline::types::{
 };
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
-use crate::store::{RetrievalScoreComponent, Store};
+use crate::store::{RetrievalScoreComponent, StoreRead};
 use heed::RoTxn;
 use std::collections::{HashMap, HashSet};
 
@@ -34,7 +34,7 @@ pub(super) fn fold_messages_into_turns(
     scores: &mut Vec<ScoredEntity>,
     signal_components: &mut HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     fold: TurnFold,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     filter_config: PipelineFilterConfig<'_>,
     metadata_cache: &mut EntityMetadataCache,
@@ -83,7 +83,7 @@ pub(super) fn fold_messages_into_turns(
 fn folded_row(
     hit: &EntityId,
     fold: TurnFold,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     filter_config: PipelineFilterConfig<'_>,
     metadata_cache: &mut EntityMetadataCache,
@@ -145,7 +145,7 @@ pub(super) fn rows_holding_distinct_turns(
     rows: &[ScoredEntity],
     bound: usize,
     fold: TurnFold,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     filter_config: PipelineFilterConfig<'_>,
     metadata_cache: &mut EntityMetadataCache,
@@ -178,8 +178,8 @@ pub(super) fn rows_holding_distinct_turns(
 }
 
 /// The TURN a witnessed MESSAGE is `PartOf`.
-fn turn_of(
-    store: &Store,
+pub(super) fn turn_of(
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     message: &EntityId,
     metadata_cache: &mut EntityMetadataCache,

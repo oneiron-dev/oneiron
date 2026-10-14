@@ -8,10 +8,16 @@ use crate::ports::EntityStoreRead;
 
 mod call_mode;
 mod items;
+mod paid;
 mod presentation;
 mod scope_honesty;
 
 pub use self::call_mode::{DEFAULT_CALL_MODE_DEADLINE, RecallEffort, resolve_recall_dial};
+#[cfg(test)]
+pub(super) use self::paid::PREPARED_SCORES_TAKEN;
+pub use self::paid::{
+    RecallRerank, RecallRerankHost, RerankDocument, RerankReport, RerankScores, RerankSkip,
+};
 
 use self::presentation::{hedge_bucket_for, value_text_of};
 pub(super) use self::presentation::{parse_pack_format, truncate_text};
@@ -141,8 +147,9 @@ pub const CONTAINER_KINDS: [u8; 4] = [
 
 /// What recall refuses from its request alone, before it reads the vault: a
 /// zero limit, an `as_of` out of range, a paid effort without its lease and
-/// reranker, an unknown format or kind. A door that pays for a query vector
-/// runs this first, so a request recall would refuse costs no embedding.
+/// reranker (unless its host serves no reranker), an unknown format or kind.
+/// A door that pays for a query vector runs this first, so a request recall
+/// would refuse costs no embedding.
 pub(crate) fn check_recall_request(
     effort: Effort,
     scope: &RecallScope,
@@ -155,7 +162,7 @@ pub(crate) fn check_recall_request(
         return Err(MemoryError::bad_request("recall limit must be at least 1"));
     }
     crate::memory::caps::check_as_of(execution.as_of)?;
-    if effort.requires_rerank() {
+    if effort.requires_rerank() && !execution.rerank_unavailable {
         if lease.is_none() {
             return Err(MemoryError::new(
                 MEMORY_CODE_LEASE_REQUIRED,
@@ -325,6 +332,10 @@ pub struct RetrievalMeta {
     /// recall ran on its other signals.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub temporal_hints: Vec<crate::temporal::TemporalHintReport>,
+    /// What the rerank stage of a recall at high, xhigh or max did: the
+    /// model whose scores ordered the top block, or why it was skipped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerank: Option<RerankReport>,
 }
 
 /// The facade projection of a `ContextPack` (S6, `pack_version: 1`).
@@ -366,7 +377,7 @@ impl Memory<'_> {
             .as_deref()
             .map(|reference| self.resolve_ref(reference))
             .transpose()?;
-        let filter = |store: &crate::store::Store,
+        let filter = |store: &crate::store::StoreRead<'_>,
                       txn: &heed::RoTxn<'_>,
                       id: &EntityId|
          -> crate::Result<bool> {
@@ -467,9 +478,10 @@ impl Memory<'_> {
         )
     }
 
-    /// Recalls inside a session. Retrieval and scope are unchanged; every
-    /// telemetry write (including the seed search and pack finalization) rides
-    /// the one session route captured for this call. Off-record rows therefore
+    /// Recalls inside a session. Retrieval reads the room's overlay ∪ base
+    /// under the same scope and gates (ARCH-0052 §2); every telemetry write
+    /// (including the seed search and pack finalization) rides the one
+    /// session route captured for this call. Off-record rows therefore
     /// evaporate with the room, never leaking into the base retrieval ledger.
     #[expect(
         clippy::too_many_arguments,
@@ -632,33 +644,34 @@ impl Memory<'_> {
             crate::pipeline::TurnFold::Fold
         };
         // Admission runs in each candidate's retrieval transaction before ranking.
-        let admitted = |store: &crate::store::Store, txn: &heed::RoTxn<'_>, id: &EntityId| {
-            // Reject irrelevant kind/predicate rows before the actor gate.
-            if !candidate_filter.map_or(Ok(true), |filter| filter(store, txn, id))? {
-                return Ok(false);
-            }
-            // A caller's own filter already chose its kinds; otherwise the
-            // scope's kinds, or the default kinds, decide.
-            if kinds.is_some() || candidate_filter.is_none() {
-                let Some(kind) = store
-                    .port_entity_record(txn, id)?
-                    .map(|row| row.entity_type)
-                else {
-                    return Ok(false);
-                };
-                let wanted = match &kinds {
-                    Some(kinds) => {
-                        kinds.contains(&kind)
-                            || (messages_only_as_turns && kind == ENTITY_TYPE_MESSAGE)
-                    }
-                    None => !CONTAINER_KINDS.contains(&kind),
-                };
-                if !wanted {
+        let admitted =
+            |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
+                // Reject irrelevant kind/predicate rows before the actor gate.
+                if !candidate_filter.map_or(Ok(true), |filter| filter(store, txn, id))? {
                     return Ok(false);
                 }
-            }
-            lane.recall_candidate_in(txn, &plan_policy, &plan_filter, id)
-        };
+                // A caller's own filter already chose its kinds; otherwise the
+                // scope's kinds, or the default kinds, decide.
+                if kinds.is_some() || candidate_filter.is_none() {
+                    let Some(kind) = store
+                        .port_entity_record(txn, id)?
+                        .map(|row| row.entity_type)
+                    else {
+                        return Ok(false);
+                    };
+                    let wanted = match &kinds {
+                        Some(kinds) => {
+                            kinds.contains(&kind)
+                                || (messages_only_as_turns && kind == ENTITY_TYPE_MESSAGE)
+                        }
+                        None => !CONTAINER_KINDS.contains(&kind),
+                    };
+                    if !wanted {
+                        return Ok(false);
+                    }
+                }
+                lane.recall_candidate_in(txn, &plan_policy, &plan_filter, id)
+            };
 
         // A door that stops waiting at the deadline answers then with the
         // last pack this recall published and drops what the recall returns
@@ -681,7 +694,13 @@ impl Memory<'_> {
             let hits = match (session, route.as_ref()) {
                 (Some(session), Some(route)) => {
                     let limit = lane.search_candidate_limit(PPR_SEED_LIMIT, true, false)?;
-                    let raw = session.search_text_routed(route, query, limit)?;
+                    // Seeds come from what the lane reads: a reader that
+                    // reads base alone in the room seeds from base alone.
+                    let raw = if lane.reads_room() {
+                        session.search_text_routed(route, query, limit)?
+                    } else {
+                        session.search_base_text_routed(route, query, limit)?
+                    };
                     let scored = lane.filter_scored_entities(raw)?;
                     receipt.restrict_with(&scored.receipt);
                     scored.value
@@ -740,6 +759,11 @@ impl Memory<'_> {
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     pipeline = pipeline.in_session(telemetry);
                 }
+                // The lane decides what the room reads: a credential it cannot
+                // place the room's rows for reads base alone.
+                if session_view.is_some() {
+                    pipeline = pipeline.reading(lane.store_read());
+                }
 
                 if let Some(deadline) = execution.deadline {
                     pipeline = pipeline.deadline(deadline);
@@ -750,9 +774,11 @@ impl Memory<'_> {
                 if !execution.phonetic_codes.is_empty() {
                     pipeline = pipeline.search_phonetic(execution.phonetic_codes);
                 }
-                if effective.requires_rerank() {
+                if effective.requires_rerank()
+                    && let Some(reranker) = execution.reranker
+                {
                     pipeline = pipeline.rerank(
-                        execution.reranker.expect("validated reranker"),
+                        reranker,
                         RerankOptions {
                             top_n: effective.rerank_top_n(),
                             query: Some(query.to_owned()),
@@ -822,6 +848,9 @@ impl Memory<'_> {
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     builder = builder.in_session(telemetry);
                 }
+                if session_view.is_some() {
+                    builder = builder.reading(lane.store_read());
+                }
                 if let Some(deadline) = execution.deadline {
                     builder = builder.deadline(deadline);
                 }
@@ -831,9 +860,11 @@ impl Memory<'_> {
                 if !execution.phonetic_codes.is_empty() {
                     builder = builder.search_phonetic(execution.phonetic_codes);
                 }
-                if effective.requires_rerank() {
+                if effective.requires_rerank()
+                    && let Some(reranker) = execution.reranker
+                {
                     builder = builder.rerank(
-                        execution.reranker.expect("validated reranker"),
+                        reranker,
                         RerankOptions {
                             top_n: effective.rerank_top_n(),
                             query: Some(query.to_owned()),
@@ -936,6 +967,7 @@ impl Memory<'_> {
                 claims_returned,
                 deep_pending,
                 temporal_hints,
+                rerank: None,
             },
             items,
             pack_version: MEMORY_PACK_VERSION,

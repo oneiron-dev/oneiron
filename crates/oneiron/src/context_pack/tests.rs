@@ -267,11 +267,13 @@ fn hydrate_entity_rejects_present_corrupt_header() -> Result<()> {
     let mut claims_suppressed = 0;
     let err = match hydrate_entity(
         &vault,
+        &vault.store.read(),
         &rtxn,
         id,
         0.0,
         HydrateOptions {
             read_mode: crate::vault::ReadMode::Indexed,
+            words_pinned: false,
             policy: &crate::gate::resolve_policy_manifest(&vault.store, &rtxn).unwrap(),
             criticality: None,
             hydrate_fields: true,
@@ -303,7 +305,7 @@ fn read_vector_splits_absent_from_corrupt_rows() -> Result<()> {
     {
         let rtxn = vault.store.env.read_txn()?;
         assert!(
-            read_vector(&vault, &rtxn, &id)?.is_none(),
+            read_vector(&vault, &vault.store, &rtxn, &id)?.is_none(),
             "absent vector rows must remain Ok(None)"
         );
     }
@@ -314,7 +316,7 @@ fn read_vector_splits_absent_from_corrupt_rows() -> Result<()> {
     })?;
     {
         let rtxn = vault.store.env.read_txn()?;
-        let err = read_vector(&vault, &rtxn, &id)
+        let err = read_vector(&vault, &vault.store, &rtxn, &id)
             .expect_err("present undecodable vector row must fail closed");
         assert!(
             matches!(err, Error::CorruptedIndex("entity vector")),
@@ -334,7 +336,7 @@ fn read_vector_splits_absent_from_corrupt_rows() -> Result<()> {
         Ok(())
     })?;
     let rtxn = vault.store.env.read_txn()?;
-    let err = read_vector(&vault, &rtxn, &id)
+    let err = read_vector(&vault, &vault.store, &rtxn, &id)
         .expect_err("present wrong-dimension vector row must fail closed");
     assert!(
         matches!(err, Error::CorruptedIndex("entity vector")),
@@ -519,7 +521,7 @@ fn scan_rejects_each_malformed_edge_row_shape_like_vault_readers() -> Result<()>
 
         {
             let rtxn = vault.store.env.read_txn()?;
-            let err = scan_edges_for_entity(&vault.store, &rtxn, &src)
+            let err = scan_edges_for_entity(&vault.store.read(), &rtxn, &src)
                 .expect_err("context-pack scan must fail closed");
             assert!(
                 matches!(err, Error::CorruptedIndex("edge record")),
@@ -543,7 +545,7 @@ fn scan_rejects_each_malformed_edge_row_shape_like_vault_readers() -> Result<()>
         })?;
         let rtxn = vault.store.env.read_txn()?;
         assert!(
-            scan_edges_for_entity(&vault.store, &rtxn, &src)?.is_empty(),
+            scan_edges_for_entity(&vault.store.read(), &rtxn, &src)?.is_empty(),
             "case `{name}`: scan should be clean after removing the planted row"
         );
     }
@@ -2070,7 +2072,7 @@ fn n12_validate_pack_disclosure_fails_a_tampered_pack() -> Result<()> {
         vector: None,
     };
     let rtxn = vault.store.env.read_txn()?;
-    let err = validate_pack_disclosure(&vault.store, &rtxn, &ctx, &[smuggled], &[])
+    let err = validate_pack_disclosure(&vault.store.read(), &rtxn, &ctx, &[smuggled], &[])
         .expect_err("THE PACK BUILD FAILS RATHER THAN LEAKS");
     assert_eq!(
         err.kind(),

@@ -1,6 +1,4 @@
 //! Host-landed MACHINE enrollment: one EnrollDevice and its BindActor.
-use ed25519_dalek::VerifyingKey;
-
 use crate::batch::EntityMetadataHeader;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_MACHINE;
@@ -61,14 +59,22 @@ impl Vault {
         {
             return Err(denied());
         }
-        VerifyingKey::from_bytes(&public_key).map_err(|_| denied())?;
+        super::strong_ed25519_key(&public_key).map_err(|_| denied())?;
         if transport_key_binding == public_key {
             return Err(denied());
         }
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
         let key = AuthorityKey::Ed25519(public_key);
-        if fold.roster.contains_key(&key) || fold.actor_bindings.contains_key(&key) {
+        // A physical machine's row or install key never becomes a writer.
+        if fold.roster.contains_key(&key)
+            || fold.actor_bindings.contains_key(&key)
+            || fold.machines.contains_key(&machine)
+            || fold
+                .machines
+                .values()
+                .any(|folded| folded.profile.machine_key == public_key)
+        {
             return Err(denied());
         }
         let seq = fold

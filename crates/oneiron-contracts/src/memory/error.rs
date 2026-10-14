@@ -25,6 +25,16 @@ pub const MEMORY_CODE_INTERNAL: &str = "INTERNAL_SERVER_ERROR";
 /// `recall(Deep)` called without a budget lease (W4/C4 lease rule).
 pub const MEMORY_CODE_LEASE_REQUIRED: &str = "LEASE_REQUIRED";
 
+/// A paid call's budget line cannot cover it: the line the host admitted the
+/// request on is spent, or the vault's budget policy refuses the call. Distinct
+/// from `LEASE_REQUIRED`: the caller held a lease, and the line ran out.
+pub const MEMORY_CODE_BUDGET_SPENT: &str = "BUDGET_SPENT";
+
+/// The model a request needs gave no usable answer: its route refused the
+/// call, the call failed, or its answer did not fit the call. Nothing stands
+/// in for it.
+pub const MEMORY_CODE_MODEL_UNAVAILABLE: &str = "MODEL_UNAVAILABLE";
+
 /// The canonical door was asked to witness into a conversation owned by a live
 /// off-record session (ARCH-0052 D2 backstop (a), ONE-1728 K7). Distinct from
 /// `FORBIDDEN`: the write was not refused on policy grounds — the room is only
@@ -372,6 +382,14 @@ impl From<Error> for MemoryError {
                 &[
                     "Nothing of this write was kept, and the stretch is off record again.",
                     "Witness the turn again to say it off record; only the vault's owner, in the room, puts it back on record.",
+                ],
+            ),
+            ErrorKind::OffRecordCopyConflict => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "Nothing of this save was kept; what was said stays in the room until it closes.",
+                    "Export the talk to keep a copy of it.",
                 ],
             ),
             // One answer for "no such stretch" and "not in its room", as the

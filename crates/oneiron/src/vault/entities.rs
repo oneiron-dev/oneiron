@@ -8,7 +8,7 @@ use crate::error::{Error, Result};
 
 use crate::pipeline::{RetrievalWithTelemetry, ScoredEntity};
 use crate::ports::EntityStoreRead;
-use crate::store::{RetrievalSignal, ShortIdAliasTarget, Store};
+use crate::store::{RetrievalSignal, ShortIdAliasTarget};
 use crate::temporal::TimeRange;
 use std::time::Instant;
 
@@ -84,7 +84,7 @@ pub(crate) enum LiveEntityRow {
 /// shell rule is the canonical [`Vault::is_deleted_shell`] one — header-only
 /// PLUS deletion metadata — so a live zero-byte payload stays live.
 pub(crate) fn live_entity_row_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<LiveEntityRow> {
@@ -204,10 +204,18 @@ impl Vault {
     }
 
     pub(crate) fn read_entity_header(&self, id: &EntityId) -> Result<Option<EntityMetadataHeader>> {
-        let rtxn = self.store.env.read_txn()?;
+        self.entity_header_in_txn(&self.store.env.read_txn()?, id)
+    }
+
+    /// [`Self::read_entity_header`] in the caller's transaction.
+    pub(crate) fn entity_header_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EntityMetadataHeader>> {
         let Some(raw) = self
             .store
-            .port_entity_record(&rtxn, id)?
+            .port_entity_record(txn, id)?
             .map(|row| row.encode())
         else {
             return Ok(None);

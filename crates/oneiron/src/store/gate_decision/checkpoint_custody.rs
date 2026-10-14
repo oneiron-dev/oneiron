@@ -465,7 +465,8 @@ impl Store {
     /// custody it binds to first, a key `source` destroyed or has committed
     /// to destroy is not copied and the receipts under it are dropped, every
     /// receipt it keeps is read back under the forked keys, and only then
-    /// does the new binding commit, with the archive mark lifted. Anything
+    /// does the new binding commit, with the archive mark lifted and this
+    /// install's machine identity dropped, the replacement keeping it. Anything
     /// short of that leaves it archived, as it was. The caller reopens the
     /// vault, whose handles then shred only its own keys.
     pub(crate) fn activate_archived(&self, source: &LiveCustody) -> Result<()> {
@@ -492,6 +493,7 @@ impl Store {
         let committed = self
             .drop_erased_gate_decisions_in_txn(&mut wtxn, custody.erased())
             .and_then(|()| self.read_back_in_txn(&wtxn, &root))
+            .and_then(|()| crate::identity::drop_machine_identity_in_txn(self, &mut wtxn))
             .and_then(|()| ARCHIVED.delete(self, &mut wtxn, &()))
             .and_then(|_| Ok(wtxn.commit()?));
         if let Err(err) = committed {

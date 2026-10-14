@@ -5,6 +5,10 @@
 //! Raw sealed bytes are never compared byte-for-byte across implementations;
 //! the oracle compares normalized semantics and cross-validation results.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 
 mod support;
 

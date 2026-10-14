@@ -109,7 +109,7 @@ fn read_in_txn(
     turn: &EntityId,
     tokens: u32,
 ) -> Result<TurnInput> {
-    let Some(members) = members_in_txn(vault, txn, turn)? else {
+    let Some(members) = members_in_txn(vault, &vault.store, txn, turn)? else {
         return Ok(TurnInput::Gone);
     };
     let speaker = turn_role(
@@ -153,7 +153,7 @@ pub(crate) fn turn_messages_in_txn(
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<Vec<EncoderMessage>>> {
-    Ok(members_in_txn(vault, txn, turn)?
+    Ok(members_in_txn(vault, &vault.store, txn, turn)?
         .map(|members| members.into_iter().filter_map(Member::sent).collect()))
 }
 
@@ -163,12 +163,16 @@ pub(crate) type TurnMember = (EntityId, Option<String>);
 
 /// Every live MESSAGE child of a live TURN, in message order. `None` for a
 /// turn [`turn_messages_in_txn`] reads as gone.
+///
+/// `store` is the content read: the vault's own, or a room's view, whose
+/// turns and messages compose with base.
 pub(crate) fn turn_members_in_txn(
     vault: &Vault,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<Vec<TurnMember>>> {
-    Ok(members_in_txn(vault, txn, turn)?.map(|members| {
+    Ok(members_in_txn(vault, store, txn, turn)?.map(|members| {
         members
             .into_iter()
             .map(|member| (member.id, member.text))
@@ -197,17 +201,19 @@ impl Member {
 /// [`turn_members_in_txn`] with each message's stored author.
 fn members_in_txn(
     vault: &Vault,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<Vec<Member>>> {
-    match live_entity_row_in_txn(&vault.store, txn, turn)? {
+    match live_entity_row_in_txn(store, txn, turn)? {
         LiveEntityRow::Live { entity_type, .. } if entity_type == ENTITY_TYPE_TURN => {}
         _ => return Ok(None),
     }
     if vault.archive_tombstone_in_txn(txn, turn)?.is_some() {
         return Ok(None);
     }
-    let children = vault.filtered_edge_peers(
+    let children = crate::vault::filtered_edge_peers_in(
+        store,
         txn,
         EdgeDirection::In,
         turn,
@@ -220,7 +226,10 @@ fn members_in_txn(
         if vault.archive_tombstone_in_txn(txn, &id)?.is_some() {
             continue;
         }
-        let Some(body) = crate::ports::safe_read_text(vault, txn, &id)? else {
+        let Some(body) = vault
+            .live_entity_in_txn(store, txn, &id)?
+            .map(|row| row.body)
+        else {
             continue;
         };
         let Ok(message) = rmp_serde::from_slice::<MessageText>(&body) else {

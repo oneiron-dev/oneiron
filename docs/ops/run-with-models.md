@@ -37,13 +37,14 @@ key_env = "CPA_API_KEY"                 # the variable's NAME; never the key its
 ```toml
 # MID: a local stack and a cloud, local first. `local` also fills local_reasoner.
 [models]
-local = "llama:qwen3:8b"
+local = "exl3:qwen3.8-27b"
 cloud = "router:anthropic/claude-sonnet-4.5"
 prefer_local = true                     # false puts the cloud rung first
 
-[models.providers.llama]                # llama.cpp `llama-server`, vLLM, MLX `mlx_lm.server`
+[models.providers.exl3]                 # any local OpenAI-compatible server: exllamav3, llama.cpp `llama-server`, vLLM, MLX `mlx_lm.server`
 kind = "local-openai-compat"
 base_url = "http://127.0.0.1:8080"
+response_format = "none"                # the EXL3 recipe below runs without the schema
 
 [models.providers.router]               # OpenRouter, or any OpenAI-compatible endpoint
 kind = "openai-compat"
@@ -56,15 +57,36 @@ key_env = "OPENROUTER_API_KEY"
 # to the next; each rung may carry its own prompt.
 [models.roles.dreamer_current]
 rungs = [
-  { model = "llama:qwen3:8b", prompt_file = "prompts/dreamer-local.md" },
+  { model = "exl3:qwen3.8-27b", prompt_file = "prompts/dreamer-local.md" },
+  { model = "llama:qwen3.8-27b-q4" },   # the fallback recipe, below
   { model = "claude:claude-sonnet-4-5" },
 ]
+
+[models.providers.llama]
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1:8081"
 
 [models.providers.claude]               # any Anthropic-compatible /v1/messages server
 kind = "anthropic-compat"
 base_url = "https://api.anthropic.com"
 key_env = "ANTHROPIC_API_KEY"
 ```
+
+The local Dreamer model the examples name is the measured recipe for the
+Dreamer's seat: Qwen3.8-27B as EXL3 4 bpw (`turboderp/Qwen3.8-27B-exl3`) with
+the DFlash2 5 bpw draft (`Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw`, 7 draft
+tokens), served by an exllamav3 OpenAI-compatible server with no schema:
+its provider sets `response_format = "none"`, so a JSON call goes out with
+no `response_format`. The fallback is llama.cpp `llama-server` on
+`Qwen3.8-27B-UD-Q4_K_M.gguf` with the `Qwen3.5-0.8B-Q8_0.gguf` draft
+(`--spec-type draft-simple --spec-draft-n-max 8`) and the schema, the
+default (`response_format = "schema"`). Either way the engine checks the
+answer against the call's schema, and an answer that breaks it is refused.
+A ladder sends a schema in `response_format` only when every rung declares
+`json_response`. A rung without it, such as the Anthropic-compatible one in
+the DETAILED example, makes the engine put the schema in a system message on
+every rung instead, so keep a schema-constrained llama.cpp fallback in a
+ladder of OpenAI-compatible rungs. Typed decisions stay on `vllm-sr/d3-flash`.
 
 Role keys are the model manifest's (ARCH-0036): `generative_reasoner` (chat and
 saved workflows), `local_reasoner`, `checker`, `dreamer_current`,
@@ -75,7 +97,8 @@ rest of the manifest list. The retrieval embedder stays in `[embedder]`, where
 Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
 `local-openai-compat`, `oneironer`), `base_url`, `key_env` or `key_secret`, `headers`
 (non-credential only), `timeout_secs` (120), `context_tokens` (128000),
-`max_output_tokens`, `output_limit_field`, `capabilities` (`streaming`,
+`max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
+default, or `none`; OpenAI-compatible providers only), `capabilities` (`streaming`,
 `json_response`, `tool_calling`, `tool_results`, `image_input`, `reasoning`),
 `locality` (`own_server` or `third_party`) and `revision` (`live`). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
@@ -99,6 +122,24 @@ uid = 991                                    # the broker's user, never the serv
 kind = "openai-compat"
 base_url = "https://api.example.com"         # https only
 key_secret = "provider-key"
+```
+
+Where no separate user exists, as on macOS, leave out `socket` and `uid`: the
+server then starts the broker as its own child, under its own user, at the first
+`key_secret` call. The child makes itself non-dumpable (`PT_DENY_ATTACH` on
+macOS), so another process of that user cannot read or trace its memory. It
+binds no socket file: it takes calls only over a socket pair the server made when
+it started it, so it serves that server alone. Its calls' receipts say
+`same_user`, and the provider's entry in the model status carries
+`"unproven": true`, the badge: another process of that user can still stop the
+child, reach the server's own descriptors, or open the child's memory in the
+moment it starts, before it closes itself. A separate user stays the first
+choice. The child is the `oneiron-broker` beside the server's binary, or:
+
+```toml
+[models.broker]
+program = "/opt/oneiron/bin/oneiron-broker"   # absolute
+extra_roots = ["/etc/oneiron/private-ca.pem"] # optional, absolute
 ```
 
 A declared run's paid keys must sit at T0, so its teacher calls go out this way.
@@ -139,9 +180,35 @@ missing:
 | a rung on `dreamer_current` | `no_model_configured` |
 | `ONEIRON_AUTH_SECRET` set (host root, machine identity) | `no_host_authority` |
 | `extraction_egress = true` under `[models]`, for any model reached over HTTP | `extraction_egress_not_allowed` |
-| vault defaults that route extraction and consolidation to where the Dreamer extracts (the seat's widest rung, or the route of the extraction teacher the vault's model manifest pins): `oneiron dreamer grant --extraction-route own_server` (or `third_party`), or `PUT /v1/llm/defaults` | `extraction_route_not_set` |
+| vault defaults that route each Dreamer role's purpose to where that role's model is served (extraction and narrative under `extraction`, the conflict verdict under `consolidation`): `oneiron dreamer grant --extraction-route own_server` (or `third_party`), or `PUT /v1/llm/defaults` | `extraction_route_not_set` |
 | with a model manifest, its extraction teacher served by `[models]` at the vault's route | `extraction_model_not_served` |
+| with a model manifest, its `generative_reasoner` (the conflict verdict) and `dreamer_current` (narrative) models served by `[models]` at the vault's route | `role_model_not_served` |
 | the Dreamer's three policy rows (a fresh vault ships them) | `needs_owner_grant` |
+
+Each pass calls three roles, each on its own model and run: extraction as
+`extraction_teacher`, the conflict verdict as `generative_reasoner`, and
+declared summaries as `dreamer_current`. A vault's model manifest pins each;
+without one, a role uses its own `[models.roles.*]` seat when it has one,
+else the Dreamer's (`default = "provider:model"` fills all three with one
+model). Each role's calls go out as the run `dreamer-pass/<role>`, so the
+run receipts (`oneiron::run_receipt` at info) name the role that made them.
+
+The extraction input lists the people, organisations and places the turns
+name that the vault already holds, each with its newest claims, so a model
+can name the claim a later turn corrects. A correction the Dreamer stages (a
+new value for a claim it already holds) takes its grant in the same pass when
+the vault's policy allows it: the replacement lands Auto, the prior closes
+with a `Supersedes` edge, and an open `core.conflict.open` that named the
+prior closes with a `core.conflict.resolved` claim. One the policy protects (a class a
+manifest rule declares critical, or attributed truth such as a user-stated
+claim) stays Proposed and is listed in the owner's run review (`GET
+/v1/owner/runs`, `oneiron runs pending`). The seeded manifest declares
+`health.`, `safety.`, `legal.` and `boundary.` critical, and `decision.settled`
+exactly; a predicate no rule names defaults critical for legibility only and
+does not hold a correction. A vault whose policy manifest is still the
+untouched seeded one takes a newer build's seeded manifest when it opens, and
+what waited on the old policy is re-gated, never applied; a manifest the owner
+wrote is never touched.
 
 ```bash
 # once, with the server stopped; ONEIRON_AUTH_SECRET set as for serve
@@ -290,3 +357,55 @@ With `[models]` set, `/v1/llm/generate` and `/v1/llm/stream` call any
 configured model by its engine id (`<provider>/<model>@<revision>`, shown in
 `GET /v1/ai/status`), or a seat by its seat id. Their process-lifetime meter is
 `models.raw_budget_units`.
+
+## 8. The reranker
+
+Recall at `high`, `xhigh` and `max` reranks its top 30 or 50 candidates on
+the `reranker` role (ARCH-0004 #rerank: a cross-encoder refines the fused set
+and never replaces the blend). Route the role in `[models]` like any other,
+on an OpenAI-compatible provider whose server answers `POST /v1/rerank`
+(`{model, query, documents}` in, `{results: [{index, relevance_score}],
+usage: {total_tokens}}` out):
+
+```toml
+[models.providers.rerank]
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1:8081"
+
+[models.roles.reranker]
+model = "rerank:<the model your server loaded>"
+
+[models.recall]
+rerank_budget_units = 32000   # each recall's own line; the default
+```
+
+Each paid recall runs on a line of its own under the vault's budget policy,
+as a chat turn does. The rerank call is admitted on its own permit, sent
+through the run's gate and settled: the tokens the reranker reports, or the
+call's reservation (one call's 8000 units, or the whole line if smaller) when
+it reports none. Its `Admitted`, `Dispatched` and `Settled` rows go to the
+server's run receipts. If the vault has a model manifest, its binding for the
+`reranker` role picks the model, as for chat.
+
+The recall scores exactly the block it would rerank: the candidates the
+reader may read, with each one's text as the reader's own read serves it.
+A message whose words live in its document (a streamed message, the
+server's own chat replies among them, or an edited one) is found but not
+reranked yet: it follows the reranked rows in its first-stage order.
+The model runs outside every vault transaction, and the scores apply only to
+that same block. A block that changed while it was scored (the vault was
+written to) is scored once more; if it changes again the recall is refused
+with `INVALID_STATE` (409) and nothing stale is used. The pack's
+`retrieval_meta.rerank` says what happened: `{"status": "applied", "model",
+"served_model", "candidates", "calls"}` or `{"status": "skipped", "reason":
+"no_reranker" | "no_candidates" | "deadline"}`.
+
+Without a `reranker` route, `high` and above run their graph expansion
+unreranked, and say `skipped` with `no_reranker`. With one, nothing stands in
+for it: a spent line is refused with `BUDGET_SPENT` (402; MCP kind
+`budget_spent`), and a reranker that refuses, fails or answers out of shape
+with `MODEL_UNAVAILABLE` (503; MCP kind `model_unavailable`). A route whose
+rungs cannot serve (a key variable unset, or a `key_secret` provider: the
+broker sends chat calls only for now) refuses the same way. The request
+never names the model, the endpoint or the lease; the server holds them, for
+MCP, HTTP and WebSocket recall alike.

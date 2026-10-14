@@ -15,7 +15,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::store::Store;
+use crate::store::StoreRead;
 
 use super::quarantine::PackQuarantineIndex;
 use super::types::ContextEntity;
@@ -35,7 +35,7 @@ fn context_pack_validation_error(id: EntityId, reason: &'static str) -> Error {
 /// OF-365 candidate-sweep admission (enforcement point 1). Fail-closed: a
 /// scored id whose payload row is missing is not admitted.
 pub(super) fn disclosure_admits_candidate(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     ctx: &DisclosureContext,
     id: &EntityId,
@@ -47,7 +47,13 @@ pub(super) fn disclosure_admits_candidate(
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex("entity metadata header"));
     };
-    ctx.admits(store, rtxn, id, header.entity_type, claim_bodies.get(id))
+    ctx.admits(
+        store.base(),
+        rtxn,
+        id,
+        header.entity_type,
+        claim_bodies.get(id),
+    )
 }
 
 /// OF-365 edge-target admission (enforcement points 2 and 3): a non-admitted
@@ -55,7 +61,7 @@ pub(super) fn disclosure_admits_candidate(
 /// in a serialized edge list — even the bare target id names the room.
 /// `None` clamp admits everything (legacy behavior).
 pub(super) fn disclosure_admits_target(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     clamp: Option<&DisclosureContext>,
     id: &EntityId,
@@ -72,7 +78,7 @@ pub(super) fn disclosure_admits_target(
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex("entity metadata header"));
     };
-    ctx.admits(store, rtxn, id, header.entity_type, None)
+    ctx.admits(store.base(), rtxn, id, header.entity_type, None)
 }
 
 /// OF-365 enforcement point 4 — the final fail-closed sweep: re-checks every
@@ -81,7 +87,7 @@ pub(super) fn disclosure_admits_target(
 /// serving a leaky pack. The red-team suite asserts this cannot fire
 /// spuriously.
 pub(super) fn validate_pack_disclosure(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     ctx: &DisclosureContext,
     results: &[ContextEntity],
@@ -91,7 +97,7 @@ pub(super) fn validate_pack_disclosure(
         return Ok(());
     }
     for entity in results.iter().chain(neighbors.iter()) {
-        if !ctx.admits(store, rtxn, &entity.id, entity.entity_type, None)? {
+        if !ctx.admits(store.base(), rtxn, &entity.id, entity.entity_type, None)? {
             return Err(Error::Gate(GateError::DisclosureClampViolation(
                 "non-admitted entity survived pack assembly",
             )));
@@ -140,7 +146,7 @@ pub(super) fn validate_hydrated_pack_entities(
 }
 
 pub(super) fn validate_pack_edge_references(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     entities: &[ContextEntity],
     claim_bodies: &mut HashMap<EntityId, ClaimBody>,
@@ -164,7 +170,7 @@ pub(super) fn validate_pack_edge_references(
 }
 
 pub(super) fn validate_pack_entity_reference(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     claim_bodies: &mut HashMap<EntityId, ClaimBody>,
@@ -203,7 +209,7 @@ pub(super) fn validate_pack_entity_reference(
 }
 
 fn validate_pack_payload_reference(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     quarantine_index: &PackQuarantineIndex,
@@ -242,7 +248,7 @@ fn validate_entity_time_ordering(id: EntityId, header: EntityMetadataHeader) -> 
 }
 
 fn validate_claim_pack_consistency(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: EntityId,
     body: &ClaimBody,
@@ -270,7 +276,7 @@ fn validate_claim_pack_consistency(
 }
 
 fn validate_claim_subject_references(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     body: &ClaimBody,
     quarantine_index: &PackQuarantineIndex,
@@ -288,7 +294,7 @@ fn validate_claim_subject_references(
 }
 
 fn validate_claim_value_references(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     body: &ClaimBody,
     quarantine_index: &PackQuarantineIndex,

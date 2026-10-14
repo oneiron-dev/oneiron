@@ -267,8 +267,11 @@ impl Vault {
         Ok(owner)
     }
 
+    /// Counts what `read` holds: a room's read holds its overlay ∪ base, and
+    /// a row its reader is refused must not take a slot from one it reads.
     pub(crate) fn scoped_read_search_candidate_limit(
         &self,
+        read: &crate::store::StoreRead<'_>,
         requested: usize,
         include_text: bool,
         include_vector: bool,
@@ -281,13 +284,12 @@ impl Vault {
         let mut limit = requested;
         let mut hybrid_union_limit = 0usize;
         if include_text {
-            let indexed_docs = usize::try_from(crate::bm25::read_total_docs(&self.store, &rtxn)?)
-                .map_err(|_| Error::IndexOverflow("bm25 total docs"))?;
+            let indexed_docs = crate::pipeline::indexed_text_population(read, &rtxn)?;
             hybrid_union_limit = hybrid_union_limit.saturating_add(indexed_docs);
             limit = limit.max(indexed_docs);
         }
         if include_vector {
-            let indexed_vectors = crate::hnsw::hnsw_entity_count(&self.store, &rtxn)?;
+            let indexed_vectors = crate::pipeline::indexed_vector_population(read, &rtxn)?;
             hybrid_union_limit = hybrid_union_limit.saturating_add(indexed_vectors);
             limit = limit.max(indexed_vectors);
         }

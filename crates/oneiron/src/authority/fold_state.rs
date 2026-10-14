@@ -21,6 +21,12 @@ pub enum AuthorityFoldIssue {
     SignerBelowTierFloor(AuthorityEntryHash),
     /// Entry references a missing or invalid parent.
     InvalidAncestry(AuthorityEntryHash),
+    /// Entry is signed by a key a handoff retired, outside that handoff's
+    /// own ancestry.
+    RetiredSigner(AuthorityEntryHash),
+    /// A handoff that conflicts with another (a fork, a cycle) or yields to
+    /// one whose fence stands: it installs no successor.
+    UnsettledHandoff(AuthorityEntryHash),
     /// Entry signer was not valid in its own ancestry.
     SignerNotInAncestry(AuthorityEntryHash),
     /// Entry sequence did not exceed its ancestry or persisted first-observation high-water mark.
@@ -95,6 +101,11 @@ pub struct AuthorityFold {
     pub valid_entries: BTreeSet<AuthorityEntryHash>,
     /// Fold-derived active/revoked roster.
     pub roster: BTreeMap<AuthorityKey, FoldedDevice>,
+    /// Keys a handoff (`ReRoot`) retired. They stay revoked on every branch:
+    /// no entry they sign stands outside the handoff's own ancestry.
+    pub retired_keys: BTreeSet<AuthorityKey>,
+    /// The handoffs whose fences stand: settled, or in conflict.
+    pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     /// Most-restrictive tier floor.
     pub tier_floor: Option<AuthorityTier>,
     /// Owner dismissed saving the recovery secret and no second device has enrolled.
@@ -118,6 +129,8 @@ pub struct AuthorityFold {
     pub federation_grant_bindings: BTreeMap<EntityId, BTreeSet<[u8; 32]>>,
     /// Folded actor-binding tuples keyed by authority key (ONE-1604-D2).
     pub actor_bindings: BTreeMap<AuthorityKey, FoldedActorBinding>,
+    /// Each physical machine's folded standing, keyed by its MACHINE row.
+    pub machines: BTreeMap<EntityId, FoldedMachine>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
 }
@@ -238,6 +251,24 @@ pub(super) struct FoldState {
     pub(super) actor_binding_revocations: BTreeMap<AuthorityKey, u64>,
     pub(super) actor_revocation_hashes: BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
     pub(super) seqs: BTreeMap<AuthorityKey, u64>,
+    pub(super) machines: BTreeMap<EntityId, BTreeMap<MachineAdmitter, MachineChain>>,
+    /// Every machine row that ever claimed each install key, merged by union.
+    pub(super) machine_keys: BTreeMap<[u8; 32], BTreeSet<EntityId>>,
+    /// Roster keys marked as the host's, merged by union: each key a host
+    /// enrolled as its own root, and each key marked for the cloud (role or
+    /// tier). Custody also passes along `key_admitters`.
+    pub(super) host_custody_keys: BTreeSet<AuthorityKey>,
+    /// Each roster key's admitters, merged by union: the keys that enrolled,
+    /// rotated to or re-rooted to it, on any branch. A key is in the host's
+    /// custody when it, or any key up this graph, is marked as the host's,
+    /// whatever labels it carries and whichever branch carried the mark.
+    pub(super) key_admitters: BTreeMap<AuthorityKey, BTreeSet<AuthorityKey>>,
+    /// The fold judges a hosted vault (`FoldContext::hosted`), fixed at genesis.
+    pub(super) hosted: bool,
+    /// Every row an accepted bind or rebind named, merged by union: the
+    /// actor merge keeps one winner, and a row bound on a losing branch is
+    /// still no physical machine.
+    pub(super) actor_rows: BTreeSet<EntityId>,
 }
 
 /// Fold-internal binding content for one authority key.
@@ -447,6 +478,18 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .and_modify(|current| *current = (*current).max(*seq))
             .or_insert(*seq);
     }
+    merge_machine_maps(&mut merged.machines, &mut merged.machine_keys, right);
+    merged
+        .host_custody_keys
+        .extend(right.host_custody_keys.iter().cloned());
+    for (key, admitters) in &right.key_admitters {
+        merged
+            .key_admitters
+            .entry(key.clone())
+            .or_default()
+            .extend(admitters.iter().cloned());
+    }
+    merged.actor_rows.extend(right.actor_rows.iter().copied());
     merged
 }
 

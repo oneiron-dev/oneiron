@@ -92,9 +92,9 @@ pub use key_value::{
     KeyValuePutReceipt, KeyValueSearch,
 };
 pub use oneiron_contracts::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
-    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_NOT_FOUND,
-    MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
+    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,
+    MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError, MemoryGateDenial, MemoryPolicyDenial,
     MemoryPolicyExceptionProposal, MemoryResult,
 };
@@ -108,7 +108,8 @@ pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpt
 pub(crate) use recall::check_recall_request;
 pub use recall::{
     CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, MEMORY_PACK_VERSION,
-    MemoryItem, MemoryPack, MemoryProvenance, RecallEffort, RecallScope, RetrievalMeta,
+    MemoryItem, MemoryPack, MemoryProvenance, RecallEffort, RecallRerank, RecallRerankHost,
+    RecallScope, RerankDocument, RerankReport, RerankScores, RerankSkip, RetrievalMeta,
     ScopeHonesty, resolve_recall_dial,
 };
 pub use room_turn::RoomTurnHandle;
@@ -139,9 +140,13 @@ pub(crate) use support::{
     verify_deletion_authority_in_txn, verify_owner_actor_binding_in_txn,
 };
 pub(crate) use witness::{
-    IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, witness_message_body,
+    IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, turn_admits_message_bodies,
+    witness_message_body,
 };
-pub(crate) use witness::{next_witness_message_order, sole_edge_target};
+pub(crate) use witness::{
+    next_witness_message_order, sole_edge_target, taken_witness_message_order,
+    witness_message_order,
+};
 
 // Read-version, revision-change, and publication types are available under
 // the existing memory namespace; no additional crate-root surface is required.

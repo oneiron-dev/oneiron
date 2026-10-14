@@ -22,8 +22,9 @@ use super::history_store::{
     machine_history_shape_matches,
 };
 use super::{
-    ClaimBody, ClaimHistoryHandoff, ClaimHistoryHandoffPin, HandoffStanding, HandoffVerification,
-    SignedClaimBirth, VerifiedClaimHistoryHandoff, verify_claim_history_handoff,
+    ClaimBody, ClaimHistoryHandoff, ClaimHistoryHandoffPin, HandoffKind, HandoffStanding,
+    HandoffVerification, SignedClaimBirth, VerifiedClaimHistoryHandoff,
+    verify_claim_history_handoff,
 };
 
 fn missing() -> Error {
@@ -38,9 +39,10 @@ pub(crate) fn pin_key(target: EntityId) -> Vec<u8> {
     [PIN_PREFIX, target.as_bytes()].concat()
 }
 
-/// A host re-root's carry of one MACHINE history: the birth digest it carried,
-/// then the content hash of the handoff packet the move signed for it. Only
-/// the move writes it; a delete retires it with the history.
+/// Retired: a host re-root once recorded its carry here, local to the vault
+/// that moved. The carry is now a `ReRootCarry` packet in the history's own
+/// chain. Nothing writes or reads this table; a delete still clears a row an
+/// earlier build left, so restore keeps classifying the family.
 pub(crate) const CARRY: SideTable<EntityId, Vec<u8>, Raw> =
     SideTable::new(&crate::side_table::CLAIM_MACHINE_HISTORY_CARRY);
 
@@ -592,7 +594,8 @@ impl Vault {
 /// Explicit in-chain re-root carry-forward: the current host signs the exact
 /// previously trusted scoped closure under its NEW authority head. An event
 /// authored later by the retired root is outside this packet and cannot gain
-/// historical standing by claiming an old timestamp/frontier.
+/// historical standing by claiming an old timestamp/frontier. The packet is a
+/// plain `Handoff`: only `re_root_host` signs a `ReRootCarry`.
 impl Vault {
     pub fn carry_machine_history_after_re_root(
         &self,
@@ -601,7 +604,13 @@ impl Vault {
         challenge: [u8; 32],
     ) -> Result<[u8; 32]> {
         let mut txn = self.store.env.write_txn()?;
-        let hash = self.carry_machine_history_in_txn(&mut txn, target, issuer, challenge)?;
+        let hash = self.carry_machine_history_in_txn(
+            &mut txn,
+            target,
+            issuer,
+            challenge,
+            HandoffKind::Handoff,
+        )?;
         txn.commit()?;
         Ok(hash)
     }
@@ -612,6 +621,7 @@ impl Vault {
         target: EntityId,
         issuer: &crate::authority::HostSlipIssuer,
         challenge: [u8; 32],
+        kind: HandoffKind,
     ) -> Result<[u8; 32]> {
         let rows = machine_history_rows(&self.store, txn, target)?;
         let prior = trusted_machine_handoff(&self.store, txn, target)?;
@@ -654,6 +664,7 @@ impl Vault {
         let mut nonce = [0; 32];
         rand_core::OsRng.fill_bytes(&mut nonce);
         let mut next = prior;
+        next.kind = kind;
         next.authority_head = authority_head;
         next.previous_handoff_hash = Some(prior_hash);
         next.nonce = nonce;

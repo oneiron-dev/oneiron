@@ -3,14 +3,16 @@
 //! The current root signs one ReRoot for the new secret's key, so the vault
 //! keeps its genesis and its id. A ReRoot retires every key on the roster, so
 //! the same transaction carries what the vault needs to keep working under the
-//! new root: its host root slip, the engine writers that were live, and the
-//! MACHINE claim histories that were readable. Every slip the old root minted
+//! new root: its host root slip, the engine writers that were live, the
+//! physical machines' standing, and the MACHINE claim histories that were
+//! readable. Every slip the old root minted
 //! stops verifying (OF-455: "existing slips on the old host fail verification
 //! against the new root"); the holders get new ones from the new root.
 use super::slip_vault::require_host;
 use super::*;
+use crate::claim::HandoffKind;
 use crate::claim::history_projection::{
-    CARRY, PIN_PREFIX, trusted_machine_handoff, verified_handoff_chain,
+    PIN_PREFIX, trusted_machine_handoff, verified_handoff_chain,
 };
 use crate::error::{Error, Result};
 use crate::store::Store;
@@ -24,6 +26,8 @@ pub struct HostReRoot {
     pub vault_id: AuthorityVaultId,
     /// Engine writers enrolled again under keys the new secret derives.
     pub writers_enrolled: usize,
+    /// Live physical machines whose standing the new root signed again.
+    pub machines_carried: usize,
     /// MACHINE claim histories the new root carried.
     pub histories_carried: usize,
     /// Pinned histories that were not readable before the move and stay so.
@@ -112,21 +116,23 @@ impl Vault {
         for machine in &writers {
             self.enroll_engine_machine_in_txn(&mut txn, next, &vault_id, *machine)?;
         }
+        let machines_carried = self.carry_machine_standing_in_txn(&mut txn, &before, next)?;
         for target in &carried {
             let mut challenge = [0; 32];
             OsRng.fill_bytes(&mut challenge);
-            let carry = self.carry_machine_history_in_txn(&mut txn, *target, next, challenge)?;
-            let birth = trusted_machine_handoff(&self.store, &txn, *target)?
-                .births
-                .first()
-                .map(|birth| birth.digest)
-                .ok_or_else(invalid_authority)?;
-            CARRY.put(&self.store, &mut txn, target, &[birth, carry].concat())?;
+            self.carry_machine_history_in_txn(
+                &mut txn,
+                *target,
+                next,
+                challenge,
+                HandoffKind::ReRootCarry,
+            )?;
         }
         txn.commit()?;
         Ok(HostReRoot {
             vault_id,
             writers_enrolled: writers.len(),
+            machines_carried,
             histories_carried: carried.len(),
             histories_left,
             retired_slips,
@@ -161,9 +167,10 @@ impl Vault {
 /// the key stayed bound to `actor` as a writer and was never revoked as an
 /// actor, and a live root carried the birth's history at the very ReRoot
 /// that made it root. A writer's actor revoke stays terminal across a move,
-/// and so does a history the move left: only the move records a carry, of the
-/// one birth it carried and in the one packet it signed, so neither a later
-/// lifecycle write nor a later birth at the same id stands in for one.
+/// and so does a history the move left: only the move signs a `ReRootCarry`,
+/// into the chain of the one birth it carried, so neither a later lifecycle
+/// write nor a later birth at the same id stands in for one. The carry
+/// travels with the chain, so a replica that adopts the history reads it too.
 pub(super) fn origin_carried_past_re_root(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -190,19 +197,14 @@ fn carried_by_live_root(
     fold: &AuthorityFold,
     target: EntityId,
 ) -> Result<bool> {
-    let Some(record) = CARRY.get(store, txn, &target)? else {
-        return Ok(false);
-    };
-    let Some((birth, carry)) = record.split_at_checked(32) else {
-        return Ok(false);
-    };
     let tip = trusted_machine_handoff(store, txn, target)?;
-    if !matches!(tip.births.as_slice(), [only] if only.digest[..] == *birth) {
+    if tip.births.len() != 1 {
         return Ok(false);
     }
+    // Every packet in the chain names the tip's one birth.
     for packet in verified_handoff_chain(store, txn, &tip, fold)? {
-        if packet.previous_handoff_hash.is_some()
-            && packet.content_hash().is_ok_and(|hash| hash[..] == *carry)
+        if packet.kind == HandoffKind::ReRootCarry
+            && packet.previous_handoff_hash.is_some()
             && fold.valid_entries.contains(&packet.authority_head)
             && fold
                 .roster

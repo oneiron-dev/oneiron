@@ -3,7 +3,7 @@ use heed::RoTxn;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::store::Store;
+use crate::store::StoreRead;
 use crate::temporal::TemporalAnchorMode;
 
 use super::types::{
@@ -11,7 +11,7 @@ use super::types::{
 };
 
 pub(super) fn read_entity_metadata(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<EntityMetadata>> {

@@ -5,7 +5,8 @@
 //! delete a descendant revocation or an independently authorized fresh rebind.
 //! Spent confirm nonces and conflict poison likewise remain spent forever.
 //! Roster-changing ops are not approvals here: Bind/RebindActor, federation
-//! confirms and critical-write confirms carry the reusable approval facts.
+//! confirms, critical-write confirms and every machine standing short of a
+//! removal carry the reusable approval facts.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -62,6 +63,7 @@ fn stale_roster_approval_deadlines(
                 AuthorityOp::CriticalWriteConfirm(action) => {
                     action.disposition == CriticalWriteConfirmDisposition::Clear
                 }
+                AuthorityOp::MachineProfile(profile) => profile.role != MachineRole::Removed,
                 _ => false,
             };
             if !approval {
@@ -164,6 +166,21 @@ pub(super) fn apply_stale_roster_window(
         if !has_live_approval {
             binding.status = ActorBindingStatus::Revoked;
         }
+    }
+    // A machine stands on the revision that won. Once that revision is
+    // stale it is not live here, until a key still on the roster signs the
+    // same standing again.
+    for folded in fold.machines.values_mut() {
+        if !expired.contains(&folded.entry) {
+            continue;
+        }
+        let reissued = entries.iter().any(|entry| {
+            matches!(&entry.op, AuthorityOp::MachineProfile(profile) if *profile == folded.profile)
+                && authority_entry_hash(entry).is_ok_and(|hash| {
+                    fold.valid_entries.contains(&hash) && !expired.contains(&hash)
+                })
+        });
+        folded.stale = !reissued;
     }
     fold.critical_write_confirms
         .retain(|_, confirm| !expired.contains(&confirm.authority_entry_hash));

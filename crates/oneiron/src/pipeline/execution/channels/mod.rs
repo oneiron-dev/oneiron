@@ -234,7 +234,7 @@ impl PipelineBuilder<'_> {
                 vector_channel_index = Some(acc.admit_channel(
                     RetrievalSignal::Vector,
                     vector_results,
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     filter_config,
                     &mut metadata_cache,
@@ -267,7 +267,7 @@ impl PipelineBuilder<'_> {
                 acc.admit_channel(
                     RetrievalSignal::Hyde,
                     hyde_results,
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     filter_config,
                     &mut metadata_cache,
@@ -317,14 +317,14 @@ impl PipelineBuilder<'_> {
             if let Some(codes) = &self.phonetic_search
                 && let Some(phonetic_results) =
                     self.run_stage(RetrievalSignal::Phonetic, stages.next(), || {
-                        execute_phonetic(&self.vault.store, rtxn, codes)
+                        execute_phonetic(&self.read, rtxn, codes)
                     })?
             {
                 diagnostics.succeeded.push(RetrievalSignal::Phonetic);
                 acc.admit_channel(
                     RetrievalSignal::Phonetic,
                     phonetic_results,
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     filter_config,
                     &mut metadata_cache,
@@ -352,7 +352,7 @@ impl PipelineBuilder<'_> {
                 acc.admit_channel(
                     RetrievalSignal::Temporal,
                     temporal_results,
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     filter_config,
                     &mut metadata_cache,
@@ -365,7 +365,7 @@ impl PipelineBuilder<'_> {
                     // search_ppr — seeds are weighted 1/ln(1 + passage_count)
                     // instead of uniform 1/n.
                     crate::ppr::ppr_query_in_txn_with_diagnostics(
-                        &self.vault.store,
+                        &self.read,
                         rtxn,
                         seeds,
                         *depth,
@@ -382,7 +382,7 @@ impl PipelineBuilder<'_> {
                 acc.admit_channel(
                     RetrievalSignal::Ppr,
                     ppr_results,
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     filter_config,
                     &mut metadata_cache,
@@ -396,17 +396,13 @@ impl PipelineBuilder<'_> {
             // CLAIM scalar constraints use the decoded post-fusion stage below.
             for scores in &mut acc.ranked_lists {
                 if self.memory_category {
-                    super::super::capabilities::retain_memory_candidates(
-                        scores,
-                        &self.vault.store,
-                        rtxn,
-                    )?;
+                    super::super::capabilities::retain_memory_candidates(scores, &self.read, rtxn)?;
                 }
                 super::authority::apply_types(
                     scores,
                     authority_filter,
                     self.type_filter.as_deref(),
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     &mut metadata_cache,
                 )?;
@@ -414,6 +410,7 @@ impl PipelineBuilder<'_> {
             if acc.ranked_lists.is_empty() {
                 return Ok(RetrievalTxnOutput {
                     revisions: HashMap::new(),
+                    words_bound: Default::default(),
                     diagnostics,
                     scores: Vec::new(),
                     cited_messages: HashMap::new(),
@@ -421,7 +418,7 @@ impl PipelineBuilder<'_> {
                     pending_vectors: Vec::new(),
                     claim_gate: ClaimStatusGateCache::default(),
                     read_suppressed: metadata_cache.countable_suppressed(
-                        &self.vault.store,
+                        &self.read,
                         rtxn,
                         authority_filter.credential.as_ref(),
                     )?,
@@ -491,7 +488,7 @@ impl PipelineBuilder<'_> {
                     vector: vector_channel_index,
                     text: text_channel_index,
                 },
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 &mut metadata_cache,
                 &mut claim_gate,
@@ -515,7 +512,7 @@ impl PipelineBuilder<'_> {
             let mut blend_base_scores = first_blend.base_scores;
             let mut blend_access_factors = first_blend.access_factors;
             let total_in_scope = if self.context_pack_budget.is_some() {
-                memory_candidate_count(&self.vault.store, rtxn, &scores)?
+                memory_candidate_count(&self.read, rtxn, &scores)?
             } else {
                 scores.len()
             };
@@ -528,7 +525,7 @@ impl PipelineBuilder<'_> {
             let before_status_gate = scores.len();
             apply_claim_status_gate(
                 &mut scores,
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 &mut metadata_cache,
                 &mut claim_gate,
@@ -600,13 +597,18 @@ impl PipelineBuilder<'_> {
             let RerankApplied {
                 merged_components: rerank_merged_components,
                 reranked_trace_scores,
+                words_revisions,
+                unpinned_turns,
             } = self.apply_rerank_ladder(
+                rtxn,
                 &mut scores,
+                &mut metadata_cache,
+                &mut claim_gate,
                 RerankLadderInputs {
                     ladder_scores: rerank_ladder_scores.as_ref(),
                     blend_access_factors: &blend_access_factors,
                     blend_components: &blend_components,
-                    claim_gate: &claim_gate,
+                    filter_config,
                     rerank_query,
                     capture_retrieval_trace,
                     trace_candidate_limit,
@@ -616,7 +618,7 @@ impl PipelineBuilder<'_> {
             entity_rank::rank_unmatched_entities_below_matches(
                 &mut scores,
                 &acc.signal_components,
-                &self.vault.store,
+                &self.read,
                 rtxn,
                 &mut metadata_cache,
             )?;
@@ -624,7 +626,7 @@ impl PipelineBuilder<'_> {
             if let Some((relationship, RelMode::Demote)) = self.relationship_filter {
                 apply_relationship_filter(
                     &mut scores,
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     &mut metadata_cache,
                     &relationship,
@@ -639,13 +641,18 @@ impl PipelineBuilder<'_> {
                     &mut scores,
                     &mut acc.signal_components,
                     self.turn_fold,
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     filter_config,
                     &mut metadata_cache,
                     &mut claim_gate,
                 )?
             };
+            // A turn with no words to pin is not served under scores its
+            // later words were not given.
+            if !unpinned_turns.is_empty() {
+                scores.retain(|hit| !unpinned_turns.contains(&hit.id));
+            }
 
             let capabilities = self.prepare_pack_candidates(
                 rtxn,
@@ -658,7 +665,7 @@ impl PipelineBuilder<'_> {
             if let Some(context_pack_budget) = self.context_pack_budget {
                 apply_context_pack_retrieval_budget(
                     &mut scores,
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     &mut metadata_cache,
                     context_pack_budget,
@@ -684,7 +691,8 @@ impl PipelineBuilder<'_> {
             {
                 empty_reason = Some(EmptyReason::NoData);
             }
-            let pending_vectors = pending_vectors_for_scores(&self.vault.store, rtxn, &scores)?;
+            let pending_vectors =
+                pending_vectors_for_scores(&self.vault.store, &self.read, rtxn, &scores)?;
             let retrieval_trace = if capture_retrieval_trace {
                 Some(self.assemble_retrieval_trace(TraceInputs {
                     derivation_owner: crate::federation::derivation::owner_in_txn(
@@ -732,10 +740,18 @@ impl PipelineBuilder<'_> {
             // A hit whose indexed revision cannot be read has no pin, so it
             // leaves the pack instead of failing the run. A MESSAGE whose text
             // moved into an entity document is one: the migration replaced its
-            // body without retaining the revision its state still names.
+            // body without retaining the revision its state still names. A
+            // reranked hit is pinned where its words were scored.
             let mut revisions = HashMap::new();
             for hit in &scores {
-                match self.vault.indexed_revision_in_txn(rtxn, &hit.id) {
+                if let Some(revision) = words_revisions.get(&hit.id) {
+                    revisions.insert(hit.id, *revision);
+                    continue;
+                }
+                match self
+                    .vault
+                    .indexed_revision_from_in_txn(&self.read, rtxn, &hit.id)
+                {
                     Ok(Some(revision)) => {
                         revisions.insert(hit.id, revision);
                     }
@@ -745,6 +761,7 @@ impl PipelineBuilder<'_> {
             }
             Ok(RetrievalTxnOutput {
                 revisions,
+                words_bound: words_revisions.into_keys().collect(),
                 diagnostics,
                 scores,
                 cited_messages,
@@ -752,7 +769,7 @@ impl PipelineBuilder<'_> {
                 pending_vectors,
                 claim_gate,
                 read_suppressed: metadata_cache.countable_suppressed(
-                    &self.vault.store,
+                    &self.read,
                     rtxn,
                     authority_filter.credential.as_ref(),
                 )?,
@@ -820,6 +837,7 @@ impl PipelineBuilder<'_> {
             partition_capabilities(
                 scores,
                 self.vault,
+                &self.read,
                 rtxn,
                 signal_components,
                 self.skill_executor.as_deref(),

@@ -37,6 +37,33 @@ const fn canonical_turn_speaker(author: WitnessAuthor) -> Option<&'static str> {
     }
 }
 
+/// Whether a stored TURN admits the canonical MESSAGE `bodies` the way it
+/// admits an append to it (ONE-1767): its byline and its one speaker stamp
+/// decode, and every non-system body speaks as that speaker. For a copy into
+/// a saved turn, which replays MESSAGE rows only.
+pub(crate) fn turn_admits_message_bodies(
+    turn_body: &[u8],
+    bodies: &[&[u8]],
+) -> crate::error::Result<bool> {
+    let (Ok(_), Ok(stored)) = (
+        decode_witness_turn_person(turn_body),
+        decode_witness_turn_speaker(turn_body),
+    ) else {
+        return Ok(false);
+    };
+    for body in bodies {
+        let author = match crate::gate::validate_canonical_witness_message_body(body)? {
+            crate::gate::WitnessMessageBodyAuthor::User => WitnessAuthor::User,
+            crate::gate::WitnessMessageBodyAuthor::Companion => WitnessAuthor::Companion,
+            crate::gate::WitnessMessageBodyAuthor::System => WitnessAuthor::System,
+        };
+        if canonical_turn_speaker(author).is_some_and(|speaker| speaker != stored) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// The call's unique non-system speaker.
 ///
 /// `None` means this call contains only permitted system/tooling/REPL

@@ -34,11 +34,16 @@ mod retired_device_ops;
 mod revoke_proof_matrix;
 mod support;
 mod tier_floor;
+mod weak_keys;
 
 mod causal_claim;
 mod checkpoint;
+mod handoff_arrival_order;
+mod handoff_settlement;
 mod history_transfer;
 mod host_re_root;
+mod machine_fold;
+mod machine_identity;
 mod machine_write;
 mod recovery_ceremony;
 mod retired_ceiling;

@@ -243,7 +243,9 @@ impl<'a> ContextPackBuilder<'a> {
             &l2_subjects,
             self.disclosure.as_ref(),
             self.l2_summary_reader,
-            self.session.is_none(),
+            // The cache is the vault's and outlives any room: a summary
+            // over a room's rows is computed, never kept.
+            self.session.is_none() && !self.read.is_union(),
         ) {
             // Only bounded-summary limits may omit an implicit optional
             // prefix. Corruption, disclosure and explicit-request errors stay
@@ -293,7 +295,7 @@ impl<'a> ContextPackBuilder<'a> {
                 let mut kept = Vec::with_capacity(scored.len());
                 for entry in scored {
                     if disclosure_admits_candidate(
-                        &self.vault.store,
+                        &self.read,
                         &rtxn,
                         ctx,
                         &entry.id,
@@ -310,7 +312,7 @@ impl<'a> ContextPackBuilder<'a> {
             for entry in pipeline_output.capabilities {
                 if clamp.is_some_and(|ctx| ctx.mode() != DisclosureMode::OwnerAlone)
                     && !disclosure_admits_candidate(
-                        &self.vault.store,
+                        &self.read,
                         &rtxn,
                         clamp.expect("checked"),
                         &entry.id,
@@ -326,9 +328,7 @@ impl<'a> ContextPackBuilder<'a> {
                 {
                     continue;
                 }
-                if let Some(hit) =
-                    crate::pipeline::capability_hit(&self.vault.store, &rtxn, entry.id)?
-                {
+                if let Some(hit) = crate::pipeline::capability_hit(&self.read, &rtxn, entry.id)? {
                     capabilities.push(hit);
                 }
             }
@@ -336,6 +336,7 @@ impl<'a> ContextPackBuilder<'a> {
 
             let result_options = HydrateOptions {
                 read_mode: self.read_mode,
+                words_pinned: false,
                 policy: &policy,
                 criticality: self.criticality,
                 hydrate_fields: self.hydrate,
@@ -348,6 +349,7 @@ impl<'a> ContextPackBuilder<'a> {
             let mut results = Vec::with_capacity(scored.len());
             for entry in scored.iter().copied() {
                 let mut options = result_options;
+                options.words_pinned = pipeline_output.words_bound.contains(&entry.id);
                 if options.read_mode == crate::vault::ReadMode::Indexed {
                     let Some(revision) = pipeline_output.revisions.get(&entry.id) else {
                         continue;
@@ -356,6 +358,7 @@ impl<'a> ContextPackBuilder<'a> {
                 }
                 let Some(entity) = hydrate_entity(
                     self.vault,
+                    &self.read,
                     &rtxn,
                     entry.id,
                     entry.score,
@@ -374,7 +377,7 @@ impl<'a> ContextPackBuilder<'a> {
             // claim budget fiction may take. Flat (unchanged) for Base / World(id).
             if matches!(self.world_scope, WorldScope::All) {
                 partition_results_by_world(
-                    &self.vault.store,
+                    &self.read,
                     &rtxn,
                     &mut results,
                     self.non_base_world_fraction,
@@ -393,7 +396,7 @@ impl<'a> ContextPackBuilder<'a> {
             // deliberately KEEP a dead world, which are exactly the ones owed
             // the warning.
             annotate_stale_federated_worlds(
-                &self.vault.store,
+                &self.read,
                 &rtxn,
                 &stale_worlds,
                 &mut results,
@@ -402,7 +405,7 @@ impl<'a> ContextPackBuilder<'a> {
 
             for entity in &results {
                 validate_pack_entity_reference(
-                    &self.vault.store,
+                    &self.read,
                     &rtxn,
                     &entity.id,
                     &mut claim_bodies,
@@ -423,7 +426,7 @@ impl<'a> ContextPackBuilder<'a> {
                 let (neighbor_filter, named_types) =
                     neighbor_pipeline.neighbor_type_policy(&rtxn)?;
                 walk_edges(
-                    &self.vault.store,
+                    &self.read,
                     &rtxn,
                     &seed_ids,
                     EdgeWalkOptions {
@@ -442,7 +445,7 @@ impl<'a> ContextPackBuilder<'a> {
             let edge_cache = self.include_edges.then_some(&edge_walk.scanned_edges);
             for id in &edge_walk.neighbor_ids {
                 validate_pack_entity_reference(
-                    &self.vault.store,
+                    &self.read,
                     &rtxn,
                     id,
                     &mut claim_bodies,
@@ -451,6 +454,7 @@ impl<'a> ContextPackBuilder<'a> {
             }
             let neighbor_options = HydrateOptions {
                 read_mode: self.read_mode,
+                words_pinned: false,
                 policy: &policy,
                 criticality: self.criticality,
                 hydrate_fields: self.hydrate,
@@ -464,11 +468,7 @@ impl<'a> ContextPackBuilder<'a> {
             if self.include_edges && self.edge_hop > 0 {
                 for entity in &mut results {
                     entity.edges = Some(load_entity_edges(
-                        &self.vault.store,
-                        &rtxn,
-                        &entity.id,
-                        edge_cache,
-                        clamp,
+                        &self.read, &rtxn, &entity.id, edge_cache, clamp,
                     )?);
                 }
             }
@@ -477,6 +477,7 @@ impl<'a> ContextPackBuilder<'a> {
             for id in edge_walk.neighbor_ids {
                 let Some(entity) = hydrate_entity(
                     self.vault,
+                    &self.read,
                     &rtxn,
                     id,
                     0.0,
@@ -492,7 +493,7 @@ impl<'a> ContextPackBuilder<'a> {
             // ONE-1411: a stale world that survived the walk did so because the
             // scope named it. Mark it on exactly the rule the results follow.
             annotate_stale_federated_worlds(
-                &self.vault.store,
+                &self.read,
                 &rtxn,
                 &stale_worlds,
                 &mut neighbors,
@@ -501,14 +502,14 @@ impl<'a> ContextPackBuilder<'a> {
 
             validate_hydrated_pack_entities(&results, &neighbors)?;
             validate_pack_edge_references(
-                &self.vault.store,
+                &self.read,
                 &rtxn,
                 &results,
                 &mut claim_bodies,
                 &quarantine_index,
             )?;
             validate_pack_edge_references(
-                &self.vault.store,
+                &self.read,
                 &rtxn,
                 &neighbors,
                 &mut claim_bodies,
@@ -517,7 +518,7 @@ impl<'a> ContextPackBuilder<'a> {
             // OF-365 enforcement point 4 — final fail-closed sweep: the pack
             // build FAILS rather than leaks a non-admitted id.
             if let Some(ctx) = clamp {
-                validate_pack_disclosure(&self.vault.store, &rtxn, ctx, &results, &neighbors)?;
+                validate_pack_disclosure(&self.read, &rtxn, ctx, &results, &neighbors)?;
             }
             if let (Some(summary), Some(pipeline)) = (&l2_base, &l2_pipeline) {
                 let valid = match super::super::l2_base::revalidate_l2_base(

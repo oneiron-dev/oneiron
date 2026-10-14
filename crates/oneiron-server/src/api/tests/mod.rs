@@ -13,6 +13,7 @@ use tower::ServiceExt;
 mod mcp_source_gate;
 
 mod auth_idempotency;
+mod machine_identity;
 mod off_record_rooms;
 mod org_admin;
 mod owner_healer;
@@ -46,6 +47,7 @@ mod mcp_results_carrier;
 mod mcp_scoping;
 mod mcp_tool_endpoints;
 mod reactive;
+mod recall_rerank;
 mod relay_widen;
 mod retrieval_depth_quality;
 mod retrieval_shaping;

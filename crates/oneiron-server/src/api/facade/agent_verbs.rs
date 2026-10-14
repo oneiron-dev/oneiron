@@ -159,14 +159,16 @@ async fn claim_upsert(
         value,
     )?))
 }
-/// `POST /v1/core/facade/recall` → `SyncServer::recall`, the recall door every
-/// server transport shares: it embeds the query whenever the vault's embedder
-/// is serving.
+/// `POST /v1/core/facade/recall` → `SyncServer::recall_off_runtime`, the
+/// recall door every server transport shares: it embeds the query whenever
+/// the vault's embedder is serving.
 ///
-/// The lease argument is `None` and is not a client input: no lease-issuer
-/// exists, and a bearer slip is not one. `Effort::High` therefore returns the
-/// engine's own `LEASE_REQUIRED`, which this projection forwards as that exact
-/// code — the bindings neither mint nor simulate a lease.
+/// The lease is not a client input, and a bearer slip is not one. At high,
+/// xhigh and max the door admits the recall on a line of its own and
+/// reranks on the `[models]` reranker; its refusals (`BUDGET_SPENT`,
+/// `MODEL_UNAVAILABLE`) are forwarded as those exact codes. With no
+/// reranker route the recall runs unreranked and reports
+/// `skipped / no_reranker` in `retrieval_meta.rerank`.
 async fn recall(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
