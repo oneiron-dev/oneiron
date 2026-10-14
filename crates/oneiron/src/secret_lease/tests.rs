@@ -1181,7 +1181,7 @@ fn rematerialization_writes_no_byte_into_a_substituted_or_shared_inode() {
 
 #[cfg(unix)]
 #[test]
-fn an_ancestor_swapped_before_the_open_redirects_no_byte() {
+fn an_ancestor_swapped_before_the_open_refuses_and_redirects_no_byte() {
     // C9: ancestors were checked by path and the file opened by path, so a
     // directory swapped for a symlink in between sent the value elsewhere.
     for fresh in [true, false] {
@@ -1209,21 +1209,79 @@ fn an_ancestor_swapped_before_the_open_redirects_no_byte() {
             std::fs::rename(&from, &to).expect("move the real directory");
             std::os::unix::fs::symlink(&target, &from).expect("plant the symlink");
         });
-        let _ = vault.register_secret_local(&lease_id, &path, "project-alpha");
+        let err = vault
+            .register_secret_local(&lease_id, &path, "project-alpha")
+            .expect_err("a swapped ancestor refuses");
+        assert!(
+            matches!(
+                err,
+                Error::Secret(SecretError::SecretLeasePathRefused { .. })
+            ),
+            "fresh={fresh}: got {err:?}"
+        );
         let landed = std::fs::read(&bait).ok();
         assert!(
             landed.is_none() || landed.as_deref() == Some(b"unrelated bytes".as_slice()),
             "fresh={fresh}: the value was written through the swapped ancestor"
         );
+        // Nothing lands in the moved directory either: a file this attempt
+        // created is removed, and the registered one keeps its old bytes.
+        let held = moved.join(path.file_name().expect("leaf"));
+        if fresh {
+            assert!(!held.exists(), "the fresh file stayed off the stored path");
+        } else {
+            assert_eq!(std::fs::read(&held).expect("registered file"), VALUE_V1);
+        }
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn a_target_that_climbs_with_dot_dot_is_refused() {
+    // C9 review: `..` asks the held directory for its current parent, which a
+    // rename can change between two steps of the walk.
+    let (tmp, vault) = temp_vault();
+    let (_, path) = declared_target(&tmp);
+    let parent = path.parent().expect("parent");
+    std::fs::create_dir_all(parent.join("inner")).expect("mkdir");
+    let climbing = parent.join("inner").join("..").join("api.key");
+    register(
+        &vault,
+        record(
+            "local",
+            CustodyClass::CustodyPortable,
+            VALUE_V1,
+            vec![binding(EFFECTOR, CustodyTier::T2LocalRegistered)],
+            vec![climbing.to_string_lossy().into_owned()],
+        ),
+    );
+    let lease_id = vault
+        .materialize_secret_lease("local", EFFECTOR, 3600)
+        .expect("lease")
+        .lease
+        .lease_id;
+    let err = vault
+        .register_secret_local(&lease_id, &climbing, "project-alpha")
+        .expect_err("a climbing target refuses");
+    assert!(
+        matches!(
+            err,
+            Error::Secret(SecretError::SecretLeasePathRefused { .. })
+        ),
+        "got {err:?}"
+    );
+    assert!(!path.exists(), "no byte landed");
+}
+
+#[cfg(unix)]
 #[test]
 fn teardown_leaves_a_substituted_file_and_keeps_the_row() {
     // C9: teardown unlinked whatever answered to the stored path and then
     // dropped the row, deleting an unrelated file and stranding the secret.
-    let (_tmp, vault, path, lease_id) = registered_t2();
-    std::fs::remove_file(&path).expect("unlink the registered name");
+    let (tmp, vault, path, lease_id) = registered_t2();
+    // Renamed aside, the registered inode stays allocated, so the planted
+    // file cannot reuse its number.
+    std::fs::rename(&path, tmp.path().join("aside")).expect("move the registered file");
     std::fs::write(&path, b"unrelated bytes").expect("plant an unrelated file");
     let revoked = vault
         .revoke_secret_lease(&lease_id, 1_700_000_100)
@@ -1235,6 +1293,32 @@ fn teardown_leaves_a_substituted_file_and_keeps_the_row() {
         .expect("read registration")
         .expect("the row stays while its file is unaccounted for");
     assert!(stored.removal_error.is_some());
+}
+
+#[cfg(unix)]
+#[test]
+fn teardown_keeps_the_row_while_the_registered_file_has_another_name() {
+    // C9 review: teardown unlinked the declared name of a file with a second
+    // name and dropped the row, so the plaintext lived on under the other
+    // name with no row and no snapshot hash exclusion covering it.
+    let (tmp, vault, path, lease_id) = registered_t2();
+    let second_name = tmp.path().join("second-name");
+    std::fs::hard_link(&path, &second_name).expect("second name");
+    let revoked = vault
+        .revoke_secret_lease(&lease_id, 1_700_000_100)
+        .expect("revoke flips the status");
+    assert_eq!(revoked.status, SecretLeaseStatus::Revoked);
+    assert_eq!(std::fs::read(&path).expect("read"), VALUE_V1);
+    assert_eq!(std::fs::read(&second_name).expect("read"), VALUE_V1);
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let stored = read_local_registration_in_txn(&vault.store, &rtxn, &lease_id)
+        .expect("read registration")
+        .expect("the row stays while the plaintext has another name");
+    assert!(stored.removal_error.is_some());
+    assert_eq!(
+        stored.registration.content_hash,
+        *blake3::hash(VALUE_V1).as_bytes()
+    );
 }
 
 // ---------------------------------------------------------------------------
