@@ -7,6 +7,8 @@
 //! door that has the stored bytes reads them instead, wherever the value is
 //! still as it was decoded ([`Encoding::Stored`]).
 
+use std::collections::HashMap;
+
 use rmpv::Value;
 
 use super::{Door, byte_values, detect, detect_bytes, sanitize_messagepack};
@@ -228,7 +230,8 @@ pub(crate) fn release_body_reads_whole_as_stored(value: &Value, bytes: &[u8]) ->
 /// `value` as MessagePack, each part of it that is as `original` decoded it
 /// from `stored` written in its stored bytes, the rest at its narrowest
 /// width. A map's entries are matched by key, since a walk drops some of
-/// them. `None` when `stored` is not the encoding `original` was decoded from.
+/// them and a projection folds a repeated key into one. `None` when `stored`
+/// is not the encoding `original` was decoded from.
 pub(crate) fn encode_as_stored(value: &Value, original: &Value, stored: &[u8]) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(stored.len());
     write_as_stored(value, original, stored, 0, &mut out)?;
@@ -267,17 +270,35 @@ fn write_as_stored(
             } else {
                 write_map_len(out, entries.len())?;
             }
-            let mut used = vec![false; len];
-            let mut next = 0;
-            for (key, value) in entries {
-                // A walk keeps the order of the entries it keeps.
-                let found = (next..len)
-                    .chain(0..next)
-                    .find(|&index| !used[index] && was[index].0 == *key);
+            // The entries of one key take the last of its stored entries, in
+            // order: a walk keeps or drops every entry of a key together, in
+            // their order, and a projection keeps a repeated key's last value.
+            let key_of = |key: &Value| {
+                let mut bytes = Vec::new();
+                rmpv::encode::write_value(&mut bytes, key).ok()?;
+                Some(bytes)
+            };
+            let mut stored_entries: HashMap<Vec<u8>, Vec<usize>> = HashMap::new();
+            for (index, (key, _)) in was.iter().enumerate() {
+                stored_entries.entry(key_of(key)?).or_default().push(index);
+            }
+            let keys = entries
+                .iter()
+                .map(|(key, _)| key_of(key))
+                .collect::<Option<Vec<_>>>()?;
+            let mut counts: HashMap<&[u8], (usize, usize)> = HashMap::new();
+            for key in &keys {
+                counts.entry(key.as_slice()).or_default().0 += 1;
+            }
+            for ((key, value), bytes) in entries.iter().zip(&keys) {
+                let (count, nth) = counts.get_mut(bytes.as_slice())?;
+                let positions = stored_entries.get(bytes).map_or(&[][..], Vec::as_slice);
+                let found = (*nth + positions.len())
+                    .checked_sub(*count)
+                    .and_then(|index| positions.get(index).copied());
+                *nth += 1;
                 match found {
                     Some(index) => {
-                        used[index] = true;
-                        next = index + 1;
                         let (key_at, value_at) = spans[index];
                         write_as_stored(key, &was[index].0, stored, key_at, out)?;
                         write_as_stored(value, &was[index].1, stored, value_at, out)?;

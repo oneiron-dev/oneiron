@@ -526,25 +526,18 @@ fn fields_that_spell_a_phrase_together_leave_no_context_writer() {
 
 #[test]
 fn an_entitys_own_alias_in_its_own_fields_never_becomes_its_name() {
-    // A host stores an ASSET whose identity key closes the first half of the
-    // phrase and whose name holds the second: no stored run and no field
-    // spells it, but its name set in place of its own key would.
+    // A host stores an ASSET whose own alias (its identity key, or its id)
+    // closes the first half of the phrase and whose name holds the second:
+    // no stored run and no field spells it, but its name set in place of
+    // its own alias would. Sol R1: an identity key equal to its own short id
+    // must not bring the name back after the alias becomes that short id.
     let words: Vec<&str> =
         "legal winner thank year wave sausage worth useful legal winner thank yellow"
             .split(' ')
             .collect();
-    let headline = format!("{} zq9", words[..6].join(" "));
     let name = words[6..].join(" ");
+    let id = EntityId::from_bytes_unchecked([0x96; 16]);
     let person = EntityId::from_bytes_unchecked([0x95; 16]);
-    let body = rmpv::Value::Map(vec![
-        ("headline".into(), headline.as_str().into()),
-        ("identity_key".into(), "zq9".into()),
-        ("name".into(), name.as_str().into()),
-        ("owner".into(), person.to_hex().into()),
-    ]);
-    let mut stored = Vec::new();
-    rmpv::encode::write_value(&mut stored, &body).unwrap();
-    assert!(crate::batch::secret_scan::scan_write_payload(&stored).is_ok());
     let entity =
         |id: EntityId, short_id: &str, entity_type: u8, fields: &[(&str, String)]| ContextEntity {
             source_revision_ref: None,
@@ -563,47 +556,60 @@ fn an_entitys_own_alias_in_its_own_fields_never_becomes_its_name() {
             edges: None,
             vector: None,
         };
-    let pack = ContextPack {
-        capabilities: Vec::new(),
-        l2_base: None,
-        retrieval_quality: Default::default(),
-        results: vec![entity(
-            EntityId::from_bytes_unchecked([0x96; 16]),
-            "as01",
-            crate::registry::ENTITY_TYPE_ASSET,
-            &[
-                ("headline", headline.clone()),
-                ("identity_key", "zq9".to_owned()),
-                ("name", name.clone()),
-                ("owner", person.to_hex()),
-            ],
-        )],
-        neighbors: vec![entity(
-            person,
-            "pe01",
-            crate::registry::ENTITY_TYPE_PERSON,
-            &[("name", "Alice".to_owned())],
-        )],
-        stats: empty_stats(),
-        empty: None,
-    };
-    for format in [
-        PackFormat::Json,
-        PackFormat::Yaml,
-        PackFormat::Toon,
-        PackFormat::Markdown,
-        PackFormat::Plaintext,
-    ] {
-        let text = String::from_utf8_lossy(&serialize_pack(
-            &pack,
-            &savings_config(format, FieldProfile::Full),
-        ))
-        .into_owned();
-        assert!(text.contains("sausage as01"), "{format:?}: {text}");
-        assert!(!text.contains("sausage worth"), "{format:?}: {text}");
-        // Its own name still shows in its name, and another entity's id in
-        // its fields still becomes that entity's name.
-        assert!(text.contains(&name), "{format:?}: {text}");
-        assert!(text.contains("Alice (pe01)"), "{format:?}: {text}");
+    for (identity_key, alias) in [("zq9", "zq9".to_owned()), ("as01", id.to_hex())] {
+        let headline = format!("{} {alias}", words[..6].join(" "));
+        let body = rmpv::Value::Map(vec![
+            ("headline".into(), headline.as_str().into()),
+            ("identity_key".into(), identity_key.into()),
+            ("name".into(), name.as_str().into()),
+            ("owner".into(), person.to_hex().into()),
+        ]);
+        let mut stored = Vec::new();
+        rmpv::encode::write_value(&mut stored, &body).unwrap();
+        assert!(crate::batch::secret_scan::scan_write_payload(&stored).is_ok());
+        let pack = ContextPack {
+            capabilities: Vec::new(),
+            l2_base: None,
+            retrieval_quality: Default::default(),
+            results: vec![entity(
+                id,
+                "as01",
+                crate::registry::ENTITY_TYPE_ASSET,
+                &[
+                    ("headline", headline),
+                    ("identity_key", identity_key.to_owned()),
+                    ("name", name.clone()),
+                    ("owner", person.to_hex()),
+                ],
+            )],
+            neighbors: vec![entity(
+                person,
+                "pe01",
+                crate::registry::ENTITY_TYPE_PERSON,
+                &[("name", "Alice".to_owned())],
+            )],
+            stats: empty_stats(),
+            empty: None,
+        };
+        for format in [
+            PackFormat::Json,
+            PackFormat::Yaml,
+            PackFormat::Toon,
+            PackFormat::Markdown,
+            PackFormat::Plaintext,
+        ] {
+            let text = String::from_utf8_lossy(&serialize_pack(
+                &pack,
+                &savings_config(format, FieldProfile::Full),
+            ))
+            .into_owned();
+            let case = format!("{identity_key} {format:?}: {text}");
+            assert!(text.contains("sausage as01"), "{case}");
+            assert!(!text.contains("sausage worth"), "{case}");
+            // Its own name still shows in its name, and another entity's id
+            // in its fields still becomes that entity's name.
+            assert!(text.contains(&name), "{case}");
+            assert!(text.contains("Alice (pe01)"), "{case}");
+        }
     }
 }

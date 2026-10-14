@@ -364,34 +364,88 @@ fn an_object_within_the_bound_is_read_whole_however_a_peer_cuts_it() {
 
 #[test]
 fn padding_never_carries_a_key_away_from_its_value_across_a_seam() {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
     // CodeRabbit on #1403: above the whole-read bound only the seam reads a
     // chunk edge, and a peer pads the key or the value past what it keeps.
+    // Wonder R1: padding of no one repeated character, too.
     let key: &[u8] = b"password=";
     let value: &[u8] = b"t7Rk2pLq9WzX\n";
     let spaces = [b' '; 1100];
     let mixed = b" \t".repeat(600);
-    let cases: [[Vec<u8>; 2]; 3] = [
-        [[key, &spaces[..]].concat(), value.to_vec()],
-        [key.to_vec(), [&spaces[..], value].concat()],
-        [[key, &mixed[..]].concat(), [&mixed[..], value].concat()],
-    ];
-    let mut installed = Vec::new();
-    for (case, [first, second]) in cases.iter().enumerate() {
+    let letters = |pair: &[u8]| pair.repeat(600);
+    seam_reads_as_whole(&[
+        (true, [[key, &spaces[..]].concat(), value.to_vec()]),
+        (true, [key.to_vec(), [&spaces[..], value].concat()]),
+        (
+            true,
+            [[key, &mixed[..]].concat(), [&mixed[..], value].concat()],
+        ),
+        (
+            true,
+            [
+                key.to_vec(),
+                [&letters(b"ab")[..], &value[..12], &letters(b"cd"), b"\n"].concat(),
+            ],
+        ),
+        // A stand-in the write door allows still installs past the padding.
+        (false, [[key, &spaces[..]].concat(), b"changeme\n".to_vec()]),
+    ]);
+}
+
+#[test]
+fn a_segment_split_at_a_seam_reads_as_the_write_door_reads_it_whole() {
+    // Sol R1: a value's middle decides it (its one digit), or turns a
+    // placeholder into a word; Wonder R1: the key's own middle; and a value
+    // that runs to the end of the stream with no break after it.
+    let key: &[u8] = b"password=";
+    let middle = [&b"kv".repeat(350)[..], b"7", &b"kv".repeat(350), b"\n"].concat();
+    seam_reads_as_whole(&[
+        (true, [key.to_vec(), middle]),
+        (
+            false,
+            [
+                key.to_vec(),
+                [&b"example-".repeat(200)[..], b"7\n"].concat(),
+            ],
+        ),
+        (
+            true,
+            [
+                [&b"xy".repeat(700)[..], b"_password="].concat(),
+                b"t7Rk2pLq9WzX\n".to_vec(),
+            ],
+        ),
+        (true, [key.to_vec(), b"t7Rk2pLq9WzX".to_vec()]),
+    ]);
+}
+
+/// Installs each two-part object, read by chunk and seam alone, and asserts
+/// that it is refused exactly when the write door refuses it read whole (as
+/// each case says it does), while each part alone passes.
+fn seam_reads_as_whole(cases: &[(bool, [Vec<u8>; 2])]) {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let mut misread = Vec::new();
+    for (case, (refused, [first, second])) in cases.iter().enumerate() {
         let parts: [&[u8]; 2] = [first, second];
+        let whole = parts.concat();
+        for part in parts {
+            crate::batch::secret_scan::scan_write_payload(part).unwrap();
+        }
+        assert_eq!(
+            crate::batch::secret_scan::scan_write_payload(&whole).is_err(),
+            *refused,
+            "case {case}"
+        );
         match install_parts_within(&vault, &parts, Some(0)) {
-            Ok(_) => installed.push(case),
-            Err(error) => {
+            Ok(_) if !refused => {}
+            Err(error) if *refused => {
                 refused_as_sensitive(Err(error));
-                let oid = LfsOid::digest(&parts.concat());
+                let oid = LfsOid::digest(&whole);
                 assert!(vault.lfs_object(oid).unwrap().is_none());
             }
+            _ => misread.push(case),
         }
     }
-    assert_eq!(installed, Vec::<usize>::new(), "padded splits installed");
-    // A stand-in the write door allows still installs past the same padding.
-    let allowed: [&[u8]; 2] = [&[key, &spaces[..]].concat(), b"changeme\n"];
-    install_parts_within(&vault, &allowed, Some(0)).unwrap();
+    assert_eq!(misread, Vec::<usize>::new(), "cases the seam misread");
 }
 
 #[test]

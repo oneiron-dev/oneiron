@@ -981,11 +981,20 @@ fn a_claim_predicate_is_read_as_the_text_it_is_served_as() {
         .filter(|item| item.kind == "CLAIM")
         .map(|item| (item.predicate.clone().unwrap(), item.value_text.clone()))
         .collect();
+    // Recall finds the claim the write door accepts, and withholds the other
+    // or serves it redacted.
+    assert!(
+        recalled
+            .iter()
+            .any(|(predicate, value)| predicate == "profile.city"
+                && value.contains("lantern harbour town")),
+        "{recalled:?}"
+    );
+    assert!(!format!("{recalled:?}").contains("sausage"), "{recalled:?}");
     let served: Vec<_> = listed
         .iter()
         .chain(&history)
         .map(|view| (view.predicate.clone(), view.value.to_string()))
-        .chain(recalled.iter().cloned())
         .collect();
     let predicates: std::collections::BTreeSet<_> = served
         .iter()
@@ -997,7 +1006,6 @@ fn a_claim_predicate_is_read_as_the_text_it_is_served_as() {
         "{served:?}"
     );
     assert_eq!(listed.len(), 2);
-    assert_eq!(recalled.len(), 2, "{recalled:?}");
     assert!(!history.is_empty());
     assert!(!format!("{served:?}").contains("sausage"), "{served:?}");
     // A claim the write door accepts serves its value.
@@ -1089,4 +1097,50 @@ fn a_write_accepted_body_of_wide_integers_serves_its_numbers() {
     );
     let exported = bundle(withheld);
     assert_eq!(exported["entities"][0]["body"], serde_json::Value::Null);
+}
+
+#[test]
+fn a_repeated_key_is_read_in_the_bytes_of_the_value_it_keeps() {
+    // Sol and Wonder R1: a map that repeats a key serves its last value, and
+    // that value is read in its own stored bytes. Its first value holds the
+    // same letters narrow but one changed, so neither value spells the
+    // phrase; the last value's letters set at the first one's widths would.
+    let letters: Vec<u8> = std::iter::once(b'\n').chain(PHRASE.bytes()).collect();
+    let array = |header: &[u8], letters: &[u8]| {
+        let mut array = vec![0xdc];
+        array.extend(u16::try_from(letters.len() + 1).unwrap().to_be_bytes());
+        array.push(0xa5);
+        array.extend_from_slice(b"notes");
+        for letter in letters {
+            array.extend_from_slice(header);
+            array.push(*letter);
+        }
+        array
+    };
+    let mut changed = letters.clone();
+    changed[1] = b'x';
+    let mut body = vec![0x82];
+    for value in [array(&[], &changed), array(&[0xcc], &letters)] {
+        body.push(0xa7);
+        body.extend_from_slice(b"letters");
+        body.extend(value);
+    }
+    assert!(crate::batch::secret_scan::scan_write_payload(&body).is_ok());
+    let served = crate::companion::companion_value_to_json(
+        &rmpv::decode::read_value(&mut &body[..]).unwrap(),
+    );
+    assert_eq!(served["letters"][2], u64::from(letters[1]));
+    let (_dir, vault, owner) = scan_off_vault();
+    let memory = facade_for(&vault, owner);
+    let kept = put_asset(&vault, &body, 10);
+    let view = memory.get_entity(&kept.to_hex()).unwrap().value.unwrap();
+    assert_eq!(view.body.unwrap(), served);
+    assert_eq!(crate::batch::export::redacted_memory_body(&body), served);
+    assert_eq!(
+        crate::batch::export::redacted_memory_payload(body.clone()).unwrap(),
+        body
+    );
+    let exported: serde_json::Value =
+        serde_json::from_slice(&vault.export_entity_bundle_json(&[kept]).unwrap()).unwrap();
+    assert_eq!(exported["entities"][0]["body"], served);
 }

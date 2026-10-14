@@ -505,17 +505,18 @@ mod tests {
                 .map(|word| rmpv::Value::from(u64::from_be_bytes(padded(word))))
                 .collect(),
         ];
+        let values = items.map(rmpv::Value::Array);
         let mut bodies = Vec::new();
-        for value in items.map(rmpv::Value::Array) {
+        for value in &values {
             let mut body = Vec::new();
-            rmpv::encode::write_value(&mut body, &value).unwrap();
+            rmpv::encode::write_value(&mut body, value).unwrap();
             // The write door refuses each in its raw bytes.
             assert!(
                 crate::batch::secret_scan::scan_write_payload(&body).is_err(),
                 "{value}"
             );
             // A reader that projects it to JSON redacts the projection.
-            let mut projected = crate::companion::companion_value_to_json(&value);
+            let mut projected = crate::companion::companion_value_to_json(value);
             redact_credentials(&mut projected);
             assert!(
                 !carries_sausage(projected.to_string().as_bytes()),
@@ -554,7 +555,15 @@ mod tests {
             );
         }
         // The context writers read what hydration hands them: of a body the
-        // write door refuses, nothing. A body it accepts still hydrates.
+        // write door refuses, nothing, though a map gives it a field to
+        // hydrate (Wonder R1). A body it accepts still hydrates.
+        for value in values {
+            let mut body = Vec::new();
+            rmpv::encode::write_value(&mut body, &rmpv::Value::Map(vec![("notes".into(), value)]))
+                .unwrap();
+            assert!(crate::batch::secret_scan::scan_write_payload(&body).is_err());
+            put_asset(&vault, &body)?;
+        }
         let mut kept = Vec::new();
         rmpv::encode::write_value(
             &mut kept,

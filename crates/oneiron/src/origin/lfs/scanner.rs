@@ -16,93 +16,104 @@ pub(super) struct CredentialStream {
     seam: Option<Seam>,
 }
 
-/// The most of one segment a seam keeps on either side of an edge, once its
-/// padding is squeezed.
-const SEAM_MAX: usize = 1024;
+/// The most of one segment a seam keeps, once its padding is squeezed: as
+/// much as an object the upload reads whole, so a segment up to that size is
+/// read whole however a peer cuts it.
+const SEAM_MAX: usize = super::upload::LFS_WHOLE_SCAN_MAX as usize;
 
 /// How much of a run of one repeated character a seam keeps: as much as the
 /// longest token any text rule measures (a stream keeps 128 bytes of one too),
 /// so the run reads as it did.
 const RUN_KEEP: usize = 128;
 
-/// The write door's text rules across a feed edge. A batch scan reads each
+/// The write door's text rules across feed edges. A batch scan reads each
 /// chunk alone, so a `password=` at one chunk's end and its value at the
-/// next one's start meet nowhere else: the segment an edge splits (the text
+/// next one's start meet nowhere else: a segment an edge splits (the text
 /// between `\n`, `\r`, `,`, `;`, `{` and `}`, as the assignment rule splits
-/// it) is read whole. A peer chooses the edges, and padding must not carry a
-/// key away from its value: each run of whitespace reads as one space and
-/// each run of one other character as at most [`RUN_KEEP`] of it. A segment
-/// still longer than [`SEAM_MAX`] keeps its two ends, the key's side and the
-/// side that meets the edge.
+/// it) is read whole once it ends, in the chunk that ends it or at the end of
+/// the stream, so each byte is read once more at most. A peer chooses the
+/// edges, and padding must not carry a key away from its value: each run of
+/// whitespace reads as one space and each run of one other character as at
+/// most [`RUN_KEEP`] of it. A segment still longer than [`SEAM_MAX`] keeps
+/// its two ends, the key's side and the side that meets the next edge.
 #[derive(Default)]
 struct Seam {
     /// The start of a segment cut to its two ends.
     front: Vec<u8>,
-    /// The segment's text up to the edge (its last part, once cut).
+    /// The open segment's text since its start (or since its front).
     tail: Vec<u8>,
+    /// Whether the open segment crossed an edge, so that no chunk holds it.
+    crossed: bool,
+    /// The last character kept or squeezed, and how long its run is.
+    run: Option<(char, usize)>,
 }
 
 impl Seam {
     fn feed(&mut self, bytes: &[u8]) -> Result<()> {
-        if !self.tail.is_empty() {
-            let head_end = bytes
-                .iter()
-                .position(|byte| segment_break(*byte))
-                .unwrap_or(bytes.len());
-            let mut head = squeeze(&bytes[..head_end]);
-            if head.len() > SEAM_MAX {
-                head.drain(SEAM_MAX / 2..head.len() - SEAM_MAX / 2);
-            }
-            let joined = [self.front.as_slice(), &self.tail, &head].concat();
-            crate::batch::secret_scan::scan_write_seam(&String::from_utf8_lossy(&joined))?;
-        }
-        match bytes.iter().rposition(|byte| segment_break(*byte)) {
-            Some(at) => {
-                self.front.clear();
-                self.tail.clear();
-                self.carry(&bytes[at + 1..]);
-            }
-            None => self.carry(bytes),
-        }
+        let Some(first) = bytes.iter().position(|byte| segment_break(*byte)) else {
+            self.carry(bytes);
+            return Ok(());
+        };
+        self.carry(&bytes[..first]);
+        self.finish()?;
+        let last = bytes
+            .iter()
+            .rposition(|byte| segment_break(*byte))
+            .unwrap_or(first);
+        self.carry(&bytes[last + 1..]);
         Ok(())
     }
 
-    fn carry(&mut self, run: &[u8]) {
-        self.tail.extend_from_slice(run);
-        self.tail = squeeze(&self.tail);
-        if self.front.len() + self.tail.len() > SEAM_MAX {
+    /// Reads the open segment if it crossed an edge, and closes it.
+    fn finish(&mut self) -> Result<()> {
+        if self.crossed {
+            let joined = [self.front.as_slice(), &self.tail].concat();
+            crate::batch::secret_scan::scan_write_seam(&String::from_utf8_lossy(&joined))?;
+        }
+        *self = Self::default();
+        Ok(())
+    }
+
+    fn carry(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        self.crossed |= !self.tail.is_empty();
+        self.squeeze(bytes);
+        // Cut only once the tail is twice what it keeps, so each byte moves
+        // once at most.
+        if self.tail.len() > SEAM_MAX {
             if self.front.is_empty() {
                 self.front = self.tail[..SEAM_MAX / 2].to_vec();
             }
             self.tail.drain(..self.tail.len() - SEAM_MAX / 2);
         }
     }
-}
 
-/// `bytes` with their padding squeezed: each run of whitespace (every
-/// character the assignment rule trims) to one space, and each run of one
-/// other character past [`RUN_KEEP`] to that many. Bytes that are not text
-/// (a character an edge cut in two) stay as they are.
-fn squeeze(bytes: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut previous = None;
-    let mut run = 0;
-    for chunk in bytes.utf8_chunks() {
-        for ch in chunk.valid().chars() {
-            let ch = if ch.is_whitespace() { ' ' } else { ch };
-            run = if previous == Some(ch) { run + 1 } else { 1 };
-            previous = Some(ch);
-            let keep = if ch == ' ' { 1 } else { RUN_KEEP };
-            if run <= keep {
-                out.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
+    /// Appends `bytes` with their padding squeezed: each run of whitespace
+    /// (every character the assignment rule trims) to one space, and each
+    /// run of one other character past [`RUN_KEEP`] to that many. Bytes that
+    /// are not text (a character an edge cut in two) stay as they are.
+    fn squeeze(&mut self, bytes: &[u8]) {
+        for chunk in bytes.utf8_chunks() {
+            for ch in chunk.valid().chars() {
+                let ch = if ch.is_whitespace() { ' ' } else { ch };
+                let run = match self.run {
+                    Some((previous, run)) if previous == ch => run + 1,
+                    _ => 1,
+                };
+                self.run = Some((ch, run));
+                if run <= if ch == ' ' { 1 } else { RUN_KEEP } {
+                    self.tail
+                        .extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
+                }
+            }
+            if !chunk.invalid().is_empty() {
+                self.tail.extend_from_slice(chunk.invalid());
+                self.run = None;
             }
         }
-        if !chunk.invalid().is_empty() {
-            out.extend_from_slice(chunk.invalid());
-            previous = None;
-        }
     }
-    out
 }
 
 fn segment_break(byte: u8) -> bool {
@@ -118,6 +129,12 @@ impl CredentialStream {
             seam: on.then(Seam::default),
             ..Self::default()
         }
+    }
+
+    /// Reads what the last edge left open: a segment that crossed an edge
+    /// and runs to the end of the stream.
+    pub(super) fn finish(&mut self) -> Result<()> {
+        self.seam.as_mut().map_or(Ok(()), Seam::finish)
     }
 
     pub(super) fn feed(&mut self, bytes: &[u8]) -> Result<()> {

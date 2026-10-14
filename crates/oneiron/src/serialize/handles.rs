@@ -30,6 +30,13 @@ impl Handles {
                 (row.source_id, name)
             })
             .collect();
+        let short_ids: HashSet<&str> = pack
+            .results
+            .iter()
+            .chain(&pack.neighbors)
+            .map(|entity| entity.short_id.as_str())
+            .filter(|short_id| !short_id.is_empty())
+            .collect();
         let mut aliases = HashMap::new();
         // Each entity's own aliases: its id, and its identity key.
         let mut own = HashMap::new();
@@ -41,12 +48,18 @@ impl Handles {
             let handle = (entity.short_id.clone(), name.to_owned());
             aliases.insert(entity.id.to_hex(), handle.clone());
             let mut mine = vec![entity.id.to_hex()];
+            // An identity key that holds a short id as a word is no alias:
+            // the short id an own alias becomes below would read as it.
             if let Some(key) = entity
                 .fields
                 .as_ref()
                 .and_then(|f| f.get("identity_key"))
                 .and_then(Value::as_str)
                 .filter(|s| !s.is_empty())
+                .filter(|key| {
+                    !key.split(|c| !is_word(c))
+                        .any(|word| short_ids.contains(word))
+                })
             {
                 aliases.insert(key.into(), handle.clone());
                 mine.push(key.into());
@@ -168,7 +181,6 @@ fn substitute(
     let mut output = String::with_capacity(text.len());
     let mut tail = text;
     let mut left_boundary = true;
-    let is_word = |c: char| c.is_alphanumeric() || c == '_';
     while !tail.is_empty() {
         let matched = aliases.iter().find_map(|(alias, handle)| {
             if !left_boundary {
@@ -194,4 +206,9 @@ fn substitute(
         }
     }
     output
+}
+
+/// What an alias's edges must not touch for it to stand as a whole word.
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
 }
