@@ -14,6 +14,9 @@ pub(super) struct CredentialStream {
     seen_private: bool,
     dashes: usize,
     seam: Option<Seam>,
+    /// The recovery-phrase rule over the whole stream: a phrase's run of
+    /// one-word segments crosses the line breaks that end a seam's segment.
+    phrases: Option<crate::batch::secret_scan::PhraseStream>,
 }
 
 /// The most of one segment a seam keeps, once its padding is squeezed: as
@@ -26,9 +29,10 @@ const SEAM_MAX: usize = super::upload::LFS_WHOLE_SCAN_MAX as usize;
 /// so the run reads as it did.
 const RUN_KEEP: usize = 128;
 
-/// The write door's text rules across feed edges. A batch scan reads each
-/// chunk alone, so a `password=` at one chunk's end and its value at the
-/// next one's start meet nowhere else: a segment an edge splits (the text
+/// The write door's text rules across feed edges, but for the recovery-phrase
+/// rule, which the stream reads whole. A batch scan reads each chunk alone,
+/// so a `password=` at one chunk's end and its value at the next one's start
+/// meet nowhere else: a segment an edge splits (the text
 /// between `\n`, `\r`, `,`, `;`, `{` and `}`, as the assignment rule splits
 /// it) is read whole once it ends, in the chunk that ends it or at the end of
 /// the stream, so each byte is read once more at most. A peer chooses the
@@ -127,19 +131,26 @@ impl CredentialStream {
     pub(super) fn with_write_seam(on: bool) -> Self {
         Self {
             seam: on.then(Seam::default),
+            phrases: on.then(Default::default),
             ..Self::default()
         }
     }
 
     /// Reads what the last edge left open: a segment that crossed an edge
-    /// and runs to the end of the stream.
+    /// and runs to the end of the stream, and the phrase rule's last run.
     pub(super) fn finish(&mut self) -> Result<()> {
+        if let Some(phrases) = &mut self.phrases {
+            phrases.finish()?;
+        }
         self.seam.as_mut().map_or(Ok(()), Seam::finish)
     }
 
     pub(super) fn feed(&mut self, bytes: &[u8]) -> Result<()> {
         if let Some(seam) = &mut self.seam {
             seam.feed(bytes)?;
+        }
+        if let Some(phrases) = &mut self.phrases {
+            phrases.feed(&String::from_utf8_lossy(bytes))?;
         }
         for &byte in bytes {
             if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-') {

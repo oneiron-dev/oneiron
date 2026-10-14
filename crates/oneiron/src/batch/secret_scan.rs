@@ -21,6 +21,7 @@ const REASON_DETECTED: &str = "gate.secret_scan.detected";
 const REASON_AWS_ACCESS_KEY_ID: &str = "gate.secret_scan.aws_access_key_id";
 const REASON_GITHUB_TOKEN: &str = "gate.secret_scan.github_token";
 const REASON_GOOGLE_API_KEY: &str = "gate.secret_scan.google_api_key";
+const REASON_MNEMONIC: &str = "gate.secret_scan.mnemonic";
 const REASON_OPENAI_KEY: &str = "gate.secret_scan.openai_key";
 const REASON_PRIVATE_KEY: &str = "gate.secret_scan.private_key";
 const REASON_SLACK_TOKEN: &str = "gate.secret_scan.slack_token";
@@ -268,12 +269,36 @@ fn byte_values(items: impl Iterator<Item = Option<u64>>) -> Option<Vec<u8>> {
 }
 
 /// The write door's text rules over text a stream scanner joined across a
-/// chunk edge. Like the batch door, it follows the owner's switch: its caller
-/// reads it.
+/// chunk edge, but for the recovery-phrase rule: a phrase's run of one-word
+/// segments crosses the line breaks that end such text, so a
+/// [`PhraseStream`] reads it over the whole stream instead. Like the batch
+/// door, it follows the owner's switch: its caller reads it.
 pub(crate) fn scan_write_seam(text: &str) -> Result<()> {
-    match detect(text, Door::Write) {
+    match detect_in(text, Door::Write, false) {
         Some(reason) => Err(secret_scan_error(reason)),
         None => Ok(()),
+    }
+}
+
+/// The write door's recovery-phrase rule over a body's text read in parts,
+/// in order: it finds what one read of the whole text finds.
+#[derive(Default)]
+pub(crate) struct PhraseStream(shapes::MnemonicStream);
+
+impl PhraseStream {
+    pub(crate) fn feed(&mut self, text: &str) -> Result<()> {
+        if self.0.feed(text) {
+            return Err(secret_scan_error(REASON_MNEMONIC));
+        }
+        Ok(())
+    }
+
+    /// Reads the end of the text.
+    pub(crate) fn finish(&mut self) -> Result<()> {
+        if self.0.finish() {
+            return Err(secret_scan_error(REASON_MNEMONIC));
+        }
+        Ok(())
     }
 }
 
@@ -369,6 +394,11 @@ fn has_redaction_marker(haystack: &str) -> bool {
 }
 
 fn detect(haystack: &str, door: Door) -> Option<&'static str> {
+    detect_in(haystack, door, true)
+}
+
+/// [`detect`], with the recovery-phrase rule only when `phrases`.
+fn detect_in(haystack: &str, door: Door, phrases: bool) -> Option<&'static str> {
     let private_key = match door {
         Door::Write => shapes::private_key_block(haystack),
         Door::Release => shapes::private_key_header(haystack),
@@ -380,8 +410,8 @@ fn detect(haystack: &str, door: Door) -> Option<&'static str> {
     if shapes::blocklisted(haystack) {
         return Some("gate.secret_scan.blocklist");
     }
-    if shapes::mnemonic(haystack) {
-        return Some("gate.secret_scan.mnemonic");
+    if phrases && shapes::mnemonic(haystack) {
+        return Some(REASON_MNEMONIC);
     }
     // Preserve precise provider reason codes before the generic env class.
     let provider = haystack

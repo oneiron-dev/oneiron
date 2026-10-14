@@ -42,44 +42,86 @@ const MAX_LIST_WORD_LEN: usize = 8;
 /// Seed-labelled fields are separately refused even when incomplete or
 /// misspelled.
 pub(super) fn mnemonic(text: &str) -> bool {
-    let mut group = PureSegments::default();
-    let mut wrapped = WrappedLines::default();
-    let mut segment: Vec<u16> = Vec::new();
-    let mut pure = true;
-    let mut blank_only = true;
-    let mut chars = text.char_indices().peekable();
-    while let Some((start, ch)) = chars.next() {
-        if !ch.is_ascii_alphabetic() {
+    let mut stream = MnemonicStream::default();
+    stream.feed(text) || stream.finish()
+}
+
+/// [`mnemonic`] over text read in parts, in order: it finds what one read of
+/// the whole finds, a word or a run cut by an edge included. What it keeps is
+/// bounded, since past [`MAX_RUN`] words no run can hold a phrase.
+#[derive(Default)]
+pub(super) struct MnemonicStream {
+    group: PureSegments,
+    wrapped: WrappedLines,
+    segment: Vec<u16>,
+    /// The segment holds a word off the list.
+    impure: bool,
+    /// The segment holds something other than words and blanks.
+    filled: bool,
+    /// The word the text so far ends in, kept to one letter past the longest
+    /// list word.
+    word: String,
+}
+
+/// The most words any run of a phrase can span: the longest phrase, and a
+/// label on either edge.
+const MAX_RUN: usize = 26;
+
+impl MnemonicStream {
+    /// Reads `text` on; `true` once a phrase is found.
+    pub(super) fn feed(&mut self, text: &str) -> bool {
+        for ch in text.chars() {
+            if ch.is_ascii_alphabetic() {
+                if self.word.len() <= MAX_LIST_WORD_LEN {
+                    self.word.push(ch);
+                }
+                continue;
+            }
+            self.end_word();
             if segment_break(ch) {
                 let line_break = matches!(ch, '\n' | '\r');
-                if wrapped.close(&segment, pure && blank_only, line_break)
-                    || group.close(std::mem::take(&mut segment), pure)
+                let segment = std::mem::take(&mut self.segment);
+                if self
+                    .wrapped
+                    .close(&segment, !self.impure && !self.filled, line_break)
+                    || self.group.close(segment, !self.impure)
                 {
                     return true;
                 }
-                pure = true;
-                blank_only = true;
+                self.impure = false;
+                self.filled = false;
             } else if !matches!(ch, ' ' | '\t') {
-                blank_only = false;
+                self.filled = true;
             }
-            continue;
         }
-        let mut end = start + 1;
-        while let Some(&(at, next)) = chars.peek() {
-            if !next.is_ascii_alphabetic() {
-                break;
-            }
-            end = at + 1;
-            chars.next();
-        }
-        match list_word_index(&text[start..end]) {
-            Some(index) => segment.push(index),
-            None => pure = false,
-        }
+        false
     }
-    wrapped.close(&segment, pure && blank_only, false)
-        || group.close(segment, pure)
-        || group.finish()
+
+    /// Reads the end of the text; `true` when a phrase ends it.
+    pub(super) fn finish(&mut self) -> bool {
+        self.end_word();
+        let segment = std::mem::take(&mut self.segment);
+        let found = self
+            .wrapped
+            .close(&segment, !self.impure && !self.filled, false)
+            || self.group.close(segment, !self.impure)
+            || self.group.finish();
+        *self = Self::default();
+        found
+    }
+
+    fn end_word(&mut self) {
+        if self.word.is_empty() {
+            return;
+        }
+        match list_word_index(&self.word) {
+            // A segment past the longest run reads as any longer one does.
+            Some(index) if self.segment.len() < MAX_RUN => self.segment.push(index),
+            Some(_) => {}
+            None => self.impure = true,
+        }
+        self.word.clear();
+    }
 }
 
 /// One phrase wrapped over lines that hold only list words and blanks (`a b c
@@ -104,7 +146,8 @@ impl WrappedLines {
         if !wraps || words.is_empty() {
             return self.finish();
         }
-        self.words.extend_from_slice(words);
+        let room = (MAX_RUN + 1).saturating_sub(self.words.len());
+        self.words.extend(words.iter().take(room));
         self.lines += 1;
         !line_break && self.finish()
     }
@@ -139,7 +182,10 @@ impl PureSegments {
             return true;
         }
         self.multi_word |= words.len() > 1;
-        self.segments.push(words);
+        // A run past the longest one a phrase spans reads as any longer one.
+        if self.segments.len() <= MAX_RUN {
+            self.segments.push(words);
+        }
         false
     }
 

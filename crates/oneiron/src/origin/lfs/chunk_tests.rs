@@ -418,6 +418,31 @@ fn a_segment_split_at_a_seam_reads_as_the_write_door_reads_it_whole() {
     ]);
 }
 
+#[test]
+fn a_phrase_split_at_a_seam_reads_as_the_write_door_reads_it_whole() {
+    // A phrase's run of one-word segments crosses the line breaks that end
+    // a seam's segment. One word per line, cut between its lines: no seam
+    // segment and no chunk holds a phrase. Sol R2: a run whose two leading
+    // words make the whole an invalid phrase, cut inside its last line: that
+    // line alone holds a valid one.
+    const PHRASE: &str =
+        "legal winner thank year wave sausage worth useful legal winner thank yellow";
+    let words: Vec<&str> = PHRASE.split(' ').collect();
+    let lines = |words: &[&str]| format!("{}\n", words.join("\n")).into_bytes();
+    let pad = format!(".{}.", "29".repeat(300));
+    let half = "29".repeat(150);
+    seam_reads_as_whole(&[
+        (true, [lines(&words[..6]), lines(&words[6..])]),
+        (
+            false,
+            [
+                format!("legal.legal\n{}.{half}", words[..6].join(&pad)).into_bytes(),
+                format!("{half}.{}\n", words[6..].join(&pad)).into_bytes(),
+            ],
+        ),
+    ]);
+}
+
 /// Installs each two-part object, read by chunk and seam alone, and asserts
 /// that it is refused exactly when the write door refuses it read whole (as
 /// each case says it does), while each part alone passes.
@@ -438,7 +463,11 @@ fn seam_reads_as_whole(cases: &[(bool, [Vec<u8>; 2])]) {
         match install_parts_within(&vault, &parts, Some(0)) {
             Ok(_) if !refused => {}
             Err(error) if *refused => {
-                refused_as_sensitive(Err(error));
+                assert!(
+                    matches!(&error, crate::error::Error::Gate(crate::error::GateError::GateWriteRejected { reason_codes, .. })
+                        if reason_codes.contains(&"gate.secret_scan.detected")),
+                    "{error:?}"
+                );
                 let oid = LfsOid::digest(&whole);
                 assert!(vault.lfs_object(oid).unwrap().is_none());
             }
