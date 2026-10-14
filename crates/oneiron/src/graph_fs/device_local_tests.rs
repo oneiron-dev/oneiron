@@ -25,7 +25,7 @@ fn a_worlds_page_off_this_device_never_names_a_device_local_world() -> Result<()
     }
     let first = vault.entities_by_type_page(ENTITY_TYPE_WORLD, None, GRAPH_FS_MAX_PAGE_ENTRIES)?;
     let kept = *first.last().expect("a full first page");
-    vault.set_world_device_only(kept, true)?;
+    vault.keep_world_on_this_machine_for_test(kept, true)?;
 
     let reader = vault.scoped_read(
         ScopedReadActorKey::new("reader")
@@ -74,7 +74,7 @@ fn a_claim_run_off_this_device_hints_at_no_device_local_claim() -> Result<()> {
         .len()
         + 2;
     put_claims_in(&vault, world, subject, 1)?;
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
 
     let next_cursor = |locality| -> Result<bool> {
         let reader = vault.scoped_read(
@@ -111,18 +111,21 @@ fn a_capped_scan_off_this_device_is_never_filled_by_device_local_rows() -> Resul
         1,
         b"person",
     )?;
-    // Every row before any is device-local: the cap they fill exactly.
+    let world = EntityId::now();
+    vault.put_entity(&world, ENTITY_TYPE_WORLD, at, 2, b"world")?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    // Every row so far but the world's own, which the setting keeps, is
+    // portable: the cap they fill exactly. The setting's own authority rows
+    // are among them.
     let cap = {
         let rtxn = vault.store.env.read_txn()?;
         vault
             .store
             .port_entity_timeline(&rtxn, crate::ports::TimelineQuery::default())?
             .count()
+            - 1
     };
-    let world = EntityId::now();
-    vault.put_entity(&world, ENTITY_TYPE_WORLD, at, 2, b"world")?;
     put_claims_in(&vault, world, subject, 2)?;
-    vault.set_world_device_only(world, true)?;
 
     let continues = |locality| -> Result<[bool; 2]> {
         let reader = vault.scoped_read(
