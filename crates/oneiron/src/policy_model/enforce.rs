@@ -243,10 +243,13 @@ impl Vault {
             &request,
             &verdict,
             "owner_plane_stale_fail_open",
-            vec![
-                OWNER_PLANE_STALE_MANIFEST_REASON.to_owned(),
-                OWNER_PLANE_FAIL_OPEN_REASON.to_owned(),
-            ],
+            policy_model_reason_codes(&verdict)
+                .into_iter()
+                .chain([
+                    OWNER_PLANE_STALE_MANIFEST_REASON.to_owned(),
+                    OWNER_PLANE_FAIL_OPEN_REASON.to_owned(),
+                ])
+                .collect(),
             Vec::new(),
         )?;
         Ok(PolicyModelEnforcement {
@@ -325,6 +328,13 @@ impl Vault {
         verdict: PolicyClassifyVerdict,
         custom_tier_skipped: bool,
     ) -> Result<PolicyModelEnforcement> {
+        // A reported skip contradicts an Allow: the check the Allow stands
+        // for never ran, so the pair is refused rather than enforced.
+        if custom_tier_skipped && verdict.decision == PolicyClassifyDecision::Allow {
+            return Err(Error::InvalidConfig(
+                "an Allow verdict cannot carry a skipped owner model".to_owned(),
+            ));
+        }
         // A verdict from the HOSTED plane is not this door's to enforce, and
         // the staleness check cannot tell: both halves of a `DualPlanePass`
         // answer the SAME request, so a hosted verdict carries the same

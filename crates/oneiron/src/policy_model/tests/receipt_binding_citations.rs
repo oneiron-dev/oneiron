@@ -599,6 +599,10 @@ fn a_manifest_that_will_not_settle_fails_the_owner_plane_open_with_a_receipt() -
     assert!(has_trace(&receipts[0], "gate.policy_model.stale_manifest"));
     assert!(has_trace(
         &receipts[0],
+        "gate.policy_model.skip_reason.policy_moving"
+    ));
+    assert!(has_trace(
+        &receipts[0],
         "gate.policy_model.owner_plane_fail_open"
     ));
     Ok(())

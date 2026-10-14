@@ -11,7 +11,9 @@ use super::super::binding::PolicyContentBinding;
 use super::super::pattern::{PatternEvaluation, PolicyPatternRole};
 use super::super::planes::PolicyPlane;
 use super::super::request::{HostedOutagePolicy, PolicyModelConfig};
-use super::super::verdict::{PolicyClassifyDecision, PolicyClassifyVerdict, PolicyPassAudit};
+use super::super::verdict::{
+    PolicyClassifyDecision, PolicyClassifyVerdict, PolicyPassAudit, PolicySkipReason,
+};
 
 /// Why a hosted relay pass could not put a usable safeguard-model answer
 /// against the policy it ran under. A degraded pass fell back to whatever the
@@ -59,6 +61,18 @@ pub enum RelayBoundaryDegrade {
 }
 
 impl RelayBoundaryDegrade {
+    /// The typed skip a degraded pass's verdict carries.
+    const fn skip_reason(self) -> PolicySkipReason {
+        match self {
+            Self::SafeguardModelUnavailable => PolicySkipReason::BackendUnavailable,
+            Self::SafeguardModelResponseUnusable | Self::OutputContractUndeclared => {
+                PolicySkipReason::ResponseUnusable
+            }
+            Self::SafeguardModelTierAbsent => PolicySkipReason::NoBackend,
+            Self::PolicyBindingMovedMidPass => PolicySkipReason::PolicyMoving,
+        }
+    }
+
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -416,10 +430,10 @@ pub(in crate::policy_model) enum RelayReceiptRow {
     OnlyIfBindingMoved,
 }
 
-/// A pass that needed a model verdict and did not get one. The verdict falls
-/// back to a clean allow — never below whatever a `Decide` rule already
-/// concluded, because a `Decide` hit returns before this is reachable — and the
-/// degrade marker is what makes the relay halt.
+/// A pass that needed a model verdict and did not get one. The verdict is
+/// skipped for the degrade's reason, never an allow no model confirmed — a
+/// `Decide` hit returns before this is reachable — and the degrade marker is
+/// what makes the relay halt.
 ///
 /// This is the ONLY place in the crate that raises a degrade, which is why it
 /// is also where the halt is resolved: it holds both the degrade and the
@@ -440,8 +454,13 @@ pub(super) fn degraded_hosted_pass(
         HostedOutagePolicy::ProceedReceipted => !degrade.is_model_availability(),
     };
     RelayBoundaryPass::Classified(Box::new(RelayClassifiedPass {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, config, PolicyPlane::HostedLegal)
-            .with_audit(audit),
+        verdict: PolicyClassifyVerdict::skipped(
+            degrade.skip_reason(),
+            binding,
+            config,
+            PolicyPlane::HostedLegal,
+        )
+        .with_audit(audit),
         degraded: Some(degrade),
         degrade_halts,
         hosted_policy_in_play,

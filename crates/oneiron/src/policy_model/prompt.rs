@@ -28,7 +28,8 @@ use serde_json::{Value as JsonValue, json};
 use crate::error::{Error, Result};
 use crate::llm::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DEFAULT_SAFEGUARD_MODEL_BINDING,
-    DeterministicFallback, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef,
+    DeterministicFallback, FinishReason, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse,
+    ModelTierRef,
 };
 
 use super::contract::{
@@ -275,6 +276,16 @@ pub(super) fn resolve_policy_model_response(
     prompt: &PolicyClassifyPrompt,
     plane: &AnswerPlane<'_>,
 ) -> Result<ResolvedAnswer> {
+    // A cut, filtered or cancelled answer is a partial verdict, however well
+    // its text parses.
+    if matches!(
+        response.finish_reason,
+        FinishReason::Length | FinishReason::ContentFiltered | FinishReason::Cancelled
+    ) {
+        return Err(Error::InvalidConfig(
+            "policy model response did not finish".to_owned(),
+        ));
+    }
     let text = response_text(response).ok_or_else(|| {
         Error::InvalidConfig("policy model response contained no text part".to_owned())
     })?;

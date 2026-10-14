@@ -119,6 +119,11 @@ fn an_availability_degrade_halts_under_the_default_outage_policy() -> Result<()>
         pass.degraded(),
         Some(RelayBoundaryDegrade::SafeguardModelUnavailable)
     );
+    // No model answered, so the hosted verdict is a typed skip, not an allow.
+    assert_eq!(
+        pass.boundary_verdict().expect("verdict").decision,
+        PolicyClassifyDecision::Skipped(PolicySkipReason::BackendUnavailable)
+    );
     assert!(pass.must_halt_relay());
     let receipts = gate_receipts(&vault)?;
     assert!(

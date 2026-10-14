@@ -203,3 +203,73 @@ fn a_clean_model_answer_is_still_a_clean_allow() -> Result<()> {
     assert_eq!(outcome.final_content.as_deref(), Some(CLEAN_CONTENT));
     Ok(())
 }
+
+/// A clean answer whose generation did not finish.
+struct UnfinishedBackend(FinishReason);
+
+impl LlmBackend for UnfinishedBackend {
+    fn generate<'a>(
+        &'a self,
+        _request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        let mut response = text_response(r#"{"violation":0,"policy_category":null}"#.to_owned());
+        response.finish_reason = self.0.clone();
+        Box::pin(async move { Ok(response) })
+    }
+
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(FatalLlmError::InvalidRequest.into())
+    }
+}
+
+/// H122, partial answer: a cut, filtered or cancelled answer is not a verdict,
+/// however cleanly its text parses. The finished answer is the control above.
+#[test]
+fn an_unfinished_model_answer_is_never_a_clean_allow() -> Result<()> {
+    let (_tmp, vault) = documented_vault()?;
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    for finish in [
+        FinishReason::Length,
+        FinishReason::ContentFiltered,
+        FinishReason::Cancelled,
+    ] {
+        let verdict = block_on(vault.classify_policy_model_with_backend(
+            request.clone(),
+            &PolicyModelConfig::default(),
+            &UnfinishedBackend(finish.clone()),
+            &lease("unfinished"),
+        ))?;
+        assert_eq!(
+            verdict.decision,
+            PolicyClassifyDecision::Skipped(PolicySkipReason::ResponseUnusable),
+            "H122: an unfinished answer ({finish:?}) became a verdict"
+        );
+    }
+    Ok(())
+}
+
+/// H121, caller-reported state: a caller that says the owner model was skipped
+/// cannot have the same verdict enforced as an Allow.
+#[test]
+fn a_reported_skip_never_rides_an_allow() -> Result<()> {
+    let (_tmp, vault) = documented_vault()?;
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let config = PolicyModelConfig::default();
+    let verdict = block_on(vault.classify_policy_model_with_backend(
+        request.clone(),
+        &config,
+        &clean_backend(),
+        &lease("answered"),
+    ))?;
+    assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+    assert!(
+        vault
+            .enforce_policy_model_verdict(request.clone(), &config, verdict.clone(), true)
+            .is_err(),
+        "H121: a reported skip was enforced as an Allow"
+    );
+    let answered = vault.enforce_policy_model_verdict(request, &config, verdict, false)?;
+    assert_eq!(answered.action, PolicyEnforcementAction::Allow);
+    Ok(())
+}
