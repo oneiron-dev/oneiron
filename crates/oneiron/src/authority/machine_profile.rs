@@ -85,6 +85,8 @@ pub(super) struct Revision {
     /// The "yours" revision this one replaced, if the head it replaced said
     /// "yours".
     replaced_mark: Option<AuthorityEntryHash>,
+    /// The machine's revisions in this one's own past.
+    past: Arc<BTreeSet<AuthorityEntryHash>>,
 }
 
 impl FoldedMachine {
@@ -179,6 +181,7 @@ pub(super) fn apply_machine_profile(
     let mut revisions = chain
         .map(|chain| chain.revisions.clone())
         .unwrap_or_default();
+    let past = Arc::new(revisions.keys().copied().collect());
     revisions.insert(
         hash,
         Arc::new(Revision {
@@ -188,6 +191,7 @@ pub(super) fn apply_machine_profile(
             replaced_mark: head
                 .filter(|folded| folded.profile.says_mine())
                 .map(|folded| folded.entry),
+            past,
         }),
     );
     let folded = FoldedMachine {
@@ -245,20 +249,25 @@ fn in_host_custody(state: &FoldState, key: &AuthorityKey) -> bool {
     false
 }
 
-/// The entries of every revision of `machine` this history holds.
-pub(super) fn revision_entries(
+/// The revisions of `machine` in the own past of its revision `mark`: what an
+/// edit signed under that mark followed. Not every revision the edit's parents
+/// carry: an edit naming a concurrent demotion never exempts it (Wonder P2
+/// round 5, W1).
+pub(super) fn mark_past(
     state: &FoldState,
     machine: EntityId,
-) -> BTreeSet<AuthorityEntryHash> {
+    mark: &AuthorityEntryHash,
+) -> Arc<BTreeSet<AuthorityEntryHash>> {
     roster_chain(state, machine)
-        .map(|chain| chain.revisions.keys().copied().collect())
+        .and_then(|chain| chain.revisions.get(mark))
+        .map(|revision| Arc::clone(&revision.past))
         .unwrap_or_default()
 }
 
 /// Whether `edit`, signed under the "yours" revision `mark` by a machine that
 /// is no longer the owner's, keeps its effect. The mark must still stand in
 /// this history: its signer in no host's custody, and no divergent revision
-/// of its number. Every revision this history holds outside the edit's own
+/// of its number. Every revision this history holds outside the mark's own
 /// past (`prior`) that leaves the machine not the owner's must have been
 /// signed by a key the owner holds, have seen the edit, and, when it took a
 /// "yours" revision away, have taken one that still stands; and there must be

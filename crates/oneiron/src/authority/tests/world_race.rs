@@ -1323,3 +1323,92 @@ fn a_removal_keeps_its_race_over_a_later_mark_it_never_saw() {
         assert!(!fold.world_readable_on(world, Destination::Unknown));
     }
 }
+
+/// A demotion the widening's mark never followed keeps it narrow, though the
+/// stolen laptop names that demotion among the widening's parents: one branch
+/// marks the laptop "yours" again, another demotes it, the thief widens on
+/// both, and the owner's removal lists the widening (Wonder P2 round 5, W1).
+#[test]
+fn a_widening_never_exempts_a_demotion_its_mark_never_followed() {
+    let host = host();
+    let world = world_row(&host);
+    let yours = MachineRole::Owned(MachineOwnership::Yours);
+    let (laptop, laptop_key) = other_machine(&host, 91, yours);
+    let narrow = edit_by(
+        &host,
+        laptop,
+        &laptop_key,
+        world,
+        settings(ReadLocation::OneMachine(laptop)),
+    );
+    land(&host, std::slice::from_ref(&narrow));
+    let fold = host.vault.authority_fold().unwrap();
+    let mut seq = fold.append_sequences[&host.issuer.public_key()];
+    let current = fold.machine(laptop).unwrap().profile.clone();
+    let mut sign = |parents: Vec<AuthorityEntryHash>, revision, role| {
+        seq += 1;
+        let profile = MachineProfile {
+            role,
+            revision,
+            seen_world_edits: BTreeSet::new(),
+            ..current.clone()
+        };
+        host.issuer
+            .sign_entry(
+                fold.vault_id,
+                seq,
+                parents,
+                AuthorityOp::MachineProfile(profile),
+                3,
+            )
+            .unwrap()
+    };
+    let heads: Vec<_> = fold.append_heads.iter().copied().collect();
+    let marked = sign(heads.clone(), 2, yours);
+    let marked_again = sign(vec![authority_entry_hash(&marked).unwrap()], 3, yours);
+    let demoted = sign(heads, 2, MachineRole::Owned(MachineOwnership::WorkSchool));
+    land(&host, &[marked, marked_again.clone(), demoted.clone()]);
+
+    let mut parents: Vec<_> = [&marked_again, &demoted, &narrow]
+        .map(|entry| authority_entry_hash(entry).unwrap())
+        .into();
+    parents.sort();
+    let widen = sign_ed(
+        unsigned_entry(
+            fold.vault_id,
+            2,
+            parents,
+            AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
+                world,
+                owner: host.owner.actor(),
+                machine: laptop,
+                settings: settings(ReadLocation::Everywhere),
+            }),
+            authority_key_from_ed(&laptop_key),
+            3,
+        ),
+        &laptop_key,
+    );
+    land(&host, std::slice::from_ref(&widen));
+    assert!(
+        host.vault
+            .authority_fold()
+            .unwrap()
+            .valid_entries
+            .contains(&authority_entry_hash(&widen).unwrap())
+    );
+    host.vault
+        .set_machine_role(&host.issuer, &host.owner, laptop, MachineRole::Removed)
+        .unwrap();
+    let fold = host.vault.authority_fold().unwrap();
+    let removal = fold.machine(laptop).unwrap();
+    assert_eq!(removal.profile.role, MachineRole::Removed);
+    assert!(
+        removal
+            .profile
+            .seen_world_edits
+            .contains(&authority_entry_hash(&widen).unwrap())
+    );
+    assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(laptop));
+    assert!(!fold.world_readable_on(world, Destination::Unknown));
+}

@@ -49,7 +49,7 @@ use std::sync::Arc;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
-use super::machine_profile::{acknowledged, derived_chains, derived_machine, revision_entries};
+use super::machine_profile::{acknowledged, derived_chains, derived_machine, mark_past};
 use super::*;
 
 /// Where a world may be read, after every live edit is met.
@@ -377,7 +377,7 @@ pub(super) struct FrontierEdit {
     narrow_only: bool,
     /// The machine's "yours" revision the edit was signed under.
     mark: AuthorityEntryHash,
-    /// The machine's revisions in the edit's own past.
+    /// The machine's revisions in its mark's own past.
     prior: Arc<BTreeSet<AuthorityEntryHash>>,
 }
 
@@ -540,7 +540,7 @@ pub(super) fn apply_world_privacy(
     }
     let narrow_only =
         !derived_machine(state, edit.machine).is_some_and(|folded| standing(state, &folded));
-    let prior = Arc::new(revision_entries(state, edit.machine));
+    let prior = mark_past(state, edit.machine, &mark);
     let frontier = state.worlds.entry(edit.world).or_default();
     let seen = std::mem::take(&mut frontier.live);
     let replaced = seen.keys().copied().collect();
