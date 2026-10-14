@@ -3898,7 +3898,7 @@ enum RootMask {
 /// latest-state section show clean values. The twins share peers and
 /// counters, so the root entry and the retained root op share an id.
 fn masked_root_snapshot(carrier: &[u8], shape: RootMask) -> Result<Vec<u8>> {
-    use RootMask::{Aliased, Long, Overwritten, Short, Untrimmed};
+    use RootMask::{Aliased, Long, Overwritten, Untrimmed};
     let long = matches!(shape, Long | Overwritten | Aliased);
     let shallow = |value: &[u8]| -> Result<Vec<u8>> {
         let doc = LoroDoc::new();
