@@ -23,3 +23,30 @@ fn a_reply_that_names_no_stop_reason_is_not_a_stop() {
     .expect("the reply decodes");
     assert_eq!(stopped.finish_reason, FinishReason::Stop);
 }
+
+/// F14 H122 (round 8): the buffered decoder skipped a content block it could
+/// not read, so a server tool request beside the text decoded as a finished,
+/// tool-free answer: an Allow. Any block kind but text, reasoning and a client
+/// tool call now fails the decode, as the streamed decoder's start event
+/// already does. Redacted reasoning beside the text still decodes.
+#[test]
+fn an_unreadable_block_never_decodes_as_a_finished_answer() {
+    let allow = json!({ "type": "text", "text": "{\"violation\":0}" });
+    for block in [
+        json!({ "type": "server_tool_use", "id": "call-1", "name": "web_search", "input": {} }),
+        json!({ "type": "mcp_tool_use", "id": "call-1", "name": "check_policy", "input": {} }),
+        json!({ "id": "call-1", "name": "check_policy", "input": {} }),
+    ] {
+        let body = json!({ "content": [allow.clone(), block], "stop_reason": "end_turn" });
+        assert!(
+            parse_anthropic_messages_response(&body).is_err(),
+            "H122: {body} decoded as a finished, tool-free answer"
+        );
+    }
+    let body = json!({
+        "content": [{ "type": "redacted_thinking", "data": "opaque" }, allow],
+        "stop_reason": "end_turn",
+    });
+    let answer = parse_anthropic_messages_response(&body).expect("redacted reasoning decodes");
+    assert_eq!(answer.finish_reason, FinishReason::Stop);
+}

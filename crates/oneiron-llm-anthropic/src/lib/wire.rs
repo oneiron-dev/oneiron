@@ -202,7 +202,11 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
                     input: block.get("input").cloned().unwrap_or(JsonValue::Null),
                 });
             }
-            _ => {}
+            // Redacted reasoning carries nothing to read.
+            Some("redacted_thinking") => {}
+            // Every other block kind is tool traffic this decoder cannot read,
+            // so the decode fails, as the streamed decoder's does.
+            _ => return Err(FatalLlmError::InvalidRequest.into()),
         }
     }
 
