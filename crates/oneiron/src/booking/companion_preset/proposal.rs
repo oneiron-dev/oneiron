@@ -10,7 +10,7 @@ use crate::booking::{
     BookingError, ConstraintObject, EventTypeKey, RankedSlot, SlotOracle, SolveRequest,
 };
 use crate::temporal::TimeRange;
-use crate::{EntityId, Vault};
+use crate::EntityId;
 
 use super::CompanionPresetRow;
 use super::storage::{PROPOSAL, companion_token_hash, participant_token_hash, refused, surface};
@@ -195,18 +195,21 @@ pub fn companion_solve_request(
 /// Asks the shared oracle and freezes a curated shortlist, one opaque token per
 /// participant and one for the creating companion.
 ///
+/// The creating companion is `companion`'s actor, rechecked in the write
+/// transaction, never an id the caller names: the confirmation it later
+/// stamps is attributed to whoever created the proposal.
+///
 /// No booking page is read: the configuration travelled in on `preset`, which
 /// is what ONE-1823's synthetic-configuration arm exists for.
-// The ten parameters are the ratified seam signature plus the creating
-// companion. `oracle` is an injected host capability and the rest are
-// independent inputs; bundling them would hide which of them the proposal
-// actually stores.
+// The nine parameters are the ratified seam signature with the creating
+// companion's facade in place of the vault. `oracle` is an injected host
+// capability and the rest are independent inputs; bundling them would hide
+// which of them the proposal actually stores.
 #[allow(clippy::too_many_arguments)]
 pub fn create_companion_proposal(
-    vault: &Vault,
+    companion: &crate::memory::Memory<'_>,
     oracle: &dyn SlotOracle,
     owner_ref: EntityId,
-    companion_ref: EntityId,
     preset: &CompanionPresetRow,
     window: TimeRange,
     constraint: Option<ConstraintObject>,
@@ -225,6 +228,8 @@ pub fn create_companion_proposal(
             ))
         })?;
     validate_visitor_tz(&visitor_tz)?;
+    let vault = companion.vault();
+    let companion_ref = companion.actor();
 
     let request = companion_solve_request(preset, window, constraint, visitor_tz);
     let solved = oracle.solve(&request)?;
@@ -270,6 +275,13 @@ pub fn create_companion_proposal(
         }),
     };
     booking_writer(vault, |wtxn| {
+        crate::memory::verify_actor_binding_in_txn(
+            vault,
+            wtxn,
+            companion_ref,
+            companion.actor_class(),
+        )
+        .map_err(|_| refused("the creating companion is not a live actor of this vault"))?;
         surface(PROPOSAL.put(&vault.store, wtxn, &id.0, &row))
     })?;
 

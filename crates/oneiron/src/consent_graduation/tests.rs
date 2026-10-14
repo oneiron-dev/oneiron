@@ -406,3 +406,79 @@ fn only_the_owner_or_the_scope_actor_takes_a_standing_grant_away() {
     );
     assert_eq!(demotion_receipts_via_public_query(&vault).len(), 1);
 }
+
+/// F24 review (H183): stepping back is a restriction, so it lands for a
+/// shared-vault member whose content grant covers one project, short of the
+/// whole-vault content write an ordinary facade write demands.
+#[test]
+fn a_scoped_member_still_steps_back_from_its_own_standing_grant() {
+    use crate::federation::{
+        FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
+        InitialSharedMember, Scope, ScopeAxis, ScopeId, SharedVaultWrite,
+        encode_federation_grant_body,
+    };
+    let (_dir, vault) = open_vault();
+    let owner = owner(&vault);
+    vault
+        .initialize_shared_vault(
+            &owner,
+            42,
+            None,
+            &[InitialSharedMember {
+                member_ref: crate::test_util::entity(0x25),
+                role: Some(FederationGrantRole::Owner),
+            }],
+            1,
+        )
+        .expect("share the vault");
+    let agent = put_person(&vault, 0x33);
+    let project = ScopeId(crate::test_util::entity(0x34));
+    let mut grant = FederationGrant::new(
+        FederationGrantScope::vault(42),
+        agent,
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    grant.authority_scope =
+        crate::federation::grant_scope::membership_preset(FederationGrantRole::Member);
+    grant.authority_scope.audience = ScopeAxis::Some(std::collections::BTreeSet::from([project]));
+    vault
+        .batch()
+        .put_replicated(
+            &crate::test_util::entity(0x35),
+            crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            &encode_federation_grant_body(&grant).expect("encode grant"),
+        )
+        .commit()
+        .expect("install the scoped grant");
+    let writer = crate::WriteActor::new(agent, crate::edge::EdgeActorClass::Agent);
+    assert!(
+        vault
+            .authorize_shared_vault_write(42, &writer, &SharedVaultWrite::Content(Scope::top()))
+            .is_err(),
+        "fixture: the member holds no whole-vault content write"
+    );
+    let scope = RampScope::new("send_email", "client_followup", agent.to_hex()).expect("scope");
+    for _ in 0..DEFAULT_GRADUATION_STREAK_FLOOR {
+        vault
+            .record_proposal_outcome_for_ramp(&owner, &scope, ProposalOutcome::ApprovedUntouched)
+            .expect("record");
+    }
+    vault
+        .accept_graduation_offer(&owner, &scope)
+        .expect("owner accepts");
+
+    vault
+        .memory(agent, crate::edge::EdgeActorClass::Agent)
+        .demote_own_ramp_scope(&scope)
+        .expect("a scoped member steps back from its own grant");
+    assert!(
+        vault
+            .active_standing_consent_grants()
+            .expect("grants")
+            .is_empty()
+    );
+    assert_eq!(demotion_receipts_via_public_query(&vault).len(), 1);
+}

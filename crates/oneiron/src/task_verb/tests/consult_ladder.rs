@@ -892,3 +892,76 @@ fn a_third_actor_cannot_settle_a_consult_ladder() {
         )
         .expect("the addressed assignee moves its consult's ladder");
 }
+
+/// Gives `actor` an Auto task ceiling beside the shipped one, so a refusal
+/// below comes from the party rule and never from the ceiling.
+fn grant_auto_ceiling(vault: &Vault, actor: EntityId) {
+    let bytes = crate::gate::default_policy_manifest().expect("default policy");
+    let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("decode policy");
+    manifest["actor_ceilings"]
+        .as_array_mut()
+        .expect("actor ceilings")
+        .push(serde_json::json!({
+            "actor_class": "agent",
+            "actor_ref": actor.to_hex(),
+            "ceiling": "auto",
+        }));
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id().expect("policy id"),
+        &rmp_serde::to_vec_named(&manifest).expect("encode policy"),
+    )
+    .expect("install policy");
+}
+
+/// F24 review (H219): a counter terminalizes its open parent, so it is a
+/// second door onto the same settlement. A third actor with its own Auto
+/// ceiling and a valid delta of its own cannot counter, and so close, a
+/// consult between two others.
+#[test]
+fn a_third_actor_cannot_counter_another_actors_consult() {
+    let (_dir, vault) = open_vault();
+    let fixture = cross_actor_fixture(&vault);
+    let CrossActorRoute::ConsultOwner { receipt } = vault
+        .memory(fixture.proposer, EdgeActorClass::Agent)
+        .route_entity_delta(
+            ladder_delta(
+                fixture.target,
+                fixture.delta_ref,
+                fixture.proposer,
+                fixture.owner,
+            ),
+            None,
+            LADDER_DEADLINE,
+            LADDER_NOW,
+        )
+        .expect("cross-actor delta routes")
+    else {
+        panic!("expected an owner consult");
+    };
+    let original = receipt.task_ref.expect("consult minted");
+    let third = ladder_id(0xE6);
+    put_person(&vault, third);
+    grant_auto_ceiling(&vault, third);
+    let census = task_entity_census(&vault);
+
+    let refused = vault
+        .memory(third, EdgeActorClass::Agent)
+        .mint_counter_task(
+            original,
+            ladder_delta(fixture.target, fixture.delta_ref, third, fixture.owner),
+            LADDER_DEADLINE,
+            LADDER_NOW + 5,
+        )
+        .expect_err("a third actor cannot counter another actor's consult");
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
+    assert!(
+        refused.message.contains("asker or its addressed assignee"),
+        "refused by the party rule, not the ceiling: {refused:?}"
+    );
+    let body = task_verb_body(&vault, original)
+        .expect("decode consult")
+        .expect("consult is typed");
+    assert!(body.terminal().is_none(), "the consult stays open");
+    assert_eq!(task_entity_census(&vault), census, "no counter was minted");
+}

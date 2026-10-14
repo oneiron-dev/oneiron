@@ -1039,3 +1039,50 @@ fn an_adapter_flag_cannot_turn_inbound_into_instructions() -> Result<()> {
 }
 
 mod cc_intake;
+
+/// F24 review (H111): the attempt queue takes any kind from any caller, so a
+/// surface-event row need not have come through routing. A row forged with
+/// both flags false still reaches the dispatcher as claims-not-instructions,
+/// beside a routed one.
+#[test]
+fn a_forged_queue_row_still_dispatches_as_claims() -> Result<()> {
+    struct FlagDispatcher(RefCell<Vec<(bool, bool)>>);
+    impl SurfaceEventDispatcher for FlagDispatcher {
+        fn dispatch(
+            &self,
+            request: SurfaceEventDispatchRequest<'_>,
+        ) -> SurfaceEventDispatchDisposition {
+            self.0.borrow_mut().push((
+                request.event.foreign_inbound,
+                request.event.claims_not_instructions,
+            ));
+            SurfaceEventDispatchDisposition::Complete
+        }
+    }
+    let (_dir, vault, _) = admitting_vault("forged@example.com", 0x2B, 0x6B);
+    accepted(vault.enqueue_inbound_surface_event(
+        input(
+            "forged@example.com",
+            SurfaceCounterpartyStamp::unknown("email:sender@example.com"),
+        ),
+        1_800_008_000,
+    )?);
+    let mut forged: SurfaceEventAttemptPayload =
+        rmp_serde::from_slice(&sole_attempt(&vault).payload).expect("routed payload");
+    forged.event.foreign_inbound = false;
+    forged.event.claims_not_instructions = false;
+    AttemptQueue::new(&vault).enqueue(crate::attempt_queue::EnqueueAttempt {
+        kind: SURFACE_EVENT_ATTEMPT_KIND.to_owned(),
+        payload: encode_surface_event_attempt_payload(&forged)?,
+        dedupe_key: Some("forged-surface-row".to_owned()),
+        run_id: Some("forged-surface-row".to_owned()),
+        now: 1_800_008_001,
+    })?;
+
+    let dispatcher = FlagDispatcher(RefCell::new(Vec::new()));
+    for at in [1_800_008_010, 1_800_008_011] {
+        vault.dispatch_next_surface_event("flag-worker", at, &dispatcher)?;
+    }
+    assert_eq!(*dispatcher.0.borrow(), vec![(true, true), (true, true)]);
+    Ok(())
+}

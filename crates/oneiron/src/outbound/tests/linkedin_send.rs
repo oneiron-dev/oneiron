@@ -481,3 +481,124 @@ fn an_attributed_new_message_from_this_seat_is_delivered()
     assert_ne!(echoed.outcome, OutboundDispatchOutcome::DeliveredToChannel);
     Ok(())
 }
+
+/// A transcript whose own message carries `id` as given: a blank id, or none.
+fn own_message_with_id(id: Option<&str>, text: &str) -> serde_json::Value {
+    let mut message = serde_json::json!({"sender": "linkedin:member:yura", "text": text});
+    if let Some(id) = id {
+        message["id"] = serde_json::Value::from(id);
+    }
+    serde_json::json!({
+        "url": "https://www.linkedin.com/messaging/thread/2-jane-doe-abc/",
+        "messages": [message],
+    })
+}
+
+/// F24 review (H130): delivery evidence is a stable provider id. An own
+/// message with no id, or a blank one, proves nothing: the retry guard does
+/// not claim it as an earlier delivery, and after a send it is not the new
+/// message.
+#[test]
+fn a_message_without_a_provider_id_is_never_delivery_evidence()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let message = "Happy to share more details.";
+    let (_tmp, vault) = temp_vault();
+    let plan =
+        LinkedInVerifiedSendPlan::new("linkedin:member:jane-doe", "2-jane-doe-abc", message)?
+            .retry_guarded();
+    let mut sink = LinkedInMcpVerifiedSendSink::new(
+        linkedin_adapter()?,
+        ScriptedLinkedInTransport::new(vec![own_message_with_id(None, message)]),
+    )
+    .with_plan("intent:linkedin-idless-guard", plan)?;
+    let guarded = vault.dispatch_outbound_intent(
+        linkedin_send_request(
+            linkedin_sender(&vault, 0xBB)?,
+            "outbound:intent:linkedin-idless-guard",
+            "intent:linkedin-idless-guard",
+        ),
+        &mut sink,
+    )?;
+    assert_eq!(guarded.outcome, OutboundDispatchOutcome::Ambiguous);
+    assert!(sink.transport().send_calls.is_empty());
+
+    let (_blank_tmp, blank_vault) = temp_vault();
+    let blank = send_attributed(
+        &blank_vault,
+        linkedin_sender(&blank_vault, 0xBC)?,
+        vec![
+            attributed_conversation("2-jane-doe-abc", &[]),
+            own_message_with_id(Some("  "), message),
+        ],
+        "intent:linkedin-blank-id",
+    )?;
+    assert_ne!(blank.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    Ok(())
+}
+
+/// F24 review (H130): "new" is relative to every id the thread held before the
+/// send. An own message that was already there and is edited to the text is
+/// not the send; nor is any id when the precheck saw page text only.
+#[test]
+fn only_an_id_absent_before_the_send_is_the_new_message()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let message = "Happy to share more details.";
+    let (_tmp, vault) = temp_vault();
+    let edited = send_attributed(
+        &vault,
+        linkedin_sender(&vault, 0xBD)?,
+        vec![
+            attributed_conversation(
+                "2-jane-doe-abc",
+                &[("m1", "linkedin:member:yura", "An earlier draft.")],
+            ),
+            attributed_conversation("2-jane-doe-abc", &[("m1", "linkedin:member:yura", message)]),
+        ],
+        "intent:linkedin-edited",
+    )?;
+    assert_ne!(edited.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+
+    let (_text_tmp, text_vault) = temp_vault();
+    let unknown_baseline = send_attributed(
+        &text_vault,
+        linkedin_sender(&text_vault, 0xBE)?,
+        vec![
+            linkedin_conversation(
+                "2-jane-doe-abc",
+                "Jane Doe\n10:01 AM\nThanks for reaching out.",
+            ),
+            attributed_conversation("2-jane-doe-abc", &[("m9", "linkedin:member:yura", message)]),
+        ],
+        "intent:linkedin-text-precheck",
+    )?;
+    assert_ne!(
+        unknown_baseline.outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+
+    // Positive control: an id the structured precheck did not hold is new.
+    let (_new_tmp, new_vault) = temp_vault();
+    let delivered = send_attributed(
+        &new_vault,
+        linkedin_sender(&new_vault, 0xBF)?,
+        vec![
+            attributed_conversation(
+                "2-jane-doe-abc",
+                &[("m1", "linkedin:member:yura", "An earlier draft.")],
+            ),
+            attributed_conversation(
+                "2-jane-doe-abc",
+                &[
+                    ("m1", "linkedin:member:yura", "An earlier draft."),
+                    ("m2", "linkedin:member:yura", message),
+                ],
+            ),
+        ],
+        "intent:linkedin-new-id",
+    )?;
+    assert_eq!(
+        delivered.outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+    Ok(())
+}

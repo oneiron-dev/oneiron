@@ -223,9 +223,13 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
         );
 
         let self_key = self.adapter.receiving_address_or_handle().to_owned();
-        let (pre_send_match_count, pre_send_own_ids) =
+        let (pre_send_match_count, pre_send_ids) =
             match self.transport.get_conversation(&plan.thread_id) {
                 Ok(output) => {
+                    // Every id the thread held before the send, whatever its
+                    // sender or text: a message that was already there, even
+                    // one edited to the text since, is never the new send.
+                    let pre_send_ids = transcript_message_ids(&output, &plan.thread_id);
                     match observed_message(&output, &plan.thread_id, &plan.message_text, &self_key)
                     {
                         Ok(Some(observation)) => {
@@ -280,10 +284,7 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
                                     "observed_existing_not_tail".to_owned(),
                                 );
                             }
-                            (
-                                observation.occurrence_count,
-                                observation.own_ids.unwrap_or_default(),
-                            )
+                            (observation.occurrence_count, pre_send_ids)
                         }
                         Ok(None) => {
                             fields.insert(
@@ -296,7 +297,7 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
                                     "observed_absent".to_owned(),
                                 );
                             }
-                            (0, BTreeSet::new())
+                            (0, pre_send_ids)
                         }
                         Err(err) => {
                             fields.insert(
@@ -383,14 +384,16 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
                     match observed_message(&output, &plan.thread_id, &plan.message_text, &self_key)
                     {
                         // Delivered means a message this seat sent, with the
-                        // text, that was not there before the send. Text the
-                        // transcript does not attribute proves nothing: the
-                        // recipient can write the same words.
+                        // text, under an id the thread did not hold before the
+                        // send. Text the transcript does not attribute proves
+                        // nothing (the recipient can write the same words), and
+                        // without a pre-send id list no id can be shown new.
                         Ok(Some(observation))
                             if observation
                                 .own_ids
                                 .as_ref()
-                                .is_some_and(|ids| !ids.is_subset(&pre_send_own_ids)) =>
+                                .zip(pre_send_ids.as_ref())
+                                .is_some_and(|(ids, before)| !ids.is_subset(before)) =>
                         {
                             fields.insert(
                                 RECEIPT_FIELD_POST_SEND_MATCH_COUNT.to_owned(),
@@ -410,7 +413,7 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
                             .with_receipt_fields(fields);
                         }
                         Ok(Some(observation)) => {
-                            if observation.own_ids.is_none()
+                            if (observation.own_ids.is_none() || pre_send_ids.is_none())
                                 && observation.tail_matches
                                 && observation.occurrence_count > pre_send_match_count
                             {
@@ -486,7 +489,8 @@ struct LinkedInObservedMessage {
     /// Provider ids of the matching messages the transcript says this seat
     /// sent. `None` when the transcript names no senders (page text only).
     own_ids: Option<BTreeSet<String>>,
-    /// The last message matches and the transcript says this seat sent it.
+    /// The last message matches, the transcript says this seat sent it, and
+    /// it carries an id.
     own_tail: bool,
 }
 
@@ -532,10 +536,39 @@ fn observed_message(
     }))
 }
 
+/// The id of every message in a structured transcript of `expected_thread_id`,
+/// whatever its sender or text. `None` when the transport supplies page text
+/// only, or a transcript of another thread: then no later id can be shown new.
+fn transcript_message_ids(output: &Value, expected_thread_id: &str) -> Option<BTreeSet<String>> {
+    let payload = mcp_payload(output).ok()?;
+    let observed_thread_id = match thread_id_from_payload_url(&payload).ok()? {
+        Some(thread_id) => thread_id,
+        None => first_conversation_thread_id(&section_references(&payload, "conversation"))
+            .ok()?
+            .unwrap_or_else(|| expected_thread_id.to_owned()),
+    };
+    if observed_thread_id != expected_thread_id {
+        return None;
+    }
+    let messages = payload.get("messages").and_then(Value::as_array)?;
+    Some(messages.iter().filter_map(message_id).collect())
+}
+
+/// A message's provider id: the first non-blank id field, trimmed.
+fn message_id(message: &Value) -> Option<String> {
+    let object = message.as_object()?;
+    ["id", "message_id", "messageId", "urn", "entity_urn"]
+        .iter()
+        .find_map(|key| {
+            let id = object.get(*key)?.as_str()?.trim();
+            (!id.is_empty()).then(|| id.to_owned())
+        })
+}
+
 /// Reads a transcript whose messages carry an id and a sender. A message is
 /// this seat's only when its `sender` is the seat's own key; a message with
-/// no id cannot be told apart from an earlier one, so it is never counted as
-/// this seat's.
+/// no id, or a blank one, cannot be told apart from an earlier one, so it is
+/// never counted as this seat's.
 fn attributed_observation(
     messages: &[Value],
     message_text: &str,
@@ -552,14 +585,18 @@ fn attributed_observation(
         };
         let matches = field(&["text", "body", "content", "message"])
             .is_some_and(|text| normalize_whitespace(text) == wanted);
-        let own = field(&["sender"]) == Some(self_key);
-        tail = (matches, matches && own);
+        let own_id = if field(&["sender"]) == Some(self_key) {
+            message_id(message)
+        } else {
+            None
+        };
+        tail = (matches, matches && own_id.is_some());
         if !matches {
             continue;
         }
         occurrence_count += 1;
-        if own && let Some(id) = field(&["id", "message_id", "messageId", "urn", "entity_urn"]) {
-            own_ids.insert(id.trim().to_owned());
+        if let Some(id) = own_id {
+            own_ids.insert(id);
         }
     }
     (occurrence_count > 0).then(|| LinkedInObservedMessage {

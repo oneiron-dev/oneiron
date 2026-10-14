@@ -131,7 +131,8 @@ impl Memory<'_> {
     ///
     /// A counter is never an edit. The original keeps its own terminal row
     /// forever; an ALREADY-terminal original is left byte-identical and only
-    /// the new task is written.
+    /// the new task is written. Only the original's asker or addressed
+    /// assignee may counter it.
     pub fn mint_counter_task(
         &self,
         parent_task_ref: EntityId,
@@ -161,6 +162,9 @@ impl Memory<'_> {
         let rate_now = self.vault().store.clock.now_recorded_at();
         let (task_ref, route) = self.with_verified_actor_write_txn(|wtxn| {
             let parent = consult_body_in_txn(self.vault(), &*wtxn, parent_task_ref)?;
+            // A counter settles its open parent, so only the parent's parties
+            // may mint one, as only they may move its ladder.
+            self.require_consult_party_in_txn(&*wtxn, parent_task_ref, &parent)?;
             self.require_auto_ceiling_in_txn(&*wtxn)?;
             record_task_create(
                 self.vault(),

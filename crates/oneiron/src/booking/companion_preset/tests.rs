@@ -114,6 +114,26 @@ impl SlotOracle for ScriptedOracle {
     }
 }
 
+/// The creating companion's facade: a live agent-capable row of this vault.
+fn companion(vault: &Vault) -> crate::memory::Memory<'_> {
+    if vault
+        .get_entity_type(&id(COMPANION))
+        .expect("entity type")
+        .is_none()
+    {
+        vault
+            .put_entity(
+                &id(COMPANION),
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"companion",
+            )
+            .expect("companion row");
+    }
+    vault.memory(id(COMPANION), crate::edge::EdgeActorClass::Agent)
+}
+
 /// Creates a proposal for `participants` people, expiring an hour out.
 fn propose(
     vault: &Vault,
@@ -121,10 +141,9 @@ fn propose(
     participants: usize,
 ) -> CompanionProposalCreation {
     create_companion_proposal(
-        vault,
+        &companion(vault),
         oracle,
         id(OWNER),
-        id(COMPANION),
         &preset(),
         monday(),
         None,
@@ -411,5 +430,39 @@ fn a_participant_cannot_confirm_in_a_companion_name() {
     );
 
     let answer = confirm(&vault, &oracle, &created).expect("the companion confirms");
+    assert_eq!(answer.confirmed_by_companion, id(COMPANION));
+}
+
+/// F24 review (H216): the companion a confirmation names is the actor that
+/// created the proposal, never an id the creator chose. A facade whose actor is
+/// no live row of this vault creates nothing.
+#[test]
+fn only_a_live_companion_actor_creates_a_proposal() {
+    let (_dir, vault) = open_vault();
+    let oracle = ScriptedOracle::new(scripted_slots());
+    let refused = create_companion_proposal(
+        &vault.memory(id(0x7E), crate::edge::EdgeActorClass::Agent),
+        &oracle,
+        id(OWNER),
+        &preset(),
+        monday(),
+        None,
+        "UTC".to_owned(),
+        1,
+        NOW + HOUR,
+    );
+    assert!(
+        refused.is_err(),
+        "an unknown actor cannot create a proposal"
+    );
+
+    let created = propose(&vault, &oracle, 1);
+    tap(
+        &vault,
+        &created.participant_tokens[0].raw_token,
+        created.proposal.id,
+        1,
+    );
+    let answer = confirm(&vault, &oracle, &created).expect("an answer");
     assert_eq!(answer.confirmed_by_companion, id(COMPANION));
 }

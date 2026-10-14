@@ -176,6 +176,9 @@ pub struct ChannelIdentitySelectionWriter {
     actor_ref: EntityId,
     kind: SelectionRuleWriterKind,
     owner: Option<AuthenticatedOwner>,
+    /// The agent's write actor, frontier included, rechecked against the
+    /// authority fold at the write.
+    agent: Option<WriteActor>,
 }
 
 impl ChannelIdentitySelectionWriter {
@@ -186,6 +189,7 @@ impl ChannelIdentitySelectionWriter {
             actor_ref: owner.actor(),
             kind: SelectionRuleWriterKind::Owner,
             owner: Some(owner.clone()),
+            agent: None,
         }
     }
 
@@ -200,6 +204,7 @@ impl ChannelIdentitySelectionWriter {
                 actor_ref: actor.entity_ref(),
                 kind: SelectionRuleWriterKind::Agent,
                 owner: None,
+                agent: Some(*actor),
             }),
             EdgeActorClass::Human => Err(ChannelIdentitySelectionError::OwnerWriterNeedsOwnerProof),
             EdgeActorClass::System => Err(ChannelIdentitySelectionError::WriterClassNotAmendable),
@@ -208,7 +213,8 @@ impl ChannelIdentitySelectionWriter {
 
     /// The writer still holds in the write's own transaction: the owner proof
     /// belongs to this vault and is live, and an agent writer names a live
-    /// actor of this vault whose type can act as an agent.
+    /// actor of this vault whose type can act as an agent and, in a rooted
+    /// vault, whose authority binding is live.
     pub(super) fn revalidate_in_txn(
         &self,
         vault: &Vault,
@@ -220,13 +226,15 @@ impl ChannelIdentitySelectionWriter {
         }
         let live_type =
             crate::vault::live_entity_row_in_txn(&vault.store, txn, &self.actor_ref)?.live_type();
-        if live_type.is_some_and(|entity_type| {
+        if !live_type.is_some_and(|entity_type| {
             crate::provenance::validate_actor_class(entity_type, EdgeActorClass::Agent).is_ok()
         }) {
-            Ok(())
-        } else {
-            Err(ChannelIdentitySelectionError::WriterNotInVault)
+            return Err(ChannelIdentitySelectionError::WriterNotInVault);
         }
+        if let Some(agent) = &self.agent {
+            vault.verify_write_actor_in_txn(txn, agent)?;
+        }
+        Ok(())
     }
 
     /// Entity stamped into every row this writer touches.

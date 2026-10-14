@@ -984,3 +984,66 @@ fn a_corrupt_stored_rule_set_fails_typed_rather_than_resolving() {
     drop(vault);
     drop(dir);
 }
+
+/// F24 review (H265): an agent writer's standing in a rooted vault is its
+/// authority binding, not a live row alone. While the binding holds the agent
+/// adds an amendable row; once it is revoked, its row still live, the same
+/// write is refused and the law stays where it was.
+#[test]
+fn a_revoked_agent_binding_cannot_amend_selection_rules() {
+    let (_dir, vault) = open_vault();
+    let agent = WriteActor::new(person(&vault, 0x68), EdgeActorClass::Agent);
+    let revoke = crate::subject_model::tests::authorization::root_owner(&vault, agent, 0xE7)
+        .expect("root the vault with the agent bound");
+    let writer =
+        ChannelIdentitySelectionWriter::from_authenticated_write(&agent).expect("agent writer");
+    let upsert = |face| {
+        ChannelIdentitySelectionPatch::Upsert(ChannelIdentitySelectionRule {
+            agent_amendable: true,
+            ..authored_rule(
+                "overlay.agent",
+                RelationshipContext::GroupSpace,
+                SelectionRuleScope::Space {
+                    space_ref: "space.beta".to_owned(),
+                },
+                face,
+            )
+        })
+    };
+    vault
+        .update_channel_identity_selection_rules(
+            0,
+            &writer,
+            upsert(ChannelIdentityFace::HouseIdentity),
+        )
+        .expect("a bound agent adds an amendable row");
+
+    vault
+        .put_authority_log_entries(&[(
+            revoke,
+            crate::temporal::TimeRange {
+                start: 102,
+                end: 102,
+            },
+            102,
+        )])
+        .expect("revoke the agent's binding");
+    assert!(
+        vault
+            .update_channel_identity_selection_rules(
+                1,
+                &writer,
+                upsert(ChannelIdentityFace::AgentNamedAddress),
+            )
+            .is_err(),
+        "a revoked binding amended the law"
+    );
+    assert_eq!(
+        vault
+            .channel_identity_selection_rules()
+            .expect("law")
+            .revision,
+        1,
+        "the refused write advanced nothing"
+    );
+}

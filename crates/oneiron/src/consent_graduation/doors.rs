@@ -319,9 +319,19 @@ impl crate::memory::Memory<'_> {
                 &["Ask the owner to demote another actor's scope."],
             ));
         }
-        let at = self.vault().store.clock.now_recorded_at();
-        self.with_verified_actor_write_txn(|wtxn| {
-            append_demotion_in_txn(self.vault(), wtxn, scope, DemotionReason::AgentJudgment, at)
+        let vault = self.vault();
+        let at = vault.store.clock.now_recorded_at();
+        // Only the actor's own binding, never a content-write grant: a
+        // narrowly scoped member giving up its own standing grant is a
+        // restriction, and restrictions always land.
+        vault.write_txn_door(crate::store::Callback::Audited, |wtxn| {
+            crate::memory::verify_actor_binding_in_txn(
+                vault,
+                wtxn,
+                self.actor(),
+                self.actor_class(),
+            )?;
+            append_demotion_in_txn(vault, wtxn, scope, DemotionReason::AgentJudgment, at)
                 .map_err(crate::memory::MemoryError::from)
         })
     }
