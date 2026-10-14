@@ -86,3 +86,5 @@ mod visibility;
 
 #[cfg(test)]
 mod slip_tests;
+#[cfg(test)]
+mod tests;
