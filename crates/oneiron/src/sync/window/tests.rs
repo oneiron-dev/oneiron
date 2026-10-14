@@ -3870,20 +3870,39 @@ fn snapshot_with_sections(header_from: &[u8], sections: [&[u8]; 3]) -> Vec<u8> {
     out
 }
 
-/// A shallow snapshot whose encoded root holds `carrier` under `masked`, with
-/// a latest-state section spliced in from a twin whose root holds a clean
-/// value there. Both share peers and counters, so the retained ops agree.
-/// With `long`, two branches of 129 ops each, on keys other than `masked`,
-/// sit unjoined above the root: Loro then ships a latest-state section of
-/// its own, and a later export at the doc's heads keeps the same root.
-fn masked_shallow_root(carrier: &[u8], long: bool) -> Result<Vec<u8>> {
+/// Where a spliced shallow snapshot hides the carrier its encoded root holds.
+#[derive(Clone, Copy, Debug)]
+enum RootMask {
+    /// The root is the latest version, and the clean twin's root stands in
+    /// as the latest-state section.
+    Short,
+    /// Two unjoined branches of 129 ops each, on other keys, sit above the
+    /// root: Loro ships a latest-state section of its own, and a later export
+    /// at the doc's heads keeps the same root.
+    Long,
+    /// As `Long`, but the root op itself writes `masked` and a branch
+    /// overwrites it, so replay and checkout both resolve the key from ops.
+    Overwritten,
+}
+
+/// The clean twin's shallow snapshot with the carrier twin's root section
+/// spliced in: the root holds `carrier` under `masked`, while the ops and the
+/// latest-state section show clean values. The twins share peers and
+/// counters, so the root entry and the retained root op share an id.
+fn masked_shallow_root(carrier: &[u8], shape: RootMask) -> Result<Vec<u8>> {
+    let long = !matches!(shape, RootMask::Short);
+    let overwritten = matches!(shape, RootMask::Overwritten);
     let shallow = |value: &[u8]| -> Result<Vec<u8>> {
         let doc = LoroDoc::new();
         doc.set_peer_id(7).unwrap();
-        map_insert_bytes(&doc.get_map("entities"), "masked", value)?;
-        doc.commit();
-        map_insert_bytes(&doc.get_map("entities"), "ordinary", b"ordinary")?;
-        doc.commit();
+        let mut writes = [("masked", value), ("ordinary", &b"ordinary"[..])];
+        if overwritten {
+            writes.reverse();
+        }
+        for (key, value) in writes {
+            map_insert_bytes(&doc.get_map("entities"), key, value)?;
+            doc.commit();
+        }
         let root = doc.oplog_frontiers();
         let base = doc.oplog_vv();
         let branches = if long {
@@ -3893,6 +3912,9 @@ fn masked_shallow_root(carrier: &[u8], long: bool) -> Result<Vec<u8>> {
         };
         for (peer, branch) in (8..).zip(&branches) {
             branch.set_peer_id(peer).unwrap();
+            if overwritten && peer == 8 {
+                map_insert_bytes(&branch.get_map("entities"), "masked", b"clean-tail")?;
+            }
             for n in 0..129 {
                 let tail = format!("tail-{peer}-{n}");
                 map_insert_bytes(&branch.get_map("entities"), &tail, b"ordinary")?;
@@ -3906,14 +3928,14 @@ fn masked_shallow_root(carrier: &[u8], long: bool) -> Result<Vec<u8>> {
             .unwrap())
     };
     let (with_carrier, clean) = (shallow(carrier)?, shallow(b"clean")?);
-    let (target, mask) = (snapshot_sections(&with_carrier), snapshot_sections(&clean));
-    // A short range ships no latest state, so its root stands in as one.
-    assert_eq!(mask[1] == b"E", !long);
-    let latest = if long { mask[1] } else { mask[2] };
-    Ok(snapshot_with_sections(
-        &with_carrier,
-        [target[0], latest, target[2]],
-    ))
+    let (root, twin) = (
+        snapshot_sections(&with_carrier)[2],
+        snapshot_sections(&clean),
+    );
+    // A short range ships no latest state, so the clean root stands in as one.
+    assert_eq!(twin[1] == b"E", !long);
+    let latest = if long { twin[1] } else { twin[2] };
+    Ok(snapshot_with_sections(&clean, [twin[0], latest, root]))
 }
 
 #[test]
@@ -3976,38 +3998,41 @@ fn local_only_update_admission_is_side_effect_free_and_checks_hidden_history() -
         assert_eq!(doc.oplog_vv(), before);
         assert!(map_get_bytes(&doc.get_map("entities"), raw_key).is_none());
     }
-    // A sender can also ship a latest-state section that masks a carrier
-    // left in the snapshot's encoded root, which a later export reuses.
-    // Past 256 retained ops the export ships that section again, and with
-    // unjoined heads it keeps the root, so the mask outlives persistence.
-    for (carrier, long) in [
-        (&diagnostic, false),
-        (&custody, false),
-        (&diagnostic, true),
-        (&custody, true),
-    ] {
-        let masked = masked_shallow_root(carrier, long)?;
-        let shown = LoroDoc::from_snapshot(&masked).unwrap();
-        let entities = shown.get_map("entities");
-        assert_eq!(map_get_bytes(&entities, "masked"), Some(b"clean".to_vec()));
-        let persisted = shown
-            .export(loro::ExportMode::shallow_snapshot(&shown.oplog_frontiers()))
-            .unwrap();
-        let [ops, _, root] = snapshot_sections(&persisted);
-        let unmasked = snapshot_with_sections(&persisted, [ops, b"E", root]);
-        let reloaded = LoroDoc::from_snapshot(&unmasked).unwrap();
-        assert_eq!(
-            map_get_bytes(&reloaded.get_map("entities"), "masked").as_ref(),
-            Some(carrier),
-            "the persisted root keeps the carrier (long: {long})"
-        );
-        assert!(
-            refused(validate_window_update_locality(&doc, &masked)),
-            "a masked root was admitted (long: {long})"
-        );
+    // A sender can also hide a carrier left in the snapshot's encoded root,
+    // which a later export reuses: behind a latest-state section, and past
+    // 256 retained ops with unjoined heads, where the export keeps the root,
+    // also behind retained ops that rewrite the key.
+    for carrier in [&diagnostic, &custody] {
+        for shape in [RootMask::Short, RootMask::Long, RootMask::Overwritten] {
+            let masked = masked_shallow_root(carrier, shape)?;
+            let shown = LoroDoc::from_snapshot(&masked).unwrap();
+            let clean: &[u8] = match shape {
+                RootMask::Overwritten => b"clean-tail",
+                RootMask::Short | RootMask::Long => b"clean",
+            };
+            let entities = shown.get_map("entities");
+            assert_eq!(map_get_bytes(&entities, "masked").as_deref(), Some(clean));
+            let persisted = shown
+                .export(loro::ExportMode::shallow_snapshot(&shown.oplog_frontiers()))
+                .unwrap();
+            let [ops, _, root] = snapshot_sections(&persisted);
+            let root = snapshot_with_sections(&persisted, [ops, root, root]);
+            let root = LoroDoc::from_snapshot(&root).unwrap();
+            assert_eq!(
+                map_get_bytes(&root.get_map("entities"), "masked").as_ref(),
+                Some(carrier),
+                "the persisted root keeps the carrier ({shape:?})"
+            );
+            assert!(
+                refused(validate_window_update_locality(&doc, &masked)),
+                "a masked root was admitted ({shape:?})"
+            );
+        }
     }
-    // The same long shape, sent honestly, is admitted.
-    validate_window_update_locality(&doc, &masked_shallow_root(b"clean", true)?)?;
+    // The long shapes, sent honestly, are admitted.
+    for shape in [RootMask::Long, RootMask::Overwritten] {
+        validate_window_update_locality(&doc, &masked_shallow_root(b"clean", shape)?)?;
+    }
     let ordinary = doc.fork();
     map_insert_bytes(&ordinary.get_map("entities"), "second", b"ordinary")?;
     ordinary.commit();
