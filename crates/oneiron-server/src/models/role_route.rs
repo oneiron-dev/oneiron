@@ -82,6 +82,14 @@ impl ModelRuntime {
         seat: &Seat,
     ) -> Result<RoleRoute, RoleRefusal> {
         let Some(manifest) = vault.model_manifest().map_err(RoleRefusal::refused)? else {
+            // A role whose work never leaves the device takes another role's
+            // seat only when that seat stays on it too.
+            if self.stays_on_device.contains(&role)
+                && seat.role != role
+                && seat.locality == ModelLocality::ThirdParty
+            {
+                return Err(RoleRefusal::NoSeat);
+            }
             return Ok(RoleRoute {
                 model: seat.model.clone(),
                 locality: seat.locality,

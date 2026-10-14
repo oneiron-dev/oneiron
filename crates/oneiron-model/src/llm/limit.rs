@@ -9,13 +9,14 @@ use serde_json::Value as JsonValue;
 use super::RetryableLlmError;
 
 /// The words a provider's error type, code, status or message uses for a
-/// spent quota or a rate limit.
+/// spent quota or a rate limit. A bare "exhausted" is not one: a server out
+/// of memory or workers is down, not limited.
 const LIMIT_WORDS: [&str; 9] = [
     "rate_limit",
     "rate limit",
     "usage limit",
     "quota",
-    "exhausted",
+    "resource_exhausted",
     "too many requests",
     "limit reached",
     "cooling down",
@@ -40,6 +41,29 @@ pub fn limit_refusal(headers: &BTreeMap<String, String>, body: &JsonValue) -> Re
         retry_after: retry_after_seconds(headers, body),
         resets_at: reset_times(body),
     }
+}
+
+/// The HTTP status an error a provider sends inside an open stream stands
+/// for: its own numeric `code` or `status`, else what its `type` names (a
+/// request error, a key refused), else a server error.
+#[must_use]
+pub fn stream_error_status(body: &JsonValue) -> u16 {
+    let error = body.get("error").unwrap_or(body);
+    let numeric = ["code", "status"].into_iter().find_map(|key| {
+        let value = error.get(key)?;
+        let status = value
+            .as_u64()
+            .or_else(|| value.as_str()?.trim().parse().ok())?;
+        u16::try_from(status)
+            .ok()
+            .filter(|status| (400..=599).contains(status))
+    });
+    numeric.unwrap_or(match error.get("type").and_then(JsonValue::as_str) {
+        Some("invalid_request_error" | "not_found_error") => 400,
+        Some("authentication_error") => 401,
+        Some("permission_error") => 403,
+        _ => 500,
+    })
 }
 
 /// Whether a provider's error body reads as a spent quota or a rate limit:

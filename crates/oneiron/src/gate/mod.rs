@@ -160,9 +160,8 @@ pub(crate) use self::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles, consent_gate_reason_codes,
 };
-pub use self::operational_policy::ProviderCooldownPolicy;
 pub(crate) use self::operational_policy::{
-    LinearMirrorPolicy, LinearSyncBudget, WaveHandoffPolicy,
+    LinearMirrorPolicy, LinearSyncBudget, ProviderCooldownPolicy, WaveHandoffPolicy,
 };
 pub(crate) use self::owner_policy_mutation::apply_owner_policy_row_change_in_txn;
 pub use self::owner_policy_mutation::{

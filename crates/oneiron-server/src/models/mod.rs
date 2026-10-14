@@ -52,6 +52,7 @@ mod sse;
 mod status;
 #[cfg(test)]
 mod tests;
+mod walk;
 
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
 pub use cooldown::OfferCooldowns;

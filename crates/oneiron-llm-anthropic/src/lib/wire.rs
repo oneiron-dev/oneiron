@@ -357,6 +357,10 @@ pub fn classify_anthropic_status(
     if limit::is_limit_status(status, body) {
         return limit::limit_refusal(headers, body).into();
     }
+    // A request error's status is the answer, whatever type its body names.
+    if matches!(status, 400 | 404 | 413 | 422) {
+        return FatalLlmError::InvalidRequest.into();
+    }
 
     if let Some(error_type) = body
         .get("error")

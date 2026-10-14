@@ -43,7 +43,8 @@ impl OpenAiCompatStreamAccumulator {
             .get("error")
             .is_some_and(|error| error.is_object() || error.is_string())
         {
-            return Err(classify_openai_status(500, &BTreeMap::new(), &chunk));
+            let status = oneiron::llm::limit::stream_error_status(&chunk);
+            return Err(classify_openai_status(status, &BTreeMap::new(), &chunk));
         }
         if let Some(usage) = chunk.get("usage").filter(|v| !v.is_null()) {
             self.usage = Some(parse_openai_usage(usage));
