@@ -133,9 +133,10 @@ impl LiveCustody {
 
 /// Refuses a missing vault at `vault_dir` here, not by a later lookup, which
 /// could find a vault someone else put under the name: a sticky parent stops
-/// no one from making a new entry in it.
+/// no one from making a new entry in it. Links are followed, so a link to a
+/// missing directory is missing too (C8 review r9).
 fn refuse_missing_vault_root(vault_dir: &Path) -> Result<()> {
-    match std::fs::symlink_metadata(vault_dir) {
+    match std::fs::metadata(vault_dir) {
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             Err(not_an_existing_root(vault_dir, false))

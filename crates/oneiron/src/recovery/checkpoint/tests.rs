@@ -1257,6 +1257,15 @@ fn a_source_missing_at_its_admission_is_never_read() {
     });
     assert!(refused_as_no_vault(SideRestoreSource::read(&source)));
     assert!(prepared.exists(), "nothing looks under the name after it");
+    // Review r9 (Astra F1): nor through a link to a missing directory.
+    let link = root.path().join("link");
+    std::os::unix::fs::symlink(&source, &link).unwrap();
+    crate::store::arm_before_live_custody_read({
+        let (prepared, source) = (prepared.clone(), source.clone());
+        move || std::fs::rename(prepared, source).unwrap()
+    });
+    assert!(refused_as_no_vault(SideRestoreSource::read(&link)));
+    assert!(prepared.exists(), "nothing looks through the link after it");
 }
 
 /// An activation commits only once every receipt it keeps reads under its
