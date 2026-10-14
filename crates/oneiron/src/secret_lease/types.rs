@@ -185,14 +185,39 @@ pub struct LocalRegistration {
     pub project_id: String,
 }
 
-/// The stored form of a local registration: the public row plus the
-/// teardown record. A retained row with `removal_error` set is CLOSED (its
-/// lease is torn down) but kept so the still-present file's path stays in
-/// SECRET-03's exclusion set and the failure is recorded (best-effort,
-/// recorded — never a silent drop).
+/// The device and inode of a T2 file, read from the descriptor the vault
+/// wrote through. Re-materialization and teardown act only on the file with
+/// this identity, never on whatever else answers to the path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FileIdentity {
+    pub(crate) dev: u64,
+    pub(crate) ino: u64,
+}
+
+impl FileIdentity {
+    /// What a platform with no file identity records.
+    #[cfg(not(unix))]
+    pub(crate) const UNBOUND: Self = Self { dev: 0, ino: 0 };
+
+    #[cfg(unix)]
+    pub(crate) fn of(metadata: &std::fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+        Self {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+        }
+    }
+}
+
+/// The stored form of a local registration: the public row, the identity of
+/// the file it wrote, and the teardown record. A retained row with
+/// `removal_error` set is CLOSED (its lease is torn down) but kept so the
+/// still-present file's path stays in SECRET-03's exclusion set and the
+/// failure is recorded (best-effort, recorded — never a silent drop).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StoredLocalRegistration {
     pub(crate) registration: LocalRegistration,
+    pub(crate) file_identity: FileIdentity,
     pub(crate) removal_error: Option<String>,
     pub(crate) removal_attempted_at: Option<u64>,
 }
