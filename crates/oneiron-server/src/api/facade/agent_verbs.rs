@@ -48,7 +48,7 @@ async fn cancel(
     )?;
     facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
     Ok(Json(facade_invoke(
-        &server, &headers, actor, class, "cancel", value,
+        &server, &headers, &auth, actor, class, "cancel", value,
     )?))
 }
 async fn describe(
@@ -74,7 +74,7 @@ async fn describe(
         &server.vault,
         &auth,
         oneiron::task_verb::sdk::describe(
-            &server.vault.memory(actor, class),
+            &credential_memory(&server.vault, Some(&auth), actor, class).at(auth.locality()),
             facade_input(value)?,
         )?,
     )?))
@@ -92,6 +92,7 @@ async fn tasks_create(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "tasks.create",
@@ -117,6 +118,7 @@ async fn tasks_update(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "tasks.update",
@@ -133,7 +135,7 @@ async fn witness(
 
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
-    let output = facade_invoke(&server, &headers, actor, class, "witness", value)?;
+    let output = facade_invoke(&server, &headers, &auth, actor, class, "witness", value)?;
     server.ai.turn_landed_by(server.vault(), actor, class);
     Ok(Json(output))
 }
@@ -150,6 +152,7 @@ async fn claim_upsert(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "claim_upsert",
@@ -183,6 +186,7 @@ async fn recall(
                 actor,
                 class,
                 auth.verified_slip().cloned(),
+                auth.locality(),
                 facade_room_turn(&headers)?,
                 facade_input(value)?,
             )
@@ -216,12 +220,13 @@ async fn export(
     let output = if proof.claims().holder_ref == "host" {
         server
             .vault
-            .export_with_verified_host_owner(&input, proof)?
+            .export_with_verified_host_owner(&input, proof, auth.locality())?
     } else {
         let (actor, class) = facade_actor(&auth)?;
         server
             .vault
             .memory(actor, class)
+            .at(auth.locality())
             .export_with_verified_owner(&input, proof)?
     };
     Ok(Json(serde_json::to_value(output).map_err(|_| {
@@ -244,7 +249,7 @@ async fn receipts(
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
-        &server, &headers, actor, class, "receipts", value,
+        &server, &headers, &auth, actor, class, "receipts", value,
     )?))
 }
 async fn key_value_get(
@@ -254,12 +259,13 @@ async fn key_value_get(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "key_value_get",
@@ -279,6 +285,7 @@ async fn key_value_put(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "key_value_put",
@@ -298,6 +305,7 @@ async fn key_value_delete(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "key_value_delete",
@@ -311,12 +319,13 @@ async fn key_value_search(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "key_value_search",
@@ -330,12 +339,13 @@ async fn key_value_namespaces(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "key_value_namespaces",
@@ -349,11 +359,11 @@ async fn can(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
-        &server, &headers, actor, class, "can", value,
+        &server, &headers, &auth, actor, class, "can", value,
     )?))
 }
 async fn peek(
@@ -363,11 +373,11 @@ async fn peek(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
-        &server, &headers, actor, class, "peek", value,
+        &server, &headers, &auth, actor, class, "peek", value,
     )?))
 }
 async fn tasks_ask(
@@ -383,6 +393,7 @@ async fn tasks_ask(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "tasks.ask",
@@ -402,6 +413,7 @@ async fn tasks_wait(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "tasks.wait",
@@ -421,6 +433,7 @@ async fn tasks_answer(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "tasks.answer",
@@ -434,12 +447,13 @@ async fn tasks_outcomes(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "tasks.outcomes",
@@ -459,6 +473,7 @@ async fn rooms_list(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "rooms.list",
@@ -478,6 +493,7 @@ async fn rooms_messages(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "rooms.messages",
@@ -497,6 +513,7 @@ async fn rooms_render(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "rooms.render",
@@ -516,6 +533,7 @@ async fn rooms_find(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "rooms.find",
@@ -535,6 +553,7 @@ async fn rooms_get(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "rooms.get",
@@ -554,6 +573,7 @@ async fn rooms_trunk(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "rooms.trunk",
@@ -573,6 +593,7 @@ async fn rooms_claim(
     Ok(Json(facade_invoke(
         &server,
         &headers,
+        &auth,
         actor,
         class,
         "rooms.claim",
@@ -589,7 +610,7 @@ async fn rooms_speak(
 
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
-    let output = facade_invoke(&server, &headers, actor, class, "rooms.speak", value)?;
+    let output = facade_invoke(&server, &headers, &auth, actor, class, "rooms.speak", value)?;
     server.ai.turn_landed_by(server.vault(), actor, class);
     Ok(Json(output))
 }

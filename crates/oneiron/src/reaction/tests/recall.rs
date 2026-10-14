@@ -97,6 +97,43 @@ fn recalled_and_context_packed_message_carries_its_grouped_reactions() {
     );
 }
 
+/// Sol R9 F3: a recalled message's reaction lines are derived from the
+/// reaction claims they count, so recall lists each one among the rows its
+/// pack was derived from, at every effort (DEC-0005).
+#[test]
+fn a_recall_lists_the_reaction_claims_its_lines_count() {
+    let room = room();
+    let counted = [
+        react(&room, room.bob, "👍").id,
+        react(&room, room.erin, "🎉").id,
+    ];
+    for effort in [Effort::Light, Effort::Medium] {
+        let producers = crate::memory::ProducerRows::default();
+        let pack = room
+            .vault
+            .memory(room.alice, EdgeActorClass::Human)
+            .listing_producers(&producers)
+            .recall(
+                "Friday plan",
+                effort,
+                &RecallScope::default(),
+                20,
+                None,
+                None,
+            )
+            .unwrap();
+        assert!(
+            pack.items.iter().any(|item| !item.reactions.is_empty()),
+            "{effort:?}"
+        );
+        let listed = producers.take();
+        assert!(
+            counted.iter().all(|claim| listed.contains(claim)),
+            "{effort:?}: {listed:?}"
+        );
+    }
+}
+
 #[test]
 fn a_direct_query_finds_a_reaction() {
     let room = reacted_room();
@@ -339,4 +376,41 @@ fn reactions_ride_the_packs_disclosure_clamp() {
         lines(Some(&all)),
         Some(serde_json::json!(["👍×2 (Bob, Erin)", "🎉×1 (Bob)"]))
     );
+}
+
+/// Sol R5-002 on #1413: the lane's reaction reads opened a snapshot of their
+/// own but never rechecked an owner lane's binding in it, so a lane kept past
+/// its owner's revocation still read the reactions of members who stayed.
+/// They refuse once the binding is gone, as the lane's other reads do.
+#[test]
+fn a_kept_owner_lane_reads_no_reaction_after_its_revocation() {
+    let room = reacted_room();
+    let issuer = crate::test_support::test_host_issuer();
+    room.vault.ensure_host_root_slip(&issuer).unwrap();
+    room.vault
+        .bind_host_owner_for_test(&issuer, room.alice)
+        .unwrap();
+    let lane = room
+        .vault
+        .scoped_read(crate::claim::ScopedReadActorKey::vault_owner(room.alice));
+    let signals = room.vault.reactions_since(room.alice, 0).unwrap();
+    let pills = |lane: &crate::claim::ScopedRead<'_>| {
+        lane.reaction_pills(&[room.message], room.alice)
+            .map(|pills| {
+                pills
+                    .get(&room.message)
+                    .is_some_and(|pills| !pills.is_empty())
+            })
+    };
+    assert!(
+        pills(&lane).unwrap(),
+        "the bound owner reads Bob's and Erin's"
+    );
+    assert!(lane.is_reaction_signal_readable(&signals[0]).unwrap());
+    assert!(!lane.reaction_lines(&room.message).unwrap().is_empty());
+
+    room.vault.revoke_host_actor_for_test(&issuer).unwrap();
+    assert!(pills(&lane).is_err());
+    assert!(lane.is_reaction_signal_readable(&signals[0]).is_err());
+    assert!(lane.reaction_lines(&room.message).is_err());
 }

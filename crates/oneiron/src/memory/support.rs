@@ -382,6 +382,10 @@ pub struct Memory<'v> {
     /// The write origin a host bound, when one did: claim doors stamp it in
     /// place of the caller's declared source.
     pub(super) host_origin: Option<HostWriteOrigin>,
+    /// Where the caller sits; see [`Memory::at`].
+    pub(super) locality: crate::claim::CallerLocality,
+    /// Where a host collects the rows its reads pick (`listing_producers`).
+    pub(super) producers: Option<&'v super::ProducerRows>,
     /// Where a host bound its writer's TASKs to be born (`with_birth_position`).
     pub(super) birth_position: crate::federation::record_scope::BirthPosition,
 }
@@ -430,6 +434,8 @@ impl Vault {
             read_proof: None,
             room_turn: None,
             host_origin: None,
+            locality: crate::claim::CallerLocality::OnDevice,
+            producers: None,
             birth_position: Default::default(),
         }
     }
@@ -458,6 +464,8 @@ impl Vault {
             read_proof: None,
             room_turn: None,
             host_origin: None,
+            locality: crate::claim::CallerLocality::OnDevice,
+            producers: None,
             birth_position: Default::default(),
         }
     }
@@ -491,6 +499,8 @@ impl<'v> Memory<'v> {
                 read_proof: self.read_proof.clone(),
                 room_turn: Some(ceiling),
                 host_origin: self.host_origin.clone(),
+                locality: self.locality,
+                producers: self.producers,
                 birth_position: self.birth_position,
             },
         })
@@ -604,18 +614,12 @@ impl Memory<'_> {
     }
 
     pub(crate) fn verify_owner_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
-        verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
-        if self.actor_class != EdgeActorClass::Human {
-            return Err(MemoryError::new(
-                MEMORY_CODE_FORBIDDEN,
-                format!(
-                    "actor class {} is not the vault owner",
-                    self.actor_class.gate_actor_class()
-                ),
-                &["Bind a human-class owner actor key."],
-            ));
-        }
-        verify_owner_actor_binding_in_txn(self.vault, txn, self.actor)
+        super::credential_key::verify_vault_owner_in_txn(
+            self.vault,
+            txn,
+            self.actor,
+            self.actor_class,
+        )
     }
 
     /// One actor-bound content writer. Its interface exposes read-only

@@ -109,6 +109,9 @@ impl<'a> ScopedRead<'a> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
+        if self.device_withholds_in(txn, id, None)? {
+            return Ok(false);
+        }
         if self.actor_key.room_turn.is_none()
             && self.actor_key.worlds.is_none()
             && self.audience.is_none()
@@ -136,6 +139,9 @@ impl<'a> ScopedRead<'a> {
         id: &EntityId,
         raw: &[u8],
     ) -> Result<bool> {
+        if self.device_withholds_in(txn, id, Some(raw))? {
+            return Ok(false);
+        }
         if self.actor_key.room_turn.is_none() && self.actor_key.worlds.is_none() {
             return self.audience_conjunct_in(txn, id, raw);
         }
@@ -176,6 +182,51 @@ impl<'a> ScopedRead<'a> {
             }
         }
         self.audience_conjunct_in(txn, id, raw)
+    }
+
+    /// Whether this read serves a caller off this device.
+    pub(crate) fn off_device(&self) -> bool {
+        self.actor_key.off_device()
+    }
+
+    /// Whether a device-local world keeps `id` from this read: a caller off
+    /// this device reads none of its rows (DEC-0005), neither the revision
+    /// `raw` a door serves nor the row as it stands. A row whose world cannot
+    /// be read stays here too. The flag set is the vault's, read on base; the
+    /// row is judged as this read sees it, so in a room a row the room stages
+    /// is judged as well. Such a row carries no record-scope stamp, and one
+    /// the judge cannot place is kept.
+    pub(super) fn device_withholds_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: Option<&[u8]>,
+    ) -> Result<bool> {
+        if !self.actor_key.off_device() {
+            return Ok(false);
+        }
+        let flagged = crate::settings::device_local_worlds_at(
+            &self.vault.store,
+            txn,
+            crate::claim::CallerLocality::OffDevice,
+        )?;
+        let read = self.store_read();
+        let withholds = match raw {
+            Some(raw) => {
+                crate::settings::device_only_withholds_raw(&read, txn, &flagged, id, Some(raw))
+            }
+            None => Ok(false),
+        };
+        match withholds.and_then(|held| {
+            if held {
+                Ok(true)
+            } else {
+                crate::settings::device_only_withholds(&read, txn, &flagged, id)
+            }
+        }) {
+            Err(Error::CorruptedIndex(_)) => Ok(true),
+            held => held,
+        }
     }
 
     /// Whether each of `peers` reads the revision `raw` too, under this
@@ -305,7 +356,7 @@ impl<'a> ScopedRead<'a> {
             })
     }
 
-    pub(super) fn proof_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    pub(crate) fn proof_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
         let Some(proof) = &self.actor_key.proof else {
             return Ok(true);
         };
@@ -321,6 +372,34 @@ impl<'a> ScopedRead<'a> {
             return Ok(false);
         }
         Ok(fold.slip_is_live(&claims.slip_id))
+    }
+
+    /// Whether `judge` holds for this read and for each peer it conjoins
+    /// ([`Self::with_peer_reads`]), each lane judged as itself in `txn`. A
+    /// peer read as the owner that is no longer the owner there fails, as it
+    /// keeps every row out of a point read.
+    pub(crate) fn every_lane_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        mut judge: impl FnMut(&ScopedRead<'a>) -> Result<bool>,
+    ) -> Result<bool> {
+        if !judge(self)? {
+            return Ok(false);
+        }
+        for peer in &self.peer_reads {
+            let peer = self.vault.scoped_read(peer.clone());
+            match peer.owner_live_in(txn) {
+                Ok(()) => {}
+                Err(Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(_))) => {
+                    return Ok(false);
+                }
+                Err(error) => return Err(error),
+            }
+            if !judge(&peer)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     #[must_use]
@@ -447,11 +526,13 @@ impl ScopedRead<'_> {
         // private one; its count would say it exists, so it reads as absent.
         // A row outside the worlds the read asked for is not withheld by
         // policy; scope honesty names its world instead. A row in a world the
-        // credential cannot read has no name and no count (DEC-0005), and
+        // credential cannot read, or one a device-local world keeps from a
+        // caller off this device, has no name and no count (DEC-0005), and
         // neither has a TASK outside the credential's worlds or facets.
         if self.actor_key.room_turn.is_none()
             && !self.outside_asked_worlds_in(txn, id, &row)?
             && !self.outside_credential_worlds_in(txn, id, &row)?
+            && !self.device_withholds_in(txn, id, None)?
             && !self.outside_credential_task_position_in(txn, id, &row)?
             && crate::note::countable_read_suppression(row.entity_type, &row.body)
         {
@@ -459,6 +540,34 @@ impl ScopedRead<'_> {
         } else {
             Ok(ReadAdmission::OpaqueAbsent)
         }
+    }
+
+    /// Whether this read's credential is live in `txn` and the worlds the
+    /// read asked for and its Scope both admit `world` (`None` is base
+    /// reality): the world ceilings every row it serves lies under, before
+    /// any manifest's say.
+    pub(crate) fn world_readable_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        world: Option<EntityId>,
+    ) -> Result<bool> {
+        if self
+            .actor_key
+            .worlds
+            .as_ref()
+            .is_some_and(|worlds| !worlds.admits(world))
+        {
+            return Ok(false);
+        }
+        let id = crate::federation::ScopeId(world.unwrap_or_else(crate::claim::base_world_id));
+        if !self
+            .actor_key
+            .authority_scope()
+            .is_none_or(|scope| scope.worlds.contains(&id))
+        {
+            return Ok(false);
+        }
+        self.proof_live_in(txn)
     }
 
     fn outside_asked_worlds_in(

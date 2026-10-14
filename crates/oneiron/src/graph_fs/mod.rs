@@ -9,6 +9,7 @@ mod claim_grep;
 mod claim_ids;
 mod coreutils;
 mod coreutils_text;
+mod device_scan;
 mod model;
 mod paging;
 mod readdir;
@@ -25,6 +26,8 @@ pub use self::model::{
     GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,
 };
 
+#[cfg(test)]
+mod device_local_tests;
 #[cfg(test)]
 mod tests;
 

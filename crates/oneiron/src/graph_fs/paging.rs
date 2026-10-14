@@ -123,6 +123,24 @@ impl SealedPosition for EntityId {
     }
 }
 
+/// Where the world listing resumes: after base reality (`None`), or after
+/// the WORLD row it last scanned.
+pub(super) struct WorldPosition(pub(super) Option<EntityId>);
+
+impl SealedPosition for WorldPosition {
+    fn to_bytes(&self) -> Vec<u8> {
+        self.0
+            .map_or_else(Vec::new, |world| world.as_bytes().to_vec())
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.is_empty() {
+            return Some(Self(None));
+        }
+        entity_id(bytes).map(|world| Self(Some(world)))
+    }
+}
+
 /// What a sealed token carries: a position, as bytes.
 pub(super) trait SealedPosition: Sized {
     fn to_bytes(&self) -> Vec<u8>;

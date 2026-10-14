@@ -657,13 +657,9 @@ pub(crate) fn retrieval_signal_name(signal: oneiron::RetrievalSignal) -> &'stati
 }
 
 impl CoreContextPackResponse {
-    /// Records the served rows on the session, folding that read's receipt
-    /// into this response's `narrowing` and its withheld-data notice.
-    pub(super) fn observe_rows(
-        &mut self,
-        read: &oneiron::claim::ScopedRead<'_>,
-        session: &mut oneiron::context_board::SessionReadSet,
-    ) -> oneiron::Result<()> {
+    /// The rows this pack serves: its results, its neighbours and the
+    /// evidence its L2 base names.
+    pub(crate) fn served_rows(&self) -> oneiron::Result<Vec<oneiron::EntityId>> {
         let mut ids = self
             .results
             .iter()
@@ -673,6 +669,17 @@ impl CoreContextPackResponse {
         if let Some(base) = &self.l2_base {
             ids.extend_from_slice(base.evidence_ids());
         }
+        Ok(ids)
+    }
+
+    /// Records the served rows on the session, folding that read's receipt
+    /// into this response's `narrowing` and its withheld-data notice.
+    pub(super) fn observe_rows(
+        &mut self,
+        read: &oneiron::claim::ScopedRead<'_>,
+        session: &mut oneiron::context_board::SessionReadSet,
+    ) -> oneiron::Result<()> {
+        let ids = self.served_rows()?;
         let observed = session.observe_rows(read, &ids)?;
         self.narrowing.restrict_with(&observed);
         self.access = oneiron::access_grant::GrantedData::new(

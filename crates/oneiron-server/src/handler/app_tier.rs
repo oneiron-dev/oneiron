@@ -216,7 +216,7 @@ pub(super) fn handle_app_message_with_connection(
                 server
                     .wire_telemetry
                     .record("auth.bind", actor, oneiron_vault_contract::now_ts());
-            state.bound_auth = Some(binding?);
+            state.bound_auth = Some(binding?.at(state.locality));
             for frame in crate::livequery::rpc_result(request.request_id, serde_json::Value::Null)?
             {
                 direct_tx
@@ -231,6 +231,11 @@ pub(super) fn handle_app_message_with_connection(
             auth.principal_ref().unwrap_or(auth.principal()),
             oneiron_vault_contract::now_ts(),
         );
+        // A result is queued with the rows it carries, for the socket's
+        // send door to judge again (DEC-0005).
+        let conn = connection
+            .as_deref()
+            .map_or(0, crate::livequery::connection::Connection::conn_id);
         let frames = if request.method == "ping" {
             vec![crate::livequery::ping_result(
                 request.request_id,
@@ -239,8 +244,9 @@ pub(super) fn handle_app_message_with_connection(
         } else if request.method.starts_with("residence.") {
             let bound = auth.clone();
             crate::livequery::residence_rpc(server, &bound, request, &mut state.residence_index)?
+                .queued(conn)
         } else {
-            crate::livequery::bound_rpc(server, auth, request)?
+            crate::livequery::bound_rpc_reply(server, auth, request)?.queued(conn)
         };
         for frame in frames {
             direct_tx
