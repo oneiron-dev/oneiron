@@ -290,6 +290,7 @@ pub fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_delay: bool
         AuthorityOp::MachineProfile(profile) => {
             super::machine_profile::machine_profile_value(profile)
         }
+        AuthorityOp::OwnerRoot(record) => super::owner_root::owner_root_value(record),
     }
 }
 

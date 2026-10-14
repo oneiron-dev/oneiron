@@ -44,6 +44,7 @@ mod history_transfer;
 mod host_re_root;
 mod machine_fold;
 mod machine_identity;
+mod owner_anchor;
 mod machine_write;
 mod recovery_ceremony;
 mod retired_ceiling;

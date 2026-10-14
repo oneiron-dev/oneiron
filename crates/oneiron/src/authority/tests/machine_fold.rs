@@ -4,7 +4,8 @@
 use super::history_transfer::re_root_entry;
 use super::machine_identity::{Host, host, request_for};
 use super::support::{
-    authority_key_from_ed, cosign_ed, device, ed_key, genesis_entry, sign_ed, unsigned_entry,
+    RosterChain, authority_key_from_ed, cosign_ed, device, ed_key, genesis_entry, sign_ed,
+    unsigned_entry,
 };
 use super::*;
 use crate::registry::ENTITY_TYPE_MACHINE;
@@ -80,7 +81,7 @@ fn a_cloud_root_never_vouches_for_a_machine() {
     let node = fold
         .machine(machines[0])
         .expect("the custodian registers its node");
-    assert!(node.is_live() && !node.is_mine());
+    assert!(node.roster_chain().is_live() && !node.is_mine(None));
     assert!(fold.machine(machines[1]).is_none());
 }
 
@@ -120,18 +121,18 @@ fn a_hosted_host_root_never_vouches_for_a_machine() {
     ] {
         assert!(
             own.machine(yours.machine)
-                .is_some_and(FoldedMachine::is_mine)
+                .is_some_and(|folded| folded.is_mine(None))
         );
         assert!(
             own.machine(later.machine)
-                .is_some_and(FoldedMachine::is_live)
+                .is_some_and(|folded| folded.roster_chain().is_live())
         );
     }
     let hosted = fold(crate::HostingPrivacyPosture::Hosted);
     assert!(
         hosted
             .machine(node.machine)
-            .is_some_and(|folded| folded.is_live() && !folded.is_mine())
+            .is_some_and(|folded| folded.roster_chain().is_live() && !folded.is_mine(None))
     );
     assert!(hosted.machine(yours.machine).is_none());
 }
@@ -187,7 +188,7 @@ fn a_hosted_roots_successor_never_vouches_for_a_machine() {
     assert!(
         self_hosted
             .machine(machine)
-            .is_some_and(FoldedMachine::is_mine)
+            .is_some_and(|folded| folded.is_mine(None))
     );
     let hosted = fold(crate::HostingPrivacyPosture::Hosted);
     assert!(hosted.valid_entries.contains(&re_root_hash));
@@ -305,7 +306,7 @@ fn a_row_bound_as_an_actor_on_any_branch_is_never_mine() {
         }
         assert!(
             fold.machine(machine)
-                .is_some_and(|folded| !folded.is_live() && !folded.is_mine())
+                .is_some_and(|folded| !folded.roster_chain().is_live() && !folded.is_mine(None))
         );
     }
 }
@@ -420,7 +421,12 @@ fn a_removal_crosses_a_refused_mark() {
                     AuthorityOp::MachineProfile(MachineProfile {
                         role: MachineRole::Removed,
                         revision: 2,
-                        ..fold.machine(node.machine).unwrap().profile.clone()
+                        ..fold
+                            .machine(node.machine)
+                            .unwrap()
+                            .roster_chain()
+                            .profile
+                            .clone()
                     }),
                     None,
                 );
@@ -463,8 +469,9 @@ fn a_removal_crosses_a_refused_mark() {
                 posture,
             );
             assert!(
-                fold.machine(node.machine)
-                    .is_some_and(|folded| folded.removed && !folded.is_live()),
+                fold.machine(node.machine).is_some_and(
+                    |folded| folded.roster_chain().removed && !folded.roster_chain().is_live()
+                ),
                 "{interposed}, {posture:?}"
             );
         }
@@ -496,7 +503,12 @@ fn a_retired_root_signs_no_machine_standing() {
     let removal = AuthorityOp::MachineProfile(MachineProfile {
         role: MachineRole::Removed,
         revision: 2,
-        ..before.machine(kept.machine).unwrap().profile.clone()
+        ..before
+            .machine(kept.machine)
+            .unwrap()
+            .roster_chain()
+            .profile
+            .clone()
     });
     let seq = before.append_sequences[&host.issuer.public_key()];
     let replayed = [
@@ -533,7 +545,7 @@ fn a_retired_root_signs_no_machine_standing() {
         assert!(fold.machine(forged).is_none());
         assert!(
             fold.machine(kept.machine)
-                .is_some_and(FoldedMachine::is_mine)
+                .is_some_and(|folded| folded.is_mine(None))
         );
     }
 }
@@ -580,7 +592,11 @@ fn an_uncarried_mark_never_outlives_the_stale_window() {
         .map(|entry| (authority_entry_hash(entry).unwrap(), 100))
         .collect();
     let within = fold_authority_log_with_seen_times(&entries, &first_seen, 100);
-    assert!(within.machine(stale).is_some_and(FoldedMachine::is_mine));
+    assert!(
+        within
+            .machine(stale)
+            .is_some_and(|folded| folded.is_mine(None))
+    );
     let after = fold_authority_log_with_seen_times(
         &entries,
         &first_seen,
@@ -589,9 +605,13 @@ fn an_uncarried_mark_never_outlives_the_stale_window() {
     assert!(
         after
             .machine(stale)
-            .is_some_and(|folded| folded.stale && !folded.is_mine())
+            .is_some_and(|folded| folded.roster_chain().stale && !folded.is_mine(None))
     );
-    assert!(after.machine(kept).is_some_and(FoldedMachine::is_mine));
+    assert!(
+        after
+            .machine(kept)
+            .is_some_and(|folded| folded.is_mine(None))
+    );
 }
 
 /// Custody is sticky: on a hosted vault a cloud root that hands the vault to
@@ -764,8 +784,8 @@ fn custody_marked_on_another_branch_reaches_the_successor() {
             .contains(&authority_entry_hash(&joining).unwrap())
     );
     let folded = fold.machine(early).unwrap();
-    assert_eq!(folded.signer_class, SignerClass::Custodial);
-    assert!(!folded.is_live() && !folded.is_mine());
+    assert_eq!(folded.roster_chain().signer_class, SignerClass::Custodial);
+    assert!(!folded.roster_chain().is_live() && !folded.is_mine(None));
 }
 
 /// `signer` marks `machine` "yours" on `parent`, with the install key `key`.
@@ -821,7 +841,11 @@ fn a_forked_handoff_leaves_no_machine_standing() {
         fold_authority_log_with_seen_times(&entries, &first_seen, 100)
     };
     let settled = fold(&[&genesis, &mark, &left]);
-    assert!(settled.machine(machine).is_some_and(FoldedMachine::is_mine));
+    assert!(
+        settled
+            .machine(machine)
+            .is_some_and(|folded| folded.is_mine(None))
+    );
     for entries in [
         [&genesis, &mark, &left, &right],
         [&right, &left, &mark, &genesis],
@@ -835,8 +859,12 @@ fn a_forked_handoff_leaves_no_machine_standing() {
             );
         }
         let folded = forked.machine(machine).unwrap();
-        assert!(folded.admitter_unsettled && !folded.is_live() && !folded.is_mine());
-        assert!(!folded.removed);
+        assert!(
+            folded.roster_chain().admitter_unsettled
+                && !folded.roster_chain().is_live()
+                && !folded.is_mine(None)
+        );
+        assert!(!folded.roster_chain().removed);
     }
 }
 
@@ -904,7 +932,12 @@ fn a_removal_holds_whichever_sibling_arrived_first() {
             AuthorityOp::MachineProfile(MachineProfile {
                 role: MachineRole::Removed,
                 revision: 2,
-                ..before.machine(removed.machine).unwrap().profile.clone()
+                ..before
+                    .machine(removed.machine)
+                    .unwrap()
+                    .roster_chain()
+                    .profile
+                    .clone()
             }),
             None,
         );
@@ -926,11 +959,15 @@ fn a_removal_holds_whichever_sibling_arrived_first() {
             }
             let fold = vault.authority_fold().unwrap();
             assert!(
-                fold.machine(removed.machine)
-                    .is_some_and(|folded| folded.removed && !folded.is_live()),
+                fold.machine(removed.machine).is_some_and(
+                    |folded| folded.roster_chain().removed && !folded.roster_chain().is_live()
+                ),
                 "merged: {merged}"
             );
-            assert!(fold.machine(node).is_some_and(FoldedMachine::is_live));
+            assert!(
+                fold.machine(node)
+                    .is_some_and(|folded| folded.roster_chain().is_live())
+            );
         }
     }
 }
@@ -979,7 +1016,12 @@ fn a_removal_holds_over_a_withdrawal_that_arrived_late() {
             AuthorityOp::MachineProfile(MachineProfile {
                 role: MachineRole::Removed,
                 revision: 2,
-                ..before.machine(machine).unwrap().profile.clone()
+                ..before
+                    .machine(machine)
+                    .unwrap()
+                    .roster_chain()
+                    .profile
+                    .clone()
             })
         };
         let first = host_entry(
@@ -1037,8 +1079,9 @@ fn a_removal_holds_over_a_withdrawal_that_arrived_late() {
             }
             let fold = vault.authority_fold().unwrap();
             let removed = |machine| {
-                fold.machine(machine)
-                    .is_some_and(|folded| folded.removed && !folded.is_live())
+                fold.machine(machine).is_some_and(|folded| {
+                    folded.roster_chain().removed && !folded.roster_chain().is_live()
+                })
             };
             assert!(removed(yours.machine), "actor revoke: {actor_revoke}");
             assert_eq!(removed(node.machine), !actor_revoke);
@@ -1085,7 +1128,12 @@ fn a_removal_never_proves_below_its_ancestrys_sequence() {
         AuthorityOp::MachineProfile(MachineProfile {
             role: MachineRole::Removed,
             revision: 2,
-            ..before.machine(yours.machine).unwrap().profile.clone()
+            ..before
+                .machine(yours.machine)
+                .unwrap()
+                .roster_chain()
+                .profile
+                .clone()
         }),
         None,
     );
@@ -1122,7 +1170,7 @@ fn a_removal_never_proves_below_its_ancestrys_sequence() {
                 .authority_fold()
                 .unwrap()
                 .machine(yours.machine)
-                .is_some_and(FoldedMachine::is_mine)
+                .is_some_and(|folded| folded.is_mine(None))
         );
     }
 
@@ -1150,7 +1198,12 @@ fn a_removal_never_proves_below_its_ancestrys_sequence() {
         AuthorityOp::MachineProfile(MachineProfile {
             role: MachineRole::Removed,
             revision: 2,
-            ..fold.machine(node.machine).unwrap().profile.clone()
+            ..fold
+                .machine(node.machine)
+                .unwrap()
+                .roster_chain()
+                .profile
+                .clone()
         }),
         None,
     ));
@@ -1166,8 +1219,9 @@ fn a_removal_never_proves_below_its_ancestrys_sequence() {
             posture,
         );
         assert!(
-            fold.machine(node.machine)
-                .is_some_and(|folded| !folded.removed && folded.is_live()),
+            fold.machine(node.machine).is_some_and(
+                |folded| !folded.roster_chain().removed && folded.roster_chain().is_live()
+            ),
             "{posture:?}"
         );
     }

@@ -581,6 +581,10 @@ fn fold_authority_log_once(
         machines: merged.as_ref().map_or_else(BTreeMap::new, |state| {
             super::machine_profile::folded_machines(state, retirements.unsettled())
         }),
+        pinned_root: None,
+        root_anchors: merged
+            .as_ref()
+            .map_or_else(BTreeMap::new, |state| state.root_anchors.clone()),
         issues,
     }
 }

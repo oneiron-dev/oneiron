@@ -7921,6 +7921,7 @@ dependencies = [
  "blake3",
  "ed25519-dalek 2.2.0",
  "oneiron-contracts",
+ "oneiron-crypto",
  "p256",
  "rmp-serde",
  "rmpv",

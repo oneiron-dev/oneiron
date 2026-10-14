@@ -170,7 +170,11 @@ pub(super) fn apply_stale_roster_window(
     // A machine stands on the revision that won. Once that revision is
     // stale it is not live here, until a key still on the roster signs the
     // same standing again.
-    for folded in fold.machines.values_mut() {
+    for folded in fold
+        .machines
+        .values_mut()
+        .flat_map(FoldedMachine::revisions_mut)
+    {
         if !expired.contains(&folded.entry) {
             continue;
         }

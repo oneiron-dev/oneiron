@@ -12,30 +12,14 @@
 use oneiron_crypto::{HybridPublicKey, HybridSecretKey};
 use zeroize::Zeroizing;
 
+pub use oneiron_authority::authority::RecoveryRootId;
+
 use super::{os_fill, refused};
+use crate::authority::OwnerRootRecord;
 use crate::error::Result;
 
 const RECOVERY_KEY_LABEL: &[u8] = b"oneiron/world-recovery-root/v1";
 const ANCHOR_CONTEXT: &str = "oneiron/owner-anchor/v1";
-const ROOT_ID_CONTEXT: &str = "oneiron/world-recovery-root-id/v2";
-
-/// A root's public id, and the fingerprint the owner carries between machines when
-/// pairing. It commits to the vault and to both seed-derived keys, so a root that
-/// copies the recovery key under another anchor has another id (R1-F1).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RecoveryRootId(pub [u8; 32]);
-
-impl RecoveryRootId {
-    /// `BLAKE3-derive_key("oneiron/world-recovery-root-id/v2", vault_id ‖ recovery_key ‖ anchor_key)`.
-    #[must_use]
-    pub fn of(vault_id: &[u8; 32], recovery_key: &HybridPublicKey, anchor_key: &[u8; 32]) -> Self {
-        let mut hasher = blake3::Hasher::new_derive_key(ROOT_ID_CONTEXT);
-        hasher.update(vault_id);
-        hasher.update(&recovery_key.to_bytes());
-        hasher.update(anchor_key);
-        Self(*hasher.finalize().as_bytes())
-    }
-}
 
 /// The kit's secret. `Debug` is redacted and the bytes are wiped on drop.
 pub struct RecoveryRootSeed(Zeroizing<[u8; 32]>);
@@ -104,4 +88,15 @@ pub struct RecoveryRoot {
     pub id: RecoveryRootId,
     pub recovery_key: HybridPublicKey,
     pub anchor_key: [u8; 32],
+}
+
+impl RecoveryRoot {
+    /// A stored root record is this root: the same id and both keys.
+    #[must_use]
+    pub fn matches(&self, record: &OwnerRootRecord) -> bool {
+        record.root == self.id
+            && record.anchor_key == self.anchor_key
+            && record.recovery_key.suite == crate::authority::MACHINE_ENCRYPTION_SUITE_HYBRID_V1
+            && record.recovery_key.key == self.recovery_key.to_bytes()
+    }
 }

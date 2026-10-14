@@ -105,6 +105,7 @@ pub(super) fn fold_entry_state(
             seqs: BTreeMap::new(),
             machines: BTreeMap::new(),
             machine_keys: BTreeMap::new(),
+            root_anchors: BTreeMap::new(),
             host_custody_keys: BTreeSet::new(),
             key_admitters: BTreeMap::new(),
             hosted: context.hosted,
@@ -142,6 +143,12 @@ pub(super) fn fold_entry_state(
         return EntryFold::Invalid(AuthorityFoldIssue::WrongVault(hash));
     }
     let signer = entry.signer_key().clone();
+    if let Some(folded) = super::anchor_fold::fold_anchor_entry(&mut state, entry, &signer, hash) {
+        return match folded {
+            Ok(()) => EntryFold::Ready(state),
+            Err(issue) => EntryFold::Invalid(issue),
+        };
+    }
     if state
         .roster
         .get(&signer)
@@ -361,7 +368,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::BindActor { .. }
         | AuthorityOp::RebindActor { .. }
         | AuthorityOp::RevokeActor { .. }
-        | AuthorityOp::MachineProfile(_) => false,
+        | AuthorityOp::MachineProfile(_)
+        | AuthorityOp::OwnerRoot(_) => false,
     }
 }
 
@@ -375,6 +383,7 @@ fn entry_requires_peer_cosign(entry: &AuthorityLogEntry) -> bool {
             | AuthorityOp::SlipRevoke { .. }
             | AuthorityOp::SlipConsume { .. }
             | AuthorityOp::MachineProfile(_)
+            | AuthorityOp::OwnerRoot(_)
     )
 }
 

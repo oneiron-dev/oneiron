@@ -27,11 +27,13 @@ enum Restriction {
     /// A verified `SlipConsume`: every id its proven branch had burnt, the
     /// single-use ancestors it spent among them.
     SlipBurn(BTreeSet<[u8; 32]>),
-    /// A verified machine removal: the machine's chains on the removal's own
-    /// branch, whose head is the terminal revision.
+    /// A verified machine removal: the removing admitter's chain on the
+    /// removal's own branch, whose head is the terminal revision. Only the
+    /// removal itself travels: nothing else that branch held.
     MachineRemoval {
         machine: EntityId,
-        chains: BTreeMap<MachineAdmitter, MachineChain>,
+        admitter: MachineAdmitter,
+        chain: MachineChain,
     },
 }
 
@@ -64,8 +66,12 @@ impl RevokeFacts {
                 Restriction::SlipBurn(burnt) => {
                     state.slips.consumed.extend(burnt.iter().copied());
                 }
-                Restriction::MachineRemoval { machine, chains } => {
-                    super::machine_profile::merge_machine_chains(state, *machine, chains);
+                Restriction::MachineRemoval {
+                    machine,
+                    admitter,
+                    chain,
+                } => {
+                    super::machine_profile::merge_machine_chain(state, *machine, *admitter, chain);
                 }
             }
         }
@@ -128,12 +134,22 @@ pub(super) fn derive_revoke_facts(
                 epoch: *epoch,
             },
             AuthorityOp::MachineProfile(profile) => {
-                let Some(chains) = state.machines.get(&profile.machine) else {
+                let Some((admitter, chain)) = state
+                    .machines
+                    .get(&profile.machine)
+                    .into_iter()
+                    .flatten()
+                    .find(|(_, chain)| chain.head.entry == *hash)
+                else {
                     continue;
                 };
                 Restriction::MachineRemoval {
                     machine: profile.machine,
-                    chains: chains.clone(),
+                    admitter: *admitter,
+                    chain: MachineChain {
+                        head: chain.head.clone(),
+                        owner_held: chain.owner_held.clone().filter(|held| held.entry == *hash),
+                    },
                 }
             }
             _ => continue,

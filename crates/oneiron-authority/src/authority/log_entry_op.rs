@@ -126,6 +126,8 @@ pub enum AuthorityOp {
     /// One revision of a physical machine's standing: the owner's answer at
     /// the pairing ceremony, signed by an owner roster key.
     MachineProfile(MachineProfile),
+    /// An owner recovery root, signed by its own anchor (world privacy P6b).
+    OwnerRoot(OwnerRootRecord),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -177,6 +179,9 @@ impl AuthorityLogEntry {
             _ => {}
         }
         validate_op(&self.op)?;
+        if let AuthorityOp::OwnerRoot(record) = &self.op {
+            record.validate_entry(self)?;
+        }
         self.signer.validate()?;
         let mut previous_cosign_key: Option<&AuthorityKey> = None;
         for cosign in &self.cosigns {
@@ -432,6 +437,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
             authority_key.validate()
         }
         AuthorityOp::MachineProfile(profile) => profile.validate(),
+        AuthorityOp::OwnerRoot(record) => record.validate(),
     }
 }
 

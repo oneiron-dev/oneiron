@@ -20,6 +20,8 @@
 //! | `fold_engine` | top-level fold orchestration |
 //! | `ancestor_index` / `ancestry_bypass` | fold ancestry and revocation bypass |
 //! | `entry_transition` | per-entry transition and consent/quorum predicates |
+//! | `anchor_fold` | owner roots and an anchor's machine marks, before the roster |
+//! | `machine_profile` | per-admitter machine chains and the trusted projection |
 //! | `op_apply` | applies one op to a fold state |
 //! | `wire_encode` / `wire_decode` | the `rmpv` codec, edited in lockstep |
 //! | `vault_api` | `impl Vault` read/write doors |
@@ -28,6 +30,7 @@ pub use crate::gate::manifest_authenticity::ManifestContribution;
 
 mod ancestor_index;
 mod ancestry_evaluator;
+mod anchor_fold;
 mod causal_write;
 mod checkpoint;
 mod claim_write;
@@ -85,8 +88,8 @@ pub use oneiron_authority::authority::{
     GenesisRecoveryStep, MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
     MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS, MAX_PACT_SCOPE_BYTES,
     MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS, MachineEncryptionKey, MachineOwnership, MachineProfile,
-    MachineRole, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY, SlipClaims,
-    SlipMintAction, authority_entry_hash, authority_log_entity_id,
+    MachineRole, OwnerRootRecord, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
+    RecoveryRootId, SlipClaims, SlipMintAction, authority_entry_hash, authority_log_entity_id,
     authority_log_entity_id_from_hash, authority_transcript, decode_authority_log_entry_body,
     encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
     genesis_vault_id, machine_profile_proof_transcript, sign_federation_pact_gesture,
@@ -113,7 +116,9 @@ pub use machine_identity::{
     LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine,
     machine_connection_transcript, machine_proof_header_value,
 };
-pub use machine_profile::{FoldedMachine, MachineAdmitter, SignerClass};
+pub use machine_profile::{
+    FoldedMachine, MachineAdmitter, MachineRevision, PinnedRoot, SignerClass, TrustedMachine,
+};
 pub use machine_write::machine_claim_transcript;
 pub use mesh_machine::{MeshMachineAddress, MeshMachineAddressEnvelope};
 pub use observation_policy::*;
@@ -147,7 +152,9 @@ pub(crate) use sequence_observation::record_authority_sequence_observation_in_tx
 // Module-internal only: nothing here leaves `authority`.
 use ancestor_index::*;
 use entry_transition::*;
-use machine_profile::{MachineChain, apply_machine_profile, merge_machine_maps};
+use machine_profile::{
+    KeyClaim, MachineChain, apply_anchor_profile, apply_machine_profile, merge_machine_maps,
+};
 pub(crate) use machine_write::{
     evidence_without_machine_signature, machine_claim_needs_history, machine_claim_read_admitted,
     machine_history_authority_descends, machine_history_host_context, verify_machine_claim_in_txn,

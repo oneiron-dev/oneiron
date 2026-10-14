@@ -1,17 +1,21 @@
 //! Folds `MachineProfile` entries into each physical machine's standing.
 //!
-//! A machine's standing is the owner's answer at the pairing ceremony, signed
-//! by an owner roster key. It merges across branches as actor bindings do: a
-//! higher revision supersedes, divergent profiles at one revision poison the
-//! machine, and a removal on any branch is terminal. Liveness is derived, never
-//! stored, so the facts that poison a machine (a shared key, a second key for
-//! one machine, an actor binding to its row) apply in every arrival order.
+//! A machine's standing is the owner's answer at the pairing ceremony. It
+//! merges across branches as actor bindings do: a higher revision supersedes,
+//! divergent profiles at one revision poison the machine, and a removal on any
+//! branch is terminal. Liveness is derived, never stored, so the facts that
+//! poison a machine (a shared key, a second key for one machine, an actor
+//! binding to its row) apply in every arrival order.
 //!
-//! Revisions form one chain per admitter and supersede only their own chain.
-//! The roster is the only admitter here; an owner anchor adds its own chain.
-//! Each revision keeps whose authority signed it, and each chain keeps its
-//! highest owner-held revision, which a custodian's later demote or removal
-//! never erases.
+//! Revisions form one chain per admitter and supersede only their own chain:
+//! the roster's, and one per owner anchor. Inside the roster's chain the
+//! revisions a key the owner holds signed form a chain of their own, so a
+//! custodian's later demote, removal or conflicting revision never reaches
+//! it. Which chains this install trusts is local: the accepted roster
+//! revisions, plus the pinned anchor's chain (world privacy P6b, contract §4).
+//! Poison applies within one admitter's chains for admission, and across the
+//! trusted chains for trust; an untrusted admitter's poison never touches a
+//! trusted chain, and its keys never speak for the machine.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -25,6 +29,8 @@ use super::*;
 pub enum MachineAdmitter {
     /// The vault's roster, under the owner-held rule for an owned mark.
     Roster,
+    /// One valid owner root's anchor key (Ed25519).
+    Anchor([u8; 32]),
 }
 
 /// Whose authority signed a revision.
@@ -37,26 +43,34 @@ pub enum SignerClass {
     Custodial,
 }
 
-/// One machine's folded standing.
+/// The root this install pins: only its anchor's chain is trusted here, and
+/// only while the fold holds the root as valid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PinnedRoot {
+    pub id: RecoveryRootId,
+    pub anchor_key: [u8; 32],
+}
+
+/// The winning revision of one admitter's chain for one machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FoldedMachine {
+pub struct MachineRevision {
     pub profile: MachineProfile,
     /// Divergent profiles at one revision, a machine key claimed by two
     /// machines, a machine whose revisions named two keys, or a row that is
     /// also an actor: never live.
     pub conflicted: bool,
-    /// A `Removed` revision folded on some branch. Terminal.
+    /// A `Removed` revision folded in this chain on some branch. Terminal.
     pub removed: bool,
     /// The winning revision rests on a roster key revoked since, past the
     /// stale-roster window, and no key still on the roster signed it again:
     /// not live on this install.
     pub stale: bool,
-    /// The admitter whose chain gives this standing has no settled root: a
-    /// handoff conflict retired its root and installed no successor. Not
-    /// live until the conflict settles, when the standing is judged again.
+    /// The roster has no settled root: a handoff conflict retired its root
+    /// and installed no successor. A roster revision is not live until the
+    /// conflict settles, when the standing is judged again.
     pub admitter_unsettled: bool,
-    /// The roster key that signed the revision, and its class. The class is
-    /// judged again on the merged history: a key found to be in the host's
+    /// The key that signed the revision, and its class. A roster key's class
+    /// is judged again on the merged history: a key found to be in the host's
     /// custody on any branch the fold holds stops its owned revision standing.
     pub signer: AuthorityKey,
     pub signer_class: SignerClass,
@@ -64,15 +78,51 @@ pub struct FoldedMachine {
     pub entry: AuthorityEntryHash,
 }
 
+/// One machine's folded standing: a chain per admitter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoldedMachine {
+    /// The roster's chain: every revision a roster key signed.
+    pub roster: Option<MachineRevision>,
+    /// The roster revisions a key P1 accepts for an owned mark signed (owner
+    /// held, and not in the host's custody on a hosted fold, judged on the
+    /// merged history), merged as a chain of their own. Custody that reaches
+    /// its signer later empties it; it never falls back to an older revision.
+    pub roster_trusted: Option<MachineRevision>,
+    /// Each owner anchor's chain, by anchor key.
+    pub anchored: BTreeMap<[u8; 32], MachineRevision>,
+    /// For each key a chain here names, the trust scopes in which another
+    /// machine claims it: `Roster` for an accepted roster revision.
+    shared: BTreeMap<[u8; 32], BTreeSet<MachineAdmitter>>,
+}
+
+/// The identity a trusted chain gives a machine: the keys that may sign as
+/// it and be wrapped to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrustedMachine<'a> {
+    pub chain: MachineAdmitter,
+    pub profile: &'a MachineProfile,
+}
+
 /// One admitter's revisions of one machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct MachineChain {
-    pub(super) head: FoldedMachine,
-    /// The highest revision an owner-held key signed.
-    pub(super) owner_held: Option<FoldedMachine>,
+    pub(super) head: MachineRevision,
+    /// The roster's chain only: the highest revision an owner-held key
+    /// signed, with only those revisions' removals.
+    pub(super) owner_held: Option<MachineRevision>,
 }
 
-impl FoldedMachine {
+/// One install key a revision named, and under whose authority.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct KeyClaim {
+    pub(super) machine: EntityId,
+    pub(super) admitter: MachineAdmitter,
+    /// The roster key that signed it, when that key was owner-held as the
+    /// revision folded. Custody is judged again on the merged history.
+    pub(super) owner_held: Option<AuthorityKey>,
+}
+
+impl MachineRevision {
     /// Of two entries carrying one revision, the smaller entry speaks for it.
     fn min_by_entry(self, other: &Self) -> Self {
         if other.entry < self.entry {
@@ -82,8 +132,8 @@ impl FoldedMachine {
         }
     }
 
-    #[must_use]
     /// An owned revision stands only when a key the owner holds signed it.
+    #[must_use]
     pub fn is_live(&self) -> bool {
         !self.conflicted
             && !self.removed
@@ -93,26 +143,165 @@ impl FoldedMachine {
                 || !matches!(self.profile.role, MachineRole::Owned(_)))
     }
 
-    /// Mine only by the owner's explicit `Yours`, and only while live.
+    /// Live, and the owner's explicit `Yours`.
     #[must_use]
-    pub fn is_mine(&self) -> bool {
+    pub fn says_yours(&self) -> bool {
         self.is_live() && self.profile.says_mine()
     }
 }
 
+impl FoldedMachine {
+    /// One admitter's chain.
+    #[must_use]
+    pub fn chain(&self, admitter: &MachineAdmitter) -> Option<&MachineRevision> {
+        match admitter {
+            MachineAdmitter::Roster => self.roster.as_ref(),
+            MachineAdmitter::Anchor(key) => self.anchored.get(key),
+        }
+    }
+
+    /// Every admitter's chain: the roster's, then each anchor's.
+    pub fn chains(&self) -> impl Iterator<Item = (MachineAdmitter, &MachineRevision)> {
+        self.roster
+            .iter()
+            .map(|chain| (MachineAdmitter::Roster, chain))
+            .chain(
+                self.anchored
+                    .iter()
+                    .map(|(key, chain)| (MachineAdmitter::Anchor(*key), chain)),
+            )
+    }
+
+    /// Chain `admitter` is live (not removed, not conflicted) and says
+    /// `Owned(Yours)`.
+    #[must_use]
+    pub fn admits(&self, admitter: &MachineAdmitter) -> bool {
+        self.chain(admitter)
+            .is_some_and(MachineRevision::says_yours)
+    }
+
+    /// Some single chain admits it. Pin-free: it authorizes nothing.
+    #[must_use]
+    pub fn is_admitted(&self) -> bool {
+        self.chains().any(|(_, chain)| chain.says_yours())
+    }
+
+    /// The identity under `T(admitter)`: the accepted roster revisions, plus
+    /// that anchor's chain. `None` unless one of those chains admits the
+    /// machine, none is removed or conflicted, they all carry the same machine
+    /// key and encryption key, and no other machine claims that key within
+    /// them. Pin-free.
+    #[must_use]
+    pub fn trusted_under(&self, admitter: &MachineAdmitter) -> Option<TrustedMachine<'_>> {
+        let anchor = match admitter {
+            MachineAdmitter::Roster => None,
+            MachineAdmitter::Anchor(key) => self.anchored.get(key).map(|chain| (*admitter, chain)),
+        };
+        let chains: Vec<_> = self
+            .roster_trusted
+            .iter()
+            .map(|chain| (MachineAdmitter::Roster, chain))
+            .chain(anchor)
+            .collect();
+        let first = chains.first()?.1;
+        let blocked = chains.iter().any(|(_, chain)| {
+            chain.removed
+                || chain.conflicted
+                || chain.profile.machine_key != first.profile.machine_key
+                || chain.profile.encryption_key != first.profile.encryption_key
+                || self
+                    .shared
+                    .get(&chain.profile.machine_key)
+                    .is_some_and(|scopes| {
+                        scopes.contains(&MachineAdmitter::Roster) || scopes.contains(admitter)
+                    })
+        });
+        if blocked {
+            return None;
+        }
+        chains
+            .into_iter()
+            .rev()
+            .find(|(_, chain)| chain.says_yours())
+            .map(|(chain, revision)| TrustedMachine {
+                chain,
+                profile: &revision.profile,
+            })
+    }
+
+    /// The trusted identity under this install's pin: `trusted_under` the
+    /// pinned anchor, or the roster alone with no pin. The caller passes a
+    /// pin only while the fold holds its root ([`AuthorityFold::pinned_root`]).
+    #[must_use]
+    pub fn trusted(&self, pin: Option<&PinnedRoot>) -> Option<TrustedMachine<'_>> {
+        self.trusted_under(&pin.map_or(MachineAdmitter::Roster, |pin| {
+            MachineAdmitter::Anchor(pin.anchor_key)
+        }))
+    }
+
+    /// Mine under this install's pin.
+    #[must_use]
+    pub fn is_mine(&self, pin: Option<&PinnedRoot>) -> bool {
+        self.trusted(pin).is_some()
+    }
+
+    /// Some chain here, trusted or not, names `machine_key`.
+    #[must_use]
+    pub fn names_key(&self, machine_key: &[u8; 32]) -> bool {
+        self.roster
+            .iter()
+            .chain(&self.roster_trusted)
+            .chain(self.anchored.values())
+            .any(|chain| &chain.profile.machine_key == machine_key)
+    }
+
+    /// Every revision this fold holds for the machine, for the post-fold
+    /// stale-roster pass.
+    pub(super) fn revisions_mut(&mut self) -> impl Iterator<Item = &mut MachineRevision> {
+        self.roster
+            .iter_mut()
+            .chain(self.roster_trusted.iter_mut())
+            .chain(self.anchored.values_mut())
+    }
+}
+
 impl AuthorityFold {
-    /// The folded standing of one MACHINE row, if the owner ever profiled it.
+    /// Every valid root's anchor key, with each root id that anchor signed.
+    /// Full root records live only in the stored entries.
+    #[must_use]
+    pub fn root_anchors(&self) -> &BTreeMap<[u8; 32], BTreeSet<RecoveryRootId>> {
+        &self.root_anchors
+    }
+
+    /// The folded standing of one MACHINE row, if any admitter profiled it.
     #[must_use]
     pub fn machine(&self, machine: EntityId) -> Option<&FoldedMachine> {
         self.machines.get(&machine)
     }
 
-    /// The live machine whose install key is `machine_key`.
+    /// One machine's trusted identity under this install's pin.
     #[must_use]
-    pub fn live_machine_by_key(&self, machine_key: &[u8; 32]) -> Option<&FoldedMachine> {
+    pub fn trusted_machine(&self, machine: EntityId) -> Option<TrustedMachine<'_>> {
         self.machines
-            .values()
-            .find(|machine| machine.is_live() && &machine.profile.machine_key == machine_key)
+            .get(&machine)?
+            .trusted(self.pinned_root.as_ref())
+    }
+
+    /// The machine key a connection proves to stand as `machine` here: its
+    /// trusted identity's under this install's pin, else its live roster
+    /// revision's (a node the owner never called theirs, so never mine). A
+    /// key only an untrusted chain names never speaks for the machine.
+    #[must_use]
+    pub fn machine_proof_key(&self, machine: EntityId) -> Option<[u8; 32]> {
+        let folded = self.machines.get(&machine)?;
+        match folded.trusted(self.pinned_root.as_ref()) {
+            Some(trusted) => Some(trusted.profile.machine_key),
+            None => folded
+                .roster
+                .as_ref()
+                .filter(|roster| roster.is_live())
+                .map(|roster| roster.profile.machine_key),
+        }
     }
 }
 
@@ -153,14 +342,10 @@ pub(super) fn apply_machine_profile(
         return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     let head = roster_chain(state, profile.machine).map(|chain| &chain.head);
-    if key_is_authority(state, &profile.machine_key)
-        || machine_is_actor(state, profile.machine)
-        || !profile.proof_verifies(&state.vault_id)
-        || head.is_some_and(|folded| profile.revision <= folded.profile.revision)
-    {
+    if refused_revision(state, profile, head) {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
-    let folded = FoldedMachine {
+    let folded = MachineRevision {
         profile: profile.clone(),
         conflicted: false,
         removed: profile.role == MachineRole::Removed || head.is_some_and(|folded| folded.removed),
@@ -171,8 +356,18 @@ pub(super) fn apply_machine_profile(
         entry: hash,
     };
     let chains = state.machines.entry(profile.machine).or_default();
-    let owner_held = match chains.remove(&MachineAdmitter::Roster) {
-        _ if signer_class == SignerClass::OwnerHeld => Some(folded.clone()),
+    let prior = chains.remove(&MachineAdmitter::Roster);
+    // The owner-held chain keeps only its own removals: a custodian's
+    // removal stays in the roster's chain and never reaches it.
+    let owner_held = match prior {
+        _ if signer_class == SignerClass::OwnerHeld => Some(MachineRevision {
+            removed: profile.role == MachineRole::Removed
+                || prior
+                    .as_ref()
+                    .and_then(|chain| chain.owner_held.as_ref())
+                    .is_some_and(|held| held.removed),
+            ..folded.clone()
+        }),
         Some(chain) => chain.owner_held,
         None => None,
     };
@@ -187,8 +382,76 @@ pub(super) fn apply_machine_profile(
         .machine_keys
         .entry(profile.machine_key)
         .or_default()
-        .insert(profile.machine);
+        .insert(KeyClaim {
+            machine: profile.machine,
+            admitter: MachineAdmitter::Roster,
+            owner_held: (signer_class == SignerClass::OwnerHeld).then(|| signer.clone()),
+        });
     Ok(())
+}
+
+/// One revision in a valid root's anchor chain of a machine (E2(b)): an owned
+/// mark or a removal, never a hosted or execution node. It supersedes only
+/// that anchor's chain; the roster's chain and every other anchor's stay as
+/// they are. No install key and no host cosign vouches here.
+pub(super) fn apply_anchor_profile(
+    state: &mut FoldState,
+    anchor: [u8; 32],
+    profile: &MachineProfile,
+    hash: AuthorityEntryHash,
+) -> std::result::Result<(), AuthorityFoldIssue> {
+    if !matches!(profile.role, MachineRole::Owned(_) | MachineRole::Removed) {
+        return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+    }
+    let admitter = MachineAdmitter::Anchor(anchor);
+    let head = state
+        .machines
+        .get(&profile.machine)
+        .and_then(|chains| chains.get(&admitter))
+        .map(|chain| &chain.head);
+    if refused_revision(state, profile, head) {
+        return Err(AuthorityFoldIssue::InvalidEntry(hash));
+    }
+    let folded = MachineRevision {
+        profile: profile.clone(),
+        conflicted: false,
+        removed: profile.role == MachineRole::Removed || head.is_some_and(|folded| folded.removed),
+        stale: false,
+        admitter_unsettled: false,
+        signer: AuthorityKey::Ed25519(anchor),
+        signer_class: SignerClass::OwnerHeld,
+        entry: hash,
+    };
+    state.machines.entry(profile.machine).or_default().insert(
+        admitter,
+        MachineChain {
+            head: folded,
+            owner_held: None,
+        },
+    );
+    state
+        .machine_keys
+        .entry(profile.machine_key)
+        .or_default()
+        .insert(KeyClaim {
+            machine: profile.machine,
+            admitter,
+            owner_held: None,
+        });
+    Ok(())
+}
+
+/// A revision no chain takes: a key that is authority, a row that is an
+/// actor's, a proof the machine did not sign, or no higher than its chain.
+fn refused_revision(
+    state: &FoldState,
+    profile: &MachineProfile,
+    head: Option<&MachineRevision>,
+) -> bool {
+    key_is_authority(state, &profile.machine_key)
+        || machine_is_actor(state, profile.machine)
+        || !profile.proof_verifies(&state.vault_id)
+        || head.is_some_and(|folded| profile.revision <= folded.profile.revision)
 }
 
 /// A key in the host's custody on a hosted vault, where the host's root is
@@ -233,19 +496,19 @@ fn machine_is_actor(state: &FoldState, machine: EntityId) -> bool {
 /// by the byte-wise smaller profile, so the merge is the same in every order.
 /// A strictly higher revision clears that poison, as it does for actor
 /// bindings; a removal never clears.
-pub(super) fn merge_machine(left: &FoldedMachine, right: &FoldedMachine) -> FoldedMachine {
+pub(super) fn merge_machine(left: &MachineRevision, right: &MachineRevision) -> MachineRevision {
     let mut merged = match left.profile.revision.cmp(&right.profile.revision) {
         Ordering::Greater => left.clone(),
         Ordering::Less => right.clone(),
-        Ordering::Equal if left.profile == right.profile => FoldedMachine {
+        Ordering::Equal if left.profile == right.profile => MachineRevision {
             conflicted: left.conflicted || right.conflicted,
             ..left.clone().min_by_entry(right)
         },
-        Ordering::Equal if left.profile < right.profile => FoldedMachine {
+        Ordering::Equal if left.profile < right.profile => MachineRevision {
             conflicted: true,
             ..left.clone()
         },
-        Ordering::Equal => FoldedMachine {
+        Ordering::Equal => MachineRevision {
             conflicted: true,
             ..right.clone()
         },
@@ -278,72 +541,194 @@ fn join_chains(
     }
 }
 
-/// Joins one machine's chains from another state into `state`.
-pub(super) fn merge_machine_chains(
+/// Joins one machine's chain from another state into `state`.
+pub(super) fn merge_machine_chain(
     state: &mut FoldState,
     machine: EntityId,
-    chains: &BTreeMap<MachineAdmitter, MachineChain>,
+    admitter: MachineAdmitter,
+    chain: &MachineChain,
 ) {
-    join_chains(state.machines.entry(machine).or_default(), chains);
+    join_chains(
+        state.machines.entry(machine).or_default(),
+        &BTreeMap::from([(admitter, chain.clone())]),
+    );
 }
 
 pub(super) fn merge_machine_maps(
     merged: &mut BTreeMap<EntityId, BTreeMap<MachineAdmitter, MachineChain>>,
-    keys: &mut BTreeMap<[u8; 32], BTreeSet<EntityId>>,
+    keys: &mut BTreeMap<[u8; 32], BTreeSet<KeyClaim>>,
     right: &FoldState,
 ) {
     for (machine, chains) in &right.machines {
         join_chains(merged.entry(*machine).or_default(), chains);
     }
-    for (key, machines) in &right.machine_keys {
-        keys.entry(*key)
-            .or_default()
-            .extend(machines.iter().copied());
+    for (key, claims) in &right.machine_keys {
+        keys.entry(*key).or_default().extend(claims.iter().cloned());
     }
 }
 
-/// One machine with the derived poison applied: branches that never saw each
-/// other may have given its key to two machines, or made its key or row an
-/// actor's. A machine joins once with one key, so a revision that names
-/// another key leaves it live under neither: a connection that proved the
-/// first key never speaks for the second. Custody is judged on the merged
-/// history too, so a mark signed before its signer's custody reached that
-/// branch counts no more than one signed after. Every reader of a machine's
-/// standing goes through this.
-pub(super) fn derived_machine(state: &FoldState, id: EntityId) -> Option<FoldedMachine> {
-    let mut folded = roster_chain(state, id)?.head.clone();
-    if state.hosted && in_host_custody(state, &folded.signer) {
-        folded.signer_class = SignerClass::Custodial;
-    }
-    let shared_key = state
-        .machine_keys
-        .get(&folded.profile.machine_key)
-        .is_some_and(|machines| machines.len() > 1);
-    let rekeyed = state
-        .machine_keys
-        .iter()
-        .any(|(key, machines)| *key != folded.profile.machine_key && machines.contains(&id));
-    folded.conflicted |= shared_key
-        || rekeyed
-        || key_is_authority(state, &folded.profile.machine_key)
-        || machine_is_actor(state, id);
-    Some(folded)
+/// Which claims one chain's poison is judged against.
+#[derive(Clone, Copy)]
+enum ClaimScope<'a> {
+    /// Every roster revision: admission under the roster.
+    Roster,
+    /// The roster revisions a key P1 accepts signed: the trusted roster chain.
+    Accepted,
+    /// One anchor's revisions.
+    Anchor(&'a [u8; 32]),
 }
 
-/// The fold's public view: each machine with the derived poison applied, and
-/// with no standing while the roster has no settled root.
+/// The fold's key claims, indexed once for the public view.
+struct ClaimIndex<'s> {
+    state: &'s FoldState,
+    by_machine: BTreeMap<EntityId, Vec<(&'s [u8; 32], &'s KeyClaim)>>,
+    custodial: std::cell::RefCell<BTreeMap<AuthorityKey, bool>>,
+}
+
+impl<'s> ClaimIndex<'s> {
+    fn new(state: &'s FoldState) -> Self {
+        let mut by_machine: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for (key, claims) in &state.machine_keys {
+            for claim in claims {
+                by_machine
+                    .entry(claim.machine)
+                    .or_default()
+                    .push((key, claim));
+            }
+        }
+        Self {
+            state,
+            by_machine,
+            custodial: std::cell::RefCell::default(),
+        }
+    }
+
+    /// A roster key the owner held as it signed, and that custody on the
+    /// merged history has not reached since.
+    fn accepted(&self, signer: &AuthorityKey) -> bool {
+        let state = self.state;
+        !*self
+            .custodial
+            .borrow_mut()
+            .entry(signer.clone())
+            .or_insert_with(|| state.hosted && in_host_custody(state, signer))
+    }
+
+    fn in_scope(&self, claim: &KeyClaim, scope: ClaimScope<'_>) -> bool {
+        match scope {
+            ClaimScope::Roster => claim.admitter == MachineAdmitter::Roster,
+            ClaimScope::Accepted => {
+                claim.admitter == MachineAdmitter::Roster
+                    && claim
+                        .owner_held
+                        .as_ref()
+                        .is_some_and(|signer| self.accepted(signer))
+            }
+            ClaimScope::Anchor(key) => claim.admitter == MachineAdmitter::Anchor(*key),
+        }
+    }
+
+    /// P1's poison within one scope: the machine named another key there,
+    /// another machine claims its key there, or its key or row is authority.
+    fn poisoned(&self, id: EntityId, key: &[u8; 32], scope: ClaimScope<'_>) -> bool {
+        let rekeyed = self.by_machine.get(&id).is_some_and(|claims| {
+            claims
+                .iter()
+                .any(|(claimed, claim)| *claimed != key && self.in_scope(claim, scope))
+        });
+        let shared = self.state.machine_keys.get(key).is_some_and(|claims| {
+            claims
+                .iter()
+                .any(|claim| claim.machine != id && self.in_scope(claim, scope))
+        });
+        rekeyed || shared || key_is_authority(self.state, key) || machine_is_actor(self.state, id)
+    }
+
+    /// The trust scopes in which another machine claims `key`.
+    fn shared_scopes(&self, id: EntityId, key: &[u8; 32]) -> BTreeSet<MachineAdmitter> {
+        self.state
+            .machine_keys
+            .get(key)
+            .into_iter()
+            .flatten()
+            .filter(|claim| claim.machine != id)
+            .filter_map(|claim| match claim.admitter {
+                MachineAdmitter::Roster => self
+                    .in_scope(claim, ClaimScope::Accepted)
+                    .then_some(MachineAdmitter::Roster),
+                anchor @ MachineAdmitter::Anchor(_) => Some(anchor),
+            })
+            .collect()
+    }
+
+    /// One machine's public standing, with the derived poison applied per
+    /// chain. Custody is judged on the merged history, so a mark signed before
+    /// its signer's custody reached that branch counts no more than one
+    /// signed after. Every reader of a machine's standing goes through this.
+    fn folded(
+        &self,
+        id: EntityId,
+        chains: &BTreeMap<MachineAdmitter, MachineChain>,
+        roster_unsettled: bool,
+    ) -> FoldedMachine {
+        let state = self.state;
+        let roster = chains.get(&MachineAdmitter::Roster);
+        let roster_head = roster.map(|chain| {
+            let mut head = chain.head.clone();
+            if state.hosted && in_host_custody(state, &head.signer) {
+                head.signer_class = SignerClass::Custodial;
+            }
+            head.conflicted |= self.poisoned(id, &head.profile.machine_key, ClaimScope::Roster);
+            head.admitter_unsettled = roster_unsettled;
+            head
+        });
+        let roster_trusted = roster
+            .and_then(|chain| chain.owner_held.clone())
+            .filter(|held| self.accepted(&held.signer))
+            .map(|mut held| {
+                held.conflicted |=
+                    self.poisoned(id, &held.profile.machine_key, ClaimScope::Accepted);
+                held.admitter_unsettled = roster_unsettled;
+                held
+            });
+        let anchored: BTreeMap<_, _> = chains
+            .iter()
+            .filter_map(|(admitter, chain)| match admitter {
+                MachineAdmitter::Anchor(key) => {
+                    let mut head = chain.head.clone();
+                    head.conflicted |=
+                        self.poisoned(id, &head.profile.machine_key, ClaimScope::Anchor(key));
+                    Some((*key, head))
+                }
+                MachineAdmitter::Roster => None,
+            })
+            .collect();
+        let shared = roster_trusted
+            .iter()
+            .chain(anchored.values())
+            .map(|chain| chain.profile.machine_key)
+            .map(|key| (key, self.shared_scopes(id, &key)))
+            .filter(|(_, scopes)| !scopes.is_empty())
+            .collect();
+        FoldedMachine {
+            roster: roster_head,
+            roster_trusted,
+            anchored,
+            shared,
+        }
+    }
+}
+
+/// The fold's public view: each machine with the derived poison applied per
+/// chain, and no roster standing while the roster has no settled root.
 pub(super) fn folded_machines(
     state: &FoldState,
     roster_unsettled: bool,
 ) -> BTreeMap<EntityId, FoldedMachine> {
+    let index = ClaimIndex::new(state);
     state
         .machines
-        .keys()
-        .filter_map(|id| {
-            derived_machine(state, *id).map(|mut folded| {
-                folded.admitter_unsettled = roster_unsettled;
-                (*id, folded)
-            })
-        })
+        .iter()
+        .map(|(id, chains)| (*id, index.folded(*id, chains, roster_unsettled)))
         .collect()
 }

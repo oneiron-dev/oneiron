@@ -260,6 +260,7 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
             })
         }
         OP_KIND_MACHINE_PROFILE => super::machine_profile::decode_machine_profile(entries),
+        OP_KIND_OWNER_ROOT => super::owner_root::decode_owner_root(entries),
         _ => Err(invalid_authority()),
     }
 }

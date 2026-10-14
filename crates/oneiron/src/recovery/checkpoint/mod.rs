@@ -562,6 +562,15 @@ impl Vault {
         }) {
             return Err(codec_error());
         }
+        // A signed authority row that fails its key-free checks (an owner
+        // root or a world-key record among them) is refused here as at every
+        // other write door, before any destination exists.
+        if image.databases["entities"]
+            .iter()
+            .any(|(_, blob)| malformed_authority_row(blob))
+        {
+            return Err(codec_error());
+        }
         // Authenticate every ORCB row against LIVE exterior custody before
         // creating a destination. A checkpoint never carries a key copy, and
         // a row whose key an erase destroyed since is dropped, not restored.
@@ -677,3 +686,15 @@ impl Vault {
 }
 #[cfg(test)]
 mod tests;
+
+/// An AUTHORITY_LOG row whose body the shared authority validator refuses.
+fn malformed_authority_row(blob: &[u8]) -> bool {
+    crate::batch::EntityMetadataHeader::parse(blob).is_some_and(|header| {
+        header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
+            && blob.len() > crate::batch::ENTITY_METADATA_HEADER_LEN
+            && crate::authority::validate_authority_log_entry_body_bytes(
+                &blob[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+            .is_err()
+    })
+}

@@ -383,6 +383,7 @@ pub(super) fn single_owner_state(
         seqs: BTreeMap::from([(owner_key.clone(), 0)]),
         machines: BTreeMap::new(),
         machine_keys: BTreeMap::new(),
+        root_anchors: BTreeMap::new(),
         host_custody_keys: BTreeSet::new(),
         key_admitters: BTreeMap::new(),
         hosted: false,
@@ -847,4 +848,17 @@ pub(super) fn mature_observed_widen(vault: &crate::Vault, entry: &AuthorityLogEn
         })
         .unwrap();
     now
+}
+
+/// P1's checks read a machine's roster chain.
+pub(super) trait RosterChain {
+    fn roster_chain(&self) -> &MachineRevision;
+}
+
+impl RosterChain for FoldedMachine {
+    fn roster_chain(&self) -> &MachineRevision {
+        self.roster
+            .as_ref()
+            .expect("the roster profiled this machine")
+    }
 }

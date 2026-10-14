@@ -2,7 +2,7 @@
 //! own answer at enrolment ("yours, work/school, or rented"; only yours counts),
 //! signed into the authority log. No MACHINE body, actor class, host-root
 //! derivation or forged entry sets it, and a mesh address bind keeps it.
-use super::support::{authority_key_from_ed, ed_key, sign_ed, unsigned_entry};
+use super::support::{RosterChain, authority_key_from_ed, ed_key, sign_ed, unsigned_entry};
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::registry::ENTITY_TYPE_MACHINE;
@@ -98,7 +98,7 @@ fn is_mine(vault: &Vault, machine: EntityId) -> bool {
         .authority_fold()
         .unwrap()
         .machine(machine)
-        .is_some_and(FoldedMachine::is_mine)
+        .is_some_and(|folded| folded.is_mine(None))
 }
 
 #[test]
@@ -116,7 +116,7 @@ fn only_the_owners_yours_makes_a_machine_mine() {
             .vault
             .enroll_machine(&host.issuer, &host.owner, &request, role)
             .unwrap();
-        assert_eq!(folded.is_mine(), mine, "{role:?}");
+        assert_eq!(folded.is_mine(None), mine, "{role:?}");
         assert_eq!(is_mine(&host.vault, request.machine), mine, "{role:?}");
         // The joining install keeps its own machine id beside its key; it is
         // not the CRDT client id.
@@ -193,6 +193,7 @@ fn only_the_owners_yours_makes_a_machine_mine() {
             .unwrap()
             .machine(request.machine)
             .unwrap()
+            .roster_chain()
             .profile
             .machine_key,
         request.machine_key
@@ -216,7 +217,7 @@ fn a_removed_machine_never_comes_back() {
             MachineRole::Removed,
         )
         .unwrap();
-    assert!(removed.removed && !removed.is_live());
+    assert!(removed.roster_chain().removed && !removed.roster_chain().is_live());
     assert!(!is_mine(&host.vault, request.machine));
     for retry in [
         host.vault
@@ -259,7 +260,13 @@ fn a_machine_never_changes_its_key() {
             )
             .unwrap()
     };
-    assert_eq!(proved(&first), PeerMachine::Proven(machine));
+    assert_eq!(
+        proved(&first),
+        PeerMachine::Proven {
+            machine,
+            key: first.verifying_key().to_bytes()
+        }
+    );
 
     let fold = host.vault.authority_fold().unwrap();
     let request = request_for(host.vault_id, machine, &second);
@@ -273,7 +280,12 @@ fn a_machine_never_changes_its_key() {
                 machine_key: request.machine_key,
                 machine_proof: request.machine_proof,
                 revision: 2,
-                ..fold.machine(machine).unwrap().profile.clone()
+                ..fold
+                    .machine(machine)
+                    .unwrap()
+                    .roster_chain()
+                    .profile
+                    .clone()
             }),
             2,
         )
@@ -418,9 +430,12 @@ fn enrolled_machine(host: Host) -> (tempfile::TempDir, Vault, MachineEnrolmentRe
             MachineRole::Owned(MachineOwnership::Yours),
         )
         .unwrap();
-    assert!(vault.local_machine().unwrap().is_some_and(|machine| {
-        machine.id == request.machine && machine.profile.is_some_and(|profile| profile.is_mine())
-    }));
+    assert!(
+        vault
+            .local_machine()
+            .unwrap()
+            .is_some_and(|machine| { machine.id == request.machine && machine.mine })
+    );
     (_dir, vault, request)
 }
 
@@ -588,7 +603,7 @@ fn pair_and_bind(
             request,
         )
         .unwrap();
-    assert!(folded.is_mine());
+    assert!(folded.is_mine(None));
     let address = MeshMachineAddress {
         endpoint_key: transport.verifying_key().to_bytes(),
         direct_addrs: vec![],
@@ -635,7 +650,10 @@ fn a_mesh_address_bind_keeps_the_mark() {
         host.vault
             .mesh_peer_machine(address.endpoint_key, b"mesh/sync")
             .unwrap(),
-        PeerMachine::Proven(machine)
+        PeerMachine::Proven {
+            machine,
+            key: request.machine_key
+        }
     );
     // Only through a live grant.
     assert_eq!(
@@ -661,7 +679,10 @@ fn a_mesh_address_bind_keeps_the_mark() {
         host.vault
             .mesh_peer_machine(address.endpoint_key, b"mesh/sync")
             .unwrap(),
-        PeerMachine::Proven(machine)
+        PeerMachine::Proven {
+            machine,
+            key: request.machine_key
+        }
     );
 
     // A mesh pairing by any key other than the profile's install key never

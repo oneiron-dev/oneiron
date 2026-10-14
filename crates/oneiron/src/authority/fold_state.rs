@@ -131,6 +131,11 @@ pub struct AuthorityFold {
     pub actor_bindings: BTreeMap<AuthorityKey, FoldedActorBinding>,
     /// Each physical machine's folded standing, keyed by its MACHINE row.
     pub machines: BTreeMap<EntityId, FoldedMachine>,
+    /// This install's pinned root while the fold holds it as a valid root:
+    /// the pin [`AuthorityFold::trusted_machine`] reads. `None` trusts the
+    /// accepted roster revisions alone.
+    pub pinned_root: Option<PinnedRoot>,
+    pub(super) root_anchors: BTreeMap<[u8; 32], BTreeSet<RecoveryRootId>>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
 }
@@ -252,8 +257,12 @@ pub(super) struct FoldState {
     pub(super) actor_revocation_hashes: BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
     pub(super) seqs: BTreeMap<AuthorityKey, u64>,
     pub(super) machines: BTreeMap<EntityId, BTreeMap<MachineAdmitter, MachineChain>>,
-    /// Every machine row that ever claimed each install key, merged by union.
-    pub(super) machine_keys: BTreeMap<[u8; 32], BTreeSet<EntityId>>,
+    /// Every claim of each install key (the machine, its admitter, and an
+    /// owner-held roster signer), merged by union.
+    pub(super) machine_keys: BTreeMap<[u8; 32], BTreeSet<KeyClaim>>,
+    /// Each valid root's anchor key, mapped to every root id it signed,
+    /// merged by union. No root record is fold state.
+    pub(super) root_anchors: BTreeMap<[u8; 32], BTreeSet<RecoveryRootId>>,
     /// Roster keys marked as the host's, merged by union: each key a host
     /// enrolled as its own root, and each key marked for the cloud (role or
     /// tier). Custody also passes along `key_admitters`.
@@ -479,6 +488,13 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .or_insert(*seq);
     }
     merge_machine_maps(&mut merged.machines, &mut merged.machine_keys, right);
+    for (anchor, roots) in &right.root_anchors {
+        merged
+            .root_anchors
+            .entry(*anchor)
+            .or_default()
+            .extend(roots.iter().copied());
+    }
     merged
         .host_custody_keys
         .extend(right.host_custody_keys.iter().cloned());

@@ -235,7 +235,7 @@ pub(super) fn decode_machine_profile(entries: &[(Value, Value)]) -> Result<Autho
 }
 
 /// A 32-hex entity id, refused unless it round-trips (the `actor_ref` rule).
-fn decode_canonical_id(value: &Value) -> Result<EntityId> {
+pub(super) fn decode_canonical_id(value: &Value) -> Result<EntityId> {
     let hex = value.as_str().ok_or_else(invalid_authority)?;
     let id = EntityId::from_hex(hex).map_err(|_| invalid_authority())?;
     if id.to_hex() != hex {
