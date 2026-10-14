@@ -847,3 +847,36 @@ fn put_world(vault: &Vault, byte: u8) -> Result<EntityId> {
     )?;
     Ok(id)
 }
+
+/// F18 review (H397): owner-only configuration acts only under a proof this
+/// vault authenticated. A proof another vault minted for the same PERSON id
+/// opens no standing block here, so it cannot claim the pair first; the
+/// owner's own proof then opens it with the intended configuration.
+#[test]
+fn a_foreign_owner_proof_opens_no_standing_block() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let (_other_dir, other) = test_vault();
+    let owner_id = put_person(&vault, 0x71)?;
+    put_person(&other, 0x71)?;
+    let agent = put_person(&vault, 0x72)?;
+    let world = put_world(&vault, 0x73)?;
+    let foreign = other.authenticate_owner(
+        owner_id,
+        &owner_id.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    assert!(
+        vault
+            .open_standing_block(&foreign, agent, world, "squatted", 8)
+            .is_err()
+    );
+    let own = vault.authenticate_owner(
+        owner_id,
+        &owner_id.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.open_standing_block(&own, agent, world, "identity", 64)?;
+    Ok(())
+}

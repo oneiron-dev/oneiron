@@ -23,13 +23,7 @@ use super::types::{
 
 impl Vault {
     pub(super) fn autonomy_owner(&self, owner: &AuthenticatedOwner) -> Result<()> {
-        self.authenticate_owner(
-            owner.actor(),
-            owner.principal_ref(),
-            true,
-            owner.decision_id(),
-        )
-        .map(|_| ())
+        owner.revalidate(self)
     }
 
     pub(super) fn autonomy_row(

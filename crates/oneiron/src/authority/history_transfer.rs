@@ -288,12 +288,7 @@ impl Vault {
         if self.privacy_posture() != crate::HostingPrivacyPosture::Hosted {
             return Err(invalid_authority());
         }
-        self.authenticate_owner(
-            owner.actor(),
-            owner.principal_ref(),
-            true,
-            owner.decision_id(),
-        )?;
+        owner.revalidate(self)?;
         let txn = self.store.env.read_txn()?;
         self.verify_owner_write_actor_in_txn(
             &txn,

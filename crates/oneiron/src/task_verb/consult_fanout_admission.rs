@@ -413,12 +413,7 @@ impl Memory<'_> {
         &self,
         owner: &AuthenticatedOwner,
     ) -> MemoryResult<()> {
-        self.vault().authenticate_owner(
-            owner.actor(),
-            owner.principal_ref(),
-            true,
-            owner.decision_id(),
-        )?;
+        owner.revalidate(self.vault())?;
         verify_actor_binding(self.vault(), owner.actor(), crate::EdgeActorClass::Human)
     }
 

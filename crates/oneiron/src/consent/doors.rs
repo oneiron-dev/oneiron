@@ -73,6 +73,15 @@ impl AuthenticatedOwner {
         self.decision_id
     }
 
+    /// [`Self::revalidate_in_txn`] in its own read transaction, for a door that
+    /// checks its owner before it opens its writer. A door never rebuilds a
+    /// proof from its public fields instead: a proof another vault
+    /// authenticated for the same PERSON id would pass that.
+    pub(crate) fn revalidate(&self, vault: &Vault) -> Result<()> {
+        let txn = vault.store.env.read_txn()?;
+        self.revalidate_in_txn(vault, &txn)
+    }
+
     pub(crate) fn revalidate_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
         if self.vault_path.as_path() != vault.store.env.path() {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(

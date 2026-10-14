@@ -83,14 +83,10 @@ impl Vault {
                 ),
             ));
         }
-        // The owner token supplies the authentication result. Recheck identity
-        // against this vault; an absent or inactive owner cannot mint authority.
-        self.authenticate_owner(
-            owner.actor(),
-            owner.principal_ref(),
-            true,
-            owner.decision_id(),
-        )?;
+        // The owner token supplies the authentication result. Recheck it
+        // against this vault: a proof another vault authenticated, or an absent
+        // or inactive owner, cannot mint authority.
+        owner.revalidate(self)?;
         self.persist_scoped_mcp_outbound_grant(id, intent, created_at)
     }
 

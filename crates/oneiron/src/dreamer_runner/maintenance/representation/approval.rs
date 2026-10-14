@@ -129,6 +129,7 @@ impl Vault {
             owner: owner.actor(),
         };
         self.with_write_txn_grouped(|txn| {
+            crate::dreamer_runner::maintenance::validate_owner_in_txn(self, &*txn, owner)?;
             require_owner_bundle_in(self, txn, review.id, &approval)?;
             // The exact reviewed body must still be live at the local arm.
             let body = self
@@ -205,15 +206,12 @@ fn require_owner(vault: &Vault, owner: &AuthenticatedOwner, packet: &Packet) -> 
     if owner.actor() != packet.request.owner {
         return Err(invalid());
     }
-    // Revalidate store truth and lifecycle instead of trusting an old handle
-    // minted before its PERSON became a merged/split shell.
-    vault.authenticate_owner(
-        owner.actor(),
-        owner.principal_ref(),
-        true,
-        owner.decision_id(),
-    )?;
-    Ok(())
+    // Revalidate the supplied proof itself against this vault's store truth
+    // and lifecycle: a handle minted before its PERSON became a merged/split
+    // shell, or a proof another vault authenticated for the same PERSON id,
+    // never reviews or arms here.
+    let txn = vault.store.env.read_txn()?;
+    crate::dreamer_runner::maintenance::validate_owner_in_txn(vault, &txn, owner)
 }
 fn is_owner_bundle_receipt(receipt: &GateDecisionRecord, approval: &ApprovalRecord) -> bool {
     let bundle_ref = format!(

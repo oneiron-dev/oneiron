@@ -114,12 +114,7 @@ impl Vault {
         name: &str,
         token_floor: usize,
     ) -> Result<StandingBlockHandle> {
-        self.authenticate_owner(
-            owner.actor(),
-            owner.principal_ref(),
-            true,
-            owner.decision_id(),
-        )?;
+        owner.revalidate(self)?;
         if name.trim().is_empty() || name.len() > 128 || token_floor == 0 {
             return Err(invalid());
         }
