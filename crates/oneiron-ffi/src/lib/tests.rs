@@ -15,14 +15,17 @@ fn open_test_vault(dimensions: usize) -> (tempfile::TempDir, *mut OneironVault) 
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().to_str().expect("utf8 temp path");
     let mut vault = ptr::null_mut();
-    let status = oneiron_vault_open(
-        path.as_ptr(),
-        path.len(),
-        dimensions,
-        ptr::null(),
-        0,
-        &mut vault,
-    );
+    // SAFETY: `path` and `vault` are live locals that outlive the call.
+    let status = unsafe {
+        oneiron_vault_open(
+            path.as_ptr(),
+            path.len(),
+            dimensions,
+            ptr::null(),
+            0,
+            &mut vault,
+        )
+    };
     assert_eq!(status, OneironStatus::Ok);
     assert!(!vault.is_null());
     (dir, vault)
@@ -85,7 +88,8 @@ fn ffi_round_trips_entity_edge_and_fail_closed_cases() {
     let payload = b"ffi-payload";
     let target_payload = b"ffi-target";
 
-    assert_eq!(
+    // SAFETY: `vault` is live and every pointer names a local that outlives the call.
+    let status = unsafe {
         oneiron_vault_put_entity(
             vault,
             entity.as_ptr(),
@@ -96,10 +100,11 @@ fn ffi_round_trips_entity_edge_and_fail_closed_cases() {
             30,
             payload.as_ptr(),
             payload.len(),
-        ),
-        OneironStatus::Ok
-    );
-    assert_eq!(
+        )
+    };
+    assert_eq!(status, OneironStatus::Ok);
+    // SAFETY: `vault` is live and every pointer names a local that outlives the call.
+    let status = unsafe {
         oneiron_vault_put_entity(
             vault,
             target.as_ptr(),
@@ -110,22 +115,21 @@ fn ffi_round_trips_entity_edge_and_fail_closed_cases() {
             30,
             target_payload.as_ptr(),
             target_payload.len(),
-        ),
-        OneironStatus::Ok
-    );
+        )
+    };
+    assert_eq!(status, OneironStatus::Ok);
 
     let mut exists = 0;
-    assert_eq!(
-        oneiron_vault_entity_exists(vault, entity.as_ptr(), entity.len(), &mut exists),
-        OneironStatus::Ok
-    );
+    // SAFETY: `vault` is live and every pointer names a local that outlives the call.
+    let status =
+        unsafe { oneiron_vault_entity_exists(vault, entity.as_ptr(), entity.len(), &mut exists) };
+    assert_eq!(status, OneironStatus::Ok);
     assert_eq!(exists, 1);
 
     let mut health = OneironBuffer::empty();
-    assert_eq!(
-        oneiron_vault_health_json(vault, &mut health),
-        OneironStatus::Ok
-    );
+    // SAFETY: `vault` is live and every pointer names a local that outlives the call.
+    let status = unsafe { oneiron_vault_health_json(vault, &mut health) };
+    assert_eq!(status, OneironStatus::Ok);
     // SAFETY: `health` was returned by this crate and is live until freed.
     let health_bytes = unsafe { slice::from_raw_parts(health.ptr, health.len) };
     let health_json: serde_json::Value = serde_json::from_slice(health_bytes).expect("health JSON");
@@ -134,19 +138,24 @@ fn ffi_round_trips_entity_edge_and_fail_closed_cases() {
         Some(u64::from(oneiron::store::STORAGE_ABI_VERSION))
     );
     assert!(health_json.get("db_manifest").is_some());
-    assert_eq!(oneiron_buffer_free(health), OneironStatus::Ok);
+    // SAFETY: the value was returned by this crate and is freed once.
+    let status = unsafe { oneiron_buffer_free(health) };
+    assert_eq!(status, OneironStatus::Ok);
 
     let mut bytes = OneironBuffer::empty();
-    assert_eq!(
-        oneiron_vault_get_entity(vault, entity.as_ptr(), entity.len(), &mut bytes),
-        OneironStatus::Ok
-    );
+    // SAFETY: `vault` is live and every pointer names a local that outlives the call.
+    let status =
+        unsafe { oneiron_vault_get_entity(vault, entity.as_ptr(), entity.len(), &mut bytes) };
+    assert_eq!(status, OneironStatus::Ok);
     // SAFETY: `bytes` was returned by this crate and is live until freed.
     let read_back = unsafe { slice::from_raw_parts(bytes.ptr, bytes.len) };
     assert_eq!(read_back, payload);
-    assert_eq!(oneiron_buffer_free(bytes), OneironStatus::Ok);
+    // SAFETY: the value was returned by this crate and is freed once.
+    let status = unsafe { oneiron_buffer_free(bytes) };
+    assert_eq!(status, OneironStatus::Ok);
 
-    assert_eq!(
+    // SAFETY: `vault` is live and every pointer names a local that outlives the call.
+    let status = unsafe {
         oneiron_vault_put_edge(
             vault,
             entity.as_ptr(),
@@ -155,74 +164,81 @@ fn ffi_round_trips_entity_edge_and_fail_closed_cases() {
             target.as_ptr(),
             target.len(),
             0.5,
-        ),
-        OneironStatus::Ok
-    );
+        )
+    };
+    assert_eq!(status, OneironStatus::Ok);
     let mut edges = OneironEdgeInfoArray::empty();
-    assert_eq!(
-        oneiron_vault_edges_out(vault, entity.as_ptr(), entity.len(), &mut edges),
-        OneironStatus::Ok
-    );
+    // SAFETY: `vault` is live and every pointer names a local that outlives the call.
+    let status =
+        unsafe { oneiron_vault_edges_out(vault, entity.as_ptr(), entity.len(), &mut edges) };
+    assert_eq!(status, OneironStatus::Ok);
     assert_eq!(edges.len, 1);
     // SAFETY: `edges` was returned by this crate and is live until freed.
     let edge_slice = unsafe { slice::from_raw_parts(edges.ptr, edges.len) };
     assert_eq!(edge_slice[0].src, entity);
     assert_eq!(edge_slice[0].tgt, target);
     assert_eq!(edge_slice[0].kind, EdgeKind::Mentions as u32);
-    assert_eq!(oneiron_edge_info_array_free(edges), OneironStatus::Ok);
+    // SAFETY: the value was returned by this crate and is freed once.
+    let status = unsafe { oneiron_edge_info_array_free(edges) };
+    assert_eq!(status, OneironStatus::Ok);
 
     let mut existed = 0;
-    assert_eq!(
-        oneiron_vault_delete_entity(vault, entity.as_ptr(), entity.len(), &mut existed),
-        OneironStatus::Ok
-    );
+    // SAFETY: `vault` is live and every pointer names a local that outlives the call.
+    let status =
+        unsafe { oneiron_vault_delete_entity(vault, entity.as_ptr(), entity.len(), &mut existed) };
+    assert_eq!(status, OneironStatus::Ok);
     assert_eq!(existed, 1);
-    assert_eq!(
-        oneiron_vault_entity_exists(vault, entity.as_ptr(), entity.len(), &mut exists),
-        OneironStatus::Ok
-    );
+    // SAFETY: `vault` is live and every pointer names a local that outlives the call.
+    let status =
+        unsafe { oneiron_vault_entity_exists(vault, entity.as_ptr(), entity.len(), &mut exists) };
+    assert_eq!(status, OneironStatus::Ok);
     assert_eq!(exists, 1, "plain delete retains the tombstone shell");
     let mut shell = OneironBuffer::empty();
-    assert_eq!(
-        oneiron_vault_get_entity(vault, entity.as_ptr(), entity.len(), &mut shell),
-        OneironStatus::Ok
-    );
+    // SAFETY: `vault` is live and every pointer names a local that outlives the call.
+    let status =
+        unsafe { oneiron_vault_get_entity(vault, entity.as_ptr(), entity.len(), &mut shell) };
+    assert_eq!(status, OneironStatus::Ok);
     assert_eq!(shell.len, 0, "soft delete scrubs the body");
-    assert_eq!(oneiron_buffer_free(shell), OneironStatus::Ok);
+    // SAFETY: the value was returned by this crate and is freed once.
+    let status = unsafe { oneiron_buffer_free(shell) };
+    assert_eq!(status, OneironStatus::Ok);
 
-    assert_eq!(
-        oneiron_vault_entity_exists(ptr::null_mut(), entity.as_ptr(), entity.len(), &mut exists),
-        OneironStatus::NullArg
-    );
-    assert_eq!(
-        oneiron_vault_entity_exists(vault, entity.as_ptr(), 15, &mut exists),
-        OneironStatus::InvalidArg
-    );
+    // SAFETY: each pointer is null or names a live local that outlives the call.
+    let status = unsafe {
+        oneiron_vault_entity_exists(ptr::null_mut(), entity.as_ptr(), entity.len(), &mut exists)
+    };
+    assert_eq!(status, OneironStatus::NullArg);
+    // SAFETY: each pointer is null or names a live local that outlives the call.
+    let status = unsafe { oneiron_vault_entity_exists(vault, entity.as_ptr(), 15, &mut exists) };
+    assert_eq!(status, OneironStatus::InvalidArg);
 
     let long_query = "x".repeat(MAX_FFI_QUERY_BYTES + 1);
     let mut scored = OneironScoredEntityArray::empty();
-    assert_eq!(
+    // SAFETY: each pointer is null or names a live local that outlives the call.
+    let status = unsafe {
         oneiron_vault_search_text(
             vault,
             long_query.as_ptr(),
             long_query.len(),
             10,
             &mut scored,
-        ),
-        OneironStatus::InvalidArg
-    );
-    assert_eq!(
+        )
+    };
+    assert_eq!(status, OneironStatus::InvalidArg);
+    // SAFETY: each pointer is null or names a live local that outlives the call.
+    let status = unsafe {
         oneiron_vault_search_text(
             vault,
             b"x".as_ptr(),
             1,
             MAX_FFI_SEARCH_LIMIT + 1,
-            &mut scored
-        ),
-        OneironStatus::InvalidArg
-    );
+            &mut scored,
+        )
+    };
+    assert_eq!(status, OneironStatus::InvalidArg);
 
-    assert_eq!(
+    // SAFETY: `vault` is live and every pointer names a local that outlives the call.
+    let status = unsafe {
         oneiron_vault_put_edge(
             vault,
             target.as_ptr(),
@@ -231,11 +247,13 @@ fn ffi_round_trips_entity_edge_and_fail_closed_cases() {
             target.as_ptr(),
             target.len(),
             f64::NAN,
-        ),
-        OneironStatus::EngineError
-    );
+        )
+    };
+    assert_eq!(status, OneironStatus::EngineError);
 
-    assert_eq!(oneiron_vault_free(vault), OneironStatus::Ok);
+    // SAFETY: the handle is live and never used after this call.
+    let status = unsafe { oneiron_vault_free(vault) };
+    assert_eq!(status, OneironStatus::Ok);
 }
 
 #[test]
@@ -270,38 +288,41 @@ fn ffi_batch_put_entities_and_boundary_statuses() {
         },
     ];
 
-    assert_eq!(
-        oneiron_vault_batch_put_entities(vault, entries.as_ptr(), entries.len()),
-        OneironStatus::Ok
-    );
+    // SAFETY: `vault` is live and every pointer names a local that outlives the call.
+    let status =
+        unsafe { oneiron_vault_batch_put_entities(vault, entries.as_ptr(), entries.len()) };
+    assert_eq!(status, OneironStatus::Ok);
 
     let mut bytes = OneironBuffer::empty();
-    assert_eq!(
-        oneiron_vault_get_entity(vault, first.as_ptr(), first.len(), &mut bytes),
-        OneironStatus::Ok
-    );
+    // SAFETY: `vault` is live and every pointer names a local that outlives the call.
+    let status =
+        unsafe { oneiron_vault_get_entity(vault, first.as_ptr(), first.len(), &mut bytes) };
+    assert_eq!(status, OneironStatus::Ok);
     // SAFETY: `bytes` was returned by this crate and is live until freed.
     let read_back = unsafe { slice::from_raw_parts(bytes.ptr, bytes.len) };
     assert_eq!(read_back, first_payload);
-    assert_eq!(oneiron_buffer_free(bytes), OneironStatus::Ok);
+    // SAFETY: the value was returned by this crate and is freed once.
+    let status = unsafe { oneiron_buffer_free(bytes) };
+    assert_eq!(status, OneironStatus::Ok);
 
     let missing = id(112);
     let mut missing_buffer = OneironBuffer::empty();
-    assert_eq!(
-        oneiron_vault_get_entity(vault, missing.as_ptr(), missing.len(), &mut missing_buffer,),
-        OneironStatus::NotFound
-    );
+    // SAFETY: `vault` is live and every pointer names a local that outlives the call.
+    let status = unsafe {
+        oneiron_vault_get_entity(vault, missing.as_ptr(), missing.len(), &mut missing_buffer)
+    };
+    assert_eq!(status, OneironStatus::NotFound);
     assert!(missing_buffer.ptr.is_null());
     assert_eq!(missing_buffer.len, 0);
 
-    assert_eq!(
-        oneiron_vault_batch_put_entities(vault, ptr::null(), 1),
-        OneironStatus::NullArg
-    );
+    // SAFETY: each pointer is null or names a live local that outlives the call.
+    let status = unsafe { oneiron_vault_batch_put_entities(vault, ptr::null(), 1) };
+    assert_eq!(status, OneironStatus::NullArg);
 
     let mut invalid_path_vault = ptr::null_mut();
     let invalid_path = [0xFF_u8];
-    assert_eq!(
+    // SAFETY: each pointer is null or names a live local that outlives the call.
+    let status = unsafe {
         oneiron_vault_open(
             invalid_path.as_ptr(),
             invalid_path.len(),
@@ -309,12 +330,14 @@ fn ffi_batch_put_entities_and_boundary_statuses() {
             ptr::null(),
             0,
             &mut invalid_path_vault,
-        ),
-        OneironStatus::Utf8
-    );
+        )
+    };
+    assert_eq!(status, OneironStatus::Utf8);
     assert!(invalid_path_vault.is_null());
 
-    assert_eq!(oneiron_vault_free(vault), OneironStatus::Ok);
+    // SAFETY: the handle is live and never used after this call.
+    let status = unsafe { oneiron_vault_free(vault) };
+    assert_eq!(status, OneironStatus::Ok);
 }
 
 /// The rows a JSON pack holds: every object with an `id`, in any section.
