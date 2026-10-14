@@ -26,7 +26,7 @@ use super::presence_diagnostics::record_read_failure;
 pub(super) use super::presence_diagnostics::{TaskPresenceReadFailure, TaskPresenceReadStage};
 use super::presence_pages::device_admitted_task_page;
 pub(super) use super::presence_pages::scan_task_entity_pages;
-use super::rate_limit::task_create_owner;
+use super::rate_limit::{task_create_owner, task_create_owner_in};
 use super::route_receipts::TaskCancelTarget;
 use super::terminal_state::{
     ConsultResultPresence, ConsultResultSummary, TaskExecutionState, TaskTerminalDisposition,
@@ -553,6 +553,79 @@ fn collect_run_tree_nodes<'a>(nodes: &'a [RunTreeNode], out: &mut Vec<&'a RunTre
     }
 }
 
+/// Whether `actor` owns the TASK `task_ref`, the standing `cancel` acts on
+/// directly and a failure's dismissal needs: `None` when `task_ref` names no
+/// TASK.
+pub(super) fn task_owned_by(
+    vault: &Vault,
+    actor: EntityId,
+    task_ref: EntityId,
+) -> MemoryResult<Option<bool>> {
+    let typed = task_verb_body(vault, task_ref)?.is_some();
+    let connector = if typed {
+        None
+    } else {
+        vault.connector_send_task(&task_ref)?
+    };
+    if !typed
+        && connector.is_none()
+        && !matches!(task_entity_role(vault, task_ref)?, Some(TaskRole::Task))
+    {
+        // Goal/Milestone/Habit/HabitCheckin ids are not TASKS (fix-r1 F6)
+        // and read as absent.
+        return Ok(None);
+    }
+    // The typed body is mutable storage and its `owner_ref` is not authority.
+    // Only the Owner authority fact minted atomically by the verified
+    // `tasks.create` path proves ownership, and it outranks whatever the body
+    // says now: a TASK born typed keeps its owner even if its body is later
+    // rewritten as another subtype. A typed body with no Owner fact proves
+    // nothing at all.
+    //
+    // The proof REPLICATES, so this is the same answer on the machine that
+    // created the task and on every peer that materialized it: the owner
+    // cancels their own task directly instead of falling to the foreign,
+    // proposal-only ladder.
+    if let Some(owner) = task_create_owner(vault, task_ref)? {
+        return Ok(Some(owner == actor));
+    }
+    // P1-c (role-only ownership): a role-only TASK carries no stored
+    // owner/author provenance (ONE-1695 role bodies are `{role}` only, and no
+    // header / side-index / ledger records the author of a raw TASK put).
+    // Ownership therefore cannot be established, so fail CLOSED to the foreign
+    // ladder (propose-only) rather than vacuously trusting the caller — no
+    // principal may directly cancel another's role-only task. Visibility
+    // (fix-r1 F6) is unaffected: role-only Tasks still render in `describe`
+    // and remain cancellable via a proposal.
+    Ok(Some(connector.is_some_and(|task| task.actor_ref == actor)))
+}
+
+/// [`task_owned_by`] through the caller's transaction, for the write that
+/// acts on the answer: the durable Owner fact first, then the connector-send
+/// body's actor. `None` when `task_ref` no longer names a TASK.
+pub(super) fn task_owned_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    task_ref: EntityId,
+) -> MemoryResult<Option<bool>> {
+    if !matches!(
+        task_entity_role_in(vault, txn, task_ref)?,
+        Some(TaskRole::Task)
+    ) {
+        return Ok(None);
+    }
+    if let Some(owner) = task_create_owner_in(vault, txn, task_ref)? {
+        return Ok(Some(owner == actor));
+    }
+    if task_verb_body_in(vault, txn, task_ref)?.is_some() {
+        return Ok(Some(false));
+    }
+    Ok(Some(
+        crate::outbound::connector_send_actor_in(vault, txn, task_ref)? == Some(actor),
+    ))
+}
+
 pub(super) fn cancel_target_state(
     vault: &Vault,
     actor: EntityId,
@@ -561,34 +634,7 @@ pub(super) fn cancel_target_state(
     match target {
         TaskCancelTarget::Task(task_ref) => {
             let task_hex = task_ref.to_hex();
-            let owned = if task_verb_body(vault, task_ref)?.is_some() {
-                // The typed body is mutable storage and its `owner_ref` is not
-                // authority. Only the Owner authority fact minted atomically by
-                // the verified `tasks.create` path proves direct-cancel
-                // ownership; typed bodies from any other write door fail
-                // closed, and a task with no Owner fact proves nothing at all.
-                //
-                // The proof REPLICATES, so this is the same answer on the
-                // machine that created the task and on every peer that
-                // materialized it: the owner cancels their own task directly
-                // instead of falling to the foreign, proposal-only ladder.
-                task_create_owner(vault, task_ref)? == Some(actor)
-            } else if let Some(task) = vault.connector_send_task(&task_ref)? {
-                task.actor_ref == actor
-            } else if matches!(task_entity_role(vault, task_ref)?, Some(TaskRole::Task)) {
-                // P1-c (role-only ownership): a role-only TASK carries no stored
-                // owner/author provenance (ONE-1695 role bodies are `{role}`
-                // only, and no header / side-index / ledger records the author
-                // of a raw TASK put). Ownership therefore cannot be established,
-                // so fail CLOSED to the foreign ladder (propose-only) rather
-                // than vacuously trusting the caller — no principal may directly
-                // cancel another's role-only task. Visibility (fix-r1 F6) is
-                // unaffected: role-only Tasks still render in `describe` and
-                // remain cancellable via a proposal. (F6 also narrows this
-                // fallback to `Task`; Goal/Milestone/Habit/HabitCheckin ids are
-                // not TASKS and fall through to `EntityNotFound`.)
-                false
-            } else {
+            let Some(owned) = task_owned_by(vault, actor, task_ref)? else {
                 return Err(MemoryError::from(Error::EntityNotFound));
             };
             let attempts = AttemptQueue::new(vault)

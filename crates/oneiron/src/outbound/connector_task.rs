@@ -675,6 +675,32 @@ fn update_connector_send_task_body_in_txn(
         .apply(wtxn)
 }
 
+/// The actor a connector-send TASK's stored body names, read through the
+/// caller's transaction; `None` when `task_ref` is no connector-send TASK. A
+/// write that acts on the TASK's owner re-reads it here, in its own
+/// transaction.
+pub(crate) fn connector_send_actor_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<Option<EntityId>, Error> {
+    let Some(raw) = vault.get_raw_in(txn, &task_ref)? else {
+        return Ok(None);
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Err(Error::CorruptedIndex("connector task entity header"));
+    };
+    let body_bytes = &raw[ENTITY_METADATA_HEADER_LEN..];
+    if header.entity_type != ENTITY_TYPE_TASK || !has_connector_send_subkind(body_bytes)? {
+        return Ok(None);
+    }
+    let body: ConnectorSendTaskBody = rmp_serde::from_slice(body_bytes)
+        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("invalid connector send body")))?;
+    EntityId::from_hex(&body.actor_ref)
+        .map(Some)
+        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("invalid connector send actor")))
+}
+
 fn has_connector_send_subkind(body: &[u8]) -> Result<bool, Error> {
     let value = rmpv::decode::read_value(&mut std::io::Cursor::new(body)).map_err(|_| {
         Error::Record(RecordError::InvalidTaskBody(

@@ -1213,3 +1213,160 @@ fn a_restore_goes_ahead_past_a_failure_acknowledged_since() {
     .expect("an acknowledgement does not block the restore");
     drop(restored);
 }
+
+/// Fails the one realization `tasks.create` queued, so its TASK renders FAILED.
+fn fail_the_realization(vault: &Vault, now: u64) {
+    let queue = AttemptQueue::new(vault);
+    let ClaimOutcome::Claimed(claimed) = queue
+        .claim_kind(
+            TASK_REALIZE_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: "worker".to_owned(),
+                now,
+            },
+        )
+        .expect("claim")
+    else {
+        panic!("created task must be claimable");
+    };
+    queue
+        .fail(FailAttempt {
+            id: claimed.id,
+            lease_owner: "worker".to_owned(),
+            attempt_count: claimed.attempt_count,
+            reason: "failed".to_owned(),
+            now: now + 1,
+        })
+        .expect("fail task");
+}
+
+/// F15 / H162: `tasks.update` dismissed any FAILED task by id. A verified
+/// actor that does not own the task hid its failure from every board, the
+/// owner's included. A dismissal is the task owner's: anyone else gets a
+/// typed refusal and the failure stays on the board.
+#[test]
+fn only_the_task_owner_dismisses_its_failure() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let owner = vault.memory(own, EdgeActorClass::Agent);
+    let task_ref = owner
+        .tasks_create(&spec(120))
+        .expect("create task")
+        .task_ref
+        .expect("task ref");
+    fail_the_realization(&vault, 120);
+    let stranger_ref = EntityId::from_bytes([0xE7; 16]).expect("stranger id");
+    put_person(&vault, stranger_ref);
+    let stranger = vault.memory(stranger_ref, EdgeActorClass::Agent);
+
+    let refused = stranger
+        .tasks_update(task_ref)
+        .expect_err("a stranger cannot dismiss another actor's failure");
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
+    assert!(!task_is_acked(&vault, task_ref).expect("ack state"));
+    let board = owner.describe_section().expect("the owner's board");
+    assert_eq!(board.rows.len(), 1);
+    assert_eq!(board.rows[0].status, TaskBoardStatus::Failed);
+
+    // A TASK no actor provably owns is nobody's to dismiss either.
+    let role_only = EntityId::from_bytes([0xB7; 16]).expect("task id");
+    vault
+        .put_entity(
+            &role_only,
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: 130,
+                end: 130,
+            },
+            130,
+            &crate::habit::task_body_for_test(TaskRole::Task),
+        )
+        .expect("put role-only task");
+    assert_eq!(
+        stranger
+            .tasks_update(role_only)
+            .expect_err("an unowned task is not dismissable")
+            .code,
+        MEMORY_CODE_FORBIDDEN
+    );
+
+    // The owner's own dismissal lands.
+    assert!(owner.tasks_update(task_ref).expect("owner ack").acked);
+    assert!(task_is_acked(&vault, task_ref).expect("ack state"));
+}
+
+/// F15 / H162, denial as absence: a handle bound to a read credential has no
+/// card for a TASK its credential does not read (`describe`), so it cannot
+/// dismiss that TASK's failure either, even as the TASK's owner. The refusal
+/// is the same NOT_FOUND an absent TASK gives.
+#[test]
+fn a_credential_dismisses_only_the_failures_it_reads() {
+    let (_dir, vault) = open_vault();
+    crate::test_support::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id().expect("policy id"),
+        &crate::gate::default_policy_manifest().expect("default policy"),
+    )
+    .expect("install the default policy");
+    let own = own_agent(&vault);
+    let (near, far) = (
+        EntityId::from_bytes([0x5D; 16]).expect("world id"),
+        EntityId::from_bytes([0x5E; 16]).expect("world id"),
+    );
+    let withheld = vault
+        .memory(own, EdgeActorClass::Agent)
+        .with_birth_position(crate::federation::record_scope::BirthPosition {
+            world: Some(far),
+            facet: None,
+        })
+        .tasks_create(&spec(120))
+        .expect("the agent creates a TASK")
+        .task_ref
+        .expect("the create mints a TASK");
+    fail_the_realization(&vault, 120);
+
+    let issuer = crate::test_support::test_host_issuer();
+    let mut claims = vault
+        .ensure_host_root_slip(&issuer)
+        .expect("host root")
+        .claims;
+    claims.slip_id = *blake3::hash(b"one world task dismisser").as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = own.to_hex();
+    claims.actor_class = Some("agent".into());
+    claims.scope = crate::federation::scope_codec::read_preset();
+    claims.scope.worlds = [near, crate::claim::base_world_id()]
+        .into_iter()
+        .map(crate::federation::ScopeId)
+        .collect();
+    let slip = vault.mint_capability_slip(&issuer, claims).expect("mint");
+    let tag = b"one-world-dismiss";
+    let proof = vault
+        .verify_capability_slip(
+            &issuer.public_key(),
+            &slip,
+            tag,
+            &issuer.binding_proof(&slip, tag).expect("binding proof"),
+        )
+        .expect("verify");
+    let bound = vault
+        .memory(own, EdgeActorClass::Agent)
+        .with_read_proof(&proof);
+
+    assert_eq!(
+        bound
+            .tasks_update(withheld)
+            .expect_err("a TASK the credential does not read is absent")
+            .code,
+        crate::memory::MEMORY_CODE_NOT_FOUND
+    );
+    assert!(!task_is_acked(&vault, withheld).expect("ack state"));
+    // The unbound owner still dismisses it.
+    assert!(
+        vault
+            .memory(own, EdgeActorClass::Agent)
+            .tasks_update(withheld)
+            .expect("owner ack")
+            .acked
+    );
+}
