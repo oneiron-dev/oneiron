@@ -4,7 +4,6 @@
 //! arrival order reads the same narrow world.
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::super::install_fold::floor_marks_of;
 use super::machine_identity::{Host, host, request_for};
 use super::support::{authority_key_from_ed, ed_key, sign_ed, unsigned_entry};
 use super::world_privacy::{
@@ -788,18 +787,18 @@ impl Start {
         )
     }
 
+    /// The laptop marked "yours" at `revision`.
+    fn yours(&self, revision: u64) -> MachineProfile {
+        MachineProfile {
+            role: MachineRole::Owned(MachineOwnership::Yours),
+            revision,
+            ..self.fold.machine(self.laptop.0).unwrap().profile.clone()
+        }
+    }
+
     /// The owner's "yours" mark of the laptop at `seq`, on the heads.
     fn mark(&self, seq: u64) -> AuthorityLogEntry {
-        revision(
-            &self.host,
-            &self.fold,
-            seq,
-            MachineProfile {
-                role: MachineRole::Owned(MachineOwnership::Yours),
-                revision: 2,
-                ..self.fold.machine(self.laptop.0).unwrap().profile.clone()
-            },
-        )
+        revision(&self.host, &self.fold, seq, self.yours(2))
     }
 
     /// The laptop's widening under `mark`, over the desk's narrowing.
@@ -950,6 +949,68 @@ fn two_step_repair() -> MarkPastFloor {
     )
 }
 
+/// Sol P2 round 17, F1: an owner row past the floor stands under a later
+/// "yours" revision of the laptop, and only a re-root over that revision
+/// vouches for the row. The revision then heads the laptop, but the vouch
+/// admits it, so it grants nothing here.
+fn rescued_successor() -> MarkPastFloor {
+    let start = Start::new(114);
+    let later = start.revoke(start.seq + 4, start.heads(), 13);
+    let refused = start.revoke(start.seq, start.below_heads(), 14);
+    let marked = start.mark(start.seq + 1);
+    let successor = start.owner_row(
+        start.seq + 5,
+        vec![hash(&marked), hash(&refused)],
+        AuthorityOp::MachineProfile(start.yours(3)),
+    );
+    let widening = start.widening(&successor);
+    let next = HostSlipIssuer::from_secret(b"world floor successor revision root").unwrap();
+    let re_root = start.owner_row(
+        start.seq + 6,
+        vec![hash(&successor), hash(&later)],
+        AuthorityOp::ReRoot {
+            new_device: next.root_device(),
+        },
+    );
+    start.replica(
+        "rescued successor",
+        &[&later, &refused, &marked, &successor, &widening],
+        Some(re_root),
+    )
+}
+
+/// Sol P2 round 17, F2: a retired tier-floor row in a re-root's line folds
+/// only as that handoff's verified ancestry, and the handoff stands only by
+/// its vouch. A later owner row over the mark and that tier-floor row must
+/// not clear the mark's floor through that permission.
+fn retired_permission() -> MarkPastFloor {
+    let start = Start::new(116);
+    let marked = start.mark(start.seq + 1);
+    let tier_floor = start.owner_row(
+        start.seq + 2,
+        vec![hash(&marked)],
+        AuthorityOp::SetTierFloor {
+            tier_floor: start.fold.tier_floor.unwrap_or(AuthorityTier::Software),
+        },
+    );
+    let later = start.revoke(start.seq + 3, vec![hash(&tier_floor)], 15);
+    let refused = start.revoke(start.seq, start.below_heads(), 16);
+    let widening = start.widening(&marked);
+    let next = HostSlipIssuer::from_secret(b"world floor permission root").unwrap();
+    let re_root = start.owner_row(
+        start.seq + 4,
+        vec![hash(&later), hash(&refused)],
+        AuthorityOp::ReRoot {
+            new_device: next.root_device(),
+        },
+    );
+    start.replica(
+        "retired permission",
+        &[&later, &refused, &marked, &tier_floor, &widening],
+        Some(re_root),
+    )
+}
+
 #[test]
 fn a_re_root_keeps_a_floor_held_mark_held() {
     ordinary_re_root().assert_held_through_the_handoff();
@@ -965,80 +1026,113 @@ fn a_re_root_never_repairs_a_floor_held_mark_in_two_steps() {
     two_step_repair().assert_held_through_the_handoff();
 }
 
-/// The marks `replica`'s install fold keeps on its rows with no handoff's
-/// vouch, and those of them its fold with the vouch drops. A row counts only
-/// when both folds hold it; a machine's mark, only when both head it with
-/// the same revision.
-fn marks_a_vouch_drops(replica: &Vault) -> (usize, Vec<String>) {
-    let entries = stored_entries(replica);
-    let txn = replica.store.env.read_txn().unwrap();
-    let observations = authority_local_observations_in_txn(&replica.store, &txn, &entries).unwrap();
-    let fold = |vouched| {
-        floor_marks_of(vouched, || {
-            fold_authority_log_with_local_observations_and_posture(
-                &entries,
-                &BTreeMap::new(),
-                0,
-                &BTreeMap::new(),
-                &observations,
-                replica.privacy_posture(),
-            )
-        })
-    };
-    let ((vouched, kept), (unvouched, held)) = (fold(true), fold(false));
-    let in_both = |hash: &&AuthorityEntryHash| {
-        vouched.valid_entries.contains(*hash) && unvouched.valid_entries.contains(*hash)
-    };
-    let row = |kind: &str, hash: &AuthorityEntryHash| format!("{kind} on {:02x?}", &hash[..4]);
-    let mut dropped: Vec<_> = held
-        .past_floor
-        .difference(&kept.past_floor)
-        .filter(in_both)
-        .map(|hash| row("past_floor", hash))
-        .collect();
-    dropped.extend(
-        held.narrow_only
-            .difference(&kept.narrow_only)
-            .filter(in_both)
-            .map(|hash| row("narrow_only", hash)),
-    );
-    let mut count = held.past_floor.len() + held.narrow_only.len();
-    for (id, machine) in unvouched.machines.iter().filter(|(_, m)| m.floor_held) {
-        count += 1;
-        if vouched
-            .machines
-            .get(id)
-            .is_some_and(|other| other.entry == machine.entry && !other.floor_held)
-        {
-            dropped.push(row("floor_held head", &machine.entry));
-        }
-    }
-    (count, dropped)
+#[test]
+fn a_revision_only_the_vouch_admits_grants_nothing() {
+    rescued_successor().assert_held_through_the_handoff();
 }
 
-/// The Engine's invariant for #1430 (after Wonder P2 rounds 9 and 10): a
-/// vouch changes only validity and settlement, never an install floor mark.
-/// In every scenario above, after its handoff, each mark the fold with no
-/// vouch keeps (a row past its floor, an edit that only narrows, a held
-/// machine) the vouched fold keeps on the same row.
 #[test]
-fn a_vouch_never_drops_a_floor_mark() {
-    let mut dropped = Vec::new();
+fn a_permission_only_the_vouch_gives_repairs_no_floor() {
+    retired_permission().assert_held_through_the_handoff();
+}
+
+/// What a vouch widens on `vault`'s install view, row by row, and how many
+/// rows its fold with no vouch holds back (the Engine's ruling on Sol P2
+/// round 17). The vouched fold holds back every machine revision and world
+/// edit the fold with no vouch holds back, and every one only the vouch
+/// admits that no handoff precedes. A machine the fold with no vouch holds
+/// stays held unless a revision after a handoff heads it.
+pub(super) fn vouch_widenings(vault: &Vault) -> (usize, Vec<String>) {
+    let entries = stored_entries(vault);
+    let txn = vault.store.env.read_txn().unwrap();
+    let observations = authority_local_observations_in_txn(&vault.store, &txn, &entries).unwrap();
+    let fold = |observations: &AuthorityLocalObservations| {
+        fold_authority_log_with_local_observations_and_posture(
+            &entries,
+            &BTreeMap::new(),
+            0,
+            &BTreeMap::new(),
+            observations,
+            vault.privacy_posture(),
+        )
+    };
+    let (vouched, unvouched) = (fold(&observations), fold(&observations.without_vouch()));
+    let by_hash: BTreeMap<_, _> = entries.iter().map(|entry| (hash(entry), entry)).collect();
+    let after_handoff = |row: &AuthorityEntryHash| {
+        let mut stack = by_hash[row].parent_hashes.clone();
+        let mut seen = BTreeSet::new();
+        while let Some(parent) = stack.pop() {
+            let Some(entry) = by_hash.get(&parent).filter(|_| seen.insert(parent)) else {
+                continue;
+            };
+            if matches!(entry.op, AuthorityOp::ReRoot { .. })
+                && vouched.valid_entries.contains(&parent)
+            {
+                return true;
+            }
+            stack.extend(entry.parent_hashes.iter().copied());
+        }
+        false
+    };
+    let row = |kind: &str, hash: &AuthorityEntryHash| format!("{kind} {:02x?}", &hash[..4]);
+    let mut widened = Vec::new();
+    for (hash, entry) in &by_hash {
+        if !matches!(
+            entry.op,
+            AuthorityOp::MachineProfile(_) | AuthorityOp::WorldPrivacy(_)
+        ) || !vouched.valid_entries.contains(hash)
+            || vouched.held_back.contains(hash)
+        {
+            continue;
+        }
+        if unvouched.held_back.contains(hash) {
+            widened.push(row("held back with no vouch", hash));
+        } else if !unvouched.valid_entries.contains(hash) && !after_handoff(hash) {
+            widened.push(row("admitted only by the vouch", hash));
+        }
+    }
+    for (id, machine) in &unvouched.machines {
+        if machine.floor_held
+            && vouched
+                .machines
+                .get(id)
+                .is_some_and(|other| !other.floor_held && !after_handoff(&other.entry))
+        {
+            widened.push(row("held machine headed by", &vouched.machines[id].entry));
+        }
+    }
+    (unvouched.held_back.len(), widened)
+}
+
+/// A handoff fixture's install view after its handoffs: no vouch widened it.
+pub(super) fn assert_no_vouch_widens(vault: &Vault) {
+    let (_, widened) = vouch_widenings(vault);
+    assert!(widened.is_empty(), "the vouch widened: {widened:?}");
+}
+
+/// The Engine's invariant for #1430 (rulings on Wonder P2 rounds 9-10 and
+/// Sol P2 round 17): a vouch decides only which handoffs stand and what the
+/// roster view shows, never the install effect of a machine revision or a
+/// world edit. In every scenario above, after its handoff, the vouched fold
+/// is no wider than the fold with no vouch.
+#[test]
+fn a_vouch_never_widens_the_install_view() {
+    let mut widened = Vec::new();
     for scenario in [
         ordinary_re_root(),
         vouch_over_a_refused_row(),
         two_step_repair(),
+        rescued_successor(),
+        retired_permission(),
     ] {
         scenario.hand_off();
-        let (held, lost) = marks_a_vouch_drops(&scenario.replica);
-        assert!(held > 0, "{}: no floor mark to keep", scenario.name);
-        dropped.extend(
-            lost.into_iter()
-                .map(|mark| format!("{}: {mark}", scenario.name)),
+        let (held, wider) = vouch_widenings(&scenario.replica);
+        assert!(held > 0, "{}: nothing held back to keep", scenario.name);
+        widened.extend(
+            wider
+                .into_iter()
+                .map(|row| format!("{}: {row}", scenario.name)),
         );
     }
-    assert!(
-        dropped.is_empty(),
-        "a vouch dropped floor marks: {dropped:?}"
-    );
+    assert!(widened.is_empty(), "the vouch widened: {widened:?}");
 }

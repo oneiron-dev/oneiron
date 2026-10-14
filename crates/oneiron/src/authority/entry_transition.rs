@@ -47,7 +47,8 @@ pub(super) fn fold_entry_state(
     // on every replica and in the log, where a later edit finds it among its
     // parents (Sol P2 round 3, F3), but acknowledges nothing here (Astra
     // #1430b). A row a handoff or a removal vouches for is never refused, and
-    // still lands restriction only.
+    // still lands restriction only, as does every row the fold with no vouch
+    // holds back or only the vouch admits (`install_held`).
     let past_floor = context
         .sequence_floors
         .and_then(|floors| floors.get(&hash))
@@ -58,7 +59,11 @@ pub(super) fn fold_entry_state(
     if past_floor && !vouched && !lands_restriction_only(&entry.op) {
         return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
-    let restriction_only = past_floor && lands_restriction_only(&entry.op);
+    let restriction_only = lands_restriction_only(&entry.op)
+        && (past_floor
+            || context
+                .install_held
+                .is_some_and(|held| held.contains(&hash)));
 
     // Wire validation is posture-blind. Cloud owner roles are only lawful
     // under the explicitly selected managed/peer root arm.

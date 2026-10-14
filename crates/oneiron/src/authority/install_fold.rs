@@ -26,20 +26,24 @@ pub(super) fn fold_as_install(
     let standing = local
         .machine_standing
         .unwrap_or(&super::world_privacy::every_admitted_machine);
+    let held = held_without_vouch(
+        entries,
+        first_seen_at_secs,
+        now_secs,
+        peer_consent_roots,
+        consent_arm,
+        local,
+    );
     let context = FoldContext {
         sequence_floors,
         floor_vouched: local.observations.map(|observations| &observations.vouched),
+        install_held: Some(&held),
         entry_ancestors: None,
         peer_consent_roots,
         consent_arm,
         hosted: local.hosted,
         machine_standing: standing,
         pre_handoff_entries: local.pre_handoff_entries,
-    };
-    #[cfg(test)]
-    let context = FoldContext {
-        floor_vouched: context.floor_vouched.filter(|_| !VOUCH_WITHHELD.get()),
-        ..context
     };
     // Staleness is this install's own projection, which the structural fold
     // never sees, and so is a roster left with no settled root. A machine
@@ -109,44 +113,104 @@ pub(super) fn fold_authority_log_with_machine_standing(
     )
 }
 
-#[cfg(test)]
-thread_local! {
-    /// This thread folds as if no handoff vouched for anything: the install
-    /// view every vouched fold's floor marks must include.
-    static VOUCH_WITHHELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// The floor marks of this thread's last fold.
-    static FLOOR_MARKS: std::cell::RefCell<FloorMarks> = std::cell::RefCell::default();
-}
-
-/// The install view's floor marks, by row (Astra #1430b): the machine
-/// revisions and world edits that landed past their signer's sequence floor,
-/// and the world edits this install counts only as narrowing.
-#[cfg(test)]
-#[derive(Debug, Default)]
-pub(super) struct FloorMarks {
-    pub(super) past_floor: BTreeSet<AuthorityEntryHash>,
-    pub(super) narrow_only: BTreeSet<AuthorityEntryHash>,
-}
-
-#[cfg(test)]
-pub(super) fn record_floor_marks(state: Option<&FoldState>) {
-    let mut marks = FloorMarks::default();
-    if let Some(state) = state {
-        super::machine_profile::past_floor_revisions(state, &mut marks.past_floor);
-        super::world_privacy::edit_floor_marks(state, &mut marks);
+/// The rows a vouch never widens (the Engine's ruling on Sol P2 round 17).
+/// The install effect of every machine revision and world edit comes from
+/// the fold with no vouch at all, which runs its own handoff probes and
+/// pre-handoff permissions; the vouch decides only which handoffs stand and
+/// what the roster view shows. When this fold settles handoffs whose lines
+/// hold a row a floor would refuse, every row that fold holds back lands
+/// restriction only here too, and so does every machine revision or world
+/// edit only the vouch admits that no candidate handoff precedes. A fresh
+/// revision after a handoff still counts. With no such row in those lines
+/// the vouch changes nothing, and nothing is held.
+fn held_without_vouch(
+    entries: &[AuthorityLogEntry],
+    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
+    now_secs: Option<u64>,
+    peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
+    consent_arm: fn(&FoldedDevice) -> bool,
+    local: FoldLocalInputs<'_>,
+) -> BTreeSet<AuthorityEntryHash> {
+    let (Some(observations), Some(handoffs)) = (local.observations, local.handoff_candidates)
+    else {
+        return BTreeSet::new();
+    };
+    if observations.unvouched || observations.vouched.is_empty() {
+        return BTreeSet::new();
     }
-    FLOOR_MARKS.set(marks);
+    let by_hash: BTreeMap<_, _> = entries
+        .iter()
+        .filter_map(|entry| authority_entry_hash(entry).ok().map(|hash| (hash, entry)))
+        .collect();
+    // Only a row a floor would refuse needs the vouch.
+    let rescues = observations.vouched.iter().any(|hash| {
+        by_hash
+            .get(hash)
+            .zip(observations.sequence_floors.get(hash))
+            .is_some_and(|(entry, floor)| {
+                entry.seq < *floor && !super::entry_transition::lands_restriction_only(&entry.op)
+            })
+    });
+    if !rescues {
+        return BTreeSet::new();
+    }
+    let unvouched = observations.without_vouch();
+    let fold = super::fold_engine::fold_authority_log_inner(
+        entries,
+        first_seen_at_secs,
+        now_secs,
+        peer_consent_roots,
+        consent_arm,
+        FoldLocalInputs {
+            observations: Some(&unvouched),
+            retire_device_ops: true,
+            pre_handoff_entries: None,
+            handoff_candidates: None,
+            ..local
+        },
+    );
+    let after = after_handoffs(&by_hash, handoffs);
+    let mut held = fold.held_back;
+    held.extend(
+        by_hash
+            .iter()
+            .filter(|(hash, entry)| {
+                super::entry_transition::lands_restriction_only(&entry.op)
+                    && !fold.valid_entries.contains(*hash)
+                    && !after.contains(*hash)
+            })
+            .map(|(hash, _)| *hash),
+    );
+    held
 }
 
-/// `fold` run on this thread with every handoff's vouch, or with none, and
-/// the floor marks it ended with.
-#[cfg(test)]
-pub(super) fn floor_marks_of(
-    vouched: bool,
-    fold: impl FnOnce() -> AuthorityFold,
-) -> (AuthorityFold, FloorMarks) {
-    VOUCH_WITHHELD.set(!vouched);
-    let folded = fold();
-    VOUCH_WITHHELD.set(false);
-    (folded, FLOOR_MARKS.take())
+/// The rows a handoff in `handoffs` precedes.
+fn after_handoffs(
+    by_hash: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+    handoffs: &BTreeSet<AuthorityEntryHash>,
+) -> BTreeSet<AuthorityEntryHash> {
+    let mut children = BTreeMap::<_, Vec<_>>::new();
+    for (hash, entry) in by_hash {
+        for parent in &entry.parent_hashes {
+            children.entry(*parent).or_default().push(*hash);
+        }
+    }
+    let mut after = BTreeSet::new();
+    let mut stack: Vec<_> = handoffs.iter().copied().collect();
+    while let Some(hash) = stack.pop() {
+        for child in children.get(&hash).into_iter().flatten() {
+            if after.insert(*child) {
+                stack.push(*child);
+            }
+        }
+    }
+    after
+}
+
+/// The machine revisions and world edits `state` holds back on this install.
+pub(super) fn held_back(state: &FoldState) -> BTreeSet<AuthorityEntryHash> {
+    let mut held = BTreeSet::new();
+    super::machine_profile::held_revisions(state, &mut held);
+    super::world_privacy::held_edits(state, &mut held);
+    held
 }

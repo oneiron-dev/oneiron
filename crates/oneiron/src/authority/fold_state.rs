@@ -136,6 +136,10 @@ pub struct AuthorityFold {
     /// Well-signed world edits from a machine that could not edit that
     /// world: valid entries without effect.
     pub refused_world_edits: BTreeSet<AuthorityEntryHash>,
+    /// The machine revisions and world edits this install holds back: each
+    /// landed restriction only, or never counts at full strength here
+    /// (Astra #1430).
+    pub(super) held_back: BTreeSet<AuthorityEntryHash>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
 }

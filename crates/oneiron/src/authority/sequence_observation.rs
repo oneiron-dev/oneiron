@@ -49,19 +49,37 @@ pub(super) struct AuthorityLocalObservations {
     pub(super) sequence_floors: BTreeMap<AuthorityEntryHash, u64>,
     /// Rows a handoff vouches for: no floor refuses them.
     pub(super) vouched: BTreeSet<AuthorityEntryHash>,
+    /// No handoff vouches for anything: the fold whose install view every
+    /// vouched fold keeps (`install_fold::held_without_vouch`).
+    pub(super) unvouched: bool,
     pub(super) policy: AuthorityObservationPolicy,
 }
 
 impl AuthorityLocalObservations {
     /// The same observations with `line`, a handoff's line, vouched for: no
     /// floor refuses a row of it, so its settlement does not turn on which
-    /// sibling this vault happened to see first. A row of it past its floor
-    /// still lands restriction only, so the handoff grants nothing this
-    /// install held back (Astra #1430b).
+    /// sibling this vault happened to see first. The handoff grants nothing
+    /// this install held back: the install view comes from the fold with no
+    /// vouch (Astra #1430b; the Engine's ruling on Sol P2 round 17).
     pub(super) fn vouching(&self, line: &BTreeSet<AuthorityEntryHash>) -> Self {
+        let mut vouched = self.vouched.clone();
+        if !self.unvouched {
+            vouched.extend(line);
+        }
         Self {
             sequence_floors: self.sequence_floors.clone(),
-            vouched: self.vouched.union(line).copied().collect(),
+            vouched,
+            unvouched: self.unvouched,
+            policy: self.policy,
+        }
+    }
+
+    /// The same observations with no handoff's vouch, now or later.
+    pub(super) fn without_vouch(&self) -> Self {
+        Self {
+            sequence_floors: self.sequence_floors.clone(),
+            vouched: BTreeSet::new(),
+            unvouched: true,
             policy: self.policy,
         }
     }
@@ -153,6 +171,7 @@ pub(super) fn authority_local_observations_in_txn(
     Ok(AuthorityLocalObservations {
         sequence_floors,
         vouched: BTreeSet::new(),
+        unvouched: false,
         policy: authority_observation_policy_in_txn(store, txn)?,
     })
 }

@@ -3,6 +3,7 @@
 //! while a machine it names is still the owner's.
 use super::machine_identity::{encryption_key, host, request_for};
 use super::support::ed_key;
+use super::world_floor::assert_no_vouch_widens;
 use super::world_privacy::{
     edit_by, enrol_here, land, other_machine, read_of, set, settings, stored_entries, world_row,
 };
@@ -253,6 +254,7 @@ fn a_stale_holders_world_is_re_picked_after_a_handoff() {
     assert_eq!(receipt.orphaned_from, vec![old.to_hex()]);
     assert_eq!(receipt.next.read, EffectiveRead::OneMachine(here));
     assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(here));
+    assert_no_vouch_widens(&host.vault);
 }
 
 /// A removal that reached this replica after a later row of its signer still

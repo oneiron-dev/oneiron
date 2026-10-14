@@ -240,10 +240,12 @@ fn a_replica_that_refused_a_fenced_row_takes_the_next_edit() {
         replica.world_privacy(world).unwrap().read,
         EffectiveRead::OneMachine(here)
     );
+    super::world_floor::assert_no_vouch_widens(&replica);
     host.vault
         .put_authority_log_entry(&handoff, TimeRange { start: 4, end: 4 }, 4)
         .unwrap();
     assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(here));
+    super::world_floor::assert_no_vouch_widens(&host.vault);
 }
 
 /// A conflict among more machines than one entry may name never locks a

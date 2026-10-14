@@ -520,9 +520,8 @@ pub(super) fn folded_machines(
         .collect()
 }
 
-/// The revisions that landed past their signer's sequence floor.
-#[cfg(test)]
-pub(super) fn past_floor_revisions(state: &FoldState, out: &mut BTreeSet<AuthorityEntryHash>) {
+/// The revisions that landed restriction only on this install.
+pub(super) fn held_revisions(state: &FoldState, out: &mut BTreeSet<AuthorityEntryHash>) {
     for chain in state.machines.values().flat_map(BTreeMap::values) {
         out.extend(
             chain

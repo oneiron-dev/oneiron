@@ -737,18 +737,18 @@ pub(super) fn live_edits_by(
         .collect()
 }
 
-/// The edits, live or replaced, that landed past their signer's sequence
-/// floor or that this install counts only as narrowing.
-#[cfg(test)]
-pub(super) fn edit_floor_marks(state: &FoldState, marks: &mut super::install_fold::FloorMarks) {
+/// The edits, live or replaced, that never count at full strength on this
+/// install: each landed restriction only, counts only as narrowing, or has
+/// copies that disagree.
+pub(super) fn held_edits(state: &FoldState, out: &mut BTreeSet<AuthorityEntryHash>) {
     for frontier in state.worlds.values() {
-        for (hash, edit) in frontier.live.iter().chain(&frontier.superseded) {
-            if edit.restriction_only {
-                marks.past_floor.insert(*hash);
-            }
-            if edit.narrow_only {
-                marks.narrow_only.insert(*hash);
-            }
-        }
+        out.extend(
+            frontier
+                .live
+                .iter()
+                .chain(&frontier.superseded)
+                .filter(|(_, edit)| edit.restriction_only || edit.narrow_only || edit.disputed)
+                .map(|(hash, _)| *hash),
+        );
     }
 }

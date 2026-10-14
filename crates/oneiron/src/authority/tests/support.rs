@@ -330,6 +330,7 @@ impl LocalFoldContext {
         FoldContext {
             sequence_floors: None,
             floor_vouched: None,
+            install_held: None,
             entry_ancestors: None,
             peer_consent_roots: &self.peer_consent_roots,
             consent_arm: folded_device_can_authority_consent,
