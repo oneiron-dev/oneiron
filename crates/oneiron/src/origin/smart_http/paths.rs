@@ -108,6 +108,12 @@ pub const DOOR_WINDOW_TIMEOUT: Duration = Duration::from_secs(300);
 /// in part; a long history still lands when pushed in smaller parts.
 pub(super) const DOOR_MAX_SCAN_BYTES: u64 = 256 * 1024 * 1024;
 
+/// The most lines those blobs may split into, across both streams. The door
+/// holds each line as its own allocation, so the byte cap alone bounds no
+/// memory: 256 MiB of bare newlines is 268 million lines. They are counted
+/// before any line is allocated, and past this the window is refused whole.
+pub(super) const DOOR_MAX_SCAN_LINES: usize = 4 * 1024 * 1024;
+
 /// The verdict line the vetted hook accepts as an admission.
 pub(super) const DOOR_VERDICT_OK: &str = "ok";
 

@@ -270,7 +270,31 @@ fn history_blobs_under_names_rev_list_cannot_pass_on_still_land() {
     }
 }
 
-// The scan cap below is new with the history walk; it has no before.
+// The scan caps below are new with the history walk; they have no before.
+
+/// H263 review r2 (Astra F4): the byte cap bounds no memory on its own, since
+/// the door holds each line as its own allocation. Blobs under the byte cap
+/// whose lines pass the budget across both streams are refused before any
+/// line is split; at the budget they still parse whole.
+#[test]
+fn door_streams_past_the_line_budget_are_refused_before_splitting() {
+    let record = |oid: &str, content: &[u8], terminated: bool| {
+        let mut record = format!("blob {oid} {} notes.txt\n", content.len()).into_bytes();
+        record.extend_from_slice(content);
+        if terminated {
+            record.push(b'\n');
+        }
+        record
+    };
+    let tip = record(&"1".repeat(40), &b"\n".repeat(3), false);
+    let history = record(&"2".repeat(40), b"first\nsecond\n", true);
+    assert!(parse_door_streams(&tip, &history, 4).is_err());
+    let (blobs, tip_blobs) =
+        parse_door_streams(&tip, &history, 5).expect("at the budget both streams parse");
+    assert_eq!(tip_blobs, 1);
+    let lines: Vec<usize> = blobs.iter().map(|blob| blob.added_lines.len()).collect();
+    assert_eq!(lines, [3, 2]);
+}
 
 #[cfg(unix)]
 #[test]

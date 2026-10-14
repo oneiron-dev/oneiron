@@ -62,9 +62,10 @@
 //! secret stack is the catastrophe dial's verdict on the `door:receive-pack`
 //! effector, because a dial that cannot shut the push door shuts nothing that
 //! matters — it READS that dial and mints nothing from it. It buffers no
-//! request or response body, caps no body and no rate (its one cap is on the
-//! blob bytes one push hands the door to scan), and expands no gix feature. `git_wire.rs` and `credential_door.rs` are consumed read-only;
-//! this module owns neither.
+//! request or response body, caps no body and no rate (its caps are on the
+//! blob bytes one push hands the door to scan and the lines they split into),
+//! and expands no gix feature. `git_wire.rs` and `credential_door.rs` are
+//! consumed read-only; this module owns neither.
 
 mod advertise;
 mod cgi_finish;

@@ -11,8 +11,8 @@ use super::door::{DoorAdmissionStamp, DoorHook, DoorSeam};
 use super::evidence::{RefUpdate, receive_pack_provenance_refused};
 use super::hooks::DoorHooksDir;
 use super::paths::{
-    DOOR_REFUSAL_NAME_CHARS, DOOR_VERDICT_OK, DOOR_WINDOW_POLL, ORIGIN_MAX_REF_UPDATES,
-    ORIGIN_REFUSED_REF_PREFIX, serve_failed,
+    DOOR_MAX_SCAN_LINES, DOOR_REFUSAL_NAME_CHARS, DOOR_VERDICT_OK, DOOR_WINDOW_POLL,
+    ORIGIN_MAX_REF_UPDATES, ORIGIN_REFUSED_REF_PREFIX, serve_failed,
 };
 use crate::Vault;
 use crate::codebase::RepoRef;
@@ -217,10 +217,27 @@ fn door_window_inputs(
     hooks: &DoorHooksDir,
 ) -> Result<(DoorWindowRequest, Vec<PushedBlob>, usize)> {
     let request = parse_door_request(&fs::read(request_path)?)?;
-    let mut blobs = parse_pushed_blobs(&fs::read(hooks.blobs_path())?)?;
-    let tip_blobs = blobs.len();
-    blobs.extend(parse_history_blobs(&fs::read(hooks.history_path())?)?);
+    let (blobs, tip_blobs) = parse_door_streams(
+        &fs::read(hooks.blobs_path())?,
+        &fs::read(hooks.history_path())?,
+        DOOR_MAX_SCAN_LINES,
+    )?;
     Ok((request, blobs, tip_blobs))
+}
+
+/// Both streams' blobs, tip blobs first, and how many came from the tip
+/// stream. Together they split into at most `max_lines` lines, counted
+/// before any line is allocated; past that the window is refused whole.
+pub(super) fn parse_door_streams(
+    tip: &[u8],
+    history: &[u8],
+    max_lines: usize,
+) -> Result<(Vec<PushedBlob>, usize)> {
+    let mut lines = max_lines;
+    let mut blobs = parse_framed_blobs(tip, false, &mut lines)?;
+    let tip_blobs = blobs.len();
+    blobs.extend(parse_framed_blobs(history, true, &mut lines)?);
+    Ok((blobs, tip_blobs))
 }
 
 /// Runs one bound door through the seam. A scan that cannot run is a refusal,
@@ -394,17 +411,19 @@ fn parse_optional_oid(value: &str) -> Result<Option<GitOid>> {
 /// door's own rejection, and a stream this function cannot read whole is a
 /// refusal at the window — never a silently empty scan.
 pub(super) fn parse_pushed_blobs(framed: &[u8]) -> Result<Vec<PushedBlob>> {
-    parse_framed_blobs(framed, false)
+    let mut lines = DOOR_MAX_SCAN_LINES;
+    parse_framed_blobs(framed, false, &mut lines)
 }
 
-/// Reads the history stream: the same records as [`parse_pushed_blobs`], each
+/// Reads one stream, charging each blob's lines to `lines` before they are
+/// split. The history stream (`terminated`) carries the same records, each
 /// followed by the one `\n` `git cat-file --batch` writes after an object's
-/// bytes. A record without it is a stream this cannot read whole.
-fn parse_history_blobs(framed: &[u8]) -> Result<Vec<PushedBlob>> {
-    parse_framed_blobs(framed, true)
-}
-
-fn parse_framed_blobs(framed: &[u8], terminated: bool) -> Result<Vec<PushedBlob>> {
+/// bytes; a record without it is a stream this cannot read whole.
+fn parse_framed_blobs(
+    framed: &[u8],
+    terminated: bool,
+    lines: &mut usize,
+) -> Result<Vec<PushedBlob>> {
     let mut blobs = Vec::new();
     let mut cursor = 0_usize;
     while cursor < framed.len() {
@@ -421,10 +440,14 @@ fn parse_framed_blobs(framed: &[u8], terminated: bool) -> Result<Vec<PushedBlob>
             .checked_add(len)
             .filter(|stop| *stop <= framed.len())
             .ok_or_else(|| serve_failed("door blob record is truncated"))?;
+        let content = &framed[start..stop];
+        *lines = lines
+            .checked_sub(content_line_count(content))
+            .ok_or_else(|| serve_failed("door scan splits into more lines than it holds"))?;
         blobs.push(PushedBlob {
             path,
             oid,
-            added_lines: content_lines(&framed[start..stop]),
+            added_lines: content_lines(content),
         });
         cursor = stop;
         if terminated {
@@ -455,6 +478,15 @@ fn parse_blob_record_header(header: &str) -> Result<(String, usize, String)> {
         .parse::<usize>()
         .map_err(|_| serve_failed("door blob record declares an unparsable length"))?;
     Ok((oid.to_owned(), len, path.to_owned()))
+}
+
+/// How many lines [`content_lines`] splits `content` into, without splitting.
+fn content_line_count(content: &[u8]) -> usize {
+    if content.is_empty() {
+        return 0;
+    }
+    let trimmed = content.strip_suffix(b"\n").unwrap_or(content);
+    trimmed.iter().filter(|byte| **byte == b'\n').count() + 1
 }
 
 /// One blob's bytes as lines, split on `\n` with no line reshaped: a trailing
