@@ -249,15 +249,6 @@ fn serve_request(
         // a push and neither delays one.
         None
     };
-    // Between the coordinator and the child, so on every way out the child
-    // is reaped first, then what a killed backend left in quarantine is
-    // swept, and only then is the coordinator let go.
-    let mut quarantines = match coordinator {
-        Some(_) => Some(IncomingQuarantines::note(
-            repo_common_dir(&repo_dir)?.join("objects"),
-        )),
-        None => None,
-    };
     // The same coordinator guards epoch cutover. Stamp and persist only after
     // acquiring it, so an old accepted request cannot cross an epoch change.
     let mut admission = stamp_admission(vault, request, &repo_dir, seam)?;
@@ -300,6 +291,16 @@ fn serve_request(
         Vec::new()
     };
     let body = &mut io::Cursor::new(commands).chain(body);
+    // Between the coordinator and the child, so on every way out the child
+    // is reaped first, then what a killed backend left in quarantine is
+    // swept, and only then is the coordinator let go. Noted only now: a push
+    // refused before its backend runs made no quarantine, so it sweeps none.
+    let mut quarantines = match coordinator {
+        Some(_) => Some(IncomingQuarantines::note(
+            repo_common_dir(&repo_dir)?.join("objects"),
+        )),
+        None => None,
+    };
     let mut child = command.spawn(request)?;
     let exchange = run_exchange(
         &ExchangeSetup {
