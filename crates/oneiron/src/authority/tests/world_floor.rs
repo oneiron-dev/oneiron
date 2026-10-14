@@ -54,6 +54,33 @@ fn revision(
         .unwrap()
 }
 
+/// A world edit `key` signs as `machine` at `seq` on `parents`.
+fn edit_on(
+    host: &Host,
+    (machine, key): (EntityId, &SigningKey),
+    world: EntityId,
+    seq: u64,
+    parents: Vec<AuthorityEntryHash>,
+    read: ReadLocation,
+) -> AuthorityLogEntry {
+    sign_ed(
+        unsigned_entry(
+            Some(host.vault_id),
+            seq,
+            parents,
+            AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
+                world,
+                owner: host.owner.actor(),
+                machine,
+                settings: settings(read),
+            }),
+            authority_key_from_ed(key),
+            2,
+        ),
+        key,
+    )
+}
+
 /// Astra #1430, shape A: a removed machine's key signs a widening at a high
 /// sequence. The fold refuses it, but storing it raised that key's floor for
 /// the world, and the owner's earlier narrowing arrives after it. The
@@ -84,21 +111,13 @@ fn a_narrowing_that_arrives_after_a_refused_row_still_narrows() {
             ..fold.machine(laptop).unwrap().profile.clone()
         },
     );
-    let refused = sign_ed(
-        unsigned_entry(
-            Some(host.vault_id),
-            100,
-            vec![authority_entry_hash(&removal).unwrap()],
-            AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
-                world,
-                owner: host.owner.actor(),
-                machine: laptop,
-                settings: settings(ReadLocation::Everywhere),
-            }),
-            authority_key_from_ed(&laptop_key),
-            2,
-        ),
-        &laptop_key,
+    let refused = edit_on(
+        &host,
+        (laptop, &laptop_key),
+        world,
+        100,
+        vec![authority_entry_hash(&removal).unwrap()],
+        ReadLocation::Everywhere,
     );
     for (order, rows) in [
         ("narrowing first", [&narrowing, &removal, &refused]),
@@ -185,5 +204,93 @@ fn a_demotion_that_arrives_after_a_removal_still_races_a_widening() {
             (EffectiveRead::OneMachine(laptop), false),
             "{order}"
         );
+    }
+}
+
+/// Sol P2 round 10, F1: a floor never grants standing. One machine holds a
+/// world and hands it on (to the other machine, or everywhere), then signs a
+/// refused row at a high sequence. Whether the handover lands in full or past
+/// the floor, standing reads it as the roster rule alone does: the first
+/// machine's later widening stays a refused no-op, and the other machine's
+/// later pick lands, in both orders.
+#[test]
+fn a_floor_never_grants_a_later_edit_standing() {
+    for handed_everywhere in [false, true] {
+        let host = host();
+        let world = world_row(&host);
+        let (first, first_key) =
+            other_machine(&host, 93, MachineRole::Owned(MachineOwnership::Yours));
+        let (second, second_key) =
+            other_machine(&host, 94, MachineRole::Owned(MachineOwnership::Yours));
+        let first = (first, &first_key);
+        let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
+        let heads = host
+            .vault
+            .authority_fold()
+            .unwrap()
+            .append_heads
+            .into_iter()
+            .collect();
+        let held = edit_on(
+            &host,
+            first,
+            world,
+            1,
+            heads,
+            ReadLocation::OneMachine(first.0),
+        );
+        let handover = edit_on(
+            &host,
+            first,
+            world,
+            2,
+            vec![hash(&held)],
+            if handed_everywhere {
+                ReadLocation::Everywhere
+            } else {
+                ReadLocation::OneMachine(second)
+            },
+        );
+        let refused = edit_on(
+            &host,
+            first,
+            world,
+            100,
+            vec![hash(&held)],
+            ReadLocation::OneMachine(EntityId::now()),
+        );
+        let later = if handed_everywhere {
+            edit_on(
+                &host,
+                (second, &second_key),
+                world,
+                1,
+                vec![hash(&handover)],
+                ReadLocation::OneMachine(second),
+            )
+        } else {
+            edit_on(
+                &host,
+                first,
+                world,
+                101,
+                vec![hash(&handover)],
+                ReadLocation::Everywhere,
+            )
+        };
+        for (order, rows) in [
+            ("handover first", [&held, &handover, &refused, &later]),
+            ("refused row first", [&held, &refused, &handover, &later]),
+        ] {
+            let (_dir, replica) = replica_storing(&host, &rows);
+            let fold = replica.authority_fold().unwrap();
+            let (read, readable) = judged(&replica, world);
+            assert!(!readable, "{order}");
+            if handed_everywhere {
+                assert_eq!(read, EffectiveRead::OneMachine(second), "{order}");
+            } else {
+                assert!(fold.refused_world_edits.contains(&hash(&later)), "{order}");
+            }
+        }
     }
 }

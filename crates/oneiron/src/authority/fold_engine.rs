@@ -607,7 +607,7 @@ pub(super) fn fold_authority_log_once(
             losers
         },
     );
-    super::world_privacy::refold_world_edits(
+    super::world_refold::refold_world_edits(
         &mut states,
         &by_hash,
         &entry_ancestors,

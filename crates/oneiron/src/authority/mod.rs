@@ -63,6 +63,7 @@ mod tier_floor;
 mod vault_api;
 mod world_privacy;
 mod world_privacy_door;
+mod world_refold;
 mod write_authorization;
 
 #[cfg(test)]

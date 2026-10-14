@@ -303,7 +303,9 @@ pub(super) fn mark_past(
 /// signed by a key the owner holds, have landed in full rather than as
 /// restriction only past a sequence floor, have seen the edit, and, when it took a
 /// "yours" revision away, have taken one that still stands; and there must be
-/// one. A revision that saw nothing, a host's removal, or a mark found later
+/// one. Judged `floor_free` (standing, by the roster rule alone), a revision
+/// that landed restriction only counts as the replica with no floor reads it.
+/// A revision that saw nothing, a host's removal, or a mark found later
 /// not to stand narrows the edit; a "yours" text or the order in which
 /// branches meet changes nothing (Sol P2 rounds 7-8, Engine ruling E8).
 pub(super) fn acknowledged(
@@ -312,6 +314,7 @@ pub(super) fn acknowledged(
     edit: &AuthorityEntryHash,
     mark: &AuthorityEntryHash,
     prior: &BTreeSet<AuthorityEntryHash>,
+    floor_free: bool,
 ) -> bool {
     let Some(chain) = roster_chain(state, machine) else {
         return false;
@@ -334,7 +337,7 @@ pub(super) fn acknowledged(
     stands(mark)
         && takers.peek().is_some()
         && takers.all(|(_, revision)| {
-            revision.acknowledges
+            (floor_free || revision.acknowledges)
                 && revision.owner_held
                 && !custodial(&revision.signer)
                 && revision.profile.seen_world_edits.contains(edit)

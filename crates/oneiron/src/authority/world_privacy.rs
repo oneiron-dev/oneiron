@@ -393,6 +393,42 @@ pub(super) struct WorldFrontier {
     superseded: BTreeMap<AuthorityEntryHash, Arc<FrontierEdit>>,
 }
 
+impl FrontierEdit {
+    /// One edit folded twice (past a floor on one replica's pass, or crossed
+    /// on another) keeps what both copies grant: either copy's restriction,
+    /// what either replaced, the past both saw, and no full strength when
+    /// they disagree on its mark. Order-free (Sol P2 round 10, F2).
+    fn meet(left: &Arc<Self>, right: &Arc<Self>) -> Arc<Self> {
+        if Arc::ptr_eq(left, right) || left == right {
+            return Arc::clone(left);
+        }
+        Arc::new(Self {
+            settings: left.settings.clone(),
+            machine: left.machine,
+            replaced: left.replaced.union(&right.replaced).copied().collect(),
+            narrow_only: left.narrow_only || right.narrow_only,
+            mark: left.mark.min(right.mark),
+            prior: Arc::new(left.prior.intersection(&right.prior).copied().collect()),
+            restriction_only: left.restriction_only
+                || right.restriction_only
+                || left.mark != right.mark,
+        })
+    }
+}
+
+fn meet_copy(
+    edits: &mut BTreeMap<AuthorityEntryHash, Arc<FrontierEdit>>,
+    hash: AuthorityEntryHash,
+    edit: &Arc<FrontierEdit>,
+) {
+    edits
+        .entry(hash)
+        .and_modify(|held| *held = FrontierEdit::meet(held, edit))
+        .or_insert_with(|| Arc::clone(edit));
+}
+
+/// Joins two frontiers: an edit superseded on either side is superseded,
+/// and two copies of one edit meet.
 pub(super) fn merge_world_frontiers(
     merged: &mut BTreeMap<EntityId, WorldFrontier>,
     right: &BTreeMap<EntityId, WorldFrontier>,
@@ -400,15 +436,22 @@ pub(super) fn merge_world_frontiers(
     for (world, frontier) in right {
         let into = merged.entry(*world).or_default();
         for (hash, edit) in &frontier.superseded {
-            into.superseded
-                .entry(*hash)
-                .or_insert_with(|| Arc::clone(edit));
+            meet_copy(&mut into.superseded, *hash, edit);
         }
         for (hash, edit) in &frontier.live {
-            into.live.entry(*hash).or_insert_with(|| Arc::clone(edit));
+            meet_copy(&mut into.live, *hash, edit);
         }
-        let superseded = &into.superseded;
-        into.live.retain(|hash, _| !superseded.contains_key(hash));
+        let moved: Vec<_> = into
+            .live
+            .keys()
+            .filter(|hash| into.superseded.contains_key(*hash))
+            .copied()
+            .collect();
+        for hash in moved {
+            if let Some(edit) = into.live.remove(&hash) {
+                meet_copy(&mut into.superseded, hash, &edit);
+            }
+        }
     }
 }
 
@@ -422,20 +465,23 @@ fn is_mine(state: &FoldState, machine: EntityId) -> bool {
 /// still says "yours" took nothing away: when it stops standing for another
 /// reason (its signer found in a host's custody) it acknowledges no edit (Sol
 /// P2 round 3, F2). An edit that landed as restriction only past a sequence
-/// floor never counts at full strength (Astra #1430).
+/// floor never counts at full strength in the settings this install reads
+/// (Astra #1430). Standing follows the roster rule alone, as a replica with
+/// no floor reads it, so a floor never grants a later edit standing (Sol P2
+/// round 10, F1).
 fn full_strength(
     state: &FoldState,
     hash: &AuthorityEntryHash,
     edit: &FrontierEdit,
     counting: Counting,
 ) -> bool {
-    !edit.restriction_only
-        && (counting == Counting::Roster || !edit.narrow_only)
+    let roster = counting == Counting::Roster;
+    (roster || !(edit.narrow_only || edit.restriction_only))
         && derived_machine(state, edit.machine).is_some_and(|folded| {
             folded.is_mine()
                 || (!folded.conflicted
                     && !folded.profile.says_mine()
-                    && acknowledged(state, edit.machine, hash, &edit.mark, &edit.prior)
+                    && acknowledged(state, edit.machine, hash, &edit.mark, &edit.prior, roster)
                     && (!folded.removed || folded.profile.role == MachineRole::Removed))
         })
 }
@@ -564,109 +610,6 @@ pub(super) fn apply_world_privacy(
         }),
     );
     Ok(())
-}
-
-/// Settlement drops every row above a main-log row it refuses (a concurrent
-/// tier floor, a retired signer's fence, a confirmation collision, an
-/// unsettled handoff), and the door names every main-log head as a parent, so
-/// a world's edits would fall with an unrelated row and the world would read
-/// wider than the owner set it (Wonder P2 round 1, W1). A world edit is judged
-/// on the main log as the fold keeps it: every edit above a main-log row the
-/// fold did not keep is folded again, in causal order, with each such row
-/// crossed, never applied. An edit invalid on its own stays invalid. Crossing
-/// gives no signer more than this replica's fold already gives the same edit
-/// signed on the crossed row's parents instead (Wonder P2 round 2, W1).
-pub(super) fn refold_world_edits(
-    states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
-    context: FoldContext<'_>,
-    issues: &mut Vec<AuthorityFoldIssue>,
-) {
-    let causal = |hashes: BTreeSet<AuthorityEntryHash>| {
-        let mut hashes: Vec<_> = hashes.into_iter().collect();
-        hashes.sort_by_key(|hash| (ancestors.get(hash).map_or(0, BTreeSet::len), *hash));
-        hashes
-    };
-    let crossable = |hash: &AuthorityEntryHash| {
-        !states.contains_key(hash)
-            && by_hash
-                .get(hash)
-                .is_some_and(|entry| side_world(&entry.op).is_none())
-    };
-    let lost = causal(
-        by_hash
-            .iter()
-            .filter(|(hash, entry)| {
-                side_world(&entry.op).is_some()
-                    && !states.contains_key(*hash)
-                    && ancestors
-                        .get(*hash)
-                        .is_some_and(|past| past.iter().any(crossable))
-            })
-            .map(|(hash, _)| *hash)
-            .collect(),
-    );
-    if lost.is_empty() {
-        return;
-    }
-    // A main-log row the fold did not keep stands for the merge of its
-    // parents, each kept or crossed in turn. Its signed sequence still bounds
-    // what its signer signs after it (Sol P2 round 5, F4).
-    let crossed = causal(
-        lost.iter()
-            .filter_map(|hash| ancestors.get(hash))
-            .flatten()
-            .filter(|hash| crossable(hash))
-            .copied()
-            .collect(),
-    );
-    let mut stand_ins = BTreeMap::<AuthorityEntryHash, FoldState>::new();
-    for hash in crossed {
-        let entry = &by_hash[&hash];
-        let mut parents = entry
-            .parent_hashes
-            .iter()
-            .map(|parent| states.get(parent).or_else(|| stand_ins.get(parent)));
-        // Parents of two vaults stand for nothing (Sol P2 round 5, F6).
-        let merged = parents.next().flatten().and_then(|first| {
-            parents.try_fold(first.clone(), |merged, next| {
-                next.filter(|state| state.vault_id == merged.vault_id)
-                    .map(|state| merge_states(&merged, state))
-            })
-        });
-        if let Some(mut state) = merged.filter(|state| entry.vault_id == Some(state.vault_id)) {
-            let seq = state
-                .seqs
-                .entry(entry.signer_key().clone())
-                .or_insert(entry.seq);
-            *seq = (*seq).max(entry.seq);
-            stand_ins.insert(hash, state);
-        }
-    }
-    for hash in lost {
-        let entry = &by_hash[&hash];
-        let parents: BTreeMap<_, _> = entry
-            .parent_hashes
-            .iter()
-            .filter_map(|parent| {
-                states
-                    .get(parent)
-                    .or_else(|| stand_ins.get(parent))
-                    .map(|state| (*parent, state.clone()))
-            })
-            .collect();
-        if let EntryFold::Ready(state) = fold_entry_state(entry, hash, &parents, context) {
-            states.insert(hash, state);
-            issues.retain(|issue| {
-                !matches!(issue,
-                    AuthorityFoldIssue::InvalidEntry(row)
-                    | AuthorityFoldIssue::InvalidAncestry(row)
-                    | AuthorityFoldIssue::SignerNotInAncestry(row)
-                    | AuthorityFoldIssue::NonMonotonicSeq(row) if *row == hash)
-            });
-        }
-    }
 }
 
 /// The fold's public view of every edited world.
