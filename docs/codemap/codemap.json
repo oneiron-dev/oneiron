@@ -1974,7 +1974,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 24,
       "struct": 1
      }
@@ -7897,7 +7897,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -7909,8 +7909,8 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 25,
-      "fn": 6,
+      "crate-vis": 26,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -7921,7 +7921,7 @@
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 22,
       "fn": 7
      }
     },
@@ -8046,7 +8046,7 @@
      "purpose": "Reactions riding along with the conversation records a scoped read admits",
      "surface": {
       "crate-vis": 1,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -18379,7 +18379,7 @@
      "path": "src/gate/grants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -18696,7 +18696,7 @@
      "path": "src/gate/retrieval_filter.rs",
      "purpose": "Retrieval authority projection and narrowing, independent of result filtering",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "re-export": 1
      }
     },
@@ -19630,7 +19630,7 @@
      "path": "src/graph_fs/coreutils.rs",
      "purpose": "grep, ls, find, cat, head and wc verbs with pushdown, walk, visibility and telemetry helpers, and the…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "fn": 6
      }
     },
@@ -19686,11 +19686,11 @@
      "path": "src/graph_fs/paging.rs",
      "purpose": "Cursor codecs, page and output builders with byte-cap logic, and day-shard civil-date math",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "GraphFsFileRead"
@@ -19698,7 +19698,7 @@
      "path": "src/graph_fs/readdir.rs",
      "purpose": "Path-routing readdir, readdir_bytes, read_file and read_link, fixed pages, world, entity and claim listdir…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 10,
       "fn": 6,
       "struct": 1
      }
@@ -23334,6 +23334,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/credential_key.rs",
+     "purpose": "The read key a verified credential reads under",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ConsolidationAttemptInput",
       "DreamerAttemptRef",
@@ -23521,7 +23532,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 2,
       "re-export": 26
      }
@@ -23632,7 +23643,7 @@
      "path": "src/memory/read_lane.rs",
      "purpose": "The bound actor's one read lane",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -23872,7 +23883,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/authority_revocation.rs",
@@ -28766,7 +28777,7 @@
      "purpose": "Grouped reaction pills, chain history, and the one-line-per-glyph rendering recall and context packs attach…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3,
       "struct": 2
      }
@@ -29592,18 +29603,53 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "BackupShareLocation",
-      "PrivacyBackupError",
-      "PrivacyBackupShare",
-      "RestoredVaultKey"
+      "CodeKeeping",
+      "IssuedKit",
+      "KitCoverage",
+      "KitError",
+      "KitIssue",
+      "KitMachine",
+      "KitManifest",
+      "KitPassphrase",
+      "KitSecretKind",
+      "PassphraseCost",
+      "PieceHome",
+      "RestoredKitSecret"
      ],
      "path": "src/recovery/privacy_kit.rs",
-     "purpose": "Vault-scoped 2-of-3 offline recovery shares; no person-level master secret",
+     "purpose": "Vault-scoped 2-of-3 offline recovery kits; no person-level master secret",
      "surface": {
-      "enum": 2,
-      "fn": 7,
-      "struct": 2
+      "const": 3,
+      "enum": 6,
+      "fn": 14,
+      "re-export": 1,
+      "struct": 6
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "KitId",
+      "KitPiece",
+      "PieceExport",
+      "RecoveryCode"
+     ],
+     "path": "src/recovery/privacy_kit/piece.rs",
+     "purpose": "Piece format v2: a 47-byte body and a 3-byte check, typed as a recovery code or kept as an export with its…",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 11,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/privacy_kit/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -36853,7 +36899,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/tests/presence_scan.rs",
@@ -40366,7 +40412,7 @@
     "graph_fs": {
      "files": 10,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Graph-FS read projection over the vault graph"
     },
@@ -40504,7 +40550,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 108,
+     "files": 109,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40679,7 +40725,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 51,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -41064,10 +41110,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 38,
+   "over_bar": 39,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2490,
-   "test_files": 798
+   "source_files": 2492,
+   "test_files": 799
   },
   "oneiron-android": {
    "files": [
@@ -44185,7 +44231,7 @@
      "path": "src/envelope/mod.rs",
      "purpose": "The sealed envelope: its typed header, the canonical encoding and the strict parser",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 4,
       "fn": 3,
       "re-export": 1,
@@ -44204,6 +44250,7 @@
      "path": "src/envelope/seal.rs",
      "purpose": "Sealing and opening, and the one key schedule every wrap type shares:",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "fn": 2,
       "struct": 2
@@ -44258,7 +44305,7 @@
      "purpose": "The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table…",
      "surface": {
       "const": 3,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -44326,6 +44373,16 @@
      "purpose": "Test-only stack probe",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/stretch.rs",
+     "purpose": "A stretched passphrase as raw key material, for constructions that are not envelope wraps: the recovery kit…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -44430,6 +44487,13 @@
      "layout": "file",
      "purpose": "Test-only stack probe"
     },
+    "stretch": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A stretched passphrase as raw key material, for constructions that are not envelope wraps: the recovery kit…"
+    },
     "suite": {
      "files": 1,
      "impl_vault": false,
@@ -44440,7 +44504,7 @@
    },
    "over_bar": 0,
    "purpose": "The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table…",
-   "source_files": 14,
+   "source_files": 15,
    "test_files": 7
   },
   "oneiron-docedit": {
@@ -50455,7 +50519,7 @@
      "path": "src/api/scoped_auth.rs",
      "purpose": "Legacy owner-auth gate and scoped-read constructors for both auth flavors",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -50553,7 +50617,7 @@
      "path": "src/api/tests/context_board_history.rs",
      "purpose": "Board history on the board's own surface (ARCH-0067 §3): hydrations that name their TURN record its board…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -50618,6 +50682,14 @@
      "notable": [],
      "path": "src/api/tests/core_memory_conversations.rs",
      "purpose": "Batch/query/hydrate smoke, memory timeline + verbs, conversations/turns, platform announcements",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/credential_reads.rs",
+     "purpose": "`/v1` doors read with a credential's key exactly as the facade's read lane does: the owner's live, full…",
      "surface": {}
     },
     {
@@ -50687,7 +50759,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/mcp_quickjs/run_rows.rs",
@@ -53623,7 +53695,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/test_credentials.rs",
@@ -54112,7 +54184,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 182,
+     "files": 183,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54289,7 +54361,7 @@
     "test_credentials": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
@@ -54318,7 +54390,7 @@
    "over_bar": 9,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 335,
-   "test_files": 146
+   "test_files": 147
   },
   "oneiron-spawn": {
    "files": [
