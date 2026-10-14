@@ -113,7 +113,7 @@ pub fn raw_update_verdict(
         Ok(UpdateVerdict::Uninspectable)
     })();
     verdict.unwrap_or_else(|error| {
-        tracing::warn!(window_key, kind = ?error.kind(), "raw window update not inspectable");
+        tracing::warn!(kind = ?error.kind(), "raw window update not inspectable");
         UpdateVerdict::Uninspectable
     })
 }

@@ -38,6 +38,13 @@ use crate::{Error, Result, SyncProtocolValidation, Vault};
 /// nested transactions used as savepoints (see [`apply_tombstone_batch`]),
 /// so one item's failure still cannot take its siblings down. Reason
 /// semantics, receipts, markers and wire values are untouched.
+/// A peer's tombstone key as a log field: the entity id it names, or a fixed
+/// marker when it names none. A refused key is the peer's text, and a log
+/// never carries it.
+fn logged_key(key: &str) -> String {
+    EntityId::from_hex(key).map_or_else(|_| "not_an_entity_id".to_owned(), |id| id.to_hex())
+}
+
 pub(super) fn materialize_tombstones_from_delta(
     doc: &LoroDoc,
     delta: &loro::event::MapDelta<'_>,
@@ -72,7 +79,7 @@ pub(super) fn materialize_tombstones_from_delta(
                             raw_value,
                         ) {
                             tracing::error!(
-                                tombstone = %key,
+                                tombstone = %logged_key(key.as_ref()),
                                 window = %window_key,
                                 kind = ?quarantine_err.kind(),
                                 "observer-b: failed to persist tombstone quarantine record"
@@ -169,7 +176,7 @@ pub(super) fn materialize_tombstones_from_delta(
                     &[],
                 ) {
                     tracing::error!(
-                        tombstone = %key,
+                        tombstone = %logged_key(key.as_ref()),
                         kind = ?e.kind(),
                         "observer-b: failed to persist tombstone-removal quarantine record"
                     );
