@@ -49,3 +49,7 @@ mod machine_identity;
 mod machine_write;
 mod recovery_ceremony;
 mod retired_ceiling;
+mod world_floor;
+mod world_orphan;
+mod world_privacy;
+mod world_race;

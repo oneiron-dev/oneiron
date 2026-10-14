@@ -137,8 +137,28 @@ pub struct AuthorityFold {
     pub actor_bindings: BTreeMap<AuthorityKey, FoldedActorBinding>,
     /// Each physical machine's folded standing, keyed by its MACHINE row.
     pub machines: BTreeMap<EntityId, FoldedMachine>,
+    /// Each edited world's settings, keyed by its WORLD row.
+    pub worlds: BTreeMap<EntityId, FoldedWorld>,
+    /// Well-signed world edits from a machine that could not edit that
+    /// world: valid entries without effect.
+    pub refused_world_edits: BTreeSet<AuthorityEntryHash>,
+    /// What this install holds back beside the roster rule (Astra #1430).
+    pub(super) install: InstallBound,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
+}
+
+/// What bounds this install's view beside the roster rule (Astra #1430).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct InstallBound {
+    /// The machine revisions and world edits this install holds back: each
+    /// revision that landed restriction only, and each edit that never counts
+    /// at full strength here, one valid without effect included.
+    pub(super) held_back: BTreeSet<AuthorityEntryHash>,
+    /// The first still-future second at which the fold with no vouch that
+    /// bounds this view changes (`install_fold::NoVouch`). A cached view
+    /// lasts no longer.
+    pub(super) no_vouch_deadline: Option<u64>,
 }
 
 /// One folded `{signing_key_id, actor_ref, actor_class, epoch, status}` tuple.
@@ -268,6 +288,8 @@ pub(super) struct FoldState {
     /// enrolled as its own root, and each key marked for the cloud (role or
     /// tier). Custody also passes along `key_admitters`.
     pub(super) host_custody_keys: BTreeSet<AuthorityKey>,
+    pub(super) worlds: BTreeMap<EntityId, WorldFrontier>,
+    pub(super) refused_world_edits: BTreeSet<AuthorityEntryHash>,
     /// Each roster key's admitters, merged by union: the keys that enrolled,
     /// rotated to or re-rooted to it, on any branch. A key is in the host's
     /// custody when it, or any key up this graph, is marked as the host's,
@@ -489,6 +511,10 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .or_insert(*seq);
     }
     merge_machine_maps(&mut merged.machines, &mut merged.machine_keys, right);
+    merge_world_frontiers(&mut merged.worlds, &right.worlds);
+    merged
+        .refused_world_edits
+        .extend(right.refused_world_edits.iter().copied());
     merged
         .host_custody_keys
         .extend(right.host_custody_keys.iter().cloned());

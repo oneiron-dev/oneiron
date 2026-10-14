@@ -48,7 +48,7 @@ impl SessionReadSet {
         cap: usize,
     ) -> Result<()> {
         let txn = vault.store.env.read_txn()?;
-        let flagged = crate::settings::device_local_worlds_at(&vault.store, &txn, locality)?;
+        let flagged = crate::settings::device_local_worlds_at(vault, &txn, locality)?;
         let mut delivery = ChangedDelivery {
             generation: self.delivery_generation(),
             ..ChangedDelivery::default()

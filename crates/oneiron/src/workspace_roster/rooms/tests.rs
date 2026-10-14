@@ -1281,7 +1281,7 @@ fn a_peer_ask_wait_lists_the_task_its_class_came_from() -> Result<()> {
         assert!(listed.contains(row), "{listed:?}");
     }
 
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     let (kept, listed) = notices(CallerLocality::OffDevice);
     assert_eq!(
         kept,

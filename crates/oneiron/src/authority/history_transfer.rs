@@ -245,12 +245,8 @@ impl Vault {
         let history = history_in_txn(self, txn)?;
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-        let mut parents = fold.valid_entries.clone();
-        for hash in &fold.valid_entries {
-            for parent in &history[hash].1.parent_hashes {
-                parents.remove(parent);
-            }
-        }
+        // The main-log heads: a world's side entries are never a main entry's parent.
+        let parents = fold.append_heads;
         let seq = history
             .values()
             .filter(|(_, entry)| entry.signer_key() == &signer_key)

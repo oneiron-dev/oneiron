@@ -43,6 +43,7 @@ mod handoff_equivocation;
 mod history_transfer;
 mod host_re_root;
 mod ingest_observation;
+mod install_fold;
 mod log_budget;
 mod machine_enroll;
 mod machine_identity;
@@ -64,6 +65,9 @@ mod slip_vault;
 mod stale_roster;
 mod tier_floor;
 mod vault_api;
+mod world_privacy;
+mod world_privacy_door;
+mod world_refold;
 mod write_authorization;
 
 #[cfg(test)]
@@ -87,14 +91,16 @@ pub use oneiron_authority::authority::{
     FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture,
     FederationPactState, FederationPactStatus, FoldedDevice, GENESIS_FRAGILE_FLAG,
     GenesisRecoveryStep, MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-    MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS, MAX_PACT_SCOPE_BYTES,
+    MACHINE_SEEN_WORLD_EDITS_MAX, MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS, MAX_PACT_SCOPE_BYTES,
     MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS, MachineEncryptionKey, MachineOwnership, MachineProfile,
-    MachineRole, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY, SlipClaims,
-    SlipMintAction, authority_entry_hash, authority_log_entity_id,
-    authority_log_entity_id_from_hash, authority_transcript, decode_authority_log_entry_body,
-    encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
-    genesis_vault_id, machine_profile_proof_transcript, sign_federation_pact_gesture,
-    validate_authority_log_entry_body_bytes, verify_authority_signature,
+    MachineRole, ModelOrder, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
+    ReadLocation, SealedCopies, SlipClaims, SlipMintAction, WORLD_MODEL_ROUTE_MAX_BYTES,
+    WORLD_MODEL_ROUTES_MAX, WorldPrivacy, WorldPrivacyEdit, authority_entry_hash,
+    authority_log_entity_id, authority_log_entity_id_from_hash, authority_transcript,
+    decode_authority_log_entry_body, encode_authority_log_entry_body, federation_pact_transcript,
+    federation_scope_digest, genesis_vault_id, machine_profile_proof_transcript,
+    sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
+    verify_authority_signature,
 };
 mod federation_activation;
 pub use federation_activation::federation_grant_activation;
@@ -168,3 +174,9 @@ use op_apply::*;
 use sequence_observation::{AuthorityLocalObservations, authority_local_observations_in_txn};
 use stale_roster::{apply_stale_roster_window, next_stale_roster_deadline};
 use tier_floor::*;
+pub use world_privacy::{
+    Destination, EffectiveModelOrder, EffectiveRead, EffectiveWorldPrivacy, FoldedWorld,
+    WorldEditStanding,
+};
+use world_privacy::{WorldFrontier, apply_world_privacy, merge_world_frontiers};
+pub use world_privacy_door::{EditOrigin, WorldPrivacyView, world_readable_on_machine_in};
