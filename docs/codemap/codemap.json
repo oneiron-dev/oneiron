@@ -7909,7 +7909,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 6,
       "struct": 1
      }
@@ -7921,7 +7921,7 @@
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 20,
       "fn": 7
      }
     },
@@ -12259,7 +12259,7 @@
      "path": "src/context_pack/builder/query.rs",
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 59,
       "struct": 1
      }
@@ -16710,7 +16710,7 @@
      "path": "src/embed/device.rs",
      "purpose": "Which device and runtime computed a stored vector (ARCH-0036, owner 2026-10-11)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 6,
       "struct": 2
@@ -19713,7 +19713,7 @@
      "path": "src/hnsw/mod.rs",
      "purpose": "HNSW graph index over the persisted neighbor graph",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -19743,7 +19743,7 @@
      "path": "src/hnsw/search.rs",
      "purpose": "Search, MRL rescore, and beam traversal",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -23786,7 +23786,7 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "fn": 11,
       "struct": 2
      }
@@ -23855,6 +23855,22 @@
      "notable": [],
      "path": "src/memory/tests/self_grant.rs",
      "purpose": "Self-Grant and private admin-ruling falsification tests",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/tests/session_recall.rs",
+     "purpose": "A room's recall reads its overlay ∪ base (ARCH-0052 §2 #target)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/tests/session_union_reads.rs",
+     "purpose": "A context pack and a graph walk bound to a room read its overlay ∪ base, and never write what they read…",
      "surface": {}
     },
     {
@@ -24911,7 +24927,7 @@
      "path": "src/off_record/lifecycle/session.rs",
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 11,
       "struct": 2
      }
@@ -24923,7 +24939,7 @@
      "path": "src/off_record/lifecycle/telemetry.rs",
      "purpose": "Retrieval-run registration door (register/finalize/discard, staged/published arms)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -26451,7 +26467,7 @@
      "path": "src/overlay_db/accessors.rs",
      "purpose": "ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 33
      }
     },
     {
@@ -26646,7 +26662,7 @@
      "path": "src/pipeline/builder/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "fn": 39,
       "struct": 1
      }
@@ -26904,8 +26920,18 @@
      "path": "src/pipeline/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/population.rs",
+     "purpose": "How many rows a read's text and vector indexes can return: the populations a scoped channel widens to, for a…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -26988,6 +27014,14 @@
      "notable": [],
      "path": "src/pipeline/tests/retrieval_blend.rs",
      "purpose": "Vector/PPR channels, recency boost, prefix gates, and temporal hints",
+     "surface": {}
+    },
+    {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "src/pipeline/tests/room_reads.rs",
+     "purpose": "Retrieval bound to a room reads its overlay ∪ base and writes nothing derived from the room into base…",
      "surface": {}
     },
     {
@@ -27699,7 +27733,7 @@
      "path": "src/ports/lmdb_entity.rs",
      "purpose": "LMDB entity, edge and place adapters",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -27709,7 +27743,7 @@
      "path": "src/ports/lmdb_index.rs",
      "purpose": "Search, short-id and deletion-ledger adapters",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -27753,7 +27787,7 @@
      "path": "src/ports/lmdb_retrieval.rs",
      "purpose": "Configured text-query adapter, including composed session targets",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -31375,13 +31409,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/session_overlay/overlay/rows.rs",
      "purpose": "Row staging, preflight, budget checks, read probes",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -31421,7 +31455,7 @@
      "path": "src/session_overlay/snapshot.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 18
      }
     },
     {
@@ -33583,7 +33617,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "RawDatabases",
@@ -33594,7 +33628,7 @@
      "path": "src/store/handle.rs",
      "purpose": "The vault handle shape: [`RawDatabases`], [`StoreCore`], [`StoreOwner`], [`Store`], [`SessionStoreView`]…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 27,
       "struct": 4
      }
     },
@@ -37227,7 +37261,7 @@
      "path": "src/vault/edges.rs",
      "purpose": "Vault edge writes, adjacency queries and graph traversal",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 13
      }
     },
@@ -37246,7 +37280,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/vault/entity_revision/citations.rs",
@@ -37263,7 +37297,7 @@
      "path": "src/vault/entity_revision/idle.rs",
      "purpose": "Idle debounce and atomic BM25/vector/frontier publication",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 6
      }
     },
@@ -37305,7 +37339,7 @@
      "path": "src/vault/entity_revision/storage.rs",
      "purpose": "Transactional revision ledger",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 26,
       "fn": 2
      }
     },
@@ -40370,7 +40404,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 106,
+     "files": 108,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40454,7 +40488,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 52,
+     "files": 54,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40930,10 +40964,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 37,
+   "over_bar": 38,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2482,
-   "test_files": 794
+   "source_files": 2483,
+   "test_files": 797
   },
   "oneiron-android": {
    "files": [
