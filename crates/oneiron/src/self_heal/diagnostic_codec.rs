@@ -94,8 +94,8 @@ pub fn decode_diagnostic_event_body(bytes: &[u8]) -> Result<DiagnosticEvent> {
     decode_body(bytes).map(|decoded| decoded.event)
 }
 
-/// One decoded body, and whether decode dropped text a body stored before
-/// the owner ruling of 2026-10-14 carried.
+/// One decoded body, and whether decode dropped what only the grammar before
+/// the owner ruling of 2026-10-14 allowed: text, or an invariant map.
 struct DecodedBody {
     event: DiagnosticEvent,
     dropped_text: bool,

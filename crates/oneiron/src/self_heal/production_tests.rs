@@ -83,17 +83,17 @@ fn a_prose_scope_label_reaches_no_stored_row() -> Result<()> {
 
 /// CodeRabbit on #1421: an owner's vault keeps the DIAGNOSTIC rows it stored
 /// before the owner ruling of 2026-10-14, with text wherever that grammar let
-/// a writer put some. Both read doors read such a row at its stored id with
-/// the text dropped, and the write door refuses its bytes.
+/// a writer put some, or an invariant map with no text in it at all. The
+/// owner's scoped read and the reviewed-finding door read such a row at its
+/// stored id with those values dropped, and the write door refuses its bytes.
 #[test]
 fn a_diagnostic_stored_before_the_ruling_reads_without_its_text() -> Result<()> {
     const TEXT: &str = "sentinel-world-text-0c5e: my sister's diagnosis";
-    let (_dir, vault, _, query) = consent_vault()?;
+    let (_dir, vault, owner, query) = consent_vault()?;
     let ids = vault.run_consent_denied_detector("scope.consent", query)?;
     let canonical = body(&vault, &ids[0])?;
     let stored = decode_diagnostic_event_body(&canonical)?;
-    let mut legacy = canonical;
-    for (key, text) in [
+    let with_text = vec![
         ("untrusted_detail", Value::from(TEXT)),
         ("expected", Value::from(TEXT)),
         (
@@ -101,44 +101,47 @@ fn a_diagnostic_stored_before_the_ruling_reads_without_its_text() -> Result<()> 
             Value::Map(vec![(Value::from(TEXT), Value::from(1_u64))]),
         ),
         ("replay_run_ref", Value::from(TEXT)),
-    ] {
-        legacy = super::text_tests::replace_field(&legacy, key, text);
-    }
-    let id = diagnostic_event_id(&stored.detector_id, &legacy);
-    let occurred = TimeRange {
-        start: stored.valid_from,
-        end: u64::MAX,
-    };
-    let row = crate::test_support::entity_record(ENTITY_TYPE_DIAGNOSTIC, occurred, 1, &legacy);
-    vault.with_write_txn(|wtxn| {
-        vault.store.entities.put(wtxn, id.as_bytes(), &row)?;
-        let type_key = crate::store::Store::encode_type_key(ENTITY_TYPE_DIAGNOSTIC, &id);
-        vault.store.type_index.put(wtxn, &type_key, &[])?;
-        Ok(())
-    })?;
+    ];
+    let empty_map = vec![("expected", Value::Map(Vec::new()))];
+    for fields in [with_text, empty_map] {
+        let mut legacy = canonical.clone();
+        for (key, value) in &fields {
+            legacy = super::text_tests::replace_field(&legacy, key, value.clone());
+        }
+        let id = diagnostic_event_id(&stored.detector_id, &legacy);
+        let occurred = TimeRange {
+            start: stored.valid_from,
+            end: u64::MAX,
+        };
+        let row = crate::test_support::entity_record(ENTITY_TYPE_DIAGNOSTIC, occurred, 1, &legacy);
+        vault.with_write_txn(|wtxn| {
+            vault.store.entities.put(wtxn, id.as_bytes(), &row)?;
+            let type_key = crate::store::Store::encode_type_key(ENTITY_TYPE_DIAGNOSTIC, &id);
+            vault.store.type_index.put(wtxn, &type_key, &[])?;
+            Ok(())
+        })?;
 
-    crate::test_util::authorize_readers(&vault, &["runner"]);
-    let scoped = vault
-        .scoped_read(crate::claim::ScopedReadActorKey::new("runner").expect("reader key"))
-        .diagnostic_events()?
-        .value
-        .into_iter()
-        .find_map(|(row, event)| (row == id).then_some(event))
-        .expect("the stored row reads");
-    let reviewed = vault.reviewed_diagnostic(&id)?;
-    assert_eq!(scoped, reviewed);
-    assert!(!format!("{reviewed:?}").contains("sentinel"));
-    assert_eq!(reviewed.expected, Value::Nil);
-    assert_eq!(reviewed.delta, Value::Nil);
-    assert_eq!(reviewed.replay.run_ref, None);
-    assert_eq!(reviewed.actual, stored.actual);
-    assert_eq!(reviewed.evidence_refs, stored.evidence_refs);
-    assert_eq!(
-        validate_diagnostic_event_admission(&id, occurred, &legacy)
-            .unwrap_err()
-            .kind(),
-        crate::ErrorKind::InvalidDiagnosticBody
-    );
+        let scoped = vault
+            .scoped_read(crate::claim::ScopedReadActorKey::vault_owner(owner))
+            .diagnostic_events()?
+            .value
+            .into_iter()
+            .find_map(|(row, event)| (row == id).then_some(event))
+            .expect("the stored row reads");
+        let reviewed = vault.reviewed_diagnostic(&id)?;
+        assert_eq!(scoped, reviewed);
+        assert!(!format!("{reviewed:?}").contains("sentinel"));
+        assert_eq!(reviewed.expected, Value::Nil);
+        assert_eq!(reviewed.actual, stored.actual);
+        assert_eq!(reviewed.evidence_refs, stored.evidence_refs);
+        assert_eq!(reviewed.replay.content_hash, stored.replay.content_hash);
+        assert_eq!(
+            validate_diagnostic_event_admission(&id, occurred, &legacy)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::InvalidDiagnosticBody
+        );
+    }
     Ok(())
 }
 

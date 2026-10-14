@@ -26,8 +26,9 @@ struct InvariantBudget {
     /// Also read the strings and string-keyed maps the grammar before the
     /// owner ruling of 2026-10-14 allowed. Only a stored body is read so.
     earlier_grammar: bool,
-    /// The walk met such text.
-    carried_text: bool,
+    /// The walk met a string or a map, even an empty one: a value only that
+    /// grammar allows.
+    earlier_only: bool,
 }
 
 /// Reads one stored invariant input, and requires it to have arrived
@@ -38,9 +39,9 @@ struct InvariantBudget {
 /// breaks the content addressing the replay coordinate rests on.
 ///
 /// A body stored before the owner ruling of 2026-10-14 (fix 6) may hold the
-/// strings and string-keyed maps its grammar allowed. Such a value is checked
-/// against that grammar and reads as `None`, so no decoded event carries its
-/// text; the write door refuses it.
+/// strings and string-keyed maps its grammar allowed. A value holding one,
+/// even an empty map, is checked against that grammar and reads as `None`, so
+/// no decoded event carries its text; the write door refuses it.
 pub(super) fn stored_invariant_field(value: &Value) -> Result<Option<Value>> {
     let mut budget = InvariantBudget {
         earlier_grammar: true,
@@ -50,7 +51,7 @@ pub(super) fn stored_invariant_field(value: &Value) -> Result<Option<Value>> {
     if &canonical != value {
         return Err(invalid_diagnostic("invariant value is not canonical"));
     }
-    Ok((!budget.carried_text).then_some(canonical))
+    Ok((!budget.earlier_only).then_some(canonical))
 }
 
 /// Rebuilds one invariant input into its single canonical spelling.
@@ -133,7 +134,7 @@ fn earlier_invariant_text<'a>(text: &'a str, budget: &mut InvariantBudget) -> Re
     if text.chars().any(is_forbidden_text_scalar) {
         return Err(invalid_diagnostic("invariant string carries controls"));
     }
-    budget.carried_text = true;
+    budget.earlier_only = true;
     Ok(text)
 }
 
@@ -144,6 +145,7 @@ fn earlier_invariant_map(
     if entries.len() > MAX_INVARIANT_WIDTH {
         return Err(invalid_diagnostic("invariant map is too wide"));
     }
+    budget.earlier_only = true;
     budget.depth += 1;
     // A `BTreeMap` IS the canonicalization: it sorts by key and it refuses a
     // second value for a key that already has one, in one structure.

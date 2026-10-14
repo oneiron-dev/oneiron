@@ -33,7 +33,8 @@ impl RetrievalTraceKey {
     /// first open. The mint deletes, in its own transaction, every retrieval
     /// run the store already holds, so a vault written before this key
     /// existed keeps no unkeyed fork hash and none of the pack bytes its runs
-    /// could hold.
+    /// could hold. The key and this deletion arrived in one change, so a store
+    /// that already holds a key holds no run from before it.
     pub(super) fn resolve_at_open(store: &Store) -> Result<Self> {
         let mut wtxn = store.env.write_txn()?;
         if let Some(key) = RETRIEVAL_TRACE_KEY.get(store, &wtxn, &())? {
