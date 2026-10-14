@@ -56,10 +56,11 @@ pub trait CompactionBackend: Send + Sync {
         request: &CompactionRequest,
         retry: Option<CompactionCheck>,
     ) -> std::result::Result<CompactionProduct, CompactionRefusal>;
-    /// The most window tokens (the messages' `tokens`) one call takes whole
-    /// beside a reply of `summary_token_budget`, or `None` when nothing
-    /// bounds it. A host that numbers its own log seals no larger window.
-    fn window_token_limit(&self, _summary_token_budget: u64) -> Option<u64> {
+    /// The most tokens one call's rendered input
+    /// ([`super::compaction_request_input`], on any try) holds beside a reply
+    /// of `summary_token_budget`, or `None` when nothing bounds it. A host
+    /// that numbers its own log seals no larger input.
+    fn input_token_limit(&self, _summary_token_budget: u64) -> Option<u64> {
         None
     }
 }
