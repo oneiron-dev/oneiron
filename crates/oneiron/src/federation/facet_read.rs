@@ -48,9 +48,51 @@ pub(crate) const MAX_HELD_PER_SENDER: u64 = 4096;
 #[cfg(feature = "sync")]
 pub(crate) const MAX_HELD_BYTES_PER_SENDER: u64 = 1 << 20;
 
-/// How long a stamp stays held while its row does not come: 30 days.
+/// How long a peer's stamp stays held while its row does not come: 30 days.
 #[cfg(feature = "sync")]
 pub(crate) const HELD_STAMP_TTL_SECS: u64 = 30 * 24 * 60 * 60;
+
+/// Whose stamps a lane of [`PARKED_STAMP`] holds, which decides what retires
+/// them (Astra-c F1 on #1432).
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HeldLane {
+    /// A federation peer's, untrusted until it brings their rows: they go
+    /// after [`HELD_STAMP_TTL_SECS`] or with the grant they came under.
+    Peer(EntityId),
+    /// An owner's foreign artifact staged under this receipt: they stay while
+    /// the receipt is Pending, whatever their age (rule 5), and go with it.
+    Staged([u8; 32]),
+}
+
+#[cfg(feature = "sync")]
+impl HeldLane {
+    /// The lane's key in the held tables.
+    pub(crate) fn key(&self) -> String {
+        match self {
+            Self::Peer(peer) => format!("p{}", peer.to_hex()),
+            Self::Staged(receipt) => {
+                format!("s{}", crate::entity_id::bytes_to_hex_lower(receipt))
+            }
+        }
+    }
+
+    /// The lane a key names, or `None` for one no lane spells.
+    fn parse(key: &str) -> Option<Self> {
+        let lane = match key.split_at_checked(1)? {
+            ("p", peer) => Self::Peer(EntityId::from_hex(peer).ok()?),
+            ("s", receipt) if receipt.len() == 64 => {
+                let mut id = [0_u8; 32];
+                for (index, byte) in id.iter_mut().enumerate() {
+                    *byte = u8::from_str_radix(receipt.get(index * 2..index * 2 + 2)?, 16).ok()?;
+                }
+                Self::Staged(id)
+            }
+            _ => return None,
+        };
+        (lane.key() == key).then_some(lane)
+    }
+}
 
 /// Whether the stored row `id`, with header and body `raw` as `view` holds
 /// it, sits in one of `facets`. A TASK sits in the facet its birth stamp
@@ -349,11 +391,10 @@ pub(crate) fn held_rows_under(
         }))
 }
 
-/// Retires each held stamp held [`HELD_STAMP_TTL_SECS`] or longer by `now`,
-/// held under a grant `conferring` no longer returns, or whose row does not
-/// decode; returns how many went. Each is judged again, with its grant, in
-/// the transaction that removes it, so a hold renewed since the scan under a
-/// grant that confers again stays (Sol R10 F3 on #1432).
+/// Retires each held stamp that [`retiring`] names by `now`; returns how
+/// many went. Each is judged again, with its grant, in the transaction that
+/// removes it, so a hold renewed since the scan under a grant that confers
+/// again stays (Sol R10 F3 on #1432).
 #[cfg(feature = "sync")]
 pub(crate) fn retire_held_stamps(
     vault: &Vault,
@@ -363,6 +404,7 @@ pub(crate) fn retire_held_stamps(
     let candidates = {
         let txn = vault.store.env.read_txn()?;
         retiring(
+            &vault.store,
             &txn,
             now,
             PARKED_STAMP.scan(&vault.store, &txn)?,
@@ -380,7 +422,7 @@ pub(crate) fn retire_held_stamps(
             }
         }
         let mut count = 0;
-        for key in retiring(wtxn, now, rows, &conferring)? {
+        for key in retiring(&vault.store, wtxn, now, rows, &conferring)? {
             if remove_held(&vault.store, wtxn, &key)? {
                 count += 1;
             }
@@ -389,9 +431,13 @@ pub(crate) fn retire_held_stamps(
     })
 }
 
-/// The keys among `rows` that retire by `now`, their grants judged in `txn`.
+/// The keys among `rows` that retire by `now`, judged in `txn`: a peer's
+/// stamp held [`HELD_STAMP_TTL_SECS`] or longer or under a grant `conferring`
+/// no longer returns, a staged stamp whose receipt keeps no record of it any
+/// more (it left Pending), and a row whose lane or value does not decode.
 #[cfg(feature = "sync")]
 fn retiring(
+    dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
     now: u64,
     rows: Vec<((HexId, HexId, String), Vec<u8>)>,
@@ -402,17 +448,23 @@ fn retiring(
         .filter_map(|(_, value)| read_held(value)?.1)
         .collect();
     let live = conferring(txn, &grants)?;
-    Ok(rows
-        .into_iter()
-        .filter(|(_, value)| match read_held(value) {
-            None => true,
-            Some((held_at, grant, _)) => {
+    let mut retire = Vec::new();
+    for (key, value) in rows {
+        let gone = match (HeldLane::parse(&key.2), read_held(&value)) {
+            (None, _) | (_, None) => true,
+            (Some(HeldLane::Peer(_)), Some((held_at, grant, _))) => {
                 now.saturating_sub(held_at) >= HELD_STAMP_TTL_SECS
                     || grant.is_some_and(|grant| !live.contains(&grant))
             }
-        })
-        .map(|(key, _)| key)
-        .collect())
+            (Some(HeldLane::Staged(receipt)), Some(_)) => {
+                !crate::batch::export::vault_import_keeps_stamps_in(dbs, txn, &receipt)?
+            }
+        };
+        if gone {
+            retire.push(key);
+        }
+    }
+    Ok(retire)
 }
 
 impl Vault {

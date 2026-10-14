@@ -1802,14 +1802,73 @@ fn a_staged_birth_confirmed_after_another_writer_birthed_the_row_releases_no_sta
     assert!(vault.row_in_facets(&row, &facet_set(private)).unwrap());
 }
 
+/// Stages `artifact` under a receipt as a foreign platform's export, while
+/// this vault may lack its rows.
+fn stage_artifact(
+    vault: &Vault,
+    window_key: &WindowKey,
+    artifact: &LoroDoc,
+    digest: u8,
+) -> crate::batch::export::StagedVaultImport {
+    let classification = crate::batch::export::VaultImportReceipt {
+        manifest_digest: [digest; 32],
+        classification: crate::batch::export::VaultImportClassification::ForeignAuthorityChain,
+        mismatches: vec![],
+        exported_vault_id: None,
+        local_vault_id: None,
+        exported_label: None,
+        expected_label: None,
+        byte_faithful: false,
+    };
+    crate::batch::export::stage_foreign_vault_import(
+        vault,
+        &classification,
+        crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
+            platform: "elsewhere".into(),
+        },
+        window_key,
+        &artifact.export(ExportMode::all_updates()).unwrap(),
+    )
+    .unwrap()
+}
+
+/// `actor` confirms `staged`; the confirmed window is materialized.
+fn confirm_artifact(
+    vault: &Vault,
+    client: &mut SyncClient,
+    window_key: &WindowKey,
+    staged: crate::batch::export::StagedVaultImport,
+    actor: EntityId,
+) {
+    let confirmation = crate::batch::export::VaultImportConfirmation {
+        receipt_id: staged.receipt.receipt_id,
+        actor,
+        confirmed_at_secs: 1,
+    };
+    client
+        .confirm_staged_vault_import(staged, confirmation)
+        .unwrap();
+    let live = client
+        .window(window_key.as_str())
+        .expect("confirm loads the window");
+    rematerialize(vault, &live.doc, window_key);
+}
+
+/// The rows a lane holds.
+fn held_under(vault: &Vault, lane: &str) -> u64 {
+    let txn = vault.store.env.read_txn().unwrap();
+    crate::federation::facet_read::held_rows_under(&vault.store, &txn, lane)
+        .unwrap()
+        .0
+}
+
 /// Rule 5 on #1432: a confirmed staged artifact is the owner's own work, so
 /// no count drops its stamps. One that brings a row and stamps it into 17
 /// facets, one past a peer's per-row cap, places all 17 at its confirmation.
 #[test]
 fn a_confirmed_staged_artifact_places_every_stamp_of_its_row() {
-    let window = "2026-05";
-    let window_key = WindowKey::new(window);
-    let (_dir, vault, _grant_id, mut client) = test_client_with_grant(entity_id(0x84), window);
+    let window_key = WindowKey::new("2026-05");
+    let (_dir, vault, _grant_id, mut client) = test_client_with_grant(entity_id(0x84), "2026-05");
     let facets: Vec<EntityId> = (0x85..=0x95).map(entity_id).collect();
     let [row, actor] = [0x96, 0x97].map(entity_id);
     let artifact = create_window_doc("foreign", &window_key);
@@ -1819,36 +1878,8 @@ fn a_confirmed_staged_artifact_places_every_stamp_of_its_row() {
         insert_edge(&artifact, row, EdgeKind::FacetOf, facet);
     }
     artifact.commit();
-    let classification = crate::batch::export::VaultImportReceipt {
-        manifest_digest: [0x84; 32],
-        classification: crate::batch::export::VaultImportClassification::ForeignAuthorityChain,
-        mismatches: vec![],
-        exported_vault_id: None,
-        local_vault_id: None,
-        exported_label: None,
-        expected_label: None,
-        byte_faithful: false,
-    };
-    let staged = crate::batch::export::stage_foreign_vault_import(
-        &vault,
-        &classification,
-        crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
-            platform: "elsewhere".into(),
-        },
-        &window_key,
-        &artifact.export(ExportMode::all_updates()).unwrap(),
-    )
-    .unwrap();
-    let confirmation = crate::batch::export::VaultImportConfirmation {
-        receipt_id: staged.receipt.receipt_id,
-        actor,
-        confirmed_at_secs: 1,
-    };
-    client
-        .confirm_staged_vault_import(staged, confirmation)
-        .unwrap();
-    let live = client.window(window).expect("confirm loads the window");
-    rematerialize(&vault, &live.doc, &window_key);
+    let staged = stage_artifact(&vault, &window_key, &artifact, 0x84);
+    confirm_artifact(&vault, &mut client, &window_key, staged, actor);
 
     assert_eq!(
         facets.len(),
@@ -1862,6 +1893,106 @@ fn a_confirmed_staged_artifact_places_every_stamp_of_its_row() {
         );
         assert!(vault.row_in_facets(&row, &facet_set(facet)).unwrap());
     }
+}
+
+/// Astra-c F1 on #1432: an owner's staged stamps stay held while the
+/// receipt is Pending, whatever their age, and the one on the row the
+/// artifact brings lands at its confirmation; a peer's stamp as old retires.
+/// Once the receipt is confirmed, the stamp it held on a row it never
+/// brought leaves with it.
+#[test]
+fn a_pending_staged_stamp_outlives_the_age_a_peer_stamp_retires_at() {
+    let window_key = WindowKey::new("2026-05");
+    let (_dir, vault, grant_id, mut client) = test_client_with_grant(entity_id(0x98), "2026-05");
+    let [work, row, stray, peer, peer_row, actor] = [1, 2, 3, 4, 5, 6].map(|n| entity_id(0x98 + n));
+    put_row(&vault, work, ENTITY_TYPE_FACET);
+    let artifact = create_window_doc("foreign", &window_key);
+    insert_entity(&artifact, row, ENTITY_TYPE_EVENT, b"row");
+    insert_edge(&artifact, row, EdgeKind::FacetOf, work);
+    insert_edge(&artifact, stray, EdgeKind::FacetOf, work);
+    artifact.commit();
+    let staged = stage_artifact(&vault, &window_key, &artifact, 0x98);
+    let ahead = create_window_doc("federation-peer", &window_key);
+    insert_edge(&ahead, peer_row, EdgeKind::FacetOf, work);
+    ahead.commit();
+    import_from_peer(
+        &vault,
+        &create_window_doc("local", &window_key),
+        &window_key,
+        &ahead.export(ExportMode::all_updates()).unwrap(),
+        (peer, grant_id),
+        FederationAdmissionRole::Member,
+    );
+    let peer_lane = crate::federation::facet_read::HeldLane::Peer(peer).key();
+    let staged_lane =
+        crate::federation::facet_read::HeldLane::Staged(staged.receipt.receipt_id).key();
+    assert_eq!(
+        (
+            held_under(&vault, &peer_lane),
+            held_under(&vault, &staged_lane)
+        ),
+        (1, 2),
+        "precondition: both lanes hold their stamps"
+    );
+
+    let aged =
+        vault.store.clock.now_recorded_at() + crate::federation::facet_read::HELD_STAMP_TTL_SECS;
+    let retire = |now| {
+        crate::federation::facet_read::retire_held_stamps(&vault, now, |_, grants| {
+            Ok(grants.clone())
+        })
+        .unwrap()
+    };
+    assert_eq!(retire(aged), 1, "only the peer's stamp ages out");
+    assert_eq!(held_under(&vault, &peer_lane), 0);
+    assert_eq!(held_under(&vault, &staged_lane), 2);
+    confirm_artifact(&vault, &mut client, &window_key, staged, actor);
+    assert!(
+        stamp_stored(&vault, row, work),
+        "the owner's staged stamp lands"
+    );
+    assert!(vault.row_in_facets(&row, &facet_set(work)).unwrap());
+    assert_eq!(
+        retire(vault.store.clock.now_recorded_at()),
+        1,
+        "the stamp on a row the confirmed artifact never brought leaves with it"
+    );
+    assert_eq!(held_under(&vault, &staged_lane), 0);
+}
+
+/// Astra-c F1 on #1432, the guard: the held table restores live while the
+/// receipt restores with its content, so a Pending receipt can outlive its
+/// holds. The receipt's own record holds every staged stamp again at the
+/// confirmation, and the stamp lands.
+#[test]
+fn a_staged_stamp_whose_hold_is_gone_lands_from_its_receipt() {
+    let window_key = WindowKey::new("2026-05");
+    let (_dir, vault, _grant_id, mut client) = test_client_with_grant(entity_id(0x9F), "2026-05");
+    let [work, row, actor] = [0xB0, 0xB1, 0xB2].map(entity_id);
+    put_row(&vault, work, ENTITY_TYPE_FACET);
+    let artifact = create_window_doc("foreign", &window_key);
+    insert_entity(&artifact, row, ENTITY_TYPE_EVENT, b"row");
+    insert_edge(&artifact, row, EdgeKind::FacetOf, work);
+    artifact.commit();
+    let staged = stage_artifact(&vault, &window_key, &artifact, 0x9F);
+    let lane = crate::federation::facet_read::HeldLane::Staged(staged.receipt.receipt_id).key();
+    vault
+        .with_write_txn_grouped(|wtxn| {
+            crate::federation::facet_read::unpark_released(&vault.store, wtxn, (row, work), &lane)
+        })
+        .unwrap();
+    assert_eq!(
+        held_under(&vault, &lane),
+        0,
+        "precondition: the hold is gone"
+    );
+
+    confirm_artifact(&vault, &mut client, &window_key, staged, actor);
+    assert!(
+        stamp_stored(&vault, row, work),
+        "a staged stamp whose hold was lost never landed"
+    );
+    assert!(vault.row_in_facets(&row, &facet_set(work)).unwrap());
 }
 
 /// Sol R5 F3: a peer's early stamps reach the owner's two devices apart, `row

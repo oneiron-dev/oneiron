@@ -399,6 +399,38 @@ impl HeldStamp {
     fn key(&self) -> String {
         super::bridge::format_edge_key(&self.src, EdgeKind::FacetOf, &self.tgt)
     }
+
+    /// `stamps` as the record a staged receipt keeps of them: each stamp's
+    /// source, target, its value's length (u64 BE) and its value.
+    pub(super) fn record<'a>(stamps: impl Iterator<Item = &'a Self>) -> Vec<u8> {
+        let mut record = Vec::new();
+        for stamp in stamps {
+            record.extend_from_slice(stamp.src.as_bytes());
+            record.extend_from_slice(stamp.tgt.as_bytes());
+            record.extend_from_slice(&(stamp.value.len() as u64).to_be_bytes());
+            record.extend_from_slice(&stamp.value);
+        }
+        record
+    }
+
+    /// A [`Self::record`] read back, or `None` for one that does not decode.
+    pub(super) fn from_record(mut record: &[u8]) -> Option<Vec<Self>> {
+        let mut stamps = Vec::new();
+        while !record.is_empty() {
+            let (src, rest) = record.split_first_chunk::<16>()?;
+            let (tgt, rest) = rest.split_first_chunk::<16>()?;
+            let (len, rest) = rest.split_first_chunk::<8>()?;
+            let (value, rest) =
+                rest.split_at_checked(usize::try_from(u64::from_be_bytes(*len)).ok()?)?;
+            stamps.push(Self {
+                src: EntityId::from_bytes(*src).ok()?,
+                tgt: EntityId::from_bytes(*tgt).ok()?,
+                value: value.to_vec(),
+            });
+            record = rest;
+        }
+        Some(stamps)
+    }
 }
 
 /// What the admission boundary does with one parsed edge row.

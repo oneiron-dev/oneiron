@@ -308,6 +308,9 @@ side_tables! {
     /// Terminal/pending status receipt (hand-rolled MessagePack map) for one foreign vault-import
     /// artifact, keyed by its content-derived receipt id. Key: hex64.
     VAULT_IMPORT_RECEIPT: SyncState b"vault_import_receipt:v1:" Raw;
+    /// The facet stamps a foreign artifact staged ahead of their rows, kept with its receipt while
+    /// it is Pending, so its confirmation holds every one of them again. Key: hex64.
+    VAULT_IMPORT_STAMPS: SyncState b"vault_import_stamps:v1:" Raw;
     /// A raised question recording that a wire call-volume window crossed its per-verb or per-actor
     /// threshold. Key: u64 ":" u64 (decimal, zero-padded to 20 digits; window start:end).
     RC42_WIRE_QUESTION: SyncState b"wire:question:v2:" Named;

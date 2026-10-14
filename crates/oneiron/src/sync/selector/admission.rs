@@ -26,7 +26,7 @@ use crate::sync::types::WindowKey;
 
 #[cfg(feature = "sync")]
 use super::edge::{
-    EarlyStamps, ReleasedStamps, copy_admitted_edges, hold_stamps, pending_births,
+    EarlyStamps, HeldStamp, ReleasedStamps, copy_admitted_edges, hold_stamps, pending_births,
     refuse_admitted_stamps, refuse_non_binary_edges, release_born_stamps,
 };
 use crate::error::{RecordError, SyncError};
@@ -81,7 +81,7 @@ pub(in crate::sync) fn admit_peer_window_update(
     role: FederationAdmissionRole,
     peer: EntityId,
 ) -> Result<AdmittedUpdate> {
-    let lane = format!("p{}", peer.to_hex());
+    let lane = crate::federation::facet_read::HeldLane::Peer(peer).key();
     admit_window_update(vault, key, update, role, Some(lane))
 }
 
@@ -102,7 +102,7 @@ pub(crate) fn admit_staged_window_update(
 
 #[cfg(feature = "sync")]
 fn staged_lane(receipt_id: &[u8; 32]) -> String {
-    format!("s{}", crate::entity_id::bytes_to_hex_lower(receipt_id))
+    crate::federation::facet_read::HeldLane::Staged(*receipt_id).key()
 }
 
 /// An update the federation door admitted, and the facet stamps it sent onto
@@ -157,6 +157,12 @@ impl AdmittedUpdate {
         };
         hold_stamps(vault, key, (lane, None), &self.early.held, false)?;
         hold_stamps(vault, key, (lane, None), &self.early.with_birth, false)
+    }
+
+    /// The record of every stamp [`Self::hold_staged`] holds, which the
+    /// receipt keeps while it is Pending.
+    pub(crate) fn staged_stamps(&self) -> Vec<u8> {
+        HeldStamp::record(self.early.held.iter().chain(&self.early.with_birth))
     }
 
     /// The rows the update brings whose births its import must watch, each
@@ -227,6 +233,15 @@ pub(in crate::sync) fn staged_births(
         })
     })?;
     let lane = staged_lane(receipt_id);
+    // The held table restores live and maintenance sweeps it, so a hold can
+    // be gone while its receipt is Pending. The receipt's own record holds
+    // every staged stamp again before its birth is judged: an owner's import
+    // never lands a row without the facets it staged (Astra-c F1 on #1432).
+    if let Some(record) = crate::batch::export::vault_import_staged_stamps(vault, receipt_id)? {
+        let stamps =
+            HeldStamp::from_record(&record).ok_or(Error::CorruptedIndex("staged facet stamps"))?;
+        hold_stamps(vault, key, (&lane, None), &stamps, false)?;
+    }
     let births = pending_births(vault, &lane, &admitted.get_map("entities"), &[])?;
     Ok(StagedBirths { lane, births })
 }

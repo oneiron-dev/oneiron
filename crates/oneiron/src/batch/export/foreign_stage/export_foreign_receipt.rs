@@ -18,9 +18,13 @@ pub(super) const CONTENT: SideTable<Hex64, Vec<u8>, Raw> =
 /// Key: hex64.
 pub(super) const RECEIPT: SideTable<Hex64, Vec<u8>, Raw> =
     SideTable::new(&side_table::VAULT_IMPORT_RECEIPT);
+/// The facet stamps an artifact staged ahead of their rows, kept exactly as
+/// long as [`CONTENT`]. Key: hex64.
+pub(super) const STAMPS: SideTable<Hex64, Vec<u8>, Raw> =
+    SideTable::new(&side_table::VAULT_IMPORT_STAMPS);
 
 /// A 32-byte id spelled as 64 lower-case hex characters — this family's key
-/// shape, shared by [`RECEIPT`] and [`CONTENT`].
+/// shape, shared by [`RECEIPT`], [`CONTENT`] and [`STAMPS`].
 #[derive(Clone, Copy)]
 pub(super) struct Hex64(pub(super) [u8; 32]);
 
