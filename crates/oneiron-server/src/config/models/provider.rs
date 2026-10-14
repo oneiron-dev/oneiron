@@ -50,9 +50,13 @@ impl ProviderKind {
                 LlmCapability::ToolCalling,
                 LlmCapability::ToolResults,
             ],
-            Self::LocalOpenaiCompat => {
-                vec![LlmCapability::Streaming, LlmCapability::JsonResponse]
-            }
+            // A local server takes a reasoning level: one serving a thinking
+            // model reads it, one that is not ignores it.
+            Self::LocalOpenaiCompat => vec![
+                LlmCapability::Streaming,
+                LlmCapability::JsonResponse,
+                LlmCapability::Reasoning,
+            ],
             Self::AnthropicCompat => vec![
                 LlmCapability::Streaming,
                 LlmCapability::ToolCalling,

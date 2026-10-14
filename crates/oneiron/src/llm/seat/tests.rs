@@ -284,3 +284,63 @@ fn run_seat_receipt_is_persisted_before_calls_and_reused_after_reopen() -> Resul
     );
     Ok(())
 }
+
+/// DREAMER-SEAT (Sol r3 F1-F3, Wonder r2 F1): a call outside any seat never
+/// carries a level a seat birth would refuse. A Gemini-wire model carries
+/// `none` whatever ladder describes it, a described row that disagrees with
+/// the registry is refused as a birth refuses it, and an authored level with
+/// no rung at or below it is refused under narrow-only precedence rather
+/// than widened. With nothing authored, the caller's level walks to the
+/// model's only rung.
+#[test]
+fn a_call_outside_a_seat_carries_only_a_level_a_seat_birth_allows() -> Result<()> {
+    use crate::llm::routing::{DescriptionPolicy, ModelDescription as Described};
+    let (_dir, vault) = policy_vault();
+    let id = register(
+        &vault,
+        "provider/a@r1",
+        ModelLocality::OwnServer,
+        "reasoning",
+    )?;
+    let purpose = CallPurpose::Extraction;
+    let effort = |wire, ladder: &[ReasoningEffort], authored: Option<ReasoningEffort>| {
+        vault.set_description_policy(&DescriptionPolicy {
+            models: vec![Described {
+                model: id.clone(),
+                wire,
+                locality: ModelLocality::OwnServer,
+                owner: None,
+                public_benchmark: Some("placeholder benchmark".into()),
+                vendor: None,
+                effort_ladder: ladder.to_vec(),
+            }],
+            contradiction_margin_millionths: 0,
+            vault_effort: None,
+            purpose_effort: authored
+                .map(|level| ("extraction".to_owned(), level))
+                .into_iter()
+                .collect(),
+            global_effort: None,
+        })?;
+        vault.purpose_effort(&purpose, &id, true, ReasoningEffort::Medium)
+    };
+    let (low, medium, high) = (
+        ReasoningEffort::Low,
+        ReasoningEffort::Medium,
+        ReasoningEffort::High,
+    );
+    assert!(effort(ModelWireFormat::Gemini, &[low, medium], None).is_err());
+    assert!(effort(ModelWireFormat::OpenaiCompat, &[high], Some(low)).is_err());
+    assert_eq!(
+        effort(ModelWireFormat::OpenaiCompat, &[high], None)?,
+        PurposeEffort::Authored(high)
+    );
+    let mut row = vault.model_registry_row(&id)?.expect("registered");
+    row.wire = ModelWireFormat::Gemini;
+    vault.put_model_registry_row(&row)?;
+    assert_eq!(
+        effort(ModelWireFormat::Gemini, &[low, medium], None)?,
+        PurposeEffort::Authored(ReasoningEffort::None)
+    );
+    Ok(())
+}
