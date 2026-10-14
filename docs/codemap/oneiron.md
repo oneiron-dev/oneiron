@@ -2420,7 +2420,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/ladder.rs` | src | m | 3 struct · 1 enum · 7 fn · 1 const | PreparedRecovery, RecoveryBudget, RecoveryManifest, RecoveryTier | Three-tier repair driver with all-or-nothing bounded work admission |
 | `src/recovery/maintenance.rs` | src | s | 1 struct · 1 fn | WindowRecoveryReport | The canonical snapshot as one owner maintenance act (ARCH-0038 escape hatch and recovery ladder): capture a… |
 | `src/recovery/maintenance_tests.rs` | test | m | — | — | The canonical snapshot as one owner maintenance act (ARCH-0038 escape hatch, recovery ladder and the… |
-| `src/recovery/privacy_kit.rs` | src | m | 2 struct · 2 enum · 7 fn | BackupShareLocation, PrivacyBackupError, PrivacyBackupShare, RestoredVaultKey | Vault-scoped 2-of-3 offline recovery shares; no person-level master secret |
+| `src/recovery/privacy_kit.rs` | src | m | 6 struct · 6 enum · 14 fn · 3 const · 1 re-export | CodeKeeping, IssuedKit, KitCoverage, KitError, KitIssue, KitMachine, KitManifest, KitPassphrase +4 | Vault-scoped 2-of-3 offline recovery kits; no person-level master secret |
+| `src/recovery/privacy_kit/piece.rs` | src | m | 4 struct · 11 fn · 8 crate-vis | KitId, KitPiece, PieceExport, RecoveryCode | Piece format v2: a 47-byte body and a 3-byte check, typed as a recovery code or kept as an export with its… |
+| `src/recovery/privacy_kit/tests.rs` | test | m | — | — | — |
 | `src/recovery/quarantine.rs` | src | s | 6 crate-vis | — | Atomic no-clobber quarantine renames |
 | `src/recovery/redaction.rs` | src | s | 1 fn | — | Cursor-independent redaction of a resolved, hash-bound canonical text span |
 | `src/recovery/snapshot_writer.rs` | src | s | 2 fn | — | Off-hot-path publication of canonical Layer-1 window artifacts |
