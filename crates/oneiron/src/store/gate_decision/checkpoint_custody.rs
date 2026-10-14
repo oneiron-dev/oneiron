@@ -20,6 +20,8 @@ use heed::{Env, RoTxn, RwTxn};
 use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, Raw, SideKey, SideTable};
 #[cfg(unix)]
+use crate::store::not_an_existing_root;
+#[cfg(unix)]
 use crate::store::root_directory::{
     FileIdentity, file_identity, make_directory, named_directory_identity, parent_or_here,
     refuse_shared_path, refuse_shared_vault_root, remove_held_directory,
@@ -130,6 +132,25 @@ impl LiveCustody {
     }
 }
 
+/// Admits the existing vault at `vault_dir` before anything opens it by name,
+/// as a restore admits its destination: refused where another user could
+/// move a directory on its path. A missing one is refused here, not by a
+/// later lookup, which could find a vault someone else put under the name: a
+/// sticky parent stops no one from making a new entry in it.
+pub(crate) fn admit_existing_vault_root(vault_dir: &Path) -> Result<()> {
+    #[cfg(unix)]
+    match std::fs::symlink_metadata(vault_dir) {
+        Ok(_) => refuse_shared_vault_root(vault_dir)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(not_an_existing_root(vault_dir, false));
+        }
+        Err(error) => return Err(error.into()),
+    }
+    #[cfg(not(unix))]
+    let _ = vault_dir;
+    Ok(())
+}
+
 /// The live custody state of the vault at `vault_dir`, read without opening
 /// it as a vault, through the read-only door (`read_existing_vault_meta`): a
 /// vault another process serves reads beside it, and one this process holds,
@@ -137,13 +158,10 @@ impl LiveCustody {
 pub(crate) fn read_live_custody(vault_dir: &Path) -> Result<LiveCustody> {
     // A side restore's source is admitted like its destination before the
     // read opens anything: the read-only door still opens `lock.mdb` by name.
-    // A missing one is the read's own refusal, once no one else could put
-    // one there.
-    #[cfg(unix)]
-    if std::fs::symlink_metadata(vault_dir).is_ok() {
-        refuse_shared_vault_root(vault_dir)?;
-    } else {
-        refuse_shared_path(parent_or_here(vault_dir.parent().unwrap_or(vault_dir)))?;
+    admit_existing_vault_root(vault_dir)?;
+    #[cfg(test)]
+    if let Some(callback) = BEFORE_LIVE_CUSTODY_READ.with(|slot| slot.borrow_mut().take()) {
+        callback();
     }
     let read = read_existing_vault_meta(vault_dir, &live_custody_prefixes())?;
     LiveCustody::from_rows(&read.root, read.rows)
@@ -650,6 +668,8 @@ thread_local! {
         std::cell::RefCell::new(None);
     static AFTER_RESTORE_DESTINATION_MADE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         std::cell::RefCell::new(None);
+    static BEFORE_LIVE_CUSTODY_READ: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
 }
 
 /// Runs `callback` once, the next time this thread activates an archived
@@ -664,4 +684,11 @@ pub(crate) fn arm_before_activation_fork(callback: impl FnOnce() + 'static) {
 #[cfg(test)]
 pub(crate) fn arm_after_restore_destination_made(callback: impl FnOnce() + 'static) {
     AFTER_RESTORE_DESTINATION_MADE.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
+/// Runs `callback` once, the next time this thread reads a vault's live
+/// custody off its directory, between the path's admission and the read.
+#[cfg(test)]
+pub(crate) fn arm_before_live_custody_read(callback: impl FnOnce() + 'static) {
+    BEFORE_LIVE_CUSTODY_READ.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
 }

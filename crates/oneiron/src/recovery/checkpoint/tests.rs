@@ -1186,6 +1186,23 @@ fn a_replacing_restore_writes_only_into_the_directory_it_made() {
         matches!(&source, Err(Error::InvalidConfig(reason)) if reason.contains("another user")),
         "{source:?}"
     );
+    // Review r6 (Sol F2, Astra F2): an activation admits the archive's own
+    // path before it opens it, and refuses a missing one rather than make it.
+    let activate = |archive: &Path| {
+        Vault::activate_archived(
+            archive,
+            VaultConfig::device(),
+            &vault.side_restore_source().unwrap(),
+        )
+    };
+    let activation = activate(&shared.join("source"));
+    assert!(
+        matches!(&activation, Err(Error::InvalidConfig(reason)) if reason.contains("another user")),
+        "{activation:?}"
+    );
+    let missing = root.path().join("no-archive");
+    assert!(refused_as_no_vault(activate(&missing)));
+    assert!(!missing.exists(), "a missing archive is not made");
     // Review r4 (Sol F1): a link of this user's whose target passes through
     // the shared directory is resolved name by name, and refused there.
     let private = directory("private", 0o700);
@@ -1214,6 +1231,24 @@ fn a_replacing_restore_writes_only_into_the_directory_it_made() {
         .permissions()
         .mode();
     assert_eq!(mode & 0o077, 0, "{mode:o}");
+}
+
+/// C8 review r6 (Sol F1, Astra F1): a side restore's source missing when it
+/// is admitted is refused then. A vault put under its name after that, as
+/// another user could in a sticky shared directory, is never read.
+#[cfg(unix)]
+#[test]
+fn a_source_missing_at_its_admission_is_never_read() {
+    let root = tempfile::tempdir().unwrap();
+    let prepared = root.path().join("prepared");
+    drop(Vault::open(&prepared, VaultConfig::device()).unwrap());
+    let source = root.path().join("source");
+    crate::store::arm_before_live_custody_read({
+        let (prepared, source) = (prepared.clone(), source.clone());
+        move || std::fs::rename(prepared, source).unwrap()
+    });
+    assert!(refused_as_no_vault(SideRestoreSource::read(&source)));
+    assert!(prepared.exists(), "nothing looks under the name after it");
 }
 
 /// An activation commits only once every receipt it keeps reads under its

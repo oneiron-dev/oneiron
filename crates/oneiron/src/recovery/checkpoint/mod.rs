@@ -449,13 +449,18 @@ impl Vault {
     /// keeps is read under its own keys before the activation commits; when
     /// this returns `Ok` it is done, and the vault opens live, joining as a
     /// new machine: its replacement is the machine it was. Refuses a vault
-    /// that is not archived, and a `source` whose custody is not the one it
-    /// binds; a refusal leaves it archived, as it was.
+    /// that is not archived, a `source` whose custody is not the one it
+    /// binds, and, before opening anything, a missing `path` or one where
+    /// another user could move a directory on it; a refusal leaves it
+    /// archived, as it was.
     pub fn activate_archived(
         path: &Path,
         config: VaultConfig,
         source: &SideRestoreSource<'_>,
     ) -> Result<()> {
+        // The archive is admitted like the source before anything opens it
+        // by name; a missing one is refused, not made.
+        crate::store::admit_existing_vault_root(path)?;
         let live = source.capture()?;
         let archive = Self::open_owned(path, config)?;
         archive.store.activate_archived(&live)
