@@ -93,6 +93,59 @@ fn owner_verbs_require_active_owner_binding_when_rooted() {
         .expect("self-retraction never needs an owner binding");
 }
 
+/// H149 (security scan, W3-T7): an unrooted vault holds no signed owner
+/// binding, so naming a PERSON as `human` must not hand it the owner verbs.
+/// The actor key an embedded host takes (`human:<id>`, as napi `as_actor`
+/// parses it) names an agent's persona PERSON here, and then the embedded
+/// owner itself: until the host roots the vault and binds its owner, all
+/// three owner verbs refuse both with OWNER_BINDING_REQUIRED.
+#[test]
+fn an_unrooted_vault_gives_no_person_the_owner_verbs() {
+    let (_dir, vault) = open_vault();
+    let persona = put_person(&vault, 0x63);
+    let agent = put_person(&vault, 0x64);
+    let subject = put_person(&vault, 0x65);
+    let agent_facade = vault.memory(agent, EdgeActorClass::Agent);
+    let embedded_owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    for (seed, named) in [(0x66, persona), (0x67, embedded_owner)] {
+        let claim = agent_facade
+            .claim_upsert(&claim_input(
+                "profile.mood",
+                &subject,
+                "observed",
+                serde_json::json!(format!("calm-{seed}")),
+            ))
+            .expect("agent claim");
+        let (actor, class) =
+            crate::memory::parse_actor_key(&vault, &format!("human:{}", named.to_hex()))
+                .expect("store truth parses the key");
+        assert_eq!(class, EdgeActorClass::Human);
+        let facade = vault.memory(actor, class);
+        for err in [
+            facade
+                .put_structural(&StructuralPutInput {
+                    id: None,
+                    kind: "PERSON".to_owned(),
+                    body: serde_json::json!({"name": "minted"}),
+                    text_fields: None,
+                    edges: None,
+                    occurred_at: 700,
+                    learned_at: None,
+                })
+                .expect_err("PERSON mint on an unrooted vault"),
+            facade
+                .claim_retract(&claim.claim_short_id)
+                .expect_err("cross-actor retract on an unrooted vault"),
+            facade
+                .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
+                .expect_err("delete on an unrooted vault"),
+        ] {
+            assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED, "{named:?}");
+        }
+    }
+    assert!(vault.get_raw(&subject).expect("read").is_some());
+}
+
 /// A recipient committed after owner revocation must never be read under an
 /// earlier owner authorization snapshot.
 #[test]
