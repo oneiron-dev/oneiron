@@ -29,6 +29,13 @@ export {
   type WorkbookSource,
   type ParseWorkerLike,
 } from "./bridge/source";
+export {
+  PREVIEW_BUDGET,
+  WorkbookBudgetError,
+  preflightPackage,
+  type BudgetLine,
+  type PreviewBudget,
+} from "./bridge/budget";
 export { assembleWorkbook, loadedSheetCount } from "./bridge/assemble";
 export { ParseSessionStore } from "./bridge/handler";
 export type {

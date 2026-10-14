@@ -5,6 +5,7 @@
  * and loads the rest on demand, so a >25MB workbook never sits fully parsed in
  * memory.
  */
+import { preflightPackage, WorkbookBudgetError } from "./budget";
 import { ParseSessionStore } from "./handler";
 import { readSheet, readWorkbookOutline } from "./parse";
 import type { ParseOptions } from "./parse";
@@ -31,16 +32,24 @@ export function createLocalWorkbookSource(
   const cache = new Map<string, Partial<IWorksheetData>>();
   return {
     outline() {
-      return Promise.resolve(readWorkbookOutline(bytes, name));
+      try {
+        return Promise.resolve(readWorkbookOutline(bytes, name, parseOptions.budget));
+      } catch (err) {
+        return Promise.reject(err);
+      }
     },
     sheet(sheetName: string) {
       const cached = cache.get(sheetName);
       if (cached) {
         return Promise.resolve(cached);
       }
-      const parsed = readSheet(bytes, sheetName, parseOptions);
-      cache.set(sheetName, parsed);
-      return Promise.resolve(parsed);
+      try {
+        const parsed = readSheet(bytes, sheetName, parseOptions);
+        cache.set(sheetName, parsed);
+        return Promise.resolve(parsed);
+      } catch (err) {
+        return Promise.reject(err);
+      }
     },
     loadedSheets() {
       return [...cache.keys()];
@@ -97,7 +106,7 @@ export function createWorkerWorkbookSource(
     }
     pending.delete(res.id);
     if (res.kind === "error") {
-      entry.reject(new Error(res.message));
+      entry.reject(res.budget ? new WorkbookBudgetError(res.budget.line, res.budget.reason) : new Error(res.message));
     } else {
       entry.resolve(res);
     }
@@ -149,11 +158,22 @@ export function createWorkerWorkbookSource(
 
   function ensureInit(): Promise<IWorkbookData> {
     if (!initPromise) {
+      // A package over budget is refused here, before it is copied and before
+      // any byte crosses to the worker.
+      let checked: Uint8Array;
+      try {
+        checked = preflightPackage(bytes, parseOptions.budget);
+      } catch (err) {
+        initPromise = Promise.reject(err);
+        return initPromise;
+      }
       // Transfer a COPY so the caller's `bytes` are not detached; the workbook
-      // crosses the wire exactly once, never per request.
-      const copy = bytes.slice();
+      // crosses the wire exactly once, never per request. A preflight that
+      // rewrote local headers already returned a copy of its own.
+      const copy = checked === bytes ? bytes.slice() : checked;
+      const budget = parseOptions.budget ? { budget: parseOptions.budget } : {};
       initPromise = send<InitResponse>(
-        (id) => ({ kind: "init", id, session, bytes: copy, name }),
+        (id) => ({ kind: "init", id, session, bytes: copy, name, ...budget }),
         "init",
         [copy.buffer],
       ).then((res) => res.workbook);
