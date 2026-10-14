@@ -50,7 +50,7 @@ impl BindingGeneration {
     /// holds is left out, and the rest fill in lowest first.
     pub(crate) fn from_classed_bindings(bindings: &[(&str, BindingId)]) -> Option<Self> {
         let mut held = bindings.to_vec();
-        held.sort_by(|left, right| left.1.cmp(&right.1));
+        held.sort_by_key(|(_, binding)| *binding);
         let mut kept: Vec<BindingId> = Vec::new();
         let mut classes: BTreeSet<&str> = BTreeSet::new();
         for (class, binding) in &held {
