@@ -1649,7 +1649,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/identity_redirect.rs` | src | m | 4 fn · 1 const · 4 crate-vis | — | ARCH-0055 redirect projection: the rebuildable `shell id -> head set` table and the read-time… |
 | `src/identity_redirect/tests.rs` | test | s | — | — | ONE-1744 (MS-02) unit tests: redirect-row derivation, resolve semantics (0/1/N + transitive chains), the… |
 | `src/identity_reputation.rs` | src | m | 5 struct · 5 enum · 16 fn · 17 const · 2 crate-vis | CampaignEmailWebhookEvent, EmailDeliveryDisposition, EmailReputationWebhookSignal, IdentityAttestationTier, IdentityReputation, IdentityReputationSignal, IdentityReputationStatus, IdentitySendRateClamp +2 | ChannelIdentity reputation claims and warmup delivery floors (OF-347 R4) |
-| `src/identity_topology/admission_disposition.rs` | src | m | 1 struct · 1 enum · 11 crate-vis | AdmissionDisposition, AdmissionVerdict | Signed append-only admission facts, independent of a decision's erasable author |
+| `src/identity_topology/admission_disposition.rs` | src | m | 1 struct · 1 enum · 15 crate-vis | AdmissionDisposition, AdmissionVerdict | Signed append-only admission facts, independent of a decision's erasable author |
 | `src/identity_topology/attribution.rs` | src | m | 11 crate-vis | — | Erasable authorship for immutable type-76 decisions |
 | `src/identity_topology/distinct_claim.rs` | src | m | 3 fn · 6 crate-vis | — | The ARCH-0055 §6 anti-merge assertion: the normalized `entity.distinct_from` pair key, its claim wire value… |
 | `src/identity_topology/event_body_codec.rs` | src | m | 16 crate-vis | — | The low-level MessagePack field codec for the type-76 event body, plus the stateless admission checks every… |
@@ -1662,7 +1662,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/identity_topology/proposal_resolution.rs` | src | m | 3 fn · 6 crate-vis | — | The ARCH-0055 r7 proposal-resolution lane: scope derivation, the amendment codec and its narrowing bounds… |
 | `src/identity_topology/reassignment_map.rs` | src | m | 3 struct · 1 enum · 2 fn · 11 crate-vis | ReassignmentEntry, ReassignmentMap, ReassignmentStats, ReassignmentTarget | The ONE-1745 reassignment projection end to end: the typed map model, its canonical wire codec, and the… |
 | `src/identity_topology/replicated_event_validation.rs` | src | m | 11 crate-vis | — | Sync-path ingest for the type-76 family: event reads, participant and actor validation shared with the local… |
-| `src/identity_topology/shell_edge_reconcile.rs` | src | m | 5 crate-vis | — | Derives and reconciles the canonical `merged_into` / `split_into` shell edge set from the ledger fold — the… |
+| `src/identity_topology/shell_edge_reconcile.rs` | src | m | 6 crate-vis | — | Derives and reconciles the canonical `merged_into` / `split_into` shell edge set from the ledger fold — the… |
 | `src/identity_topology/store_entity_helpers.rs` | src | s | 7 crate-vis | — | Store-level (pre-vault) readers for the type-76 entity kind: the helpers the batch write/materialize path… |
 | `src/identity_topology/stored_event.rs` | src | m | 1 struct · 1 enum · 6 fn | StoredIdentityOpAction, StoredIdentityOpEvent | The type-76 wire record types: one stored ledger event, the action payload it carries, and their pinned… |
 | `src/identity_topology/tests.rs` | test | XL | — | — | ONE-1743 (MS-01) unit tests: op vocabulary, the full (state, op) transition table, the seq-ordered ledger… |
@@ -1883,7 +1883,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/booking.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | EmergencyInstructionInput | Owner-authenticated booking operations on the existing Memory surface |
 | `src/memory/booking_publication.rs` | src | s | 1 fn · 5 crate-vis | — | Owner checks for the ordinary booking publication claim write/read seam |
 | `src/memory/campaign.rs` | src | s | 10 fn | — | Campaign + saved-query thin delegating wrappers over the domain surfaces (`crate::campaign::surface`… |
-| `src/memory/caps.rs` | src | m | 11 fn · 12 const | — | The boundary cap contract (ONE-1441 §Binding cap contract, I11) |
+| `src/memory/caps.rs` | src | m | 11 fn · 13 const | — | The boundary cap contract (ONE-1441 §Binding cap contract, I11) |
 | `src/memory/caps/tests.rs` | test | s | — | — | — |
 | `src/memory/chat.rs` | src | m | 3 struct · 3 enum · 1 trait · 3 fn · 1 type | ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatOptions, ChatResponse, ChatScope, ComposedChatAnswer | The `.chat` answer verb (OF-228/OF-096): depth-as-cost tiers over [`Memory::recall`], answering only with… |
 | `src/memory/chat/tests.rs` | test | L | — | — | `.chat` acceptance tests: depth→effort mapping, composer call counts, the zero-model minimal tier, the typed… |
@@ -2620,7 +2620,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/share/tests/recipient_class.rs` | test | m | — | — | — |
 | `src/side_table/codec.rs` | src | s | 8 crate-vis | — | The value codecs a side table may declare |
 | `src/side_table/decls/mod.rs` | src | s | 4 crate-vis | — | The declaration list: every prefix a module keeps rows under in `vault_meta` or `sync_state`, one entry each |
-| `src/side_table/decls/sync_state.rs` | src | s | — | — | — |
+| `src/side_table/decls/sync_state.rs` | src | m | — | — | — |
 | `src/side_table/decls/vault_meta_a_c.rs` | src | m | — | — | — |
 | `src/side_table/decls/vault_meta_d_l.rs` | src | m | — | — | — |
 | `src/side_table/decls/vault_meta_m_r.rs` | src | m | — | — | — |
@@ -2859,6 +2859,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/bridge/app_reads.rs` | src | s | 2 fn | — | Bounded-page adapters for authority-scoped app subscription channels |
 | `src/sync/bridge/childof.rs` | src | m | 8 crate-vis | — | ChildOf replay set, component ordering, and ordered edge-op application |
 | `src/sync/bridge/companion_identity.rs` | src | m | 4 fn · 8 crate-vis | — | Retired identity-carrier scrub, identity topology ingest, and edge key/value helpers |
+| `src/sync/bridge/companion_identity_tests.rs` | test | m | — | — | H161 (W2-T5): a type-74 admission seal counts only when this vault sealed it, or a live machine the owner… |
 | `src/sync/bridge/diagnostic_tests.rs` | test | s | — | — | Account-local diagnostic isolation at both replay paths and outbound packing |
 | `src/sync/bridge/edges.rs` | src | m | 5 crate-vis | — | Edge-delta materialization and per-op quarantine bookkeeping |
 | `src/sync/bridge/entities.rs` | src | m | 6 crate-vis | — | Observer B's entity driver: one batch transaction per delta, each entity through the shared ingest entry… |
