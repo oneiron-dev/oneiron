@@ -7,10 +7,13 @@ use super::*;
 
 const FACADE_CLAIM_UPSERT: &str = "/v1/core/facade/claim_upsert";
 
+/// One critical claim about the owner. Each leg names its own predicate: an
+/// upsert on a subject and predicate that already hold a head is a
+/// replacement, which waits for review whoever writes it.
 fn health_claim(id: oneiron::EntityId, owner: oneiron::EntityId, value: &str) -> Value {
     serde_json::json!({
         "id": id.to_hex(),
-        "predicate": "health.allergy",
+        "predicate": format!("health.allergy_{value}"),
         "subject_ref": owner.to_hex(),
         "value": value,
         "confidence": 1.0,
@@ -103,7 +106,7 @@ async fn an_owners_own_critical_claim_carries_its_own_confirmation() {
     let mut wrong = Vec::new();
     for (index, (leg, authorization, held)) in legs.into_iter().enumerate() {
         let claim = seeded_test_entity_id(0x2440_0010 + index as u128);
-        let body = health_claim(claim, owner, &format!("pollen {index}"));
+        let body = health_claim(claim, owner, &format!("leg{index}"));
         let (status, reply) = route_json(
             server.clone(),
             core_request_with_authz("POST", FACADE_CLAIM_UPSERT, authorization, Some(&body)),
@@ -139,7 +142,7 @@ async fn an_owners_own_critical_claim_carries_its_own_confirmation() {
             "POST",
             FACADE_CLAIM_UPSERT,
             String::new(),
-            Some(&health_claim(claim, owner, "pollen handed")),
+            Some(&health_claim(claim, owner, "handed")),
         ),
     );
     let response = api_routes(server.clone()).oneshot(request).await.unwrap();
