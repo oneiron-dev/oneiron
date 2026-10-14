@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::Json;
 use axum::extract::State;
-use oneiron::llm::run_admission::{MemoryReceipts, RunEvent, RunReceipt};
+use oneiron::llm::run_admission::{MemoryReceipts, RunEvent, RunReceipt, RunReceiptSink};
 
 use super::*;
 use crate::ai_host::AiHost;
@@ -152,9 +152,18 @@ async fn served(
     AiHost,
     Arc<MemoryReceipts>,
 ) {
+    let receipts = Arc::new(MemoryReceipts::default());
+    let (dir, server, host) = served_with(models, receipts.clone()).await;
+    (dir, server, host, receipts)
+}
+
+/// [`served`], its run receipts written to `receipts`.
+async fn served_with(
+    models: Option<&crate::config::models::ModelsConfig>,
+    receipts: Arc<dyn RunReceiptSink>,
+) -> (tempfile::TempDir, Arc<SyncServer>, AiHost) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
-    let receipts = Arc::new(MemoryReceipts::default());
     let server = SyncServer::new(
         vault,
         SyncServerConfig {
@@ -163,9 +172,9 @@ async fn served(
         },
     )
     .unwrap()
-    .with_run_receipts(receipts.clone());
+    .with_run_receipts(receipts);
     let (server, host) = AiHost::attach(server, models).await;
-    (dir, Arc::new(server), host, receipts)
+    (dir, Arc::new(server), host)
 }
 
 fn remember(vault: &oneiron::Vault, actor: oneiron::EntityId, text: &str) -> oneiron::EntityId {
@@ -707,6 +716,33 @@ impl HeldReranker {
     }
 }
 
+/// A WORLD row, not flagged, and a claim of `text` by `actor` in it: the
+/// world.
+fn world_with(vault: &oneiron::Vault, actor: oneiron::EntityId, text: &str) -> oneiron::EntityId {
+    let world = oneiron::EntityId::now();
+    vault
+        .put_entity(
+            &world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .unwrap();
+    remember_in(vault, actor, Some(world), text);
+    world
+}
+
+/// A high recall of [`QUERY`] that reads `world` too.
+fn high_in(world: oneiron::EntityId) -> Value {
+    json!({
+        "query": QUERY,
+        "effort": "high",
+        "limit": 10,
+        "scope": {"world_ref": world.to_hex()},
+    })
+}
+
 /// Whether a `/v1/rerank` request sent `text` in one of its documents.
 fn sent(request: &Value, text: &str) -> bool {
     request["documents"]
@@ -746,28 +782,13 @@ rerank_budget_units = 32000
     ));
     let (_dir, server, _host, _) = served(Some(&models)).await;
     let actor = reader(&server, "rerank-flagged").await;
-    let world = oneiron::EntityId::now();
-    server
-        .vault()
-        .put_entity(
-            &world,
-            oneiron::registry::ENTITY_TYPE_WORLD,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"world",
-        )
-        .unwrap();
-    remember_in(server.vault(), actor, Some(world), KEPT);
+    let world = world_with(server.vault(), actor, KEPT);
 
     let recalling = {
         let server = Arc::clone(&server);
-        let spec = json!({
-            "query": QUERY,
-            "effort": "high",
-            "limit": 10,
-            "scope": {"world_ref": world.to_hex()},
-        });
-        tokio::spawn(async move { recall_spec(&server, "rerank-flagged", actor, spec).await })
+        tokio::spawn(
+            async move { recall_spec(&server, "rerank-flagged", actor, high_in(world)).await },
+        )
     };
     let first = held.taken.recv().await.expect("the first rung took a call");
     assert!(sent(&first, KEPT), "the world was not yet flagged: {first}");
@@ -784,6 +805,51 @@ rerank_budget_units = 32000
     assert!(
         order(&pack).iter().any(|text| text.contains(KEPT)),
         "the reader's own recall still serves the row: {pack}"
+    );
+}
+
+/// A run receipt sink that flags a world device-only when the recall's
+/// rerank call is admitted, as a flag that commits while admission waits on
+/// the host's receipts. Given its vault and world once they exist.
+#[derive(Default)]
+struct FlagOnAdmission(Mutex<Option<(Arc<oneiron::Vault>, oneiron::EntityId)>>);
+
+impl RunReceiptSink for FlagOnAdmission {
+    fn record(&self, receipt: RunReceipt) {
+        if receipt.run.starts_with("recall-rerank:")
+            && matches!(receipt.event, RunEvent::Admitted(_))
+            && let Some((vault, world)) = self.0.lock().unwrap().take()
+        {
+            vault.set_world_device_only(world, true).unwrap();
+        }
+    }
+}
+
+/// Sol R9 on this branch: a rung asked the device-only verdict before its
+/// admission, which waits on the host's receipt sink, and then sent the
+/// words of a row a world flagged meanwhile keeps. It asks again once the
+/// rung is admitted: nothing is sent, and the recall ranks by fusion.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_world_flagged_while_a_rung_is_admitted_reaches_no_rung() {
+    const KEPT: &str = "the lantern key is under the mat";
+    let fake = FakeReranker::start(prefers_known(), no_hook(), 10).await;
+    let models = reranker_models(&fake.base_url, 32_000);
+    let flag = Arc::new(FlagOnAdmission::default());
+    let (_dir, server, _host) = served_with(Some(&models), flag.clone()).await;
+    let actor = reader(&server, "rerank-admitted").await;
+    let world = world_with(server.vault(), actor, KEPT);
+    *flag.0.lock().unwrap() = Some((Arc::clone(server.vault()), world));
+
+    let pack = recall_spec(&server, "rerank-admitted", actor, high_in(world))
+        .await
+        .unwrap();
+
+    assert!(flag.0.lock().unwrap().is_none(), "the rung was admitted");
+    assert_eq!(fake.calls(), 0, "the rung was not sent");
+    assert_eq!(
+        pack["retrieval_meta"]["rerank"],
+        json!({"status": "skipped", "reason": "device_only"}),
+        "{pack}"
     );
 }
 

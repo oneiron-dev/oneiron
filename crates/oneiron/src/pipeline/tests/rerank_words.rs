@@ -171,6 +171,32 @@ impl Reranker for RestoringReranker<'_> {
     }
 }
 
+/// The context pack a binding reranker scores claim `id` in, born with
+/// `old`, put again with newer words whose index publication waits, and put
+/// back to `old` while the reranker scores it.
+fn restored_pack(vault: &Vault, id: EntityId, old: Vec<u8>) -> Result<crate::ContextPack> {
+    // The claim's subject, which the pack's validation reads.
+    vault.put_entity(
+        &entity_id(0x7C),
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"person",
+    )?;
+    put_twice(vault, id, ENTITY_TYPE_CLAIM, &old, &claim_body("new-words"))?;
+    let reranker = RestoringReranker {
+        vault,
+        id,
+        body: old,
+    };
+    vault
+        .context_pack()
+        .read_mode(ReadMode::Live)
+        .search_text("lantern", 10)
+        .rerank(&reranker, RerankOptions::default())
+        .run()
+}
+
 /// Astra on #1426 (F2): a claim scored at its pin was hydrated from the body
 /// the claim gate cached when retrieval read it live, whenever the live row
 /// equalled the pin by the time the pack hydrated. A write restoring the
@@ -180,35 +206,9 @@ impl Reranker for RestoringReranker<'_> {
 #[test]
 fn a_restored_claim_is_served_at_the_words_scored() -> Result<()> {
     let (_dir, vault) = open_test_vault();
-    // The claim's subject, which the pack's validation reads.
-    vault.put_entity(
-        &entity_id(0x7C),
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"person",
-    )?;
     let id = entity_id(0x6C);
-    let old = claim_body("old-words");
-    put_twice(
-        &vault,
-        id,
-        ENTITY_TYPE_CLAIM,
-        &old,
-        &claim_body("new-words"),
-    )?;
-    let reranker = RestoringReranker {
-        vault: &vault,
-        id,
-        body: old,
-    };
 
-    let pack = vault
-        .context_pack()
-        .read_mode(ReadMode::Live)
-        .search_text("lantern", 10)
-        .rerank(&reranker, RerankOptions::default())
-        .run()?;
+    let pack = restored_pack(&vault, id, claim_body("old-words"))?;
 
     let served = pack.results.first().expect("the claim");
     assert_eq!(served.id, id);
@@ -216,6 +216,46 @@ fn a_restored_claim_is_served_at_the_words_scored() -> Result<()> {
         served.fields.as_ref().and_then(|fields| fields.get("val")),
         Some(&serde_json::json!("old-words")),
         "{served:?}"
+    );
+    Ok(())
+}
+
+/// Sol R9 on this branch: a scored claim the cache could not stand for was
+/// held to `claim_surfaceable` alone. Pinned words citing a source that is
+/// not live, put back during the rerank stage, were served, though
+/// retrieval would now suppress the claim. They are held to its live
+/// support too.
+#[test]
+fn a_restored_claim_with_no_live_support_is_not_served() -> Result<()> {
+    use crate::dreamer_consolidation::{
+        ConsolidationEvidenceEnvelope, encode_consolidation_evidence,
+    };
+    let (_dir, vault) = open_test_vault();
+    let id = entity_id(0x6D);
+    let mut unsupported = ClaimBody::new(
+        "test.rerank_words",
+        ClaimSubject::Entity(entity_id(0x7C)),
+        rmpv::Value::from("old-words"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    unsupported.evidence = Some(encode_consolidation_evidence(
+        &ConsolidationEvidenceEnvelope {
+            refs: vec![entity_id(0x7D)],
+            chain: Vec::new(),
+            source_meet: ClaimSource::UserStated,
+        },
+    ));
+    let old = crate::claim::encode_claim_body(&unsupported).expect("encode claim body");
+
+    let pack = restored_pack(&vault, id, old)?;
+
+    assert!(
+        pack.results.iter().all(|row| row.id != id),
+        "{:?}",
+        pack.results
     );
     Ok(())
 }

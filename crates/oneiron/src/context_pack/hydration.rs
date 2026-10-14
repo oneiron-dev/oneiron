@@ -183,10 +183,19 @@ pub(super) fn hydrate_entity(
             Some(body) => gated_claim_body = Some(body),
             None => {
                 // Neighbor (or cache miss): decode once for gate +
-                // projection.
+                // projection. A scored claim the cache cannot stand for is
+                // held to retrieval's gate, its live support included.
                 decoded_here = pinned.or_else(decode);
+                let admitted = match &decoded_here {
+                    Some(body) => {
+                        claim_surfaceable(body)
+                            && (!options.words_pinned
+                                || crate::claim::has_live_support_in_txn(store, rtxn, body)?)
+                    }
+                    None => false,
+                };
                 match &decoded_here {
-                    Some(body) if claim_surfaceable(body) => gated_claim_body = Some(body),
+                    Some(body) if admitted => gated_claim_body = Some(body),
                     _ => {
                         *claims_suppressed += 1;
                         return Ok(None);
