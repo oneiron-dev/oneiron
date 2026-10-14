@@ -2,6 +2,8 @@
 
 use std::cmp::Reverse;
 
+use crate::Vault;
+use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::write_envelope::WriteActor;
@@ -162,35 +164,69 @@ const FIRST_STORED_REVISION: u64 = 1;
 
 /// An authenticated writer of selection rules.
 ///
-/// The only constructor is [`Self::from_authenticated_write`], so a writer kind
-/// is always DERIVED from an authenticated [`WriteActor`] and can never arrive
-/// as caller-supplied data. There is deliberately no way to mint a
+/// The owner's writer comes only from an [`AuthenticatedOwner`], and an
+/// agent's from its [`WriteActor`]. A write actor's class is caller-asserted,
+/// so it can name an agent but never mint the owner's writer. The write door
+/// checks both again inside its transaction.
+/// There is deliberately no way to mint a
 /// [`SelectionRuleWriterKind::SystemDefault`] writer: compiled law is not
 /// something a caller writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelIdentitySelectionWriter {
     actor_ref: EntityId,
     kind: SelectionRuleWriterKind,
+    owner: Option<AuthenticatedOwner>,
 }
 
 impl ChannelIdentitySelectionWriter {
-    /// Derives a writer from an authenticated write actor.
+    /// The owner's writer, from the owner's authentication.
+    #[must_use]
+    pub fn owner(owner: &AuthenticatedOwner) -> Self {
+        Self {
+            actor_ref: owner.actor(),
+            kind: SelectionRuleWriterKind::Owner,
+            owner: Some(owner.clone()),
+        }
+    }
+
+    /// Derives an agent's writer from its write actor.
     ///
-    /// `Human` writes as the owner, `Agent` writes as an agent, and `System`
-    /// is refused: an unattended process has no standing to rewrite the law
-    /// that decides which face the vault wears.
+    /// `Agent` writes as an agent. `Human` is refused: the owner writes through
+    /// [`Self::owner`]. `System` is refused: an unattended process has no
+    /// standing to rewrite the law that decides which face the vault wears.
     pub fn from_authenticated_write(actor: &WriteActor) -> ChannelIdentitySelectionResult<Self> {
-        let kind = match actor.actor_class() {
-            EdgeActorClass::Human => SelectionRuleWriterKind::Owner,
-            EdgeActorClass::Agent => SelectionRuleWriterKind::Agent,
-            EdgeActorClass::System => {
-                return Err(ChannelIdentitySelectionError::WriterClassNotAmendable);
-            }
-        };
-        Ok(Self {
-            actor_ref: actor.entity_ref(),
-            kind,
-        })
+        match actor.actor_class() {
+            EdgeActorClass::Agent => Ok(Self {
+                actor_ref: actor.entity_ref(),
+                kind: SelectionRuleWriterKind::Agent,
+                owner: None,
+            }),
+            EdgeActorClass::Human => Err(ChannelIdentitySelectionError::OwnerWriterNeedsOwnerProof),
+            EdgeActorClass::System => Err(ChannelIdentitySelectionError::WriterClassNotAmendable),
+        }
+    }
+
+    /// The writer still holds in the write's own transaction: the owner proof
+    /// belongs to this vault and is live, and an agent writer names a live
+    /// actor of this vault whose type can act as an agent.
+    pub(super) fn revalidate_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> ChannelIdentitySelectionResult<()> {
+        if let Some(owner) = &self.owner {
+            owner.revalidate_in_txn(vault, txn)?;
+            return Ok(());
+        }
+        let live_type =
+            crate::vault::live_entity_row_in_txn(&vault.store, txn, &self.actor_ref)?.live_type();
+        if live_type.is_some_and(|entity_type| {
+            crate::provenance::validate_actor_class(entity_type, EdgeActorClass::Agent).is_ok()
+        }) {
+            Ok(())
+        } else {
+            Err(ChannelIdentitySelectionError::WriterNotInVault)
+        }
     }
 
     /// Entity stamped into every row this writer touches.

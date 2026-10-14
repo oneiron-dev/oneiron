@@ -840,3 +840,55 @@ fn a_consent_required_interruption_cannot_be_resumed_durably() {
         Some(LadderTerminalDisposition::Approved)
     );
 }
+
+/// H219: a consult's ladder is moved by the consult's own parties, its asker
+/// or the actor it was addressed to. A third actor in the same vault that can
+/// read the ladder state still cannot settle it.
+#[test]
+fn a_third_actor_cannot_settle_a_consult_ladder() {
+    let (_dir, vault) = open_vault();
+    let (task_ref, peer, _question) = open_consult(&vault);
+    let working = ConsultLadderState::Working(WorkingState {
+        started_at: LADDER_NOW,
+        decision_round: 0,
+    });
+    seed_ladder_state(&vault, task_ref, &working);
+
+    let refused = vault
+        .memory(other_actor(&vault), EdgeActorClass::Agent)
+        .compare_and_set_consult_ladder(
+            task_ref,
+            &working,
+            LadderTransition::Finish(LadderTerminalState {
+                disposition: LadderTerminalDisposition::Approved,
+                result_ref: ladder_id(0xA7),
+                counter_task_ref: None,
+                finished_at: LADDER_NOW + 1,
+            }),
+        )
+        .expect_err("a third actor cannot settle another actor's consult");
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
+    let body = task_verb_body(&vault, task_ref)
+        .expect("decode consult")
+        .expect("consult is typed");
+    assert_eq!(
+        body.state,
+        Some(project_consult_ladder_state(&working)),
+        "the refused move wrote nothing"
+    );
+
+    // The addressed assignee still moves the ladder of a consult sent to it.
+    vault
+        .memory(peer, EdgeActorClass::Agent)
+        .compare_and_set_consult_ladder(
+            task_ref,
+            &working,
+            LadderTransition::Interrupt(InterruptedState {
+                kind: InterruptionKind::Contested,
+                consent_required: false,
+                case_ref: ladder_id(0xA8),
+                interrupted_at: LADDER_NOW + 2,
+            }),
+        )
+        .expect("the addressed assignee moves its consult's ladder");
+}

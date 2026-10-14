@@ -22,7 +22,9 @@ use super::create_validation::{
 };
 use super::entity_delta_facade::counter_lineage_artifact_value;
 use super::follow_up::PEER_HANDLES;
-use super::rate_limit::{record_task_create, task_actor_ceiling, task_verb_contract};
+use super::rate_limit::{
+    record_task_create, task_actor_ceiling, task_create_owner_in, task_verb_contract,
+};
 use super::route_receipts::TaskCreateReceipt;
 use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord};
 use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl};
@@ -63,6 +65,10 @@ impl Memory<'_> {
     /// check between them decides staleness, not immutability: a deferring
     /// terminal persists on the live `Interrupted` register, so the projection
     /// alone cannot tell a settled ladder from a resumable interruption.
+    ///
+    /// Only the consult's parties move its ladder: the actor the task's Owner
+    /// authority fact names, or the actor the consult is addressed to. That is
+    /// decided in the same transaction as the write.
     pub fn compare_and_set_consult_ladder(
         &self,
         task_ref: EntityId,
@@ -73,6 +79,7 @@ impl Memory<'_> {
         let expected_state = project_consult_ladder_state(expected);
         let (ladder_state, task_state) = self.with_verified_actor_write_txn(|wtxn| {
             let mut body = consult_body_in_txn(self.vault(), &*wtxn, task_ref)?;
+            self.require_consult_party_in_txn(&*wtxn, task_ref, &body)?;
             if body.settled_ladder_disposition().is_some() {
                 return Err(ladder_refusal(LadderTransitionError::TerminalImmutable));
             }
@@ -95,6 +102,27 @@ impl Memory<'_> {
             ladder_state,
             task_state,
         })
+    }
+
+    /// The asker (the replicated Owner authority fact, never the body's
+    /// mutable `owner_ref`) or the addressed assignee.
+    fn require_consult_party_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        task_ref: EntityId,
+        body: &TaskVerbBody,
+    ) -> MemoryResult<()> {
+        let actor = self.actor();
+        if body.assignee.and_then(TaskAssignee::entity_ref) == Some(actor)
+            || task_create_owner_in(self.vault(), txn, task_ref)? == Some(actor)
+        {
+            return Ok(());
+        }
+        Err(consult_refusal(
+            MEMORY_CODE_FORBIDDEN,
+            "only the consult's asker or its addressed assignee may move its ladder",
+            "Move the ladder as the actor that asked, or the actor it was addressed to.",
+        ))
     }
 
     /// Mints one counter TASK, and — when the original is still open —

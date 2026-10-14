@@ -13,7 +13,7 @@ use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
 
 use super::CompanionPresetRow;
-use super::storage::{PROPOSAL, participant_token_hash, refused, surface};
+use super::storage::{PROPOSAL, companion_token_hash, participant_token_hash, refused, surface};
 // -------------------------------------------------------------------------
 // Ratified constants
 // -------------------------------------------------------------------------
@@ -32,6 +32,7 @@ pub(super) const PARTICIPANT_TOKEN_HEX_LEN: usize = 64;
 const PROPOSAL_ID_DOMAIN: &[u8] = b"oneiron.booking.companion_proposal_id.v1\0";
 pub(super) const PARTICIPANT_TOKEN_DOMAIN: &[u8] =
     b"oneiron.booking.companion_participant_token.v1\0";
+pub(super) const COMPANION_TOKEN_DOMAIN: &[u8] = b"oneiron.booking.companion_confirm_token.v1\0";
 // -------------------------------------------------------------------------
 // Proposal state
 // -------------------------------------------------------------------------
@@ -79,6 +80,9 @@ pub struct OneTimeParticipantToken {
 pub struct CompanionProposalCreation {
     pub proposal: CompanionProposal,
     pub participant_tokens: Vec<OneTimeParticipantToken>,
+    /// The creating companion's credential for the soft confirmation. Only
+    /// its hash is stored, and no participant link carries it.
+    pub companion_token: String,
 }
 /// One recorded tap. This is the stored form: `(participant, choice)` is unique
 /// within a proposal, so the tap log is bounded by participants x choices and
@@ -134,6 +138,17 @@ pub(super) struct CompanionProposalRow {
     pub(super) proposal: CompanionProposal,
     pub(super) taps: Vec<ProposalTap>,
     pub(super) confirmation: Option<CompanionSoftConfirmation>,
+    /// Who may confirm. A row written before this field existed has none,
+    /// and nobody can confirm it.
+    #[serde(default)]
+    pub(super) companion: Option<CompanionBinding>,
+}
+/// The companion that created a proposal, and the hash of its confirm token.
+#[derive(Serialize, Deserialize)]
+pub(super) struct CompanionBinding {
+    #[serde(with = "entity_ref_serde")]
+    pub(super) companion_ref: EntityId,
+    pub(super) token_hash: [u8; 32],
 }
 /// Hex spelling for the one `EntityId` field each stored shape carries. The
 /// booking module keeps this adapter per file rather than sharing one, matching
@@ -178,18 +193,20 @@ pub fn companion_solve_request(
     }
 }
 /// Asks the shared oracle and freezes a curated shortlist, one opaque token per
-/// participant.
+/// participant and one for the creating companion.
 ///
 /// No booking page is read: the configuration travelled in on `preset`, which
 /// is what ONE-1823's synthetic-configuration arm exists for.
-// The nine parameters are the ratified seam signature. `oracle` is an injected
-// host capability and the rest are independent inputs; bundling them would hide
-// which of them the proposal actually stores.
+// The ten parameters are the ratified seam signature plus the creating
+// companion. `oracle` is an injected host capability and the rest are
+// independent inputs; bundling them would hide which of them the proposal
+// actually stores.
 #[allow(clippy::too_many_arguments)]
 pub fn create_companion_proposal(
     vault: &Vault,
     oracle: &dyn SlotOracle,
     owner_ref: EntityId,
+    companion_ref: EntityId,
     preset: &CompanionPresetRow,
     window: TimeRange,
     constraint: Option<ConstraintObject>,
@@ -242,10 +259,15 @@ pub fn create_companion_proposal(
         participant_token_hashes,
         expires_at,
     };
+    let companion_token = mint_raw_token();
     let row = CompanionProposalRow {
         proposal: proposal.clone(),
         taps: Vec::new(),
         confirmation: None,
+        companion: Some(CompanionBinding {
+            companion_ref,
+            token_hash: companion_token_hash(id, &companion_token),
+        }),
     };
     booking_writer(vault, |wtxn| {
         surface(PROPOSAL.put(&vault.store, wtxn, &id.0, &row))
@@ -254,6 +276,7 @@ pub fn create_companion_proposal(
     Ok(CompanionProposalCreation {
         proposal,
         participant_tokens,
+        companion_token,
     })
 }
 /// The shortlist: highest-ranked first, ties broken by the earlier start so two

@@ -1003,4 +1003,39 @@ fn subject_stamp_uses_event_received_at_not_processing_time() -> Result<()> {
     Ok(())
 }
 
+/// H111: inbound arrives from an adapter, so it is claims, never the owner's
+/// instructions, whatever flag the adapter sent. A payload that says
+/// `foreign_inbound: false` still routes, still queues, and still reaches the
+/// dispatcher as claims-not-instructions; a rejection receipt says the same.
+#[test]
+fn an_adapter_flag_cannot_turn_inbound_into_instructions() -> Result<()> {
+    let (_dir, vault, _) = admitting_vault("claims@example.com", 0x2A, 0x6A);
+    let mut owned = input(
+        "claims@example.com",
+        SurfaceCounterpartyStamp::unknown("email:sender@example.com"),
+    );
+    owned.foreign_inbound = false;
+
+    let receipt = vault.route_inbound_surface_event(owned.clone())?;
+    assert_eq!(receipt.outcome, InboundSurfaceRouteOutcome::Routed);
+    assert!(receipt.claims_not_instructions);
+    assert!(receipt.foreign_inbound);
+    let event = receipt.surface_event.expect("routed event");
+    assert!(event.claims_not_instructions && event.foreign_inbound);
+
+    accepted(vault.enqueue_inbound_surface_event(owned.clone(), 1_800_006_000)?);
+    let queued = decode_surface_event_attempt_payload(&sole_attempt(&vault).payload)?;
+    assert!(queued.event.claims_not_instructions && queued.event.foreign_inbound);
+
+    let mut unknown = owned;
+    unknown.receiving_address_or_handle = "nobody@example.com".to_owned();
+    let SurfaceEventAdmission::Rejected(rejected) =
+        vault.enqueue_inbound_surface_event(unknown, 1_800_006_001)?
+    else {
+        panic!("an unknown receiving identity is not admitted");
+    };
+    assert!(rejected.claims_not_instructions && rejected.foreign_inbound);
+    Ok(())
+}
+
 mod cc_intake;

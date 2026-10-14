@@ -299,3 +299,185 @@ fn linkedin_send_dm_observed_absent_produces_ambiguous_receipt_without_phantom_s
     assert_eq!(sink.transport().send_calls.len(), 1);
     Ok(())
 }
+
+/// One dispatch actor with a policy that lets it send LinkedIn DMs.
+fn linkedin_sender(
+    vault: &crate::Vault,
+    seed: u8,
+) -> std::result::Result<OutboundDispatchActor, Box<dyn std::error::Error>> {
+    let actor = OutboundDispatchActor::agent(entity(seed));
+    vault.put_entity(
+        &entity(seed),
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"dispatch actor",
+    )?;
+    allow_linkedin_send(vault, &actor)?;
+    Ok(actor)
+}
+
+/// A transcript that names who sent each message, as a host transport reads
+/// it from the provider rather than from the page text.
+fn attributed_conversation(thread_id: &str, messages: &[(&str, &str, &str)]) -> serde_json::Value {
+    serde_json::json!({
+        "url": format!("https://www.linkedin.com/messaging/thread/{thread_id}/"),
+        "messages": messages
+            .iter()
+            .map(|(id, sender, text)| serde_json::json!({"id": id, "sender": sender, "text": text}))
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// H130: the recipient writes half the transcript. If the message never
+/// left (the send call returned but nothing arrived) and the recipient types
+/// the same words, page text alone must not become a delivered receipt.
+#[test]
+fn a_recipient_echo_is_never_a_delivered_receipt()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault) = temp_vault();
+    let actor = linkedin_sender(&vault, 0xB8)?;
+    let message = "Happy to share more details.";
+    let transport = ScriptedLinkedInTransport::new(vec![
+        linkedin_conversation(
+            "2-jane-doe-abc",
+            "Jane Doe\n10:01 AM\nThanks for reaching out.",
+        ),
+        linkedin_conversation(
+            "2-jane-doe-abc",
+            "Jane Doe\n10:01 AM\nThanks for reaching out.\nJane Doe\n10:05 AM\nHappy to share more details.",
+        ),
+    ]);
+    let plan =
+        LinkedInVerifiedSendPlan::new("linkedin:member:jane-doe", "2-jane-doe-abc", message)?
+            .with_max_observation_attempts(1)?;
+    let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
+        .with_plan("intent:linkedin-echo", plan)?;
+    let result = vault.dispatch_outbound_intent(
+        linkedin_send_request(
+            actor,
+            "outbound:intent:linkedin-echo",
+            "intent:linkedin-echo",
+        ),
+        &mut sink,
+    )?;
+
+    assert_ne!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Ambiguous);
+    assert_eq!(
+        result
+            .receipt
+            .fields
+            .get("linkedin_send_verification")
+            .map(String::as_str),
+        Some("content_observed_unattributed")
+    );
+    Ok(())
+}
+
+/// H130, the retry guard: a matching tail the transcript does not attribute to
+/// this seat skips the duplicate send without claiming a delivery.
+#[test]
+fn a_retry_guard_never_counts_a_recipient_echo_as_delivered()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault) = temp_vault();
+    let actor = linkedin_sender(&vault, 0xB9)?;
+    let transport = ScriptedLinkedInTransport::new(vec![linkedin_conversation(
+        "2-jane-doe-abc",
+        "Jane Doe\n10:05 AM\nHappy to share more details.",
+    )]);
+    let plan = LinkedInVerifiedSendPlan::new(
+        "linkedin:member:jane-doe",
+        "2-jane-doe-abc",
+        "Happy to share more details.",
+    )?
+    .retry_guarded();
+    let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
+        .with_plan("intent:linkedin-echo-guard", plan)?;
+    let result = vault.dispatch_outbound_intent(
+        linkedin_send_request(
+            actor,
+            "outbound:intent:linkedin-echo-guard",
+            "intent:linkedin-echo-guard",
+        ),
+        &mut sink,
+    )?;
+
+    assert_ne!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Ambiguous);
+    assert!(sink.transport().send_calls.is_empty());
+    Ok(())
+}
+
+fn send_attributed(
+    vault: &crate::Vault,
+    actor: OutboundDispatchActor,
+    conversations: Vec<serde_json::Value>,
+    intent_ref: &str,
+) -> std::result::Result<OutboundDispatchResult, Box<dyn std::error::Error>> {
+    let plan = LinkedInVerifiedSendPlan::new(
+        "linkedin:member:jane-doe",
+        "2-jane-doe-abc",
+        "Happy to share more details.",
+    )?
+    .with_max_observation_attempts(1)?;
+    let mut sink = LinkedInMcpVerifiedSendSink::new(
+        linkedin_adapter()?,
+        ScriptedLinkedInTransport::new(conversations),
+    )
+    .with_plan(intent_ref, plan)?;
+    Ok(vault.dispatch_outbound_intent(
+        linkedin_send_request(actor, &format!("outbound:{intent_ref}"), intent_ref),
+        &mut sink,
+    )?)
+}
+
+/// The legitimate path: a transcript that names senders proves delivery with a
+/// new message this seat sent. The same words from the recipient do not.
+#[test]
+fn an_attributed_new_message_from_this_seat_is_delivered()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault) = temp_vault();
+    let message = "Happy to share more details.";
+    let echo = attributed_conversation(
+        "2-jane-doe-abc",
+        &[
+            ("m1", "linkedin:member:jane-doe", "Thanks for reaching out."),
+            ("m2", "linkedin:member:jane-doe", message),
+        ],
+    );
+    let sent = attributed_conversation(
+        "2-jane-doe-abc",
+        &[
+            ("m1", "linkedin:member:jane-doe", "Thanks for reaching out."),
+            ("m2", "linkedin:member:jane-doe", message),
+            ("m3", "linkedin:member:yura", message),
+        ],
+    );
+    let delivered = send_attributed(
+        &vault,
+        linkedin_sender(&vault, 0xBA)?,
+        vec![echo.clone(), sent],
+        "intent:linkedin-attributed",
+    )?;
+    assert_eq!(
+        delivered.outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+
+    let (_echo_tmp, echo_vault) = temp_vault();
+    let echoed = send_attributed(
+        &echo_vault,
+        linkedin_sender(&echo_vault, 0xBA)?,
+        vec![
+            attributed_conversation(
+                "2-jane-doe-abc",
+                &[("m1", "linkedin:member:jane-doe", "Thanks for reaching out.")],
+            ),
+            echo,
+        ],
+        "intent:linkedin-attributed-echo",
+    )?;
+    assert_ne!(echoed.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    Ok(())
+}

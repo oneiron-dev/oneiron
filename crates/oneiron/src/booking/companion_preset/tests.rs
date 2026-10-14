@@ -124,6 +124,7 @@ fn propose(
         vault,
         oracle,
         id(OWNER),
+        id(COMPANION),
         &preset(),
         monday(),
         None,
@@ -141,10 +142,16 @@ fn tap(vault: &Vault, token: &str, proposal_id: ProposalId, choice: u16) -> TapA
 fn confirm(
     vault: &Vault,
     oracle: &dyn SlotOracle,
-    proposal_id: ProposalId,
+    created: &CompanionProposalCreation,
 ) -> Option<CompanionSoftConfirmation> {
-    soft_confirm_highest_common_on_home_node(vault, oracle, proposal_id, id(COMPANION), NOW)
-        .expect("confirm runs")
+    soft_confirm_highest_common_on_home_node(
+        vault,
+        oracle,
+        created.proposal.id,
+        &created.companion_token,
+        NOW,
+    )
+    .expect("confirm runs")
 }
 
 /// Every byte in `vault_meta`, so a search for a raw secret cannot miss a
@@ -215,6 +222,10 @@ fn proposal_creation_returns_raw_tokens_once_and_stores_only_hashes() {
             "a raw participant token must never be at rest"
         );
     }
+    assert!(
+        !contains(&stored, created.companion_token.as_bytes()),
+        "the raw companion token must never be at rest"
+    );
     // What IS at rest is the proposal-scoped hash set, and only that: the
     // row has no field a raw value could travel in.
     let row = stored_row(&vault, created.proposal.id);
@@ -310,7 +321,7 @@ fn tap_after_expires_at_fails_lazily() {
             &vault,
             &oracle,
             created.proposal.id,
-            id(COMPANION),
+            &created.companion_token,
             expires_at,
         )
         .is_err(),
@@ -355,7 +366,7 @@ fn confirm_recomputes_and_picks_highest_ranked_common_choice() {
         2,
     );
 
-    let answer = confirm(&vault, &oracle, created.proposal.id).expect("an answer");
+    let answer = confirm(&vault, &oracle, &created).expect("an answer");
     assert_eq!(answer.selected.id, ChoiceId(1));
     assert_eq!(answer.selected.slot, slot(12, 0.7));
     assert_eq!(answer.confirmed_by_companion, id(COMPANION));
@@ -363,6 +374,42 @@ fn confirm_recomputes_and_picks_highest_ranked_common_choice() {
 
     // Reloaded from stored state, not from the caller: a retry lands on the
     // very answer the first confirm recorded.
-    let retry = confirm(&vault, &oracle, created.proposal.id).expect("a retry");
+    let retry = confirm(&vault, &oracle, &created).expect("a retry");
     assert_eq!(retry, answer);
+}
+
+/// H216: a participant link discloses the proposal id. Its holder can tap,
+/// but cannot finalize the proposal or name a companion on it: only the
+/// token creation handed the companion confirms, and the answer names the
+/// companion that token was minted for.
+#[test]
+fn a_participant_cannot_confirm_in_a_companion_name() {
+    let (_dir, vault) = open_vault();
+    let oracle = ScriptedOracle::new(scripted_slots());
+    let created = propose(&vault, &oracle, 2);
+    let participant = created.participant_tokens[0].raw_token.clone();
+    tap(&vault, &participant, created.proposal.id, 1);
+
+    let guessed = "0".repeat(64);
+    for forged in [participant.as_str(), guessed.as_str(), ""] {
+        assert!(
+            soft_confirm_highest_common_on_home_node(
+                &vault,
+                &oracle,
+                created.proposal.id,
+                forged,
+                NOW
+            )
+            .is_err(),
+            "a confirm without the companion's token is refused"
+        );
+    }
+    assert!(
+        stored_row(&vault, created.proposal.id)
+            .confirmation
+            .is_none()
+    );
+
+    let answer = confirm(&vault, &oracle, &created).expect("the companion confirms");
+    assert_eq!(answer.confirmed_by_companion, id(COMPANION));
 }
