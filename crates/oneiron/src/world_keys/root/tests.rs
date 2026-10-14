@@ -40,7 +40,7 @@ fn the_anchor_build_stays_within_its_wipe_and_signing_leaves_no_secret() {
     let anchor = seed.anchor();
     let message: &[u8] = b"stack probe transcript";
     let signing = stack_probe::run(SPAN, &mut || {
-        drop(ed25519_dalek::Signer::sign(&anchor, message));
+        let _ = std::hint::black_box(ed25519_dalek::Signer::sign(&anchor, message));
     });
     for (name, run) in [("bare build", &bare), ("signature", &signing)] {
         eprintln!(
