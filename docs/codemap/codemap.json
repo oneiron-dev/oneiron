@@ -22133,6 +22133,7 @@
      "path": "src/linkedin_connector/seat_policy.rs",
      "purpose": "Seat risk limits, sandbox policy evaluation, kill switch, and consent copy",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 20,
       "struct": 6,
