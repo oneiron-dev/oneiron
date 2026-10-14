@@ -72,7 +72,8 @@ impl<'vault> GraphFsResolver<'_, 'vault> {
         } else {
             CallerLocality::OnDevice
         };
-        let withheld = crate::settings::device_local_worlds_at(store, rtxn, locality)?;
+        let withheld =
+            crate::settings::device_local_worlds_at(self.scoped_read.vault(), rtxn, locality)?;
         if withheld.is_empty() {
             return Ok(rows);
         }

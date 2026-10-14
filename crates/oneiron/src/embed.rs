@@ -573,7 +573,7 @@ impl PendingEmbeddingReconciler {
         let primary_on_device = self.embedder.locality() == EmbedderLocality::OnDevice;
         self.vault.with_write_txn_grouped(|wtxn| {
             let flagged = crate::settings::device_local_worlds_at(
-                &self.vault.store,
+                &self.vault,
                 wtxn,
                 crate::claim::CallerLocality::OffDevice,
             )?;

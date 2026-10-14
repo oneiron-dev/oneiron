@@ -227,7 +227,8 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
         posture,
     );
     // The fold's only clock-sensitive transition is stale-roster approval
-    // expiry. Slip TTL is checked by each caller against its own snapshot
+    // expiry, here and in the fold with no vouch that bounds this install's
+    // view. Slip TTL is checked by each caller against its own snapshot
     // clock, not frozen into this authority view.
     let next_deadline_secs = next_stale_roster_deadline(
         &entries,
@@ -235,7 +236,10 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
         &first_seen_at_secs,
         now_secs,
         key.policy.stale_roster_window_secs,
-    );
+    )
+    .into_iter()
+    .chain(fold.install.no_vouch_deadline)
+    .min();
     let view = AuthorityView {
         fold: Arc::new(fold),
         generation: key.generation,

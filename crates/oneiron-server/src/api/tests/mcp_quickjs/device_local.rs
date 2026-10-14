@@ -173,7 +173,13 @@ async fn a_code_runs_search_off_this_device_finds_no_device_local_claim() {
         Some(world),
         "orchid lantern",
     );
-    mode.vault.set_world_device_only(world, true).unwrap();
+    mode.vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&mode.server),
+            world,
+            true,
+        )
+        .unwrap();
 
     let (_, body) = route_json(
         mode.server.clone(),
@@ -268,7 +274,13 @@ async fn a_failed_code_run_off_this_device_names_no_device_local_row() {
     assert_mcp_structured_error(&body, "code_run_failed");
     assert!(body.to_string().contains("current head"), "{body}");
 
-    mode.vault.set_world_device_only(world, true).unwrap();
+    mode.vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&mode.server),
+            world,
+            true,
+        )
+        .unwrap();
     let (_, body) = route_json(
         mode.server.clone(),
         run_request(actor, credential, "quickjs-failed-kept"),
@@ -359,7 +371,13 @@ async fn a_replayed_code_run_off_this_device_releases_no_answer_a_device_local_r
     assert!(steps.contains("agent_verb"), "{steps}");
     assert!(!steps.contains(&about.to_hex()), "{steps}");
 
-    mode.vault.set_world_device_only(world, true).unwrap();
+    mode.vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&mode.server),
+            world,
+            true,
+        )
+        .unwrap();
     let (_, body) = route_json(
         mode.server.clone(),
         run_request(owner, credential, "quickjs-outcomes"),
