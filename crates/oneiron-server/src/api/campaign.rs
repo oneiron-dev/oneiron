@@ -172,7 +172,8 @@ pub(crate) fn dispatch(
         Some(auth),
         actor,
         oneiron::EdgeActorClass::Human,
-    );
+    )
+    .at(auth.locality());
     let reply = invoke_campaign_surface(
         &facade,
         SurfaceCall {

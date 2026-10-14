@@ -171,10 +171,11 @@ pub(crate) async fn list_core_conversations(
         .transpose()?;
     let (actor, class) = super::conversation_transcript::reader(&auth)?;
     let proof = auth.verified_slip().cloned();
+    let locality = auth.locality();
     let view = query.view.unwrap_or(View::Summary);
     let count_mode = query.count_mode;
     let read = tokio::task::spawn_blocking(move || {
-        let memory = server.vault.memory(actor, class);
+        let memory = server.vault.memory(actor, class).at(locality);
         let memory = match &proof {
             Some(proof) => memory.with_read_proof(proof),
             None => memory,

@@ -8,12 +8,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 
-type Socket =
+pub(super) type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-struct Fixture {
+pub(super) struct Fixture {
     task: tokio::task::JoinHandle<()>,
-    server: Arc<SyncServer>,
+    pub(super) server: Arc<SyncServer>,
     window: loro::LoroDoc,
     url: String,
     _dir: tempfile::TempDir,
@@ -25,7 +25,7 @@ impl Drop for Fixture {
     }
 }
 
-async fn fixture() -> Fixture {
+pub(super) async fn fixture() -> Fixture {
     let (dir, server) = server();
     let window = server
         .get_or_create_window(&oneiron::sync::WindowKey::from_timestamp(AT))
@@ -66,12 +66,12 @@ async fn next(socket: &mut Socket) -> Message {
         .unwrap()
 }
 
-async fn send(socket: &mut Socket, tag: u8, value: Value) {
+pub(super) async fn send(socket: &mut Socket, tag: u8, value: Value) {
     let bytes = test_wire::request(tag, value);
     socket.send(Message::Binary(bytes.into())).await.unwrap();
 }
 
-async fn app(socket: &mut Socket, tag: u8) -> Value {
+pub(super) async fn app(socket: &mut Socket, tag: u8) -> Value {
     let mut collector = test_wire::Collector::default();
     // One deadline bounds the whole wait, even if sync broadcasts keep arriving.
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -110,7 +110,7 @@ async fn upgrade(f: &Fixture) -> Socket {
     socket
 }
 
-async fn connect(f: &Fixture, class: &str) -> Socket {
+pub(super) async fn connect(f: &Fixture, class: &str) -> Socket {
     let mut socket = upgrade(f).await;
     send(
         &mut socket,

@@ -175,6 +175,10 @@ pub struct CalibrationPair {
     pub prediction: DecisionAnswer,
     pub probability: f64,
     pub outcome: OutcomeLabel,
+    /// The rows the reader derived the pair from. A retained copy of it is
+    /// released again only while each of them may leave.
+    #[serde(skip)]
+    pub derived_from: Vec<EntityId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

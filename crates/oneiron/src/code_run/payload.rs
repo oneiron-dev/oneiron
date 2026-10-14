@@ -223,10 +223,19 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
                 ),
             ),
         ]),
-        SelfDispatchOutcome::AgentVerb(output) => request_map(vec![
-            ("kind", Value::from("agent_verb")),
-            ("output", Value::from(output.to_string())),
-        ]),
+        SelfDispatchOutcome::AgentVerb(answer) => {
+            let mut entries = vec![
+                ("kind", Value::from("agent_verb")),
+                ("output", Value::from(answer.output.to_string())),
+            ];
+            if let Some(rows) = &answer.rows {
+                entries.push((
+                    "rows",
+                    Value::Array(rows.iter().copied().map(entity_id_value).collect()),
+                ));
+            }
+            request_map(entries)
+        }
         SelfDispatchOutcome::Failed(result) => request_map(vec![
             ("kind", Value::from("failed")),
             ("effect", Value::from(result.effect.as_str())),
@@ -345,10 +354,16 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
             outcome: str_value(map_get(entries, "outcome")?)?.to_owned(),
             reason_codes: str_array(map_get(entries, "reason_codes")?)?,
         })),
-        "agent_verb" => Ok(SelfDispatchOutcome::AgentVerb(
-            serde_json::from_str(str_value(map_get(entries, "output")?)?)
+        "agent_verb" => Ok(SelfDispatchOutcome::AgentVerb(super::AgentVerbAnswer {
+            output: serde_json::from_str(str_value(map_get(entries, "output")?)?)
                 .map_err(|_| invalid_code_run_replay("invalid agent verb output"))?,
-        )),
+            // An answer recorded with no row set decodes as one, and no
+            // caller off this device is released it.
+            rows: map_get(entries, "rows")
+                .ok()
+                .map(|rows| decode_array(rows, entity_value))
+                .transpose()?,
+        })),
         "failed" => Ok(SelfDispatchOutcome::Failed(SelfFailedResult {
             effect: self_effect_from_str(str_value(map_get(entries, "effect")?)?)?,
             error: str_value(map_get(entries, "error")?)?.to_owned(),

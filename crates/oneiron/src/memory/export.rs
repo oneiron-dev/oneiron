@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::Vault;
 use crate::authority::VerifiedSlip;
+use crate::claim::CallerLocality;
 use crate::context_pack::PackFormat;
 use crate::edge::EdgeActorClass;
 use crate::memory::verify_actor_binding_in_txn;
@@ -52,6 +53,8 @@ impl Memory<'_> {
 
     /// Full-vault export with the caller's authenticated owner-grade slip.
     /// HTTP passes the verifier-produced instrument, never a client option.
+    /// A caller off this device (see [`Memory::at`]) takes no device-local
+    /// world with it (DEC-0005).
     pub fn export_with_verified_owner(
         &self,
         opts: &ExportOptions,
@@ -65,66 +68,79 @@ impl Memory<'_> {
         opts: &ExportOptions,
         proof: Option<&VerifiedSlip>,
     ) -> MemoryResult<MemoryExport> {
-        render_export(self.vault, opts, &self.actor.to_hex(), |txn| {
-            verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
-            if self.actor_class != EdgeActorClass::Human {
-                return Err(export_forbidden());
-            }
-            if let Some(proof) = proof {
-                validate_verified_owner(self.vault, txn, proof)?;
-                // A holder proof authorizes its own bound actor, not another
-                // PERSON selected through `Vault::memory` or an HTTP field.
-                if proof.claims().actor_class.as_deref() != Some("human")
-                    || proof.claims().holder_ref != self.actor.to_hex()
-                {
+        render_export(
+            self.vault,
+            opts,
+            &self.actor.to_hex(),
+            self.locality,
+            |txn| {
+                verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
+                if self.actor_class != EdgeActorClass::Human {
                     return Err(export_forbidden());
                 }
-                // A live slip outlives its holder's Owner role: whole-vault
-                // export asks for the role now, in the export's snapshot.
-                if !crate::policy_model::is_live_vault_owner_in_txn(self.vault, txn, &self.actor)? {
-                    return Err(export_forbidden());
-                }
-            } else {
-                // `memory(actor)` is public. Only a process holding the vault
-                // writer lease and bound to its constructor's seeded owner
-                // can use the local door; an arbitrary PERSON cannot.
-                let owner = crate::vault::embedded_owner_actor_id()?;
-                if self.actor != owner
-                    || !self
+                if let Some(proof) = proof {
+                    validate_verified_owner(self.vault, txn, proof)?;
+                    // A holder proof authorizes its own bound actor, not another
+                    // PERSON selected through `Vault::memory` or an HTTP field.
+                    if proof.claims().actor_class.as_deref() != Some("human")
+                        || proof.claims().holder_ref != self.actor.to_hex()
+                    {
+                        return Err(export_forbidden());
+                    }
+                    // A live slip outlives its holder's Owner role: whole-vault
+                    // export asks for the role now, in the export's snapshot.
+                    if !crate::policy_model::is_live_vault_owner_in_txn(
+                        self.vault,
+                        txn,
+                        &self.actor,
+                    )? {
+                        return Err(export_forbidden());
+                    }
+                } else {
+                    // `memory(actor)` is public. Only a process holding the vault
+                    // writer lease and bound to its constructor's seeded owner
+                    // can use the local door; an arbitrary PERSON cannot.
+                    let owner = crate::vault::embedded_owner_actor_id()?;
+                    if self.actor != owner
+                        || !self
+                            .vault
+                            .writer_lease()
+                            .is_some_and(crate::store::VaultWriterLease::held_by_current_process)
+                        || !crate::vault::live_entity_row_in_txn(&self.vault.store, txn, &owner)?
+                            .is_live()
+                    {
+                        return Err(export_forbidden());
+                    }
+                    if self
                         .vault
-                        .writer_lease()
-                        .is_some_and(crate::store::VaultWriterLease::held_by_current_process)
-                    || !crate::vault::live_entity_row_in_txn(&self.vault.store, txn, &owner)?
-                        .is_live()
-                {
-                    return Err(export_forbidden());
+                        .authority_fold_readonly_in_txn(txn)?
+                        .vault_root_is_conflicted()
+                    {
+                        return Err(MemoryError::new(
+                            MEMORY_CODE_INVALID_STATE,
+                            "conflicting vault roots suspend full-vault export",
+                            &["Resolve the authority fork before exporting."],
+                        ));
+                    }
                 }
-                if self
-                    .vault
-                    .authority_fold_readonly_in_txn(txn)?
-                    .vault_root_is_conflicted()
-                {
-                    return Err(MemoryError::new(
-                        MEMORY_CODE_INVALID_STATE,
-                        "conflicting vault roots suspend full-vault export",
-                        &["Resolve the authority fork before exporting."],
-                    ));
-                }
-            }
-            Ok(())
-        })
+                Ok(())
+            },
+        )
     }
 }
 
 impl Vault {
     /// Host-root export without inventing an actor or creating a root on read.
-    /// The verifier-produced root is rechecked in the export snapshot.
+    /// The verifier-produced root is rechecked in the export snapshot. A
+    /// caller at `locality` off this device takes no device-local world with
+    /// it (DEC-0005).
     pub fn export_with_verified_host_owner(
         &self,
         opts: &ExportOptions,
         proof: &VerifiedSlip,
+        locality: CallerLocality,
     ) -> MemoryResult<MemoryExport> {
-        render_export(self, opts, "host", |txn| {
+        render_export(self, opts, "host", locality, |txn| {
             validate_verified_owner(self, txn, proof)?;
             if proof.claims().holder_ref != "host" {
                 return Err(export_forbidden());
@@ -159,6 +175,7 @@ fn render_export(
     vault: &Vault,
     opts: &ExportOptions,
     by: &str,
+    locality: CallerLocality,
     admit: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
 ) -> MemoryResult<MemoryExport> {
     let name = opts.format.as_deref().unwrap_or("toon");
@@ -175,7 +192,7 @@ fn render_export(
             ));
         }
     };
-    let document = vault.export_whole_vault_with_admission(format, admit)?;
+    let document = vault.export_whole_vault_with_admission(format, locality, admit)?;
     let rendered = String::from_utf8(document.bytes().to_vec())
         .map_err(|_| MemoryError::bad_request("export serializer emitted non-UTF-8 text"))?;
     let receipt = ExportReceipt {
