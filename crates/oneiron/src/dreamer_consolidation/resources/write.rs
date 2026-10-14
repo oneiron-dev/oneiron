@@ -387,3 +387,49 @@ impl ConsolidationFence {
         Ok(candidate.evidence_meet)
     }
 }
+
+impl ConsolidationFence {
+    #[cfg(test)]
+    pub(crate) fn for_reader_test(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        actor: WriteActor,
+        pinned: Option<EntityId>,
+    ) -> Result<Self> {
+        let mut sources = BTreeMap::new();
+        if let Some(id) = pinned {
+            let revision = RowRevision::read_in(vault, txn, &id)?
+                .ok_or(crate::Error::EntityNotFound)?;
+            let raw = vault.store.entities.get(txn, id.as_bytes())?
+                .ok_or(crate::Error::EntityNotFound)?;
+            let body = crate::claim::decode_claim_body(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true,
+            )?;
+            sources.insert(id, SourcePin {
+                resource: revision.resource,
+                entity_type: revision.entity_type,
+                learned_at: revision.learned_at,
+                project: Some(body.scope_project),
+                trust_class: body.source,
+            });
+        }
+        let rules = match crate::dreamer_consolidation::routing::KEY_RULES
+            .get(&vault.store, txn, &())? {
+            Some(rules) => rules,
+            None => serde_json::from_str(include_str!("../key_defaults.json"))
+                .map_err(|_| invalid_consolidation("invalid default key rules"))?,
+        };
+        Ok(Self {
+            actor,
+            attempt: crate::attempt_queue::AttemptId::now(),
+            fallback_binding: None,
+            sources,
+            turns: BTreeSet::new(),
+            texts: BTreeMap::new(),
+            conversation: actor.entity_ref(),
+            rules,
+            closed: std::sync::Mutex::default(),
+            standing: std::sync::Mutex::default(),
+        })
+    }
+}

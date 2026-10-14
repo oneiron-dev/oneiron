@@ -179,3 +179,16 @@ pub(super) fn verify(
     }
     Ok((decoded.source_meet, project))
 }
+
+impl Vault {
+    #[cfg(test)]
+    pub(crate) fn verify_derived_support_for_test(
+        &self,
+        subject: &EdgeRef,
+        evidence: &Value,
+        reader: WriteActor,
+    ) -> Result<(ClaimSource, EntityId)> {
+        let txn = self.store.env.read_txn()?;
+        verify(self, &txn, subject, evidence, reader)
+    }
+}

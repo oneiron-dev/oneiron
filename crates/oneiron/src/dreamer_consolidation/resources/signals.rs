@@ -205,3 +205,27 @@ fn axis(entries: &[(Value, Value)], name: &str) -> Result<Option<EntityId>> {
     }
     Ok(found)
 }
+
+impl crate::Vault {
+    #[cfg(test)]
+    pub(crate) fn graph_source_in_slice_for_test(
+        &self,
+        actor: crate::WriteActor,
+        conversation: EntityId,
+        source: &EntityId,
+    ) -> Result<bool> {
+        let resources = BranchResources::open(
+            self,
+            actor,
+            crate::dreamer_consolidation::ConsolidationPartitionKey {
+                conversation_ref: conversation,
+                world_ref: None,
+                facet_ref: None,
+            },
+            &[],
+            crate::attempt_queue::AttemptId::now(),
+            None,
+        )?;
+        resources.graph_source_in_slice(resources.scope(), source)
+    }
+}

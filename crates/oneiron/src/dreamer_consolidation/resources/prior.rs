@@ -282,3 +282,39 @@ fn prior_keys(prior: &PriorHead, rules: &PredicateKeyRules) -> Result<CandidateK
     keys.identity.project = body.scope_project;
     Ok(keys)
 }
+
+impl crate::Vault {
+    #[cfg(test)]
+    pub(crate) fn explicit_prior_ids_for_test(
+        &self,
+        actor: crate::WriteActor,
+        conversation: EntityId,
+        claim: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let partition = crate::dreamer_consolidation::ConsolidationPartitionKey {
+            conversation_ref: conversation,
+            world_ref: None,
+            facet_ref: None,
+        };
+        let mut scope = Scope::default();
+        scope.readable.insert(ScopeResource::Bucket {
+            key: crate::entity_id::bytes_to_hex_lower(&partition.partition_hash()),
+        });
+        for id in [conversation, claim] {
+            let raw = self.get_raw(&id)?.ok_or(crate::Error::EntityNotFound)?;
+            scope.readable.insert(document_version(
+                id,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            ));
+        }
+        let resources = BranchResources::open(
+            self,
+            actor,
+            partition,
+            &[],
+            crate::attempt_queue::AttemptId::now(),
+            Some(&scope),
+        )?;
+        Ok(resources.priors.keys().copied().collect())
+    }
+}

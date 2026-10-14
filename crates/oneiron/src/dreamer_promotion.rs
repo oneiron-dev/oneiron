@@ -695,3 +695,8 @@ impl crate::dreamer_consolidation::ConsolidationSink for PromotionWriterSink<'_>
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) fn evidence_ref_admissible_for_test(vault: &Vault, entry: &EntityId) -> Result<bool> {
+    evidence_ref_admissible(vault, entry)
+}

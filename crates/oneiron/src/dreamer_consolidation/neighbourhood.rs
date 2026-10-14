@@ -548,3 +548,21 @@ fn cut(text: &str, limit: usize) -> String {
     }
     format!("{}…", &text[..end])
 }
+
+impl Vault {
+    #[cfg(test)]
+    pub(crate) fn newest_claim_ids_for_test(
+        &self,
+        principal: EntityId,
+        subject: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        let actor = crate::claim::ScopedReadActorKey::new(principal.to_hex())
+            .ok_or(crate::Error::InvariantViolation("reader fixture actor"))?;
+        let read = self.scoped_read(actor);
+        Ok(newest_claims(self, &txn, &read, subject, &Scope::default(), None)?
+            .into_iter()
+            .map(|(known, _)| known.id)
+            .collect())
+    }
+}

@@ -279,3 +279,14 @@ fn live_entity_row_has_type(
         Ok(LiveEntityRow::Live { entity_type: found, .. }) if found == entity_type
     )
 }
+
+impl crate::Vault {
+    #[cfg(test)]
+    pub(crate) fn dreamer_precommit_denial_for_test(
+        &self,
+        body: &ClaimBody,
+    ) -> Result<Option<GateReasonCode>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(dreamer_precommit_denial(&self.store, &txn, body))
+    }
+}
