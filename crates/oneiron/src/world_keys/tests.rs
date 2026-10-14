@@ -5,12 +5,50 @@ use oneiron_crypto::{Envelope, HybridSecretKey, Kek, Purpose, SealKey, SealParam
 use oneiron_keystore::{DeviceKeystore, MemoryKeystore};
 
 use super::*;
+use crate::recovery::{
+    CodeKeeping, KitIssue, KitPassphrase, KitPiece, KitSecretKind, PassphraseCost, PieceHome,
+    issue_recovery_root_kit, issue_vault_key_kit, restore_kit,
+};
 
 const VAULT: [u8; 32] = [0x5a; 32];
 const INSTALL: [u8; 16] = [0x3c; 16];
 
 fn entity(byte: u8) -> EntityId {
     EntityId::from_bytes_unchecked([byte; 16])
+}
+
+/// A kit for `secret` on `VAULT`, its pieces kept on this machine, another machine
+/// and paper, or with `passphrase` in place of the paper.
+fn kit(
+    kind: KitSecretKind,
+    secret: &[u8; 32],
+    passphrase: Option<&KitPassphrase>,
+) -> Vec<KitPiece> {
+    let third = match passphrase {
+        Some(_) => PieceHome::Passphrase,
+        None => PieceHome::RecoveryCode(CodeKeeping::Paper),
+    };
+    let issue = KitIssue {
+        vault_id: VAULT,
+        homes: [
+            PieceHome::ThisMachine,
+            PieceHome::OtherMachine(EntityId::now()),
+            third,
+        ],
+        passphrase,
+        cost: PassphraseCost::FLOOR,
+        only_machine: false,
+    };
+    match kind {
+        KitSecretKind::RecoveryRoot => issue_recovery_root_kit(&issue, secret),
+        KitSecretKind::VaultKey => issue_vault_key_kit(
+            &crate::config::VaultPrivacyConfig::default(),
+            &issue,
+            secret,
+        ),
+    }
+    .unwrap()
+    .into_pieces()
 }
 
 fn binding(key: &WorldKey) -> WorldKeyBinding {
@@ -49,8 +87,17 @@ fn a_world_key_opens_only_for_its_machine_and_for_the_kit() {
     assert!(open_world_key(&bound, to_b, &b, &for_a).is_err());
     assert!(open_world_key(&bound, to_root, &a, &for_root).is_err());
 
-    // The kit, restored on a new machine: only the 32 seed bytes come back.
-    let restored = RecoveryRootSeed::from_kit_bytes(seed.kit_bytes()).unwrap();
+    // The kit, restored on a new machine from two of its pieces.
+    let pieces = kit(KitSecretKind::RecoveryRoot, &seed.kit_bytes(), None);
+    let restored = restore_kit(
+        VAULT,
+        KitSecretKind::RecoveryRoot,
+        &[&pieces[1], &pieces[2]],
+        None,
+    )
+    .unwrap();
+    let restored = RecoveryRootSeed::from_restored_kit(restored).unwrap();
+    assert!(restored.authenticated());
     let opened = open_world_key(
         &bound,
         to_root,
@@ -98,9 +145,7 @@ fn the_vault_key_alone_opens_no_world_key() {
             seal_world_key(&bound, to_root, &root.recovery_key, &key).unwrap(),
         ),
     ];
-    let as_seed = RecoveryRootSeed::from_kit_bytes(zeroize::Zeroizing::new(vault_key)).unwrap();
     let candidates = [
-        as_seed.recovery_secret().unwrap(),
         HybridSecretKey::from_seed(&vault_key, b"oneiron/machine-encryption/v1").unwrap(),
         HybridSecretKey::from_seed(&vault_key, b"oneiron/world-recovery-root/v1").unwrap(),
         HybridSecretKey::from_seeds(
@@ -292,4 +337,47 @@ fn debug_output_carries_no_secret() {
         keys.locality(),
         oneiron_keystore::KeystoreLocality::ProcessOnly
     );
+}
+
+/// Done means (contract §3, Astra #1424): a root seed comes back only from a kit that
+/// carries one, and it knows how it was rebuilt. Two stored pieces authenticate it;
+/// one piece with the passphrase does not, since anyone who knows the passphrase could
+/// have written that piece. A drawn seed is the issuer's, and a vault-key kit gives
+/// no root seed.
+#[test]
+fn a_kit_gives_back_a_root_seed_only_for_its_kind() {
+    let drawn = RecoveryRootSeed::generate().unwrap();
+    assert!(!drawn.authenticated());
+    // A throwaway passphrase made in the test; never a real one.
+    let mut raw = [0u8; 12];
+    os_fill(&mut raw).unwrap();
+    let text: String = raw.iter().map(|byte| format!("{byte:02x}")).collect();
+    let passphrase = KitPassphrase::new(&text).unwrap();
+    let pieces = kit(
+        KitSecretKind::RecoveryRoot,
+        &drawn.kit_bytes(),
+        Some(&passphrase),
+    );
+    let restored = restore_kit(
+        VAULT,
+        KitSecretKind::RecoveryRoot,
+        &[&pieces[1]],
+        Some(&passphrase),
+    )
+    .unwrap();
+    assert_eq!(restored.stored_pieces(), 1);
+    let seed = RecoveryRootSeed::from_restored_kit(restored).unwrap();
+    assert!(!seed.authenticated());
+    assert_eq!(seed.public(&VAULT).unwrap(), drawn.public(&VAULT).unwrap());
+
+    let vault_key = drawn.kit_bytes();
+    let pieces = kit(KitSecretKind::VaultKey, &vault_key, None);
+    let restored = restore_kit(
+        VAULT,
+        KitSecretKind::VaultKey,
+        &[&pieces[0], &pieces[2]],
+        None,
+    )
+    .unwrap();
+    assert!(RecoveryRootSeed::from_restored_kit(restored).is_err());
 }

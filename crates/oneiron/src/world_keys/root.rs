@@ -7,7 +7,8 @@
 //!   issue or restore (E2).
 //!
 //! The engine never stores the seed. How the kit's pieces carry the 32 bytes is the
-//! kit's business; this module only needs them back.
+//! kit's business; this module takes back only the kit's whole restore, never bare
+//! bytes, so it knows the kit's kind and how many genuine pieces rebuilt it.
 
 use oneiron_crypto::{HybridPublicKey, HybridSecretKey};
 use zeroize::Zeroizing;
@@ -17,12 +18,25 @@ pub use oneiron_authority::authority::RecoveryRootId;
 use super::{os_fill, refused};
 use crate::authority::OwnerRootRecord;
 use crate::error::Result;
+use crate::recovery::{KitSecretKind, RestoredKitSecret};
 
 const RECOVERY_KEY_LABEL: &[u8] = b"oneiron/world-recovery-root/v1";
 const ANCHOR_CONTEXT: &str = "oneiron/owner-anchor/v1";
 
 /// The kit's secret. `Debug` is redacted and the bytes are wiped on drop.
-pub struct RecoveryRootSeed(Zeroizing<[u8; 32]>);
+pub struct RecoveryRootSeed {
+    bytes: Zeroizing<[u8; 32]>,
+    origin: SeedOrigin,
+}
+
+/// Where a seed came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SeedOrigin {
+    /// Drawn here, by the root's issuer.
+    Drawn,
+    /// Rebuilt by the kit, from this many genuine stored pieces.
+    Kit { stored_pieces: u8 },
+}
 
 impl std::fmt::Debug for RecoveryRootSeed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -38,33 +52,52 @@ impl RecoveryRootSeed {
         if *seed == [0u8; 32] {
             return Err(refused("os entropy unavailable"));
         }
-        Ok(Self(seed))
+        Ok(Self {
+            bytes: seed,
+            origin: SeedOrigin::Drawn,
+        })
     }
 
-    /// The bytes, for the kit issuer only.
+    /// The bytes, for the kit issuer only. The engine never stores them.
     #[must_use]
     pub fn kit_bytes(&self) -> Zeroizing<[u8; 32]> {
-        Zeroizing::new(*self.0)
+        Zeroizing::new(*self.bytes)
     }
 
-    /// The seed back from the kit. An all-zero seed is refused.
-    pub fn from_kit_bytes(bytes: Zeroizing<[u8; 32]>) -> Result<Self> {
-        if *bytes == [0u8; 32] {
+    /// The seed back from the kit's restore. A kit that carries another secret, and an
+    /// all-zero seed, are refused before anything is kept.
+    pub fn from_restored_kit(secret: RestoredKitSecret) -> Result<Self> {
+        if secret.kind() != KitSecretKind::RecoveryRoot {
+            return Err(refused("the kit carries another secret"));
+        }
+        if *secret.as_bytes() == [0u8; 32] {
             return Err(refused("an all-zero recovery seed"));
         }
-        Ok(Self(bytes))
+        let stored_pieces = secret.stored_pieces();
+        Ok(Self {
+            bytes: secret.into_bytes(),
+            origin: SeedOrigin::Kit { stored_pieces },
+        })
+    }
+
+    /// Rebuilt from two or more genuine stored pieces. With one, the passphrase gave the
+    /// other point, and anyone who knows it could have written that piece for a seed of
+    /// their own. A `Drawn` seed is the issuer's, not a kit's.
+    #[must_use]
+    pub fn authenticated(&self) -> bool {
+        matches!(self.origin, SeedOrigin::Kit { stored_pieces } if stored_pieces >= 2)
     }
 
     /// The recovery keypair's secret half. It opens the root's wraps.
     pub fn recovery_secret(&self) -> Result<HybridSecretKey> {
-        HybridSecretKey::from_seed(&self.0, RECOVERY_KEY_LABEL)
+        HybridSecretKey::from_seed(&self.bytes, RECOVERY_KEY_LABEL)
             .map_err(|_| refused("the recovery seed does not expand"))
     }
 
     /// The owner anchor's signing key.
     #[must_use]
     pub fn anchor(&self) -> ed25519_dalek::SigningKey {
-        let mut bytes = Zeroizing::new(blake3::derive_key(ANCHOR_CONTEXT, &self.0[..]));
+        let mut bytes = Zeroizing::new(blake3::derive_key(ANCHOR_CONTEXT, &self.bytes[..]));
         let key = ed25519_dalek::SigningKey::from_bytes(&bytes);
         zeroize::Zeroize::zeroize(&mut *bytes);
         key
