@@ -537,13 +537,9 @@ fn seat_for(
     let model = ModelId::new(format!("seat/{}@{revision}", role_key(role))).ok()?;
     let mut alone: BTreeMap<ModelId, Arc<OfferLadder>> = BTreeMap::new();
     for rung in &rungs {
-        alone.entry(rung.model.clone()).or_insert_with(|| {
-            Arc::new(OfferLadder::seat(
-                rung.model.clone(),
-                vec![rung.clone()],
-                Arc::clone(&rests),
-            ))
-        });
+        alone
+            .entry(rung.model.clone())
+            .or_insert_with(|| Arc::new(OfferLadder::pinned(rung.clone(), Arc::clone(&rests))));
     }
     Some(Seat {
         role,

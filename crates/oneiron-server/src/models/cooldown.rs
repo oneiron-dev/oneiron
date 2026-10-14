@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use oneiron::llm::run_admission::OfferBinding;
-use oneiron::{LlmRequest, ModelLocality, ProviderCooldownPolicy, Vault};
+use oneiron::{LlmRequest, ModelLocality, Vault};
 use serde::{Deserialize, Serialize};
 
 /// The engine's `MODEL_OFFER_COOLDOWN` side table: LIVE, never replicated
@@ -60,9 +60,10 @@ impl OfferCooldowns {
     }
 
     /// When the offer serving `wire_model` is back in rotation, while it
-    /// rests. An unreadable row leaves the offer in rotation: the worst it
-    /// costs is one more refusal.
-    pub(super) fn resting(&self, offer: &OfferBinding, wire_model: &str) -> Option<u64> {
+    /// rests past both now and `woke` (when a call that waited for an offer
+    /// back woke, else zero). An unreadable row leaves the offer in rotation:
+    /// the worst it costs is one more refusal.
+    pub(super) fn resting(&self, offer: &OfferBinding, wire_model: &str, woke: u64) -> Option<u64> {
         let vault = self.vault.as_ref()?;
         let rest = match vault.sync_state_get(&key(offer, wire_model)) {
             Ok(Some(bytes)) => rmp_serde::from_slice::<Rest>(&bytes).ok(),
@@ -75,7 +76,7 @@ impl OfferCooldowns {
                 None
             }
         }?;
-        (rest.until > vault.now_recorded_at()).then_some(rest.until)
+        (rest.until > vault.now_recorded_at().max(woke)).then_some(rest.until)
     }
 
     /// Rests the offer serving `wire_model` after a limit refusal: until the
@@ -92,7 +93,12 @@ impl OfferCooldowns {
     ) -> Option<Rest> {
         let vault = self.vault.as_ref()?;
         let policy = vault.provider_cooldown_policy().unwrap_or_default();
-        let rest = rest_end(vault.now_recorded_at(), policy, retry_after, resets_at);
+        let rest = rest_end(
+            vault.now_recorded_at(),
+            (policy.default_secs, policy.max_secs),
+            retry_after,
+            resets_at,
+        );
         let key = key(offer, wire_model);
         let kept = vault.try_with_write_txn_grouped(|txn| {
             let running = vault
@@ -154,22 +160,20 @@ pub(super) fn leaves_device(offer: &OfferBinding) -> bool {
     offer.locality == ModelLocality::ThirdParty
 }
 
-/// The end of a rest that starts `now`.
+/// The end of a rest that starts `now`, under the vault's default and
+/// longest rest.
 fn rest_end(
     now: u64,
-    policy: ProviderCooldownPolicy,
+    (default_secs, max_secs): (u64, u64),
     retry_after: Option<u64>,
     resets_at: &[u64],
 ) -> Rest {
-    let longest = now.saturating_add(policy.max_secs);
+    let longest = now.saturating_add(max_secs);
     let (until, source) = match resets_at.iter().find(|reset| **reset > now) {
         Some(reset) => (*reset, ResetSource::ErrorTime),
         None => match retry_after.filter(|seconds| *seconds > 0) {
             Some(seconds) => (now.saturating_add(seconds), ResetSource::RetryAfter),
-            None => (
-                now.saturating_add(policy.default_secs),
-                ResetSource::Default,
-            ),
+            None => (now.saturating_add(default_secs), ResetSource::Default),
         },
     };
     Rest {

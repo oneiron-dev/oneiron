@@ -142,6 +142,9 @@ pub struct OfferLadder {
     /// An answer carries the ladder's served receipt (a seat, or a rung of
     /// one), or the provider's usage as it came (a model called by its id).
     receipt: bool,
+    /// The one model a caller or a manifest named: its one rung is that
+    /// pick, never a fallback.
+    picked: bool,
     /// Where an offer refused for a limit rests until its reset.
     rests: Arc<OfferCooldowns>,
 }
@@ -152,6 +155,18 @@ impl OfferLadder {
             name,
             rungs,
             receipt: true,
+            picked: false,
+            rests,
+        }
+    }
+
+    /// One rung of a seat, served alone where a manifest pins its model.
+    pub(super) fn pinned(rung: LadderRung, rests: Arc<OfferCooldowns>) -> Self {
+        Self {
+            name: rung.model.clone(),
+            rungs: vec![rung],
+            receipt: true,
+            picked: true,
             rests,
         }
     }
@@ -162,6 +177,7 @@ impl OfferLadder {
             name: rung.model.clone(),
             rungs: vec![rung],
             receipt: false,
+            picked: true,
             rests,
         }
     }
@@ -189,7 +205,9 @@ impl OfferLadder {
         &self.name
     }
 
-    /// How many provider calls a call that fails makes: one per rung.
+    /// How many provider calls a call that fails makes on one pass of its
+    /// chain: one per rung. A call that waits for a cooling chain makes one
+    /// more pass.
     #[must_use]
     pub fn rungs(&self) -> usize {
         self.rungs.len()
@@ -255,11 +273,15 @@ impl OfferLadder {
     }
 
     /// Whether a fallback to the rung at `index` would take `request` off
-    /// the device while its world stays on it. The first rung is the owner's
-    /// own pick, never a fallback.
+    /// the device while its world stays on it. A seat's configured first
+    /// rung, and the one model a caller or a manifest named, are the owner's
+    /// own pick, never a fallback; a later rung is one even when no rung
+    /// before it could be built.
     fn kept_on_device(&self, index: usize, request: &LlmRequest) -> bool {
-        index > 0
-            && leaves_device(&self.rungs[index].offer.binding)
+        let rung = &self.rungs[index];
+        !self.picked
+            && rung.position > 0
+            && leaves_device(&rung.offer.binding)
             && !self.rests.world_may_leave(request)
     }
 
@@ -277,12 +299,15 @@ impl OfferLadder {
                 "a fallback would take the work off the device; passed over"
             );
             Passed::KeptOnDevice
-        } else if let Some(until) = self.rests.resting(&rung.offer.binding, &rung.wire_model) {
+        } else if let Some(until) =
+            self.rests
+                .resting(&rung.offer.binding, &rung.wire_model, walk.woke)
+        {
             Passed::Resting { until }
         } else {
             return false;
         };
-        walk.passed.push((index, passed));
+        walk.note(index, passed);
         true
     }
 
@@ -342,20 +367,21 @@ impl OfferLadder {
     }
 
     /// When the call met only rests (each rung it could use rests, or
-    /// refused for a limit), the rung back first and the wait until it is,
-    /// if that is within the vault's longest wait. The rate law: a cooling
-    /// chain is not refused for rate; its call waits for the first offer back.
-    fn waits_for(&self, walk: &Walk) -> Option<(usize, Duration)> {
+    /// refused for a limit), the first offer back, when, and the wait until
+    /// then, if that is within the vault's longest wait. The rate law: a
+    /// cooling chain is not refused for rate; its call waits for the first
+    /// offer back.
+    fn waits_for(&self, walk: &Walk) -> Option<Back> {
         if !walk.limited() {
             return None;
         }
-        let (index, back) = walk
-            .passed
-            .iter()
-            .filter_map(|(index, passed)| Some((*index, passed.back()?)))
-            .min_by_key(|(_, back)| *back)?;
-        let wait = back.saturating_sub(self.rests.now()?);
-        (wait <= self.rests.max_wait_secs()).then(|| (index, Duration::from_secs(wait)))
+        let (index, at) = walk.back()?;
+        let wait = at.saturating_sub(self.rests.now()?);
+        (wait <= self.rests.max_wait_secs()).then(|| Back {
+            index,
+            at,
+            wait: Duration::from_secs(wait),
+        })
     }
 
     /// The call's end with no answer. A last failure that was a limit
@@ -364,7 +390,7 @@ impl OfferLadder {
     /// caller can say when. Any other last failure is returned as it came.
     fn unanswered(&self, walk: Walk) -> LlmError {
         match (walk.limited(), walk.back(), self.rests.now()) {
-            (true, Some(back), Some(now)) => RetryableLlmError::RateLimited {
+            (true, Some((_, back)), Some(now)) => RetryableLlmError::RateLimited {
                 retry_after: Some(back.saturating_sub(now)),
                 resets_at: vec![back],
             }
@@ -403,34 +429,31 @@ impl OfferLadder {
     ) -> LlmResult<LlmResponse> {
         self.admits(&request)?;
         let mut walk = Walk::default();
-        for index in 0..self.rungs.len() {
-            if !may_send() {
-                return Err(self.unanswered(walk));
+        // The chain, then, when only rests stopped it, the chain once more
+        // after one wait for its first offer back.
+        for waited in [false, true] {
+            if waited {
+                let Some(back) = self.waits_for(&walk).filter(|_| may_send()) else {
+                    break;
+                };
+                tokio::time::sleep(back.wait).await;
+                walk.woke = back.at;
             }
-            if self.passes_over(index, &request, &mut walk) {
-                continue;
-            }
-            match self
-                .send(run, index, &request, selector, may_send, &mut walk)
-                .await?
-            {
-                Sent::Answer(response) => return Ok(response),
-                Sent::Failed => {}
-                Sent::Stopped => return Err(self.unanswered(walk)),
-            }
-        }
-        if may_send()
-            && let Some((index, wait)) = self.waits_for(&walk)
-        {
-            tokio::time::sleep(wait).await;
-            // Its world may have been kept on the device while the call waited.
-            if may_send()
-                && !self.kept_on_device(index, &request)
-                && let Sent::Answer(response) = self
+            for index in 0..self.rungs.len() {
+                if !may_send() {
+                    return Err(self.unanswered(walk));
+                }
+                if self.passes_over(index, &request, &mut walk) {
+                    continue;
+                }
+                match self
                     .send(run, index, &request, selector, may_send, &mut walk)
                     .await?
-            {
-                return Ok(response);
+                {
+                    Sent::Answer(response) => return Ok(response),
+                    Sent::Failed => {}
+                    Sent::Stopped => return Err(self.unanswered(walk)),
+                }
             }
         }
         Err(self.unanswered(walk))
@@ -489,7 +512,7 @@ impl OfferLadder {
         {
             Some(start) => (start, None),
             None => match self.waits_for(&walk) {
-                Some((index, wait)) => (index, Some(wait)),
+                Some(back) => (back.index, Some(back)),
                 None => return Err(self.unanswered(walk)),
             },
         };
@@ -523,59 +546,73 @@ impl OfferLadder {
             wait,
             mut walk,
         } = opening;
-        if let Some(wait) = wait {
-            // Every usable offer rested: the call waited for the one back
-            // first, and goes there alone, unless its world was kept on the
-            // device meanwhile.
-            tokio::time::sleep(wait).await;
-            if self.kept_on_device(start, request) {
-                settle_failed(first.1);
-                walk.passed.push((start, Passed::KeptOnDevice));
-            } else if let Flow::Ended = self.stream_rung(run, start, first, &mut walk, events).await
+        let mut held = Some((start, first));
+        // The chain, then, when only rests stopped it, the chain once more
+        // after one wait for its first offer back. A stream that opened with
+        // every usable offer resting starts with that wait.
+        let back = match wait {
+            Some(back) => Some(back),
+            None => match self
+                .stream_pass(run, request, selector, &mut held, &mut walk, events)
+                .await
+            {
+                Flow::Ended => return,
+                Flow::On => self.waits_for(&walk),
+            },
+        };
+        if let Some(back) = back {
+            tokio::time::sleep(back.wait).await;
+            walk.woke = back.at;
+            if let Flow::Ended = self
+                .stream_pass(run, request, selector, &mut held, &mut walk, events)
+                .await
             {
                 return;
             }
-            let _ = events.send(Err(self.unanswered(walk))).await;
-            return;
         }
-        // The opening rung, then each later one the call can use.
-        let mut admitted = Some(first);
-        for index in start..self.rungs.len() {
-            let next = match admitted.take() {
-                Some(first) => first,
-                None if self.passes_over(index, request, &mut walk) => continue,
-                None => match self.admit(run, &self.rungs[index], request, selector, true) {
-                    Ok(next) => next,
-                    Err(error) => {
-                        let _ = events.send(Err(error)).await;
-                        return;
-                    }
-                },
-            };
-            if let Flow::Ended = self.stream_rung(run, index, next, &mut walk, events).await {
-                return;
-            }
-        }
-        // Then, once, the offer back first.
-        if let Some((index, wait)) = self.waits_for(&walk) {
-            tokio::time::sleep(wait).await;
-            if !self.kept_on_device(index, request) {
-                match self.admit(run, &self.rungs[index], request, selector, true) {
-                    Ok(next) => {
-                        if let Flow::Ended =
-                            self.stream_rung(run, index, next, &mut walk, events).await
-                        {
-                            return;
-                        }
-                    }
-                    Err(error) => {
-                        let _ = events.send(Err(error)).await;
-                        return;
-                    }
-                }
-            }
+        if let Some((_, (_, permit))) = held {
+            settle_failed(permit);
         }
         let _ = events.send(Err(self.unanswered(walk))).await;
+    }
+
+    /// One pass of a stream's chain: each rung the call can use, in order,
+    /// until one ends the call. `held` is the rung admitted before the
+    /// stream started: the pass sends it when it reaches it in use, and
+    /// settles it unsent, for nothing, before it sends another.
+    async fn stream_pass(
+        &self,
+        run: &RunAdmission,
+        request: &LlmRequest,
+        selector: Option<&str>,
+        held: &mut Option<(usize, (LlmRequest, RunPermit))>,
+        walk: &mut Walk,
+        events: &Sender<LlmResult<LlmStreamEvent>>,
+    ) -> Flow {
+        for index in 0..self.rungs.len() {
+            if self.passes_over(index, request, walk) {
+                continue;
+            }
+            let next = match held.take() {
+                Some((at, first)) if at == index => first,
+                other => {
+                    if let Some((_, (_, permit))) = other {
+                        settle_failed(permit);
+                    }
+                    match self.admit(run, &self.rungs[index], request, selector, true) {
+                        Ok(next) => next,
+                        Err(error) => {
+                            let _ = events.send(Err(error)).await;
+                            return Flow::Ended;
+                        }
+                    }
+                }
+            };
+            if let Flow::Ended = self.stream_rung(run, index, next, walk, events).await {
+                return Flow::Ended;
+            }
+        }
+        Flow::On
     }
 
     /// Streams the rung at `index` to the caller. The call is over once the
@@ -650,8 +687,17 @@ impl OfferLadder {
 struct Opening {
     start: usize,
     first: (LlmRequest, RunPermit),
-    wait: Option<Duration>,
+    wait: Option<Back>,
     walk: Walk,
+}
+
+/// A cooling chain's first offer back: its rung, when it is back, and the
+/// wait until then.
+#[derive(Clone, Copy)]
+struct Back {
+    index: usize,
+    at: u64,
+    wait: Duration,
 }
 
 /// What sending one rung came to.

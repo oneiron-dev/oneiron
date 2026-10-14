@@ -74,6 +74,39 @@ async fn ask(seat: &Seat) -> LlmResult<LlmResponse> {
         .await
 }
 
+/// A world the world settings keep on this machine.
+fn private_world(vault: &Vault) -> EntityId {
+    let world = EntityId::now();
+    vault
+        .put_entity(
+            &world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            oneiron::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
+    world
+}
+
+/// The text a seat streams for one call, which must answer.
+async fn streamed(seat: &Seat) -> String {
+    let mut events = seat
+        .ladder
+        .stream(&test_run(), request(&seat.model, "stream this"), None)
+        .expect("a stream");
+    let mut text = String::new();
+    while let Some(event) = events.next().await {
+        if let LlmStreamEvent::TextDelta { text: delta, .. } = event.expect("an answer") {
+            text.push_str(&delta);
+        }
+    }
+    text
+}
+
 fn limited(retry_after: u64, back: u64) -> LlmError {
     RetryableLlmError::RateLimited {
         retry_after: Some(retry_after),
@@ -458,19 +491,7 @@ async fn work_kept_on_the_device_never_falls_back_off_it() {
     assert!(second.seen().is_empty(), "the seat stays on the device");
 
     // A seat that may leave, called for a world kept on this machine.
-    let world = EntityId::now();
-    vault
-        .put_entity(
-            &world,
-            oneiron::registry::ENTITY_TYPE_WORLD,
-            oneiron::temporal::TimeRange { start: 1, end: 1 },
-            1,
-            b"world",
-        )
-        .unwrap();
-    vault
-        .keep_world_on_this_machine_for_test(world, true)
-        .unwrap();
+    let world = private_world(&vault);
     let (other_first, other_second) = (
         FakeLlm::start(vec![limit()], None).await,
         FakeLlm::start(vec![], Some(Reply::text("from the cloud"))).await,
@@ -604,4 +625,112 @@ async fn a_cooling_chain_waits_for_its_first_offer_back_within_the_longest_wait(
     second.push(short("3600"));
     let error = ask(seat).await.expect_err("too long to wait");
     assert_eq!(error, limited(3600, T0 + 10 + 3600));
+}
+
+/// Review repro (Sol R2 P1): a seat whose first offer cannot be built still
+/// treats its cloud offer as a fallback, so a call for a world kept on this
+/// machine never goes there.
+#[tokio::test]
+async fn a_cloud_fallback_stays_a_fallback_when_the_first_offer_is_unavailable() {
+    let cloud = FakeLlm::start(vec![], Some(Reply::text("from the cloud"))).await;
+    let models = config(&format!(
+        r#"
+[providers.first]
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1:9"
+key_env = "ONEIRON_TEST_KEY_THAT_IS_NEVER_SET"
+[providers.second]
+kind = "openai-compat"
+base_url = "{}"
+[roles.checker]
+rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
+"#,
+        cloud.base_url
+    ));
+    let (dir, clock) = (tempfile::tempdir().unwrap(), ManualClock::new(T0));
+    let vault = clocked_vault(dir.path(), &clock);
+    let world = private_world(&vault);
+    let runtime = kept(&models, &vault);
+    let seat = runtime
+        .seat(ModelRole::Checker)
+        .expect("the cloud offer serves");
+    let mut private = request(&seat.model, "about the private world");
+    private.envelope.scope.world = Some(world);
+    let refused = LlmError::from(FatalLlmError::InvalidRequest);
+    let error = seat
+        .ladder
+        .generate(&test_run(), private.clone(), None)
+        .await
+        .expect_err("the world stays on the device");
+    assert_eq!(error, refused);
+    let error = seat
+        .ladder
+        .stream(&test_run(), private, None)
+        .err()
+        .expect("refused before the stream starts");
+    assert_eq!(error, refused);
+    assert!(cloud.seen().is_empty(), "the world's text stayed here");
+    let answer = ask(seat).await.expect("a portable call goes to the cloud");
+    assert_eq!(answer.usage.raw_provider["rung"], json!(1));
+}
+
+/// Review repro (Sol R2 P2): after its one wait a call tries every offer
+/// back, not only the one it waited for, in a stream too, and a refusal
+/// then names each offer's current end: a later refusal supersedes the
+/// reset the call waited for.
+#[tokio::test]
+async fn after_its_one_wait_a_call_tries_every_offer_back_and_names_the_current_end() {
+    let wait = |seconds: &str| {
+        refusal(
+            429,
+            &[("retry-after", seconds)],
+            json!({"error": {"message": "rate limit"}}),
+        )
+    };
+    let first = FakeLlm::start(vec![wait("1"), wait("120")], None).await;
+    let second = FakeLlm::start(vec![wait("1")], Some(Reply::text("second after the wait"))).await;
+    let (dir, clock) = (tempfile::tempdir().unwrap(), ManualClock::new(T0));
+    let vault = clocked_vault(dir.path(), &clock);
+    let runtime = kept(&two_offers(&first, &second, ""), &vault);
+    let seat = runtime.seat(ModelRole::Checker).expect("seat");
+
+    // Both rest a second. The offer waited for refuses again; the other,
+    // back at the same time, answers.
+    let answer = ask(seat).await.expect("the other offer back answers");
+    assert_eq!(text_of(&answer.message), "second after the wait");
+    assert_eq!((first.seen().len(), second.seen().len()), (2, 2));
+    let passed = &answer.usage.raw_provider["passed_over"];
+    assert_eq!(passed[2]["cooldown_until"], json!(T0 + 120));
+
+    // The same in a stream whose first offer refuses as it opens.
+    clock.set(T0 + 200);
+    for reply in [wait("1"), wait("120")] {
+        first.push(reply);
+    }
+    second.push(wait("1"));
+    assert_eq!(streamed(seat).await, "second after the wait");
+    assert_eq!((first.seen().len(), second.seen().len()), (4, 4));
+
+    // And in a stream that opens with both offers resting until one time.
+    clock.set(T0 + 400);
+    for _ in 0..2 {
+        first.push(wait("1"));
+        second.push(wait("1"));
+    }
+    let error = ask(seat).await.expect_err("each refused twice");
+    assert_eq!(error, limited(1, T0 + 401));
+    first.push(wait("120"));
+    assert_eq!(streamed(seat).await, "second after the wait");
+    assert_eq!((first.seen().len(), second.seen().len()), (7, 7));
+
+    // When nothing answers after the wait, the refusal names the end now
+    // first: the other offer's, not the one the call waited for.
+    clock.set(T0 + 600);
+    for reply in [wait("1"), wait("120")] {
+        first.push(reply);
+    }
+    second.push(wait("2"));
+    let error = ask(seat).await.expect_err("nothing is back");
+    assert_eq!(error, limited(2, T0 + 602));
+    assert_eq!((first.seen().len(), second.seen().len()), (9, 8));
 }
