@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::sync::selector::{FederationAdmissionRole, admit_federated_window_update};
+use crate::sync::selector::{FederationAdmissionRole, admit_staged_window_update};
 use crate::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
 use crate::sync::types::WindowKey;
 
@@ -229,7 +229,7 @@ pub fn stage_foreign_vault_import(
             }
         };
     }
-    let admitted = match admit_federated_window_update(
+    let admitted = match admit_staged_window_update(
         vault,
         key,
         remote,

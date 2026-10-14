@@ -16,6 +16,7 @@ pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) ->
             write_under_local_withdrawal(store, wtxn, src, kind, tgt, None, |wtxn| {
                 apply_edge(store, wtxn, src, kind, tgt, weight, vad)
             })?;
+            unpark_local_stamp(store, wtxn, src, kind, tgt)?;
             ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
             Ok(true)
         }
@@ -33,6 +34,7 @@ pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) ->
                     store, wtxn, src, kind, tgt, weight, created_at, vad,
                 )
             })?;
+            unpark_local_stamp(store, wtxn, src, kind, tgt)?;
             ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
             Ok(true)
         }
@@ -148,6 +150,22 @@ fn write_under_local_withdrawal(
     write(wtxn)?;
     if check {
         crate::provenance::withdraw_image_support_in_txn(store, wtxn, &subject)?;
+    }
+    Ok(())
+}
+
+/// A local public stamp comes from a writer that may place its row: the
+/// owner, a row's own birth, or a credential its door judged. A federated copy
+/// of the same stamp parked ahead of its row counts from then on.
+fn unpark_local_stamp(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    src: EntityId,
+    kind: crate::edge::EdgeKind,
+    tgt: EntityId,
+) -> Result<()> {
+    if kind == crate::edge::EdgeKind::FacetOf {
+        crate::federation::facet_read::unpark_stamp(store, wtxn, src, tgt)?;
     }
     Ok(())
 }

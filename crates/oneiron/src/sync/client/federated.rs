@@ -9,8 +9,8 @@ use crate::sync::federation_burst::{
     FederationBurstDecision, WorkKind, admit_work, record_outcome,
 };
 use crate::sync::selector::{
-    FederationAdmissionRole, SyncSelector, admit_federated_window_update,
-    encode_selector_vv_request, revalidate_admitted_federated_claims,
+    FederationAdmissionRole, SyncSelector, admit_peer_window_update, encode_selector_vv_request,
+    revalidate_admitted_federated_claims, settle_confirmed_window_update,
 };
 use crate::sync::transport;
 use crate::sync::transport::{MAX_DECODED_PAYLOAD_BYTES, TransportError, window_sub_tags};
@@ -131,7 +131,8 @@ impl SyncClient {
             .map_err(map_federated_admission_err)?;
         // Validate before retaining bytes. Malformed rows never become durable
         // deferred work, and they cannot reach an observed Loro document.
-        let admitted = match admit_federated_window_update(&self.vault, &key, update, role) {
+        let sender = peer.principal();
+        let admitted = match admit_peer_window_update(&self.vault, &key, update, role, sender) {
             Ok(admitted) => admitted,
             Err(error) => {
                 let error = map_federated_admission_err(error);
@@ -275,6 +276,13 @@ impl SyncClient {
             &admission_key,
             &staged.admitted_update,
             durable.role,
+        )
+        .map_err(map_federated_admission_err)?;
+        settle_confirmed_window_update(
+            &self.vault,
+            &admission_key,
+            &staged.admitted_update,
+            &durable.receipt_id,
         )
         .map_err(map_federated_admission_err)?;
         let window = self.ensure_window(&durable.window_key)?;

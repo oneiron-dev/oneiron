@@ -13,12 +13,21 @@ use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{
     ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
 };
+use crate::side_table::{self, HexId, Raw, SideTable, SideTableDbs};
 use crate::store::ManifestDbs;
 use crate::{EntityId, Vault};
 
+/// A federated `FacetOf` stamp that arrived ahead of its source row, under the
+/// lane of the sender that brought it. The read rule skips it until that
+/// sender brings the row, the row's own birth carries the stamp, or a writer
+/// that may place the row writes it. The export selector still reads it (H2).
+const PARKED_STAMP: SideTable<(HexId, HexId, String), (), Raw> =
+    SideTable::new(&side_table::FEDERATION_PARKED_FACET_STAMP);
+
 /// Whether the stored row `id`, with header and body `raw` as `view` holds
 /// it, sits in one of `facets`. A TASK sits in the facet its birth stamp
-/// names; any row sits in each facet a `FacetOf` edge of its names, and, for a room and
+/// names; any row sits in each facet a `FacetOf` edge of its names, unless
+/// the stamp is parked, and, for a room and
 /// each MESSAGE or TURN said there, in each facet of the room. A row with
 /// several facets is readable when any one is in the set; a row that names
 /// none sits in no facet. A whole axis reads every row and an empty one reads
@@ -44,20 +53,35 @@ pub(crate) fn facets_admit_in(
         return Ok(true);
     }
     for edge in view.port_edges(txn, &id, EdgeDirection::Out, Some(EdgeKind::FacetOf), None)? {
-        if set.contains(&ScopeId(edge?.target)) {
+        let facet = edge?.target;
+        if set.contains(&ScopeId(facet)) && !stamp_parked(view, txn, id, facet)? {
             return Ok(true);
         }
     }
     let room = match header.entity_type {
         ENTITY_TYPE_CONVERSATION => Some(id),
-        ENTITY_TYPE_TURN => out_target(view, txn, id, EdgeKind::ChildOf)?,
-        ENTITY_TYPE_MESSAGE => match out_target(view, txn, id, EdgeKind::BelongsTo)? {
-            Some(room) => Some(room),
-            None => match out_target(view, txn, id, EdgeKind::PartOf)? {
-                Some(turn) => out_target(view, txn, turn, EdgeKind::ChildOf)?,
-                None => None,
-            },
-        },
+        ENTITY_TYPE_TURN => out_targets(view, txn, id, EdgeKind::ChildOf)?
+            .first()
+            .copied(),
+        // A MESSAGE names its room directly and through its TURN. It sits in
+        // a room only when the two agree, as the deletion resolver reads it:
+        // a room edge added to a row someone else said only withholds it.
+        ENTITY_TYPE_MESSAGE => {
+            let mut rooms = out_targets(view, txn, id, EdgeKind::BelongsTo)?;
+            for part in out_targets(view, txn, id, EdgeKind::PartOf)? {
+                if view
+                    .entities()
+                    .get(txn, part.as_bytes())?
+                    .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
+                {
+                    rooms.push(part);
+                } else {
+                    rooms.extend(out_targets(view, txn, part, EdgeKind::ChildOf)?);
+                }
+            }
+            let first = rooms.first().copied();
+            first.filter(|first| rooms.iter().all(|room| room == first))
+        }
         _ => None,
     };
     let Some(room) = room else {
@@ -67,17 +91,73 @@ pub(crate) fn facets_admit_in(
         .is_some_and(|room| !room.meet(facets).is_bottom()))
 }
 
-/// The target of `id`'s first outgoing `kind` edge.
-fn out_target(
+/// The targets of `id`'s outgoing `kind` edges.
+fn out_targets(
     view: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     kind: EdgeKind,
-) -> Result<Option<EntityId>> {
+) -> Result<Vec<EntityId>> {
     view.port_edges(txn, &id, EdgeDirection::Out, Some(kind), None)?
-        .next()
         .map(|edge| edge.map(|edge| edge.target))
-        .transpose()
+        .collect()
+}
+
+/// The key every parked copy of the stamp `src -FacetOf-> facet` starts with.
+fn stamp_prefix(src: EntityId, facet: EntityId) -> String {
+    format!("{}{}", src.to_hex(), facet.to_hex())
+}
+
+fn stamp_parked(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    src: EntityId,
+    facet: EntityId,
+) -> Result<bool> {
+    Ok(PARKED_STAMP
+        .iter_raw_from(dbs, txn, stamp_prefix(src, facet).as_bytes())?
+        .next()
+        .transpose()?
+        .is_some())
+}
+
+/// Parks the stamp `src -FacetOf-> facet` under the sender's `lane`.
+pub(crate) fn park_stamp(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut heed::RwTxn<'_>,
+    src: EntityId,
+    facet: EntityId,
+    lane: &str,
+) -> Result<()> {
+    PARKED_STAMP.put(dbs, wtxn, &(HexId(src), HexId(facet), lane.to_owned()), &())
+}
+
+/// Lets the stamp `src -FacetOf-> facet` count, whichever senders parked it.
+pub(crate) fn unpark_stamp(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut heed::RwTxn<'_>,
+    src: EntityId,
+    facet: EntityId,
+) -> Result<()> {
+    for key in PARKED_STAMP.scan_keys(dbs, wtxn, stamp_prefix(src, facet).as_bytes())? {
+        PARKED_STAMP.delete(dbs, wtxn, &key)?;
+    }
+    Ok(())
+}
+
+/// The facets of the stamps on `src` parked under `lane`.
+pub(crate) fn parked_under(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    src: EntityId,
+    lane: &str,
+) -> Result<Vec<EntityId>> {
+    Ok(PARKED_STAMP
+        .scan_keys(dbs, txn, src.to_hex().as_bytes())?
+        .into_iter()
+        .filter(|(_, _, by)| by == lane)
+        .map(|(_, facet, _)| facet.0)
+        .collect())
 }
 
 impl Vault {

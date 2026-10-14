@@ -120,6 +120,82 @@ pub(super) fn copy_admitted_edges(
     rejections.commit(vault)
 }
 
+/// Parks each facet stamp an admitted update carries ahead of its row, under
+/// the sender's `lane`, and lets count the parked stamps whose row this update
+/// brings.
+///
+/// A stamp counts for reads only with placement authority (Astra on #1432).
+/// One that arrives before its row cannot be judged yet and still copies (H2),
+/// so the read rule skips it until the same sender brings the row, the row's
+/// own birth carries the stamp, or a writer that may place the row writes it.
+/// A row that reaches this vault from anyone else (own-device sync, another
+/// peer, a staged import, a local birth) leaves it parked. A stamp onto a row
+/// this vault holds parks too unless it is stored already: admission drops
+/// one, and only a staged artifact confirmed after its row arrived carries
+/// one here.
+#[cfg(feature = "sync")]
+pub(super) fn settle_parked_stamps(
+    vault: &Vault,
+    admitted: &loro::LoroDoc,
+    lane: &str,
+) -> Result<()> {
+    use crate::federation::facet_read::{park_stamp, parked_under, unpark_stamp};
+    let store = &vault.store;
+    let mut stamps = Vec::new();
+    map_for_each_value_bytes(&admitted.get_map("edges"), |key, _| {
+        if let Some((src, EdgeKind::FacetOf, tgt)) = super::bridge::parse_edge_key(key) {
+            stamps.push((src, tgt));
+        }
+    });
+    let mut brought = std::collections::BTreeSet::new();
+    map_for_each_value_bytes(&admitted.get_map("entities"), |key, _| {
+        if let Ok(id) = EntityId::from_hex(key) {
+            brought.insert(id);
+        }
+    });
+    let births = {
+        let rtxn = store.env.read_txn()?;
+        let mut births = Vec::new();
+        for &src in &brought {
+            if !parked_under(store, &rtxn, src, lane)?.is_empty() {
+                births.push(src);
+            }
+        }
+        births
+    };
+    if stamps.is_empty() && births.is_empty() {
+        return Ok(());
+    }
+    vault.with_write_txn_grouped(|wtxn| {
+        for &(src, tgt) in &stamps {
+            let unstored = crate::batch::stored_entity_type(store, wtxn, &src)?.is_none();
+            if unstored && brought.contains(&src) {
+                unpark_stamp(store, wtxn, src, tgt)?;
+            } else if unstored
+                || crate::ports::EdgeStoreRead::port_edge_get(
+                    store,
+                    wtxn,
+                    &src,
+                    EdgeKind::FacetOf,
+                    &tgt,
+                )?
+                .is_none()
+            {
+                park_stamp(store, wtxn, src, tgt, lane)?;
+            }
+        }
+        for &src in &births {
+            if crate::batch::stored_entity_type(store, wtxn, &src)?.is_some() {
+                continue;
+            }
+            for facet in parked_under(store, wtxn, src, lane)? {
+                unpark_stamp(store, wtxn, src, facet)?;
+            }
+        }
+        Ok(())
+    })
+}
+
 /// What the admission boundary does with one parsed edge row.
 #[cfg(feature = "sync")]
 enum AdmittedEdgeVerdict {
