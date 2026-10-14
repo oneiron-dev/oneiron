@@ -161,6 +161,9 @@ impl NativeClient {
         path: Option<std::path::PathBuf>,
         dimensions: Option<usize>,
     ) -> PyResult<Self> {
+        // Crash output never carries world text: the engine's hook goes in before
+        // any vault opens (owner ruling 2026-10-14, fix 6).
+        oneiron::panic_report::install_panic_hook();
         let options = oneiron_remote::OpenOptions { dimensions };
         let inner = py
             .detach(|| oneiron_remote::OneironClient::open(path.as_deref(), &options))

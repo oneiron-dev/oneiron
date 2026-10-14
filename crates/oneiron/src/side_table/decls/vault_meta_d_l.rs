@@ -105,6 +105,19 @@ side_tables! {
     DREAMER_PROACTIVITY_JUDGE_ASKS: VaultMeta b"dreamer:proactivity:judge_asks:v1:" Raw;
     /// Rolling proactivity-digest emission state (last_emitted timestamp). Key: ().
     DREAMER_PROACTIVITY_STATE: VaultMeta b"dreamer:proactivity:state:v1" LegacyJson;
+    /// The projector rounds one TURN gave words to, for erasure. Key: id16(turn).
+    DREAMER_PROJECTION_GIVEN: VaultMeta b"dreamer:projection:given:v1:" Named;
+    /// The latest TURN the projector queued, vault-wide, its round, and whether it holds. Key: ().
+    DREAMER_PROJECTION_LATEST: VaultMeta b"dreamer:projection:latest:v1" Named;
+    /// A TURN consumed as a repeat of the held TURN: the round it rode and the TURN it repeated.
+    /// Key: u64be + id16.
+    DREAMER_PROJECTION_RIDER: VaultMeta b"dreamer:projection:rider:v1:" Named;
+    /// A rider by the TURN it repeated. Key: id16(repeated) + u64be + id16(rider).
+    DREAMER_PROJECTION_RIDER_OF: VaultMeta b"dreamer:projection:rider_of:v1:" Raw;
+    /// The temporal key one riding TURN rides under. Key: id16(turn).
+    DREAMER_PROJECTION_RIDES: VaultMeta b"dreamer:projection:rides:v1:" Named;
+    /// One projector round: its turns and riders, and whether it applied. Key: hash32(round).
+    DREAMER_PROJECTION_ROUND: VaultMeta b"dreamer:projection:round:v1:" Named;
     /// Owner approval/decline record for a representation proposal review. Key: id16.
     DREAMER_REPRESENTATION_APPROVAL: VaultMeta b"dreamer:representation:v1:approval:" LegacyJson;
     /// Evidence-citing user-voice representation proposal record, keyed by proposal claim id. Key:
@@ -116,6 +129,24 @@ side_tables! {
     /// Pinned effective scope attenuation bound to one Dreamer attempt, inherited by retry
     /// successors. Key: id16.
     DREAMER_SELECTION_SCOPE: VaultMeta b"dreamer:selection_scope:v1:" LegacyJson;
+    /// A TURN whose sieve read the pass's text bound stopped, with the chunks it reads on in.
+    /// Key: id16(turn).
+    DREAMER_SIEVE_CONTINUE: VaultMeta b"dreamer:sieve:continue:v1:" Named;
+    /// Where the continuous sieve stands on the TURN timeline. Key: ().
+    DREAMER_SIEVE_CURSOR: VaultMeta b"dreamer:sieve:cursor:v1" Named;
+    /// A TURN owed a new sieve read (new, changed words or saved tags). Key: id16(turn).
+    DREAMER_SIEVE_OWED: VaultMeta b"dreamer:sieve:owed:v1:" Raw;
+    /// The sieve's interest queue, one span per row. Key: u32be(inverted score) + hash32(span).
+    DREAMER_SIEVE_QUEUE: VaultMeta b"dreamer:sieve:queue:v1:" Named;
+    /// The sieve's grant epoch and its sweep over the withheld turns. Key: ().
+    DREAMER_SIEVE_RETRY: VaultMeta b"dreamer:sieve:retry:v1" Named;
+    /// One queued span of a TURN. Key: id16(turn) + u32be(inverted score) + hash32(span).
+    DREAMER_SIEVE_SPANS: VaultMeta b"dreamer:sieve:spans:v1:" Raw;
+    /// What the sieve last read of one TURN. Key: id16(turn).
+    DREAMER_SIEVE_TURN: VaultMeta b"dreamer:sieve:turn:v1:" Named;
+    /// A TURN the sieve read with a MESSAGE the Dreamer may not read, and the grant epoch it was
+    /// read at (u64be). Key: id16(turn).
+    DREAMER_SIEVE_WITHHELD: VaultMeta b"dreamer:sieve:withheld:v1:" Raw;
     /// Dreamer step index rows, plus the 'i:' sub-index. Key: bytes.
     DREAMER_STEP_INDEX: VaultMeta b"dreamer:step_index:v1:" Raw;
     /// Device-local step progression state (Started/ResponseReceived/Logged); never synced. Key:
@@ -260,12 +291,6 @@ side_tables! {
     /// Binding proof tying a restored foreign expression-preference claim to the exact local row it
     /// reconstructed. Key: id16.
     EXPRESSION_ARCHIVE_BINDING: VaultMeta b"expression/archive-binding/v1\0" Raw;
-    /// Private tier-2 censored sample and source proofs. Key: hex-week ":" hex-turn.
-    FAILURE_SIGNALS_TIER2_SAMPLE: VaultMeta b"failure_signals:tier2:sample:" Raw;
-    /// Reverse source-to-sample pointer. Key: hex-source ":" full sample key.
-    FAILURE_SIGNALS_TIER2_SOURCE: VaultMeta b"failure_signals:tier2:source:" Raw;
-    /// Per-week tier-2 quota count. Key: hex-week.
-    FAILURE_SIGNALS_TIER2_WEEK: VaultMeta b"failure_signals:tier2:week:" Raw;
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
     /// Open feedback-review-item queue row awaiting triage. Key: id16.

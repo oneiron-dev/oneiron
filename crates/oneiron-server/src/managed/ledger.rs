@@ -250,16 +250,19 @@ impl WakeLedger {
     pub async fn push_with_retry(&self, rev: u64, entries: &[WakeEntry]) -> bool {
         match self.push_once(rev, entries).await {
             Ok(()) => return true,
-            Err(error) => {
-                tracing::warn!(%error, "wake ledger push failed; retrying once");
+            Err(_) => {
+                tracing::warn!(
+                    reason = "ledger_push_failed",
+                    "wake ledger push failed; retrying once"
+                );
             }
         }
         tokio::time::sleep(LEDGER_RETRY_DELAY).await;
         match self.push_once(rev, entries).await {
             Ok(()) => true,
-            Err(error) => {
+            Err(_) => {
                 tracing::warn!(
-                    %error,
+                    reason = "ledger_push_failed",
                     "wake ledger push retry failed; proceeding without the supervisor"
                 );
                 false

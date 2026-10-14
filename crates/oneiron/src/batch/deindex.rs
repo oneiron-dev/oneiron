@@ -76,7 +76,6 @@ pub(crate) fn deindex_entity(
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
     crate::dreamer_runner::authority::guard_actor_delete(id)?;
-    crate::config::failure_signals::purge_tier2_for_source_in_txn(store, wtxn, id)?;
     crate::ports::invalidate_source_in_txn(store, wtxn, id)?;
     crate::ports::keep_deleted_worlds_in_txn(store, wtxn, id)?;
     store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
@@ -146,8 +145,10 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     #[cfg(feature = "sync")]
     crate::entity_doc::erase_in_txn(store, wtxn, id)?;
     // Saved tags find a message's turn through its PartOf edge, so they go
-    // before the edges do.
+    // before the edges do, and the sieve and projection rows of the same
+    // words with them.
     crate::tagging::tear_in_txn(store, wtxn, id)?;
+    crate::dreamer_wake::erase_in_txn(store, wtxn, id)?;
     store
         .l2_base_cache
         .lock()

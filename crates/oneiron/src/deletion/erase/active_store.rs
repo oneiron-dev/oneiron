@@ -104,6 +104,9 @@ impl Vault {
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         let had_tags = crate::tagging::erase_in_txn(self, wtxn, id)?;
+        // A soft erase keeps the graph, so the sieve and projection rows of
+        // the same words go here, not at the physical tear.
+        crate::dreamer_wake::erase_in_txn(&self.store, wtxn, id)?;
         self.record_invalid_participant_dispositions_for_delete_in_txn(wtxn, id)?;
         self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
         crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;
@@ -127,7 +130,6 @@ impl Vault {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .erase(id, self.store.env.info().last_txn_id);
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
-        crate::config::failure_signals::purge_tier2_for_source_in_txn(&self.store, wtxn, id)?;
         crate::ports::invalidate_source_in_txn(&self.store, wtxn, id)?;
         crate::ports::keep_deleted_worlds_in_txn(&self.store, wtxn, id)?;
         crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;

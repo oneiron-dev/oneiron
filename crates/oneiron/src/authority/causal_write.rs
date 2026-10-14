@@ -48,10 +48,14 @@ impl AuthorityFold {
     }
 }
 
+/// Only main-log states are frontiers: a world's side entry carries the main
+/// bindings it inherited, but a write stamped with it would depend on history
+/// a replica that may not hold the world never receives.
 pub(super) fn causal_actor_frontiers(
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     final_state: Option<&FoldState>,
     bindings: &BTreeMap<AuthorityKey, FoldedActorBinding>,
+    is_main: impl Fn(&AuthorityEntryHash) -> bool,
 ) -> BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>> {
     let Some(final_state) = final_state else {
         return BTreeMap::new();
@@ -68,6 +72,7 @@ pub(super) fn causal_actor_frontiers(
             .unwrap_or_default();
         let frontiers = states
             .iter()
+            .filter(|(hash, _)| is_main(hash))
             .filter_map(|(hash, state)| {
                 let binding = state.live_actor_binding(key)?;
                 (binding.actor_ref == final_binding.actor_ref

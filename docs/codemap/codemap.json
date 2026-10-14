@@ -1605,7 +1605,7 @@
      "path": "src/authority/entry_transition.rs",
      "purpose": "Per-entry state transition and the consent / quorum predicates",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -1635,7 +1635,7 @@
      "path": "src/authority/fold_engine.rs",
      "purpose": "Top-level fold orchestration",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 11,
       "fn": 4
      }
     },
@@ -1653,7 +1653,7 @@
      "path": "src/authority/fold_state.rs",
      "purpose": "Folded-state data model and the two-state merge",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 3,
       "fn": 3,
       "struct": 3
@@ -1719,6 +1719,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/install_fold.rs",
+     "purpose": "The strict fold as this install reads it, once its handoffs settle: its own sequence floors, the…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -1758,7 +1768,7 @@
      "path": "src/authority/machine_profile.rs",
      "purpose": "Folds `MachineProfile` entries into each physical machine's standing",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 13,
       "enum": 2,
       "fn": 4,
       "struct": 1
@@ -1808,7 +1818,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 10,
-      "re-export": 21
+      "re-export": 23
      }
     },
     {
@@ -1863,7 +1873,7 @@
      "path": "src/authority/revoke_proof.rs",
      "purpose": "Log-derived, typed restrictive facts (actor revocations, slip withdrawals, slip burns and machine removals)…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -1883,7 +1893,7 @@
      "path": "src/authority/sequence_observation.rs",
      "purpose": "Durable signer sequence maxima and content-addressed first-observation receipts",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -2240,6 +2250,42 @@
      "surface": {}
     },
     {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/tests/world_floor.rs",
+     "purpose": "A restriction still lands past a sequence floor (Astra #1430)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/tests/world_orphan.rs",
+     "purpose": "World privacy orphan re-pick: a world whose read names no machine still the owner's is re-picked from…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/tests/world_privacy.rs",
+     "purpose": "World privacy P2 acceptance: a world's settings change only through the owner's door, on a machine the owner…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/tests/world_race.rs",
+     "purpose": "World privacy races: an edit by a machine that lost the owner's standing, or one this install does not…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -2258,6 +2304,52 @@
      "surface": {
       "crate-vis": 3,
       "fn": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Destination",
+      "EffectiveModelOrder",
+      "EffectiveRead",
+      "EffectiveWorldPrivacy",
+      "FoldedWorld",
+      "WorldEditStanding"
+     ],
+     "path": "src/authority/world_privacy.rs",
+     "purpose": "Folds `WorldPrivacy` edits into each world's effective settings",
+     "surface": {
+      "crate-vis": 16,
+      "enum": 4,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EditOrigin",
+      "WorldPrivacyView"
+     ],
+     "path": "src/authority/world_privacy_door.rs",
+     "purpose": "The signed half of the owner's world-settings door, and the one judge every egress door asks: may a world be…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/world_refold.rs",
+     "purpose": "A world edit above a main-log row the fold did not keep, folded again with that row crossed",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -7897,7 +7989,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -8034,7 +8126,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 7,
       "struct": 2
@@ -8120,7 +8212,7 @@
      "path": "src/claim/scoped_read/visibility.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -10686,39 +10778,10 @@
      "path": "src/config/failure_signals.rs",
      "purpose": "Deployment-tier participation is separate from permission to train",
      "surface": {
-      "crate-vis": 1,
       "enum": 1,
       "fn": 2,
-      "re-export": 1,
       "struct": 1
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "RedactionKind",
-      "RedactionSpan",
-      "Tier2Redactor",
-      "Tier2Sample"
-     ],
-     "path": "src/config/failure_signals/samples.rs",
-     "purpose": "Vault-local tier-2 sampling",
-     "surface": {
-      "crate-vis": 1,
-      "enum": 1,
-      "fn": 2,
-      "struct": 2,
-      "trait": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/config/failure_signals/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -12462,7 +12525,7 @@
      "path": "src/context_pack/telemetry.rs",
      "purpose": "Finalize or discard the retrieval-run row a pack assembly registered",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -14118,7 +14181,7 @@
      "path": "src/dreamer_consolidation/partition.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 7,
       "struct": 3
      }
@@ -14164,7 +14227,7 @@
      "path": "src/dreamer_consolidation/redirty.rs",
      "purpose": "The re-dirty carrier: a TURN whose final words changed after a round may have consumed it is pending again…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 15
      }
     },
     {
@@ -14395,6 +14458,14 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_consolidation/tests/turn_wake.rs",
+     "purpose": "The turn wake against ARCH-0026's projector and shared-carrier lines: a wake over material the projection…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -14409,7 +14480,7 @@
      "path": "src/dreamer_consolidation/tests/witnessed_turns.rs",
      "purpose": "Turns captured through the Memory witness door keep their words on MESSAGE children",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -14443,7 +14514,7 @@
      "path": "src/dreamer_consolidation/turn_text.rs",
      "purpose": "The read-only text of one TURN as a consolidation branch sees it",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 21
      }
     },
     {
@@ -15250,8 +15321,8 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 1,
-      "re-export": 8
+      "crate-vis": 7,
+      "re-export": 10
      }
     },
     {
@@ -15288,6 +15359,20 @@
      "path": "src/dreamer_wake/policy/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProjectorPolicy"
+     ],
+     "path": "src/dreamer_wake/projector.rs",
+     "purpose": "The projector's surprise check (ARCH-0026 RD-26): a due wake writes only when its material is new to the…",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 2,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -15337,7 +15422,95 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/sieve/chunks.rs",
+     "purpose": "A TURN's words as the sieve reads them: one chunk per source row, each with the digest that versions it…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
      "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SievePass",
+      "SieveQueue",
+      "SieveRung",
+      "SieveSkipped",
+      "SieveSpan",
+      "SpanBand",
+      "SpanKind",
+      "SpanOrigin"
+     ],
+     "path": "src/dreamer_wake/sieve/mod.rs",
+     "purpose": "The continuous sieve (ARCH-0026, the Continuous recipe): the cheap check that tags what is new on the local…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 4,
+      "fn": 2,
+      "re-export": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SievePolicy"
+     ],
+     "path": "src/dreamer_wake/sieve/policy.rs",
+     "purpose": "The sieve's policy row: how much one pass reads, how interesting each kind of span is, how sure each rule…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/sieve/read.rs",
+     "purpose": "One turn's read: a whole read from its rows, a read that goes on where the text bound stopped it, and the…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RuleClass"
+     ],
+     "path": "src/dreamer_wake/sieve/rules.rs",
+     "purpose": "The sieve's rules: the date and name spans of one chunk of text, as byte ranges, each with the rule class…",
+     "surface": {
+      "crate-vis": 13,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_wake/sieve/tests.rs",
+     "purpose": "The sieve against the packet's checks (gate 3, ARCH-0026 Continuous): a turn chunk with a date and a name…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/sieve/words.rs",
+     "purpose": "The prose under the sieve's rules: code, sentences, words, and runs of capitalized words and of katakana…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_wake/tests.rs",
@@ -16997,7 +17170,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EngineExecutorConfig",
@@ -17017,7 +17190,7 @@
      "purpose": "Public API surface of the engine-native executor: limits, config, errors, and code-mode step/outcome types",
      "surface": {
       "const": 6,
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 6,
       "struct": 8,
@@ -17851,7 +18024,7 @@
      "path": "src/feedback/bundle.rs",
      "purpose": "Feedback bundle wire contract: bundle, config, and diagnosis types plus the MessagePack codec and digest",
      "surface": {
-      "const": 14,
+      "const": 13,
       "enum": 2,
       "fn": 14,
       "struct": 6
@@ -17867,7 +18040,7 @@
       "FeedbackRedactionError",
       "FeedbackRedactor",
       "FeedbackSendRoute",
-      "PassThroughFeedbackRedactor"
+      "UnredactedFeedback"
      ],
      "path": "src/feedback/consent.rs",
      "purpose": "Feedback consent: send routes, approval scope, redaction seam, preview, disclosure card, and approval…",
@@ -17908,7 +18081,7 @@
      "path": "src/feedback/error.rs",
      "purpose": "Feedback error type plus shared validation and framing helpers",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "enum": 1
      }
     },
@@ -21719,7 +21892,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 18,
-      "mod": 173,
+      "mod": 174,
       "re-export": 72
      }
     },
@@ -26666,6 +26839,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/panic_report.rs",
+     "purpose": "The content-free panic report a host installs before it opens a vault",
+     "surface": {
+      "const": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/persona_snapshot/codec.rs",
      "purpose": "Export-body msgpack codec, row-id and fingerprint validators, decode helpers",
      "surface": {
@@ -27187,7 +27371,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/pipeline/tests/telemetry_trace.rs",
@@ -27458,7 +27642,7 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 5,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -27508,6 +27692,20 @@
      "path": "src/policy_model/owner_rows/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorldPrivacyReceipt"
+     ],
+     "path": "src/policy_model/owner_rows/world_privacy_switch.rs",
+     "purpose": "The owner's settings for one world: where it may be read, where its sealed copies may rest, and its model…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -30906,7 +31104,7 @@
      "path": "src/self_heal/admission.rs",
      "purpose": "Content-address and occurrence binding shared by local and replicated puts",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -31009,7 +31207,7 @@
      "purpose": "Closed diagnostic event vocabulary: classes, sources, criticality, event and working-set types, bounds",
      "surface": {
       "const": 2,
-      "crate-vis": 13,
+      "crate-vis": 12,
       "enum": 3,
       "fn": 7,
       "struct": 4,
@@ -31168,7 +31366,9 @@
      "notable": [],
      "path": "src/self_heal/text_tests.rs",
      "purpose": "—",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -31673,9 +31873,9 @@
      "purpose": "Persisted customization settings and client-visible change events",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 3,
       "enum": 2,
-      "fn": 14,
+      "fn": 13,
       "mod": 1,
       "re-export": 1,
       "struct": 7
@@ -34138,7 +34338,7 @@
      "path": "src/store/retrieval_telemetry/retention.rs",
      "purpose": "Bounded, expirable base-ledger retrieval runs and crash-orphan reconciliation",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -34156,7 +34356,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "RetrievalPackOutput",
       "RetrievalReplayInputs",
       "RetrievalState",
       "RetrievalTurn"
@@ -34165,7 +34364,7 @@
      "purpose": "Query-free retrieval context, preserved verbatim for offline replay",
      "surface": {
       "crate-vis": 2,
-      "struct": 4
+      "struct": 3
      }
     },
     {
@@ -35920,7 +36119,7 @@
      "purpose": "Test-only hooks",
      "surface": {
       "crate-vis": 2,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -36106,7 +36305,7 @@
      "path": "src/tagging/tags.rs",
      "purpose": "The saved tag sets: what save mode keeps for a tagged turn, the index of the entities they name, and the…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 2,
       "fn": 6,
       "struct": 5
@@ -37103,13 +37302,33 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_util/dreamer_rows.rs",
+     "purpose": "A policy manifest without the Dreamer's actor-keyed rows, as a release before warm-by-default seeded it",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_util/log_capture.rs",
+     "purpose": "Thread-scoped capture of everything `tracing` would write: every event and span at every level, with its…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 24
      }
     },
     {
@@ -37644,7 +37863,7 @@
      "path": "src/vault/mod.rs",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 6,
       "struct": 1
      }
@@ -37702,6 +37921,16 @@
       "crate-vis": 1,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/retrieval_trace_key.rs",
+     "purpose": "The per-vault key over every stored retrieval-trace fork hash",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -39914,7 +40143,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 70,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40173,7 +40402,7 @@
      "purpose": "Companion task queue and PERSON/FACET persona compilation"
     },
     "config": {
-     "files": 4,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -40313,7 +40542,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40355,7 +40584,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 14,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40711,6 +40940,13 @@
      "layout": "dir",
      "purpose": "Per-database accessor seam for the session write-overlay (ARCH-0052, D2)"
     },
+    "panic_report": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The content-free panic report a host installs before it opens a vault"
+    },
     "persona_snapshot": {
      "files": 7,
      "impl_vault": true,
@@ -40726,7 +40962,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41090,7 +41326,7 @@
      "purpose": "Doors for tests that drive the engine from another crate, such as the seal organ's end-to-end check, which…"
     },
     "test_util": {
-     "files": 4,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41132,7 +41368,7 @@
      "purpose": "—"
     },
     "vault": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41197,8 +41433,8 @@
    },
    "over_bar": 38,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2497,
-   "test_files": 802
+   "source_files": 2512,
+   "test_files": 807
   },
   "oneiron-android": {
    "files": [
@@ -41340,8 +41576,8 @@
      "path": "src/authority/machine_profile.rs",
      "purpose": "The physical machine profile: the owner's signed answer when a machine joins the vault, and its wire codec",
      "surface": {
-      "const": 3,
-      "crate-vis": 2,
+      "const": 4,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 5,
       "struct": 2
@@ -41354,7 +41590,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -41414,6 +41650,26 @@
      "purpose": "`rmpv::Value` encoding for every authority type",
      "surface": {
       "fn": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ModelOrder",
+      "ReadLocation",
+      "SealedCopies",
+      "WorldPrivacy",
+      "WorldPrivacyEdit"
+     ],
+     "path": "src/authority/world_privacy.rs",
+     "purpose": "A world's privacy settings and their wire codec: where the world may be read, where its sealed copies may…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 2,
+      "enum": 3,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -41530,7 +41786,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41553,7 +41809,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and…",
-   "source_files": 21,
+   "source_files": 22,
    "test_files": 1
   },
   "oneiron-bench": {
@@ -44054,12 +44310,15 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "OpenPhrase",
       "QueryTemporalHints",
       "TemporalExpression",
       "TemporalExpressionParseError",
       "TemporalGranularity",
       "TemporalHintReport",
       "TemporalHintStatus",
+      "TemporalPhraseSpan",
+      "TemporalPhraseStep",
       "TemporalUnit",
       "TimeRange",
       "WeekdayRelation"
@@ -44069,8 +44328,8 @@
      "surface": {
       "const": 1,
       "enum": 6,
-      "fn": 6,
-      "struct": 3
+      "fn": 8,
+      "struct": 6
      }
     },
     {
@@ -47204,7 +47463,7 @@
      "path": "src/facade/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): napi lift of the engine memory facade",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 1
      }
     },
@@ -50555,7 +50814,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -50797,7 +51056,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/device_local_reads.rs",
@@ -52342,7 +52601,7 @@
      "purpose": "Oneiron CRDT sync server library",
      "surface": {
       "fn": 1,
-      "mod": 17,
+      "mod": 18,
       "re-export": 1
      }
     },
@@ -52578,6 +52837,27 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/logging.rs",
+     "purpose": "What the binaries write to their log sinks, and the panic hook",
+     "surface": {
+      "crate-vis": 4,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/logging/tests.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/main.rs",
      "purpose": "—",
      "surface": {}
@@ -52660,6 +52940,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/managed/listener/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/managed/mod.rs",
@@ -52690,7 +52978,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ManagedShutdown",
@@ -53843,7 +54131,7 @@
      "path": "src/test_credentials.rs",
      "purpose": "Request fixtures mint real logged slips before crossing the production router",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -54430,10 +54718,17 @@
      "layout": "file+dir",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync"
     },
-    "managed": {
-     "files": 11,
+    "logging": {
+     "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
+     "layout": "file+dir",
+     "purpose": "What the binaries write to their log sinks, and the panic hook"
+    },
+    "managed": {
+     "files": 12,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Managed serve mode: the vault engine as a supervised child process"
     },
@@ -54536,10 +54831,10 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 10,
+   "over_bar": 11,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 338,
-   "test_files": 150
+   "source_files": 339,
+   "test_files": 152
   },
   "oneiron-spawn": {
    "files": [
