@@ -226,7 +226,7 @@ fn a_signer_past_its_bound_waits_but_live_restrictions_and_owner_rows_land() {
     assert!(
         checks.contains(&AuthorityLogCheck {
             kind: AuthorityLogCheck::SIGNER_BOUND,
-            signer: Some(label.clone()),
+            signer: Some(label),
             count: BOUND as u64,
             threshold: BOUND as u64,
         }),
