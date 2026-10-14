@@ -24,7 +24,7 @@ pub(crate) fn stored_entity_type(
     let Some(raw) = store.entities.get(rtxn, id.as_bytes())? else {
         return Ok(None);
     };
-    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     Ok(Some(header.entity_type))
 }
 

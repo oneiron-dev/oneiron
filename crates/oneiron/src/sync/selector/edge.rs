@@ -100,6 +100,7 @@ pub(super) fn copy_admitted_edges(
             };
             match verdict {
                 Ok(AdmittedEdgeVerdict::Copy) => {}
+                Ok(AdmittedEdgeVerdict::Drop) => return,
                 Ok(AdmittedEdgeVerdict::Hold) => {
                     // Only a value replay could write is held; any other is
                     // the peer's rejection, typed as the materializers type it.
@@ -237,6 +238,9 @@ enum AdmittedEdgeVerdict {
     /// A stamp whose source row neither this vault holds nor the update
     /// brings: hold it out of the document under the sender's lane.
     Hold,
+    /// A stamp this vault already holds: a copy adds nothing, and is no
+    /// rejection either.
+    Drop,
     /// PROVABLY off-table on the facts in hand (a known off-table source, or
     /// a known non-FACET target, is each sufficient alone), or a new stamp
     /// onto a row this vault already holds. Drop with this typed rejection.
@@ -357,8 +361,10 @@ fn admitted_facet_of_verdict(
     // already holds puts the row in a facet it was not born in, and a
     // narrowed reader reads a row in ANY of its facets, so an added stamp
     // only widens who reads it (Astra on #1432). A stamp this vault already
-    // holds adds nothing, so a re-sent frame still copies. A stamp ahead of
-    // its row waits for the row.
+    // holds adds nothing and goes no further either: the checks a frame's
+    // surviving edges meet later would tell the peer which stamps a row it
+    // cannot read holds (Astra R8 F1). A stamp ahead of its row waits for the
+    // row.
     if crate::batch::stored_entity_type(&vault.store, rtxn, &src)?.is_none() {
         return Ok(
             if super::loro_support::map_get_bytes(brought, &src.to_hex()).is_some() {
@@ -370,7 +376,7 @@ fn admitted_facet_of_verdict(
     }
     Ok(match restamp_of_stored_row(vault, rtxn, src, tgt)? {
         Some(refusal) => AdmittedEdgeVerdict::DropRejected(refusal),
-        None => AdmittedEdgeVerdict::Copy,
+        None => AdmittedEdgeVerdict::Drop,
     })
 }
 

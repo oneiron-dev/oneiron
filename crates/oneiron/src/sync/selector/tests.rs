@@ -1880,6 +1880,39 @@ fn an_edge_value_that_is_not_bytes_is_refused_whether_or_not_its_row_is_stored()
     }
 }
 
+/// Astra R8 F1 on #1432: a peer's stamp onto a stored row goes no further
+/// than admission whether the row holds it or not, so no later check of the
+/// frame tells the peer which.
+#[test]
+fn a_stamp_onto_a_stored_row_leaves_admission_alike_whether_the_row_holds_it() {
+    let window_key = WindowKey::new("2026-05");
+    let (_dir, vault, _) = test_vault_with_grant(entity_id(0x30));
+    let [peer, stamped, unstamped, facet] = [1, 2, 3, 4].map(|n| entity_id(0x30 + n));
+    put_row(&vault, facet, ENTITY_TYPE_FACET);
+    for row in [stamped, unstamped] {
+        put_row(&vault, row, ENTITY_TYPE_EVENT);
+    }
+    vault
+        .put_edge(&stamped, EdgeKind::FacetOf, &facet, 1.0)
+        .unwrap();
+    for (name, row) in [("holds", stamped), ("lacks", unstamped)] {
+        let probe = create_window_doc("federation-peer", &window_key);
+        insert_edge(&probe, row, EdgeKind::FacetOf, facet);
+        probe.commit();
+        let probe = probe.export(ExportMode::all_updates()).unwrap();
+        let role = FederationAdmissionRole::Member;
+        let admitted = create_window_doc("local", &window_key);
+        admitted
+            .import(&admit_peer_window_update(&vault, &window_key, &probe, role, peer).unwrap())
+            .unwrap();
+        assert_eq!(
+            admitted.get_map("edges").len(),
+            0,
+            "the stamp left admission when the row {name} it"
+        );
+    }
+}
+
 /// Astra R7 F2 on #1432: release looks up the rows an update brings without
 /// copying a stored one, however many spellings of its key the update carries.
 #[test]
