@@ -107,7 +107,7 @@ pub(crate) struct McpCallContext {
     pub(crate) request_id: String,
     /// Where this request's writes land (`write_facet::landing_facet`),
     /// judged once from the session it names.
-    pub(crate) landing: Result<Option<oneiron::EntityId>, crate::api::write_facet::LandingRefusal>,
+    pub(crate) landing: Result<Option<oneiron::EntityId>, crate::api::write_facet::LandingRefused>,
 }
 
 impl std::ops::Deref for McpCallContext {

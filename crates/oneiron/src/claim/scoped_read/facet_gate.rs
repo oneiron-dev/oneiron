@@ -9,6 +9,20 @@ use crate::federation::ScopeAxis;
 use crate::federation::facet_read::facets_admit_in;
 
 impl ScopedRead<'_> {
+    /// Whether a deleted row's shell may be named to this read: a read limited
+    /// to facets names only a shell that still proves a place inside them, and
+    /// a dangling reference with no shell proves none (DEC-0005).
+    pub(super) fn facets_allow_shell_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        match self.entity_record_in(txn, id)? {
+            Some(row) => self.facets_allow_in(txn, id, &row.encode()),
+            None => self.facets_allow_raw_in(txn, id, None),
+        }
+    }
+
     /// Whether the stored row `row` of `id` sits outside the facets this read
     /// is limited to: such a row has no name and no count, as one outside
     /// the credential's worlds has none (DEC-0005).
@@ -30,6 +44,17 @@ impl ScopedRead<'_> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
+    ) -> Result<bool> {
+        self.facets_allow_raw_in(txn, id, Some(raw))
+    }
+
+    /// [`Self::facets_allow_in`] for a row that may not be stored: one that
+    /// is not sits in no facet.
+    fn facets_allow_raw_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: Option<&[u8]>,
     ) -> Result<bool> {
         let credential = self
             .actor_key
@@ -54,6 +79,9 @@ impl ScopedRead<'_> {
         {
             return Ok(true);
         }
+        let Some(raw) = raw else {
+            return Ok(false);
+        };
         for facets in credential.into_iter().chain(room.as_ref()) {
             let inside = match self.session_view {
                 Some(view) => facets_admit_in(self.vault, view, txn, *id, raw, facets)?,

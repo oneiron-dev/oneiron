@@ -10,14 +10,15 @@ use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
-use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::registry::{
+    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
+};
 use crate::store::ManifestDbs;
 use crate::{EntityId, Vault};
 
 /// Whether the stored row `id`, with header and body `raw` as `view` holds
-/// it, sits in one of `facets`. A row sits in the facet its record scope
-/// names (a CLAIM's own facet, a NOTE's or ASSET's birth facet, a TASK's birth
-/// stamp), in each facet a `FacetOf` edge of its names, and, for a room and
+/// it, sits in one of `facets`. A TASK sits in the facet its birth stamp
+/// names; any row sits in each facet a `FacetOf` edge of its names, and, for a room and
 /// each MESSAGE or TURN said there, in each facet of the room. A row with
 /// several facets is readable when any one is in the set; a row that names
 /// none sits in no facet. A whole axis reads every row and an empty one reads
@@ -35,8 +36,10 @@ pub(crate) fn facets_admit_in(
         ScopeAxis::Some(set) if !set.is_empty() => set,
         _ => return Ok(false),
     };
-    if scope_for_blob(view, txn, id, raw)?
-        .is_some_and(|scope| !scope.facets.meet(facets).is_bottom())
+    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("record header"))?;
+    if header.entity_type == ENTITY_TYPE_TASK
+        && scope_for_blob(view, txn, id, raw)?
+            .is_some_and(|scope| !scope.facets.meet(facets).is_bottom())
     {
         return Ok(true);
     }
@@ -45,7 +48,6 @@ pub(crate) fn facets_admit_in(
             return Ok(true);
         }
     }
-    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("record header"))?;
     let room = match header.entity_type {
         ENTITY_TYPE_CONVERSATION => Some(id),
         ENTITY_TYPE_TURN => out_target(view, txn, id, EdgeKind::ChildOf)?,

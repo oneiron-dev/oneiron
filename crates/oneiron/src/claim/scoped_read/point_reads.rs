@@ -329,6 +329,7 @@ impl ScopedRead<'_> {
             // Only authority covering every possible old position may reveal
             // deletion metadata, never a narrow grant.
             && self.credential_allows_id(&hydrated.id)
+            && self.facets_allow_shell_in(txn, &hydrated.id)?
             && crate::gate::scoped_read_record_allowed(
                 policy,
                 &self.actor_key,

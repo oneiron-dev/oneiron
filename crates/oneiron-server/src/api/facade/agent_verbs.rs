@@ -85,7 +85,7 @@ async fn tasks_create(
     headers: HeaderMap,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
-    auth.require(CoreScope::Write)?;
+    auth.require_granted(CoreScope::Write)?;
     let position = facade_landing(&server, &headers, &auth)?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;

@@ -10,15 +10,11 @@ use oneiron::federation::{ScopeAxis, ScopeId};
 /// request's writes land in.
 pub(crate) const SESSION_HEADER: &str = "x-oneiron-session";
 
-/// Why a write cannot land.
-#[derive(Clone, Debug)]
-pub(crate) enum LandingRefusal {
-    /// The named session does not read: not a live SESSION, or the store
-    /// failed.
-    Session,
-    /// The session's facet is not one the credential reads.
-    OutsideFacets(EntityId),
-}
+/// A write that cannot land: the session it names does not read, or names a
+/// facet the credential does not read. The two answer alike, so the refusal
+/// says nothing about a session the caller cannot read.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LandingRefused;
 
 /// The session a request names, or `Err` for a header that is no id.
 pub(crate) fn request_session(headers: &HeaderMap) -> Result<Option<EntityId>, ()> {
@@ -42,19 +38,17 @@ pub(crate) fn landing_facet(
     session: Option<EntityId>,
     facets: &ScopeAxis<ScopeId>,
     write_facet: Option<EntityId>,
-) -> Result<Option<EntityId>, LandingRefusal> {
+) -> Result<Option<EntityId>, LandingRefused> {
     let ScopeAxis::Some(set) = facets else {
         return Ok(None);
     };
     let session_facet = match session {
-        Some(session) => vault
-            .session_facet(session)
-            .map_err(|_| LandingRefusal::Session)?,
+        Some(session) => vault.session_facet(session).map_err(|_| LandingRefused)?,
         None => None,
     };
     match session_facet {
         Some(facet) if set.contains(&ScopeId(facet)) => Ok(Some(facet)),
-        Some(facet) => Err(LandingRefusal::OutsideFacets(facet)),
+        Some(_) => Err(LandingRefused),
         None => Ok(write_facet
             .filter(|facet| set.contains(&ScopeId(*facet)))
             .or_else(|| set.first().map(|facet| facet.0))),

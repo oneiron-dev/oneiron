@@ -546,8 +546,11 @@ def outputs():
         if r['name'] == 'describe':
             validation += "if value.get(\"self\").and_then(serde_json::Value::as_bool) == Some(true) { "
             validation += "facade_outside_room_turn(&headers, \"describe\")?; return Ok(Json(crate::api::context_board::describe_self_for_auth(&server, &auth, &value).await?)); } "
+        # A born door's landing judges its record bounds, so only the grant is
+        # left to check.
+        require = 'require_granted' if r.get('admission', {}).get('born_record_scope') else 'require'
         server += f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, headers: HeaderMap, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
-        auth.require(CoreScope::{r["scope"]})?;
+        auth.{require}(CoreScope::{r["scope"]})?;
         {record_scope_guard(r)}
         let value = facade_json(payload)?;
          {validation}let (actor, class) = facade_actor(&auth)?;{guard}{landed}

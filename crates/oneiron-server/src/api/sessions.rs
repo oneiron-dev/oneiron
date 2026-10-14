@@ -36,10 +36,12 @@ pub(super) async fn mode(
     Path(session): Path<String>,
     payload: Result<Json<ModeWrite>, JsonRejection>,
 ) -> Result<Json<Value>, EnvelopedApiError> {
-    auth.require(CoreScope::Write)?;
+    // A credential narrowed to facets may set a session's mode, naming only
+    // a facet it reads (Engine Q2); any other narrowing fails closed.
+    auth.require_lane_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
     let id = parse_entity_id_param(&session, "session_id")?;
     let req = json_payload(payload)?;
-    // A credential narrowed to facets names only one it reads (Engine Q2).
     if let (Some(facet), Some(proof)) = (req.facet_ref, auth.verified_slip())
         && !proof.scope().facets.contains(&ScopeId(facet))
     {

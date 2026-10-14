@@ -120,24 +120,13 @@ pub(crate) async fn resolve_mcp_gateway_actor(
 }
 
 /// A write whose session names a facet the connector does not read, or a
-/// session that does not read, is refused before anything is written.
-fn mcp_landing_refusal(refusal: crate::api::write_facet::LandingRefusal) -> McpGatewayError {
-    use crate::api::write_facet::LandingRefusal;
-    match refusal {
-        LandingRefusal::Session => McpGatewayError::new(
-            -32602,
-            "tool_args_invalid",
-            "the session this request names does not read",
-        ),
-        LandingRefusal::OutsideFacets(facet) => McpGatewayError::new(
-            -32020,
-            "mcp_scope_refused",
-            format!(
-                "the session's facet {} is not one this connector reads",
-                facet.to_hex()
-            ),
-        ),
-    }
+/// session that does not read, is refused before anything is written, alike.
+fn mcp_landing_refusal(_: crate::api::write_facet::LandingRefused) -> McpGatewayError {
+    McpGatewayError::new(
+        -32020,
+        "mcp_scope_refused",
+        "the session this request names does not place this connector's writes",
+    )
 }
 
 fn mcp_proof_error() -> McpGatewayError {

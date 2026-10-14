@@ -55,7 +55,7 @@ use oneiron::memory::{
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::credential_memory;
-use super::write_facet::{LandingRefusal, landing_facet, request_session};
+use super::write_facet::{landing_facet, request_session};
 
 /// Request-body ceiling for the facade nest: 64 MiB.
 ///
@@ -200,26 +200,13 @@ fn facade_landing(
         .vault
         .paired_write_facet(&proof.claims().slip_id)
         .map_err(MemoryError::from)?;
-    let landing = match landing_facet(&server.vault, session, &proof.scope().facets, write_facet) {
-        Ok(landing) => landing,
-        Err(LandingRefusal::Session) => {
-            return Err(FacadeApiError::new(
-                StatusCode::BAD_REQUEST,
-                MEMORY_CODE_BAD_REQUEST,
-                "the session this request names does not read",
-                ["Name a live session, or call without the session header."],
-            ));
-        }
-        Err(LandingRefusal::OutsideFacets(facet)) => {
-            return Err(FacadeApiError::forbidden(
-                format!(
-                    "the session's facet {} is not one this credential reads",
-                    facet.to_hex()
-                ),
-                ["Set the session's facet to one this credential reads."],
-            ));
-        }
-    };
+    let landing = landing_facet(&server.vault, session, &proof.scope().facets, write_facet)
+        .map_err(|_| {
+            FacadeApiError::forbidden(
+                "the session this request names does not place this credential's writes",
+                ["Name a session whose facet this credential reads, or none."],
+            )
+        })?;
     auth.require_record_scope_carried(
         ScopeAxis::All,
         landing.map_or(ScopeAxis::All, |facet| {
