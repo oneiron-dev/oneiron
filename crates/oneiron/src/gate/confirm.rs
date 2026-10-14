@@ -21,11 +21,9 @@ pub const CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS: u64 = 300;
 // A public listing uses one expiry pass plus one listing pass: at most 512 rows total.
 const CRITICAL_CONFIRM_SWEEP_PAGE_LIMIT: usize = 256;
 const CRITICAL_CONFIRM_LIST_CALL_ROW_BUDGET: usize = CRITICAL_CONFIRM_SWEEP_PAGE_LIMIT * 2;
-pub const GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED: &str =
-    "gate.allow.critical_confirm_attached";
-// The decision receipt uses the allow namespace; the durable pending row must
-// remain in store.rs's existing pending namespace.
-pub(super) const GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED: &str =
+/// Marks both the pending decision receipt and the durable pending row of a
+/// critical write that waits on its owner's confirmation.
+pub const GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED: &str =
     "gate.pending.critical_confirm_attached";
 pub const GATE_REASON_CRITICAL_CONFIRM_TIMEOUT: &str = "gate.pending.critical_confirm_timeout";
 pub const GATE_REASON_CRITICAL_CONFIRM_DECLINED: &str = "gate.retract.critical_confirm_declined";
@@ -240,20 +238,22 @@ impl Vault {
             let expired = binding.expires_at <= now;
             let deferred = self.has_deferred_claim_in_txn(wtxn, &binding.claim_id)?;
             if expired && !deferred {
-                put_preauthorized_claim_status_in_txn(
-                    self,
-                    wtxn,
-                    &binding.claim_id,
-                    &body,
-                    PreauthorizedClaimStatusGrant::TimeoutDemotion,
-                    TimeRange {
-                        start: header.occurred_start,
-                        end: header.occurred_end,
-                    },
-                    header.learned_at,
-                )?;
-                // The decline below must bind the transaction's staged Proposed row.
-                body.approval = ClaimApprovalStatus::Proposed;
+                if body.approval == ClaimApprovalStatus::Auto {
+                    put_preauthorized_claim_status_in_txn(
+                        self,
+                        wtxn,
+                        &binding.claim_id,
+                        &body,
+                        PreauthorizedClaimStatusGrant::TimeoutDemotion,
+                        TimeRange {
+                            start: header.occurred_start,
+                            end: header.occurred_end,
+                        },
+                        header.learned_at,
+                    )?;
+                    // The decline below must bind the transaction's staged Proposed row.
+                    body.approval = ClaimApprovalStatus::Proposed;
+                }
                 let mut timed_out = pending;
                 timed_out.reason_codes = vec![GATE_REASON_CRITICAL_CONFIRM_TIMEOUT.to_owned()];
                 self.store
@@ -294,6 +294,22 @@ impl Vault {
             }
             match state.action.disposition {
                 CriticalWriteConfirmDisposition::Clear => {
+                    // The claim waited Proposed for exactly this: the owner's
+                    // clear is the one thing that makes it live.
+                    if !deferred && body.approval == ClaimApprovalStatus::Proposed {
+                        put_preauthorized_claim_status_in_txn(
+                            self,
+                            wtxn,
+                            &binding.claim_id,
+                            &body,
+                            PreauthorizedClaimStatusGrant::FoldClear,
+                            TimeRange {
+                                start: header.occurred_start,
+                                end: header.occurred_end,
+                            },
+                            header.learned_at,
+                        )?;
+                    }
                     if deferred {
                         if self.deferred_claim_is_supersession_in_txn(wtxn, &binding.claim_id)? {
                             put_preauthorized_claim_status_in_txn(
@@ -399,25 +415,30 @@ impl Vault {
                 let Some(body) = self.get_claim_in_txn(&*wtxn, &binding.claim_id)? else {
                     continue;
                 };
-                if body.approval != ClaimApprovalStatus::Auto {
-                    continue;
+                match body.approval {
+                    // Attached to its Proposed landing: it is already held, so
+                    // expiry only closes the ceremony.
+                    ClaimApprovalStatus::Proposed => {}
+                    ClaimApprovalStatus::Auto => {
+                        let raw = self
+                            .store
+                            .port_entity_record(&*wtxn, &binding.claim_id)?
+                            .ok_or(Error::EntityNotFound)?;
+                        put_preauthorized_claim_status_in_txn(
+                            self,
+                            wtxn,
+                            &binding.claim_id,
+                            &body,
+                            PreauthorizedClaimStatusGrant::TimeoutDemotion,
+                            TimeRange {
+                                start: raw.occurred.start,
+                                end: raw.occurred.end,
+                            },
+                            raw.learned_at,
+                        )?;
+                    }
+                    _ => continue,
                 }
-                let raw = self
-                    .store
-                    .port_entity_record(&*wtxn, &binding.claim_id)?
-                    .ok_or(Error::EntityNotFound)?;
-                put_preauthorized_claim_status_in_txn(
-                    self,
-                    wtxn,
-                    &binding.claim_id,
-                    &body,
-                    PreauthorizedClaimStatusGrant::TimeoutDemotion,
-                    TimeRange {
-                        start: raw.occurred.start,
-                        end: raw.occurred.end,
-                    },
-                    raw.learned_at,
-                )?;
                 let mut timed_out = row;
                 timed_out.reason_codes = vec![GATE_REASON_CRITICAL_CONFIRM_TIMEOUT.to_owned()];
                 self.store
@@ -546,25 +567,23 @@ pub(crate) fn critical_write_confirm_binding(
     })
 }
 
-/// Whether a critical claim write may land `Auto` with an attached owner
-/// confirmation instead of being floored.
+/// Whether a critical claim write that pends only on the criticality floor gets
+/// an owner confirmation attached to its `Proposed` landing.
 ///
-/// The ceremony this authorizes is a HUMAN one: the write lands now and an owner
-/// closes the attached confirmation afterwards. That trade only makes sense for
-/// a claim a person actually authored. `comm.*` standing state is not that — it
-/// is DERIVED state a projector folds out of already-recorded comm events
-/// (`Auto`, `Observed`, first-party), with no author to confirm anything and no
-/// reviewer looking for the attachment. Converting its criticality floor into an
-/// `Allow` would let projector output cross a gate that the default policy
-/// manifest closes, which is fail-OPEN at the claim door; the floor must stand
-/// and the write must be rejected (ONE-1716 sweep-11, oracle ES-03).
+/// The ceremony this opens is a HUMAN one: the claim waits `Proposed`, and only
+/// the owner's clear makes it `Auto`. An unsettled confirmation never leaves
+/// the claim live — the floor's pend is never turned into an `Allow`. That
+/// trade only makes sense for a claim a person actually authored. `comm.*`
+/// standing state is not that — it is DERIVED state a projector folds out of
+/// already-recorded comm events (`Auto`, `Observed`, first-party), with no
+/// author to confirm anything and no reviewer looking for the attachment, so
+/// its floor stands with no ceremony (ONE-1716 sweep-11, oracle ES-03).
 ///
 /// The prefix is matched inline rather than against `comm::COMM_CLAIM_PREDICATES`
 /// on purpose: this is a gate-side exclusion of a predicate LAYER, so it must
 /// also cover any future `comm.*` predicate without the gate importing the comm
-/// module. Every other condition is unchanged, so this is strictly more
-/// restrictive than before — it can only remove `Allow`s, never add one.
-pub(super) fn critical_claim_can_land_auto_with_confirm(
+/// module.
+pub(super) fn critical_claim_takes_confirm(
     input: &GateEvaluatorInput,
     pending: &[GateReasonCode],
     predicate: &str,

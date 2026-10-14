@@ -16,7 +16,7 @@ use crate::gate::resolution::{
     PolicyManifestResolution, check_claim_source_trust, hash_bytes, hash_opt_str, hash_str,
 };
 use crate::genui::{GrantMintIntent, GrantMintIntentScope};
-use crate::llm::{AUTO_CHECK_VALUE_PREVIEW_BYTES, BoundedAutoChecker, truncate_on_char_boundary};
+use crate::llm::{AUTO_CHECK_VALUE_PREVIEW_BYTES, BoundedAutoChecker};
 use crate::store::Store;
 use crate::write_envelope::{WriteActor, WriteEnvelope};
 use rmpv::Value;
@@ -79,20 +79,22 @@ pub(crate) fn validate_write_envelope(envelope: &WriteEnvelope) -> Result<()> {
     Ok(())
 }
 
-/// The bounded claim-value prefix an auto-check candidate carries (ONE-1296).
+/// The claim value an auto-check candidate carries (ONE-1296), or `None` when
+/// it does not fit the preview bound.
 ///
 /// A string value is shown as itself; anything else is rendered through the
 /// MessagePack value's own display, because the engine does not interpret
 /// typed claim payloads. Either way the checker sees at most
-/// [`AUTO_CHECK_VALUE_PREVIEW_BYTES`], truncated on a character boundary: this
-/// seam asks for a second opinion on a candidate, it is not a disclosure
-/// channel for whole claim values.
-pub(super) fn auto_check_value_preview(value: &Value) -> String {
+/// [`AUTO_CHECK_VALUE_PREVIEW_BYTES`]: this seam asks for a second opinion on a
+/// candidate, it is not a disclosure channel for whole claim values. A value
+/// longer than that has no preview at all, because a verdict on a prefix is not
+/// a verdict on the value the write would store.
+pub(super) fn auto_check_value_preview(value: &Value) -> Option<String> {
     let rendered = match value.as_str() {
         Some(text) => text.to_owned(),
         None => value.to_string(),
     };
-    truncate_on_char_boundary(&rendered, AUTO_CHECK_VALUE_PREVIEW_BYTES).to_owned()
+    (rendered.len() <= AUTO_CHECK_VALUE_PREVIEW_BYTES).then_some(rendered)
 }
 
 /// The hex actor ref an envelope attributes a write to, for source-trust row

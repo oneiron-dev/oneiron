@@ -65,7 +65,7 @@ use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::llm::BoundedAutoChecker;
-use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
 use crate::write_envelope::{SourceLineage, WriteActor, WriteEnvelope, WriteProvenance};
 
 // PromotionCandidate is DEFINED by its producer (dreamer_consolidation,
@@ -581,21 +581,19 @@ fn verify_landed(
     Ok(body.approval)
 }
 
-/// True when the evidence ref may corroborate: TURN and other non-claim
-/// entities pass; a type-0 CLAIM must pass `claim_evidence_admissible`
-/// (GATE-11 — Generated-origin claims contribute zero); an unresolvable
-/// ref is dropped fail-closed.
+/// True when the evidence ref may corroborate: a TURN passes; a type-0 CLAIM
+/// must pass `claim_evidence_admissible` (GATE-11 — Generated-origin claims
+/// contribute zero); every other type, and an unresolvable ref, is dropped
+/// fail-closed. The same two kinds the sealed path verifies: a PERSON or a
+/// SESSION is not something a person said.
 fn evidence_ref_admissible(vault: &Vault, entry: &EntityId) -> Result<bool> {
-    let Some(entity_type) = vault.get_entity_type(entry)? else {
-        return Ok(false);
-    };
-    if entity_type != ENTITY_TYPE_CLAIM {
-        return Ok(true);
+    match vault.get_entity_type(entry)? {
+        Some(ENTITY_TYPE_TURN) => Ok(true),
+        Some(ENTITY_TYPE_CLAIM) => Ok(vault
+            .get_claim(entry)?
+            .is_some_and(|body| claim_evidence_admissible(&body))),
+        _ => Ok(false),
     }
-    let Some(body) = vault.get_claim(entry)? else {
-        return Ok(false);
-    };
-    Ok(claim_evidence_admissible(&body))
 }
 
 /// Appends the engine-owned `evidence_taint` scope entry, preserving the

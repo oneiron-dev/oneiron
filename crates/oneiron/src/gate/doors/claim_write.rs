@@ -18,8 +18,7 @@ use crate::claim::{ClaimApprovalStatus, claim_sensitivity_band, dreamer_isolatio
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::confirm::{
-    GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED,
-    critical_claim_can_land_auto_with_confirm,
+    GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED, critical_claim_takes_confirm,
 };
 use crate::gate::constants::LOCAL_WRITE_ACTOR_CLASS;
 use crate::gate::decision::{GateDecision, GateOutcome, GateReasonCode};
@@ -32,6 +31,10 @@ use crate::store::{
     checker_hold_receipt_reason,
 };
 use crate::write_envelope::{SourceLineage, WriteEnvelope};
+
+/// The receipt reason of a write held because its value does not fit the auto
+/// checker's preview, so no checker could review all of it.
+const CHECKER_PARTIAL_VIEW_RECEIPT_REASON: &str = "checker_partial_view";
 
 /// The claim write door.
 ///
@@ -256,7 +259,7 @@ fn check_claim_policy_for_write_with_record_inner(
         // otherwise have been allowed. It also runs BEFORE the
         // critical-confirm attachment below, whose exact single-code match on
         // `[PendingCriticalityFloor]` an isolation pend can therefore never
-        // satisfy: a persona-core write has no confirm-attached Auto path.
+        // satisfy: a persona-core write has no confirm-attached path.
         if dreamer_candidate
             && decision.outcome() != GateOutcome::Deny
             && let Some(isolation_class) = dreamer_isolation_class(&body.predicate)
@@ -284,36 +287,28 @@ fn check_claim_policy_for_write_with_record_inner(
         {
             decision = GateDecision::pending(vec![GateReasonCode::PendingCarryForwardConfidence]);
         }
-        let attach_critical_confirm = body.approval == ClaimApprovalStatus::Auto
-            && critical_claim_can_land_auto_with_confirm(
-                &input,
-                decision.reason_codes(),
-                &body.predicate,
-            );
+        // A critical claim pends on the floor until its owner confirms it. The
+        // confirmation attaches to the PROPOSED landing: an `Auto` write stays
+        // refused, so an unsettled confirmation never leaves the claim live.
+        let attach_critical_confirm = body.approval == ClaimApprovalStatus::Proposed
+            && critical_claim_takes_confirm(&input, decision.reason_codes(), &body.predicate);
         if attach_critical_confirm {
-            decision = GateDecision::allow()
-                .with_receipt_reasons([GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED]);
+            decision =
+                decision.with_receipt_reasons([GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED]);
         }
 
         // ONE-1296: the host's auto checker is the LAST word on an ORDINARY
         // Auto verdict, and only that. It runs after everything the engine
         // decides for itself — pre-commit validity, the policy verdict,
-        // GATE-13 isolation, the critical-confirm attachment — so a write
-        // already refused or already parked is never consulted about, and the
-        // checker can only NARROW a verdict, never widen one.
+        // GATE-13 isolation — so a write already refused or already parked is
+        // never consulted about, and the checker can only NARROW a verdict,
+        // never widen one.
         //
         // The consult is EXACTLY: a manifest names a checker, a checker is
         // injected for this write, the ordinary decision is Auto, the write is
         // an agent-class Dreamer write, and its source is one that requires an
         // explicit auto permit. Human and owner writes therefore never reach a
         // checker at all, and neither does any door that passes `None`.
-        //
-        // A confirm-attached Auto is excluded because it is not the ordinary
-        // verdict: the ordinary verdict there was a criticality-floor PEND,
-        // and what replaced it is an owner ceremony bound to this exact claim.
-        // A host hedge must not overrule a confirmation the owner just gave,
-        // and rewriting that decision would also drop the criticality marker
-        // the inbox classifies on.
         //
         // ONE-1314 widens this source check to source OR lineage.
         // This only selects a checker consult; authorization still checks
@@ -322,7 +317,6 @@ fn check_claim_policy_for_write_with_record_inner(
         let verdict_binding = model_manifest.as_ref().and_then(|m| m.verdict.as_ref());
         let mut checker_receipt_reasons: Vec<String> = Vec::new();
         if decision.outcome() == GateOutcome::Allow
-            && !attach_critical_confirm
             && dreamer_candidate
             && (policy.auto_checker().is_some() || verdict_binding.is_some())
             && (auto_checker.is_some() || verdict_binding.is_some())
@@ -332,7 +326,15 @@ fn check_claim_policy_for_write_with_record_inner(
                     || lineage.is_some_and(SourceLineage::requires_explicit_auto_permit)
             })
         {
+            // A value the preview cannot hold whole is never sent: the
+            // checker would answer for a prefix while the write stores the
+            // rest. With no checker to ask, the write is held below.
             let value_preview = auto_check_value_preview(&body.value);
+            if value_preview.is_none() {
+                checker_receipt_reasons.push(CHECKER_PARTIAL_VIEW_RECEIPT_REASON.to_owned());
+            }
+            let auto_checker = auto_checker.filter(|_| value_preview.is_some());
+            let value_preview = value_preview.unwrap_or_default();
             let candidate = AutoCheckCandidate {
                 signals: crate::gate::auto_signals::auto_check_signals(
                     store,
@@ -483,9 +485,8 @@ fn check_claim_policy_for_write_with_record_inner(
         }
 
         if mode.persist_pending_consent
-            && ((decision.outcome() == GateOutcome::Pending
-                && body.approval == ClaimApprovalStatus::Proposed)
-                || (attach_critical_confirm && body.approval == ClaimApprovalStatus::Auto))
+            && decision.outcome() == GateOutcome::Pending
+            && body.approval == ClaimApprovalStatus::Proposed
         {
             let pending_decision = if mode.record_decision {
                 decision_record.clone()

@@ -15,7 +15,7 @@ fn observer_b_malformed_critical_marker_quarantines_without_prior_mutation() -> 
     let (_tmp, vault) = temp_vault();
     let vault = Arc::new(vault);
     let claim = test_id(0xb4);
-    let mut pending = put_critical_auto_claim(&vault, claim)?;
+    let mut pending = put_critical_held_claim(&vault, claim)?;
     let binding = critical_write_confirm_binding(&pending)?;
     pending.reason_codes.push("gate.pending.extra".to_owned());
     vault.with_write_txn(|wtxn| vault.store.put_pending_gate_consent_in_txn(wtxn, &pending))?;
@@ -83,7 +83,7 @@ fn replicated_delete_then_recreate_consults_claim_scoped_invalidation() -> Resul
 
     let (tmp, vault) = temp_vault();
     let claim = test_id(0xb5);
-    put_critical_auto_claim(&vault, claim)?;
+    put_critical_held_claim(&vault, claim)?;
     let mut replacement = vault.get_claim(&claim)?.expect("attached claim");
     replacement.value = Value::from("invalidate before delete");
     replacement.approval = ClaimApprovalStatus::Auto;
@@ -152,7 +152,7 @@ fn ordinary_pending_from_local_gate_survives_direct_and_rematerialized_marker_re
 
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0xb6);
-    put_critical_auto_claim(&vault, claim)?;
+    put_critical_held_claim(&vault, claim)?;
     let mut replacement = vault.get_claim(&claim)?.expect("attached claim");
     replacement.value = Value::from("tombstoned replacement");
     replacement.approval = ClaimApprovalStatus::Auto;
@@ -272,7 +272,7 @@ fn ordinary_pending_from_local_gate_survives_direct_and_rematerialized_marker_re
 fn batch_in_fresh_critical_ceremony_never_reuses_invalidated_decision() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0xb8);
-    let old_pending = put_critical_auto_claim(&vault, claim)?;
+    let old_pending = put_critical_held_claim(&vault, claim)?;
     let old_binding = critical_write_confirm_binding(&old_pending)?;
     let original = vault.get_claim(&claim)?.expect("original claim");
 
@@ -348,7 +348,7 @@ fn fresh_critical_ceremony_transactionally_clears_marker_and_exact_replay_conver
 {
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0xb7);
-    put_critical_auto_claim(&vault, claim)?;
+    put_critical_held_claim(&vault, claim)?;
     let mut replacement = vault.get_claim(&claim)?.expect("attached claim");
     replacement.value = Value::from("requires a new ceremony");
     replacement.approval = ClaimApprovalStatus::Auto;
@@ -372,7 +372,7 @@ fn fresh_critical_ceremony_transactionally_clears_marker_and_exact_replay_conver
     );
     assert!(!has_pending_gate_consent(&vault, &claim)?);
 
-    let fresh = put_critical_auto_claim(&vault, claim)?;
+    let fresh = put_critical_held_claim(&vault, claim)?;
     let fresh_binding = critical_write_confirm_binding(&fresh)?;
     let fresh_body = vault.get_claim(&claim)?.expect("fresh claim");
     assert_eq!(fresh_body.approval, ClaimApprovalStatus::Auto);
@@ -401,7 +401,7 @@ fn fresh_critical_ceremony_transactionally_clears_marker_and_exact_replay_conver
 fn critical_write_confirm_decline_after_timeout_retracts_with_declined_receipt() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0x84);
-    let mut pending = put_critical_auto_claim(&vault, claim)?;
+    let mut pending = put_critical_held_claim(&vault, claim)?;
     pending.created_at = 1;
     vault.with_write_txn(|wtxn| vault.store.put_pending_gate_consent_in_txn(wtxn, &pending))?;
     let binding = critical_write_confirm_binding(&pending)?;
@@ -438,7 +438,7 @@ fn critical_write_confirm_stale_binding_is_already_settled() -> Result<()> {
 
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0x85);
-    let pending = put_critical_auto_claim(&vault, claim)?;
+    let pending = put_critical_held_claim(&vault, claim)?;
     let binding = critical_write_confirm_binding(&pending)?;
     let (genesis, mut clear) = critical_confirm_owner_entry(
         &pending,
@@ -467,7 +467,7 @@ fn critical_confirm_sweep_preserves_ordinary_pending_rows() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let critical = test_id(0x86);
     let ordinary = test_id(0x87);
-    let mut pending = put_critical_auto_claim(&vault, critical)?;
+    let mut pending = put_critical_held_claim(&vault, critical)?;
     pending.created_at = 1;
     vault.with_write_txn(|wtxn| {
         vault
@@ -502,7 +502,7 @@ fn critical_confirm_sweep_preserves_ordinary_pending_rows() -> Result<()> {
 fn critical_write_confirm_double_settle_replay_is_already_settled() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0x88);
-    let pending = put_critical_auto_claim(&vault, claim)?;
+    let pending = put_critical_held_claim(&vault, claim)?;
     let binding = critical_write_confirm_binding(&pending)?;
     let (genesis, clear) = critical_confirm_owner_entry(
         &pending,
@@ -526,7 +526,7 @@ fn critical_confirm_decline_uses_preauthorized_status_door_after_manifest_fails_
 -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0x89);
-    let pending = put_critical_auto_claim(&vault, claim)?;
+    let pending = put_critical_held_claim(&vault, claim)?;
     let binding = critical_write_confirm_binding(&pending)?;
     let receipts_before = vault.store.gate_decisions(20)?.len();
 
@@ -561,7 +561,7 @@ fn critical_confirm_decline_uses_preauthorized_status_door_after_manifest_fails_
         "settlement creates only its resolution receipt"
     );
     assert!(receipts_after.iter().all(|row| {
-        row.receipt_reasons != [GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED]
+        row.receipt_reasons != [GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED]
             || row.decision_id == pending.decision_id
     }));
     Ok(())
@@ -571,7 +571,7 @@ fn critical_confirm_decline_uses_preauthorized_status_door_after_manifest_fails_
 fn critical_confirm_exact_index_interleaves_absent_and_present_ids() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0xc1);
-    let pending = put_critical_auto_claim(&vault, claim)?;
+    let pending = put_critical_held_claim(&vault, claim)?;
     let binding = critical_write_confirm_binding(&pending)?;
     let (genesis, clear) = critical_confirm_owner_entry(
         &pending,
@@ -635,7 +635,7 @@ fn critical_confirm_stale_or_malformed_alias_is_removed_fail_closed() -> Result<
 fn preauthorized_status_door_rejects_a_body_not_bound_to_the_attachment() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0x8b);
-    let pending = put_critical_auto_claim(&vault, claim)?;
+    let pending = put_critical_held_claim(&vault, claim)?;
     let mut changed = stored_claim_body(&vault, &claim)?;
     changed.confidence = 0.25;
     let rtxn = vault.store.env.read_txn()?;
@@ -673,7 +673,7 @@ fn preauthorized_status_door_rejects_a_body_not_bound_to_the_attachment() -> Res
 fn preauthorized_status_door_rejects_wrong_id_and_header_binding() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0x8c);
-    let pending = put_critical_auto_claim(&vault, claim)?;
+    let pending = put_critical_held_claim(&vault, claim)?;
     let body = stored_claim_body(&vault, &claim)?;
     let raw = vault.get_raw(&claim)?.expect("claim");
     let header = EntityMetadataHeader::parse(&raw).expect("header");
@@ -723,7 +723,7 @@ fn preauthorized_status_door_rejects_wrong_id_and_header_binding() -> Result<()>
 fn critical_confirm_timeout_sweep_ignores_a_later_fail_closed_manifest() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0x8e);
-    let mut pending = put_critical_auto_claim(&vault, claim)?;
+    let mut pending = put_critical_held_claim(&vault, claim)?;
     pending.created_at = 1;
     vault.with_write_txn(|wtxn| vault.store.put_pending_gate_consent_in_txn(wtxn, &pending))?;
     let receipts_before = vault.store.gate_decisions(20)?;

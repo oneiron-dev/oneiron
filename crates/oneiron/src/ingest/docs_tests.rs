@@ -753,7 +753,7 @@ fn thin_docs_wait_for_authorized_read_or_explicit_deep_trigger() -> Result<()> {
     let claim_id = EntityId::from_hex(&deep.claim_refs[0])?;
     let claim = vault.get_claim(&claim_id)?.unwrap();
     assert_eq!(claim.source, Some(crate::claim::ClaimSource::Imported));
-    assert_eq!(claim.approval, crate::claim::ClaimApprovalStatus::Approved);
+    assert_eq!(claim.approval, crate::claim::ClaimApprovalStatus::Proposed);
     assert_eq!(claim.subject, crate::claim::ClaimSubject::Entity(asset));
     let evidence = claim.evidence.as_ref().unwrap();
     let candidate = field(
@@ -820,6 +820,15 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
         .collect::<Result<_>>()?;
     assert_eq!(first_ids.len(), 2);
     assert_eq!(second_ids.len(), 2);
+    // Derived claims wait for review; the owner approves each before it reads.
+    for id in first_ids.iter().chain(&second_ids) {
+        let body = vault.get_claim(id)?.unwrap();
+        vault.approve_inbox_member_with_edit_at(
+            id,
+            &crate::claim::encode_claim_body(&body)?,
+            crate::unix_seconds_now(),
+        )?;
+    }
 
     let default_claim = EntityId::from_bytes([0xD8; 16])?;
     let body = ClaimBody::new(
@@ -1088,20 +1097,27 @@ fn docs_deep_claims_register_source_dependencies_and_refuse_dangling_chunks() ->
     Ok(())
 }
 
+/// Security pack 2, F14 H405: the owner's bulk import consent approved reading
+/// and deriving from this source revision. It never saw the extractor's
+/// output, so every derived claim waits `Proposed` in the tray until the owner
+/// approves that claim.
 #[test]
-fn docs_deep_bulk_import_consent_yields_approved_claims_without_individual_tray_rows() -> Result<()>
-{
+fn docs_deep_claims_wait_for_review_under_bulk_import_consent() -> Result<()> {
     let (_dir, vault, owner, _doc, _ceiling, receipt) = deep_fixture()?;
     let asset = EntityId::from_hex(&receipt.asset_refs[0])?;
     assert!(vault.pending_gate_consents(20)?.is_empty());
     let deep =
         vault.deep_ingest_docs_asset(&owner, asset, DocsDeepTrigger::Dreamer, &MultiNer, 3)?;
     assert_eq!(deep.claim_refs.len(), 2);
-    assert!(vault.pending_gate_consents(20)?.is_empty());
-    for reference in deep.claim_refs {
-        let claim = vault.get_claim(&EntityId::from_hex(&reference)?)?.unwrap();
+    for reference in &deep.claim_refs {
+        let claim = vault.get_claim(&EntityId::from_hex(reference)?)?.unwrap();
+        assert_eq!(
+            claim.approval,
+            crate::claim::ClaimApprovalStatus::Proposed,
+            "H405: an extractor's output landed {:?} with no review",
+            claim.approval
+        );
         assert_eq!(claim.source, Some(crate::claim::ClaimSource::Imported));
-        assert_eq!(claim.approval, crate::claim::ClaimApprovalStatus::Approved);
         let derivation = field(
             field(
                 claim.evidence.as_ref().unwrap(),
@@ -1117,6 +1133,24 @@ fn docs_deep_bulk_import_consent_yields_approved_claims_without_individual_tray_
                 .is_some()
         );
     }
+    assert_eq!(
+        vault.pending_gate_consents(20)?.len(),
+        2,
+        "each derived claim is in the tray"
+    );
+
+    // The positive control: the owner's own approval lands one.
+    let approved = EntityId::from_hex(&deep.claim_refs[0])?;
+    let body = vault.get_claim(&approved)?.unwrap();
+    vault.approve_inbox_member_with_edit_at(
+        &approved,
+        &crate::claim::encode_claim_body(&body)?,
+        crate::unix_seconds_now(),
+    )?;
+    assert_eq!(
+        vault.get_claim(&approved)?.unwrap().approval,
+        crate::claim::ClaimApprovalStatus::Approved
+    );
     Ok(())
 }
 

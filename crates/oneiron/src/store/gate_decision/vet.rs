@@ -239,7 +239,9 @@ pub(in crate::store) fn valid_gate_receipt_reason(reason: &str) -> bool {
                     || matches!(byte, b'_' | b'.' | b'-')
             });
     }
-    if reason == "policy_precedence_shipped_default" {
+    if reason == "policy_precedence_shipped_default"
+        || reason == crate::gate::GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED
+    {
         return true;
     }
 

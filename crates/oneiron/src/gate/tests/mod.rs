@@ -73,7 +73,7 @@ use connector_budget::{
 };
 use consent_bundle::{consent_bundle_owner, consent_bundle_receipts};
 use critical_confirm_lifecycle::{
-    critical_confirm_owner_entry, critical_confirm_pending, put_critical_auto_claim,
+    critical_confirm_owner_entry, critical_confirm_pending, put_critical_held_claim,
 };
 use dreamer_precommit::{
     PRECOMMIT_EVIDENCE_REFS_KEY, PRECOMMIT_RUN_ID, precommit_body, precommit_evidence,

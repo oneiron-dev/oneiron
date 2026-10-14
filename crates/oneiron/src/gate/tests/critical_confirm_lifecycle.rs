@@ -267,15 +267,26 @@ pub(super) fn critical_confirm_owner_entry(
     (genesis, confirmation)
 }
 
-pub(super) fn put_critical_auto_claim(
+/// A critical claim written the way it lands: `Proposed`, its owner
+/// confirmation attached.
+pub(super) fn put_critical_held_claim(
     vault: &crate::Vault,
     claim: EntityId,
+) -> Result<PendingGateConsentRecord> {
+    put_critical_claim(vault, claim, ClaimApprovalStatus::Proposed)
+}
+
+pub(super) fn put_critical_claim(
+    vault: &crate::Vault,
+    claim: EntityId,
+    approval: ClaimApprovalStatus,
 ) -> Result<PendingGateConsentRecord> {
     let mut data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::UserStated, 0)]);
     trust_human_candidate_actor(&mut data);
     put_policy_manifest_bytes(vault, test_id(0xee), &data)?;
     let mut body = public_stamped(source_trust_claim(ClaimSource::UserStated));
     body.predicate = "health.allergy".to_owned();
+    body.approval = approval;
     let (candidate, envelope) = claim_candidate_write_parts(vault, &body)?;
     vault
         .batch()
@@ -290,10 +301,10 @@ pub(super) fn put_critical_auto_claim(
 }
 
 #[test]
-fn critical_auto_batch_write_attaches_pending_confirm_and_allow_receipt() -> Result<()> {
+fn critical_batch_write_attaches_pending_confirm_to_its_held_landing() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0x81);
-    let pending = put_critical_auto_claim(&vault, claim)?;
+    let pending = put_critical_held_claim(&vault, claim)?;
     assert_eq!(
         pending.reason_codes,
         vec![GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED.to_owned()]
@@ -304,11 +315,60 @@ fn critical_auto_batch_write_attaches_pending_confirm_and_allow_receipt() -> Res
         .into_iter()
         .find(|row| row.claim_id == Some(*claim.as_bytes()))
         .expect("write receipt");
-    assert_eq!(decision.outcome, "allow");
+    assert_eq!(decision.outcome, "pending");
     assert_eq!(
         decision.receipt_reasons,
-        vec![GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED.to_owned()]
+        vec![GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED.to_owned()]
     );
+    Ok(())
+}
+
+/// Security pack 2, F14 H244: an unsettled critical confirmation never leaves
+/// the claim live. The `Auto` write is held, the claim waits `Proposed` with the
+/// confirmation attached, and only the owner's clear makes it `Auto`.
+#[test]
+fn an_unsettled_critical_confirm_never_leaves_the_claim_live() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim = test_id(0x8a);
+    let auto = put_critical_claim(&vault, claim, ClaimApprovalStatus::Auto);
+    let landed = vault.get_claim(&claim)?;
+    assert!(
+        landed
+            .as_ref()
+            .is_none_or(|body| body.approval != ClaimApprovalStatus::Auto
+                && !crate::claim::claim_surfaceable(body)),
+        "H244: a critical claim went live before its owner confirmed it: {:?}",
+        landed.map(|body| body.approval)
+    );
+    assert_eq!(
+        auto.expect_err("the Auto write is held").kind(),
+        crate::ErrorKind::GateWriteRejected
+    );
+
+    let pending = put_critical_held_claim(&vault, claim)?;
+    assert_eq!(
+        pending.reason_codes,
+        vec![GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED.to_owned()]
+    );
+    let held = vault.get_claim(&claim)?.expect("held claim");
+    assert_eq!(held.approval, ClaimApprovalStatus::Proposed);
+    assert!(!crate::claim::claim_surfaceable(&held));
+
+    // The positive control: the owner's clear is what makes it live.
+    let binding = critical_write_confirm_binding(&pending)?;
+    let (genesis, clear) = critical_confirm_owner_entry(
+        &pending,
+        crate::authority::CriticalWriteConfirmDisposition::Clear,
+        0x8b,
+    );
+    vault.put_authority_log_entries(&[(genesis, test_time(1), 1), (clear, test_time(2), 2)])?;
+    assert_eq!(
+        vault.settle_critical_write_confirm(binding.confirm_id)?,
+        CriticalWriteConfirmResolution::Cleared
+    );
+    let live = vault.get_claim(&claim)?.expect("cleared claim");
+    assert_eq!(live.approval, ClaimApprovalStatus::Auto);
+    assert!(crate::claim::claim_surfaceable(&live));
     Ok(())
 }
 
@@ -324,7 +384,7 @@ fn rematerialized_critical_claim_overwrite_invalidates_attachment_and_rejects_st
 
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0xb1);
-    let pending = put_critical_auto_claim(&vault, claim)?;
+    let pending = put_critical_held_claim(&vault, claim)?;
     let binding = critical_write_confirm_binding(&pending)?;
     let window_key = WindowKey::new("2026-04");
     let doc = create_window_doc("peer", &window_key);
@@ -402,7 +462,7 @@ fn rematerialized_critical_claim_overwrite_invalidates_attachment_and_rejects_st
 fn replicated_critical_claim_overwrite_invalidates_attachment_before_stale_clear() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0xb2);
-    let pending = put_critical_auto_claim(&vault, claim)?;
+    let pending = put_critical_held_claim(&vault, claim)?;
     let binding = critical_write_confirm_binding(&pending)?;
     let mut replacement = vault.get_claim(&claim)?.expect("attached claim");
     replacement.value = Value::from("replicated replacement");
@@ -463,7 +523,7 @@ fn replicated_critical_claim_overwrite_invalidates_attachment_before_stale_clear
 
     // A new local ceremony is distinct from the invalidated one. The old Clear
     // must neither settle it nor disturb its pending attachment.
-    let fresh = put_critical_auto_claim(&vault, claim)?;
+    let fresh = put_critical_held_claim(&vault, claim)?;
     let fresh_binding = critical_write_confirm_binding(&fresh)?;
     assert_ne!(fresh_binding.confirm_id, binding.confirm_id);
 
@@ -494,7 +554,7 @@ fn replicated_critical_claim_overwrite_invalidates_attachment_before_stale_clear
 fn replicated_changed_claim_duplicate_in_one_batch_stays_proposed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0xb3);
-    put_critical_auto_claim(&vault, claim)?;
+    put_critical_held_claim(&vault, claim)?;
     let mut replacement = vault.get_claim(&claim)?.expect("attached claim");
     replacement.value = Value::from("same batch replacement");
     replacement.approval = ClaimApprovalStatus::Auto;
@@ -518,7 +578,7 @@ fn replicated_changed_claim_duplicate_in_one_batch_stays_proposed() -> Result<()
 fn critical_demotion_holds_body_until_bound_human_clear() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0x86);
-    put_critical_auto_claim(&vault, claim)?;
+    put_critical_held_claim(&vault, claim)?;
     let before = vault.get_claim(&claim)?.expect("critical head");
     let now = crate::unix_seconds_now();
     let error = vault
@@ -567,7 +627,7 @@ fn critical_demotion_holds_body_until_bound_human_clear() -> Result<()> {
 fn critical_demotion_expiry_and_decline_do_not_retract_original_truth() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0x88);
-    put_critical_auto_claim(&vault, claim)?;
+    put_critical_held_claim(&vault, claim)?;
     let before = vault.get_claim(&claim)?.expect("head");
     let now = crate::unix_seconds_now();
     assert!(
@@ -607,7 +667,7 @@ fn critical_demotion_expiry_and_decline_do_not_retract_original_truth() -> Resul
 fn critical_supersession_closes_only_after_bound_clear_with_companion() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let old = test_id(0x8a);
-    put_critical_auto_claim(&vault, old)?;
+    put_critical_held_claim(&vault, old)?;
     let mut replacement = vault.get_claim(&old)?.expect("old");
     replacement.value = Value::from("replacement");
     replacement.approval = ClaimApprovalStatus::Proposed;

@@ -269,6 +269,35 @@ fn gate_decision_count(vault: &Vault) -> usize {
         .len()
 }
 
+/// Security pack 2, F14 H153: only a TURN, or a claim admissible as evidence,
+/// meets the promotion evidence floor. A PERSON or a SESSION named as
+/// evidence is no evidence at all.
+#[test]
+fn promotion_evidence_is_a_turn_or_an_admissible_claim() -> Result<()> {
+    let (_dir, vault) = open_auto_vault();
+    let fixture = fixture(&vault)?;
+    let session = EntityId::now();
+    vault.put_entity(&session, ENTITY_TYPE_SESSION, occurred(1), 1, b"session")?;
+    let by_person = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.subject]);
+    let by_session = candidate(&fixture, "profile.city", "Tokyo", vec![session]);
+    // The positive control: the same kind of candidate citing its TURN.
+    let by_turn = candidate(&fixture, "profile.nickname", "Olety", vec![fixture.turn]);
+    let unsupported = [by_person.claim_id, by_session.claim_id];
+    let supported = by_turn.claim_id;
+
+    let outcome =
+        promote_consolidated_claims(&vault, &fixture.run, vec![by_person, by_session, by_turn])?;
+    assert_eq!(
+        outcome.landed,
+        vec![supported],
+        "H153: a PERSON or SESSION ref met the evidence floor"
+    );
+    for id in unsupported {
+        assert!(vault.get_claim(&id)?.is_none(), "no claim without evidence");
+    }
+    Ok(())
+}
+
 #[test]
 fn promotion_lands_auto_with_the_computed_source_through_gate() -> Result<()> {
     let (_dir, vault) = open_auto_vault();

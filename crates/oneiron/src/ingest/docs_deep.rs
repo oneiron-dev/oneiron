@@ -1,7 +1,6 @@
 //! On-demand docs NER: only a named trigger crosses the thin-star boundary.
 use super::{DocsDerivationEnvelope, DocsSegment, docs_semantic_segments};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::ClaimApprovalStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
@@ -367,63 +366,61 @@ impl Vault {
                 value: claim.value,
             });
         }
-        // Follow the import-batch Gate door: Proposed preflight, then the
-        // approved transition under the stored, source-revision-bound bulk act.
-        // Pending rows are transient in this writer txn and never reach a tray.
-        for approval in [ClaimApprovalStatus::Proposed, ClaimApprovalStatus::Approved] {
-            let mut builder = self.batch_in();
-            for claim in &claims {
-                let admission = super::ImportedEvidenceAdmission::proposed(
-                    super::DOCS_EXPORT_SOURCE_ID,
-                    claim.id,
-                    super::ImportedEvidenceEntityResolution::subject(asset),
-                    actor,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                )
-                .with_approval(approval);
-                let (candidate, envelope) = super::admission::imported_candidate(
-                    &claim.predicate,
-                    super::admission::json_to_msgpack_value(&claim.value),
-                    &claim.source_record_id,
-                    &admission,
-                )?;
-                let v = rmpv::Value::from;
-                let rmpv::Value::Map(mut evidence) = super::admission::imported_evidence_value(
-                    super::DOCS_EXPORT_SOURCE_ID,
-                    &claim.source_record_id,
-                ) else {
-                    unreachable!("imported evidence is a map")
-                };
-                evidence.push((
-                    v("derivation"),
-                    rmpv::Value::Map(vec![
-                        (v("source_ref"), rmpv::Value::from(claim.chunk.to_hex())),
-                        (v("source_hash"), v(claim.segment_hash.as_str())),
-                        (v("producer"), v(extractor.binding())),
-                        (v("source"), v("imported")),
-                        (v("derived_kind"), v("ner_claim")),
-                        (v("approval_digest"), v(approval_digest.as_str())),
-                    ]),
-                ));
-                builder = builder.claim_candidate(
-                    &claim.id,
-                    candidate
-                        .with_scope(rmpv::Value::Map(vec![(
-                            v("scopeProjectId"),
-                            rmpv::Value::Binary(project_id.as_bytes().to_vec()),
-                        )]))
-                        .with_evidence(rmpv::Value::Map(evidence)),
-                    &envelope,
-                    admission.occurred,
-                    admission.learned_at,
-                );
-            }
-            builder.apply(&mut txn)?;
+        // Follow the import-batch Gate door, Proposed only. The stored bulk act
+        // approved reading this source revision and deriving from it; it never
+        // saw what the extractor would say, so each derived claim waits in the
+        // owner's tray for its own review.
+        let mut builder = self.batch_in();
+        for claim in &claims {
+            let admission = super::ImportedEvidenceAdmission::proposed(
+                super::DOCS_EXPORT_SOURCE_ID,
+                claim.id,
+                super::ImportedEvidenceEntityResolution::subject(asset),
+                actor,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            );
+            let (candidate, envelope) = super::admission::imported_candidate(
+                &claim.predicate,
+                super::admission::json_to_msgpack_value(&claim.value),
+                &claim.source_record_id,
+                &admission,
+            )?;
+            let v = rmpv::Value::from;
+            let rmpv::Value::Map(mut evidence) = super::admission::imported_evidence_value(
+                super::DOCS_EXPORT_SOURCE_ID,
+                &claim.source_record_id,
+            ) else {
+                unreachable!("imported evidence is a map")
+            };
+            evidence.push((
+                v("derivation"),
+                rmpv::Value::Map(vec![
+                    (v("source_ref"), rmpv::Value::from(claim.chunk.to_hex())),
+                    (v("source_hash"), v(claim.segment_hash.as_str())),
+                    (v("producer"), v(extractor.binding())),
+                    (v("source"), v("imported")),
+                    (v("derived_kind"), v("ner_claim")),
+                    (v("approval_digest"), v(approval_digest.as_str())),
+                ]),
+            ));
+            builder = builder.claim_candidate(
+                &claim.id,
+                candidate
+                    .with_scope(rmpv::Value::Map(vec![(
+                        v("scopeProjectId"),
+                        rmpv::Value::Binary(project_id.as_bytes().to_vec()),
+                    )]))
+                    .with_evidence(rmpv::Value::Map(evidence)),
+                &envelope,
+                admission.occurred,
+                admission.learned_at,
+            );
         }
+        builder.apply(&mut txn)?;
         for claim in &claims {
             crate::ports::record_derived_edge_in_txn(
                 &self.store,
@@ -434,8 +431,6 @@ impl Vault {
             // The dependency index is one hop, not recursive. Bind the root
             // asset too, so deleting it invalidates the derived claim directly.
             crate::ports::record_derived_edge_in_txn(&self.store, &mut txn, &claim.id, &asset)?;
-            self.store
-                .delete_pending_gate_consent_in_txn(&mut txn, &claim.id)?;
             receipt.claim_refs.push(claim.id.to_hex());
         }
         DEEP_RECEIPTS.put(&self.store, &mut txn, &HexId(asset), &receipt)?;
