@@ -142,7 +142,8 @@ fn a_signers_full_bound_still_folds() {
 /// Substrate invariant: the store door refuses a signer's row past its bound
 /// with a typed error naming the signer, and writes nothing. A row that only
 /// restricts still lands for that signer, the genesis owner and so a slip
-/// issuer, and another signer still writes.
+/// issuer, and another signer the owner cosigns for still writes; alone, it
+/// is held.
 #[test]
 fn a_signer_at_its_bound_is_refused_but_restrictions_and_other_signers_land() {
     const BOUND: usize = 16;
@@ -187,8 +188,25 @@ fn a_signer_at_its_bound_is_refused_but_restrictions_and_other_signers_land() {
             &owner,
         );
         vault.put_authority_log_entry(&revoke, at, 1).unwrap();
-        let other = confirm_chain(&genesis, 65, 1, |_| vec![head]);
-        vault.put_authority_log_entry(&other[0], at, 1).unwrap();
+        let stranger = ed_key(65);
+        let other = unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![head],
+            confirm_op(BOUND + 1),
+            authority_key_from_ed(&stranger),
+            3,
+        );
+        let err = vault
+            .put_authority_log_entry(&sign_ed(other.clone(), &stranger), at, 1)
+            .unwrap_err();
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::AuthorityLogSignerPending
+        );
+        vault
+            .put_authority_log_entry(&cosign_ed(other, &stranger, &owner), at, 1)
+            .unwrap();
         assert_eq!(
             vault
                 .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
@@ -360,13 +378,33 @@ fn the_slip_issuers_slip_rows_count_toward_no_fold_bound() {
     });
 }
 
-/// Bug repro: a key that is not a slip issuer stores no more than its bound,
-/// whatever its rows do. An agent key the host enrolled, or the key of a
-/// machine the owner holds as theirs, once stored slip revokes and actor
-/// revocations without end, and the fold counted each one, so past the
-/// fold's row bound the owner's vault failed closed. The fold applies none
-/// of them, so they now count toward that key's bound, as its slip mints
-/// do, and a handoff it signs is refused at once.
+/// `entry` signed by `signing` and cosigned by the host's key.
+fn host_cosigned(
+    mut entry: AuthorityLogEntry,
+    signing: &SigningKey,
+    host: &HostSlipIssuer,
+) -> AuthorityLogEntry {
+    entry.cosigns = vec![AuthoritySignature {
+        suite: AuthoritySignatureSuite::Ed25519,
+        public_key: host.public_key(),
+        signature: vec![0; 64],
+    }];
+    let transcript = authority_transcript(&entry).unwrap();
+    entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+    entry.cosigns[0].signature = host.sign_mesh(&transcript).to_vec();
+    entry
+}
+
+/// Bug repro: no door stores a row that no owner, admin or install key
+/// signed, and a key that is not a slip issuer stores no more than its
+/// bound, whatever its rows do. An agent key the host enrolled, or the key
+/// of a machine the owner holds as theirs, once stored slip revokes and
+/// actor revocations without end, through sync and then through the public
+/// local door (review round 2, F2), and the fold counted each one, so past
+/// the fold's row bound the owner's vault failed closed. The fold applies
+/// none of them. Rows the key signs alone are now held at the local door
+/// too; rows the host cosigns count toward the key's bound, and a handoff
+/// it signs is refused at once.
 #[test]
 fn agent_and_machine_keys_rows_count_toward_their_bounds_whatever_they_do() {
     const BOUND: usize = 8;
@@ -415,19 +453,30 @@ fn agent_and_machine_keys_rows_count_toward_their_bounds_whatever_they_do() {
             .iter()
             .next()
             .unwrap();
-        let row = |seq: usize, parent: AuthorityEntryHash, op| {
-            sign_ed(
-                unsigned_entry(
-                    Some(host.vault_id),
-                    seq as u64,
-                    vec![parent],
-                    op,
-                    key.clone(),
-                    1,
-                ),
-                &signing,
-            )
+        let row = |seq: usize, parent: AuthorityEntryHash, op, cosigned: bool| {
+            let entry = unsigned_entry(
+                Some(host.vault_id),
+                seq as u64,
+                vec![parent],
+                op,
+                key.clone(),
+                1,
+            );
+            if cosigned {
+                host_cosigned(entry, &signing, &host.issuer)
+            } else {
+                sign_ed(entry, &signing)
+            }
         };
+        let assert_held = |err: crate::error::Error| {
+            assert_eq!(
+                err.kind(),
+                crate::error::ErrorKind::AuthorityLogSignerPending,
+                "machine {machine}: {err}"
+            );
+        };
+        let stored = || host.vault.export_signed_authority_history().unwrap().len();
+        let before = stored();
         let assert_full = |err: crate::error::Error| {
             assert_eq!(
                 err.kind(),
@@ -451,7 +500,13 @@ fn agent_and_machine_keys_rows_count_toward_their_bounds_whatever_they_do() {
                         epoch: n as u64,
                     },
                 };
-                let entry = row(n + 1, parent, op);
+                let alone = row(n + 1, parent, op.clone(), false);
+                assert_held(
+                    host.vault
+                        .put_authority_log_entry(&alone, at, 1)
+                        .unwrap_err(),
+                );
+                let entry = row(n + 1, parent, op, true);
                 match host.vault.put_authority_log_entry(&entry, at, 1) {
                     Ok(_) => {
                         landed += 1;
@@ -471,6 +526,7 @@ fn agent_and_machine_keys_rows_count_toward_their_bounds_whatever_they_do() {
                     .is_some_and(FoldedMachine::is_mine)
             );
             assert_eq!(landed, BOUND, "machine {machine}");
+            assert_eq!(stored() - before, BOUND, "machine {machine}");
         });
         let handoff = AuthorityOp::ReRoot {
             new_device: device(
@@ -479,9 +535,15 @@ fn agent_and_machine_keys_rows_count_toward_their_bounds_whatever_they_do() {
                 AuthorityTier::Software,
             ),
         };
+        let alone = row(10 * BOUND + 1, parent, handoff.clone(), false);
+        assert_held(
+            host.vault
+                .put_authority_log_entry(&alone, at, 1)
+                .unwrap_err(),
+        );
         let err = host
             .vault
-            .put_authority_log_entry(&row(10 * BOUND + 1, parent, handoff), at, 1)
+            .put_authority_log_entry(&row(10 * BOUND + 1, parent, handoff, true), at, 1)
             .unwrap_err();
         assert_full(err);
     }
@@ -496,7 +558,7 @@ fn every_live_owner_a_fold_holds_is_a_slip_issuer() {
     let mut revoked_owners = 0;
     for seed in 0..400_u64 {
         let entries = super::fold_schedule::random_log(&mut StdRng::seed_from_u64(seed));
-        let issuers = crate::authority::log_budget::slip_issuers(entries.iter());
+        let issuers = crate::authority::log_budget::slip_issuers(&entries);
         for fold in [
             fold_authority_log(&entries),
             fold_legacy_authority_log(&entries),
@@ -638,9 +700,91 @@ fn a_host_an_admin_admitted_line_hands_off_to_is_a_slip_issuer() {
             .contains(&authority_entry_hash(&handoff).unwrap())
     );
     assert!(roster_has_live_owner(&fold.roster, &host.public_key()));
-    let issuers = crate::authority::log_budget::slip_issuers(entries.iter());
+    let issuers = crate::authority::log_budget::slip_issuers(&entries);
     assert!(issuers.contains(&host.public_key()));
     assert!(!issuers.contains(&authority_key_from_ed(&admin)));
+
+    // Review round 2 (F1): the same line arrives through sync, parents
+    // first. The admin's promotion once waited for ever, as no owner key
+    // signed it; an admitter's signature vouches for it now.
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    vault
+        .put_authority_log_entry(&entries[0], TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+    for entry in &entries[1..] {
+        put_replicated_row(&vault, entry).unwrap();
+        if !matches!(entry.op, AuthorityOp::ReRoot { .. }) {
+            mature_observed_widen(&vault, entry);
+        }
+    }
+    let fold = vault.authority_fold().unwrap();
+    assert!(roster_has_live_owner(&fold.roster, &host.public_key()));
+}
+
+/// Bug repro (review round 2, F5): a genesis an admin-only key signs is a
+/// consent root the fold accepts. The issuer set once read only an owner
+/// genesis, so it held no key of this line, and the store door refused its
+/// owner's first handoff as past the bound. The admin genesis now admits,
+/// and the complete line imports with its host a slip issuer.
+#[test]
+fn an_admin_genesis_line_imports_with_its_host_a_slip_issuer() {
+    let [admin, owner] = [124, 125].map(ed_key);
+    let host = HostSlipIssuer::from_secret(b"admin genesis host placeholder words").unwrap();
+    let mut genesis = genesis_entry(124, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    if let AuthorityOp::Genesis { device, .. } = &mut genesis.op {
+        device.roles = ROLE_ADMIN;
+    }
+    let genesis = sign_ed(genesis, &admin);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let enrolled = sign_ed(
+        unsigned_entry(
+            Some(id),
+            1,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            AuthorityOp::EnrollDevice {
+                device: device(
+                    authority_key_from_ed(&owner),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            authority_key_from_ed(&admin),
+            2,
+        ),
+        &admin,
+    );
+    let handoff = cosign_ed(
+        unsigned_entry(
+            Some(id),
+            1,
+            vec![authority_entry_hash(&enrolled).unwrap()],
+            AuthorityOp::ReRoot {
+                new_device: device(
+                    host.public_key(),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            authority_key_from_ed(&owner),
+            3,
+        ),
+        &owner,
+        &admin,
+    );
+    let entries = vec![genesis, enrolled, handoff];
+    let issuers = crate::authority::log_budget::slip_issuers(&entries);
+    assert!(issuers.contains(&host.public_key()));
+    assert!(!issuers.contains(&authority_key_from_ed(&admin)));
+    let history: Vec<_> = entries
+        .iter()
+        .map(|entry| encode_authority_log_entry_body(entry).unwrap())
+        .collect();
+    let dir = tempfile::tempdir().unwrap();
+    let target = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    target.import_signed_authority_history(&history).unwrap();
+    let fold = target.authority_fold().unwrap();
+    assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
 }
 
 /// Bug repro (review round 1): a complete signed history imports in any
@@ -673,4 +817,191 @@ fn a_complete_history_imports_past_the_bound_in_any_order() {
     let fold = target.authority_fold().unwrap();
     assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
     assert!(fold.slips.mints.len() > 10 * BOUND);
+}
+
+/// Bug repro (review round 2, F4): issuer membership is read from the whole
+/// log, not from a row's own ancestry. A history whose owner admission is
+/// only a sibling of that owner's slip rows, given slips first, charged the
+/// slips until the admission was staged and stopped at the bound. The
+/// import now stages the rows the issuer set rests on first.
+#[test]
+fn a_history_whose_issuer_admission_is_a_sibling_imports_in_any_order() {
+    const BOUND: usize = 4;
+    let [owner, next] = [126, 127].map(ed_key);
+    let genesis = genesis_entry(126, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let root = authority_entry_hash(&genesis).unwrap();
+    let handoff = sign_ed(
+        unsigned_entry(
+            Some(id),
+            1,
+            vec![root],
+            AuthorityOp::ReRoot {
+                new_device: device(
+                    authority_key_from_ed(&next),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            authority_key_from_ed(&owner),
+            2,
+        ),
+        &owner,
+    );
+    let mut history = vec![encode_authority_log_entry_body(&genesis).unwrap()];
+    let mut parent = root;
+    for n in 0..10 * BOUND {
+        let mut slip_id = [0x5A; 32];
+        slip_id[..8].copy_from_slice(&(n as u64).to_be_bytes());
+        let slip = sign_ed(
+            unsigned_entry(
+                Some(id),
+                n as u64 + 1,
+                vec![parent],
+                AuthorityOp::SlipRevoke { slip_id },
+                authority_key_from_ed(&next),
+                3,
+            ),
+            &next,
+        );
+        parent = authority_entry_hash(&slip).unwrap();
+        history.push(encode_authority_log_entry_body(&slip).unwrap());
+    }
+    history.push(encode_authority_log_entry_body(&handoff).unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    let target = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    with_rows_per_signer_for_test(BOUND, || target.import_signed_authority_history(&history))
+        .unwrap();
+    assert!(!target.authority_fold().unwrap().authority_log_past_bound());
+}
+
+/// Bug repro (review round 2, Astra F3): two replicas at the owner's bound
+/// each demote one machine from the same head. The door judged the second
+/// against the machine as this vault already held it, demoted, so refused
+/// it as full, and a later removal on that line was stranded. A revision
+/// that leaves an owned machine owned but not "yours" lands past the bound
+/// in either order, and the removal follows.
+#[test]
+fn concurrent_demotions_of_one_machine_land_past_the_bound() {
+    const BOUND: usize = 8;
+    let host = host();
+    let request = request_for(host.vault_id, EntityId::now(), &ed_key(74));
+    host.vault
+        .enroll_machine(
+            &host.issuer,
+            &host.owner,
+            &request,
+            MachineRole::Owned(MachineOwnership::Yours),
+        )
+        .unwrap();
+    let at = TimeRange { start: 1, end: 1 };
+    let next = |op| {
+        crate::authority::slip_vault::next_entry(
+            &host.issuer,
+            &host.vault.authority_fold().unwrap(),
+            op,
+            host.vault.now_recorded_at(),
+        )
+        .unwrap()
+    };
+    with_rows_per_signer_for_test(BOUND, || {
+        let mut n = 0;
+        let full = loop {
+            match host
+                .vault
+                .put_authority_log_entry(&next(confirm_op(n)), at, 1)
+            {
+                Ok(_) => n += 1,
+                Err(err) => break err,
+            }
+        };
+        assert_eq!(full.kind(), crate::error::ErrorKind::AuthorityLogFull);
+        let current = host
+            .vault
+            .authority_fold()
+            .unwrap()
+            .machine(request.machine)
+            .unwrap()
+            .profile
+            .clone();
+        let revision = |class| {
+            AuthorityOp::MachineProfile(MachineProfile {
+                role: MachineRole::Owned(class),
+                revision: current.revision + 1,
+                ..current.clone()
+            })
+        };
+        let first = next(revision(MachineOwnership::WorkSchool));
+        let second = next(revision(MachineOwnership::Rented));
+        assert_eq!(first.parent_hashes, second.parent_hashes);
+        host.vault.put_authority_log_entry(&first, at, 1).unwrap();
+        host.vault.put_authority_log_entry(&second, at, 1).unwrap();
+        host.vault
+            .set_machine_role(
+                &host.issuer,
+                &host.owner,
+                request.machine,
+                MachineRole::Removed,
+            )
+            .unwrap();
+        let fold = host.vault.authority_fold().unwrap();
+        assert!(!fold.authority_log_past_bound());
+        assert!(
+            fold.machine(request.machine)
+                .is_some_and(|machine| machine.removed)
+        );
+    });
+}
+
+/// Bug repro (review round 2, F3): each held row re-read and re-verified the
+/// whole stored log, so a peer's held rows, retried on every pass, cost the
+/// vault that scan each time. The doors read the stored log once per
+/// authority generation.
+#[test]
+fn held_rows_read_the_stored_log_once_per_generation() {
+    let host = host();
+    let root = host.vault.ensure_host_root_slip(&host.issuer).unwrap();
+    for n in 0..16 {
+        host.vault
+            .mint_oauth_capability_slip(&host.issuer, claims_numbered(&root.claims, n), 3600, None)
+            .unwrap();
+    }
+    let agent = ed_key(75);
+    let enroll = crate::authority::slip_vault::next_entry(
+        &host.issuer,
+        &host.vault.authority_fold().unwrap(),
+        AuthorityOp::EnrollDevice {
+            device: device(
+                authority_key_from_ed(&agent),
+                ROLE_AGENT,
+                AuthorityTier::Software,
+            ),
+        },
+        host.vault.now_recorded_at(),
+    )
+    .unwrap();
+    host.vault
+        .put_authority_log_entry(&enroll, TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+    let parent = authority_entry_hash(&enroll).unwrap();
+    let builds = crate::authority::log_budget::door_view_builds_for_test();
+    for n in 0..32 {
+        let held = sign_ed(
+            unsigned_entry(
+                Some(host.vault_id),
+                n + 1,
+                vec![parent],
+                confirm_op(n as usize),
+                authority_key_from_ed(&agent),
+                3,
+            ),
+            &agent,
+        );
+        let err = put_replicated_row(&host.vault, &held).unwrap_err();
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::AuthorityLogSignerPending
+        );
+    }
+    assert!(crate::authority::log_budget::door_view_builds_for_test() - builds <= 1);
 }
