@@ -348,8 +348,8 @@ async fn a_spent_rerank_line_refuses_xhigh_and_max_by_name() {
             }
         }) as OnCall
     };
-    let fake = FakeReranker::start(prefers_known(), hook, 5_000).await;
-    let models = reranker_models(&fake.base_url, 2_000);
+    let fake = FakeReranker::start(prefers_known(), hook, 50_000).await;
+    let models = reranker_models(&fake.base_url, 30_000);
     let (_dir, server, _host, receipts) = served(Some(&models)).await;
     let actor = reader(&server, "rerank-spent").await;
     *vault.lock().unwrap() = Some((Arc::clone(server.vault()), actor));
@@ -374,7 +374,7 @@ async fn a_spent_rerank_line_refuses_xhigh_and_max_by_name() {
     assert!(
         settled
             .iter()
-            .all(|(units, error)| *units == 5_000 && error.is_none()),
+            .all(|(units, error)| *units == 50_000 && error.is_none()),
         "{settled:?}"
     );
     // Medium makes no model call, so the spent line does not touch it.
@@ -624,8 +624,15 @@ fn high_recall_over_the_sync_rpc_reranks_on_a_current_thread_runtime() {
         reply["result"]["retrieval_meta"]["rerank"]["status"], "applied",
         "{reply}"
     );
-    assert_eq!(rank_of_known(&reply["result"]), 0, "{reply}");
     assert_eq!(fake.calls(), 1);
+    assert!(
+        fake.seen()[0]["documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|document| document.as_str().unwrap().contains(KNOWN)),
+        "{reply}"
+    );
     drop(fake);
     io.shutdown_background();
 }

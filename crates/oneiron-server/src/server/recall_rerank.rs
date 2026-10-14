@@ -6,7 +6,10 @@
 //! reservation. Nothing a request carries picks the model, its endpoint or
 //! the lease: the door holds them. The words a call sends are known before
 //! it leaves, so it is priced on them first ([`payload_units`]), and a line
-//! that cannot cover them refuses the call unsent.
+//! that cannot cover them refuses the call unsent. A `[models]` rung is
+//! reached over HTTP, never in this process, so this host does not run on
+//! the device (`RecallRerankHost::runs_on_device`): a row a device-only world
+//! keeps is sent to it empty.
 //!
 //! A call is driven on its caller's runtime when that runtime is
 //! multi-thread. A synchronous door holds its caller's thread until the

@@ -351,7 +351,8 @@ or an edited one; or a turn whose messages show none) is found but not
 reranked yet: it follows the reranked rows in its first-stage order. Each
 text is judged by the write door as it would leave, a turn's messages
 joined as the reranker would read them, and one the door refuses is sent
-empty. A block with no text to send makes no call and says `skipped` with
+empty. So is a row a device-only world keeps: a `[models]` reranker is
+reached over HTTP, never on the device. A row sent empty scores last. A block with no text to send makes no call and says `skipped` with
 `no_candidates`. The pack repeats the name the endpoint says answered as
 `served_model` only when it is at most 200 printable characters.
 The model runs outside every vault transaction, and the scores apply only to

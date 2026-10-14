@@ -22,6 +22,7 @@
 //! block at the same revisions: a block or a row that changed in between
 //! takes none of the scores, and the door scores the new block once more
 //! before it refuses.
+use std::collections::HashSet;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -90,6 +91,14 @@ pub trait RecallRerankHost: Sync {
         documents: &[RerankDocument<'_>],
         answer_at: Option<Instant>,
     ) -> MemoryResult<RerankScores>;
+
+    /// Whether every model `score` can reach runs on this device, in this
+    /// process. Only then is it sent the words of a row a device-only world
+    /// keeps; any other host is sent such a row empty. A host that cannot
+    /// say runs elsewhere.
+    fn runs_on_device(&self) -> bool {
+        false
+    }
 }
 
 /// One candidate as its reranker reads it.
@@ -323,7 +332,7 @@ impl Memory<'_> {
                 }
                 (Err(error), None) => return Err(error),
             };
-            let texts = self.rerank_documents(scope, &block)?;
+            let texts = self.rerank_documents(scope, &block, host.runs_on_device())?;
             if texts.iter().all(String::is_empty) {
                 let mut pack = self.recall_with_execution(
                     &input.query,
@@ -355,7 +364,7 @@ impl Memory<'_> {
                     text,
                 })
                 .collect();
-            let scored = match host.score(
+            let mut scored = match host.score(
                 &input.query,
                 &documents,
                 deadline.as_ref().map(RetrievalDeadline::answer_at),
@@ -375,6 +384,13 @@ impl Memory<'_> {
                     "the reranker did not score every candidate",
                     &["Check the reranker route's endpoint, or recall at medium."],
                 ));
+            }
+            // A row sent empty was sent nothing to judge: it scores last,
+            // whatever the model made of no words.
+            for (score, text) in scored.scores.iter_mut().zip(&texts) {
+                if text.is_empty() {
+                    *score = f32::MIN;
+                }
             }
             let candidates: Vec<RerankCandidate<'_>> =
                 block.iter().map(BlockCandidate::borrowed).collect();
@@ -460,12 +476,33 @@ impl Memory<'_> {
     /// revision the block holds it at: a claim as its predicate and redacted
     /// value, any other row as its words. A row that read no longer admits,
     /// or with no revision to read it at, is sent empty and scores last, as
-    /// is a text the write door refuses whole; nothing it holds leaves.
+    /// is a text the write door refuses whole; nothing it holds leaves. So is
+    /// a row a device-only world keeps (the vault's own flag, whoever reads),
+    /// unless the host's model runs on this device (`on_device`).
     fn rerank_documents(
         &self,
         scope: &RecallScope,
         block: &[BlockCandidate],
+        on_device: bool,
     ) -> MemoryResult<Vec<String>> {
+        let kept_here: HashSet<EntityId> = if on_device {
+            HashSet::new()
+        } else {
+            let rtxn = self.vault.store.env.read_txn().map_err(crate::Error::from)?;
+            let flagged = crate::settings::device_only_worlds_in(&self.vault.store, &rtxn)?;
+            let mut kept_here = HashSet::new();
+            for candidate in block {
+                if crate::settings::device_only_withholds(
+                    &self.vault.store,
+                    &rtxn,
+                    &flagged,
+                    &candidate.id,
+                )? {
+                    kept_here.insert(candidate.id);
+                }
+            }
+            kept_here
+        };
         let worlds = self.recall_worlds(scope)?;
         let lane = self
             .read_lane(ClaimReadStatus::Surfaceable)?
@@ -474,8 +511,12 @@ impl Memory<'_> {
         let mut texts = Vec::with_capacity(block.len());
         for candidate in block {
             // The block sets a row with no pin aside before it is taken; its
-            // words, read now, would be whatever they had become.
-            let Some(revision) = candidate.revision else {
+            // words, read now, would be whatever they had become. A row a
+            // device-only world keeps is sent no model elsewhere.
+            let Some(revision) = candidate
+                .revision
+                .filter(|_| !kept_here.contains(&candidate.id))
+            else {
                 texts.push(String::new());
                 continue;
             };

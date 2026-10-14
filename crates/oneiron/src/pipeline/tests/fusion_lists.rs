@@ -29,7 +29,7 @@ fn a_one_code_phonetic_hit_outranks_a_row_with_no_match() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     // Same words, so the text channel ties them; an id-order tie puts the
     // row with no match first.
-    let (missed, matched) = (entity_id(0x41), entity_id(0x42));
+    let (missed, matched) = (entity_id(0x43), entity_id(0x44));
     for id in [missed, matched] {
         let mut batch = vault
             .batch()

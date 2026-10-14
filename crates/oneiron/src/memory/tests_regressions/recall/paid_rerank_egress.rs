@@ -35,15 +35,24 @@ fn scripted<'a>(
 /// query vector `[1, 0, 0, 0]`.
 fn recall_high(
     facade: &Memory<'_>,
-    host: &ScriptedReranker<'_>,
+    host: &dyn crate::memory::RecallRerankHost,
     query: &str,
+) -> crate::memory::MemoryPack {
+    recall_high_in(facade, host, query, None)
+}
+
+fn recall_high_in(
+    facade: &Memory<'_>,
+    host: &dyn crate::memory::RecallRerankHost,
+    query: &str,
+    scope: Option<crate::memory::RecallScope>,
 ) -> crate::memory::MemoryPack {
     crate::task_verb::sdk::recall_at_door(
         facade,
         crate::task_verb::sdk::RecallRequest {
             query: query.to_owned(),
             effort: Some(crate::memory::RecallEffort::High),
-            scope: None,
+            scope,
             limit: Some(10),
             format: None,
             as_of: None,
@@ -57,6 +66,31 @@ fn recall_high(
         },
     )
     .expect("recall")
+}
+
+/// A [`ScriptedReranker`] that says where its model runs.
+struct Placed<'a> {
+    host: &'a ScriptedReranker<'a>,
+    on_device: bool,
+}
+
+impl crate::memory::RecallRerankHost for Placed<'_> {
+    fn lease(&self) -> &crate::llm::BudgetLease {
+        crate::memory::RecallRerankHost::lease(self.host)
+    }
+
+    fn score(
+        &self,
+        query: &str,
+        documents: &[crate::memory::RerankDocument<'_>],
+        answer_at: Option<std::time::Instant>,
+    ) -> MemoryResult<crate::memory::RerankScores> {
+        crate::memory::RecallRerankHost::score(self.host, query, documents, answer_at)
+    }
+
+    fn runs_on_device(&self) -> bool {
+        self.on_device
+    }
 }
 
 /// Gives a witnessed `turn` the vector `[1, 0, 0, 0]`, as an embedder would,
@@ -117,24 +151,34 @@ fn a_turn_whose_messages_refuse_together_is_not_sent_whole() {
     ));
 }
 
-/// #1419 Wonder W1-4: a block whose every text reads back empty, here a
-/// TURN whose joined words the write door refuses, makes no call. It runs
-/// unreranked and says it skipped: `skipped / no_candidates`.
+/// #1419 Wonder W1-4: a block whose every text reads back empty makes no
+/// call. It runs unreranked and says it skipped: `skipped / no_candidates`.
+/// Here the one row is a claim a device-only world keeps, read for a host
+/// whose model runs elsewhere.
 #[test]
 fn a_block_with_no_words_to_send_makes_no_call() {
     let (_dir, vault) = open_embedding_vault();
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let facade = facade_for(&vault, owner);
-    let phrase = witness_turn(&facade, 0xF3, &PHRASE_HALVES, 1_900);
-    embed_turn(&vault, &phrase);
+    let (world, _, _) = device_only_world(&vault, owner);
     let host = scripted(&|_: usize, _: &str| 1.0, &|_: usize| {});
 
-    // No word matches: the TURN's vector alone finds it.
-    let pack = recall_high(&facade, &host, "zqxv");
+    let pack = recall_high_in(
+        &facade,
+        &host,
+        "lantern",
+        Some(crate::memory::RecallScope {
+            world_ref: Some(world.to_hex()),
+            kinds: Some(vec!["CLAIM".to_owned()]),
+            ..Default::default()
+        }),
+    );
 
     assert!(
-        pack.items.iter().any(|item| item.kind == "TURN"),
-        "the turn is found: {pack:?}"
+        pack.items
+            .iter()
+            .any(|item| item.value_text.contains("under the mat")),
+        "the kept claim is found and served here: {pack:?}"
     );
     assert_eq!(host.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     assert!(
@@ -211,4 +255,141 @@ fn a_turn_with_no_words_to_pin_is_sent_nothing() {
         pack.retrieval_meta.rerank,
         Some(crate::memory::RerankReport::Applied { .. })
     ));
+}
+
+/// A WORLD flagged device-only on this device, a claim it keeps and a
+/// portable one in base reality, both about lanterns: the world, the kept
+/// claim and the portable one.
+fn device_only_world(vault: &crate::Vault, owner: EntityId) -> (EntityId, EntityId, EntityId) {
+    let world = crate::test_util::entity(0x61);
+    vault
+        .put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .expect("the world");
+    let remember = |id: EntityId, world: Option<EntityId>, text: &str| {
+        let mut claim = crate::claim::ClaimBody::new(
+            "profile.note",
+            crate::claim::ClaimSubject::Entity(owner),
+            rmpv::Value::from(text),
+            1.0,
+            crate::claim::ClaimApprovalStatus::Auto,
+            crate::claim::ClaimLifecycleStatus::Active,
+        )
+        .expect("a claim");
+        claim.source = Some(crate::claim::ClaimSource::UserStated);
+        claim.world = world;
+        vault
+            .put_claim(
+                &id,
+                &claim,
+                crate::temporal::TimeRange { start: 10, end: 10 },
+                10,
+            )
+            .expect("store the claim");
+        vault
+            .batch()
+            .text(&id, &[("body", text)])
+            .commit()
+            .expect("index the claim");
+    };
+    let (kept, portable) = (
+        crate::test_util::entity(0x62),
+        crate::test_util::entity(0x63),
+    );
+    remember(kept, Some(world), "the lantern key is under the mat");
+    remember(portable, None, "a brass lantern hook");
+    vault
+        .set_world_device_only(world, true)
+        .expect("flag the world");
+    (world, kept, portable)
+}
+
+/// Packet item 9 (the device-egress lane's question): #1419 made a remote
+/// reranker live, and a recall sent it the words of a row a device-only world
+/// keeps, which never leave this device. Judged on the vault's own flag, such
+/// a row goes empty to a host whose model runs elsewhere, and scores last. A
+/// host whose model runs on this device is sent its words.
+#[test]
+fn a_device_only_row_reaches_only_a_reranker_on_this_device() {
+    let (_dir, vault) = open_embedding_vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let facade = facade_for(&vault, owner);
+    let (world, kept, _) = device_only_world(&vault, owner);
+
+    for on_device in [false, true] {
+        let sent = std::sync::Mutex::new(Vec::new());
+        let score = |_: usize, text: &str| {
+            sent.lock().unwrap().push(text.to_owned());
+            1.0
+        };
+        let host = scripted(&score, &|_: usize| {});
+        let pack = recall_high_in(
+            &facade,
+            &Placed {
+                host: &host,
+                on_device,
+            },
+            "lantern",
+            Some(crate::memory::RecallScope {
+                world_ref: Some(world.to_hex()),
+                ..Default::default()
+            }),
+        );
+
+        assert!(
+            host.seen.lock().unwrap().contains(&kept),
+            "on device {on_device}: {pack:?}"
+        );
+        let sent = sent.lock().unwrap();
+        assert_eq!(
+            sent.iter().any(|text| text.contains("under the mat")),
+            on_device,
+            "{sent:?}"
+        );
+        assert!(
+            sent.iter().any(|text| text.contains("brass lantern hook")),
+            "{sent:?}"
+        );
+    }
+}
+
+/// A row sent empty was sent nothing to judge, so it scores last, whatever
+/// the model makes of no words. Before, the model's score for an empty text
+/// stood: here one that prefers no words would have put the claim it was
+/// sent nothing of first.
+#[test]
+fn a_row_sent_empty_scores_last() {
+    let (_dir, vault) = open_embedding_vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let facade = facade_for(&vault, owner);
+    let (world, _, _) = device_only_world(&vault, owner);
+    let host = scripted(
+        &|_: usize, text: &str| if text.is_empty() { 100.0 } else { 1.0 },
+        &|_: usize| {},
+    );
+
+    let pack = recall_high_in(
+        &facade,
+        &host,
+        "lantern",
+        Some(crate::memory::RecallScope {
+            world_ref: Some(world.to_hex()),
+            kinds: Some(vec!["CLAIM".to_owned()]),
+            ..Default::default()
+        }),
+    );
+
+    assert_eq!(host.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let order: Vec<&str> = pack
+        .items
+        .iter()
+        .map(|item| item.value_text.as_str())
+        .collect();
+    assert_eq!(order.len(), 2, "{pack:?}");
+    assert!(order[0].contains("brass lantern hook"), "{order:?}");
 }

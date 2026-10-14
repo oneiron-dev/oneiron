@@ -240,10 +240,12 @@ fn access_factor_applied_post_fusion() -> Result<()> {
         "decay changes rank, never survival"
     );
 
-    // ONE-2702: the PPR seed now leads on relevance; the twin claims still tie and order by id.
+    // ONE-2702 made relevance a blend input; EMBED-PACK scores the phonetic
+    // list over every candidate, so the seed, which matched no code, follows
+    // the twin claims. The twins still tie and order by id.
     assert_eq!(
         baseline.iter().map(|scored| scored.id).collect::<Vec<_>>(),
-        vec![seed, decayed, control],
+        vec![decayed, control, seed],
         "undecayed, the decayed claim leads its identical twin"
     );
     assert_eq!(

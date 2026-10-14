@@ -114,7 +114,13 @@ fn live_exact_claim_preserves_search_text_limit() -> Result<()> {
     put_text(&vault, lower_ranked_exact_doc, "livegateprefix")?;
     put_claim_text(&vault, live_prefix, "livegateprefixalpha", None)?;
 
-    let results = vault.query().search_text("livegateprefix", 1).run()?;
+    // EMBED-PACK: the text channel fetches its fusion list length whatever it
+    // is asked for, so the pack's limit is what caps the results.
+    let results = vault
+        .query()
+        .search_text("livegateprefix", 1)
+        .limit(1)
+        .run()?;
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].id, live_exact);
@@ -202,10 +208,13 @@ fn prefix_scope_widening_preserves_exact_text_limit_after_type_filter() -> Resul
         .text(&in_scope_extra, &[("body", "limitfilterneedle")])
         .commit()?;
 
+    // EMBED-PACK: the text channel fetches its fusion list length whatever it
+    // is asked for, so the pack's limit is what caps the results.
     let results = vault
         .query()
         .search_text("limitfilterneedle", 1)
         .filter_types(&[1])
+        .limit(1)
         .run()?;
 
     assert_eq!(results.len(), 1);
