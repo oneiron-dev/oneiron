@@ -341,6 +341,9 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
     assert!(!seats_of(&g, id).contains(&leader));
 
     // (h′) Two identical seal requests in one second: the second repeats.
+    // Seal time is the authority clock's, which ticks from the vault's own
+    // anchor, so each try starts right after a tick; a pair that load carries
+    // across the next tick is two seconds and two seals, and tries again.
     let sealer = owner(&vault)?;
     let mut authority = project.s0.authority_at(ProjectProofVersion::V3);
     authority.roster = Some(BTreeSet::from([leader.to_hex(), z.to_hex()]));
@@ -348,22 +351,38 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
     let (issuer, slip) = host_slip(&vault)?;
     let wire = slip.to_token()?;
     let signer = |challenge: &[u8]| issuer.binding_proof(&slip, challenge);
-    while std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| invalid())?
-        .subsec_millis()
-        > 300
-    {
-        std::thread::sleep(std::time::Duration::from_millis(20));
+    let seal_clock = || -> Result<u64> {
+        let txn = vault.store.env.read_txn()?;
+        let floor = crate::authority::AUTHORITY_FIRST_SEEN
+            .get_lenient(
+                &vault.store,
+                &txn,
+                &crate::authority::authority_first_seen_clock_key(),
+            )?
+            .unwrap_or(0);
+        Ok(crate::authority::authority_observation_secs(
+            &vault.store,
+            floor,
+            vault.store.clock.now_recorded_at(),
+        ))
+    };
+    let mut first = None;
+    for _ in 0..5 {
+        let start = seal_clock()?;
+        while seal_clock()? == start {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        first =
+            Some(vault.seal_project(&sealer, id, authority.clone(), base, wire.clone(), signer)?);
+        match vault.seal_project(&sealer, id, authority.clone(), base, wire.clone(), signer) {
+            Err(error) => {
+                assert_eq!(error.kind(), ErrorKind::ProjectAuthorityUnresolved);
+                break;
+            }
+            Ok(_) => first = None,
+        }
     }
-    let first = vault.seal_project(&sealer, id, authority.clone(), base, wire.clone(), signer)?;
-    assert_eq!(
-        vault
-            .seal_project(&sealer, id, authority.clone(), base, wire.clone(), signer)
-            .unwrap_err()
-            .kind(),
-        ErrorKind::ProjectAuthorityUnresolved
-    );
+    let first = first.ok_or_else(invalid)?;
     std::thread::sleep(std::time::Duration::from_millis(1100));
     let second = vault.seal_project(&sealer, id, authority, base, wire, signer)?;
     assert_ne!(first, second);
