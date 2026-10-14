@@ -38,6 +38,15 @@ pub(crate) fn pinned_store_clock(now: u64) -> oneiron::store::ports::StoreClock 
     oneiron::store::ports::StoreClock::new(pinned.clone(), pinned)
 }
 
+/// `config` on an engine clock pinned at `now`.
+pub(crate) fn on_pinned_clock(
+    mut config: oneiron::config::VaultConfig,
+    now: u64,
+) -> oneiron::config::VaultConfig {
+    config.store_clock = pinned_store_clock(now);
+    config
+}
+
 /// Canonical test entity id: `[seed; 16]`. Panics on production-pinned seeds,
 /// including `entity(0)`. See `test_util::entity` for the full contract.
 pub(crate) fn entity(seed: u8) -> EntityId {

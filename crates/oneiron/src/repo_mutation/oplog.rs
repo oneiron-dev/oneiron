@@ -210,9 +210,11 @@ impl Vault {
                     expected != stale.pre_action_fork_hash && actual_matches(expected)
                 })
             {
+                // The interrupted operation finishes on its own admitted ref,
+                // not the ref of whichever call triggered this recovery.
                 let repo_conflict_claim_id = finish_repo_mutation_roll_forward(
                     self,
-                    repo_ref,
+                    &stale.repo_ref,
                     repo_root,
                     &stale,
                     recovery_intent.as_ref(),
@@ -268,7 +270,7 @@ impl Vault {
 
             if let Some(outcome) = super::document::resume_reviewed_document(
                 self,
-                repo_ref,
+                &stale.repo_ref,
                 repo_root,
                 &stale,
                 prepared_commit.as_ref(),

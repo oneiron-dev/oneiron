@@ -1462,6 +1462,78 @@ fn repo_conflict_resolution_supersedes_open_claim_and_writes_clean_tree() {
     );
 }
 
+/// A resolution interrupted after its commit and claims, once an unrelated
+/// write had moved HEAD: the next write names the HEAD the resolution moved
+/// to, and its recovery pass finishes the resolution on its own pin.
+#[test]
+fn an_interrupted_resolution_rolls_forward_under_the_next_writes_head() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    create_conflicting_branches(&repo);
+    let branch_subject = put_branch_subject(&vault);
+    let open = vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref(&repo),
+            RepoMutationOperation::RecordConflict {
+                branch_subject,
+                branch_name: "left".to_owned(),
+                ours_ref: "left".to_owned(),
+                theirs_ref: "right".to_owned(),
+            },
+        ))
+        .expect("record conflict")
+        .repo_conflict_claim_id
+        .expect("open claim id");
+    run_git_at_path(repo.path(), &["checkout".to_owned(), "left".to_owned()])
+        .expect("checkout left");
+    let write = |path: &str| {
+        vault.apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref(&repo),
+            RepoMutationOperation::CommitFile {
+                path: path.to_owned(),
+                content: b"written\n".to_vec(),
+                message: format!("write {path}"),
+            },
+        ))
+    };
+    write("unrelated.txt").expect("an unrelated write moves HEAD");
+    let pinned = repo_ref(&repo);
+    INJECT_REPO_MUTATION_CRASH
+        .with(|cell| cell.set(RepoMutationCrashPoint::AfterActionBeforeApplied));
+    vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            pinned.clone(),
+            RepoMutationOperation::ResolveConflictFile {
+                branch_subject,
+                open_conflict_claim_id: open,
+                branch_name: "left".to_owned(),
+                path: "README.md".to_owned(),
+                content: b"resolved branch\n".to_vec(),
+                message: "resolve readme conflict".to_owned(),
+            },
+        ))
+        .expect_err("injected crash after the resolution commit");
+
+    let next = write("next.txt").expect("the next write lands after recovery");
+    assert_eq!(next.entry.status, RepoMutationStatus::Applied);
+    let log = vault.repo_mutation_oplog(&repo_ref(&repo)).expect("oplog");
+    assert!(
+        log.iter()
+            .all(|entry| entry.status != RepoMutationStatus::Prepared)
+    );
+    let resolutions = vault
+        .repo_conflict_resolution_claims(&branch_subject)
+        .expect("resolution claims");
+    assert_eq!(resolutions.len(), 1);
+    assert_eq!(resolutions[0].repo_ref, pinned);
+    assert!(
+        vault
+            .repo_conflict_claims(&branch_subject)
+            .expect("active open conflicts")
+            .is_empty()
+    );
+}
+
 #[test]
 fn repo_conflict_resolution_roll_forward_completes_claims_after_commit_crash() {
     let (_vault_dir, vault) = open_test_vault();
@@ -1530,8 +1602,10 @@ fn repo_conflict_resolution_roll_forward_completes_claims_after_commit_crash() {
             .is_empty()
     );
 
+    // Recovery runs under the HEAD the resolution moved to; the resolution
+    // still finishes on the pin it was admitted with.
     let recovered = vault
-        .recover_prepared_repo_mutations(&canonical)
+        .recover_prepared_repo_mutations(&repo_ref(&repo))
         .expect("roll forward conflict resolution");
     assert_eq!(recovered.len(), 1);
     assert_eq!(
@@ -1550,6 +1624,7 @@ fn repo_conflict_resolution_roll_forward_completes_claims_after_commit_crash() {
     assert_eq!(resolutions.len(), 1);
     assert_eq!(resolutions[0].claim_id, resolution_claim_id);
     assert_eq!(resolutions[0].open_conflict_claim_id, open);
+    assert_eq!(resolutions[0].repo_ref, canonical);
     let open_body = vault
         .get_claim(&open)
         .expect("get open claim")

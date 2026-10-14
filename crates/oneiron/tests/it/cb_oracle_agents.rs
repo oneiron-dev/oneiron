@@ -2287,9 +2287,7 @@ mod lead_fixture {
 
         /// The fixture on a vault whose engine clock is pinned at `now`.
         pub(crate) fn open_at(now: u64) -> Self {
-            let mut config = VaultConfig::device();
-            config.store_clock = crate::common::pinned_store_clock(now);
-            Self::open_with(config)
+            Self::open_with(crate::common::on_pinned_clock(VaultConfig::device(), now))
         }
 
         fn open_with(mut config: VaultConfig) -> Self {

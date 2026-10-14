@@ -954,9 +954,9 @@ mod cb_a {
         };
 
         // The engine's clock sits inside the consult window the answers name.
-        let mut config = VaultConfig::default();
-        config.store_clock = crate::common::pinned_store_clock(super::CONSULT_NOW + 10);
-        let fixture = super::consult_fixture::ConsultFixture::open_with(config);
+        let fixture = super::consult_fixture::ConsultFixture::open_with(
+            crate::common::on_pinned_clock(VaultConfig::default(), super::CONSULT_NOW + 10),
+        );
         let peers = [
             fixture.peer("cc-first", 0xE2),
             fixture.peer("cc-second", 0xE4),
