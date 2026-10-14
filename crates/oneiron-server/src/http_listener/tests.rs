@@ -1,15 +1,18 @@
 //! The listener's admission, end to end over real sockets (C4): headers that
-//! never finish are closed at the deadline, a socket past the bound is shed
-//! while admitted ones keep working, a WebSocket keeps its permit past the
-//! header deadline, and routes still see the socket peer.
+//! never finish are closed at the deadline, a body that stops arriving gives
+//! its connection back while a slow one that keeps arriving is served, a
+//! socket past the bound is shed while admitted ones keep working, a
+//! WebSocket keeps its permit past the header deadline, and routes still see
+//! the socket peer.
 
 use std::net::SocketAddr;
 use std::time::Duration;
 
 use axum::Router;
+use axum::body::Bytes;
 use axum::extract::ConnectInfo;
 use axum::extract::ws::{Message, WebSocketUpgrade};
-use axum::routing::get;
+use axum::routing::{get, post};
 use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -51,6 +54,10 @@ fn app() -> Router {
                 "finished"
             }),
         )
+        .route(
+            "/length",
+            post(|body: Bytes| async move { body.len().to_string() }),
+        )
 }
 
 struct Served {
@@ -86,6 +93,7 @@ fn limits(max_connections: usize, header_read_timeout: Duration) -> ConnectionLi
         max_connections,
         max_connections_per_peer: 1,
         header_read_timeout,
+        body_idle_timeout: PATIENCE,
     }
 }
 
@@ -180,6 +188,56 @@ async fn headers_that_never_finish_are_closed_at_the_deadline() {
 }
 
 #[tokio::test]
+async fn a_body_that_stops_arriving_gives_its_connection_back() {
+    let served = start(
+        "127.0.0.1:0",
+        ConnectionLimits {
+            body_idle_timeout: Duration::from_millis(300),
+            ..limits(1, PATIENCE)
+        },
+    )
+    .await;
+
+    // Whole headers, then three of the ten body bytes they promise: the
+    // header deadline is behind it and the route is waiting on the body.
+    let mut stalled = TcpStream::connect(served.addr).await.unwrap();
+    stalled
+        .write_all(b"POST /length HTTP/1.1\r\nhost: listener\r\ncontent-length: 10\r\n\r\nabc")
+        .await
+        .unwrap();
+    assert!(
+        until_closed(&mut stalled).await.is_some(),
+        "a body that stops arriving is ended at the idle limit"
+    );
+    // Its connection held the only permit, and has given it back.
+    let _admitted = served_again(served.addr).await;
+}
+
+#[tokio::test]
+async fn a_slow_body_that_keeps_arriving_is_served() {
+    let served = start(
+        "127.0.0.1:0",
+        ConnectionLimits {
+            body_idle_timeout: Duration::from_millis(300),
+            ..limits(1, PATIENCE)
+        },
+    )
+    .await;
+
+    let mut stream = TcpStream::connect(served.addr).await.unwrap();
+    stream
+        .write_all(b"POST /length HTTP/1.1\r\nhost: listener\r\ncontent-length: 10\r\n\r\n")
+        .await
+        .unwrap();
+    // Every gap is inside the idle limit; together they are well past it.
+    for byte in b"0123456789" {
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        stream.write_all(&[*byte]).await.unwrap();
+    }
+    assert_eq!(read_response(&mut stream).await, (200, "10".to_owned()));
+}
+
+#[tokio::test]
 async fn past_the_bound_new_sockets_are_shed_while_admitted_ones_finish() {
     let served = start("127.0.0.1:0", limits(2, PATIENCE)).await;
 
@@ -226,6 +284,7 @@ async fn one_off_device_peer_holds_only_its_share() {
             max_connections: 8,
             max_connections_per_peer: 1,
             header_read_timeout: PATIENCE,
+            body_idle_timeout: PATIENCE,
         },
     )
     .await;

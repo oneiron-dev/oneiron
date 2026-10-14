@@ -19,6 +19,9 @@ pub struct LimitsConfig {
     /// How long a request's headers may take to arrive, in milliseconds. It
     /// also bounds how long an idle keep-alive connection stays open.
     pub header_read_timeout_ms: u64,
+    /// How long a route may wait for the next piece of a request body, in
+    /// milliseconds, before the body fails and the connection is closed.
+    pub body_idle_timeout_ms: u64,
     /// `git http-backend` exchanges at once, each one child process.
     pub git_exchanges: usize,
     /// Git exchanges one principal may hold at once.
@@ -42,6 +45,7 @@ impl Default for LimitsConfig {
             max_connections: 512,
             max_connections_per_peer: 64,
             header_read_timeout_ms: 30_000,
+            body_idle_timeout_ms: 60_000,
             git_exchanges: 8,
             git_exchanges_per_principal: 4,
             lfs_transfers: 8,
@@ -61,6 +65,7 @@ impl LimitsConfig {
             max_connections: self.max_connections,
             max_connections_per_peer: self.max_connections_per_peer,
             header_read_timeout: Duration::from_millis(self.header_read_timeout_ms),
+            body_idle_timeout: Duration::from_millis(self.body_idle_timeout_ms),
         }
     }
 
@@ -69,6 +74,7 @@ impl LimitsConfig {
             max_connections,
             max_connections_per_peer,
             header_read_timeout_ms,
+            body_idle_timeout_ms,
             git_exchanges,
             git_exchanges_per_principal,
             lfs_transfers,
@@ -79,6 +85,7 @@ impl LimitsConfig {
         set(&mut self.max_connections, max_connections);
         set(&mut self.max_connections_per_peer, max_connections_per_peer);
         set(&mut self.header_read_timeout_ms, header_read_timeout_ms);
+        set(&mut self.body_idle_timeout_ms, body_idle_timeout_ms);
         set(&mut self.git_exchanges, git_exchanges);
         set(
             &mut self.git_exchanges_per_principal,
@@ -103,6 +110,7 @@ impl LimitsConfig {
                 self.max_connections_per_peer as u64,
             ),
             ("header_read_timeout_ms", self.header_read_timeout_ms),
+            ("body_idle_timeout_ms", self.body_idle_timeout_ms),
             ("git_exchanges", self.git_exchanges as u64),
             (
                 "git_exchanges_per_principal",
@@ -137,6 +145,7 @@ pub(super) struct LimitsConfigOverride {
     pub(super) max_connections: Option<usize>,
     pub(super) max_connections_per_peer: Option<usize>,
     pub(super) header_read_timeout_ms: Option<u64>,
+    pub(super) body_idle_timeout_ms: Option<u64>,
     pub(super) git_exchanges: Option<usize>,
     pub(super) git_exchanges_per_principal: Option<usize>,
     pub(super) lfs_transfers: Option<usize>,

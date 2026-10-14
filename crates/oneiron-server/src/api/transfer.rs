@@ -120,10 +120,8 @@ pub(super) async fn feed_body(
                 let _ = pieces.send(Ok(None)).await;
                 return;
             }
-            Ok(Some(Err(_))) => {
-                let _ = pieces
-                    .send(Err(io::Error::other("request body failed")))
-                    .await;
+            Ok(Some(Err(error))) => {
+                let _ = pieces.send(Err(body_failure(error))).await;
                 return;
             }
             Err(_) => {
@@ -147,6 +145,20 @@ pub(super) async fn feed_body(
                 return;
             }
         }
+    }
+}
+
+/// A body that failed, as the worker reads it. A body the listener ended
+/// for going quiet is a stall like one this feed times out itself.
+fn body_failure(error: axum::Error) -> io::Error {
+    let stalled = error
+        .into_inner()
+        .downcast_ref::<io::Error>()
+        .is_some_and(|error| error.kind() == io::ErrorKind::TimedOut);
+    if stalled {
+        io::Error::new(io::ErrorKind::TimedOut, "request body stalled")
+    } else {
+        io::Error::other("request body failed")
     }
 }
 
