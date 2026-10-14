@@ -5,6 +5,7 @@ mod effort;
 mod terminal;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::Vault;
 use crate::codebase::RepoRef;
@@ -16,6 +17,7 @@ use crate::query_expansion::{GroundingContext, HydeExpander, HydeOptions};
 use crate::rerank::{RerankOptions, Reranker};
 use crate::store::RetrievalAction;
 use crate::temporal::{TemporalAnchorMode, TemporalGranularity, TimeRange};
+use crate::vault::NoMatchFloors;
 
 use super::support::normalize_range;
 use super::types::{
@@ -96,6 +98,9 @@ pub struct PipelineBuilder<'a> {
     pub(super) hyde: Option<(&'a dyn HydeExpander, GroundingContext, HydeOptions)>,
     pub(super) access_factor_overrides: Option<&'a HashMap<EntityId, f32>>,
     pub(super) skip_vector_rescore: bool,
+    /// The no-match floors the run judges, hashes and records by, read once
+    /// when it starts ([`Self::no_match_floors`]).
+    pub(super) no_match_floors: Option<Arc<NoMatchFloors>>,
     /// Additive session routing (ONE-1728 K10). `None` on every canonical
     /// entry, which is therefore behaviorally unchanged; a retrieval issued
     /// inside a room passes the room's registration door so the retrieval-run
@@ -160,8 +165,18 @@ impl<'a> PipelineBuilder<'a> {
             hyde: None,
             access_factor_overrides: None,
             skip_vector_rescore: false,
+            no_match_floors: None,
             session: None,
         }
+    }
+
+    /// The no-match floors this run judges by and records: the vault's
+    /// floors as the run read them when it started, so floors a host sets
+    /// mid-run judge the next run, not part of this one.
+    pub(super) fn no_match_floors(&self) -> Arc<NoMatchFloors> {
+        self.no_match_floors
+            .clone()
+            .unwrap_or_else(|| Arc::new(self.vault.no_match_floors()))
     }
 
     /// Selects the exact executor model@revision for skill reliability ranking.
@@ -269,9 +284,10 @@ impl<'a> PipelineBuilder<'a> {
     /// Attaches a host-injected top-N reranker for this run (RET-010,
     /// 1186-D2). Presence IS the feature flag: no reranker attached means
     /// rerank is off and the pipeline behaves exactly as before. The block
-    /// size is `options.top_n`; the pipeline never overfetches on rerank's
-    /// behalf — the reranker only sees more than `result_limit` candidates
-    /// when the caller's per-channel limits exceed `result_limit`.
+    /// is the fused list's top `options.top_n`; the pipeline fetches nothing
+    /// more on rerank's behalf. Each channel fetches its fusion list length
+    /// (`FUSION_LIST_LENGTH`, 80), or the caller's limit when
+    /// larger, so the block can hold more candidates than `result_limit`.
     pub fn rerank(mut self, reranker: &'a dyn Reranker, options: RerankOptions) -> Self {
         self.rerank = Some((reranker, options));
         self

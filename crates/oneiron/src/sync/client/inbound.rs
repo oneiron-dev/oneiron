@@ -429,6 +429,8 @@ impl SyncClient {
                     "staged world update has missing causal history",
                 ));
             }
+            let tombstones =
+                crate::sync::loro_support::TombstoneIndex::build(&candidate.get_map("tombstones"));
             let mut entities = Vec::new();
             crate::sync::loro_support::map_for_each_value_bytes(
                 &candidate.get_map("entities"),
@@ -457,6 +459,7 @@ impl SyncClient {
                         &self.vault,
                         &txn,
                         &candidate,
+                        &tombstones,
                         &id,
                         &blob,
                         key,
@@ -591,6 +594,8 @@ impl SyncClient {
             let witnesses = candidate.get_map("retained_claim_worlds");
             let mut ids = Vec::new();
             witnesses.for_each(|raw, _| ids.push(raw.to_owned()));
+            let tombstones =
+                crate::sync::loro_support::TombstoneIndex::build(&candidate.get_map("tombstones"));
             self.vault
                 .with_write_txn_grouped(|txn| {
                     for raw in &ids {
@@ -602,6 +607,7 @@ impl SyncClient {
                             &self.vault,
                             txn,
                             &candidate,
+                            &tombstones,
                             &id,
                             &blob,
                             &window.key,
