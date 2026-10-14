@@ -13,14 +13,15 @@ use crate::error::{Error, Result};
 use crate::llm::{BudgetLease, LlmBackend};
 use crate::store::GateSystemNoticeRecord;
 
-use super::classify::OwnerPlanePass;
 use super::notice::{
     POLICY_MODEL_HELP_MESSAGE, default_system_notice, policy_model_rationale_notice, policy_notice,
 };
 use super::planes::PolicyPlane;
 use super::receipt::policy_model_reason_codes;
 use super::request::{PolicyClassifyRequest, PolicyModelConfig};
-use super::verdict::{PolicyClassifyDecision, PolicyClassifyVerdict, PolicyVerdictCategory};
+use super::verdict::{
+    PolicyClassifyDecision, PolicyClassifyVerdict, PolicySkipReason, PolicyVerdictCategory,
+};
 use crate::error::RelayError;
 
 /// The manifest moved out from under the pass twice running, so no verdict
@@ -70,6 +71,10 @@ pub enum PolicyEnforcementAction {
     Block,
     RouteToHelp,
     Hold,
+    /// The owner plane's model did not answer. The content is delivered
+    /// unread, because that plane is sovereign, and it is never reported as
+    /// an `Allow`.
+    Skipped,
 }
 
 impl PolicyEnforcementAction {
@@ -81,6 +86,7 @@ impl PolicyEnforcementAction {
             Self::Block => "block",
             Self::Hold => "hold",
             Self::RouteToHelp => "route_to_help",
+            Self::Skipped => "skipped",
         }
     }
 
@@ -91,10 +97,12 @@ impl PolicyEnforcementAction {
             PolicyClassifyDecision::Block => Self::Block,
             PolicyClassifyDecision::Hold => Self::Hold,
             PolicyClassifyDecision::RouteToHelp => Self::RouteToHelp,
+            PolicyClassifyDecision::Skipped(_) => Self::Skipped,
         }
     }
 
-    /// Whether the caller must not deliver the content. `Warn` delivers.
+    /// Whether the caller must not deliver the content. `Warn` and `Skipped`
+    /// deliver.
     #[must_use]
     pub const fn halts(self) -> bool {
         matches!(self, Self::Block | Self::RouteToHelp | Self::Hold)
@@ -151,7 +159,8 @@ pub struct PolicyModelEnforcement {
     pub classify_trace: Vec<PolicyClassifyVerdict>,
     pub pre_display_block: bool,
     pub barge_in_kill: Option<PolicyBargeInKill>,
-    /// The owner plane did not get to run: its safeguard model was down.
+    /// The owner plane did not get to run: its safeguard model was down. Always
+    /// true when [`Self::action`] is [`PolicyEnforcementAction::Skipped`].
     pub custom_tier_skipped: bool,
 }
 
@@ -181,7 +190,8 @@ impl Vault {
     /// A downed model, an unreadable answer and an unwritten policy document
     /// all read as "the owner plane did not run" rather than as a failure —
     /// nothing below the owner plane exists to fall back to, so the content
-    /// passes through and `custom_tier_skipped` records the fact.
+    /// passes through as [`PolicyEnforcementAction::Skipped`] and
+    /// `custom_tier_skipped` records the fact.
     ///
     /// # The manifest can move while the model is answering
     ///
@@ -211,17 +221,7 @@ impl Vault {
                 return self.stale_owner_plane_fail_open(request, config);
             }
         }
-        let OwnerPlanePass {
-            verdict,
-            model_skipped,
-        } = pass;
-        self.enforcement_from_verdict(
-            request,
-            config,
-            verdict,
-            model_skipped,
-            DecisionLedger::Record,
-        )
+        self.enforcement_from_verdict(request, config, pass.verdict, false, DecisionLedger::Record)
     }
 
     /// The owner plane could not pin a verdict to the policy in force, so it
@@ -233,7 +233,12 @@ impl Vault {
         config: &PolicyModelConfig,
     ) -> Result<PolicyModelEnforcement> {
         let binding = self.policy_model_context(&request, config)?.binding;
-        let verdict = PolicyClassifyVerdict::clean_allow(binding, config, PolicyPlane::OwnerPolicy);
+        let verdict = PolicyClassifyVerdict::skipped(
+            PolicySkipReason::PolicyMoving,
+            binding,
+            config,
+            PolicyPlane::OwnerPolicy,
+        );
         let receipt_ref = self.append_policy_model_gate_receipt(
             &request,
             &verdict,
@@ -245,7 +250,7 @@ impl Vault {
             Vec::new(),
         )?;
         Ok(PolicyModelEnforcement {
-            action: PolicyEnforcementAction::Allow,
+            action: PolicyEnforcementAction::Skipped,
             classify_trace: vec![verdict.clone()],
             verdict,
             final_content: Some(request.content),
@@ -271,7 +276,9 @@ impl Vault {
     ///
     /// `custom_tier_skipped` is the caller's to supply: it is
     /// [`DualPlanePass::owner_model_skipped`] for that pass, and `false` for a
-    /// verdict a model answered.
+    /// verdict a model answered. It can only add the fact, never erase it: a
+    /// [`PolicyClassifyDecision::Skipped`] verdict is enforced as skipped
+    /// whatever the flag says.
     ///
     /// # The producing door owns the ledger row
     ///
@@ -379,6 +386,7 @@ impl Vault {
         ledger: DecisionLedger,
     ) -> Result<PolicyModelEnforcement> {
         let action = PolicyEnforcementAction::for_decision(verdict.decision);
+        let custom_tier_skipped = custom_tier_skipped || action == PolicyEnforcementAction::Skipped;
         let classify_trace = vec![verdict.clone()];
         // An allow that learned nothing carries no signal and is not
         // receipted. An allow that DID learn something — a pattern fired and

@@ -38,6 +38,7 @@ mod outage_contracts;
 mod owner_decisions_ledger;
 mod owner_manifest_binding;
 mod receipt_binding_citations;
+mod skipped_verdicts;
 mod support;
 
 use self::support::*;

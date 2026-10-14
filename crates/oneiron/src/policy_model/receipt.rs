@@ -126,6 +126,9 @@ pub(super) fn policy_model_reason_codes(verdict: &PolicyClassifyVerdict) -> Vec<
         "gate.policy_model.{}",
         verdict.decision.ledger_str()
     )];
+    if let Some(reason) = verdict.decision.skip_reason() {
+        reasons.push(format!("gate.policy_model.skip_reason.{}", reason.as_str()));
+    }
     reasons.push(policy_model_category_reason(&verdict.category).to_owned());
     if let PolicyVerdictCategory::HostedLegal { category, .. } = &verdict.category {
         reasons.push(format!(

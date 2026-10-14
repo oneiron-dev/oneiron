@@ -38,11 +38,10 @@ fn a_bare_classify_then_the_enforce_door_leaves_exactly_one_row() -> Result<()> 
 
 #[test]
 fn a_bare_classify_whose_model_did_not_answer_still_receipts_the_fail_open() -> Result<()> {
-    // The verdict a downed model produces is exactly the one the silence rule
-    // drops: a clean allow that learned nothing. But it is the SOVEREIGN PLANE
-    // FALLING OPEN, and content shipped because nothing looked at it is the
-    // fact the owner is most owed. No pattern here, so nothing else would
-    // carry it either.
+    // A downed model learns nothing, but its verdict is a skip, not the clean
+    // allow the silence rule drops: it is the SOVEREIGN PLANE FALLING OPEN, and
+    // content shipped because nothing looked at it is the fact the owner is
+    // most owed. No pattern here, so nothing else would carry it either.
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
@@ -60,7 +59,10 @@ fn a_bare_classify_whose_model_did_not_answer_still_receipts_the_fail_open() -> 
         &lease("bare-classify-fail-open"),
     ))?;
 
-    assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
+    assert_eq!(
+        verdict.decision,
+        PolicyClassifyDecision::Skipped(PolicySkipReason::BackendUnavailable)
+    );
     assert!(
         verdict.audit.is_none(),
         "nothing was learned — which is precisely why the silence rule would have dropped it"

@@ -75,7 +75,10 @@ fn the_owner_plane_fails_open_where_the_hosted_plane_fails_closed() -> Result<()
         &backend,
         &lease("owner-fails-open"),
     ))?;
-    assert_eq!(owner.decision, PolicyClassifyDecision::Allow);
+    assert_eq!(
+        owner.decision,
+        PolicyClassifyDecision::Skipped(PolicySkipReason::ResponseUnusable)
+    );
 
     let budget = lease("hosted-fails-closed");
     let hosted = relay_pass(

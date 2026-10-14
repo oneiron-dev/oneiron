@@ -162,14 +162,11 @@ impl Vault {
         let owner = owner?;
         let relay = relay?;
         self.record_owner_plane_receipt(&request, &owner, config)?;
-        let OwnerPlanePass {
-            verdict,
-            model_skipped,
-        } = owner;
+        let owner_model_skipped = owner.model_skipped();
         Ok(DualPlanePass {
-            owner: verdict,
+            owner: owner.verdict,
             relay,
-            owner_model_skipped: model_skipped,
+            owner_model_skipped,
         })
     }
 }
@@ -194,10 +191,7 @@ impl Vault {
         config: &PolicyModelConfig,
     ) -> Result<()> {
         let verdict = &pass.verdict;
-        if verdict.decision == PolicyClassifyDecision::Allow
-            && verdict.audit.is_none()
-            && !pass.model_skipped
-        {
+        if verdict.decision == PolicyClassifyDecision::Allow && verdict.audit.is_none() {
             return Ok(());
         }
         let mut reason_codes = vec![
@@ -207,7 +201,7 @@ impl Vault {
                 config.owner_classifier_mode.as_str()
             ),
         ];
-        if pass.model_skipped {
+        if pass.model_skipped() {
             reason_codes.push("gate.relay.owner_plane.model_skipped".to_owned());
             reason_codes.push("gate.relay.owner_plane.fail_open".to_owned());
         }

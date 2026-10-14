@@ -403,7 +403,7 @@ fn resolve_hosted_violation(
 /// Ordering only — never stored, never emitted.
 const fn decision_severity(decision: PolicyClassifyDecision) -> u8 {
     match decision {
-        PolicyClassifyDecision::Allow => 0,
+        PolicyClassifyDecision::Allow | PolicyClassifyDecision::Skipped(_) => 0,
         PolicyClassifyDecision::Warn => 1,
         PolicyClassifyDecision::RouteToHelp => 2,
         PolicyClassifyDecision::Hold => 4,

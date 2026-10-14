@@ -307,14 +307,16 @@ impl RelayBoundaryPass {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DualPlanePass {
     /// The vault owner's own verdict. A clean `Allow` when the owner's plane
-    /// is off, has no document, or its model did not answer — that plane is
-    /// sovereign and fails open.
+    /// is off; [`PolicyClassifyDecision::Skipped`] when it has no document or
+    /// its model did not answer — that plane is sovereign and fails open, but
+    /// never as an `Allow`.
     pub owner: PolicyClassifyVerdict,
     /// The hosted relay boundary's pass, which is what decides whether the
     /// relay may proceed.
     pub relay: RelayBoundaryPass,
     /// The owner plane wanted a model verdict and did not get one. Never halts
-    /// anything; the caller is simply owed the fact.
+    /// anything; the caller is simply owed the fact. Mirrors
+    /// [`PolicyClassifyDecision::skip_reason`] on [`Self::owner`].
     pub owner_model_skipped: bool,
 }
 

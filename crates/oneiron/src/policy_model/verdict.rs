@@ -7,8 +7,8 @@ use super::pattern::PolicyPatternRole;
 use super::planes::PolicyPlane;
 use super::request::{PolicyModelConfig, RelayClassifierMode};
 
-/// The four things a policy verdict can ask for. `Warn` is the only non-`Allow`
-/// arm that still delivers the content, and it delivers it BYTE-IDENTICALLY —
+/// What a policy verdict can ask for. `Warn` and `Skipped` are the non-`Allow`
+/// arms that still deliver the content, and they deliver it BYTE-IDENTICALLY —
 /// there is deliberately no arm that returns rewritten content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -18,6 +18,45 @@ pub enum PolicyClassifyDecision {
     Block,
     RouteToHelp,
     Hold,
+    /// The plane wanted a model answer and got none, so nothing examined the
+    /// content. Not an `Allow`: an `Allow` is an answer. The owner's plane is
+    /// sovereign, so its content still goes out, but the caller is told it
+    /// went out unread.
+    Skipped(PolicySkipReason),
+}
+
+/// Why a plane that wanted a model answer has none. A closed set, so a ledger
+/// row or a host can name the cause without carrying an error's text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PolicySkipReason {
+    /// The door had no safeguard model in reach.
+    NoBackend,
+    /// The plane wants model coverage but the owner wrote no policy document
+    /// for a model to read.
+    NoDocument,
+    /// The model call failed.
+    BackendUnavailable,
+    /// The model answered, but not in a form the plane can resolve.
+    ResponseUnusable,
+    /// The classifier budget refused the call.
+    BudgetExhausted,
+    /// The policy moved under every pass, so no verdict could be pinned to it.
+    PolicyMoving,
+}
+
+impl PolicySkipReason {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NoBackend => "no_backend",
+            Self::NoDocument => "no_document",
+            Self::BackendUnavailable => "backend_unavailable",
+            Self::ResponseUnusable => "response_unusable",
+            Self::BudgetExhausted => "budget_exhausted",
+            Self::PolicyMoving => "policy_moving",
+        }
+    }
 }
 
 impl PolicyClassifyDecision {
@@ -29,6 +68,7 @@ impl PolicyClassifyDecision {
             Self::Block => "block",
             Self::Hold => "hold",
             Self::RouteToHelp => "route-to-help",
+            Self::Skipped(_) => "skipped",
         }
     }
 
@@ -42,6 +82,16 @@ impl PolicyClassifyDecision {
             Self::Block => "block",
             Self::Hold => "hold",
             Self::RouteToHelp => "route_to_help",
+            Self::Skipped(_) => "skipped",
+        }
+    }
+
+    /// Why nothing examined the content, or `None` for an answered verdict.
+    #[must_use]
+    pub const fn skip_reason(self) -> Option<PolicySkipReason> {
+        match self {
+            Self::Skipped(reason) => Some(reason),
+            _ => None,
         }
     }
 }
@@ -100,6 +150,12 @@ impl PolicyConfidence {
     pub(super) const MEDIUM: Self = Self {
         calibrated: 0.75,
         hedge_bucket: PolicyHedgeBucket::Medium,
+    };
+
+    /// No confidence: nothing examined the content.
+    pub(super) const UNEXAMINED: Self = Self {
+        calibrated: 0.0,
+        hedge_bucket: PolicyHedgeBucket::Low,
     };
 }
 
@@ -440,6 +496,24 @@ impl PolicyClassifyVerdict {
             PolicyClassifyDecision::Allow,
             PolicyVerdictCategory::None,
             PolicyConfidence::HIGH,
+            binding,
+            config,
+            plane,
+        )
+    }
+
+    /// The plane wanted a model answer and got none. The verdict carries no
+    /// category and no confidence, and it is never an `Allow`.
+    pub(super) fn skipped(
+        reason: PolicySkipReason,
+        binding: PolicyContentBinding,
+        config: &PolicyModelConfig,
+        plane: PolicyPlane,
+    ) -> Self {
+        Self::new(
+            PolicyClassifyDecision::Skipped(reason),
+            PolicyVerdictCategory::None,
+            PolicyConfidence::UNEXAMINED,
             binding,
             config,
             plane,

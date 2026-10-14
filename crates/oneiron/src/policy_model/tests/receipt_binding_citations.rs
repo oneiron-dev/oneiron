@@ -586,7 +586,11 @@ fn a_manifest_that_will_not_settle_fails_the_owner_plane_open_with_a_receipt() -
         &lease("unsettled-manifest"),
     ))?;
 
-    assert_eq!(outcome.action, PolicyEnforcementAction::Allow);
+    assert_eq!(outcome.action, PolicyEnforcementAction::Skipped);
+    assert_eq!(
+        outcome.verdict.decision,
+        PolicyClassifyDecision::Skipped(PolicySkipReason::PolicyMoving)
+    );
     assert_eq!(outcome.final_content.as_deref(), Some(original));
     assert!(outcome.custom_tier_skipped);
     assert!(outcome.receipt_ref.is_some());
