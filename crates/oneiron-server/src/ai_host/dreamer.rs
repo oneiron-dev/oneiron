@@ -10,6 +10,9 @@
 //! atomically with the end.
 use std::sync::Arc;
 
+use oneiron::dreamer_consolidation::{
+    DREAMER_EXTRACTION_ROLE, DREAMER_ROLES, RoleBackend, RoleBackends,
+};
 use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::llm::HostInferenceBinding;
 use oneiron::llm::manifest::ModelRole;
@@ -25,15 +28,13 @@ use oneiron_driver::{
 
 use super::policy::extraction_egress;
 use super::status::{StatusCell, WorkState, WorkStatus};
-use crate::config::models::DreamerSettings;
-use crate::models::{ModelRuntime, RunBackend, Seat};
+use crate::config::models::{DreamerSettings, role_key};
+use crate::models::{ModelRuntime, RoleRefusal, RoleRoute, RunBackend, Seat};
 
 /// Stamped on every admission and park this server makes.
 pub(super) const LEASE_OWNER: &str = "oneiron-server-dreamer";
 /// Base id of the per-pass durable budget rows (`dreamer:p<n>`).
 const BUDGET_ID: &str = "dreamer";
-/// The role a pass's extraction is admitted as; a vault's manifest binds it.
-pub(super) const EXTRACTION_ROLE: ModelRole = ModelRole::ExtractionTeacher;
 
 /// A running Dreamer: its stop handle, its hint producer and its thread.
 pub(super) struct DreamerHost {
@@ -194,12 +195,31 @@ fn now_ms() -> u64 {
 /// The run a Dreamer pass's model calls are admitted under.
 const DREAMER_PASS_RUN: &str = "dreamer-pass";
 
-/// The consolidation factory, rebuilt for each pass on the model that pass's
-/// extraction is admitted as, with each pass and attempt reported to status.
+/// Each Dreamer role's route: the vault manifest's binding for it, else the
+/// role's own `[models]` seat, else the Dreamer's seat (a one-model setup).
+pub(super) fn role_routes(
+    runtime: &ModelRuntime,
+    vault: &Vault,
+    seat: &Seat,
+) -> Result<Vec<(ModelRole, RoleRoute)>, (ModelRole, RoleRefusal)> {
+    DREAMER_ROLES
+        .into_iter()
+        .map(|role| {
+            runtime
+                .route_role(vault, role, runtime.seat(role).unwrap_or(seat))
+                .map(|route| (role, route))
+                .map_err(|refusal| (role, refusal))
+        })
+        .collect()
+}
+
+/// The consolidation factory, rebuilt for each pass on the models that
+/// pass's roles are admitted as, with each pass and attempt reported to
+/// status.
 struct ObservedFactory {
     vault: Arc<Vault>,
     runtime: Arc<ModelRuntime>,
-    /// The binding when the vault has no model manifest.
+    /// The binding of a role with no manifest row and no seat of its own.
     seat: Seat,
     actor: WriteActor,
     egress: bool,
@@ -213,35 +233,36 @@ impl PassExecutorFactory for ObservedFactory {
     type Exec<'p> =
         ObservedExecutor<'p, <ConsolidationExecutorFactory as PassExecutorFactory>::Exec<'p>>;
 
-    /// Resolves the extraction role against the vault's live manifest and
-    /// route, as a chat turn does, so the backend attests the model the
-    /// engine's admission selects. A route this server does not serve stops
+    /// Resolves each of the Dreamer's roles (extraction, the conflict
+    /// verdict, narrative) against the vault's live manifest and route, as a
+    /// chat turn does, so each role's backend attests the model the engine's
+    /// admission selects for it. A route this server does not serve stops
     /// the pass before any attempt is admitted.
     fn executor<'p>(
         &'p mut self,
         guard: &'p oneiron::BudgetGuard,
     ) -> oneiron::Result<Self::Exec<'p>> {
-        let route = match self
-            .runtime
-            .route_role(&self.vault, EXTRACTION_ROLE, &self.seat)
-        {
-            Ok(route) => route,
-            Err(refusal) => {
-                let error =
-                    oneiron::Error::InvalidConfig(format!("dreamer extraction refused: {refusal}"));
+        let routes = match role_routes(&self.runtime, &self.vault, &self.seat) {
+            Ok(routes) => routes,
+            Err((role, refusal)) => {
+                let error = oneiron::Error::InvalidConfig(format!(
+                    "dreamer {} refused: {refusal}",
+                    role_key(role)
+                ));
                 self.status
                     .update(|status| status.dreamer.last_error = Some(error.to_string()));
                 return Err(error);
             }
         };
-        // The pass's calls go out as a run on a line that mirrors the pass's
-        // own: its limit, and the vault's budget policy for the Dreamer's
-        // actor, so each rung's permit meets the same caps. Each rung takes
-        // its own permit through the run's gate, and the line charges what
-        // the engine's step layer does not see (a failed rung, an answer
-        // with no usage). The step layer still meters the pass on `guard`
-        // with its own lease; a line spent first traps the step on budget
-        // as the pass's own admission would.
+        // The pass's calls go out as one run per role, all on one line that
+        // mirrors the pass's own: its limit, and the vault's budget policy
+        // for the Dreamer's actor, so each rung's permit meets the same caps
+        // whichever role it serves. Each rung takes its own permit through
+        // its role's run, and the line charges what the engine's step layer
+        // does not see (a failed rung, an answer with no usage). The step
+        // layer still meters the pass on `guard` with its own lease; a line
+        // spent first traps the step on budget as the pass's own admission
+        // would.
         let line = self.vault.policy_budget_guard(
             DREAMER_PASS_RUN,
             guard.read().limit_units,
@@ -249,22 +270,39 @@ impl PassExecutorFactory for ObservedFactory {
             oneiron::BudgetExhaustionPolicy::Suspend,
             self.actor,
         )?;
-        let backend = RunBackend::new(
-            route.ladder,
-            self.runtime.undeclared_run(DREAMER_PASS_RUN, line),
-        );
+        let mut roles = RoleBackends::default();
+        for (role, route) in &routes {
+            let run = self.runtime.undeclared_run(
+                format!("{DREAMER_PASS_RUN}/{}", role_key(*role)),
+                line.clone(),
+            );
+            roles = roles.with(
+                *role,
+                RoleBackend {
+                    backend: Arc::new(RunBackend::new(Arc::clone(&route.ladder), run)),
+                    model: route.model.clone(),
+                    binding: HostInferenceBinding::Advertised {
+                        model: route.model.clone(),
+                        locality: route.locality,
+                    },
+                },
+            );
+        }
+        let extraction = roles
+            .get(DREAMER_EXTRACTION_ROLE)
+            .cloned()
+            .ok_or_else(|| oneiron::Error::InvalidConfig("dreamer extraction unrouted".into()))?;
+        let selected = routes.iter().map(|(_, route)| route.model.clone());
         let mut factory = ConsolidationExecutorFactory::new(
-            Arc::new(backend),
+            extraction.backend,
             DreamerClaimAuthoringStrategy::SinglePass,
             self.actor,
-            route.model.clone(),
-            HostInferenceBinding::Advertised {
-                model: route.model.clone(),
-                locality: route.locality,
-            },
-            self.egress.then(|| extraction_egress(route.model)),
+            extraction.model,
+            extraction.binding,
+            self.egress.then(|| extraction_egress(selected.collect())),
             Box::new(AttemptPromotionSink::new(Arc::clone(&self.vault))),
-        );
+        )
+        .with_role_backends(roles);
         if let Some(instruction) = &self.summary_instruction {
             factory = factory.with_scope_summary_instruction(instruction.clone());
         }

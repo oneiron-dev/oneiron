@@ -48,12 +48,14 @@ pub(super) fn skippable_permissive(op: &AuthorityOp) -> bool {
         | AuthorityOp::RebindActor { .. }
         | AuthorityOp::EnrollDevice { .. }
         | AuthorityOp::FederationLifecycle(_) => true,
-        // Grants that change neither the roster nor a machine's standing, so
-        // a removal is judged without them as with them; a withdrawal that
-        // needs one fails closed without it (Wonder #1423 r2 W2).
+        // Grants that change neither the roster nor a machine's standing, and
+        // the retired ceiling, which changes nothing: a removal is judged
+        // without them as with them, and a withdrawal that needs one fails
+        // closed without it (Wonder #1423 r2 W2, Sol #1423 r9).
         AuthorityOp::SlipMint(_)
         | AuthorityOp::FederationConfirm(_)
-        | AuthorityOp::CriticalWriteConfirm(_) => true,
+        | AuthorityOp::CriticalWriteConfirm(_)
+        | AuthorityOp::RetiredCeiling { .. } => true,
         // A profile grants standing; a removal withdraws it and never is.
         AuthorityOp::MachineProfile(profile) => profile.role != MachineRole::Removed,
         _ => false,
@@ -115,8 +117,10 @@ fn parent_outcome<'a>(
 }
 
 /// Resolve every branch to real folded evidence. An otherwise rejected grant
-/// is skipped and its op never applies. Missing or cyclic history and
-/// incompatible vault roots refuse the whole restrictive proof.
+/// is skipped and its op never applies, but its signer's sequence still
+/// counts, so a withdrawal must rise above it as it would in the fold (Sol
+/// #1423 r9). Missing or cyclic history and incompatible vault roots refuse
+/// the whole restrictive proof.
 fn resolve_parent(
     start: AuthorityEntryHash,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
@@ -128,6 +132,7 @@ fn resolve_parent(
     let mut frontier = vec![start];
     let mut merged: Option<FoldState> = None;
     let mut crossed_vaults = Vec::new();
+    let mut crossed_seqs = BTreeMap::<AuthorityKey, u64>::new();
     while let Some(hash) = frontier.pop() {
         if !visited.insert(hash) {
             continue;
@@ -153,6 +158,10 @@ fn resolve_parent(
                     return None;
                 }
                 crossed_vaults.push(entry.vault_id);
+                crossed_seqs
+                    .entry(entry.signer_key().clone())
+                    .and_modify(|seq| *seq = (*seq).max(entry.seq))
+                    .or_insert(entry.seq);
                 frontier.extend(entry.parent_hashes.iter().copied());
             }
             ParentOutcome::Unavailable => return None,
@@ -164,5 +173,10 @@ fn resolve_parent(
     {
         return None;
     }
-    merged
+    let mut merged = merged?;
+    for (key, crossed) in crossed_seqs {
+        let seq = merged.seqs.entry(key).or_insert(crossed);
+        *seq = (*seq).max(crossed);
+    }
+    Some(merged)
 }

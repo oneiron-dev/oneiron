@@ -96,24 +96,25 @@ pub(super) fn derive_revoke_facts(
     context: FoldContext<'_>,
 ) -> RevokeFacts {
     let mut facts = RevokeFacts::default();
-    let mut removal_floors = None;
     for (hash, entry) in entries {
         let removal = match &entry.op {
             AuthorityOp::RevokeActor { .. } => false,
             op if removes_machine(op) => true,
             _ => continue,
         };
-        // A removal's ancestry is the ancestry the fold accepted, siblings at
-        // one sequence and removals that arrived late included (Astra
-        // #1423b, Sol #1423 r8).
-        let context = match context.sequence_floors {
-            Some(floors) if removal => FoldContext {
-                sequence_floors: Some(
-                    removal_floors.get_or_insert_with(|| floors_without_removals(entries, floors)),
-                ),
+        // A removal is terminal on every replica. It vouches for its own
+        // signed branch as a handoff vouches for its line: a local floor only
+        // records which of a signer's rows this vault saw first, so the proof
+        // applies none inside the branch and accepts what the fold accepts
+        // when the branch arrives on its own, siblings at one sequence
+        // included (Astra #1423b, Sol #1423 r8 and r9).
+        let context = if removal {
+            FoldContext {
+                sequence_floors: None,
                 ..context
-            },
-            _ => context,
+            }
+        } else {
+            context
         };
         let Some(state) = verify_signed_branch(*hash, entries, ancestors, context, !removal) else {
             continue;
@@ -228,25 +229,6 @@ impl RevokeFacts {
                 })
         });
     }
-}
-
-/// The local sequence floors less every machine removal's. A removal is
-/// terminal on every replica, and a floor only records which of its signer's
-/// rows arrived first, so a sibling seen earlier never refuses a removal; every
-/// other row keeps its floor.
-fn floors_without_removals(
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    floors: &BTreeMap<AuthorityEntryHash, u64>,
-) -> BTreeMap<AuthorityEntryHash, u64> {
-    floors
-        .iter()
-        .filter(|(hash, _)| {
-            !entries
-                .get(*hash)
-                .is_some_and(|entry| removes_machine(&entry.op))
-        })
-        .map(|(hash, floor)| (*hash, *floor))
-        .collect()
 }
 
 /// The target's own folded state, proved over its signed ancestry alone.
