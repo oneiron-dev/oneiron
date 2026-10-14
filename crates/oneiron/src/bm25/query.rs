@@ -45,6 +45,10 @@ pub(crate) struct PrefixExpansionPostingDecision {
 
 pub(super) const FINAL_TOKEN_PREFIX_WEIGHT: f64 = 0.5;
 
+/// The most query text the index reads: the facade's query ceiling, so a caller at the engine
+/// door tokenizes no more than a facade caller may send.
+pub(super) const MAX_QUERY_TEXT_BYTES: usize = crate::memory::caps::MAX_QUERY_BYTES;
+
 pub(super) const MAX_FINAL_TOKEN_PREFIX_TERMS: usize = 64;
 
 /// Bound term-key reads for any one prefix after the scoped expansion cap.

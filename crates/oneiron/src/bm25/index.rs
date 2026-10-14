@@ -147,6 +147,11 @@ pub(crate) fn analyze_text(
     })
 }
 
+/// The most text one document may put through the analyzer: its field names and values, in
+/// bytes. Twice the 1 MiB a native NOTE body or a MESSAGE stream may hold, so those always
+/// index. A docs segment, an entity document or a raw `batch().text()` over it is refused.
+pub(super) const MAX_INDEXED_TEXT_BYTES: usize = 2 * 1024 * 1024;
+
 fn analyze(analyzer: &MultilingualAnalyzer, fields: &[(String, String)]) -> Result<Analysis> {
     let mut tokens: Vec<Token> = Vec::new();
     let ctx = AnalyzerContext::for_index();

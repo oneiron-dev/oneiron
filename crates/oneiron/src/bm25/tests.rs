@@ -2,6 +2,7 @@ use super::*;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource};
 use crate::config::{HnswConfig, VaultConfig};
 use crate::edge::EdgeActorClass;
+use crate::error::StoreError;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -983,6 +984,159 @@ fn analysis_read_from_other_fields_is_refused() -> Result<()> {
     index_analyzed_text(&vault.store, &mut wtxn, &id, &body("cat"), &cat)?;
     wtxn.commit()?;
     assert!(contains_id(&vault.search_text("cat", 10)?, &id));
+    Ok(())
+}
+
+/// A vault with room for documents at the per-document text ceiling.
+fn open_ceiling_vault() -> Result<(tempfile::TempDir, Vault)> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(
+        temp_dir.path(),
+        VaultConfig {
+            map_size: 64 * 1024 * 1024,
+            ..test_config()
+        },
+    )?;
+    Ok((temp_dir, vault))
+}
+
+/// `word ` repeated to exactly `bytes`.
+fn text_of_len(word: &str, bytes: usize) -> String {
+    let mut text = format!("{word} ").repeat(bytes / (word.len() + 1) + 1);
+    text.truncate(bytes);
+    text
+}
+
+/// Bug repro (H6) and done-means: one document's text past the per-document ceiling is
+/// refused, typed, before the analyzer reads it. The batch that carried it writes nothing, and
+/// a direct index call whose transaction commits leaves the document's old index in place. A
+/// document exactly at the ceiling, twice what a NOTE body may hold, still indexes.
+#[test]
+fn a_document_past_the_text_ceiling_is_refused_and_its_index_stays() -> Result<()> {
+    let (_dir, vault) = open_ceiling_vault()?;
+    let id = EntityId::now();
+    put_text_doc(&vault, &id, "lantern")?;
+    let limit = index::MAX_INDEXED_TEXT_BYTES;
+    let at_ceiling = text_of_len("harbor", limit - "body".len());
+    let full = EntityId::now();
+    put_text_doc(&vault, &full, &at_ceiling)?;
+    assert!(contains_id(&vault.search_text("harbor", 10)?, &full));
+
+    let over = format!("{at_ceiling}x");
+    let refused = vault
+        .batch()
+        .put(&id, 1, test_time_range(1, 1), 3, b"refused-body")
+        .text(&id, &[("body", over.as_str())])
+        .commit();
+    assert_matches!(
+        refused,
+        Err(Error::Store(StoreError::IndexedTextTooLarge { bytes, limit: refused_at }))
+            if bytes == limit + 1 && refused_at == limit
+    );
+    let raw = vault.get_raw(&id)?.expect("the document stays");
+    assert_eq!(
+        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        b"text-doc"
+    );
+
+    let mut wtxn = vault.store.env.write_txn()?;
+    let refused = index_text(
+        &vault.store,
+        &mut wtxn,
+        &vault.analyzer,
+        &id,
+        &[("body".to_owned(), over)],
+    );
+    assert_matches!(
+        refused,
+        Err(Error::Store(StoreError::IndexedTextTooLarge { .. }))
+    );
+    wtxn.commit()?;
+    assert!(contains_id(&vault.search_text("lantern", 10)?, &id));
+    assert!(!contains_id(&vault.search_text("harbor", 10)?, &id));
+    Ok(())
+}
+
+/// Done-means (H6): text for a document whose index waits for idle publication meets the
+/// ceiling at its write. Staged unread, it would fail every idle pass instead.
+#[test]
+fn text_past_the_ceiling_is_refused_at_its_write_when_publication_waits_for_idle() -> Result<()> {
+    let (_dir, vault) = open_ceiling_vault()?;
+    crate::test_util::publish_seeded_revisions(&vault);
+    let id = EntityId::now();
+    put_text_doc(&vault, &id, "lantern")?;
+    // A changed body keeps the old index until idle, and text written now is staged with it.
+    vault.put_entity(&id, 1, test_time_range(1, 1), 3, b"edited")?;
+    let over = text_of_len("harbor", index::MAX_INDEXED_TEXT_BYTES + 1);
+    let refused = vault.batch().text(&id, &[("body", over.as_str())]).commit();
+    assert_matches!(
+        refused,
+        Err(Error::Store(StoreError::IndexedTextTooLarge { .. }))
+    );
+    let report = vault.refresh_staged_indexed_at_idle(u64::MAX)?;
+    assert!(report.failed.is_empty());
+    assert!(!contains_id(&vault.search_text("harbor", 10)?, &id));
+    Ok(())
+}
+
+/// Oracle (H6): analysis drains its token buffer field by field, and the same words index the
+/// same whether they arrive as one field or one field each.
+#[test]
+fn the_same_words_index_the_same_in_one_field_or_many() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let words: Vec<String> = (0..64).map(|n| format!("lantern{n} harbors")).collect();
+    let one = EntityId::now();
+    let many = EntityId::now();
+    let joined = words.join(" ");
+    put_text_doc(&vault, &one, &joined)?;
+    let names: Vec<String> = (0..words.len()).map(|n| format!("f{n}")).collect();
+    let fields: Vec<(&str, &str)> = names
+        .iter()
+        .zip(&words)
+        .map(|(name, text)| (name.as_str(), text.as_str()))
+        .collect();
+    vault
+        .batch()
+        .put(&many, 1, test_time_range(1, 1), 2, b"text-doc")
+        .text(&many, &fields)
+        .commit()?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    for db in [
+        vault.store.text_forward,
+        vault.store.text_meta,
+        vault.store.text_doc_field_lengths,
+    ] {
+        assert_eq!(
+            db.get(&rtxn, one.as_bytes())?,
+            db.get(&rtxn, many.as_bytes())?
+        );
+    }
+    drop(rtxn);
+    for term in ["lantern0", "lantern31", "lantern63"] {
+        let hits = vault.search_text(term, 10)?;
+        assert!(contains_id(&hits, &one) && contains_id(&hits, &many));
+    }
+    Ok(())
+}
+
+/// Bug repro (H6) and done-means: the engine's query door reads a query's first
+/// `MAX_QUERY_TEXT_BYTES`, the facade's ceiling, and never tokenizes the rest; a cut that
+/// falls inside a character keeps the whole characters before it.
+#[test]
+fn a_query_is_read_to_the_query_ceiling() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let id = EntityId::now();
+    put_text_doc(&vault, &id, "lantern")?;
+    let limit = query::MAX_QUERY_TEXT_BYTES;
+    let within = format!("{} lantern", text_of_len("x", limit - " lantern".len()));
+    assert_eq!(within.len(), limit);
+    assert!(contains_id(&vault.search_text(&within, 10)?, &id));
+    let past = format!("{} lantern", text_of_len("x", limit));
+    assert!(vault.search_text(&past, 10)?.is_empty());
+    assert!(vault.search_text(&"\u{3042}".repeat(limit), 10)?.is_empty());
     Ok(())
 }
 
