@@ -13,6 +13,8 @@ use crate::store::ChannelIdentityLifecycleReceiptRecord;
 
 /// Projects ARCH-0055 identity-topology ledger events (merge / split / undo
 /// counter-events, effective AND parked) into `IdentityLifecycle` receipts.
+/// An applied decision projects only once a seal this vault counts binds it
+/// (H161); a stranger's merge is no completed act here.
 ///
 /// Scans the type-76 record family NEWEST-FIRST (reverse type-index walk;
 /// UUIDv7 ids order by mint time) and caps EVERY visited row, including rows
@@ -32,6 +34,7 @@ pub(super) fn identity_topology_receipts(
     scan_cap: usize,
 ) -> Result<Vec<ReceiptRecord>> {
     let mut receipts = Vec::new();
+    let mut trust = crate::identity_topology::SealTrust::default();
     for entry in vault
         .store
         .port_entity_ids_by_type_descending(
@@ -59,6 +62,15 @@ pub(super) fn identity_topology_receipts(
         {
             continue;
         }
+        if !crate::identity_topology::decision_in_force_by_seal_in_txn(
+            &vault.store,
+            rtxn,
+            &event_id,
+            &record,
+            &mut trust,
+        )? {
+            continue;
+        }
         // Per-kind dispatch: a resolution row NAMED by the fold as a
         // duplicate (the proposal already retired by an EARLIER ruling)
         // projects nothing — an outcome receipt for it would read as a
@@ -75,9 +87,10 @@ pub(super) fn identity_topology_receipts(
         );
         if action_is_resolution || action_is_cancellation {
             let effective = vault.fold_effective_identity_topology_events_in_txn(rtxn)?;
-            // A cancellation whose proposal has not arrived (or whose
-            // participant does not belong to it) is not a completed act.
-            if action_is_cancellation && !effective.iter().any(|event| event.event_id == event_id) {
+            // A ruling or cancellation the effective fold leaves out is not a
+            // completed act: its proposal has not arrived, its participant does
+            // not belong to it, or no seal this vault counts binds it (H161).
+            if !effective.iter().any(|event| event.event_id == event_id) {
                 continue;
             }
             let fold = crate::identity_topology::fold_identity_topology_log(&effective);

@@ -118,6 +118,12 @@ side_tables! {
     /// out-of-order proposal cancellation never settles against a live entity. Presence-only,
     /// empty value. Key: hex32 (entity id).
     DELETION_IDENTITY_SOFT_DELETE_MARKER: SyncState b"it:deleted:" Raw;
+    /// Digest of which install keys counted as mine-machine signers when an authority write last
+    /// reconciled the identity-topology shell edges (32 bytes). Local only. Key: ().
+    IDENTITY_TOPOLOGY_MINE_SIGNERS: SyncState b"it:mine_signers" Raw;
+    /// An identity-topology admission seal this vault wrote itself: the signer key and signature (96
+    /// bytes) of the fact row. Local truth that never replicates. Key: hex32 (fact entity id).
+    IDENTITY_TOPOLOGY_SEALED_HERE: SyncState b"it:sealed:" Raw;
     /// Durable provenance row (source/tier/thread/message/surface-event) for one ingested LinkedIn
     /// message. Key: hex16 (same hash as the seen marker).
     LINKEDIN_INBOX_SYNC_PROVENANCE: SyncState b"linkedin:inbox_sync:provenance:v1:" LegacyJson;

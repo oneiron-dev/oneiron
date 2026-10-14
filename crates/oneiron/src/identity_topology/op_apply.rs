@@ -495,9 +495,11 @@ impl Vault {
         ops.extend(effects);
         // The signed disposition is a separate immutable type-76 event. A
         // receiver can replay the two rows in either order and bind by digest.
-        let disposition = super::AdmissionDisposition::sign(
+        let disposition_id = self.store.clock.entity_id()?;
+        let disposition = super::AdmissionDisposition::seal(
             self,
             wtxn,
+            disposition_id,
             event_id,
             &record,
             super::AdmissionVerdict::Validated,
@@ -516,7 +518,7 @@ impl Vault {
             action: StoredIdentityOpAction::AdmissionDisposition(disposition),
         };
         ops.push(BatchOp::Put {
-            id: self.store.clock.entity_id()?,
+            id: disposition_id,
             entity_type: ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
             occurred: TimeRange {
                 start: now,
