@@ -562,7 +562,7 @@ pub(crate) fn owner_note_admission(
             &vault.store,
             txn,
             &crate::settings::device_local_worlds_at(
-                &vault.store,
+                vault,
                 txn,
                 crate::claim::CallerLocality::OffDevice,
             )?,
@@ -610,7 +610,7 @@ pub(crate) fn text_withheld(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) 
         &vault.store,
         txn,
         &crate::settings::device_local_worlds_at(
-            &vault.store,
+            vault,
             txn,
             crate::claim::CallerLocality::OffDevice,
         )?,
