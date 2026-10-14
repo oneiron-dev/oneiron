@@ -58,8 +58,8 @@ pub(super) struct RetrievalBlendConfig<'a> {
 pub(super) struct RetrievalChannelIndexes {
     pub(super) vector: Option<usize>,
     pub(super) text: Option<usize>,
-    /// Scored over every candidate, not its hits alone (see
-    /// [`fusion::retrieval_candidates_from_ranked_lists`]).
+    /// Scored as a full fusion-length list of hits and non-hits, not over
+    /// its hits alone (see [`fusion::retrieval_candidates_from_ranked_lists`]).
     pub(super) phonetic: Option<usize>,
 }
 

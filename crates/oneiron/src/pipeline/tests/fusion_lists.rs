@@ -1,8 +1,9 @@
 //! EMBED-PACK (owner ruling, 2026-10-14): the engine's merge rule stays (each
 //! channel's list z-scored on its own, a missed candidate taking the list's
 //! lowest z, the z values added), with two fixes and a pinned list length.
-//! A phonetic list counts matches, so it is scored over every candidate, and
-//! the no-match floors are keyed by embedding space and kind. Design:
+//! A phonetic list counts matches, so it is scored as a full list of that
+//! length whose other places are non-hits, and the no-match floors are keyed
+//! by embedding space and kind. Design:
 //! embedder-config DESIGN §1.5.
 
 use super::*;

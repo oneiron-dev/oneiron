@@ -78,9 +78,10 @@ pub struct RetrievalBlendInput {
 ///
 /// A ranked list is z-scored against its own best [`FUSION_LIST_LENGTH`]
 /// scores. The lists at `sparse` count matches (phonetic codes) and return
-/// only their hits: each is z-scored over the whole union instead, a
-/// candidate it did not return scoring 0, so one matched code lifts a hit
-/// above a candidate with none.
+/// only their hits: each is z-scored as a list of that length whose other
+/// places are non-hits scoring 0, and a candidate it did not return scores
+/// 0, so one matched code lifts a hit above a candidate with none, by as
+/// much whatever the other lists returned or the vault holds.
 pub fn retrieval_candidates_from_ranked_lists(
     ranked_lists: &[Vec<ScoredEntity>],
     sparse: &[usize],
@@ -111,17 +112,17 @@ pub fn retrieval_candidates_from_ranked_lists(
                 *slot = slot.max(score);
             }
             if sparse.contains(&index) {
-                let values: Vec<f64> = candidates
-                    .iter()
-                    .map(|id| by_id.get(id).copied().unwrap_or(0.0))
-                    .collect();
-                let by_id: HashMap<EntityId, f64> = candidates
-                    .iter()
-                    .copied()
-                    .zip(z_normalized(values))
-                    .collect();
-                let floor = by_id.values().copied().fold(f64::INFINITY, f64::min);
-                return (by_id, floor);
+                // RESEARCH-1216 measured z over all 80 clips, a hit among
+                // non-hits (DESIGN §1.5 item 5); the fusion length stands in
+                // for that pool, as for every other list.
+                let mut pool: Vec<f64> = by_id.values().copied().collect();
+                pool.resize(pool.len().max(FUSION_LIST_LENGTH), 0.0);
+                let scale = spread(&pool);
+                let z = |score: f64| scale.map_or(0.0, |(mean, stddev)| (score - mean) / stddev);
+                for value in by_id.values_mut() {
+                    *value = z(*value);
+                }
+                return (by_id, z(0.0));
             }
             let mut scores: Vec<f64> = ranked
                 .iter()

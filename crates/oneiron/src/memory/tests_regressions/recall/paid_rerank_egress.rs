@@ -154,7 +154,11 @@ fn a_turn_whose_messages_refuse_together_is_not_sent_whole() {
 /// #1419 Wonder W1-4: a block whose every text reads back empty makes no
 /// call. It runs unreranked and says it skipped: `skipped / no_candidates`.
 /// Here the one row is a claim a device-only world keeps, read for a host
-/// whose model runs elsewhere.
+/// whose model runs elsewhere, so the block reads back empty through item 9
+/// (on main its words were sent, and this fails for that). Before item 9 a
+/// block read back empty only when its rows stopped being readable between
+/// capture and egress, a race; with only the all-empty skip removed, this
+/// makes the call W1-4 names.
 #[test]
 fn a_block_with_no_words_to_send_makes_no_call() {
     let (_dir, vault) = open_embedding_vault();

@@ -98,3 +98,23 @@ fn a_flat_window_keeps_weaker_rows_past_it_below() {
     assert_eq!(relevance_of(&inputs, [1; 16]), 0.0);
     assert!(relevance_of(&inputs, weaker) < 0.0, "{inputs:?}");
 }
+
+/// Sol R2 on this branch (DESIGN §1.5 item 5): a sparse list was z-scored
+/// over the candidates the channels returned, so its scale moved with the
+/// other lists' coverage, and a single-code hit no other list returned lost
+/// to a row two lists ranked first. It is scored as a list of the fusion
+/// length whose other places are non-hits, RESEARCH-1216's z over 80 clips.
+#[test]
+fn a_sparse_list_scores_as_a_full_list_whatever_the_others_return() {
+    let (hit, both, neither) = ([1; 16], [2; 16], [3; 16]);
+    let others = vec![scored(both, 1.0), scored(neither, 0.0)];
+    let inputs = retrieval_candidates_from_ranked_lists(
+        &[vec![scored(hit, 1.0)], others.clone(), others],
+        &[0],
+    );
+
+    assert!(
+        relevance_of(&inputs, hit) > relevance_of(&inputs, both),
+        "{inputs:?}"
+    );
+}
