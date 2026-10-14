@@ -3,7 +3,6 @@
 //! revision). Two owner-held keys sign one profile of a machine, and only the
 //! loser's later copy is still within its stale-roster window (Sol code-R2
 //! S2-F1, code-R3 S3-F2, code-R4 S4-F1).
-use super::history_transfer::re_root_entry;
 use super::machine_identity::request_for;
 use super::owner_anchor::{YOURS, pin, profile, publish, rekeyed, signed};
 use super::support::{
