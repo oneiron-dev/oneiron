@@ -230,9 +230,9 @@ impl Vault {
         // pins the lease to its path. A DIFFERENT declared path under the
         // same lease would overwrite the row and orphan the first plaintext
         // file beyond revoke/expiry — typed conflict; the caller mints a
-        // fresh lease for a new path. Same-path re-materialization
-        // (`replace`) is the S4 recovery flow and stays admitted.
-        let replace = match read_local_registration_in_txn(&self.store, &wtxn, lease_id)? {
+        // fresh lease for a new path. Same-path re-materialization is the S4
+        // recovery flow and stays admitted, into the registered file only.
+        let registered = match read_local_registration_in_txn(&self.store, &wtxn, lease_id)? {
             Some(stored) if stored.registration.path.as_path() != target_path => {
                 return Err(Error::Secret(SecretError::SecretLeasePathConflict {
                     lease_id: lease.lease_id,
@@ -240,18 +240,19 @@ impl Vault {
                     requested_path: target_path.display().to_string(),
                 }));
             }
-            Some(_) => true,
-            None => false,
+            Some(stored) => Some(stored.file_identity),
+            None => None,
         };
         let value = read_value_for_ref_in_txn(self, &wtxn, &id, &lease.binding_effector)?;
         // The file write lands before any row persists, under the T2
         // file-lifecycle policy (no-follow, no-clobber, owner-only before
-        // the first byte). The returned guard removes a file THIS attempt
-        // created fresh if the row write, the lease write, or the commit
-        // fails — nothing durable may point at a file the vault cannot
-        // clean, and no plaintext may sit untracked. A same-path replace is
-        // never the guard's to remove: the live row still covers it.
-        let guard = write_secret_file(target_path, &value, replace)?;
+        // the first byte, and a replace only into the registered file). The
+        // returned guard removes a file THIS attempt created fresh if the row
+        // write, the lease write, or the commit fails — nothing durable may
+        // point at a file the vault cannot clean, and no plaintext may sit
+        // untracked. A same-path replace is never the guard's to remove: the
+        // live row still covers it.
+        let guard = write_secret_file(target_path, &value, registered)?;
         let registration = LocalRegistration {
             lease_id: lease.lease_id,
             path: target_path.to_path_buf(),
@@ -263,6 +264,7 @@ impl Vault {
             &mut wtxn,
             &StoredLocalRegistration {
                 registration: registration.clone(),
+                file_identity: guard.identity(),
                 removal_error: None,
                 removal_attempted_at: None,
             },
