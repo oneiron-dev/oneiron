@@ -119,11 +119,15 @@ fn load_row<T: serde::Serialize + serde::de::DeserializeOwned>(
 
 pub mod digest;
 
+/// The owner proof still holds in this write: it was authenticated by THIS
+/// vault (a proof from another vault never acts here, whatever PERSON ids the
+/// two share), its credential is live, and its actor is a live, active PERSON.
 pub(crate) fn validate_owner_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     owner: &crate::consent::AuthenticatedOwner,
 ) -> Result<()> {
+    owner.revalidate_in_txn(vault, txn)?;
     let refused = || {
         Error::Gate(crate::error::GateError::ConsentOwnerNotAuthenticated(
             "maintenance requires a live owner in this vault",
