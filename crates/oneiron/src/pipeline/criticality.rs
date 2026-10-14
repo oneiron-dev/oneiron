@@ -4,11 +4,11 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::store::Store;
+use crate::store::StoreRead;
 use heed::RoTxn;
 
 pub(super) fn candidate_matches_criticality(
-    store: &Store,
+    store: &StoreRead<'_>,
     txn: &RoTxn<'_>,
     id: &EntityId,
     entity_type: u8,
@@ -29,7 +29,7 @@ pub(super) fn candidate_matches_criticality(
     else {
         return Ok(false);
     };
-    let policy = crate::gate::resolve_policy_manifest(store, txn)?;
+    let policy = crate::gate::resolve_policy_manifest(store.base(), txn)?;
     Ok((policy.criticality_for_predicate(&body.predicate)
         == crate::gate::PolicyCriticality::Critical)
         == selected)

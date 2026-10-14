@@ -13,6 +13,9 @@ impl Memory<'_> {
         cited: &[EntityId],
         receipt: &mut ScopedReadReceipt,
     ) -> MemoryResult<Option<MemoryItem>> {
+        // What the lane admits from is what the item is projected from: a
+        // room's view, or base.
+        let content = lane.store_read();
         let ScopedReadResult {
             value: admitted,
             receipt: read,
@@ -36,14 +39,15 @@ impl Memory<'_> {
                 // empty one too, which may show text after its next change.
                 let mut members = Vec::new();
                 for (message, _) in
-                    crate::tagging::turn_members_in_txn(self.vault, txn, id)?.unwrap_or_default()
+                    crate::tagging::turn_members_in_txn(self.vault, &content, txn, id)?
+                        .unwrap_or_default()
                 {
                     if readable(&message)? {
                         members.push(message);
                     }
                 }
                 match crate::vault::entity_revision::served_turn_text_in_txn(
-                    self.vault, txn, id, mode,
+                    self.vault, &content, txn, id, mode,
                 )? {
                     Some(text) => {
                         let revision = text.revision;
@@ -55,7 +59,7 @@ impl Memory<'_> {
             } else {
                 None
             };
-            let view = self.entity_view_of_in_txn(txn, row, mode)?;
+            let view = self.entity_view_of_in_txn(lane, txn, row, mode)?;
             Ok(Some((entity_type, body, view, turn)))
         })?;
         receipt.restrict_with(&read);
@@ -203,15 +207,29 @@ impl Memory<'_> {
                 _ => None,
             };
             let mut conversation_id = None;
-            for edge in edges
-                .iter()
-                .filter(|edge| Some(edge.kind) == conversation_kind)
             {
-                if self.vault.get_entity_type(&edge.target)?
-                    == Some(crate::registry::ENTITY_TYPE_CONVERSATION)
+                // Closed before the quotes below, which open their own.
+                let txn = self
+                    .vault
+                    .store
+                    .env
+                    .read_txn()
+                    .map_err(crate::error::Error::from)?;
+                for edge in edges
+                    .iter()
+                    .filter(|edge| Some(edge.kind) == conversation_kind)
                 {
-                    conversation_id = Some(edge.target.to_hex());
-                    break;
+                    if crate::ports::EntityStoreRead::port_entity_record(
+                        &content,
+                        &txn,
+                        &edge.target,
+                    )?
+                    .map(|row| row.entity_type)
+                        == Some(crate::registry::ENTITY_TYPE_CONVERSATION)
+                    {
+                        conversation_id = Some(edge.target.to_hex());
+                        break;
+                    }
                 }
             }
             // Each message a TURN took in is read through the same lane, so a
