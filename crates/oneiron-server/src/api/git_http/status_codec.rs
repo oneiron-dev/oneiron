@@ -6,15 +6,15 @@
 use super::serve::GIT_HTTP_MAX_HELD_BYTES;
 use axum::body::Bytes;
 use oneiron::origin::smart_http;
+use std::collections::HashMap;
 
 pub(super) fn rewrite_receive_pack_status(
     body: &[u8],
     results: &[smart_http::ReceivePackRefResult],
 ) -> Option<Vec<u8>> {
-    if body.len() > GIT_HTTP_MAX_HELD_BYTES
-        || results.is_empty()
-        || results.len() > smart_http::ORIGIN_MAX_REF_UPDATES
-    {
+    // A push may report any number of refs (rule 5); only the held bytes are
+    // bounded.
+    if body.len() > GIT_HTTP_MAX_HELD_BYTES || results.is_empty() {
         return None;
     }
     let mut probe = body;
@@ -45,6 +45,11 @@ pub(super) fn rewrite_receive_pack_status(
     let mut rewritten = Vec::new();
     append_status_packet(&mut rewritten, b"unpack ok\n")?;
     let mut seen = vec![false; results.len()];
+    let index_of: HashMap<&str, usize> = results
+        .iter()
+        .enumerate()
+        .map(|(index, result)| (result.name.as_str(), index))
+        .collect();
     let mut suppress_options = true;
     let mut flushed = false;
     while !input.is_empty() {
@@ -66,7 +71,7 @@ pub(super) fn rewrite_receive_pack_status(
             } else {
                 text
             };
-            let index = results.iter().position(|result| result.name == name)?;
+            let index = *index_of.get(name)?;
             if std::mem::replace(&mut seen[index], true) {
                 return None;
             }

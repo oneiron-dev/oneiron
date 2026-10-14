@@ -94,10 +94,10 @@ pub use self::hooks::DoorHooksDir;
 pub use self::intent::{ReceivePackRefResult, ReceivePackRefStatus};
 pub use self::landing::{ReceivePackAttribution, ReceivePackLanding, refs_already_applied};
 pub use self::paths::{
-    DOOR_PRE_RECEIVE_HOOK_NAME, DOOR_WINDOW_TIMEOUT, ORIGIN_DOOR_ROOT_NAME, ORIGIN_MAX_REF_UPDATES,
-    ORIGIN_MAX_REPO_NAME_BYTES, ORIGIN_REFUSED_REF_PREFIX, ORIGIN_REPO_DIR_SUFFIX,
-    ORIGIN_SERVING_ROOT_NAME, SERVE_BASE_ENV_KEYS, SERVE_IDLE_TIMEOUT, SERVE_REQUEST_ENV_KEYS,
-    origin_repo_dir, origin_serving_root, validate_repo_name,
+    DOOR_PRE_RECEIVE_HOOK_NAME, DOOR_WINDOW_TIMEOUT, ORIGIN_DOOR_ROOT_NAME,
+    ORIGIN_MAX_REPO_NAME_BYTES, ORIGIN_REF_UPDATE_BATCH, ORIGIN_REFUSED_REF_PREFIX,
+    ORIGIN_REPO_DIR_SUFFIX, ORIGIN_SERVING_ROOT_NAME, SERVE_BASE_ENV_KEYS, SERVE_IDLE_TIMEOUT,
+    SERVE_REQUEST_ENV_KEYS, origin_repo_dir, origin_serving_root, validate_repo_name,
 };
 pub use self::serve::{
     ServeReport, ServeSink, serve, serve_bounded, serve_with_authority, serve_with_provenance,

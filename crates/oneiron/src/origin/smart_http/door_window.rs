@@ -13,7 +13,7 @@ use super::evidence::{RefUpdate, receive_pack_provenance_refused};
 use super::hooks::DoorHooksDir;
 use super::paths::{
     DOOR_MAX_FRAMED_BYTES, DOOR_MAX_SCAN_LINES, DOOR_REFUSAL_NAME_CHARS, DOOR_VERDICT_OK,
-    DOOR_WINDOW_POLL, ORIGIN_MAX_REF_UPDATES, ORIGIN_REFUSED_REF_PREFIX, serve_failed,
+    DOOR_WINDOW_POLL, ORIGIN_REFUSED_REF_PREFIX, serve_failed,
 };
 use crate::Vault;
 use crate::codebase::RepoRef;
@@ -303,16 +303,13 @@ fn verdict_line(verdict: &DoorWindowVerdict) -> String {
 ///   every later scan of this repository reads.
 /// - A name outside the GitWire ref grammar is refused, because
 ///   [`GitRefName::parse_full`] is what the landing must parse it with.
-/// - A name proposed twice and a batch past [`ORIGIN_MAX_REF_UPDATES`] are
-///   refused, because GitWire's publication set rejects both.
+/// - A name proposed twice is refused, because the landing journals one
+///   outcome per name.
+///
+/// How many refs a push moves is never a reason (rule 5): the landing
+/// publishes them one at a time.
 pub(super) fn unlandable_ref_reasons(updates: &[RefUpdate]) -> Vec<String> {
     let mut reasons = Vec::new();
-    if updates.len() > ORIGIN_MAX_REF_UPDATES {
-        reasons.push(format!(
-            "a push may propose at most {ORIGIN_MAX_REF_UPDATES} ref moves; this one proposes {}",
-            updates.len()
-        ));
-    }
     for (index, update) in updates.iter().enumerate() {
         let name = printable_ref_name(&update.name);
         if update.name.starts_with(ORIGIN_REFUSED_REF_PREFIX) {
