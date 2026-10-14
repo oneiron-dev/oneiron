@@ -30,7 +30,9 @@ struct Room {
 fn facets() -> Facets {
     let (_dir, server) = interlocutor_test_server();
     let owner = seeded_test_entity_id(0x2614_0001);
-    let agent = seeded_test_entity_id(0x2614_0002);
+    // The seeded manifest's agent ceiling names the first-party connector
+    // actor; MCP resolves an agent connector only under one.
+    let agent = oneiron::EntityId::from_bytes([0xE1; 16]).unwrap();
     for (id, kind) in [
         (owner, oneiron::registry::ENTITY_TYPE_PERSON),
         (agent, oneiron::registry::ENTITY_TYPE_PERSON),
@@ -202,7 +204,8 @@ impl Facets {
     }
 
     /// Whether MCP's ceiling admits `label` to the message said in `room`: a
-    /// call that clears it fails later on the row's type, never on its scope.
+    /// call that clears it is refused after, by the verb gate that cannot
+    /// project a narrowed credential's bounds onto one task's detail.
     async fn mcp_admits(&self, label: &str, scope: &McpConnectorScope, room: Room) -> bool {
         let mut envelope = mcp_scoped_envelope(self.agent, "read_tasks", scope);
         envelope["actor"]["actor_class"] = json!("agent");
@@ -221,7 +224,12 @@ impl Facets {
             ),
         )
         .await;
-        refused["error"]["data"]["error_code"] != "mcp_scope_refused"
+        let code = refused["error"]["data"]["error_code"].as_str();
+        assert!(
+            matches!(code, Some("mcp_scope_refused" | "mcp_scope_unprojectable")),
+            "{label} must reach the ceiling: {refused}"
+        );
+        code == Some("mcp_scope_unprojectable")
     }
 }
 
@@ -492,7 +500,9 @@ async fn a_narrowed_birth_lands_in_its_write_facet_or_its_sessions() {
     // refuses as one placed elsewhere does.
     let (status, unplaced_refusal) = facade("facade-unplaced", Some(unplaced)).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{unplaced_refusal}");
-    assert_eq!(unplaced_refusal.get("error"), refused.get("error"));
+    for field in ["code", "message"] {
+        assert_eq!(unplaced_refusal["error"][field], refused["error"][field]);
+    }
 
     let (status, refused) = route_json(
         vault.server.clone(),
