@@ -590,10 +590,42 @@ pub(crate) async fn submit_core_surface_event(
         oneiron::SurfaceEventAdmission::Accepted(ack) => {
             SurfaceEventSubmitOutcome::Accepted(ack.into())
         }
-        oneiron::SurfaceEventAdmission::Rejected(receipt) => {
-            SurfaceEventSubmitOutcome::Rejected(receipt.into())
-        }
+        oneiron::SurfaceEventAdmission::Rejected(receipt) => SurfaceEventSubmitOutcome::Rejected(
+            rejection_as_read_by(&server, &auth, receipt)?.into(),
+        ),
     })
+}
+
+/// A rejection as its submitter may read it. The receipt names the identity
+/// the address resolved to, that identity's agent, and why the identity
+/// refused the event. A submitter that cannot read the identity learns none
+/// of it: its rejection reads as an address no identity holds. An agent it
+/// cannot read is left out.
+fn rejection_as_read_by(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    mut receipt: oneiron::InboundSurfaceRouteReceipt,
+) -> Result<oneiron::InboundSurfaceRouteReceipt, ApiError> {
+    let reads = |reference: Option<&str>| -> Result<bool, ApiError> {
+        let Some(id) = reference.and_then(|id| oneiron::EntityId::from_hex(id).ok()) else {
+            return Ok(false);
+        };
+        auth.can_read_entity(&server.vault, &id).map_err(|error| {
+            tracing::error!(kind = ?error.kind(), "surface event rejection admission failed");
+            core_engine_error("surface event admission failed", error)
+        })
+    };
+    if receipt.receiving_identity_ref.is_some()
+        && !reads(receipt.receiving_identity_ref.as_deref())?
+    {
+        receipt.receiving_identity_ref = None;
+        receipt.agent_ref = None;
+        receipt.rejection_reason =
+            Some(oneiron::InboundSurfaceRejectionReason::UnknownReceivingIdentity);
+    } else if receipt.agent_ref.is_some() && !reads(receipt.agent_ref.as_deref())? {
+        receipt.agent_ref = None;
+    }
+    Ok(receipt)
 }
 
 /// Read the durable handoff status for one correlation id.

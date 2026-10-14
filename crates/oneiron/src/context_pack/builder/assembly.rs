@@ -15,15 +15,18 @@ use super::super::empty_pack::{
     serialized_context_pack_empty_reason,
 };
 use super::super::hydration::hydrate_entity;
-use super::super::psych_mirror::{PsychProfilePackSection, psych_profile_pack_section};
+use super::super::psych_mirror::{
+    PsychProfilePackSection, missing_psych_profile_pack_section, psych_profile_pack_section,
+};
 use super::super::quarantine::load_pack_quarantine_index;
 use super::super::telemetry::{
     discard_failed_context_pack_telemetry, finalize_context_pack_telemetry,
 };
 use super::super::types::{ContextPack, ContextPackRetrievalBudget, PackStats};
 use super::super::validation::{
-    disclosure_admits_candidate, validate_hydrated_pack_entities, validate_pack_disclosure,
-    validate_pack_edge_references, validate_pack_entity_reference, validate_scored_candidates,
+    disclosure_admits_candidate, disclosure_admits_target, validate_hydrated_pack_entities,
+    validate_pack_disclosure, validate_pack_edge_references, validate_pack_entity_reference,
+    validate_scored_candidates,
 };
 use super::super::world_partition::{
     annotate_stale_federated_worlds, partition_results_by_world, resolve_edge_short_ids,
@@ -46,14 +49,30 @@ pub(crate) struct PackRunStatus {
 
 impl<'a> ContextPackBuilder<'a> {
     /// Runs retrieval and returns the opt-in stored-profile companion section.
+    /// The profile is one more row of the pack: the pack's disclosure clamp
+    /// and reader admit it as they admit any row, and a profile either
+    /// refuses reads as a missing one.
     pub fn run_with_psych_profile(self) -> Result<(ContextPack, Option<PsychProfilePackSection>)> {
-        let key = self.psych_profile_key;
-        let vault = self.vault;
+        let section = match self.psych_profile_key {
+            Some(key) if self.psych_profile_admitted(&key)? => {
+                Some(psych_profile_pack_section(self.vault, &key)?)
+            }
+            Some(key) => Some(missing_psych_profile_pack_section(key)),
+            None => None,
+        };
         let pack = self.run()?;
-        let section = key
-            .map(|key| psych_profile_pack_section(vault, &key))
-            .transpose()?;
         Ok((pack, section))
+    }
+
+    fn psych_profile_admitted(&self, key: &crate::psych_profile::PsychProfileKey) -> Result<bool> {
+        let id = crate::psych_profile::psych_profile_entity_id(key);
+        if let Some(reader) = self.l2_summary_reader
+            && !reader.is_entity_readable(&id)?
+        {
+            return Ok(false);
+        }
+        let rtxn = self.vault.store.env.read_txn()?;
+        disclosure_admits_target(&self.read, &rtxn, self.disclosure.as_ref(), &id)
     }
 
     pub fn run(self) -> Result<ContextPack> {

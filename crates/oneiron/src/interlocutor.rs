@@ -476,12 +476,37 @@ impl Vault {
         &self,
         input: &InterlocutorResolutionInput,
     ) -> Result<InterlocutorSet> {
+        self.resolve_interlocutors_admitting(input, &|_| Ok(true))
+    }
+
+    /// [`Self::resolve_interlocutors`] for a caller that reads as `read`:
+    /// a contact `read` cannot read resolves as a missing one does. An
+    /// explicit ref to it is `Error::EntityNotFound`, a channel pair that
+    /// finds it stays the caller's own unknown label, and a voice roster
+    /// naming any entity it cannot read is an unresolved roster. Denial
+    /// reads as absence, so no status, label or id tells them apart.
+    pub fn resolve_interlocutors_under(
+        &self,
+        input: &InterlocutorResolutionInput,
+        read: &crate::claim::ScopedRead<'_>,
+    ) -> Result<InterlocutorSet> {
+        self.resolve_interlocutors_admitting(input, &|id| read.is_entity_readable(id))
+    }
+
+    fn resolve_interlocutors_admitting(
+        &self,
+        input: &InterlocutorResolutionInput,
+        admit: &dyn Fn(&EntityId) -> Result<bool>,
+    ) -> Result<InterlocutorSet> {
         let mut non_owner: Vec<Interlocutor> = Vec::with_capacity(input.parties.len());
         let mut seen_contact_refs: HashSet<String> = HashSet::new();
 
         for party in &input.parties {
             let entry = match party {
                 InterlocutorPartyInput::ContactRef(id) => {
+                    if !admit(id)? {
+                        return Err(Error::EntityNotFound);
+                    }
                     let record = self
                         .get_counterparty_contact(id)?
                         .ok_or(Error::EntityNotFound)?;
@@ -500,7 +525,9 @@ impl Vault {
                     identity_ref,
                     counterparty,
                 } => match self.find_counterparty_contact(identity_ref, counterparty)? {
-                    Some((id, record)) if record.status == CounterpartyContactStatus::Active => {
+                    Some((id, record))
+                        if record.status == CounterpartyContactStatus::Active && admit(&id)? =>
+                    {
                         self.known_contact_interlocutor(
                             id,
                             &record.counterparty,
@@ -527,7 +554,7 @@ impl Vault {
         // BEFORE the owner branch, so an Owner entry can still only come from
         // `session_owner()` via `with_session_owner`.
         if let Some(voice_session_ref) = input.voice_session_ref.as_deref() {
-            match self.voice_roster_parties(voice_session_ref) {
+            match self.voice_roster_parties(voice_session_ref, admit) {
                 Ok(parties) => {
                     for entry in parties {
                         if let Some(contact_ref) = entry.contact_ref.as_ref()
@@ -569,11 +596,35 @@ impl Vault {
     /// storage fault — so the one caller has a single fail-closed branch. A
     /// roster that resolves but names nobody legitimately yields no entries.
     /// One party per distinct speaker: repeated segments of the same speaker
-    /// collapse before the caller's contact-ref dedupe sees them.
-    fn voice_roster_parties(&self, voice_session_ref: &str) -> Result<Vec<Interlocutor>> {
+    /// collapse before the caller's contact-ref dedupe sees them. A roster
+    /// naming any entity `admit` refuses fails as a missing one does: its
+    /// labels are those entities' ids.
+    fn voice_roster_parties(
+        &self,
+        voice_session_ref: &str,
+        admit: &dyn Fn(&EntityId) -> Result<bool>,
+    ) -> Result<Vec<Interlocutor>> {
         let roster = self
             .voice_session_roster(voice_session_ref)?
             .ok_or(Error::EntityNotFound)?;
+        for segment in &roster.segments {
+            let attendee = match &segment.evidence {
+                VoiceAttributionEvidence::InviteElimination { attendee_ref } => Some(attendee_ref),
+                _ => None,
+            };
+            for id in [
+                segment.subject_ref.as_ref(),
+                segment.contact_ref.as_ref(),
+                attendee,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !admit(id)? {
+                    return Err(Error::EntityNotFound);
+                }
+            }
+        }
 
         let mut parties = Vec::new();
         let mut seen_speakers: HashSet<String> = HashSet::new();

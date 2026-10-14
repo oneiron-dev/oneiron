@@ -762,3 +762,77 @@ fn migrated_non_note_document_edits_invalidate_pre_provider_pins() -> TestResult
     assert_ne!(first.frontier, fresh.frontier);
     Ok(())
 }
+
+/// F16 H394: a standing answer rests only on sources the question's principal
+/// reads under its own relationship grants. For an agent's question, a
+/// relationship MESSAGE is no source until the agent holds a live
+/// MessagesRead grant for it, and is none again once that grant is revoked.
+#[test]
+fn a_relationship_message_is_a_standing_source_only_on_the_principals_grant() -> TestResult {
+    use crate::access_grant::{
+        AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+    };
+    use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = EntityId::now();
+    let principal = crate::test_util::seed_agent_definition(&vault, EntityId::now(), "asker");
+    let space = EntityId::now();
+    let message = EntityId::now();
+    person(&vault, owner)?;
+    grant(&vault, principal)?;
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::now().to_hex(),
+            turn_ref: None,
+            occurred_at: 1,
+            messages: vec![WitnessMessage {
+                id: Some(message.to_hex()),
+                author: WitnessAuthor::User,
+                message_type: "dialogue".into(),
+                content: "relationship source".into(),
+                metadata: Some(serde_json::json!({ "rel": space.to_hex() })),
+                is_visible: true,
+                order: 0,
+            }],
+        })?;
+    let actor = WriteActor::new(principal, EdgeActorClass::Agent);
+    let id = create_question(&vault, principal, definition(message, "Relationship?"), 2)?
+        .definition
+        .question
+        .id;
+    let frontier = |vault: &Vault| {
+        standing_source_frontier(vault, principal, id, 1, actor, message, &[message])
+    };
+    assert!(
+        frontier(&vault).is_err(),
+        "no grant reads no relationship row"
+    );
+    assert!(backfill_standing_answer(&vault, principal, id, 1, actor, input(message), 3).is_err());
+
+    let grant_id = EntityId::now();
+    vault.create_access_grant(
+        &grant_id,
+        &AccessGrant {
+            principal_ref: principal,
+            scope: AccessGrantScope::Messages { space_ref: space },
+            capability: AccessGrantCapability::MessagesRead,
+            status: AccessGrantStatus::Active,
+            created_at: 1,
+            revoked_at: None,
+            expires_at: Some(u64::MAX),
+            authority_scope: crate::federation::scope_codec::read_preset(),
+        },
+    )?;
+    assert!(
+        frontier(&vault).is_ok(),
+        "the principal's live grant reads it"
+    );
+    vault.revoke_access_grant(&grant_id, 4)?;
+    assert!(
+        frontier(&vault).is_err(),
+        "a revoked grant reads it no more"
+    );
+    Ok(())
+}

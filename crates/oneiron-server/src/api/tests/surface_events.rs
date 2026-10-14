@@ -197,11 +197,12 @@ async fn v1_core_surface_event_rejection_receipt_names_which_identity_failed() {
         .expect("seed vault-bound identity");
     activate_seeded_identity(&server, identity_ref, 1_782_357_000);
 
+    // The submitter reads the identity, so its receipt may name it.
     let (status, receipt) = core_json(
         server.clone(),
         "POST",
         "/v1/core/surface-events",
-        "core:write",
+        "core:read,core:write",
         Some(&surface_event_body(address, "provider-reject-2")),
     )
     .await;
@@ -399,7 +400,7 @@ async fn v1_core_surface_event_rejection_is_not_cached_under_the_idempotency_key
         let request = Request::builder()
             .method("POST")
             .uri("/v1/core/surface-events")
-            .header(AUTHORIZATION, test_bearer("scope=core:write"))
+            .header(AUTHORIZATION, test_bearer("scope=core:read,core:write"))
             .header("Idempotency-Key", "provider-idem-retry-1")
             .header(CONTENT_TYPE, "application/json")
             .body(Body::from(body.to_string()))
@@ -440,4 +441,91 @@ async fn v1_core_surface_event_rejection_is_not_cached_under_the_idempotency_key
     assert_eq!(accepted_status, StatusCode::ACCEPTED);
     assert_eq!(ack["replayed"], Value::from(false));
     assert_eq!(ack["state"], Value::from("queued"));
+}
+
+/// F16 H172: a submitter learns nothing of an identity it cannot read. A
+/// vault-bound identity and one still provisioning refuse the event as an
+/// address no identity holds does: no identity or agent ref, no reason that
+/// tells them apart. That holds for a write-only credential and for a reader
+/// whose grant reads no identity rows.
+#[tokio::test]
+async fn a_submitter_learns_nothing_of_an_identity_it_cannot_read() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let requested = |counter: u128, address: &str, binding| {
+        server
+            .vault
+            .create_channel_identity(
+                &seeded_test_entity_id(counter),
+                &oneiron::channel_identity::ChannelIdentity::requested(
+                    "email",
+                    address,
+                    oneiron::channel_identity::SelfHeldShape::DedicatedAddress,
+                    binding,
+                    1_782_357_000,
+                ),
+            )
+            .expect("seed identity");
+    };
+    requested(
+        0x2516_0301,
+        "hidden-vault-bound@example.com",
+        oneiron::channel_identity::ChannelIdentityBinding::vault(7),
+    );
+    activate_seeded_identity(&server, seeded_test_entity_id(0x2516_0301), 1_782_357_000);
+    requested(
+        0x2516_0302,
+        "hidden-provisioning@example.com",
+        oneiron::channel_identity::ChannelIdentityBinding::agent(seeded_test_entity_id(
+            0x2516_0303,
+        )),
+    );
+    let principal = seeded_test_entity_id(0x2516_0304);
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        principal,
+        &[oneiron::registry::ENTITY_TYPE_TURN],
+    );
+    let submitters = [
+        test_bearer("scope=core:write"),
+        test_bearer(&format!(
+            "scope=core:read,core:write;principal_ref={}",
+            principal.to_hex()
+        )),
+    ];
+    for (index, bearer) in submitters.into_iter().enumerate() {
+        let mut receipts = Vec::new();
+        for address in [
+            "nobody@example.com",
+            "hidden-vault-bound@example.com",
+            "hidden-provisioning@example.com",
+        ] {
+            let (status, mut receipt) = route_json(
+                server.clone(),
+                core_request_with_authz(
+                    "POST",
+                    "/v1/core/surface-events",
+                    bearer.clone(),
+                    Some(&surface_event_body(
+                        address,
+                        &format!("hidden-{index}-{address}"),
+                    )),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{receipt}");
+            let fields = receipt.as_object_mut().unwrap();
+            fields.remove("event_id");
+            fields.remove("receiving_address_or_handle");
+            receipts.push(receipt);
+        }
+        assert_eq!(
+            receipts[0]["rejection_reason"],
+            "unknown_receiving_identity"
+        );
+        assert_eq!(receipts[1], receipts[0], "submitter {index}");
+        assert_eq!(receipts[2], receipts[0], "submitter {index}");
+    }
 }

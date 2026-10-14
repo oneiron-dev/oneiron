@@ -1,6 +1,14 @@
 //! Router proofs for session observations and turn-local capability riders.
 use super::*;
 use oneiron::context_board::{BoardStreamFrame, DeltaRow, FrameKind};
+use oneiron::skill_hub::pack_catalog::{
+    PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackPermissions, PackSource,
+    PackSourceAdapter,
+};
+use oneiron::skill_hub::{
+    HubFile, HubPackage, HubPin, HubRef, HubSyncPolicy, SkillHubAdapter, SkillHubKind,
+    SkillHubRecord, SkillHubTrustTier,
+};
 
 fn seed_board_skill(server: &SyncServer, id: oneiron::EntityId, needle: &str) -> String {
     let mut record = oneiron::skill::SkillRecord::new(
@@ -570,54 +578,165 @@ async fn board_host_narrow_connector_never_delivers_a_rider() {
     assert_mcp_structured_error(&refused, "mcp_scope_refused");
 }
 
+struct Adapter {
+    hub: oneiron::EntityId,
+    source: PackSource,
+}
+impl SkillHubAdapter for Adapter {
+    fn hub_id(&self) -> oneiron::EntityId {
+        self.hub
+    }
+    fn kind(&self) -> SkillHubKind {
+        SkillHubKind::Git
+    }
+    fn endpoint(&self) -> Option<&str> {
+        Some("https://example.invalid/board-pack")
+    }
+    fn fetch_package(&self, _: &HubRef) -> oneiron::Result<HubPackage> {
+        Err(oneiron::Error::EntityNotFound)
+    }
+}
+impl PackSourceAdapter for Adapter {
+    fn fetch_pack_source(&self, _: &HubRef) -> oneiron::Result<PackSource> {
+        Ok(self.source.clone())
+    }
+}
+struct Fit;
+impl PackFitPolicy for Fit {
+    fn evaluate(&self, _: &PackSource, card: &PackPermissions) -> oneiron::Result<PackFitVerdict> {
+        assert_eq!(card.section_authorities, ["read"]);
+        Ok(PackFitVerdict {
+            fits: true,
+            rules_hit: false,
+            code_auto_install: true,
+        })
+    }
+}
+
+/// Installs a one-section board pack named `name` from a verified hub, as
+/// the owner, and returns its receipt's content hash.
+fn install_board_pack(server: &SyncServer, name: &str) -> String {
+    let section = json!({"section_id": format!("{name}.panel"), "state_family":{"family":"claim","version":1},
+        "verbs":["board.expand"], "authority_lane":"read", "budget_policy":"board.plugin_sections.v1"});
+    let manifest = format!(
+        "---\nname: {name}\ndescription: board pack\nversion: 1\nkind: capability\n\
+         predicates: [\"{name}.topic\"]\n---\nBoard pack\n"
+    );
+    let source = PackSource::from_files(vec![
+        HubFile::new("PACK.md", manifest.as_bytes()),
+        HubFile::new(
+            format!("knowledge/sections/{name}.panel.json"),
+            serde_json::to_vec(&section).unwrap(),
+        ),
+    ])
+    .unwrap();
+    let occurred = oneiron::TimeRange { start: 4, end: 4 };
+    let owner_id = oneiron::EntityId::now();
+    server
+        .vault
+        .put_entity(
+            &owner_id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            occurred,
+            4,
+            b"owner",
+        )
+        .unwrap();
+    let owner = server
+        .vault
+        .authenticate_owner(
+            owner_id,
+            &format!("principal:{name}"),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let hub = oneiron::EntityId::now();
+    server
+        .vault
+        .configure_skill_hub(
+            &owner,
+            &hub,
+            &SkillHubRecord::new(
+                SkillHubKind::Git,
+                "https://example.invalid/board-pack",
+                SkillHubTrustTier::Verified,
+                HubSyncPolicy::ContentHashFrozen,
+            )
+            .unwrap(),
+            occurred,
+            4,
+        )
+        .unwrap();
+    let publisher = server
+        .vault
+        .admit_skill_publisher(&owner, &format!("publisher:{name}"), hub)
+        .unwrap();
+    let reference = HubRef::new(
+        hub,
+        format!("packs/{name}"),
+        HubPin::ContentHash(source.content_hash().to_hex()),
+    )
+    .unwrap();
+    let PackInstallDisposition::Installed(receipt) = server
+        .vault
+        .install_pack_from_adapter(
+            &Adapter { hub, source },
+            &reference,
+            &publisher,
+            &Fit,
+            occurred,
+            4,
+        )
+        .unwrap()
+    else {
+        panic!("post-fit board pack")
+    };
+    receipt.content_hash
+}
+
+/// F16 H385: the core board's changed line names only packs whose source row
+/// its reader reads. To a reader that cannot read the pack's source, the
+/// pack is not installed; once its grant reads the source, it sees the
+/// install.
+#[tokio::test]
+async fn a_board_names_no_pack_its_reader_cannot_read() {
+    use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x2516_0201).to_hex();
+    let restrict = |types: &[u8]| {
+        super::context_board_history::restrict_principal_read_types(
+            &server,
+            seeded_test_entity_id(0x2516_0201),
+            types,
+        );
+    };
+    restrict(&[ENTITY_TYPE_TURN, ENTITY_TYPE_PERSON]);
+    for session in ["hidden-session", "shown-session"] {
+        assert_eq!(
+            core_board(&server, &principal, session).await["changed"],
+            json!([])
+        );
+    }
+    let hash = install_board_pack(&server, "alice.hidden");
+    let hidden = core_board(&server, &principal, "hidden-session").await;
+    assert!(
+        !hidden.to_string().contains("alice.hidden") && !hidden.to_string().contains(&hash),
+        "{hidden:#}"
+    );
+    restrict(&[ENTITY_TYPE_TURN, ENTITY_TYPE_PERSON, ENTITY_TYPE_ASSET]);
+    let shown = core_board(&server, &principal, "shown-session").await;
+    assert!(
+        shown["changed"].to_string().contains("alice.hidden"),
+        "a reader that reads the pack's source sees it installed: {shown:#}"
+    );
+}
+
 #[tokio::test]
 async fn board_host_pack_install_is_changed_line_and_live_section_next_render() {
-    use oneiron::skill_hub::pack_catalog::{
-        PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackPermissions, PackSource,
-        PackSourceAdapter,
-    };
-    use oneiron::skill_hub::{
-        HubFile, HubPackage, HubPin, HubRef, HubSyncPolicy, SkillHubAdapter, SkillHubKind,
-        SkillHubRecord, SkillHubTrustTier,
-    };
-    struct Adapter {
-        hub: oneiron::EntityId,
-        source: PackSource,
-    }
-    impl SkillHubAdapter for Adapter {
-        fn hub_id(&self) -> oneiron::EntityId {
-            self.hub
-        }
-        fn kind(&self) -> SkillHubKind {
-            SkillHubKind::Git
-        }
-        fn endpoint(&self) -> Option<&str> {
-            Some("https://example.invalid/board-pack")
-        }
-        fn fetch_package(&self, _: &HubRef) -> oneiron::Result<HubPackage> {
-            Err(oneiron::Error::EntityNotFound)
-        }
-    }
-    impl PackSourceAdapter for Adapter {
-        fn fetch_pack_source(&self, _: &HubRef) -> oneiron::Result<PackSource> {
-            Ok(self.source.clone())
-        }
-    }
-    struct Fit;
-    impl PackFitPolicy for Fit {
-        fn evaluate(
-            &self,
-            _: &PackSource,
-            card: &PackPermissions,
-        ) -> oneiron::Result<PackFitVerdict> {
-            assert_eq!(card.section_authorities, ["read"]);
-            Ok(PackFitVerdict {
-                fits: true,
-                rules_hit: false,
-                code_auto_install: true,
-            })
-        }
-    }
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()

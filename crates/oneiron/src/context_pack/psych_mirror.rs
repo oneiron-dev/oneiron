@@ -144,6 +144,19 @@ pub enum PsychProfilePackStaleReason {
     },
 }
 
+/// The section for a profile that is not there, or that the pack's clamp or
+/// reader does not admit: the two read alike.
+pub(super) fn missing_psych_profile_pack_section(key: PsychProfileKey) -> PsychProfilePackSection {
+    PsychProfilePackSection {
+        section: "psych_profile".to_owned(),
+        status: "missing".to_owned(),
+        entity_id: psych_profile_entity_id(&key),
+        key,
+        profile: None,
+        stale_reason: None,
+    }
+}
+
 /// Materializes a requested stored-profile companion section.
 pub fn psych_profile_pack_section(
     vault: &Vault,
@@ -153,14 +166,7 @@ pub fn psych_profile_pack_section(
     let key = *key;
     let entity_id = psych_profile_entity_id(&key);
     Ok(match state {
-        PsychProfileState::Missing => PsychProfilePackSection {
-            section: "psych_profile".to_owned(),
-            status: "missing".to_owned(),
-            entity_id,
-            key,
-            profile: None,
-            stale_reason: None,
-        },
+        PsychProfileState::Missing => missing_psych_profile_pack_section(key),
         PsychProfileState::Fresh(profile) => PsychProfilePackSection {
             section: "psych_profile".to_owned(),
             status: "fresh".to_owned(),

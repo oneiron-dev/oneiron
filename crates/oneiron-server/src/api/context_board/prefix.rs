@@ -74,8 +74,12 @@ pub(crate) async fn session_prefix(
     })
 }
 
+/// The caller's pending notifications: those `read`, its own read, reads,
+/// whose recipient markers name it. A recipient marker targets delivery; it
+/// never grants a read the caller does not hold.
 pub(crate) fn pending_notifications(
     server: &SyncServer,
+    read: &oneiron::claim::ScopedRead<'_>,
     caller: &str,
 ) -> Result<Vec<NotificationItem>, ApiError> {
     let mut notifications = Vec::new();
@@ -93,6 +97,15 @@ pub(crate) fn pending_notifications(
         .map_err(|_| ApiError::internal_server_error("pending notification scan failed"))?;
 
     for (id, learned_at, raw_body) in rows {
+        let readable = read
+            .is_entity_readable(&id)
+            .inspect_err(|e| {
+                tracing::error!(kind = ?e.kind(), "pending notification admission failed");
+            })
+            .map_err(|_| ApiError::internal_server_error("pending notification scan failed"))?;
+        if !readable {
+            continue;
+        }
         let Some(body) = notification_body_json(&raw_body) else {
             continue;
         };

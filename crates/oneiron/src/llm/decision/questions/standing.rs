@@ -119,16 +119,22 @@ fn sources_in_txn(
         return Err(invalid("too many standing answer sources"));
     }
     let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+    // Relationship membership and AccessGrants are the question principal's,
+    // for both reads: the writer's own grant never widens what the
+    // principal's answer may rest on. The vault's live owner reads its
+    // relationships' rows as it does on every lane.
     let reader = ScopedReadActorKey::with_actor_class(
         principal.to_hex(),
         actor.actor_class().gate_actor_class(),
     )
-    .ok_or(Error::InvariantViolation("canonical question principal"))?;
+    .ok_or(Error::InvariantViolation("canonical question principal"))?
+    .exempt_while_owner(principal);
     let holder = ScopedReadActorKey::with_actor_class(
         actor.entity_ref().to_hex(),
         actor.actor_class().gate_actor_class(),
     )
-    .ok_or(Error::InvariantViolation("canonical question actor"))?;
+    .ok_or(Error::InvariantViolation("canonical question actor"))?
+    .exempt_while_owner(principal);
     let mut hasher = blake3::Hasher::new();
     let mut sources = Vec::with_capacity(evidence.len() + 1);
     for id in std::iter::once(&unit).chain(evidence.iter()) {

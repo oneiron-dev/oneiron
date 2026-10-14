@@ -231,8 +231,9 @@ pub(crate) async fn context_board_hydrate(
     // same key the MEMORIES cursor store already uses.
     let caller = auth.principal_ref().unwrap_or(auth.principal()).trim();
 
+    let read = super::scoped_read_for_core_auth(&server.vault, &auth)?;
     let session = session_prefix(&server, auth.locality()).await?;
-    let notifications = pending_notifications(&server, caller)?;
+    let notifications = pending_notifications(&server, &read, caller)?;
     let unprocessed = pending_unprocessed_items(&server, caller);
     let budget = standing.as_ref().map_or_else(
         || current_hydration_budget(&server),
@@ -261,14 +262,24 @@ pub(crate) async fn context_board_hydrate(
         None => (None, None, None),
     };
 
-    let installed_packs: Vec<(String, String)> = server
+    // The pack inventory the rider folds and the session records is the
+    // caller's: a pack whose source row it cannot read is not installed.
+    let mut installed_packs: Vec<(String, String)> = Vec::new();
+    for row in server
         .vault
         .installed_packs()
         .map_err(|error| super::core_engine_error("pack inventory failed", error))?
-        .into_iter()
-        .map(|row| (row.pack_name, row.content_hash))
-        .collect();
-    let read = super::scoped_read_for_core_auth(&server.vault, &auth)?;
+    {
+        let Ok(source) = oneiron::EntityId::from_hex(&row.source_id) else {
+            continue;
+        };
+        if read
+            .is_entity_readable(&source)
+            .map_err(|error| super::core_engine_error("pack inventory failed", error))?
+        {
+            installed_packs.push((row.pack_name, row.content_hash));
+        }
+    }
     // The rider is folded from, and acknowledged into, this one session.
     let session_id = resolved_session_id(
         &server,

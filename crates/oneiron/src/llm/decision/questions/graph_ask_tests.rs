@@ -766,3 +766,92 @@ fn diary_pair_revoked_during_answerer_cannot_be_used_as_graph_evidence() -> crat
     );
     Ok(())
 }
+
+/// F16 H391: a relationship's MESSAGE answers the asker only on the asker's
+/// own live grant. Without one it is neither a unit the answerer sees nor a
+/// neighbor of one; once the asker holds a MessagesRead grant for the
+/// relationship, it is a neighbor like any row the asker reads.
+#[test]
+fn a_relationship_message_reaches_the_answerer_only_on_the_askers_grant() -> crate::Result<()> {
+    use crate::access_grant::{
+        AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+    };
+    let (_temp, vault) = open_vault();
+    let (principal, actor) = identities(&vault)?;
+    let owner = EntityId::now();
+    put_entity(&vault, owner, ENTITY_TYPE_PERSON, b"owner")?;
+    let space = EntityId::now();
+    let message = EntityId::now();
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .witness(&crate::WitnessTurn {
+            conversation_ref: EntityId::now().to_hex(),
+            turn_ref: None,
+            messages: vec![crate::WitnessMessage {
+                id: Some(message.to_hex()),
+                author: crate::WitnessAuthor::User,
+                message_type: "dialogue".into(),
+                content: "relationship source".into(),
+                metadata: Some(serde_json::json!({ "rel": space.to_hex() })),
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: 10,
+        })
+        .expect("witness relationship message");
+    let (hidden, shown) = (EntityId::now(), EntityId::now());
+    for unit in [hidden, shown] {
+        put_entity(&vault, unit, ENTITY_TYPE_PERSON, b"unit")?;
+        vault.put_edge(&unit, EdgeKind::Mentions, &message, 0.8)?;
+    }
+    let sees_message = |answerer: &FixedAnswerer| {
+        answerer
+            .contexts
+            .iter()
+            .any(|context| context.sources.iter().any(|source| source.id == message))
+    };
+
+    let mut answerer = FixedAnswerer::returning(Some(prediction()));
+    let result = run_graph_ask(
+        &vault,
+        principal,
+        actor,
+        question(),
+        &[hidden, message],
+        &mut answerer,
+        16,
+    )
+    .map_err(|failure| *failure.error)?;
+    assert!(result.answers.iter().all(|answer| answer.unit != message));
+    assert!(
+        !sees_message(&answerer),
+        "no grant reads no relationship row"
+    );
+
+    vault.create_access_grant(
+        &EntityId::now(),
+        &AccessGrant {
+            principal_ref: principal,
+            scope: AccessGrantScope::Messages { space_ref: space },
+            capability: AccessGrantCapability::MessagesRead,
+            status: AccessGrantStatus::Active,
+            created_at: 1,
+            revoked_at: None,
+            expires_at: Some(u64::MAX),
+            authority_scope: crate::federation::scope_codec::read_preset(),
+        },
+    )?;
+    let mut answerer = FixedAnswerer::returning(Some(prediction()));
+    run_graph_ask(
+        &vault,
+        principal,
+        actor,
+        question(),
+        &[shown],
+        &mut answerer,
+        17,
+    )
+    .map_err(|failure| *failure.error)?;
+    assert!(sees_message(&answerer), "the asker's live grant reads it");
+    Ok(())
+}

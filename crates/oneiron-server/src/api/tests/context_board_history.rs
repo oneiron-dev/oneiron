@@ -782,3 +782,51 @@ async fn a_keyed_board_turn_retry_replays_its_first_success() {
         "{refused:#}"
     );
 }
+
+/// F16 H311: a board delivers only the notifications its reader reads. A
+/// notification with no recipient marker is for every caller that reads it,
+/// never for one whose grant reads no notification.
+#[tokio::test]
+async fn a_board_delivers_no_notification_its_reader_cannot_read() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x2516_0101);
+    let notice = seeded_test_entity_id(0x2516_0102);
+    server
+        .vault
+        .put_entity(
+            &notice,
+            oneiron::registry::ENTITY_TYPE_NOTIFICATION,
+            oneiron::TimeRange { start: 2, end: 2 },
+            2,
+            &rmp_serde::to_vec_named(&json!({ "title": "vault-wide notice" })).unwrap(),
+        )
+        .unwrap();
+    let delivered = || async {
+        let (status, board) =
+            route_json(server.clone(), hydrate(principal, "core:read", &json!({}))).await;
+        assert_eq!(status, StatusCode::OK, "{board:#}");
+        board["notifications"]
+            .to_string()
+            .contains(&notice.to_hex())
+    };
+    restrict_principal_read_types(&server, principal, &[oneiron::registry::ENTITY_TYPE_TURN]);
+    assert!(
+        !delivered().await,
+        "a notification the reader cannot read is not its own"
+    );
+    restrict_principal_read_types(
+        &server,
+        principal,
+        &[
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::registry::ENTITY_TYPE_NOTIFICATION,
+        ],
+    );
+    assert!(
+        delivered().await,
+        "a reader that reads the notification receives it"
+    );
+}

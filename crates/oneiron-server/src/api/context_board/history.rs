@@ -215,7 +215,8 @@ fn current_board_authority<'a>(
     ApiError,
 > {
     let read = super::super::scoped_read_for_core_auth(vault, auth)?;
-    let interlocutors = super::super::resolve_core_interlocutor_set(vault, auth, None, None)?;
+    let interlocutors =
+        super::super::resolve_core_interlocutor_set(vault, auth, &read, None, None)?;
     let disclosure = super::super::resolve_core_disclosure(vault, interlocutors.as_ref(), None)?;
     Ok((read, disclosure))
 }

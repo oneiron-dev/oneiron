@@ -1265,3 +1265,94 @@ async fn an_agent_only_room_never_reads_as_the_owner_alone_for_a_bare_host() {
         "an agent's room never holds Tier A: {after}"
     );
 }
+
+/// F16 H145: a narrowed reader that names a contact it cannot read learns
+/// nothing of it. An explicit `contact_ref` fails exactly as a missing one
+/// does, and a channel pair that finds the contact stays the unknown label
+/// the reader sent, never the contact's id. Once the reader's grant admits
+/// contact rows, the same requests resolve the contact.
+#[tokio::test]
+async fn a_narrowed_reader_resolves_no_contact_it_cannot_read() {
+    let (_dir, server) = interlocutor_test_server();
+    let principal = seeded_test_entity_id(0x2516_0001);
+    let identity = seeded_test_entity_id(0x2516_0002);
+    let contact = seeded_test_entity_id(0x2516_0003);
+    let missing = seeded_test_entity_id(0x2516_0004);
+    seed_counterparty_contact(&server, contact, identity, "hidden@example.com");
+    let pack = |party: Value| {
+        route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                "/v1/core/context-pack",
+                "core:read",
+                &principal.to_hex(),
+                Some(&json!({
+                    "query": "anything",
+                    "interlocutors": { "third_parties": [party] }
+                })),
+            ),
+        )
+    };
+    let by_ref = |id: oneiron::EntityId| json!({ "contact_ref": id.to_hex() });
+    let by_channel = json!({
+        "channel_identity_ref": identity.to_hex(),
+        "counterparty": "hidden@example.com"
+    });
+    let error = |body: &Value| {
+        (
+            body["error"]["code"].clone(),
+            body["error"]["message"].clone(),
+            body["error"]["details"].clone(),
+        )
+    };
+    let stamp = |body: &Value, speaker: &str| -> Value {
+        body["interlocutors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|stamp| stamp["speaker"] == speaker)
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        principal,
+        &[oneiron::registry::ENTITY_TYPE_TURN],
+    );
+    let (missing_status, missing_body) = pack(by_ref(missing)).await;
+    assert_eq!(missing_status, StatusCode::NOT_FOUND, "{missing_body}");
+    let (status, body) = pack(by_ref(contact)).await;
+    assert_eq!(
+        (status, error(&body)),
+        (missing_status, error(&missing_body)),
+        "a contact the reader cannot read is a missing one: {body}"
+    );
+    let (status, body) = pack(by_channel.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(!body.to_string().contains(&contact.to_hex()), "{body}");
+    assert_eq!(
+        stamp(&body, "hidden@example.com")["class"],
+        "unknown",
+        "{body}"
+    );
+
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        principal,
+        &[
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT,
+        ],
+    );
+    for party in [by_ref(contact), by_channel] {
+        let (status, body) = pack(party).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            stamp(&body, &contact.to_hex())["class"],
+            "known_contact",
+            "a reader that reads the contact resolves it: {body}"
+        );
+    }
+}
