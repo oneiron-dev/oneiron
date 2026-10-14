@@ -253,10 +253,14 @@ impl Vault {
         // A revision that takes "yours" away keeps the effect of the machine's
         // world edits it has seen; one it never saw only counts stricter. A
         // later revision of a machine already not the owner's took nothing
-        // away: it carries that list, and the fold reads only the first.
+        // away: it carries that list, and the fold reads only the first. Nor
+        // does one whose "yours" no longer stands by the roster rule.
         profile.seen_world_edits = match fold.machine(profile.machine) {
             Some(current) if !current.profile.says_mine() => {
                 current.profile.seen_world_edits.clone()
+            }
+            Some(current) if !super::world_privacy::mine_by_roster(current) => {
+                std::collections::BTreeSet::new()
             }
             _ => super::world_privacy::live_edits_by(fold, profile.machine),
         };

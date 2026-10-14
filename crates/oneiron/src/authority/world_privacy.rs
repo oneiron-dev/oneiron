@@ -415,7 +415,9 @@ fn is_mine(state: &FoldState, machine: EntityId) -> bool {
 /// "yours" took nothing away: when it stops standing for another reason (its
 /// signer found in a host's custody) it acknowledges no edit (Sol P2 round 3,
 /// F2). Nor does a later revision of a machine already not the owner's, such
-/// as a removal after a demotion (Wonder P2 round 1, W2).
+/// as a removal after a demotion (Wonder P2 round 1, W2), or one that took
+/// away a mark that did not stand, whenever its custody is found (round 2,
+/// W2).
 fn full_strength(
     state: &FoldState,
     hash: &AuthorityEntryHash,
@@ -558,7 +560,9 @@ pub(super) fn apply_world_privacy(
 /// wider than the owner set it (Wonder P2 round 1, W1). A world edit is judged
 /// on the main log as the fold keeps it: every edit above a main-log row the
 /// fold did not keep is folded again, in causal order, with each such row
-/// crossed, never applied. An edit invalid on its own stays invalid.
+/// crossed, never applied. An edit invalid on its own stays invalid. Crossing
+/// gives no signer more than this replica's fold already gives the same edit
+/// signed on the crossed row's parents instead (Wonder P2 round 2, W1).
 pub(super) fn refold_world_edits(
     states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,

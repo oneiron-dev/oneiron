@@ -73,7 +73,8 @@ pub(super) struct MachineChain {
     /// While the machine is not the owner's: what the revision that took
     /// "yours" away had seen. A later revision of a machine already not the
     /// owner's took nothing away and acknowledges nothing (Wonder P2 round 1,
-    /// W2).
+    /// W2), and neither does one that took a "yours" mark that no longer
+    /// stood (Wonder P2 round 2, W2).
     pub(super) acknowledged: Option<Acknowledged>,
 }
 
@@ -84,6 +85,9 @@ pub(super) struct Acknowledged {
     /// never was the owner's.
     from: u64,
     seen: BTreeSet<AuthorityEntryHash>,
+    /// The signers of the marks taken away. Custody found later on any branch
+    /// voids the acknowledgement, as it voids the marks.
+    marks: BTreeSet<AuthorityKey>,
 }
 
 impl Acknowledged {
@@ -98,6 +102,7 @@ impl Acknowledged {
                 Ordering::Equal => Self {
                     from: left.from,
                     seen: left.seen.intersection(&right.seen).copied().collect(),
+                    marks: left.marks.union(&right.marks).cloned().collect(),
                 },
             }),
             (one, other) => one.or(other).cloned(),
@@ -192,11 +197,17 @@ pub(super) fn apply_machine_profile(
         Some(chain) if !chain.head.profile.says_mine() => chain.acknowledged.clone(),
         Some(chain) => Some(Acknowledged {
             from: chain.head.profile.revision,
-            seen: profile.seen_world_edits.clone(),
+            seen: if derived_head(state, profile.machine, chain).is_mine() {
+                profile.seen_world_edits.clone()
+            } else {
+                BTreeSet::new()
+            },
+            marks: BTreeSet::from([chain.head.signer.clone()]),
         }),
         None => Some(Acknowledged {
             from: 0,
             seen: BTreeSet::new(),
+            marks: BTreeSet::new(),
         }),
     };
     if key_is_authority(state, &profile.machine_key)
@@ -262,7 +273,8 @@ fn in_host_custody(state: &FoldState, key: &AuthorityKey) -> bool {
 }
 
 /// The world edits of `machine` the revision that took "yours" away had
-/// seen; `None` while no revision has.
+/// seen; `None` while no revision has, or once a mark it took away turns out
+/// to be signed in a host's custody.
 pub(super) fn acknowledged_world_edits(
     state: &FoldState,
     machine: EntityId,
@@ -270,6 +282,13 @@ pub(super) fn acknowledged_world_edits(
     roster_chain(state, machine)?
         .acknowledged
         .as_ref()
+        .filter(|acknowledged| {
+            !(state.hosted
+                && acknowledged
+                    .marks
+                    .iter()
+                    .any(|key| in_host_custody(state, key)))
+        })
         .map(|acknowledged| &acknowledged.seen)
 }
 

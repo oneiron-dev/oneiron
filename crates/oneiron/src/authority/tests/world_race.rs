@@ -1040,4 +1040,120 @@ fn a_custodial_mark_acknowledges_no_widening() {
     assert_eq!(folded.signer_class, SignerClass::Custodial);
     assert!(folded.profile.seen_world_edits.contains(&hash(&widen)));
     assert_eq!(fold.world_privacy(world).read, EffectiveRead::MyMachines);
+
+    // A removal on the marking branch, before that branch meets the custody,
+    // took away a mark that did not stand: once the custody is found it
+    // acknowledges nothing (Wonder P2 round 2, W2).
+    let removal = entry(
+        3,
+        &[&entries[7]],
+        AuthorityOp::MachineProfile(MachineProfile {
+            role: MachineRole::Removed,
+            revision: 3,
+            ..match profile(3, BTreeSet::from([hash(&widen)])) {
+                AuthorityOp::MachineProfile(profile) => profile,
+                _ => unreachable!(),
+            }
+        }),
+        &admitted,
+        None,
+    );
+    let mut removed = entries[..8].to_vec();
+    removed.push(removal.clone());
+    let fold = fold_authority_log_for_posture(
+        &removed,
+        &BTreeMap::new(),
+        10,
+        &BTreeMap::new(),
+        crate::HostingPrivacyPosture::Hosted,
+    );
+    assert!(fold.valid_entries.contains(&hash(&removal)));
+    assert_eq!(
+        fold.machine(machine).unwrap().profile.role,
+        MachineRole::Removed
+    );
+    assert_eq!(fold.world_privacy(world).read, EffectiveRead::MyMachines);
+    assert!(!fold.world_readable_on(world, Destination::Unknown));
+}
+
+/// A removal that takes away a "yours" no longer standing acknowledges
+/// nothing, from the owner's door or crafted: two divergent revisions at one
+/// revision leave the laptop conflicted before it is removed (Wonder P2
+/// round 2, W2).
+#[test]
+fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
+    for crafted in [false, true] {
+        let host = host();
+        let world = world_row(&host);
+        let (laptop, laptop_key) =
+            other_machine(&host, 86, MachineRole::Owned(MachineOwnership::Yours));
+        land(
+            &host,
+            &[edit_by(
+                &host,
+                laptop,
+                &laptop_key,
+                world,
+                settings(ReadLocation::OneMachine(laptop)),
+            )],
+        );
+        let widen = edit_by(
+            &host,
+            laptop,
+            &laptop_key,
+            world,
+            settings(ReadLocation::Everywhere),
+        );
+        let seen = BTreeSet::from([authority_entry_hash(&widen).unwrap()]);
+        let fold = host.vault.authority_fold().unwrap();
+        let current = fold.machine(laptop).unwrap().profile.clone();
+        let sibling = |seen_world_edits| {
+            let profile = MachineProfile {
+                revision: current.revision + 1,
+                seen_world_edits,
+                ..current.clone()
+            };
+            next_entry(&host.issuer, &fold, AuthorityOp::MachineProfile(profile), 3).unwrap()
+        };
+        land(&host, &[sibling(BTreeSet::new()), sibling(seen.clone())]);
+        land(&host, std::slice::from_ref(&widen));
+        assert!(
+            host.vault
+                .authority_fold()
+                .unwrap()
+                .machine(laptop)
+                .unwrap()
+                .conflicted
+        );
+        assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(laptop));
+
+        if crafted {
+            let fold = host.vault.authority_fold().unwrap();
+            let current = fold.machine(laptop).unwrap().profile.clone();
+            let profile = MachineProfile {
+                role: MachineRole::Removed,
+                revision: current.revision + 1,
+                seen_world_edits: seen,
+                ..current
+            };
+            land(
+                &host,
+                &[
+                    next_entry(&host.issuer, &fold, AuthorityOp::MachineProfile(profile), 4)
+                        .unwrap(),
+                ],
+            );
+        } else {
+            host.vault
+                .set_machine_role(&host.issuer, &host.owner, laptop, MachineRole::Removed)
+                .unwrap();
+        }
+        let fold = host.vault.authority_fold().unwrap();
+        assert_eq!(
+            fold.machine(laptop).unwrap().profile.role,
+            MachineRole::Removed
+        );
+        assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(laptop));
+        assert!(!fold.world_readable_on(world, Destination::Unknown));
+    }
 }
