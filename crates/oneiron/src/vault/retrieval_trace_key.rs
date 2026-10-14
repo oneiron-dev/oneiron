@@ -5,7 +5,8 @@
 //! lets that reader test guesses at a short query offline. The stored hash is
 //! therefore BLAKE3 keyed with a random key the store minted at its first open.
 //! The key has its own `vault_meta` row outside the telemetry families, so it
-//! never reaches telemetry, an export, a checkpoint image or sync.
+//! never reaches telemetry, an export, a checkpoint image or sync. The open
+//! that mints it deletes every run already stored, whose hash is unkeyed.
 
 use rand_core::{OsRng, RngCore};
 
@@ -29,7 +30,10 @@ pub(crate) struct RetrievalTraceKey([u8; 32]);
 
 impl RetrievalTraceKey {
     /// Reads the key `store` persisted at its first open, minting it on that
-    /// first open.
+    /// first open. The mint deletes, in its own transaction, every retrieval
+    /// run the store already holds, so a vault written before this key
+    /// existed keeps no unkeyed fork hash and none of the pack bytes its runs
+    /// could hold.
     pub(super) fn resolve_at_open(store: &Store) -> Result<Self> {
         let mut wtxn = store.env.write_txn()?;
         if let Some(key) = RETRIEVAL_TRACE_KEY.get(store, &wtxn, &())? {
@@ -37,6 +41,7 @@ impl RetrievalTraceKey {
         }
         let mut key = [0; 32];
         OsRng.fill_bytes(&mut key);
+        store.delete_retrieval_runs_before_trace_key(&mut wtxn)?;
         RETRIEVAL_TRACE_KEY.put(store, &mut wtxn, &(), &key)?;
         wtxn.commit()?;
         Ok(Self(key))

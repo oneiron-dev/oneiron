@@ -448,6 +448,59 @@ fn crash_orphans_sweep_on_reopen() -> crate::Result<()> {
     Ok(())
 }
 
+/// CodeRabbit on #1421: a run stored before the owner ruling of 2026-10-14
+/// may hold its pack's bytes (`pack_output`) beside an unkeyed fork hash.
+/// The open that mints the vault's trace key deletes it.
+#[test]
+fn a_run_stored_before_the_trace_key_holds_no_pack_bytes_after_open() -> crate::Result<()> {
+    const PACK: &str = "sentinel-pack-text-6b1d: my sister's diagnosis";
+    let dir = tempfile::tempdir()?;
+    let run = record(10);
+    {
+        let vault = crate::Vault::open(dir.path(), telemetry_config())?;
+        vault.store.record_retrieval_run(&run)?;
+        // The row as a build before the ruling wrote it, in a vault that has
+        // no trace key yet.
+        let Ok(rmpv::Value::Map(mut row)) =
+            rmpv::decode::read_value(&mut encode_retrieval_run(&run)?.as_slice())
+        else {
+            panic!("a run row is a map");
+        };
+        let pack = PACK.bytes().map(rmpv::Value::from).collect();
+        row.push((
+            "pack_output".into(),
+            rmpv::Value::Map(vec![
+                ("format".into(), "msgpack".into()),
+                ("bytes".into(), rmpv::Value::Array(pack)),
+            ]),
+        ));
+        let mut legacy = Vec::new();
+        rmpv::encode::write_value(&mut legacy, &rmpv::Value::Map(row)).expect("row encodes");
+        vault.with_write_txn(|txn| {
+            let meta = &vault.store.vault_meta;
+            meta.put(txn, &retrieval_run_key(run.run_id), &legacy)?;
+            meta.delete(txn, b"retrieval_trace_key:local:v1")?;
+            Ok(())
+        })?;
+        assert!(
+            vault.retrieval_run(run.run_id)?.is_some(),
+            "the old row reads"
+        );
+    }
+    let vault = crate::Vault::open(dir.path(), telemetry_config())?;
+    assert!(vault.retrieval_run(run.run_id)?.is_none());
+    for (table, rows) in crate::test_util::row_dump::dump_rows(&vault) {
+        for (key, value) in rows {
+            assert!(
+                !value.windows(PACK.len()).any(|w| w == PACK.as_bytes()),
+                "{table} row {:?} holds the pack bytes",
+                String::from_utf8_lossy(&key)
+            );
+        }
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn open_does_not_sweep_a_provisional_run_while_another_owner_holds_the_vault() -> crate::Result<()>
