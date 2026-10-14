@@ -1,7 +1,5 @@
 //! The entity-ingest ladder: one admission for every replicated entities-map value.
 
-use loro::LoroMap;
-
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, RegistryError, Result, SyncError};
@@ -11,7 +9,7 @@ use crate::registry::{
     ENTITY_TYPE_NOTE, ENTITY_TYPE_RECEIPT_RECORD, ENTITY_TYPE_REDACTION_AUDIT,
 };
 use crate::sync::bridge::ingest_replicated_identity_topology_event_in_txn;
-use crate::sync::loro_support::{tombstone_map_contains_id, tombstone_values_for_id};
+use crate::sync::loro_support::TombstoneIndex;
 use crate::sync::pack_sync;
 use crate::sync::quarantine::{
     self, QuarantineContainer, quarantine_rejected_op_in_txn, remote_rejection_reason,
@@ -20,12 +18,12 @@ use crate::sync::quota;
 use crate::vault::Vault;
 
 /// What one ingest reads besides the value: the vault, the window the value replays into, the
-/// lease vault its receipts verify against, and that window's tombstones map.
+/// lease vault its receipts verify against, and that window's tombstones, indexed once per pass.
 pub(in crate::sync) struct IngestCtx<'a> {
     vault: &'a Vault,
     window_key: &'a str,
     lease_vault_id: u64,
-    tombstones_map: &'a LoroMap,
+    tombstones: &'a TombstoneIndex,
     residence: Option<Residence<'a>>,
 }
 
@@ -47,13 +45,13 @@ impl<'a> IngestCtx<'a> {
         vault: &'a Vault,
         window_key: &'a str,
         lease_vault_id: u64,
-        tombstones_map: &'a LoroMap,
+        tombstones: &'a TombstoneIndex,
     ) -> Self {
         Self {
             vault,
             window_key,
             lease_vault_id,
-            tombstones_map,
+            tombstones,
             residence: None,
         }
     }
@@ -267,7 +265,14 @@ fn check_residence(
         Residence::Quarantine(doc) => {
             if window.world().is_some()
                 && crate::sync::types::retained_world_shell_belongs_to_window(
-                    ctx.vault, wtxn, doc, &id, blob, &window, false,
+                    ctx.vault,
+                    wtxn,
+                    doc,
+                    ctx.tombstones,
+                    &id,
+                    blob,
+                    &window,
+                    false,
                 )?
             {
                 return Ok(None);
@@ -276,7 +281,14 @@ fn check_residence(
         }
         Residence::Forward { doc, trusted } => {
             if crate::sync::types::retained_world_shell_belongs_to_window(
-                ctx.vault, wtxn, doc, &id, blob, &window, trusted,
+                ctx.vault,
+                wtxn,
+                doc,
+                ctx.tombstones,
+                &id,
+                blob,
+                &window,
+                trusted,
             )? {
                 // The dedicated shell restorer runs after this pass.
                 return Ok(Some(EntityStep::Skip));
@@ -308,7 +320,7 @@ fn admit(
         let wrote = crate::sync::receipt_ingest::ingest_in_txn(
             vault,
             wtxn,
-            ctx.tombstones_map,
+            ctx.tombstones,
             ctx.window_key,
             &id,
             blob,
@@ -463,7 +475,7 @@ fn admit(
 /// re-puts the key must not resurrect a body deleted here, hard or soft. A failed marker read
 /// fails closed.
 fn deleted_here(ctx: &IngestCtx<'_>, txn: &heed::RoTxn<'_>, id: &EntityId) -> bool {
-    if tombstone_map_contains_id(ctx.tombstones_map, id) {
+    if ctx.tombstones.contains(id) {
         tracing::debug!(entity = %id.to_hex(), "sync ingest: entity tombstoned in CRDT (delete wins)");
         return true;
     }
@@ -570,7 +582,7 @@ fn refuse_protected_tombstones(
 ) -> Result<()> {
     let rejection = Error::Registry(RegistryError::MaintenanceKindNotWritable(entity_type));
     let crdt_key = id.to_hex();
-    for tombstone in tombstone_values_for_id(ctx.tombstones_map, id) {
+    for tombstone in ctx.tombstones.values_for(id) {
         quarantine_rejected_op_in_txn(
             ctx.vault,
             wtxn,

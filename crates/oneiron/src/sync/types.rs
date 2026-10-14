@@ -191,6 +191,7 @@ pub(crate) fn retained_world_shell_belongs_to_window(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     doc: &loro::LoroDoc,
+    tombstones: &crate::sync::loro_support::TombstoneIndex,
     id: &crate::EntityId,
     blob: &[u8],
     key: &WindowKey,
@@ -207,15 +208,14 @@ pub(crate) fn retained_world_shell_belongs_to_window(
     {
         return Ok(false);
     }
-    let tombstones = doc.get_map("tombstones");
     let Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(value))) =
-        tombstones.get(&id.to_hex())
+        tombstones.map().get(&id.to_hex())
     else {
         return Ok(false);
     };
     if crate::deletion::decode_tombstone_value(&value).reason
         != Some(crate::deletion::TombstoneReason::UserDelete)
-        || crate::sync::loro_support::tombstone_values_for_id(&tombstones, id).len() != 1
+        || tombstones.values_for(id).len() != 1
     {
         return Ok(false);
     }
@@ -324,6 +324,7 @@ pub(crate) fn edge_belongs_to_window_in(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     doc: &loro::LoroDoc,
+    tombstones: &crate::sync::loro_support::TombstoneIndex,
     source: &crate::EntityId,
     target: &crate::EntityId,
     key: &WindowKey,
@@ -345,6 +346,7 @@ pub(crate) fn edge_belongs_to_window_in(
                     vault,
                     txn,
                     doc,
+                    tombstones,
                     id,
                     in_doc.as_deref().expect("matched"),
                     key,
@@ -363,6 +365,7 @@ pub(crate) fn edge_belongs_to_window_in(
                     vault,
                     txn,
                     doc,
+                    tombstones,
                     id,
                     stored.as_deref().expect("matched"),
                     key,

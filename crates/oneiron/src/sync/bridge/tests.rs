@@ -7,8 +7,8 @@ use crate::error::SyncError;
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_TASK};
 use crate::sync::ingest::{EntityStep, IngestCtx, ingest_entity_in_txn};
 use crate::sync::loro_support::{
-    doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_since, import_doc,
-    map_contains_binary, map_insert_bytes,
+    TombstoneIndex, doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_since,
+    import_doc, map_contains_binary, map_insert_bytes,
 };
 use crate::temporal::TimeRange;
 use core::assert_matches;
@@ -30,11 +30,12 @@ fn ingest_peer_blob(
     id: &EntityId,
     blob: &[u8],
 ) -> Result<EntityStep> {
+    let tombstones = TombstoneIndex::build(tombstones);
     let ingest = IngestCtx::new(
         vault,
         "2026-03",
         crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
-        tombstones,
+        &tombstones,
     );
     ingest_entity_in_txn(&ingest, wtxn, &id.to_hex(), Some(blob))
 }
@@ -1123,7 +1124,7 @@ fn apply_materialized_edge_ops_keeps_other_edges_after_child_of_failure() {
                 ops,
                 &metas,
                 "2026-03",
-                &LoroDoc::new().get_map("tombstones"),
+                &TombstoneIndex::build(&LoroDoc::new().get_map("tombstones")),
             )?;
             Ok(())
         })
@@ -1173,7 +1174,7 @@ fn apply_materialized_edge_ops_keeps_valid_child_of_delete_when_add_fails() {
                 ops,
                 &metas,
                 "2026-03",
-                &LoroDoc::new().get_map("tombstones"),
+                &TombstoneIndex::build(&LoroDoc::new().get_map("tombstones")),
             )?;
             Ok(())
         })
@@ -1228,7 +1229,7 @@ fn apply_materialized_edge_ops_child_of_subset_is_deterministic() {
                 ops,
                 &metas,
                 "2026-03",
-                &LoroDoc::new().get_map("tombstones"),
+                &TombstoneIndex::build(&LoroDoc::new().get_map("tombstones")),
             )?;
             Ok(())
         })

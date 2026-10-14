@@ -4,8 +4,8 @@ use std::collections::HashSet;
 
 use super::bridge::{BRIDGE_ORIGIN, encode_edge_value_for_crdt, format_edge_key};
 use super::loro_support::{
-    export_snapshot, map_contains_binary, map_delete, map_for_each_tombstone_value,
-    map_for_each_value_bytes, map_get_bytes, map_insert_bytes, tombstone_map_contains_id,
+    TombstoneIndex, export_snapshot, map_contains_binary, map_delete, map_for_each_tombstone_value,
+    map_for_each_value_bytes, map_get_bytes, map_insert_bytes,
 };
 use super::pack_sync;
 use super::quarantine::{self, QuarantineContainer};
@@ -201,10 +201,18 @@ pub(super) fn scrub_local_claim_carriers(
     // erased body. A different-world or unproven shell remains withheld.
     let mut retained = Vec::new();
     if key.world().is_some() {
+        let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
         for id in &ids {
             if let Some(raw) = vault.store.entities.get(&rtxn, id.as_bytes())?
                 && crate::sync::types::retained_world_shell_belongs_to_window(
-                    vault, &rtxn, doc, id, &raw, key, false,
+                    vault,
+                    &rtxn,
+                    doc,
+                    &tombstones,
+                    id,
+                    &raw,
+                    key,
+                    false,
                 )?
             {
                 retained.push(*id);
@@ -514,7 +522,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         crate::identity_topology::redacted_keys_in_txn(&vault.store, &rtxn)?
     };
     let entities_map = doc.get_map("entities");
-    let tombstones_map = doc.get_map("tombstones");
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     let edges_map = doc.get_map("edges");
     let device_only = {
         let rtxn = vault.store.env.read_txn()?;
@@ -588,8 +596,8 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         // their carrier and quarantine the hostile tombstone; ordinary rows
         // retain the value-agnostic, entity-canonical delete-wins gate.
         let protected_tombstone =
-            quarantine_outbound_protected_tombstones(vault, window_key, &tombstones_map, id, &raw)?;
-        if !protected_tombstone && tombstone_map_contains_id(&tombstones_map, id) {
+            quarantine_outbound_protected_tombstones(vault, window_key, &tombstones, id, &raw)?;
+        if !protected_tombstone && tombstones.contains(id) {
             vault.with_write_txn_grouped(|wtxn| {
                 OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
                 Ok(())
@@ -637,7 +645,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 // tombstone decodes HARD) once tombstone v2 lands in M4-06.
                 if !super::types::edge_belongs_to_window(vault, id, &edge.target, window_key)?
                     || !local_claim_sync_allowed(vault, &edge.target)?
-                    || tombstone_map_contains_id(&tombstones_map, &edge.target)
+                    || tombstones.contains(&edge.target)
                     || window_packing_excludes_entity(vault, &device_only, &edge.target)?
                 {
                     continue;
@@ -691,7 +699,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             // the full mirror must not re-insert edges to deleted targets.
             if !super::types::edge_belongs_to_window(vault, id, &edge.target, window_key)?
                 || !local_claim_sync_allowed(vault, &edge.target)?
-                || tombstone_map_contains_id(&tombstones_map, &edge.target)
+                || tombstones.contains(&edge.target)
                 || window_packing_excludes_entity(vault, &device_only, &edge.target)?
             {
                 continue;

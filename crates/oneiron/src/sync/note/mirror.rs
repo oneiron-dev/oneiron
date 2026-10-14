@@ -51,6 +51,7 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
         window.end_timestamp().ok_or(invalid("NOTE window"))?,
     )?;
     let mut state = State::default();
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     let txn = vault.store.env.read_txn()?;
     let flagged = crate::settings::device_local_worlds_at(
         &vault.store,
@@ -67,7 +68,7 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
             if raw.len() > ENTITY_METADATA_HEADER_LEN {
                 state.cores.entry(note).or_insert(raw);
             }
-            if blocked(vault, &txn, doc, &note)? {
+            if blocked(vault, &txn, &tombstones, &note)? {
                 removed.insert(note);
             }
         }
@@ -88,7 +89,7 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
             continue;
         }
         local.insert(note);
-        if blocked(vault, &txn, doc, &note)? {
+        if blocked(vault, &txn, &tombstones, &note)? {
             removed.insert(note);
         } else {
             state.cores.insert(note, raw.to_vec());
@@ -97,7 +98,7 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
     // Only trusted local workflows are exported. Untrusted inbox or carried
     // peer rows are never promoted or replayed as local review decisions.
     for note in state.cores.keys() {
-        if blocked(vault, &txn, doc, note)? {
+        if blocked(vault, &txn, &tombstones, note)? {
             removed.insert(*note);
         }
     }
@@ -198,9 +199,10 @@ pub(crate) fn dropped_in(
         return Ok(dropped);
     }
     let state = codec::read(source)?;
+    let tombstones = TombstoneIndex::build(&source.get_map("tombstones"));
     for note in ids {
         if state.cores.contains_key(note)
-            && (blocked(vault, txn, source, note)? || held(vault, txn, flagged, note)?)
+            && (blocked(vault, txn, &tombstones, note)? || held(vault, txn, flagged, note)?)
         {
             dropped.insert(*note);
         }

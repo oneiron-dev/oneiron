@@ -19,6 +19,7 @@ use crate::edge::{EdgeKind, decode_edge_value_for_kind};
 use crate::entity_id::EntityId;
 use crate::ports::EdgeStoreRead;
 use crate::store::Store;
+use crate::sync::loro_support::TombstoneIndex;
 use crate::sync::quarantine::{
     self, QuarantineContainer, quarantine_rejected_op_in_txn, remote_rejection_reason,
 };
@@ -81,7 +82,7 @@ pub(super) fn materialize_edges_from_delta(
     let mut pending_companion_scrubs = Vec::new();
     let result = vault.with_write_txn_grouped(|wtxn| {
         let entities_map = doc.get_map("entities");
-        let tombstones_map = doc.get_map("tombstones");
+        let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
         let edges_map = doc.get_map("edges");
         // HOLE-1871-F2: the stale rows and stranded live candidates this delta
         // leaves behind, replayed through the very same gauntlet as its own
@@ -135,7 +136,7 @@ pub(super) fn materialize_edges_from_delta(
                     let window = crate::sync::WindowKey::try_new(window_key)
                         .ok_or(Error::InvalidKey)?;
                     if !crate::sync::types::edge_belongs_to_window_in(
-                        vault, wtxn, doc, &src, &tgt, &window,
+                        vault, wtxn, doc, &tombstones, &src, &tgt, &window,
                     )? {
                         quarantine_rejected_op_in_txn(
                             vault, wtxn, window_key, QuarantineContainer::Edges,
@@ -150,8 +151,7 @@ pub(super) fn materialize_edges_from_delta(
                     let decoded = match decode_edge_value_for_kind(kind, buf) {
                         Ok(v) => v,
                         Err(_) if kind == EdgeKind::Parent => {
-                            let tombstoned = crate::sync::loro_support::tombstone_map_contains_id(&tombstones_map, &src)
-                                || crate::sync::loro_support::tombstone_map_contains_id(&tombstones_map, &tgt);
+                            let tombstoned = tombstones.contains(&src) || tombstones.contains(&tgt);
                             super::parent_retry::submit(vault, wtxn, window_key, src, tgt, buf, tombstoned)?;
                             continue;
                         }
@@ -180,7 +180,7 @@ pub(super) fn materialize_edges_from_delta(
                         vault,
                         wtxn,
                         &entities_map,
-                        &tombstones_map,
+                        &tombstones,
                         window_key,
                         &src,
                         lease_vault_id,
@@ -189,7 +189,7 @@ pub(super) fn materialize_edges_from_delta(
                         vault,
                         wtxn,
                         &entities_map,
-                        &tombstones_map,
+                        &tombstones,
                         window_key,
                         &tgt,
                         lease_vault_id,
@@ -294,8 +294,8 @@ pub(super) fn materialize_edges_from_delta(
                         (Ok(_), Ok(_)) if kind == EdgeKind::Parent => {}
                         (Ok(_), Ok(_)) => {
                             if kind == EdgeKind::SpawnedBy
-                                && !crate::sync::loro_support::tombstone_map_contains_id(&tombstones_map, &src)
-                                && !crate::sync::loro_support::tombstone_map_contains_id(&tombstones_map, &tgt)
+                                && !tombstones.contains(&src)
+                                && !tombstones.contains(&tgt)
                                 && !vault.local_hard_delete_marker_exists_in_txn(wtxn, &src)?
                                 && !vault.local_hard_delete_marker_exists_in_txn(wtxn, &tgt)?
                             {
@@ -304,8 +304,8 @@ pub(super) fn materialize_edges_from_delta(
                                 )?;
                             }
                             if kind == EdgeKind::ChildOf
-                                && !crate::sync::loro_support::tombstone_map_contains_id(&tombstones_map, &src)
-                                && !crate::sync::loro_support::tombstone_map_contains_id(&tombstones_map, &tgt)
+                                && !tombstones.contains(&src)
+                                && !tombstones.contains(&tgt)
                                 && !vault.local_hard_delete_marker_exists_in_txn(wtxn, &src)?
                                 && !vault.local_hard_delete_marker_exists_in_txn(wtxn, &tgt)?
                             {
@@ -525,7 +525,8 @@ pub(super) fn materialize_edges_from_delta(
                     // removal is never evidence that the door ran, so it
                     // is quarantined rather than applied.
                     let hard_deleted = [src, tgt].iter().any(|id| {
-                        crate::sync::loro_support::tombstone_values_for_id(&tombstones_map, id)
+                        tombstones
+                            .values_for(id)
                             .iter()
                             .any(|value| crate::deletion::decode_tombstone_value(value).is_hard())
                     });
@@ -573,7 +574,7 @@ pub(super) fn materialize_edges_from_delta(
             BatchOp::EdgeWithCreatedAt { src, kind: EdgeKind::ChildOf, tgt, .. } => Some((*src, *tgt)),
             _ => None,
         }).collect();
-        apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key, &tombstones_map)?;
+        apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key, &tombstones)?;
         for (src, tgt) in considered_child_of {
             // The candidate has reached the winner arbiter or its terminal
             // rejection, so no earlier missing-endpoint obligation remains.

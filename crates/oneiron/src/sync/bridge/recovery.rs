@@ -32,12 +32,12 @@ pub(crate) fn preflight_canonical_recovery(
     let mut txn = vault.store.env.write_txn()?;
     crate::recovery::validate_window_documents(doc)?;
     snapshot.preflight_note_recovery(vault, &txn)?;
-    let tombstones_map = doc.get_map("tombstones");
+    let tombstones = crate::sync::loro_support::TombstoneIndex::build(&doc.get_map("tombstones"));
     let ingest = IngestCtx::new(
         vault,
         &snapshot.window,
         materializer.lease_vault_id(),
-        &tombstones_map,
+        &tombstones,
     );
     for entity in &snapshot.entity_blobs {
         let id = EntityId::from_bytes(entity.id)?;
