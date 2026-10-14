@@ -73,33 +73,32 @@ fn ceiling_hold(
 }
 
 /// An exact retry keeps its paid admission while the ceiling's window still
-/// counts it. A Pending retry whose admission (`paid_ms`, read before the
-/// replay wrote the row) aged out of that window is a send in today's window,
-/// so once governance has let it out, under the same writer lock, it meets
-/// the ceiling: held at a full ceiling, keeping its Pending row, and
-/// otherwise renewed before transport, so a concurrent send counts it.
-/// Governance answers first, so the ceiling only ever adds a hold to a send
-/// that would go out; a send governance stops gets the same answer at a full
-/// ceiling as below it. Returns the hold, or `None` with the transaction
-/// settled.
+/// counts it. A Pending retry whose admission aged out of that window is a
+/// send in today's window, so once governance has let it out, under the same
+/// writer lock, it meets the ceiling: held at a full ceiling, keeping its
+/// Pending row, and otherwise renewed before transport, so a concurrent send
+/// counts it. Governance answers first, so the ceiling only ever adds a hold
+/// to a send that would go out; a send governance stops gets the same answer
+/// at a full ceiling as below it. Returns the hold, or `None` with the
+/// transaction settled.
 pub(super) fn aged_admission_ceiling(
     vault: &Vault,
     mut wtxn: heed::RwTxn<'_>,
     prepared: &PreparedEffect,
     record: &crate::outbound_intent_ledger::IntentLedgerRecord,
-    paid_ms: u64,
     now_ms: u64,
 ) -> Result<Option<OutboundEffectResult>, OutboundEffectError> {
     let Some(ceiling) = prepared.admission_ceiling else {
         return Ok(None);
     };
-    // The row as it stands under this lock, which a renewal rewrites. Its
-    // age is the admission it paid for: a possible-delivery write on the way
-    // here moved its timestamp without paying for today.
+    // The row as it stands under this lock, not the snapshot the replay
+    // began from: a renewal rewrites it.
     let Some(stored) = read_intent_record_in_txn(vault, &wtxn, &record.id)? else {
         return Ok(None);
     };
-    if stored.state != IntentState::Pending || paid_ms >= ceiling.since_ms {
+    if stored.state != IntentState::Pending
+        || stored.created_ms.max(stored.updated_ms) >= ceiling.since_ms
+    {
         return Ok(None);
     }
     let admitted = crate::outbound_intent_ledger::admitted_calls_since_in_txn(

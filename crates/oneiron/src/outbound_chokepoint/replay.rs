@@ -45,15 +45,12 @@ pub(super) fn replay_record<T: OutboundTransport>(
             Ok(effect_result(&record, None, true, Some(reason)))
         }
         (IntentState::Pending, Some(RecordedOutboundOutcome::DefiniteNonDelivery)) => {
-            let paid_ms = record.created_ms.max(record.updated_ms);
-            send_pending_with_gate(
-                vault, authority, record, prepared, paid_ms, now_ms, true, transport,
-            )
+            send_pending_with_gate(vault, authority, record, prepared, now_ms, true, transport)
         }
         (IntentState::Pending, None) if !record.idempotency_supported => {
             // A previous node may have sent before crashing. The stop reason
             // does not carry this delivery fact; store it independently.
-            record_possible_delivery(vault, record.id, now_ms)?;
+            record_possible_delivery(vault, record.id)?;
             let abandoned = abandon_record(
                 vault,
                 record.id,
@@ -68,9 +65,6 @@ pub(super) fn replay_record<T: OutboundTransport>(
             ))
         }
         (IntentState::Pending, None) => {
-            // The admission this row paid for, read before the write below
-            // moves its timestamp.
-            let paid_ms = record.created_ms.max(record.updated_ms);
             // A refused resume writes nothing. The row stays outcome-free
             // Pending, which already resolves as unresolved delivery.
             {
@@ -80,9 +74,9 @@ pub(super) fn replay_record<T: OutboundTransport>(
             // This row was committed before a prior transport attempt. A crash
             // could have hidden a delivered response; persist that possibility
             // BEFORE a resumed no-wire failure can replace its retry marker.
-            let uncertain = record_possible_delivery(vault, record.id, now_ms)?;
+            let uncertain = record_possible_delivery(vault, record.id)?;
             send_pending_with_gate(
-                vault, authority, uncertain, prepared, paid_ms, now_ms, true, transport,
+                vault, authority, uncertain, prepared, now_ms, true, transport,
             )
         }
         _ => Err(IntentLedgerError::InvalidRecord(
@@ -99,21 +93,14 @@ pub(super) fn send_pending<T: OutboundTransport>(
     replayed: bool,
     transport: &mut T,
 ) -> Result<OutboundEffectResult, IntentLedgerError> {
-    let paid_ms = record.created_ms.max(record.updated_ms);
-    send_pending_with_gate(
-        vault, authority, record, None, paid_ms, now_ms, replayed, transport,
-    )
+    send_pending_with_gate(vault, authority, record, None, now_ms, replayed, transport)
 }
 
-/// `paid_ms` is when the row last paid its admission, read before this replay
-/// wrote anything to it.
-#[expect(clippy::too_many_arguments)]
 fn send_pending_with_gate<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
     record: crate::outbound_intent_ledger::IntentLedgerRecord,
     prepared: Option<&PreparedEffect>,
-    paid_ms: u64,
     now_ms: u64,
     replayed: bool,
     transport: &mut T,
@@ -210,9 +197,9 @@ fn send_pending_with_gate<T: OutboundTransport>(
         }
         // Governance lets this Pending send out; only now does an aged
         // admission meet its ceiling, under this same writer lock.
-        if let Some(mut held) = super::admission::aged_admission_ceiling(
-            vault, wtxn, prepared, &record, paid_ms, now_ms,
-        )? {
+        if let Some(mut held) =
+            super::admission::aged_admission_ceiling(vault, wtxn, prepared, &record, now_ms)?
+        {
             held.dispatch.replayed = replayed;
             return Ok(held);
         }
@@ -289,11 +276,11 @@ fn send_pending_with_gate<T: OutboundTransport>(
             Ok(effect_result(&done, Some(outcome), replayed, None))
         }
         OutboundSendOutcome::Ambiguous if record.idempotency_supported => {
-            let uncertain = record_possible_delivery(vault, record.id, now_ms)?;
+            let uncertain = record_possible_delivery(vault, record.id)?;
             Ok(effect_result(&uncertain, Some(outcome), replayed, None))
         }
         OutboundSendOutcome::Ambiguous => {
-            record_possible_delivery(vault, record.id, now_ms)?;
+            record_possible_delivery(vault, record.id)?;
             let abandoned = abandon_record(
                 vault,
                 record.id,

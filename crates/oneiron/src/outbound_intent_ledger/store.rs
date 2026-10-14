@@ -408,10 +408,13 @@ pub(crate) fn abandon_record(
 /// Persist positive uncertainty before a later attempt can replace the
 /// current attempt's outcome with definite non-delivery. Never reset this bit
 /// on retry; only confirmed Done or an explicit reconciliation can resolve it.
+///
+/// The bit pays for no admission, so the row's timestamp stays where its
+/// admission, renewal or last outcome put it: an aged retry marked here,
+/// even one a full ceiling then holds, still meets today's ceiling next time.
 pub(crate) fn record_possible_delivery(
     vault: &Vault,
     id: [u8; 32],
-    now_ms: u64,
 ) -> IntentLedgerResult<IntentLedgerRecord> {
     let mut wtxn = vault.store.env.write_txn()?;
     let mut record = get_ledger_record(vault, &wtxn, &id)?.ok_or(
@@ -424,7 +427,6 @@ pub(crate) fn record_possible_delivery(
     }
     if !record.delivery_uncertain {
         record.delivery_uncertain = true;
-        record.updated_ms = now_ms.max(record.created_ms);
         LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
         wtxn.commit().map_err(Error::from)?;
     } else {

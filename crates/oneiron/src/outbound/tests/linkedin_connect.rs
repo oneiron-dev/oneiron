@@ -882,8 +882,12 @@ enum CeilingPath {
     /// A connect with no row yet.
     FreshSend,
     /// A Pending retry whose admission aged out of the rolling day and whose
-    /// replay resends: its first try failed before sending.
+    /// replay resends: its first try failed before sending, before the seat's
+    /// connector key was registered, so the live gate answers the retry.
     AgedResend,
+    /// The same retry of a first try made under the registered key: recovery
+    /// reads the key the admission named and answers before the live gate.
+    AgedResendUnderKey,
 }
 
 /// What live governance says to the connect.
@@ -917,11 +921,21 @@ fn connect_at_ceiling(
     let today = 1_060 + 86_401;
     let (_tmp, vault, actor) = connect_fixture()?;
     let key_id = entity(0xC5);
-    vault.register_connector_key(
-        &key_id,
-        crate::connector_key::ConnectorKeyRecord::active(LINKEDIN_CHANNEL, None, Vec::new(), 1_000),
-    )?;
-    if let CeilingPath::AgedResend = path {
+    let register_key = |at| {
+        vault.register_connector_key(
+            &key_id,
+            crate::connector_key::ConnectorKeyRecord::active(
+                LINKEDIN_CHANNEL,
+                None,
+                Vec::new(),
+                at,
+            ),
+        )
+    };
+    if !matches!(path, CeilingPath::AgedResend) {
+        register_key(1_000)?;
+    }
+    if let CeilingPath::AgedResend | CeilingPath::AgedResendUnderKey = path {
         let mut failing = LinkedInMcpVerifiedConnectSink::new(
             linkedin_adapter()?,
             ConnectTransport {
@@ -946,6 +960,9 @@ fn connect_at_ceiling(
             1_060,
         );
         assert!(failing.transport().calls.is_empty());
+    }
+    if let CeilingPath::AgedResend = path {
+        register_key(today)?;
     }
     if full {
         let mut filler = capped_connect_sink("intent:cl:john", john)?;
@@ -998,16 +1015,22 @@ fn connect_at_ceiling(
 
 /// F26 H359, the ceiling's invariant: a cap only adds a hold to a send
 /// governance would let out. Every path that meets the ceiling (a fresh send,
-/// and an aged retry that resends) runs under governance that allows it, a
-/// suspended connector key and a charter never-list, once below today's cap
-/// and once with it full. Where the send goes out below the cap, a full cap
-/// holds it, and a held retry stays the Pending row it was. Where governance
-/// stops it, a full cap gives exactly the answer the send gets below it: a
-/// never-list stays the gate-denied suppression, never a retryable hold.
+/// and an aged retry that resends, answered by the live gate or first by
+/// recovery) runs under governance that allows it, a suspended connector key
+/// and a charter never-list, once below today's cap and once with it full.
+/// Where the send goes out below the cap, a full cap holds it, and a held
+/// retry stays the Pending row it was. Where governance stops it, a full cap
+/// gives exactly the answer the send gets below it: a live denial stays the
+/// gate-denied suppression, never a retryable hold, and recovery's hold stays
+/// that hold.
 #[test]
 fn a_ceiling_only_holds_a_send_governance_lets_out()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
-    for path in [CeilingPath::FreshSend, CeilingPath::AgedResend] {
+    for path in [
+        CeilingPath::FreshSend,
+        CeilingPath::AgedResend,
+        CeilingPath::AgedResendUnderKey,
+    ] {
         for governance in [
             Governance::Allows,
             Governance::SuspendedKey,
@@ -1024,7 +1047,7 @@ fn a_ceiling_only_holds_a_send_governance_lets_out()
             assert!(!full.sent, "{case}: a full cap let a send out");
             if below.sent {
                 assert_eq!(full.outcome, OutboundDispatchOutcome::Held, "{case}");
-                if let CeilingPath::AgedResend = path {
+                if !matches!(path, CeilingPath::FreshSend) {
                     assert_eq!(
                         full.intent_state.as_deref(),
                         Some(crate::outbound_intent_ledger::IntentState::Pending.as_str()),
@@ -1038,9 +1061,14 @@ fn a_ceiling_only_holds_a_send_governance_lets_out()
                     "FAILBEFORE H359 ({case}): the cap changed governance's answer"
                 );
             }
-            if governance == Governance::NeverList {
-                assert_eq!(full.outcome, OutboundDispatchOutcome::Suppressed, "{case}");
-                assert_eq!(full.suppression.as_deref(), Some("gate_denied"), "{case}");
+            let live_denial = governance != Governance::Allows
+                && !matches!(path, CeilingPath::AgedResendUnderKey);
+            if live_denial {
+                assert_eq!(
+                    (&full.outcome, full.suppression.as_deref()),
+                    (&OutboundDispatchOutcome::Suppressed, Some("gate_denied")),
+                    "FAILBEFORE H359 ({case}): a live denial at a full cap is no hold"
+                );
             }
         }
     }
