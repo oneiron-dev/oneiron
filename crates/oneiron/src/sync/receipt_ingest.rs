@@ -11,7 +11,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_RECEIPT_RECORD;
-use crate::sync::loro_support::tombstone_values_for_id;
+use crate::sync::loro_support::TombstoneIndex;
 use crate::sync::quarantine::{QuarantineContainer, quarantine_rejected_op_in_txn};
 use crate::temporal::TimeRange;
 
@@ -42,7 +42,7 @@ pub(crate) fn validate_envelope(id: &EntityId, blob: &[u8]) -> Result<EntityMeta
 pub(crate) fn ingest_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    tombstones_map: &LoroMap,
+    tombstones: &TombstoneIndex,
     window_key: &str,
     id: &EntityId,
     blob: &[u8],
@@ -84,7 +84,7 @@ pub(crate) fn ingest_in_txn(
     let rejection = Error::Registry(crate::error::RegistryError::MaintenanceKindNotWritable(
         ENTITY_TYPE_RECEIPT_RECORD,
     ));
-    for tombstone in tombstone_values_for_id(tombstones_map, id) {
+    for tombstone in tombstones.values_for(id) {
         quarantine_rejected_op_in_txn(
             vault,
             wtxn,
