@@ -578,6 +578,22 @@ impl Vault {
                 }
                 Ok(())
             })?;
+            // An untouched seeded policy manifest takes the one this build
+            // ships. A failure leaves the vault on its own; the next open
+            // tries again.
+            match vault.upgrade_seeded_policy_manifest() {
+                Ok(Some(regate)) => tracing::info!(
+                    rebound = regate.rebound,
+                    restaged = regate.restaged,
+                    stale = regate.stale,
+                    "the seeded policy manifest took the shipped one; waiting consents re-gated"
+                ),
+                Ok(None) => {}
+                Err(error) => tracing::warn!(
+                    %error,
+                    "the seeded policy manifest was not upgraded; the vault keeps its own until the next open"
+                ),
+            }
             crate::skill_hub::seed_bootstrap_skills(&vault)?;
             crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
             crate::skill_hub::seed_default_skill_hub(&vault)?;

@@ -1147,3 +1147,41 @@ async fn a_broker_call_that_cannot_go_out_is_refused_uncharged() {
     }
     drop(listener);
 }
+
+/// Engine ruling 2026-10-14 (NIGHTLY-SWITCH): a provider set to
+/// `response_format = "none"` sends a JSON call no `response_format`; the
+/// default still sends the call's schema, on a generate and on a stream.
+#[tokio::test]
+async fn a_provider_set_to_no_schema_sends_no_response_format() {
+    let fake = FakeLlm::start(vec![], Some(Reply::text("{}"))).await;
+    let schema = json!({"type": "object"});
+    for (line, sends) in [("", true), ("response_format = \"none\"\n", false)] {
+        let before = fake.seen().len();
+        let runtime = ModelRuntime::build(Some(&config(&format!(
+            "default = \"p:m\"\n[providers.p]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n{line}",
+            fake.base_url
+        ))));
+        let seat = runtime.seat(ModelRole::DreamerCurrent).expect("seat");
+        let run = test_run();
+        let mut call = request(&seat.model, "extract");
+        call.envelope.response_format = ResponseFormat::Json {
+            schema: schema.clone(),
+        };
+        seat.ladder
+            .generate(&run, call.clone(), None)
+            .await
+            .unwrap();
+        let mut events = seat.ladder.stream(&run, call, None).unwrap();
+        while events.next().await.is_some() {}
+        let seen = fake.seen();
+        assert_eq!(seen.len(), before + 2);
+        for sent in &seen[before..] {
+            assert_eq!(
+                sent.body.get("response_format").is_some(),
+                sends,
+                "{}",
+                sent.body
+            );
+        }
+    }
+}
