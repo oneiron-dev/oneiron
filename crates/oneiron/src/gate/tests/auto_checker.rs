@@ -1014,3 +1014,34 @@ fn a_checker_never_allows_a_value_it_saw_only_part_of() -> Result<()> {
     assert_eq!(checker.calls(), 1);
     Ok(())
 }
+
+/// Security pack 2, F14 H282: a manifest that names a checker is not
+/// satisfied by a door that injects none. The write gets no verdict, so it is
+/// held as checker-unavailable, never written `Auto` unreviewed. With no
+/// checker named, the same write lands.
+#[test]
+fn a_named_checker_no_door_injected_holds_the_write() -> Result<()> {
+    let (_tmp, vault) = checker_vault(Some(CHECKER_REF))?;
+    let claim = test_id(0x3c);
+    let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+    let result = attempt_checked_candidate_write(&vault, &claim, &body, None);
+    assert!(
+        vault
+            .get_claim(&claim)?
+            .is_none_or(|body| body.approval != ClaimApprovalStatus::Auto),
+        "FAILBEFORE H282 no checker: the write landed Auto with no checker consulted"
+    );
+    let (outcome, reason_codes) =
+        gate_rejection_parts(result.expect_err("the Auto request is held"));
+    assert_eq!(outcome, "pending");
+    assert_eq!(reason_codes, vec!["gate.pending.checker.unavailable"]);
+
+    let (_tmp, vault) = checker_vault(None)?;
+    let body = checker_body(&vault, ClaimApprovalStatus::Auto)?;
+    attempt_checked_candidate_write(&vault, &claim, &body, None)?;
+    assert_eq!(
+        vault.get_claim(&claim)?.expect("landed").approval,
+        ClaimApprovalStatus::Auto
+    );
+    Ok(())
+}

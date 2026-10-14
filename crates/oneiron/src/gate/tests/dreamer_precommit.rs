@@ -56,7 +56,7 @@ pub(super) fn precommit_body(value: Value, evidence: Option<Value>) -> ClaimBody
 }
 
 pub(super) fn seed_precommit_evidence_entity(vault: &crate::Vault, id: &EntityId) -> Result<()> {
-    vault.put_entity(id, ENTITY_TYPE_PERSON, test_time(1), 1, b"evidence ref")
+    vault.put_entity(id, ENTITY_TYPE_TURN, test_time(1), 1, b"evidence ref")
 }
 
 fn attempt_precommit_write(
@@ -191,6 +191,57 @@ fn invalid_dreamer_write_rejected_precommit_evidence_floor() -> Result<()> {
     let body = precommit_body(
         Value::from("Ada Lovelace"),
         Some(precommit_evidence(vec![resolving])),
+    );
+    attempt_precommit_write(&vault, &claim_id, &body)?;
+    assert_eq!(
+        stored_claim_body(&vault, &claim_id)?.approval,
+        ClaimApprovalStatus::Auto
+    );
+    Ok(())
+}
+
+/// Security pack 2, F14 H153: the generic batch door holds the floor
+/// promotion holds. A live PERSON and a live SESSION both resolve, and neither
+/// is something a person said, so a Dreamer write citing only them is denied.
+/// The same write citing a TURN lands.
+#[test]
+fn a_dreamer_write_cites_a_turn_not_any_live_entity() -> Result<()> {
+    let (_tmp, vault) = precommit_vault()?;
+    let person = test_id(0x55);
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, test_time(1), 1, b"a person")?;
+    let session = test_id(0x56);
+    vault.put_entity(
+        &session,
+        crate::registry::ENTITY_TYPE_SESSION,
+        test_time(1),
+        1,
+        b"a session",
+    )?;
+    for (seed, evidence) in [(0x57_u8, person), (0x58, session)] {
+        let claim_id = test_id(seed);
+        let body = precommit_body(
+            Value::from("Ada Lovelace"),
+            Some(precommit_evidence(vec![evidence])),
+        );
+        let result = attempt_precommit_write(&vault, &claim_id, &body);
+        assert!(
+            vault.get_raw(&claim_id)?.is_none(),
+            "FAILBEFORE H153 batch door: a Dreamer claim landed on non-TURN evidence"
+        );
+        assert_precommit_denied(
+            &vault,
+            result.expect_err("non-TURN evidence is no evidence"),
+            &claim_id,
+            "gate.deny.dreamer_precommit.no_evidence",
+        )?;
+    }
+
+    let turn = test_id(0x59);
+    seed_precommit_evidence_entity(&vault, &turn)?;
+    let claim_id = test_id(0x5A);
+    let body = precommit_body(
+        Value::from("Ada Lovelace"),
+        Some(precommit_evidence(vec![person, turn])),
     );
     attempt_precommit_write(&vault, &claim_id, &body)?;
     assert_eq!(

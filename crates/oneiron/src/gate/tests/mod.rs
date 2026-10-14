@@ -14,7 +14,9 @@ use crate::error::{ErrorKind, GateDenialOutcome, GateDenialReason};
 use crate::pipeline::ScoredEntity;
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::receipt::{ReceiptKind, ReceiptQuery, StandingOutboundGrantsLensQuery};
-use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
+use crate::registry::{
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
+};
 use crate::run_tree::{GATE_CONSENT_BUNDLE_SCHEMA_VERSION, GateConsentBundleAction};
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
@@ -73,7 +75,7 @@ use connector_budget::{
 };
 use consent_bundle::{consent_bundle_owner, consent_bundle_receipts};
 use critical_confirm_lifecycle::{
-    critical_confirm_owner_entry, critical_confirm_pending, put_critical_held_claim,
+    critical_confirm_owner_entry, critical_confirm_pending, put_critical_auto_claim,
 };
 use dreamer_precommit::{
     PRECOMMIT_EVIDENCE_REFS_KEY, PRECOMMIT_RUN_ID, precommit_body, precommit_evidence,

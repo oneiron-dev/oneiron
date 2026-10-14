@@ -1761,6 +1761,55 @@ fn verdict_bound_deferred_closure_keeps_prior_until_calibrated_auto_grant() -> R
     Ok(())
 }
 
+/// Security pack 2, F14 H282: closing a stored claim admits nothing new, so a
+/// stored value longer than the checker's preview never holds its closure. A
+/// claim that landed before the host named a checker is still superseded
+/// through the checked grant, and the replacement is still checked.
+#[test]
+fn a_checked_grant_closes_a_stored_value_too_long_to_preview() -> Result<()> {
+    let (_dir, vault) = open_auto_vault();
+    let fx = fixture(&vault)?;
+    let long = format!(
+        "Ada {}",
+        "a".repeat(crate::llm::AUTO_CHECK_VALUE_PREVIEW_BYTES)
+    );
+    let first = candidate(&fx, "profile.name", &long, vec![fx.turn]);
+    let old = first.claim_id;
+    assert_eq!(
+        promote_consolidated_claims(&vault, &fx.run, vec![first])?.landed,
+        vec![old],
+    );
+    // The host names a checker afterwards.
+    let id = crate::gate::default_policy_manifest_id().expect("default policy manifest id");
+    crate::test_util::put_policy_manifest_bytes(&vault, id, &auto_checker_manifest(CHECKER_REF))?;
+    let allow = CountingAutoChecker::new(AutoCheckOutcome::Allow);
+    let checker = BoundedAutoChecker::new(allow.clone());
+    let mut second = candidate(&fx, "profile.name", "Ada Lovelace", vec![fx.turn]);
+    second.supersedes = Some(old);
+    let new = second.claim_id;
+    assert_eq!(
+        promote_consolidated_claims_with_checker(&vault, &fx.run, vec![second], Some(&checker))?
+            .pended,
+        vec![new],
+    );
+    let granted =
+        vault.grant_deferred_claim_auto_with_checker(&new, fx.run.now_ms + 1, Some(&checker));
+    assert!(
+        granted.is_ok(),
+        "FAILBEFORE H282 closure: the closure of a stored long value was held: {granted:?}"
+    );
+    assert!(allow.calls() >= 1, "the replacement is still checked");
+    assert_eq!(
+        vault.get_claim(&old)?.expect("closed").lifecycle,
+        crate::ClaimLifecycleStatus::Superseded
+    );
+    assert_eq!(
+        vault.get_claim(&new)?.expect("Auto").approval,
+        ClaimApprovalStatus::Auto
+    );
+    Ok(())
+}
+
 /// A hold refuses the Auto request. On THIS path that means the whole write
 /// rolls back and the candidate is reported as rejected — ARCH-0067 §7 keeps
 /// standing: consolidation mints no owner-review row behind the Dreamer's

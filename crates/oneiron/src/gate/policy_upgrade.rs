@@ -10,7 +10,9 @@
 //! when it changed. Nothing is applied; the grant or the owner's approval
 //! still decides, with a fresh verdict. A row whose claim does not read, or
 //! whose fresh verdict denies the claim, stays stale on the old frontier.
-use super::confirm::GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED;
+use super::confirm::{
+    GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED,
+};
 use crate::batch::{
     BatchOp, ClaimMaterialization, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader,
 };
@@ -134,7 +136,7 @@ fn restage_claim(
     let attached = fresh
         .receipt_reasons
         .iter()
-        .any(|reason| reason == GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED);
+        .any(|reason| reason == GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED);
     let reasons = if attached {
         vec![GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED.to_owned()]
     } else if fresh.outcome == "pending" {

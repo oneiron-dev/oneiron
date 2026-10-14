@@ -14,11 +14,16 @@ use super::peripheral::{
     local_write_actor_entity_ref, validate_write_envelope, write_envelope_actor_ref,
 };
 use super::recorded::RecordedClaimGateDecision;
-use crate::claim::{ClaimApprovalStatus, claim_sensitivity_band, dreamer_isolation_class};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, VerifiedClaimTransition};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, claim_sensitivity_band,
+    decode_claim_body, dreamer_isolation_class,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::confirm::{
-    GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED, critical_claim_takes_confirm,
+    GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED,
+    critical_claim_can_land_auto_with_confirm,
 };
 use crate::gate::constants::LOCAL_WRITE_ACTOR_CLASS;
 use crate::gate::decision::{GateDecision, GateOutcome, GateReasonCode};
@@ -35,6 +40,33 @@ use crate::write_envelope::{SourceLineage, WriteEnvelope};
 /// The receipt reason of a write held because its value does not fit the auto
 /// checker's preview, so no checker could review all of it.
 const CHECKER_PARTIAL_VIEW_RECEIPT_REASON: &str = "checker_partial_view";
+
+/// Whether this write only closes the stored row: the row's own value, now
+/// closed, under a verified in-place transition, and too long for the
+/// checker's preview. It admits nothing new, so the partial-view hold never
+/// refuses it: a restriction always lands.
+fn closes_stored_value_beyond_preview(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &ClaimBody,
+    transition: Option<&VerifiedClaimTransition>,
+) -> bool {
+    body.lifecycle != ClaimLifecycleStatus::Active
+        && auto_check_value_preview(&body.value).is_none()
+        && transition.is_some_and(|proof| {
+            proof.predecessor().is_none()
+                && proof.matches_body(store, txn, id, body).unwrap_or(false)
+        })
+        && store
+            .entities
+            .get(txn, id.as_bytes())
+            .ok()
+            .flatten()
+            .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
+            .and_then(|stored| decode_claim_body(stored, true).ok())
+            .is_some_and(|stored| stored.value == body.value)
+}
 
 /// The claim write door.
 ///
@@ -259,7 +291,7 @@ fn check_claim_policy_for_write_with_record_inner(
         // otherwise have been allowed. It also runs BEFORE the
         // critical-confirm attachment below, whose exact single-code match on
         // `[PendingCriticalityFloor]` an isolation pend can therefore never
-        // satisfy: a persona-core write has no confirm-attached path.
+        // satisfy: a persona-core write has no confirm-attached Auto path.
         if dreamer_candidate
             && decision.outcome() != GateOutcome::Deny
             && let Some(isolation_class) = dreamer_isolation_class(&body.predicate)
@@ -287,28 +319,38 @@ fn check_claim_policy_for_write_with_record_inner(
         {
             decision = GateDecision::pending(vec![GateReasonCode::PendingCarryForwardConfidence]);
         }
-        // A critical claim pends on the floor until its owner confirms it. The
-        // confirmation attaches to the PROPOSED landing: an `Auto` write stays
-        // refused, so an unsettled confirmation never leaves the claim live.
-        let attach_critical_confirm = body.approval == ClaimApprovalStatus::Proposed
-            && critical_claim_takes_confirm(&input, decision.reason_codes(), &body.predicate);
+        let attach_critical_confirm = body.approval == ClaimApprovalStatus::Auto
+            && critical_claim_can_land_auto_with_confirm(
+                &input,
+                decision.reason_codes(),
+                &body.predicate,
+            );
         if attach_critical_confirm {
-            decision =
-                decision.with_receipt_reasons([GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED]);
+            decision = GateDecision::allow()
+                .with_receipt_reasons([GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED]);
         }
 
         // ONE-1296: the host's auto checker is the LAST word on an ORDINARY
         // Auto verdict, and only that. It runs after everything the engine
         // decides for itself — pre-commit validity, the policy verdict,
-        // GATE-13 isolation — so a write already refused or already parked is
-        // never consulted about, and the checker can only NARROW a verdict,
-        // never widen one.
+        // GATE-13 isolation, the critical-confirm attachment — so a write
+        // already refused or already parked is never consulted about, and the
+        // checker can only NARROW a verdict, never widen one.
         //
-        // The consult is EXACTLY: a manifest names a checker, a checker is
-        // injected for this write, the ordinary decision is Auto, the write is
-        // an agent-class Dreamer write, and its source is one that requires an
-        // explicit auto permit. Human and owner writes therefore never reach a
-        // checker at all, and neither does any door that passes `None`.
+        // The consult is EXACTLY: a manifest names a checker, the ordinary
+        // decision is Auto, the write is an agent-class Dreamer write, and its
+        // source is one that requires an explicit auto permit. Human and owner
+        // writes therefore never reach a checker at all. A door that injects
+        // no checker for a write the manifest wants checked gets no verdict,
+        // so the write pends as checker-unavailable rather than landing
+        // unreviewed.
+        //
+        // A confirm-attached Auto is excluded because it is not the ordinary
+        // verdict: the ordinary verdict there was a criticality-floor PEND,
+        // and what replaced it is an owner ceremony bound to this exact claim.
+        // A host hedge must not overrule a confirmation the owner just gave,
+        // and rewriting that decision would also drop the criticality marker
+        // the inbox classifies on.
         //
         // ONE-1314 widens this source check to source OR lineage.
         // This only selects a checker consult; authorization still checks
@@ -317,14 +359,15 @@ fn check_claim_policy_for_write_with_record_inner(
         let verdict_binding = model_manifest.as_ref().and_then(|m| m.verdict.as_ref());
         let mut checker_receipt_reasons: Vec<String> = Vec::new();
         if decision.outcome() == GateOutcome::Allow
+            && !attach_critical_confirm
             && dreamer_candidate
             && (policy.auto_checker().is_some() || verdict_binding.is_some())
-            && (auto_checker.is_some() || verdict_binding.is_some())
             && preflight_decision_id.is_none()
             && let Some(source) = body.source.filter(|source| {
                 source.requires_explicit_auto_permit()
                     || lineage.is_some_and(SourceLineage::requires_explicit_auto_permit)
             })
+            && !closes_stored_value_beyond_preview(store, &*wtxn, id, body, transition)
         {
             // A value the preview cannot hold whole is never sent: the
             // checker would answer for a prefix while the write stores the
@@ -485,8 +528,9 @@ fn check_claim_policy_for_write_with_record_inner(
         }
 
         if mode.persist_pending_consent
-            && decision.outcome() == GateOutcome::Pending
-            && body.approval == ClaimApprovalStatus::Proposed
+            && ((decision.outcome() == GateOutcome::Pending
+                && body.approval == ClaimApprovalStatus::Proposed)
+                || (attach_critical_confirm && body.approval == ClaimApprovalStatus::Auto))
         {
             let pending_decision = if mode.record_decision {
                 decision_record.clone()
