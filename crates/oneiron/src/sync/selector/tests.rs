@@ -348,7 +348,7 @@ fn test_vault_with_grant_scope(
     member_ref: EntityId,
     scope: FederationGrantScope,
 ) -> (tempfile::TempDir, Vault, EntityId) {
-    let dir = crate::test_support::restore_tempdir();
+    let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
     let grant_id = put_test_grant(&vault, member_ref, scope);
     (dir, vault, grant_id)
@@ -366,7 +366,7 @@ fn test_client_with_grant(
     member_ref: EntityId,
     window: &str,
 ) -> (tempfile::TempDir, Arc<Vault>, EntityId, SyncClient) {
-    let dir = crate::test_support::restore_tempdir();
+    let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
     let grant_id = put_test_grant(&vault, member_ref, test_selector_scope());
     let manager = Arc::new(WindowManager::new(
@@ -3496,7 +3496,7 @@ fn test_vault_with_delegate(
     now_secs: u64,
     expires_at_secs: u64,
 ) -> (tempfile::TempDir, Vault, EntityId) {
-    let dir = crate::test_support::restore_tempdir();
+    let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
     let grant_id = put_delegate_grant(&vault, member_ref, now_secs, expires_at_secs);
     (dir, vault, grant_id)
@@ -4545,7 +4545,7 @@ fn selector_custody_locality_uses_the_export_read_snapshot() {
 }
 
 fn member_grant_vault(member: EntityId) -> (tempfile::TempDir, Vault, EntityId) {
-    let dir = crate::test_support::restore_tempdir();
+    let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
     let grant_id = EntityId::now();
     put_selector_test_federation_grant(

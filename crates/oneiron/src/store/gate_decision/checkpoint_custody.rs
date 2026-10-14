@@ -19,7 +19,6 @@ use heed::{Env, RoTxn, RwTxn};
 
 use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, Raw, SideKey, SideTable};
-#[cfg(unix)]
 use crate::store::not_an_existing_root;
 #[cfg(unix)]
 use crate::store::root_directory::{
@@ -132,22 +131,26 @@ impl LiveCustody {
     }
 }
 
-/// Admits the existing vault at `vault_dir` before anything opens it by name,
-/// as a restore admits its destination: refused where another user could
-/// move a directory on its path. A missing one is refused here, not by a
-/// later lookup, which could find a vault someone else put under the name: a
-/// sticky parent stops no one from making a new entry in it.
-pub(crate) fn admit_existing_vault_root(vault_dir: &Path) -> Result<()> {
-    #[cfg(unix)]
+/// Refuses a missing vault at `vault_dir` here, not by a later lookup, which
+/// could find a vault someone else put under the name: a sticky parent stops
+/// no one from making a new entry in it.
+fn refuse_missing_vault_root(vault_dir: &Path) -> Result<()> {
     match std::fs::symlink_metadata(vault_dir) {
-        Ok(_) => refuse_shared_vault_root(vault_dir)?,
+        Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(not_an_existing_root(vault_dir, false));
+            Err(not_an_existing_root(vault_dir, false))
         }
-        Err(error) => return Err(error.into()),
+        Err(error) => Err(error.into()),
     }
-    #[cfg(not(unix))]
-    let _ = vault_dir;
+}
+
+/// Admits the existing vault at `vault_dir` before anything opens it by name,
+/// as a restore admits its destination: refused when missing, and where
+/// another user could move a directory on its path.
+pub(crate) fn admit_existing_vault_root(vault_dir: &Path) -> Result<()> {
+    refuse_missing_vault_root(vault_dir)?;
+    #[cfg(unix)]
+    refuse_shared_vault_root(vault_dir)?;
     Ok(())
 }
 
@@ -156,9 +159,10 @@ pub(crate) fn admit_existing_vault_root(vault_dir: &Path) -> Result<()> {
 /// vault another process serves reads beside it, and one this process holds,
 /// under any name, is refused. A missing or unreadable vault refuses.
 pub(crate) fn read_live_custody(vault_dir: &Path) -> Result<LiveCustody> {
-    // A side restore's source is admitted like its destination before the
-    // read opens anything: the read-only door still opens `lock.mdb` by name.
-    admit_existing_vault_root(vault_dir)?;
+    // A shared directory on the source's path is no reason to refuse: the
+    // vault opens, reads and writes there as it is, so whoever could move it
+    // could change it already. The source reports it instead.
+    refuse_missing_vault_root(vault_dir)?;
     #[cfg(test)]
     if let Some(callback) = BEFORE_LIVE_CUSTODY_READ.with(|slot| slot.borrow_mut().take()) {
         callback();

@@ -18,7 +18,7 @@ pub(super) struct Host {
 }
 
 pub(super) fn host() -> Host {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_support::restore_tempdir();
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     let issuer = crate::test_support::test_host_issuer();
     vault.ensure_host_root_slip(&issuer).unwrap();

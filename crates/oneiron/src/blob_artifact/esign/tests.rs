@@ -67,7 +67,7 @@ fn setup_with(
     config: VaultConfig,
     expires_at: u64,
 ) -> Result<(tempfile::TempDir, Vault, EntityId, EsignDocument)> {
-    let dir = crate::test_support::restore_tempdir();
+    let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), config)?;
     let person = EntityId::now();
     vault.put_entity(

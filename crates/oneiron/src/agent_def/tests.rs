@@ -758,7 +758,7 @@ fn manifest_json_with(mutate: impl FnOnce(&mut serde_json::Value)) -> String {
 }
 
 fn open_unseeded() -> (tempfile::TempDir, crate::Vault) {
-    let dir = crate::test_support::restore_tempdir();
+    let dir = tempfile::tempdir().expect("temp dir");
     let vault = crate::Vault::open_unseeded_for_test(dir.path(), embedding_test_config())
         .expect("open unseeded vault");
     (dir, vault)

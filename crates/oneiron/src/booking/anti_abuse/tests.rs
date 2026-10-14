@@ -15,7 +15,7 @@ const STAMP: u8 = 0x53;
 const OTHER_PAGE: u8 = 0x54;
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
-    let dir = crate::test_support::restore_tempdir();
+    let dir = tempfile::tempdir().expect("temp dir");
     let vault =
         Vault::open(dir.path(), crate::VaultConfig::default()).expect("open anti-abuse vault");
     (dir, vault)

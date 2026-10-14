@@ -57,7 +57,7 @@ fn host() -> Host {
 }
 
 fn install() -> (tempfile::TempDir, Vault) {
-    let dir = crate::test_support::restore_tempdir();
+    let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     (dir, vault)
 }

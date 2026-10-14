@@ -1178,14 +1178,15 @@ fn a_replacing_restore_writes_only_into_the_directory_it_made() {
         restore(&inner).is_err(),
         "a shared directory above refuses too"
     );
-    // Review r5 (Astra F1): a side restore's source there is refused before
-    // its read opens anything.
+    // A side restore's source there is read, since the vault opens and writes
+    // there as it is, and the directory is reported (Engine ruling on r5).
     drop(Vault::open(shared.join("source"), VaultConfig::device()).unwrap());
-    let source = SideRestoreSource::read(&shared.join("source")).map(|_| ());
-    assert!(
-        matches!(&source, Err(Error::InvalidConfig(reason)) if reason.contains("another user")),
-        "{source:?}"
+    let source = SideRestoreSource::read(&shared.join("source")).unwrap();
+    assert_eq!(
+        source.shared_path().map(|path| path.directory.clone()),
+        Some(shared.canonicalize().unwrap())
     );
+    drop(source);
     // Review r6 (Sol F2, Astra F2): an activation admits the archive's own
     // path before it opens it, and refuses a missing one rather than make it.
     let activate = |archive: &Path| {
@@ -1234,14 +1235,21 @@ fn a_replacing_restore_writes_only_into_the_directory_it_made() {
 }
 
 /// C8 review r6 (Sol F1, Astra F1): a side restore's source missing when it
-/// is admitted is refused then. A vault put under its name after that, as
-/// another user could in a sticky shared directory, is never read.
+/// is first looked up is refused then. A vault put under its name after
+/// that, as another user could in a sticky shared directory, is never read.
+/// Control: a source in a private directory reads with nothing to report.
 #[cfg(unix)]
 #[test]
 fn a_source_missing_at_its_admission_is_never_read() {
     let root = crate::test_support::restore_tempdir();
     let prepared = root.path().join("prepared");
     drop(Vault::open(&prepared, VaultConfig::device()).unwrap());
+    let read = SideRestoreSource::read(&prepared).unwrap();
+    assert!(
+        read.shared_path().is_none(),
+        "a private source has nothing to report"
+    );
+    drop(read);
     let source = root.path().join("source");
     crate::store::arm_before_live_custody_read({
         let (prepared, source) = (prepared.clone(), source.clone());

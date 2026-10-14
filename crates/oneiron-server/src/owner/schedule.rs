@@ -26,6 +26,10 @@ pub(crate) struct OwnerHost {
     pub(crate) every: Option<Duration>,
     /// One backup at a time, whether the schedule or the owner asked.
     pub(crate) backup_lock: Mutex<()>,
+    /// Where a test's rehearsals make their scratch copy in place of the
+    /// system temp directory, which its host may share with other accounts.
+    #[cfg(test)]
+    pub(crate) rehearse_temp: Option<PathBuf>,
 }
 
 impl OwnerHost {
@@ -50,6 +54,8 @@ impl OwnerHost {
                 && config.privacy_posture == oneiron::HostingPrivacyPosture::SelfHostLocal)
                 .then(|| Duration::from_secs(backup.every_hours.saturating_mul(3_600))),
             backup_lock: Mutex::new(()),
+            #[cfg(test)]
+            rehearse_temp: None,
         }
     }
 
@@ -88,13 +94,23 @@ impl OwnerHost {
         file: Option<&str>,
     ) -> OwnerResult<Rehearsal> {
         self.with_chosen(file, |chosen| {
-            Ok(backup::rehearse(
+            Ok(backup::rehearse_in(
+                &self.rehearse_temp(),
                 &chosen.path,
                 self.vault_config.clone(),
                 None,
                 &vault.side_restore_source()?,
             )?)
         })
+    }
+
+    /// The directory a rehearsal's scratch copy is made in and removed from.
+    fn rehearse_temp(&self) -> PathBuf {
+        #[cfg(test)]
+        if let Some(temp) = &self.rehearse_temp {
+            return temp.clone();
+        }
+        std::env::temp_dir()
     }
 
     fn with_chosen<T>(
@@ -191,6 +207,7 @@ mod tests {
             backups: BackupPlan::new(dir.path(), backups.path().to_path_buf(), keep),
             every: Some(every),
             backup_lock: Mutex::new(()),
+            rehearse_temp: dir.path().parent().map(std::path::Path::to_path_buf),
         };
         let server = SyncServer::new(vault, SyncServerConfig::default())
             .unwrap()

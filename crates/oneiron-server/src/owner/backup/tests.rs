@@ -23,7 +23,7 @@ fn plan(root: &Path, keep: usize) -> BackupPlan {
 
 #[test]
 fn take_prunes_to_keep_and_leaves_other_files_alone() {
-    let root = tempfile::tempdir().unwrap();
+    let root = oneiron::test_support::restore_tempdir();
     let plan = plan(root.path(), 2);
     let vault = Vault::open_owned(root.path().join("vault"), VaultConfig::default()).unwrap();
     std::fs::create_dir_all(&plan.dir).unwrap();
@@ -104,7 +104,7 @@ fn rehearsal_reports_the_backup_and_restore_brings_it_back() {
 
 #[test]
 fn a_failed_sync_after_the_swap_still_reports_the_restore_and_the_previous_vault() {
-    let root = tempfile::tempdir().unwrap();
+    let root = oneiron::test_support::restore_tempdir();
     let vault_path = root.path().join("vault");
     let plan = plan(root.path(), 7);
     let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
@@ -141,7 +141,7 @@ fn a_failed_sync_after_the_swap_still_reports_the_restore_and_the_previous_vault
 #[cfg(unix)]
 #[test]
 fn a_restore_over_a_symlinked_vault_path_swaps_the_directory_it_names() {
-    let root = tempfile::tempdir().unwrap();
+    let root = oneiron::test_support::restore_tempdir();
     let directory = root.path().join("data").join("vault");
     let vault = Vault::open_owned(&directory, VaultConfig::default()).unwrap();
     let kept = person(&vault, b"in the backup");
@@ -184,7 +184,7 @@ fn a_restore_over_a_symlinked_vault_path_swaps_the_directory_it_names() {
 /// after the exchange must not run the cleanup of a failure before it).
 #[test]
 fn a_restore_whose_swap_cannot_be_confirmed_removes_nothing() {
-    let root = tempfile::tempdir().unwrap();
+    let root = oneiron::test_support::restore_tempdir();
     let vault_path = root.path().join("vault");
     let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
     let outcome = take(&vault, &plan(root.path(), 7)).unwrap();
@@ -233,7 +233,7 @@ fn a_restore_whose_swap_cannot_be_confirmed_removes_nothing() {
 #[test]
 fn a_directory_moved_in_before_the_open_is_never_held() {
     use std::os::unix::fs::PermissionsExt;
-    let root = tempfile::tempdir().unwrap();
+    let root = oneiron::test_support::restore_tempdir();
     let private = |name: &str, mode: u32| {
         let dir = root.path().join(name);
         std::fs::create_dir(&dir).unwrap();
@@ -271,7 +271,7 @@ fn a_directory_moved_in_before_the_open_is_never_held() {
 #[test]
 fn a_failed_swap_removes_only_the_staging_directory_it_made() {
     for occupant in ["directory", "link"] {
-        let root = tempfile::tempdir().unwrap();
+        let root = oneiron::test_support::restore_tempdir();
         let vault_path = root.path().join("vault");
         let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
         let outcome = take(&vault, &plan(root.path(), 7)).unwrap();
@@ -320,13 +320,18 @@ fn a_failed_swap_removes_only_the_staging_directory_it_made() {
 
 #[test]
 fn restore_refuses_a_running_vault_and_leaves_it_alone() {
-    let root = tempfile::tempdir().unwrap();
+    let root = oneiron::test_support::restore_tempdir();
     let vault_path = root.path().join("vault");
     let plan = plan(root.path(), 7);
     let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
     let outcome = take(&vault, &plan).unwrap();
     let later = person(&vault, b"after the backup");
-    assert!(restore_over(&outcome.backup.path, &vault_path, VaultConfig::default()).is_err());
+    let refused = restore_over(&outcome.backup.path, &vault_path, VaultConfig::default())
+        .map(|_| ())
+        .unwrap_err()
+        .to_string();
+    // The running vault's refusal, not the path's (C8 review r8).
+    assert!(!refused.contains("another user"), "{refused}");
     assert!(vault.get(&later).unwrap().is_some());
     let siblings: Vec<_> = std::fs::read_dir(root.path())
         .unwrap()
@@ -338,7 +343,7 @@ fn restore_refuses_a_running_vault_and_leaves_it_alone() {
 
 #[test]
 fn vaults_sharing_a_backup_directory_never_prune_each_other() {
-    let root = tempfile::tempdir().unwrap();
+    let root = oneiron::test_support::restore_tempdir();
     let shared = root.path().join("backups");
     let open_at = |parent: &str| {
         let path = root.path().join(parent).join("vault");
@@ -377,7 +382,7 @@ fn a_failed_rehearsal_removes_only_what_it_created() {
 
 #[test]
 fn a_clock_that_stepped_back_never_prunes_the_backup_just_taken() {
-    let root = tempfile::tempdir().unwrap();
+    let root = oneiron::test_support::restore_tempdir();
     let plan = plan(root.path(), 2);
     let vault = Vault::open_owned(root.path().join("vault"), VaultConfig::default()).unwrap();
     // Two backups stamped in the future: the clock has since stepped back.
@@ -403,7 +408,7 @@ fn a_clock_that_stepped_back_never_prunes_the_backup_just_taken() {
 /// shipped) still lists, older than every sequenced one, and is pruned first.
 #[test]
 fn a_backup_named_before_sequences_lists_first_and_is_pruned_first() {
-    let root = tempfile::tempdir().unwrap();
+    let root = oneiron::test_support::restore_tempdir();
     let plan = plan(root.path(), 2);
     let vault = Vault::open_owned(root.path().join("vault"), VaultConfig::default()).unwrap();
     let first = take(&vault, &plan).unwrap().backup;
@@ -425,7 +430,7 @@ fn a_backup_named_before_sequences_lists_first_and_is_pruned_first() {
 
 #[test]
 fn pruning_preserves_contents_of_same_label_malformed_stamp_files() {
-    let root = tempfile::tempdir().unwrap();
+    let root = oneiron::test_support::restore_tempdir();
     let plan = plan(root.path(), 1);
     let vault = Vault::open_owned(root.path().join("vault"), VaultConfig::default()).unwrap();
     std::fs::create_dir_all(&plan.dir).unwrap();
@@ -470,7 +475,7 @@ fn pruning_preserves_contents_of_same_label_malformed_stamp_files() {
 #[test]
 fn a_restore_where_another_user_could_move_entries_opens_nothing() {
     use std::os::unix::fs::PermissionsExt;
-    let root = tempfile::tempdir().unwrap();
+    let root = oneiron::test_support::restore_tempdir();
     let parent = root.path().join("shared");
     std::fs::create_dir(&parent).unwrap();
     let vault_path = parent.join("vault");
@@ -495,6 +500,14 @@ fn a_restore_where_another_user_could_move_entries_opens_nothing() {
         .map(|entry| entry.unwrap().file_name())
         .collect();
     assert_eq!(names, ["vault"], "nothing is made beside it");
+    // A rehearsal reads the vault there and goes ahead, naming the directory:
+    // the vault opens and writes there as it is (Engine ruling on review r5).
+    let source = SideRestoreSource::read(&vault_path).unwrap();
+    let rehearsal =
+        rehearse_in(root.path(), &backup, VaultConfig::default(), None, &source).unwrap();
+    let warning = rehearsal.shared_path.expect("the directory is reported");
+    assert_eq!(warning.directory, parent.canonicalize().unwrap());
+    assert!(warning.fix.contains("chmod go-w"), "{}", warning.fix);
     set_mode(0o755);
     restore_over(&backup, &vault_path, VaultConfig::default()).expect("restore");
 }

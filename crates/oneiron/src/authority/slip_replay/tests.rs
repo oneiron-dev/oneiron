@@ -111,7 +111,7 @@ impl Holder {
     fn paired(start: u64) -> Self {
         use crate::authority::{HostSlipIssuer, pairing_binding_transcript};
         use ed25519_dalek::Signer;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_support::restore_tempdir();
         let clock = crate::ports::ManualClock::new(start);
         let config = crate::VaultConfig {
             store_clock: clock.bundle(),

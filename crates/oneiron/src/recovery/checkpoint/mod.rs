@@ -94,8 +94,13 @@ enum Source<'a> {
     /// A vault open in this process, read through its own handle.
     Open(&'a Vault),
     /// A vault read off its directory, as [`SideRestoreSource::read`] read
-    /// it first.
-    Disk { dir: PathBuf, first: LiveCustody },
+    /// it first, and the directory on its path another user could change.
+    Disk {
+        dir: PathBuf,
+        first: LiveCustody,
+        #[cfg(unix)]
+        shared: Option<crate::store::SharedPath>,
+    },
 }
 impl SideRestoreSource<'static> {
     /// The vault at `vault_dir`, read without opening it, so a running
@@ -105,18 +110,32 @@ impl SideRestoreSource<'static> {
     /// at its start, and refuses if the vault there is no longer the store
     /// read here, bound to the custody it bound here.
     pub fn read(vault_dir: &Path) -> Result<Self> {
+        let first = crate::store::read_live_custody(vault_dir)?;
         Ok(Self(Source::Disk {
             dir: vault_dir.to_path_buf(),
-            first: crate::store::read_live_custody(vault_dir)?,
+            first,
+            #[cfg(unix)]
+            shared: crate::store::shared_vault_root(vault_dir)?,
         }))
     }
 }
 impl SideRestoreSource<'_> {
+    /// A directory on the path of a source read off the disk that another
+    /// user could change, found when it was read. A restore from it goes
+    /// ahead, since the vault opens and writes there as it is; a caller
+    /// reports it with the fix. `None` for a vault open in this process.
+    #[cfg(unix)]
+    pub fn shared_path(&self) -> Option<&crate::store::SharedPath> {
+        match &self.0 {
+            Source::Disk { shared, .. } => shared.as_ref(),
+            Source::Open(_) => None,
+        }
+    }
     /// The source's live custody state, read now, at a restore's start.
     fn capture(&self) -> Result<LiveCustody> {
         match &self.0 {
             Source::Open(vault) => vault.store.live_custody(),
-            Source::Disk { dir, first } => {
+            Source::Disk { dir, first, .. } => {
                 let live = crate::store::read_live_custody(dir)?;
                 if !first.same_vault(&live) {
                     return Err(Error::InvalidConfig(

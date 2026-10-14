@@ -132,7 +132,7 @@ fn pack_vault() -> Result<(tempfile::TempDir, Vault, ForeignSkillPublisher, Enti
     config.map_size = 64 * 1024 * 1024;
     config.dimensions = 4;
     config.embedding_model = None;
-    let dir = crate::test_support::restore_tempdir();
+    let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), config)?;
     let at = TimeRange { start: 1, end: 1 };
     let (owner, hub) = (entity(0xC5), entity(0xC6));

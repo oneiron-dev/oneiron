@@ -106,26 +106,64 @@ pub(super) fn named_directory_identity(root: &Path) -> Result<Option<FileIdentit
     }
 }
 
+/// A directory on a path that another user could change: move entries in
+/// it, or, for a vault's own directory, change entries in it. Its `Display`
+/// names the directory and the `chmod` that fixes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SharedPath {
+    /// The directory.
+    pub directory: PathBuf,
+    /// Whether it is the vault's own directory, writable by a group or other.
+    pub vault_root: bool,
+}
+
+impl std::fmt::Display for SharedPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.vault_root {
+            write!(
+                f,
+                "another user could change entries in the vault {}; chmod go-w it",
+                self.directory.display()
+            )
+        } else {
+            write!(
+                f,
+                "another user could move entries in {}; make it and the directories above it \
+                 yours or root's with no group or other write (chmod go-w), or sticky (chmod +t)",
+                self.directory.display()
+            )
+        }
+    }
+}
+
+fn refused(shared: &SharedPath) -> Error {
+    Error::InvalidConfig(format!("restore refused: {shared}"))
+}
+
 /// Refuses unless no other user can move an entry anywhere on the way to
-/// `dir`. The path is resolved here one name at a time from `/`, as the
-/// kernel resolves it, through every link and `..`: each directory passed
-/// is this user's or root's, with no group or other write unless its sticky
-/// bit keeps others to their own entries, and each link followed is this
-/// user's or root's. On such a path every name a restore makes, opens or
-/// exchanges stays the one it checked. Mode bits only: an access-control list
-/// granting another user more is not read.
+/// `dir` ([`shared_path`]). On such a path every name a restore makes, opens
+/// or exchanges stays the one it checked.
 pub fn refuse_shared_path(dir: &Path) -> Result<()> {
+    shared_path(dir)?.map_or(Ok(()), |shared| Err(refused(&shared)))
+}
+
+/// The first directory on the way to `dir` in which another user could move
+/// an entry, if any. The path is resolved here one name at a time from `/`,
+/// as the kernel resolves it, through every link and `..`: each directory
+/// passed must be this user's or root's, with no group or other write unless
+/// its sticky bit keeps others to their own entries, and each link followed
+/// must be this user's or root's. Mode bits only: an access-control list
+/// granting another user more is not read.
+pub fn shared_path(dir: &Path) -> Result<Option<SharedPath>> {
     use std::ffi::OsString;
     use std::path::Component;
     let euid = rustix::process::geteuid().as_raw();
     let ours = |metadata: &std::fs::Metadata| metadata.uid() == euid || metadata.uid() == 0;
-    let refuse = |at: &Path| {
-        Error::InvalidConfig(format!(
-            "restore refused: another user could move entries in {}; make it and the \
-             directories above it yours or root's with no group or other write (chmod go-w), \
-             or sticky (chmod +t)",
-            at.display()
-        ))
+    let shared = |at: &Path| {
+        Ok(Some(SharedPath {
+            directory: at.to_path_buf(),
+            vault_root: false,
+        }))
     };
     // Names still to resolve, the next one last; `None` is the root.
     let mut names: Vec<Option<OsString>> = Vec::new();
@@ -155,32 +193,38 @@ pub fn refuse_shared_path(dir: &Path) -> Result<()> {
         if metadata.file_type().is_symlink() {
             links += 1;
             if links > 40 || !ours(&metadata) {
-                return Err(refuse(&next));
+                return shared(&next);
             }
             push(&mut names, &std::fs::read_link(&next)?);
             continue;
         }
         let shielded = metadata.mode() & 0o022 == 0 || metadata.mode() & 0o1000 != 0;
         if !(metadata.is_dir() && ours(&metadata) && shielded) {
-            return Err(refuse(&next));
+            return shared(&next);
         }
         at = next;
     }
-    Ok(())
+    Ok(None)
 }
 
-/// [`refuse_shared_path`] for a vault's own directory, which must also be
-/// writable by no group or other, sticky or not: the vault open makes and
-/// opens names inside it.
+/// [`refuse_shared_path`] for a vault's own directory ([`shared_vault_root`]).
 pub fn refuse_shared_vault_root(root: &Path) -> Result<()> {
-    refuse_shared_path(root)?;
-    if std::fs::metadata(root)?.mode() & 0o022 != 0 {
-        return Err(Error::InvalidConfig(format!(
-            "restore refused: another user could change entries in the vault {}; chmod go-w it",
-            root.display()
-        )));
+    shared_vault_root(root)?.map_or(Ok(()), |shared| Err(refused(&shared)))
+}
+
+/// [`shared_path`] for a vault's own directory, which must also be writable
+/// by no group or other, sticky or not: the vault open makes and opens names
+/// inside it.
+pub fn shared_vault_root(root: &Path) -> Result<Option<SharedPath>> {
+    if let Some(shared) = shared_path(root)? {
+        return Ok(Some(shared));
     }
-    Ok(())
+    Ok(
+        (std::fs::metadata(root)?.mode() & 0o022 != 0).then(|| SharedPath {
+            directory: root.to_path_buf(),
+            vault_root: true,
+        }),
+    )
 }
 
 /// Makes the directory `path` names, owner-only whatever the umask, through

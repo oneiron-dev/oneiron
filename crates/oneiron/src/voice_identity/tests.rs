@@ -11,7 +11,7 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
 }
 
 fn temp_ref_vault() -> (tempfile::TempDir, Vault) {
-    let dir = crate::test_support::restore_tempdir();
+    let dir = tempfile::tempdir().expect("ref vault directory");
     let vault = Vault::open(dir.path(), crate::config::VaultConfig::default())
         .expect("open seeded ref vault");
     (dir, vault)

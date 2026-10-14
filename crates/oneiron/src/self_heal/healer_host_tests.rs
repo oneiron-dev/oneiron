@@ -7,7 +7,7 @@ fn fixture() -> (
     crate::consent::AuthenticatedOwner,
     WriteActor,
 ) {
-    let d = crate::test_support::restore_tempdir();
+    let d = tempfile::tempdir().unwrap();
     let v = Vault::open_owned(d.path(), crate::VaultConfig::device()).unwrap();
     let person = EntityId::now();
     v.put_entity(

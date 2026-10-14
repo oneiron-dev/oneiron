@@ -251,6 +251,33 @@ pub(crate) struct Rehearsal {
     /// Doctor fields that did not decode in the restored copy; empty when sound.
     pub(crate) unreadable_fields: Vec<String>,
     pub(crate) verified: bool,
+    /// Set when another user could change a directory on the live vault's
+    /// path, read off the disk for this rehearsal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) shared_path: Option<SharedPathWarning>,
+}
+
+/// A directory on the live vault's path that another user could change,
+/// found when a rehearsal or an activation read the vault off the disk. It
+/// still ran: the vault opens and writes there as it is.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct SharedPathWarning {
+    pub(crate) directory: PathBuf,
+    /// What another user could do there, and the `chmod` that stops it.
+    pub(crate) fix: String,
+}
+
+#[cfg(unix)]
+fn shared_path_warning(source: &SideRestoreSource) -> Option<SharedPathWarning> {
+    source.shared_path().map(|shared| SharedPathWarning {
+        directory: shared.directory.clone(),
+        fix: shared.to_string(),
+    })
+}
+
+#[cfg(not(unix))]
+fn shared_path_warning(_: &SideRestoreSource) -> Option<SharedPathWarning> {
+    None
 }
 
 /// Restores `backup` into a scratch directory, opens it, checks it and
@@ -298,6 +325,7 @@ pub(crate) fn rehearse_in(
     }
     let mut rehearsal = outcome?;
     rehearsal.kept = keep_at.is_some();
+    rehearsal.shared_path = shared_path_warning(source);
     Ok(rehearsal)
 }
 
@@ -330,6 +358,7 @@ fn rehearse_into(
         pending_embeddings: report.pending_embeddings,
         verified: unreadable_fields.is_empty(),
         unreadable_fields,
+        shared_path: None,
     })
 }
 
@@ -622,6 +651,9 @@ pub(crate) struct Activated {
     pub(crate) vault: PathBuf,
     /// The vault that replaced it, whose custody it forked.
     pub(crate) replaced_by: PathBuf,
+    /// Set when another user could change a directory on that vault's path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) shared_path: Option<SharedPathWarning>,
 }
 
 /// Activates the archived vault a restore over `vault_path` set aside at
@@ -641,6 +673,7 @@ pub(crate) fn activate(
     Ok(Activated {
         vault: previous.to_path_buf(),
         replaced_by: vault_path.to_path_buf(),
+        shared_path: shared_path_warning(&source),
     })
 }
 

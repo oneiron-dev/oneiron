@@ -55,7 +55,7 @@ fn hub_ref(pin: HubPin) -> HubRef {
 }
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
-    let temp = crate::test_support::restore_tempdir();
+    let temp = tempfile::tempdir().expect("temp dir");
     let vault = Vault::open(temp.path(), crate::VaultConfig::default()).expect("open vault");
     (temp, vault)
 }

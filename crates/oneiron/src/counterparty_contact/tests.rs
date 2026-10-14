@@ -702,7 +702,7 @@ fn a_restore_never_rebinds_a_contact_to_the_party_it_left() -> Result<()> {
         &contact,
         &CounterpartyContactRecord::user_introduction(identity, "sora@example.com", 10)?,
     )?;
-    let backups = crate::test_support::restore_tempdir();
+    let backups = tempfile::tempdir()?;
     let image = backups.path().join("before-rebinding");
     vault.snapshot_checkpoint(&image, 100)?;
 
@@ -736,7 +736,7 @@ fn a_restore_never_drops_the_hold_of_a_public_first_touch() -> Result<()> {
         &contact,
         &CounterpartyContactRecord::user_introduction(identity, "sora@example.com", 10)?,
     )?;
-    let backups = crate::test_support::restore_tempdir();
+    let backups = tempfile::tempdir()?;
 
     let before_correction = backups.path().join("before-correction");
     vault.snapshot_checkpoint(&before_correction, 100)?;

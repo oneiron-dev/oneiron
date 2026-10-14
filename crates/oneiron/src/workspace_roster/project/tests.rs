@@ -1795,7 +1795,7 @@ fn a_project_whose_home_room_id_sorts_first_replays_without_a_stuck_window() -> 
     // Each peer is another device of this vault: the same root project, and
     // none of the child's rows yet. A peer with its own root would hide the
     // source root's subtree, room included.
-    let images = crate::test_support::restore_tempdir();
+    let images = tempfile::tempdir()?;
     let image = images.path().join("before-child");
     source.snapshot_checkpoint(&image, 5)?;
     let (child_id, child) = child_project_whose_home_room_sorts_first(&source)?;

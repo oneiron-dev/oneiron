@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use tempfile::TempDir;
 
 fn vault() -> (TempDir, Vault) {
-    let dir = crate::test_support::restore_tempdir();
+    let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
     // Callers bind (_d, v): reverse drop order closes v before _d removes
     // its LMDB files. Deleting a live root can let recycled file identities

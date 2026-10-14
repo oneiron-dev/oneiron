@@ -589,6 +589,7 @@ async fn every_effort_through_mcp_on_the_local_embedder_and_a_loopback_reranker(
         backups: crate::owner::backup::BackupPlan::new(dir.path(), backups.path().to_path_buf(), 2),
         every: None,
         backup_lock: std::sync::Mutex::new(()),
+        rehearse_temp: None,
     })
     .with_embedder(crate::embedder::EmbedderSlot::from_config(&embedder).unwrap());
     let (server, _host) = AiHost::attach(server, Some(&models)).await;
