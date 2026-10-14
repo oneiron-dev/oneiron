@@ -176,10 +176,15 @@ fn put_subject(vault: &Vault) -> Result<()> {
     )
 }
 
-/// The context pack a binding reranker scores claim `id` in, born with
-/// `old`, put again with newer words whose index publication waits, and put
-/// back to `old` while the reranker scores it.
-fn restored_pack(vault: &Vault, id: EntityId, old: Vec<u8>) -> Result<crate::ContextPack> {
+/// The context pack a reranker (binding unless `unbound`) scores claim `id`
+/// in, born with `old`, put again with newer words whose index publication
+/// waits, and put back to `old` while the reranker scores it.
+fn restored_pack(
+    vault: &Vault,
+    id: EntityId,
+    old: Vec<u8>,
+    unbound: bool,
+) -> Result<crate::ContextPack> {
     put_subject(vault)?;
     put_twice(vault, id, ENTITY_TYPE_CLAIM, &old, &claim_body("new-words"))?;
     let restore = || {
@@ -196,7 +201,7 @@ fn restored_pack(vault: &Vault, id: EntityId, old: Vec<u8>) -> Result<crate::Con
     };
     let reranker = WritingReranker {
         write: &restore,
-        unbound: false,
+        unbound,
     };
     scored_pack(vault, &reranker)
 }
@@ -212,7 +217,7 @@ fn a_restored_claim_is_served_at_the_words_scored() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = entity_id(0x6C);
 
-    let pack = restored_pack(&vault, id, claim_body("old-words"))?;
+    let pack = restored_pack(&vault, id, claim_body("old-words"), false)?;
 
     let served = pack.results.first().expect("the claim");
     assert_eq!(served.id, id);
@@ -231,16 +236,25 @@ fn a_restored_claim_is_served_at_the_words_scored() -> Result<()> {
 /// support too.
 #[test]
 fn a_restored_claim_with_no_live_support_is_not_served() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let id = entity_id(0x6D);
+    // Bound, the pin; unbound (Sol R13), the live row, which the restore
+    // made the pinned bytes again while the gate's cache holds newer words.
+    for unbound in [false, true] {
+        let (_dir, vault) = open_test_vault();
+        let id = entity_id(0x6D);
 
-    let pack = restored_pack(&vault, id, cited_body(entity_id(0x7D), "old-words"))?;
+        let pack = restored_pack(
+            &vault,
+            id,
+            cited_body(entity_id(0x7D), "old-words"),
+            unbound,
+        )?;
 
-    assert!(
-        pack.results.iter().all(|row| row.id != id),
-        "{:?}",
-        pack.results
-    );
+        assert!(
+            pack.results.iter().all(|row| row.id != id),
+            "unbound {unbound}: {:?}",
+            pack.results
+        );
+    }
     Ok(())
 }
 
@@ -375,5 +389,64 @@ fn a_claim_whose_source_is_deleted_while_it_is_scored_is_not_served() -> Result<
         }
     }
     assert!(served.is_empty(), "{served:?}");
+    Ok(())
+}
+
+/// Sol and Wonder R13 on this branch: a claim the reranker does not bind,
+/// read live, took the gate's cached body whenever the live row equalled the
+/// row read, though the gate read an older row. Rewritten while scored to
+/// words citing only a source that is gone, it was served on its old words
+/// and their source. The gate's verdict stands only for the body it read;
+/// the body in hand is judged here.
+#[test]
+fn a_claim_rewritten_while_it_is_scored_is_judged_on_its_new_body() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    put_subject(&vault)?;
+    let kept = entity_id(0x7F);
+    vault.put_entity(
+        &kept,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"kept source",
+    )?;
+    let id = entity_id(0x6B);
+    crate::test_util::publish_seeded_revisions(&vault);
+    vault
+        .batch()
+        .put(
+            &id,
+            ENTITY_TYPE_CLAIM,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &cited_body(kept, "old-words"),
+        )
+        .text(&id, &[("body", "the brass lantern")])
+        .commit()?;
+    let newer = cited_body(entity_id(0x7D), "new-words");
+    let rewrite = || {
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &newer,
+            )
+            .commit()
+    };
+    let reranker = WritingReranker {
+        write: &rewrite,
+        unbound: true,
+    };
+
+    let pack = scored_pack(&vault, &reranker)?;
+
+    assert!(
+        pack.results.iter().all(|row| row.id != id),
+        "{:?}",
+        pack.results
+    );
     Ok(())
 }

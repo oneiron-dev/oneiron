@@ -167,34 +167,26 @@ pub(super) fn hydrate_entity(
     let mut gated_claim_body: Option<&ClaimBody> = None;
     let decoded_here: Option<ClaimBody>;
     if header.entity_type == ENTITY_TYPE_CLAIM {
-        // Reads allow reserved `edge.*` predicates.
-        let decode = || {
-            raw.get(ENTITY_METADATA_HEADER_LEN..)
-                .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
-        };
-        // The gate cached the body retrieval read live. A row scored at its
-        // words takes it only when it is the pinned body: a live row equal
-        // to the pin now says nothing of the row the gate read then.
-        let pinned = if options.words_pinned { decode() } else { None };
-        match options
+        // Decoded once for gate + projection; reads allow reserved `edge.*`
+        // predicates.
+        decoded_here = raw
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            .and_then(|body| crate::claim::decode_claim_body(body, true).ok());
+        // The gate's verdict stands for the body in hand only when it is the
+        // body the gate read: retrieval read its own snapshot, and the row
+        // may have been written since, or its pin may hold other words.
+        let gated = options
             .claim_bodies
-            .filter(|_| raw == live_raw)
             .and_then(|cache| cache.get(&id))
-            .filter(|body| !options.words_pinned || pinned.as_ref() == Some(*body))
-        {
-            // Pipeline-gated result: already decoded once and surfaceable.
-            Some(body) => gated_claim_body = Some(body),
-            None => {
-                // Neighbor (or cache miss): decode once for gate +
-                // projection.
-                decoded_here = pinned.or_else(decode);
-                match &decoded_here {
-                    Some(body) if claim_surfaceable(body) => gated_claim_body = Some(body),
-                    _ => {
-                        *claims_suppressed += 1;
-                        return Ok(None);
-                    }
-                }
+            .filter(|cached| decoded_here.as_ref() == Some(*cached));
+        match (gated, &decoded_here) {
+            // Pipeline-gated result: the body the gate admitted.
+            (Some(body), _) => gated_claim_body = Some(body),
+            // A neighbor, or a body the gate never read.
+            (None, Some(body)) if claim_surfaceable(body) => gated_claim_body = Some(body),
+            _ => {
+                *claims_suppressed += 1;
+                return Ok(None);
             }
         }
     }
