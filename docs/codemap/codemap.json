@@ -25764,7 +25764,7 @@
      "path": "src/origin/smart_http/door_window.rs",
      "purpose": "The quarantine-window protocol: hook request and blob parsing, ref-name pre-check, seam scan, verdict publish",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -25796,6 +25796,14 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/origin/smart_http/history_scan_tests.rs",
+     "purpose": "The door scans every blob a push makes reachable, not only the tip diff (H263): a secret one commit adds and…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -25804,7 +25812,7 @@
      "path": "src/origin/smart_http/hooks.rs",
      "purpose": "The per-request door-owned hook directory and the vetted pre-receive script it carries",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 1
      }
@@ -25884,7 +25892,7 @@
      "purpose": "Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and…",
      "surface": {
       "const": 10,
-      "crate-vis": 10,
+      "crate-vis": 13,
       "fn": 3
      }
     },
@@ -40935,7 +40943,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "origin": {
-     "files": 47,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41477,7 +41485,7 @@
    "over_bar": 38,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2514,
-   "test_files": 810
+   "test_files": 811
   },
   "oneiron-android": {
    "files": [
