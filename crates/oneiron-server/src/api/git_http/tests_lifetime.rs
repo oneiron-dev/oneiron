@@ -4,7 +4,8 @@
 //! coordinator taken is refused rather than queued while reads go on past it,
 //! exchanges past the bound are refused while a stalled one holds its permit,
 //! the permit returns once the stalled child is gone, and a slow transfer
-//! that keeps moving is never cut.
+//! that keeps moving is never cut. One push names no limit on its ref count
+//! (rule 5): two hundred refs land in one exchange.
 
 use super::routes::git_http_routes;
 use crate::config::{LimitsConfig, SyncServerConfig};
@@ -345,6 +346,46 @@ async fn a_stalled_fetch_holds_its_permit_until_its_child_is_gone() {
     .await
     .expect("the permit returns once the stalled exchange ends");
     assert_eq!(admitted, 200);
+}
+
+/// A push may move as many refs as it names (rule 5): two hundred new
+/// branches in one stock-git push all land and are all advertised.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_200_ref_push_lands() {
+    let origin = origin(LimitsConfig::default()).await;
+    let url = format!("http://{}/git/demo.git", origin.addr);
+    let source = origin.source.path().to_owned();
+    let [token, binding] = origin.git_auth.clone();
+    let (pushed, listed) = tokio::task::spawn_blocking(move || {
+        std::fs::write(source.join("README.md"), "burst\n").expect("readme");
+        stock_git(&source, &["add", "README.md"]);
+        commit(&source, "burst");
+        let targets: Vec<String> = (0..200)
+            .map(|n| format!("HEAD:refs/heads/burst-{n:03}"))
+            .collect();
+        let mut push: Vec<&str> = vec!["-c", &token, "-c", &binding, "push", &url];
+        push.extend(targets.iter().map(String::as_str));
+        stock_git(&source, &push);
+        let listed = stock_git(
+            &source,
+            &[
+                "-c",
+                &token,
+                "-c",
+                &binding,
+                "ls-remote",
+                &url,
+                "refs/heads/burst-*",
+            ],
+        );
+        (stock_git(&source, &["rev-parse", "HEAD"]), listed)
+    })
+    .await
+    .unwrap();
+    let expected: Vec<String> = (0..200)
+        .map(|n| format!("{pushed}\trefs/heads/burst-{n:03}"))
+        .collect();
+    assert_eq!(listed.lines().collect::<Vec<_>>(), expected);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
