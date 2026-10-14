@@ -86,7 +86,7 @@ mod scrub;
 mod seq;
 
 pub(in crate::sync) use self::scrub::scrub_receiver_outbox_on_remote_hard_delete_in_txn;
-pub(crate) use self::scrub::scrub_window_updates_in_txn;
+pub(crate) use self::scrub::{retire_window_rows_in_txn, scrub_window_updates_in_txn};
 pub(crate) use self::seq::{
     delete_embed_job_in_txn, push_delete_bearing_in_txn, push_embed_job_in_txn,
 };

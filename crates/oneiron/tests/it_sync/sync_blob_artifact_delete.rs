@@ -198,12 +198,12 @@ fn a_deleted_artifact_takes_its_version_bytes_off_every_replica() {
     // persists and reloads the window: they leave both vaults, and A, which never saw B's
     // reload, still catches up through B's export door.
     delete_artifact(&mut b, &own);
-    sync_through_doors(&a, &b);
+    sync_through_doors(&a, &mut b);
     assert!(!holds(&a, &shared) && !holds(&b, &shared));
 
     // Positive control: the same bytes uploaded again are a new reference, and they sync.
     upload(&mut a, T0 + 20, &[UNIQUE]);
-    sync_through_doors(&a, &b);
+    sync_through_doors(&a, &mut b);
     assert!(holds(&a, &unique));
     assert!(
         holds(&b, &unique),

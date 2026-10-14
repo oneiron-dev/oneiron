@@ -14,6 +14,9 @@ pub(super) struct ConnState {
     subscribed_windows: HashSet<WindowKey>,
     /// Only windows rechecked under a live bound grant can exchange full VVs.
     pub(super) promoted_windows: std::collections::HashMap<WindowKey, SyncSelector>,
+    /// Each promoted window's baseline: the home's version when this socket promoted it. A
+    /// vector behind it never receives older history. It only rises.
+    pub(super) promotion_baselines: std::collections::HashMap<WindowKey, loro::VersionVector>,
     pub(super) documents:
         std::collections::HashMap<oneiron::EntityId, oneiron::sync::SelectorVvRequest>,
     /// Owner-lane NOTE subscriptions of an own device, with its last VV.
@@ -41,6 +44,7 @@ impl ConnState {
             windows_touched: HashSet::new(),
             subscribed_windows: HashSet::new(),
             promoted_windows: std::collections::HashMap::new(),
+            promotion_baselines: std::collections::HashMap::new(),
             documents: std::collections::HashMap::new(),
             owner_documents: std::collections::HashMap::new(),
             window_sync_mode: WindowSyncMode::Unbound,
@@ -125,15 +129,13 @@ impl ConnState {
             }
             WindowSyncMode::FullWindow
                 if self.protocol_version != protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION
-                    && self.protocol_version != protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION =>
+                    && !protocol::is_owner_window_version(self.protocol_version) =>
             {
                 return Err(ProtocolError::InvalidPayload(
                     "full-window sync requires the current full-window protocol",
                 ));
             }
-            WindowSyncMode::Residence
-                if self.protocol_version != protocol::RESIDENCE_PROTOCOL_VERSION =>
-            {
+            WindowSyncMode::Residence if !protocol::is_residence_version(self.protocol_version) => {
                 return Err(ProtocolError::InvalidPayload(
                     "opened-item sync requires the residence protocol",
                 ));

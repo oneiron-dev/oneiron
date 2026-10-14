@@ -20,8 +20,8 @@ pub(super) fn handle_document(
     state: &mut ConnState,
 ) -> Result<(), ProtocolError> {
     if state.protocol_version != transport::PROTOCOL_VERSION
-        && state.protocol_version != transport::CHUNK_FULL_WINDOW_PROTOCOL_VERSION
-        && state.protocol_version != transport::RESIDENCE_PROTOCOL_VERSION
+        && !transport::is_owner_window_version(state.protocol_version)
+        && !transport::is_residence_version(state.protocol_version)
     {
         return Err(ProtocolError::InvalidPayload(
             "document sync requires a document-capable protocol",
@@ -281,8 +281,8 @@ fn owner_auth<'a>(
     state: &'a ConnState,
     write: bool,
 ) -> Result<&'a crate::auth::CoreAuth, ProtocolError> {
-    if (state.protocol_version != transport::CHUNK_FULL_WINDOW_PROTOCOL_VERSION
-        && state.protocol_version != transport::RESIDENCE_PROTOCOL_VERSION)
+    if (!transport::is_owner_window_version(state.protocol_version)
+        && !transport::is_residence_version(state.protocol_version))
         || state.window_sync_mode == super::conn_state::WindowSyncMode::Selector
         || !state.documents.is_empty()
     {

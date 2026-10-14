@@ -694,7 +694,8 @@ fn window_export_scrubs_chunk_carriers_but_keeps_manifest() {
     doc.commit();
     let exported =
         export_window_updates_since(&vault, &key, &doc, &loro::VersionVector::default().encode())
-            .unwrap();
+            .unwrap()
+            .into_bytes();
     let peer = create_window_doc("peer", &key);
     peer.import(&exported).unwrap();
     assert!(peer.get_map("entities").get(&chunk.to_hex()).is_none());
@@ -706,7 +707,8 @@ fn window_export_scrubs_chunk_carriers_but_keeps_manifest() {
     // A second export must not reintroduce the scrubbed historical set-op.
     let later =
         export_window_updates_since(&vault, &key, &doc, &loro::VersionVector::default().encode())
-            .unwrap();
+            .unwrap()
+            .into_bytes();
     let later_peer = create_window_doc("later", &key);
     later_peer.import(&later).unwrap();
     assert!(

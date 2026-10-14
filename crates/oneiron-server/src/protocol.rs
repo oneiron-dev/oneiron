@@ -16,6 +16,7 @@ pub(crate) use oneiron::sync::transport::{
     PROTOCOL_VERSION, RESIDENCE_PROTOCOL_VERSION, TAG_EPHEMERAL, TAG_LEASE_REQUEST,
     TAG_LFS_CHUNK_SYNC, TAG_RPC, TAG_SUB, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR,
     decode_lease_request, decode_protocol_hello, encode_ephemeral, encode_lease_granted,
+    installs_window_replacements, is_owner_window_version, is_residence_version,
 };
 
 /// Sub-tags within WindowSync messages.
@@ -317,6 +318,11 @@ pub(crate) enum ProtocolError {
     /// replay after a restart.
     #[error("sync persistence error: {0}")]
     Persistence(String),
+    /// The peer is behind a window's history-free floor and holds part of the window, and its
+    /// protocol version cannot install the replacement it needs. Closed with
+    /// `close_codes::VERSION_MISMATCH`, never answered with history it cannot apply.
+    #[error("window replacement requires a newer protocol")]
+    ReplacementUnsupported,
 }
 
 /// WebSocket close codes per ARCH-023 section 3.5.

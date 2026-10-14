@@ -305,7 +305,7 @@ async fn handle_connection(
                             }
                             continue;
                         }
-                        if protocol_version == protocol::RESIDENCE_PROTOCOL_VERSION
+                        if protocol::is_residence_version(protocol_version)
                             && data.first() == Some(&protocol::TAG_WINDOW_SYNC)
                         {
                             let Ok((raw_key, sub_tag, _)) =
@@ -571,6 +571,17 @@ async fn handle_connection(
                                 .await;
                             break;
                         }
+                        ProtocolError::ReplacementUnsupported => {
+                            transport
+                                .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
+                                    code: close_codes::VERSION_MISMATCH,
+                                    reason: Utf8Bytes::from_static(
+                                        "window behind its history-free floor: upgrade this device to hello v13+ (v14 for residence)",
+                                    ),
+                                })))
+                                .await;
+                            break;
+                        }
                         ProtocolError::InvalidPayload(msg) => {
                             tracing::warn!(conn_id, error = %msg, "invalid payload — closing");
                             break;
@@ -675,7 +686,7 @@ fn window_broadcast_allowed(
         .and_then(|payload| oneiron::sync::transport::decode_window_sync(payload).ok())
         .and_then(|(key, _, _)| oneiron::sync::WindowKey::try_new(key));
     match protocol_version {
-        version if version == protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION => {
+        version if protocol::is_owner_window_version(version) => {
             key.is_some_and(|key| state.receives_window(&key))
         }
         _ => false,
@@ -706,6 +717,6 @@ pub(super) fn should_forward_broadcast(protocol_version: u8, data: &[u8]) -> boo
         return false; // Only document_delivery may construct a recipient's export.
     }
     (protocol_version == protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION
-        || protocol_version == protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION)
+        || protocol::is_owner_window_version(protocol_version))
         || data.first().copied() != Some(protocol::TAG_WINDOW_SYNC)
 }

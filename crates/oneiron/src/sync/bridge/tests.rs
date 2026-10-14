@@ -4965,7 +4965,8 @@ fn assert_deferred_merge_actor_mismatch_survives_erasure(validated_at_write: boo
         &outbound,
         &loro::VersionVector::default().encode(),
     )
-    .expect("export recovered window");
+    .expect("export recovered window")
+    .into_bytes();
     let peer = test_vault();
     for participant in [&survivor, &source] {
         peer.put_entity(

@@ -855,7 +855,8 @@ fn custody_portable_dial_window_roundtrip_and_replay_wall() -> crate::Result<()>
             &key,
             &doc,
             &loro::VersionVector::default().encode(),
-        )?;
+        )?
+        .into_bytes();
         let received = create_window_doc("receiver", &key);
         received.import(&bytes).unwrap();
         assert_eq!(

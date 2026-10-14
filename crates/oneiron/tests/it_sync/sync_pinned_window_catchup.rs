@@ -6,7 +6,7 @@
 use loro::{ExportMode, LoroDoc};
 use oneiron::registry::ENTITY_TYPE_DIAGNOSTIC;
 use oneiron::sync::types::WindowKey;
-use oneiron::sync::window;
+use oneiron::sync::window::{self, WindowExport};
 use oneiron::{DeleteReason, EntityId};
 
 use crate::sync_harness::{
@@ -70,50 +70,102 @@ fn plant(b: &mut TestNode, cause: PinCause) -> EntityId {
     id
 }
 
-/// Bug repro (stall ticket) and done-means: A shares B's window prefix, then B commits more than
-/// one change A never sees, and B's export door pins the window history-free. The two sides must
-/// still come level through their export doors within the convergence bound, A must read every
-/// row B holds, and the scrubbed carrier must reach neither A's rows nor A's window.
+/// Which side of the sync connection is the hub (the server) and which the device.
+#[derive(Clone, Copy, Debug)]
+enum Hub {
+    /// B, whose window is pinned, serves A.
+    Pinned,
+    /// A, which is behind B, serves B.
+    Behind,
+}
+
+/// Writes two rows into `node`'s window by separate commits; returns their ids.
+fn write_two(node: &mut TestNode, at: u64, bodies: [&[u8]; 2]) -> Vec<EntityId> {
+    let mut ids = Vec::new();
+    for (n, body) in bodies.into_iter().enumerate() {
+        let id = EntityId::now();
+        node.put_entity_in_window(WINDOW, &id, &make_entity_blob(1, at + n as u64, body));
+        ids.push(id);
+    }
+    ids
+}
+
+/// Bug repro (stall ticket) and done-means, per pin cause and per hub: A shares B's window
+/// prefix, then B commits more than one change A never sees and its export door pins the window
+/// history-free, while A makes edits of its own it never sends (and, in the both-pinned rows,
+/// pins its own window too). The two sides must come level through their export doors within
+/// the convergence bound; each must hold every row either wrote, A's unsent edits included; no
+/// scrubbed carrier may reach the other side's rows or window; and once level, neither door
+/// answers the other with a replacement again.
 #[test]
 fn a_peer_behind_a_pinned_window_catches_up_through_its_export_door() {
-    for cause in [PinCause::WithdrawnDelete, PinCause::LocalOnlyCarrier] {
-        let (a, mut b) = vault_pair();
+    use PinCause::{LocalOnlyCarrier, WithdrawnDelete};
+    let rows = [
+        (WithdrawnDelete, None, Hub::Pinned),
+        (WithdrawnDelete, None, Hub::Behind),
+        (LocalOnlyCarrier, None, Hub::Pinned),
+        (LocalOnlyCarrier, None, Hub::Behind),
+        (WithdrawnDelete, Some(LocalOnlyCarrier), Hub::Pinned),
+        (LocalOnlyCarrier, Some(WithdrawnDelete), Hub::Behind),
+    ];
+    for (cause, own_pin, hub) in rows {
+        let row = format!("{cause:?}/{own_pin:?}/{hub:?}");
+        let (mut a, mut b) = vault_pair();
         let key = WindowKey::new(WINDOW);
         let shared = EntityId::now();
         b.put_entity_in_window(WINDOW, &shared, &make_entity_blob(1, T0, b"shared prefix"));
-        sync_through_doors(&a, &b);
+        sync_through_doors(&b, &mut a);
         assert!(a.vault.get_raw(&shared).unwrap().is_some());
 
-        // B moves on by separate commits A never sees.
-        let mut survivors = vec![shared];
-        for (n, body) in [b"first survivor".as_slice(), b"second survivor"]
-            .into_iter()
-            .enumerate()
-        {
-            let id = EntityId::now();
-            b.put_entity_in_window(WINDOW, &id, &make_entity_blob(1, T0 + 1 + n as u64, body));
-            survivors.push(id);
-        }
-        let carrier = plant(&mut b, cause);
+        // B moves on by separate commits A never sees, then pins; A edits on its own.
+        let mut rows_of_b = write_two(&mut b, T0 + 1, [b"first survivor", b"second survivor"]);
+        rows_of_b.push(shared);
+        let mut carriers = vec![plant(&mut b, cause)];
+        let rows_of_a = write_two(&mut a, T0 + 10, [b"unsent edit", b"second unsent edit"]);
+        carriers.extend(own_pin.map(|own| plant(&mut a, own)));
 
-        sync_through_doors(&a, &b);
+        match hub {
+            Hub::Pinned => sync_through_doors(&b, &mut a),
+            Hub::Behind => sync_through_doors(&a, &mut b),
+        }
         assert!(
             window::history_free_window_required(&b.vault, &key).unwrap(),
-            "{cause:?}: the export door pinned B's window"
+            "{row}: the export door pinned B's window"
         );
-        for id in &survivors {
+        for node in [&a, &b] {
+            for id in rows_of_a.iter().chain(&rows_of_b) {
+                assert!(
+                    node.vault.get_raw(id).unwrap().is_some(),
+                    "{row}: {} lost or never received a row",
+                    node.name
+                );
+            }
+            for carrier in &carriers {
+                assert!(
+                    node.vault.get_raw(carrier).unwrap().is_none(),
+                    "{row}: a scrubbed carrier became a row on {}",
+                    node.name
+                );
+                assert!(
+                    map_get_bytes(&node.doc(WINDOW).get_map("entities"), &carrier.to_hex())
+                        .is_none(),
+                    "{row}: a scrubbed carrier reached {}'s window",
+                    node.name
+                );
+            }
+        }
+        for (from, to) in [(&a, &b), (&b, &a)] {
+            let reply = window::export_window_updates_since(
+                &from.vault,
+                &key,
+                from.doc(WINDOW),
+                &to.doc(WINDOW).oplog_vv().encode(),
+            )
+            .unwrap();
             assert!(
-                a.vault.get_raw(id).unwrap().is_some(),
-                "{cause:?}: A never received a row B holds"
+                matches!(reply, WindowExport::Update(_)),
+                "{row}: level peers keep trading replacements"
             );
         }
-        assert!(
-            a.vault.get_raw(&carrier).unwrap().is_none(),
-            "{cause:?}: the scrubbed carrier became a row on A"
-        );
-        assert!(
-            map_get_bytes(&a.doc(WINDOW).get_map("entities"), &carrier.to_hex()).is_none(),
-            "{cause:?}: the scrubbed carrier reached A's window"
-        );
     }
 }

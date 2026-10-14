@@ -21,11 +21,11 @@ use crate::sync::window_rows::{HISTORY_FREE_WINDOW, OFF_RECORD_PROMOTE_PICKUP, W
 use crate::Vault;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result, SyncError};
+use crate::error::{Error, Result};
 use crate::sync::local_claims::{
     claim_sync_allowed, local_claim_sync_allowed, withheld_claim_carriers,
 };
-use loro::{CommitOptions, ExportMode, LoroDoc, VersionVector};
+use loro::{CommitOptions, ExportMode, LoroDoc};
 
 /// THE SYNC WINDOW-PACKING EGRESS DOOR (ARCH-0052 P6, owner ruling
 /// R-20260807-06).
@@ -408,82 +408,9 @@ pub(super) fn scrub_redacted_attribution_carriers(
     Ok(!keys.is_empty())
 }
 
-/// Exports a full-window response without carrying pre-scrub operation bytes.
-/// The peer VV is still decoded first so malformed-VV requests never become a
-/// full-export fallback. A window of a world flagged device-only, or one
-/// carrying such a world's claim or an edge naming one, ships nothing,
-/// against the flag as it stands now. So does a delta that inserts one, to a
-/// receiver that already holds part of the window; an empty receiver gets
-/// the history-free snapshot.
-pub fn export_window_updates_since(
-    vault: &Vault,
-    key: &WindowKey,
-    doc: &LoroDoc,
-    remote_vv: &[u8],
-) -> Result<Vec<u8>> {
-    let remote = VersionVector::decode(remote_vv).map_err(|source| {
-        Error::Sync(SyncError::CrdtDecodeError {
-            context: "decode version vector",
-            source,
-        })
-    })?;
-    if super::device_only::export_withheld(vault, key, doc, &remote)? {
-        return super::device_only::withheld_window_update();
-    }
-    crate::sync::note::refresh(vault, doc, key)?;
-    let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;
-    let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
-    let authors_scrubbed = scrub_redacted_attribution_carriers(vault, key, doc)?;
-    let withdrawn_scrubbed = scrub_withdrawn_delete_carriers(vault, key, doc)?;
-    let scrubbed = secret_scrubbed || claims_scrubbed || authors_scrubbed || withdrawn_scrubbed;
-    if scrubbed
-        || history_free_window_required(vault, key)?
-        || doc.is_shallow()
-        || (remote.is_empty()
-            && super::device_only::delta_carries_device_only(vault, doc, &remote)?)
-    {
-        export_history_free_window_snapshot(doc)
-    } else {
-        super::loro_support::export_updates_since(doc, remote_vv)
-    }
-}
-
-/// A promoted device holds the canonical shallow frontier. When the home
-/// sends its VV, ship ONLY the post-frontier tail: re-exporting a shallow
-/// snapshot on every reply can discard the device's later unconfirmed op
-/// during a merge. If a scrub pinned this window to history-free transport,
-/// retain the existing snapshot policy instead.
-pub(in crate::sync) fn export_promoted_window_updates_since(
-    vault: &Vault,
-    key: &WindowKey,
-    doc: &LoroDoc,
-    remote_vv: &[u8],
-) -> Result<Vec<u8>> {
-    let remote = VersionVector::decode(remote_vv).map_err(|source| {
-        Error::Sync(SyncError::CrdtDecodeError {
-            context: "decode promoted version vector",
-            source,
-        })
-    })?;
-    if super::device_only::export_withheld(vault, key, doc, &remote)? {
-        return super::device_only::withheld_window_update();
-    }
-    crate::sync::note::refresh(vault, doc, key)?;
-    let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;
-    let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
-    let withdrawn_scrubbed = scrub_withdrawn_delete_carriers(vault, key, doc)?;
-    let scrubbed = secret_scrubbed || claims_scrubbed || withdrawn_scrubbed;
-    if scrubbed
-        || history_free_window_required(vault, key)?
-        || (remote.is_empty()
-            && super::device_only::delta_carries_device_only(vault, doc, &remote)?)
-    {
-        export_history_free_window_snapshot(doc)
-    } else {
-        super::loro_support::export_updates_since(doc, remote_vv)
-    }
-}
-
+/// The window's state with no history at all: a snapshot rooted at its newest operation. The
+/// canonical promotion snapshot and a device-only window's empty receiver take this; the version
+/// export door roots history-free snapshots through [`super::history_free`].
 pub(crate) fn export_history_free_window_snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {
     doc.commit();
     let frontiers = doc.oplog_frontiers();
@@ -496,8 +423,8 @@ pub(crate) fn export_history_free_window_snapshot(doc: &LoroDoc) -> Result<Vec<u
         })
 }
 
-/// Scrubs the live state and chooses ordinary versus shallow snapshot bytes
-/// using the durable per-window history-free pin.
+/// Scrubs the live state and persists it: a pinned window keeps only the history
+/// [`super::history_free::HistoryCheck`] ships, every other window all it holds.
 pub(in crate::sync) fn export_scrubbed_window_snapshot(
     vault: &Vault,
     key: &WindowKey,
@@ -508,9 +435,11 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     scrub_local_only_carriers(vault, key, doc)?;
     scrub_redacted_attribution_carriers(vault, key, doc)?;
     scrub_withdrawn_delete_carriers(vault, key, doc)?;
-    if history_free_window_required(vault, key)? || doc.is_shallow() {
-        export_history_free_window_snapshot(doc)
+    if history_free_window_required(vault, key)? {
+        let check = super::history_free::HistoryCheck::read(vault, doc)?;
+        super::history_free::history_free_snapshot(doc, Some(&check), None)
     } else {
+        // A shallow doc's snapshot keeps its own root.
         export_snapshot(doc)
     }
 }

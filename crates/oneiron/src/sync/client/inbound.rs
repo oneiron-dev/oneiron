@@ -6,7 +6,7 @@ use loro::VersionVector;
 
 use super::base::{SyncClient, load_root_doc};
 use super::types::SyncResidenceMode;
-use crate::error::{Error, SyncError};
+use crate::error::{Error, SyncError, SyncProtocolValidation};
 use crate::sync::SyncEvent;
 use crate::sync::bridge::persist_window_update;
 use crate::sync::loro_support::{doc_version_vector, export_updates_since};
@@ -19,7 +19,9 @@ use crate::sync::transport::{
     TransportError, window_sub_tags,
 };
 use crate::sync::types::WindowKey;
-use crate::sync::window::{LoadedWindow, apply_pending_window_updates, load_window_from_state};
+use crate::sync::window::{
+    LoadedWindow, WindowExport, apply_pending_window_updates, load_window_from_state,
+};
 use crate::sync::window_rows::BULK_TRANSFER_MARKER;
 
 impl SyncClient {
@@ -214,6 +216,7 @@ impl SyncClient {
                 window_sub_tags::UPDATE
                     | window_sub_tags::VV_REQUEST
                     | window_sub_tags::VV_RESPONSE
+                    | window_sub_tags::REPLACEMENT
             )
             && self
                 .vault
@@ -228,7 +231,9 @@ impl SyncClient {
         if self.config.federation_peer.is_some()
             && matches!(
                 sub_tag,
-                window_sub_tags::VV_REQUEST | window_sub_tags::VV_RESPONSE
+                window_sub_tags::VV_REQUEST
+                    | window_sub_tags::VV_RESPONSE
+                    | window_sub_tags::REPLACEMENT
             )
         {
             return Err(TransportError::InvalidPayload(
@@ -321,24 +326,9 @@ impl SyncClient {
                     .map_err(|_| TransportError::VersionVectorDecode)?;
                 let window = self.ensure_window(window_key)?;
                 let doc = &window.doc;
-                let delta = if self.config.residence_mode == SyncResidenceMode::Opened
-                    && self.config.federation_peer.is_none()
-                {
-                    crate::sync::window::export_promoted_window_updates_since(
-                        &self.vault,
-                        &window.key,
-                        doc,
-                        payload,
-                    )
-                } else {
-                    crate::sync::window::export_window_updates_since(
-                        &self.vault,
-                        &window.key,
-                        doc,
-                        payload,
-                    )
-                }
-                .map_err(map_delta_export_err)?;
+                let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
+                    return Ok(vec![replacement_request(window_key)?]);
+                };
                 let responses = vec![
                     transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
                         .into_result()?,
@@ -369,8 +359,56 @@ impl SyncClient {
                     )?;
                     return Ok(Vec::new());
                 }
-                self.import_window_update(window_key, payload, super::ImportTier::OwnDevice)?;
-                Ok(Vec::new())
+                match self.import_window_update(window_key, payload, super::ImportTier::OwnDevice) {
+                    Ok(()) => Ok(Vec::new()),
+                    // The update builds on history this window does not hold, or that its own
+                    // shallow root cut away: no update can bring it level, the server's
+                    // replacement can.
+                    Err(_) if self.update_needs_replacement(&key, payload) => {
+                        self.staged_world_updates
+                            .retain(|(staged, bytes)| staged != &key || bytes != payload);
+                        Ok(vec![replacement_request(window_key)?])
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            window_sub_tags::REPLACEMENT => {
+                if payload.len() > MAX_DECODED_PAYLOAD_BYTES {
+                    return Err(TransportError::FrameTooLarge {
+                        size: payload.len(),
+                        max: MAX_DECODED_PAYLOAD_BYTES,
+                    });
+                }
+                let evidence = self.staged_entity_evidence()?;
+                let (window, conflicts) = self
+                    .manager
+                    .replace_window(&key, payload, &evidence)
+                    .map_err(|error| match error {
+                        Error::Sync(SyncError::SyncProtocolError {
+                            context: SyncProtocolValidation::ReplacementBusy,
+                        }) => TransportError::Storage(
+                            "window replacement waits on a held window".to_string(),
+                        ),
+                        Error::Sync(SyncError::SyncProtocolError {
+                            context: SyncProtocolValidation::ReplacementRejected,
+                        }) => TransportError::InvalidPayload("window replacement rejected"),
+                        error => TransportError::Storage(error.to_string()),
+                    })?;
+                if !conflicts.is_empty() {
+                    let _ = self.event_tx.send(SyncEvent::ReplacementConflicts {
+                        window_key: window_key.to_string(),
+                        conflicts,
+                    });
+                }
+                // The replaced window starts a fresh exchange: what the server held of the old
+                // one witnesses nothing about the new one.
+                self.server_vvs.remove(window_key);
+                let vv = doc_version_vector(&window.doc);
+                drop(window);
+                Ok(vec![
+                    transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
+                        .into_result()?,
+                ])
             }
             window_sub_tags::VV_RESPONSE => {
                 // Peer's VV answering our VV_REQUEST — export and send only our
@@ -378,25 +416,9 @@ impl SyncClient {
                 let server_vv = VersionVector::decode(payload)
                     .map_err(|_| TransportError::VersionVectorDecode)?;
                 let window = self.ensure_window(window_key)?;
-                let doc = &window.doc;
-                let delta = if self.config.residence_mode == SyncResidenceMode::Opened
-                    && self.config.federation_peer.is_none()
-                {
-                    crate::sync::window::export_promoted_window_updates_since(
-                        &self.vault,
-                        &window.key,
-                        doc,
-                        payload,
-                    )
-                } else {
-                    crate::sync::window::export_window_updates_since(
-                        &self.vault,
-                        &window.key,
-                        doc,
-                        payload,
-                    )
-                }
-                .map_err(map_delta_export_err)?;
+                let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
+                    return Ok(vec![replacement_request(window_key)?]);
+                };
                 let responses = vec![
                     transport::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
                         .into_result()?,
@@ -964,6 +986,53 @@ impl SyncClient {
             .map_err(|_| TransportError::InvalidPayload("queued update import failed"))?;
         Ok(())
     }
+
+    /// What this device sends the server for `window` past the server's vector: the update
+    /// bytes, or `None` when only a replacement could bring the server level. A device never
+    /// pushes a replacement on the hub; it asks for the hub's and writes its own state on top
+    /// (`REPLACEMENT_REQUEST`). A server holding nothing of the window takes the snapshot as
+    /// its first update, as before replacements existed.
+    fn export_to_server(
+        &self,
+        window: &LoadedWindow,
+        payload: &[u8],
+        server_vv: &VersionVector,
+    ) -> std::result::Result<Option<Vec<u8>>, TransportError> {
+        let export = crate::sync::window::export_window_updates_since(
+            &self.vault,
+            &window.key,
+            &window.doc,
+            payload,
+        )
+        .map_err(map_delta_export_err)?;
+        Ok(match export {
+            WindowExport::Update(delta) => Some(delta),
+            WindowExport::Replacement(snapshot) if server_vv.is_empty() => Some(snapshot),
+            WindowExport::Replacement(_) => None,
+        })
+    }
+
+    /// `REPLACEMENT_REQUEST` frames asking the server for each of `windows` whole.
+    pub(in crate::sync) fn replacement_requests(
+        &self,
+        windows: &std::collections::BTreeSet<String>,
+    ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
+        windows.iter().map(|key| replacement_request(key)).collect()
+    }
+
+    /// Whether `update` failed on this device because it builds on history the live window
+    /// does not hold.
+    fn update_needs_replacement(&self, key: &WindowKey, update: &[u8]) -> bool {
+        self.manager.window(key).is_some_and(|window| {
+            crate::sync::window::update_needs_replacement(&window.doc, update)
+        })
+    }
+}
+
+/// A device's request for the server's replacement of `window_key`.
+fn replacement_request(window_key: &str) -> std::result::Result<Vec<u8>, TransportError> {
+    transport::encode_window_sync(window_key, window_sub_tags::REPLACEMENT_REQUEST, &[])
+        .into_result()
 }
 
 /// Maps a delta-export error onto the transport taxonomy.
