@@ -4045,9 +4045,10 @@ fn local_only_update_admission_is_side_effect_free_and_checks_hidden_history() -
         for shape in [Short, Long, Overwritten, Aliased, Untrimmed] {
             let masked = masked_root_snapshot(carrier, shape)?;
             let shown = LoroDoc::from_snapshot(&masked).unwrap();
+            // The state load takes the alias, the clean twin's root.
             let clean: Option<&[u8]> = match shape {
-                Short | Long => Some(b"clean"),
-                Overwritten | Aliased => Some(b"clean-tail"),
+                Short | Long | Aliased => Some(b"clean"),
+                Overwritten => Some(b"clean-tail"),
                 Untrimmed => None,
             };
             let entities = shown.get_map("entities");
