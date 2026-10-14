@@ -80,22 +80,36 @@ pub(super) fn events_in(
     }
     Ok(output)
 }
-/// Every document this vault holds a signing draft for, in id order: the
-/// subjects of its draft claims. The housekeeping pass feeds them to the
-/// expiry and seal sweeps, which take a caller's document list.
-pub(crate) fn esign_documents_in_txn(
+/// One page of the documents this vault holds a signing draft for: the
+/// subjects of at most `limit` draft claims after `after`, in claim-id order,
+/// and the last claim the page read. The housekeeping pass walks the pages and
+/// feeds each to the expiry and seal sweeps, which take a caller's document
+/// list; a short page ends the walk.
+pub(crate) fn esign_document_page_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-) -> Result<Vec<EntityId>> {
+    after: Option<EntityId>,
+    limit: usize,
+) -> Result<(Vec<EntityId>, Option<EntityId>)> {
+    let claims = crate::claim::claim_ids_for_predicate_page_in_txn(
+        &vault.store,
+        txn,
+        DRAFT_PREDICATE,
+        after,
+        limit,
+    )?;
     let mut documents = std::collections::BTreeSet::new();
-    for id in crate::claim::claim_ids_for_predicate_in_txn(&vault.store, txn, DRAFT_PREDICATE)? {
-        if let Some(body) = vault.get_claim_in_txn(txn, &id)?
+    for id in &claims {
+        if let Some(body) = vault.get_claim_in_txn(txn, id)?
             && let ClaimSubject::Entity(document) = body.subject
         {
             documents.insert(document);
         }
     }
-    Ok(documents.into_iter().collect())
+    let last = (claims.len() == limit)
+        .then(|| claims.last().copied())
+        .flatten();
+    Ok((documents.into_iter().collect(), last))
 }
 fn fold(rows: &[EsignEventRow]) -> Result<Option<EsignState>> {
     let Some(first) = rows.first() else {

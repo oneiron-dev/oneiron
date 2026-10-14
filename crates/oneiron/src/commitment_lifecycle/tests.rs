@@ -534,6 +534,40 @@ fn overdue_instance_lapses_with_let_go_receipt_and_successor() -> Result<()> {
     Ok(())
 }
 
+/// A running host lapses an overdue instance with no caller: its housekeeping
+/// pass runs the sweep under the projector's own MACHINE envelope.
+#[test]
+fn the_housekeeping_pass_lapses_an_overdue_instance() -> Result<()> {
+    use crate::housekeeping::{HousekeepingBudget, HousekeepingSweep, SweepOutcome, SweepWork};
+    let dir = tempfile::tempdir()?;
+    let clock = crate::ports::ManualClock::new(1_000_001);
+    let mut config = VaultConfig::device();
+    config.map_size = 64 * 1024 * 1024;
+    config.dimensions = 4;
+    config.embedding_model = Some("test/model@v1".to_owned());
+    config.store_clock = clock.bundle();
+    let vault = Vault::open(dir.path(), config)?;
+    let parties = parties(&vault)?;
+    let instance =
+        parties.put_interval_instance(&vault, &crate::test_util::entity(0x3D), 1_000_000)?;
+    assert_eq!(status(&vault, &instance)?, CommitmentStatus::Open);
+
+    let report = vault.housekeeping(HousekeepingBudget::unbounded())?;
+    assert!(
+        matches!(
+            report.sweep(HousekeepingSweep::CommitmentLapse),
+            Some(SweepOutcome::Ran {
+                work: SweepWork::Commitments { lapsed: 1, .. },
+                ..
+            })
+        ),
+        "{report:#?}"
+    );
+    assert_eq!(status(&vault, &instance)?, CommitmentStatus::Lapsed);
+    assert_eq!(receipts_for(&vault, &instance)?[0].outcome, "let_go");
+    Ok(())
+}
+
 #[test]
 fn lapse_then_delete_erases_only_the_deleted_instances_gate_decisions() -> Result<()> {
     let (_dir, vault) = temp_vault()?;

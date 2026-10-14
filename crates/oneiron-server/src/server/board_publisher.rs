@@ -20,15 +20,18 @@ use super::core::SyncServer;
 
 /// A serve loop's background tasks: the lifecycle scheduler, then the board
 /// publisher. Stopped together, in that order, once serving ends.
-pub(crate) struct ServeBackground([tokio::task::JoinHandle<()>; 2]);
+pub(crate) struct ServeBackground {
+    lifecycle: super::lifecycle::LifecycleScheduler,
+    board: tokio::task::JoinHandle<()>,
+}
 
 impl ServeBackground {
-    /// Aborts each task and waits for it to end.
+    /// Stops the scheduler, waiting out a housekeeping pass in flight, then
+    /// aborts the publisher and waits for it to end.
     pub(crate) async fn stop(self) {
-        for handle in self.0 {
-            handle.abort();
-            let _ = handle.await;
-        }
+        self.lifecycle.stop().await;
+        self.board.abort();
+        let _ = self.board.await;
     }
 }
 
@@ -39,10 +42,10 @@ impl SyncServer {
         self: &Arc<Self>,
         admit: super::HousekeepingAdmission,
     ) -> ServeBackground {
-        ServeBackground([
-            self.spawn_lifecycle_scheduler(admit),
-            self.spawn_board_publisher(),
-        ])
+        ServeBackground {
+            lifecycle: self.spawn_lifecycle_scheduler(admit),
+            board: self.spawn_board_publisher(),
+        }
     }
 
     /// Starts the publisher. It subscribes before it returns, so no TASK

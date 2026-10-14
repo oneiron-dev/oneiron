@@ -15,12 +15,20 @@
 //! window, an erasure obligation the owner queued. It never refuses or holds
 //! the owner's work. Sweeps that need authority only a host holds are listed
 //! in every report with the reason they did not run.
+//!
+//! A host that stops a vault between uses asks [`Vault::housekeeping_wake_at`]
+//! when it must run the vault again for a retirement that comes due.
 
 mod schedule;
 mod sweeps;
 #[cfg(test)]
 mod tests;
+mod wake;
 
+pub(crate) use self::wake::note_wake_in_txn;
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -159,10 +167,12 @@ impl HousekeepingSweep {
     /// erasure sweep daily, hourly while an obligation waits (ARCH-0038's
     /// deadline is 30 days); the graph-walk cache daily.
     const fn runner(self) -> Runner {
-        let engine = |every| Runner::Engine {
-            every,
-            at_open: false,
-        };
+        const fn engine(every: u64) -> Runner {
+            Runner::Engine {
+                every,
+                at_open: false,
+            }
+        }
         match self {
             Self::SecretLeaseExpiry | Self::CriticalConfirmExpiry => engine(MINUTE),
             Self::SymbolLeaseExpiry => engine(5 * MINUTE),
@@ -187,35 +197,63 @@ impl HousekeepingSweep {
 
 /// How long one pass may keep starting work. A sweep in flight finishes; the
 /// budget is checked before each sweep and between the pages of a paged one.
-/// A pass always runs at least one due sweep, so it makes progress.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A pass always runs at least one due sweep, so it makes progress, unless
+/// its host has asked it to stop.
+#[derive(Debug, Clone, Default)]
 pub struct HousekeepingBudget {
     time: Option<Duration>,
+    stop: Option<Arc<AtomicBool>>,
 }
 
 impl HousekeepingBudget {
     /// Start no new sweep or page once `time` has passed.
-    pub const fn within(time: Duration) -> Self {
-        Self { time: Some(time) }
+    pub fn within(time: Duration) -> Self {
+        Self {
+            time: Some(time),
+            stop: None,
+        }
     }
 
     /// No time bound: every sweep runs to its own bound.
-    pub const fn unbounded() -> Self {
-        Self { time: None }
+    pub fn unbounded() -> Self {
+        Self::default()
     }
 
-    fn deadline(self) -> Deadline {
-        Deadline(self.time.and_then(|time| Instant::now().checked_add(time)))
+    /// Also start no new sweep or page once `stop` is set: a host that is
+    /// shutting down sets it, then waits for the pass to return.
+    #[must_use]
+    pub fn stop_when(self, stop: Arc<AtomicBool>) -> Self {
+        Self {
+            stop: Some(stop),
+            ..self
+        }
+    }
+
+    fn deadline(&self) -> Deadline {
+        Deadline {
+            at: self.time.and_then(|time| Instant::now().checked_add(time)),
+            stop: self.stop.clone(),
+        }
     }
 }
 
 /// When a pass stops starting work.
-#[derive(Debug, Clone, Copy)]
-struct Deadline(Option<Instant>);
+#[derive(Debug, Clone)]
+struct Deadline {
+    at: Option<Instant>,
+    stop: Option<Arc<AtomicBool>>,
+}
 
 impl Deadline {
-    fn passed(self) -> bool {
-        self.0.is_some_and(|at| Instant::now() >= at)
+    /// The host asked the pass to stop.
+    fn stopped(&self) -> bool {
+        self.stop
+            .as_ref()
+            .is_some_and(|stop| stop.load(Ordering::Acquire))
+    }
+
+    fn passed(&self) -> bool {
+        self.stopped() || self.at.is_some_and(|at| Instant::now() >= at)
     }
 }
 
@@ -233,13 +271,13 @@ impl HousekeepingReport {
         self.count(|outcome| matches!(outcome, SweepOutcome::Ran { .. }))
     }
 
-    /// Sweeps that failed or panicked this pass.
+    /// Sweeps that failed or panicked this pass, or ran but could not finish
+    /// some of their items.
     pub fn failed(&self) -> usize {
-        self.count(|outcome| {
-            matches!(
-                outcome,
-                SweepOutcome::Failed { .. } | SweepOutcome::Panicked
-            )
+        self.count(|outcome| match outcome {
+            SweepOutcome::Failed { .. } | SweepOutcome::Panicked => true,
+            SweepOutcome::Ran { work, .. } => work.items_failed() > 0,
+            _ => false,
         })
     }
 
@@ -337,6 +375,18 @@ pub enum SweepWork {
 }
 
 impl SweepWork {
+    /// Items the run could not finish: each is retried on a later pass, after
+    /// the backoff.
+    pub fn items_failed(&self) -> u64 {
+        match *self {
+            Self::EsignExpiry { failed, .. } | Self::EsignSeals { failed, .. } => failed,
+            Self::HardErase(work) => work
+                .jobs_failed
+                .saturating_add(work.obligations_undecodable),
+            _ => 0,
+        }
+    }
+
     /// Whether the run found nothing to do.
     pub fn is_idle(&self) -> bool {
         match *self {
@@ -372,6 +422,9 @@ pub struct HardEraseWork {
     /// Obligations left for a later run without an attempt (not yet due, a
     /// live window, an unreadable row).
     pub jobs_deferred: u64,
+    /// Windows no caller held, written down and closed so their carriers
+    /// could be compacted.
+    pub windows_unloaded: u64,
     /// Obligations whose attempt failed; each keeps its row with a retry time.
     pub jobs_failed: u64,
     pub windows_compacted: u64,
@@ -407,6 +460,17 @@ enum Selection {
     All,
 }
 
+/// A sweep a pass will start if its budget allows.
+struct Due {
+    /// When it fell due; 0 when it was asked for.
+    at: u64,
+    /// Its place in [`HousekeepingSweep::ALL`].
+    index: usize,
+    every: u64,
+    /// Due because it was asked for, not because its schedule says so.
+    forced: bool,
+}
+
 impl Vault {
     /// Runs every engine sweep that is due, oldest-due first, within
     /// `budget`. A host calls this on its own tick, off the request path. An
@@ -422,6 +486,41 @@ impl Vault {
         self.housekeeping_pass(Selection::All, budget)
     }
 
+    /// When a vault that is not running must next run a pass, or `None` when
+    /// it owes no retirement: the earliest deadline a door noted for a secret
+    /// lease, a voice print or a critical confirm, not before that sweep is
+    /// next due (a failing sweep waits out its backoff), and the erasure
+    /// sweep's due time while an obligation waits. Cache and retention hygiene
+    /// never wake a vault. Reads one row per sweep and the schedule, never a
+    /// whole table, so a host can ask every time it stops the vault.
+    pub fn housekeeping_wake_at(&self) -> Result<Option<u64>> {
+        let states = schedule::read_states(self)?;
+        let noted = {
+            let txn = self.store.env.read_txn()?;
+            let mut noted = Vec::new();
+            for sweep in wake::WAKE_SWEEPS {
+                if let Some(at) = wake::earliest_in_txn(&self.store, &txn, sweep)? {
+                    noted.push((sweep, at));
+                }
+            }
+            noted
+        };
+        let mut owed = noted;
+        if schedule::erase_obligation_waiting(self)? {
+            owed.push((HousekeepingSweep::HardEraseSweep, 0));
+        }
+        let mut earliest: Option<u64> = None;
+        for (sweep, at) in owed {
+            let Runner::Engine { every, .. } = sweep.runner() else {
+                continue;
+            };
+            let due = schedule::due_at(self, sweep, states.get(&sweep), every)?;
+            let wake = at.max(due);
+            earliest = Some(earliest.map_or(wake, |seen| seen.min(wake)));
+        }
+        Ok(earliest)
+    }
+
     fn housekeeping_pass(
         &self,
         selection: Selection,
@@ -433,20 +532,30 @@ impl Vault {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let deadline = budget.deadline();
         let started_at = self.now_recorded_at();
-        let states = schedule::read_states(self)?;
+        let mut states = schedule::read_states(self)?;
 
         let mut rows: Vec<Option<SweepOutcome>> = vec![None; HousekeepingSweep::ALL.len()];
-        let mut due: Vec<(u64, usize, u64)> = Vec::new();
+        let mut due: Vec<Due> = Vec::new();
         for (index, sweep) in HousekeepingSweep::ALL.into_iter().enumerate() {
             match sweep.runner() {
                 Runner::Host(reason) => rows[index] = Some(SweepOutcome::HostOnly { reason }),
                 Runner::Engine { every, at_open } => {
                     if selection == Selection::All || (at_open && !handle.first_pass_done) {
-                        due.push((0, index, every));
+                        due.push(Due {
+                            at: 0,
+                            index,
+                            every,
+                            forced: true,
+                        });
                         continue;
                     }
                     match schedule::due_at(self, sweep, states.get(&sweep), every)? {
-                        at if at <= started_at => due.push((at, index, every)),
+                        at if at <= started_at => due.push(Due {
+                            at,
+                            index,
+                            every,
+                            forced: false,
+                        }),
                         at => rows[index] = Some(SweepOutcome::NotDue { due_at: at }),
                     }
                 }
@@ -454,18 +563,24 @@ impl Vault {
         }
         // Oldest-due first: a sweep the budget left behind runs ahead of
         // sweeps that fell due after it, so none is starved.
-        due.sort_unstable();
+        due.sort_unstable_by_key(|due| (due.at, due.index));
 
         let mut ran_any = false;
-        for (_, index, every) in due {
+        for Due {
+            index,
+            every,
+            forced,
+            ..
+        } in due
+        {
             let sweep = HousekeepingSweep::ALL[index];
-            if ran_any && deadline.passed() {
-                rows[index] = Some(SweepOutcome::OutOfBudget);
+            let state = states.remove(&sweep).unwrap_or_default();
+            if deadline.stopped() || (ran_any && deadline.passed()) {
+                rows[index] = Some(self.leave_for_later(sweep, state, forced, started_at));
                 continue;
             }
             ran_any = true;
-            let state = states.get(&sweep).copied().unwrap_or_default();
-            rows[index] = Some(self.run_scheduled_sweep(sweep, state, every, deadline));
+            rows[index] = Some(self.run_scheduled_sweep(sweep, state, every, &deadline));
         }
         handle.first_pass_done = true;
 
@@ -480,6 +595,23 @@ impl Vault {
         Ok(HousekeepingReport { started_at, sweeps })
     }
 
+    /// The row of a due sweep the pass did not start. One the schedule made
+    /// due stays due; one that was due only because it was asked for (the
+    /// owner's "now", or the first pass of a handle) keeps the request, so a
+    /// later pass runs it rather than waiting out its cadence.
+    fn leave_for_later(
+        &self,
+        sweep: HousekeepingSweep,
+        state: SweepState,
+        forced: bool,
+        at: u64,
+    ) -> SweepOutcome {
+        if forced && let Err(error) = schedule::write_state(self, sweep, &state.requested(at)) {
+            return SweepOutcome::Failed { kind: error.kind() };
+        }
+        SweepOutcome::OutOfBudget
+    }
+
     /// Runs one sweep between its start marker and its finish row. The marker
     /// is what tells the next pass that a run was interrupted.
     fn run_scheduled_sweep(
@@ -487,13 +619,16 @@ impl Vault {
         sweep: HousekeepingSweep,
         state: SweepState,
         every: u64,
-        deadline: Deadline,
+        deadline: &Deadline,
     ) -> SweepOutcome {
         let start = self.now_recorded_at();
         let running = state.started(start);
-        if let Err(error) = schedule::write_state(self, sweep, running) {
+        if let Err(error) = schedule::write_state(self, sweep, &running) {
             return SweepOutcome::Failed { kind: error.kind() };
         }
+        // The wake rows this run covers: noted before it started and due by
+        // then. A row noted while it runs stays for the next run.
+        let covered = wake::due_by(self, sweep, start).unwrap_or_default();
         #[cfg(test)]
         let injected = tests::injected(sweep);
         #[cfg(test)]
@@ -511,28 +646,33 @@ impl Vault {
                 Some(tests::Injected::Panic) => panic!("test: an injected sweep panic"),
                 _ => {}
             }
-            sweeps::run(self, sweep, start, deadline)
+            sweeps::run(self, sweep, start, deadline, running.cursor.as_deref())
         }));
         let end = self.now_recorded_at();
         let (outcome, finished) = match result {
-            Ok(Ok((work, complete))) => (
-                SweepOutcome::Ran { work, complete },
-                SweepState::succeeded(
-                    end,
-                    if complete {
-                        end.saturating_add(every)
-                    } else {
-                        end
+            Ok(Ok(run)) => {
+                let items_failed = run.work.items_failed() > 0;
+                if run.complete && !items_failed {
+                    // A row the clear leaves behind costs one wake that finds
+                    // nothing.
+                    let _ = wake::clear(self, sweep, &covered);
+                }
+                let finished = running.ran(end, every, run.cursor, run.complete, items_failed);
+                (
+                    SweepOutcome::Ran {
+                        work: run.work,
+                        complete: run.complete,
                     },
-                ),
-            ),
+                    finished,
+                )
+            }
             Ok(Err(error)) => (
                 SweepOutcome::Failed { kind: error.kind() },
                 running.failed(end, every),
             ),
             Err(_) => (SweepOutcome::Panicked, running.failed(end, every)),
         };
-        match schedule::write_state(self, sweep, finished) {
+        match schedule::write_state(self, sweep, &finished) {
             Ok(()) => outcome,
             // The run's own work committed, but its schedule did not: the
             // start marker stays, so the next pass treats the run as

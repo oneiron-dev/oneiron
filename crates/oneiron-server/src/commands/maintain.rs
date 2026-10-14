@@ -134,28 +134,28 @@ fn repair(vault: &oneiron::Vault, args: &MaintainArgs) -> anyhow::Result<Repairs
     }
     let report = builder.run()?;
     Ok(Repairs {
-        vector_graph: args.rebuild_vector_graph.then(|| VectorGraphRepair {
+        vector_graph: args.rebuild_vector_graph.then_some(VectorGraphRepair {
             live_nodes: report.hnsw_live_nodes,
             dead_nodes_removed: report.hnsw_dead_nodes_removed,
             invalid_vectors_skipped: report.hnsw_invalid_vectors_skipped,
         }),
-        short_ids: args.recompute_short_ids.then(|| ShortIdRepair {
+        short_ids: args.recompute_short_ids.then_some(ShortIdRepair {
             hashes_updated: report.short_id_hashes_updated,
             orphans_deleted: report.orphan_short_ids_deleted,
         }),
         gate_claim_index: args
             .backfill_gate_claim_index
-            .then(|| GateClaimIndexRepair {
+            .then_some(GateClaimIndexRepair {
                 rows_backfilled: report.gate_claim_index_rows_backfilled,
                 already_complete: report.gate_claim_index_backfill_already_complete,
             }),
         conversation_dags: args
             .migrate_conversation_dags
-            .then(|| ConversationDagRepair {
+            .then_some(ConversationDagRepair {
                 migrated: report.conversation_dags_migrated,
                 skipped_invalid: report.conversation_dags_skipped_invalid.len(),
             }),
-        text_index: args.reindex_text.then(|| TextIndexRepair {
+        text_index: args.reindex_text.then_some(TextIndexRepair {
             postings_removed: report.text_postings_removed,
             documents_reindexed: report.text_documents_reindexed,
         }),

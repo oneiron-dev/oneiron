@@ -31,7 +31,7 @@ const RETRY_CAP_SECS: u64 = 60 * 60;
 const HARD_ERASE_BUSY_EVERY: u64 = 60 * 60;
 
 /// One sweep's schedule, in vault-clock seconds.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct SweepState {
     /// When the sweep is next due.
     next_due_at: u64,
@@ -41,20 +41,53 @@ pub(super) struct SweepState {
     started_at: Option<u64>,
     /// Runs in a row that failed, panicked or were interrupted.
     failures: u32,
+    /// When the owner asked for a run that has not started yet. The sweep is
+    /// due from then, whatever its cadence says.
+    #[serde(default)]
+    requested_at: Option<u64>,
+    /// Where an unfinished paged walk goes on from; opaque to the schedule.
+    #[serde(default)]
+    pub(super) cursor: Option<Vec<u8>>,
 }
 
 impl SweepState {
-    pub(super) fn succeeded(end: u64, next_due_at: u64) -> Self {
+    /// The row of a run that ended. A run that finished its walk is due a
+    /// cadence later; one that stopped at its bound is due again now and keeps
+    /// its cursor. Items the run could not finish count as a failure, so they
+    /// are retried after the backoff rather than a whole cadence later.
+    pub(super) fn ran(
+        self,
+        end: u64,
+        every: u64,
+        cursor: Option<Vec<u8>>,
+        complete: bool,
+        items_failed: bool,
+    ) -> Self {
+        let failures = if items_failed {
+            self.failures.saturating_add(1)
+        } else {
+            0
+        };
+        let next_due_at = if !complete {
+            end
+        } else if items_failed {
+            end.saturating_add(retry_after(failures, every))
+        } else {
+            end.saturating_add(every)
+        };
         Self {
             next_due_at,
             finished_at: end,
             started_at: None,
-            failures: 0,
+            failures,
+            requested_at: None,
+            cursor,
         }
     }
 
     /// The row of a run in flight. A start marker already there was left by
-    /// an interrupted run, which counts as a failure.
+    /// an interrupted run, which counts as a failure. The owner's request is
+    /// answered by this run.
     pub(super) fn started(self, start: u64) -> Self {
         let failures = if self.started_at.is_some() {
             self.failures.saturating_add(1)
@@ -64,10 +97,13 @@ impl SweepState {
         Self {
             started_at: Some(start),
             failures,
+            requested_at: None,
             ..self
         }
     }
 
+    /// The row of a run that failed or panicked. The cursor stays, so the
+    /// retry goes on from the last page that committed.
     pub(super) fn failed(self, end: u64, every: u64) -> Self {
         let failures = self.failures.saturating_add(1);
         Self {
@@ -75,6 +111,17 @@ impl SweepState {
             finished_at: end,
             started_at: None,
             failures,
+            requested_at: None,
+            ..self
+        }
+    }
+
+    /// The row of a sweep the owner asked to run that the budget left out:
+    /// due from `at` until a run starts.
+    pub(super) fn requested(self, at: u64) -> Self {
+        Self {
+            requested_at: Some(self.requested_at.map_or(at, |earlier| earlier.min(at))),
+            ..self
         }
     }
 }
@@ -101,7 +148,8 @@ pub(super) fn read_states(vault: &Vault) -> Result<BTreeMap<HousekeepingSweep, S
 }
 
 /// When `sweep` is next due: now for one that never ran, after the backoff for
-/// one whose run was interrupted, else its stored due time.
+/// one whose run was interrupted, else its stored due time; never later than
+/// a run the owner asked for.
 pub(super) fn due_at(
     vault: &Vault,
     sweep: HousekeepingSweep,
@@ -111,6 +159,18 @@ pub(super) fn due_at(
     let Some(state) = state else {
         return Ok(0);
     };
+    let scheduled = scheduled_due_at(vault, sweep, state, every)?;
+    Ok(state
+        .requested_at
+        .map_or(scheduled, |requested| requested.min(scheduled)))
+}
+
+fn scheduled_due_at(
+    vault: &Vault,
+    sweep: HousekeepingSweep,
+    state: &SweepState,
+    every: u64,
+) -> Result<u64> {
     if let Some(started) = state.started_at {
         return Ok(started.saturating_add(retry_after(state.failures.saturating_add(1), every)));
     }
@@ -127,16 +187,16 @@ pub(super) fn due_at(
 pub(super) fn write_state(
     vault: &Vault,
     sweep: HousekeepingSweep,
-    state: SweepState,
+    state: &SweepState,
 ) -> Result<()> {
     let mut txn = vault.store.env.write_txn()?;
-    SCHEDULE.put(&vault.store, &mut txn, &sweep.code().to_owned(), &state)?;
+    SCHEDULE.put(&vault.store, &mut txn, &sweep.code().to_owned(), state)?;
     txn.commit()?;
     Ok(())
 }
 
 /// Whether any erasure obligation (an `h:` row) is queued.
-fn erase_obligation_waiting(vault: &Vault) -> Result<bool> {
+pub(super) fn erase_obligation_waiting(vault: &Vault) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
     let mut rows = vault
         .store

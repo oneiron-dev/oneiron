@@ -2,11 +2,12 @@
 //! short tick over a vault on a manual clock, retires what the engine said
 //! would retire, with no call from the test but moving the clock.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::store::ports::ManualClock;
+use oneiron::sync::WindowKey;
 use oneiron::voice_identity::{
     VoiceAttributionEvidence, VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState,
     VoiceEmbeddingFamily, VoiceEmbeddingSpaceV1, VoiceEnrollmentOrigin, VoiceEnrollmentRequest,
@@ -17,22 +18,21 @@ use oneiron::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, DeleteReason, EdgeActorClass,
     EntityId, TimeRange, Vault, WriteActor, WriteEnvelope, WriteProvenance,
 };
-use tokio::task::JoinHandle;
 
 use super::core::SyncServer;
 use super::housekeeping::admit_every_pass;
-use super::lifecycle::LifecycleJobKind;
+use super::lifecycle::{LifecycleJobKind, LifecycleScheduler};
 use crate::config::SyncServerConfig;
 
 const T0: u64 = 1_800_000_000;
 const TICK: Duration = Duration::from_millis(50);
 
 struct Running {
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
     clock: Arc<ManualClock>,
     vault: Arc<Vault>,
     server: Arc<SyncServer>,
-    lifecycle: Option<JoinHandle<()>>,
+    lifecycle: Option<LifecycleScheduler>,
 }
 
 impl Running {
@@ -41,15 +41,42 @@ impl Running {
     fn seeded(seed: impl FnOnce(&Path, &Vault)) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let clock = ManualClock::new(T0);
-        let mut config = oneiron::VaultConfig::device();
-        config.store_clock = clock.bundle();
-        let vault = Arc::new(Vault::open_owned(dir.path(), config).expect("open vault"));
+        let vault = open(dir.path(), &clock);
         seed(dir.path(), &vault);
         let server = Arc::new(
             SyncServer::new(Arc::clone(&vault), SyncServerConfig::default()).expect("server"),
         );
         Self {
-            _dir: dir,
+            dir,
+            clock,
+            vault,
+            server,
+            lifecycle: None,
+        }
+    }
+
+    /// Stops serving and closes the vault, as a reap does, then opens it
+    /// again at `at`, as the supervisor's wake does.
+    async fn reaped_then_woken_at(self, at: u64) -> Self {
+        let Self {
+            dir,
+            clock,
+            vault,
+            server,
+            lifecycle,
+        } = self;
+        if let Some(lifecycle) = lifecycle {
+            lifecycle.stop().await;
+        }
+        drop(server);
+        drop(vault);
+        clock.set(at);
+        let vault = open(dir.path(), &clock);
+        let server = Arc::new(
+            SyncServer::new(Arc::clone(&vault), SyncServerConfig::default()).expect("server"),
+        );
+        Self {
+            dir,
             clock,
             vault,
             server,
@@ -82,12 +109,10 @@ impl Running {
     }
 }
 
-impl Drop for Running {
-    fn drop(&mut self) {
-        if let Some(lifecycle) = self.lifecycle.take() {
-            lifecycle.abort();
-        }
-    }
+fn open(dir: &Path, clock: &Arc<ManualClock>) -> Arc<Vault> {
+    let mut config = oneiron::VaultConfig::device();
+    config.store_clock = clock.bundle();
+    Arc::new(Vault::open_owned(dir, config).expect("open vault"))
 }
 
 /// Waits, ticks passing, until `done` holds.
@@ -99,6 +124,9 @@ async fn eventually(what: &str, mut done: impl FnMut() -> bool) {
     }
 }
 
+/// The metadata header a stored record carries ahead of its body.
+const RECORD_HEADER_LEN: usize = 25;
+
 #[derive(serde::Deserialize)]
 struct SweepTimes {
     sweep_queued_at: Option<u64>,
@@ -109,11 +137,13 @@ struct SweepTimes {
 fn sweep_times(vault: &Vault, receipt: &EntityId) -> SweepTimes {
     let raw = vault.get_raw(receipt).expect("read").expect("receipt");
     assert_eq!(raw[0], oneiron::registry::ENTITY_TYPE_REDACTION_AUDIT);
-    rmp_serde::from_slice(&raw[oneiron::batch::ENTITY_METADATA_HEADER_LEN..]).expect("receipt body")
+    rmp_serde::from_slice(&raw[RECORD_HEADER_LEN..]).expect("receipt body")
 }
 
+/// The server has served the erased entity's window: a sync client fetched it
+/// and left, so the window stays registered, held by no one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_running_server_discharges_an_erasure_obligation() {
+async fn a_running_server_discharges_an_erasure_obligation_under_a_window_it_served() {
     let mut receipt = None;
     let mut running = Running::seeded(|_, vault| {
         let erased = EntityId::from_bytes([0xB7; 16]).expect("id");
@@ -132,6 +162,21 @@ async fn a_running_server_discharges_an_erasure_obligation() {
         receipt = deleted.receipt_id;
     });
     let receipt = receipt.expect("a hard erase writes a receipt");
+    let window = WindowKey::from_timestamp(T0);
+    drop(
+        running
+            .server
+            .get_or_create_window(&window)
+            .await
+            .expect("serve the window"),
+    );
+    assert!(
+        running
+            .server
+            .reassert_manager
+            .loaded_keys()
+            .contains(&window)
+    );
     let queued = sweep_times(&running.vault, &receipt);
     assert!(queued.sweep_queued_at.is_some());
     assert_eq!(queued.sweep_complete_at, None);
@@ -274,50 +319,54 @@ async fn a_voice_print_past_its_retention_deadline_matches_no_one_and_a_running_
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_running_server_expires_a_secret_lease_and_removes_its_file() {
+/// A T2 secret lease of 60 seconds whose value is written to a file under
+/// `dir`. Returns the file.
+fn lease_a_file(dir: &Path, vault: &Vault) -> PathBuf {
     use oneiron::secret_custody::{
         CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding,
         SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
     };
+    let target = dir
+        .canonicalize()
+        .expect("canonical tempdir")
+        .join("workspace")
+        .join(".secrets")
+        .join("api.key");
+    std::fs::create_dir_all(target.parent().expect("parent")).expect("mkdir");
+    vault
+        .register_secret(SecretCustodyRecord {
+            schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+            name: "local".to_owned(),
+            class: CustodyClass::CustodyPortable,
+            device_only: false,
+            value_bytes: b"housekeeping-lease-fixture-value".to_vec(),
+            status: SecretCustodyStatus::Active,
+            registered_at: T0,
+            rotated_at: None,
+            rotation_generation: 0,
+            bindings: vec![SecretBinding {
+                effector: "connector:test".to_owned(),
+                tier_ceiling: CustodyTier::T2LocalRegistered,
+                scopes: vec!["read".to_owned()],
+            }],
+            manifest_ref: "secrets.toml".to_owned(),
+            declared_paths: vec![target.to_string_lossy().into_owned()],
+            policy_floor_snapshot: SecretCustodyFloor::default(),
+        })
+        .expect("register secret");
+    let lease = vault
+        .materialize_secret_lease("local", "connector:test", 60)
+        .expect("lease");
+    vault
+        .register_secret_local(&lease.lease.lease_id, &target, "project-alpha")
+        .expect("register file");
+    target
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_running_server_expires_a_secret_lease_and_removes_its_file() {
     let mut path = None;
-    let mut running = Running::seeded(|dir, vault| {
-        let target = dir
-            .canonicalize()
-            .expect("canonical tempdir")
-            .join("workspace")
-            .join(".secrets")
-            .join("api.key");
-        std::fs::create_dir_all(target.parent().expect("parent")).expect("mkdir");
-        vault
-            .register_secret(SecretCustodyRecord {
-                schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
-                name: "local".to_owned(),
-                class: CustodyClass::CustodyPortable,
-                device_only: false,
-                value_bytes: b"housekeeping-lease-fixture-value".to_vec(),
-                status: SecretCustodyStatus::Active,
-                registered_at: T0,
-                rotated_at: None,
-                rotation_generation: 0,
-                bindings: vec![SecretBinding {
-                    effector: "connector:test".to_owned(),
-                    tier_ceiling: CustodyTier::T2LocalRegistered,
-                    scopes: vec!["read".to_owned()],
-                }],
-                manifest_ref: "secrets.toml".to_owned(),
-                declared_paths: vec![target.to_string_lossy().into_owned()],
-                policy_floor_snapshot: SecretCustodyFloor::default(),
-            })
-            .expect("register secret");
-        let lease = vault
-            .materialize_secret_lease("local", "connector:test", 60)
-            .expect("lease");
-        vault
-            .register_secret_local(&lease.lease.lease_id, &target, "project-alpha")
-            .expect("register file");
-        path = Some(target);
-    });
+    let mut running = Running::seeded(|dir, vault| path = Some(lease_a_file(dir, vault)));
     let path = path.expect("seeded");
     running.serve();
     running.settle().await;
@@ -325,6 +374,50 @@ async fn a_running_server_expires_a_secret_lease_and_removes_its_file() {
 
     running.clock.set(T0 + 61);
     eventually("the expired lease's file to be removed", || !path.exists()).await;
+}
+
+/// A managed vault is reaped while a lease is outstanding. The wake ledger it
+/// leaves the supervisor asks to be woken when the lease comes due; woken
+/// then, the first pass expires the lease and removes its file.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reaped_vault_wakes_when_its_lease_comes_due_and_expires_it() {
+    let mut path = None;
+    let mut running = Running::seeded(|dir, vault| path = Some(lease_a_file(dir, vault)));
+    let path = path.expect("seeded");
+    running.serve();
+    running.settle().await;
+
+    // The reap pulls the ledger, then the process exits.
+    let ledger = crate::managed::WakeLedger::load(
+        Arc::clone(&running.vault),
+        "wake-test".to_owned(),
+        running.dir.path().join("supervisor.sock"),
+        &oneiron_vault_contract::Credentials {
+            dek: [1; 32],
+            token: [2; 32],
+        },
+    )
+    .expect("ledger");
+    let entries = ledger.export(&running.server).expect("export");
+    drop(ledger);
+    let wake = entries
+        .iter()
+        .find(|entry| entry.id == "housekeeping")
+        .unwrap_or_else(|| panic!("no wake for the lease: {entries:?}"));
+    assert_eq!(
+        wake.at,
+        oneiron_vault_contract::Schedule::Exact { at: T0 + 60 }
+    );
+
+    let mut running = running.reaped_then_woken_at(T0 + 60).await;
+    assert!(path.exists(), "nothing ran while the vault was down");
+    running.serve();
+    eventually("the lease's file to be removed", || !path.exists()).await;
+    assert_eq!(
+        running.vault.expire_secret_leases(T0 + 60).expect("sweep"),
+        0,
+        "the lease is already expired"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -1,10 +1,11 @@
 //! Window serving: snapshots, exports, and the local-change broadcast bridge.
 use std::sync::Arc;
 
-use loro::{ExportMode, LoroDoc, VersionVector};
+use loro::{ExportMode, VersionVector};
 use oneiron::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
 use oneiron::sync::schema::{add_window_to_root, read_window_list};
 use oneiron::sync::server_state;
+use oneiron::sync::window::LoadedWindow;
 use oneiron::sync::{WindowKey, WindowManager};
 use tokio::sync::broadcast;
 
@@ -32,17 +33,22 @@ impl SyncServer {
             .map_err(|e| format!("root doc snapshot failed: {e}"))
     }
 
-    /// Gets or creates the canonical live window LoroDoc.
+    /// Gets or creates the canonical live window.
     ///
     /// Server websocket sync and lifecycle maintenance both route through
     /// `WindowManager`, so a server-side reassertion drain commits into the
     /// same doc that active connections serve. First touch still preserves
     /// the server root contract: a fresh window is snapshotted to `d:w:*`,
     /// registered in `meta.windows`, and persisted to `d:root`.
+    ///
+    /// The caller holds the returned handle for as long as it uses the doc:
+    /// an outstanding handle is what keeps the manager from unloading the
+    /// window (housekeeping unloads idle windows before an erasure sweep)
+    /// while an import is in flight.
     pub(crate) async fn get_or_create_window(
         &self,
         key: &WindowKey,
-    ) -> Result<LoroDoc, oneiron::Error> {
+    ) -> Result<Arc<LoadedWindow>, oneiron::Error> {
         let snapshot_key = format!("d:w:{key}");
         let had_snapshot = self.vault.sync_state_get(&snapshot_key)?.is_some();
         let window = self.reassert_manager.open_window(key)?;
@@ -75,7 +81,7 @@ impl SyncServer {
             }
         }
 
-        Ok(window.doc.clone())
+        Ok(window)
     }
 
     /// Persists an imported client update to sync_state

@@ -137,6 +137,37 @@ pub(crate) fn claim_ids_for_predicate_in_txn(
 ) -> Result<Vec<EntityId>> {
     predicate_ids_in_txn(store, txn, predicate_hash(predicate), 10_000)
 }
+/// One page of a predicate's posting list: at most `limit` claim ids after
+/// `after`, in id order. A walk that pages through every page reads each claim
+/// once, however long the list, without a whole-list ceiling.
+pub(crate) fn claim_ids_for_predicate_page_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    after: Option<EntityId>,
+    limit: usize,
+) -> Result<Vec<EntityId>> {
+    let hash = predicate_hash(predicate);
+    let after = after.map(|id| (hash, id));
+    let rows: Box<dyn Iterator<Item = Result<(([u8; 32], EntityId), String)>> + '_> = match &after {
+        Some(after) => Box::new(PREDICATE_INDEX.iter_range(
+            store,
+            txn,
+            std::ops::Bound::Excluded(after),
+            std::ops::Bound::Unbounded,
+        )?),
+        None => Box::new(PREDICATE_INDEX.iter_from(store, txn, &hash)?),
+    };
+    let mut ids = Vec::new();
+    for row in rows {
+        let (key, _) = row?;
+        if key.0 != hash || ids.len() == limit {
+            break;
+        }
+        ids.push(key.1);
+    }
+    Ok(ids)
+}
 /// The same posting list under a caller-resolved ceiling (a policy row), for
 /// doors whose limit is authored data rather than this index's default.
 pub(crate) fn claim_ids_for_predicate_bounded_in_txn(

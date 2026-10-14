@@ -437,6 +437,11 @@ side_tables! {
     /// One engine housekeeping sweep's schedule: when it is next due, when its last run finished,
     /// and whether a run is in flight. Key: string (the sweep's code).
     HOUSEKEEPING_SCHEDULE: VaultMeta b"housekeeping:v1:" Named;
+    /// A retirement deadline a door started (a secret lease's expiry, a voice print's retention
+    /// deadline, a critical confirm's window), kept for a vault that is not running to know when to
+    /// wake. Key: the sweep's tag byte, then the deadline (u64 BE), so a sweep's earliest deadline
+    /// is its first row. Value: empty.
+    HOUSEKEEPING_WAKE: VaultMeta b"housekeeping:wake:v1:" Raw;
     /// Follow-up reminder/escalation cursor state for one human task. Key: id16.
     HUMAN_TASK_FOLLOWUP: VaultMeta b"human_task.followup.v1\0" Raw;
     /// Idempotency marker recording which signal/surface-event a wait's response already produced.

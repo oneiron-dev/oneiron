@@ -205,3 +205,33 @@ fn a_failing_or_panicking_sweep_is_reported_and_retried_and_never_stops_the_othe
     );
     assert_eq!(report.ran(), ENGINE_SWEEPS.len() - 1, "{report:#?}");
 }
+
+#[test]
+fn the_owners_run_now_left_over_by_its_budget_runs_on_the_next_pass() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let clock = ManualClock::new(T0);
+    let vault = open(dir.path(), &clock);
+    let report = pass(&vault);
+    assert_eq!(report.ran(), ENGINE_SWEEPS.len(), "{report:#?}");
+
+    // Nothing is due; the owner asks for everything with no time to spare.
+    clock.set(T0 + 1);
+    let report = vault
+        .housekeeping_all(HousekeepingBudget::within(std::time::Duration::ZERO))
+        .expect("the schedule reads");
+    assert_eq!(report.ran(), 1, "{report:#?}");
+    let left: Vec<_> = ENGINE_SWEEPS
+        .into_iter()
+        .filter(|&sweep| matches!(outcome(&report, sweep), SweepOutcome::OutOfBudget))
+        .collect();
+    assert_eq!(left.len(), ENGINE_SWEEPS.len() - 1, "{report:#?}");
+
+    clock.set(T0 + 2);
+    let report = pass(&vault);
+    for sweep in left {
+        assert!(
+            ran(&report, sweep),
+            "{sweep:?} was asked for and dropped: {report:#?}"
+        );
+    }
+}

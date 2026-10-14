@@ -8,6 +8,7 @@
 //! text or an error's message.
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use oneiron::housekeeping::{HousekeepingBudget, HousekeepingReport, SweepOutcome};
@@ -33,10 +34,11 @@ pub(crate) fn admit_every_pass() -> HousekeepingAdmission {
 impl SyncServer {
     /// Starts one housekeeping pass on a task of its own and returns it, or
     /// returns `None` when the last pass is still running or the host's gate
-    /// refused the tick.
+    /// refused the tick. The pass starts no sweep or page once `stop` is set.
     pub(super) async fn start_housekeeping_pass(
         self: &Arc<Self>,
         admit: &HousekeepingAdmission,
+        stop: &Arc<AtomicBool>,
     ) -> Option<JoinHandle<()>> {
         if !self
             .begin_lifecycle_job(LifecycleJobKind::Housekeeping)
@@ -50,11 +52,13 @@ impl SyncServer {
             return None;
         };
         let server = Arc::clone(self);
+        let budget =
+            HousekeepingBudget::within(HOUSEKEEPING_PASS_BUDGET).stop_when(Arc::clone(stop));
         Some(tokio::spawn(async move {
             let vault = Arc::clone(server.vault());
             let pass = tokio::task::spawn_blocking(move || {
                 let _admission = admission;
-                vault.housekeeping(HousekeepingBudget::within(HOUSEKEEPING_PASS_BUDGET))
+                vault.housekeeping(budget)
             })
             .await;
             match pass {

@@ -70,7 +70,7 @@ fn persisted_window_labels(vault: &Vault) -> Result<(BTreeSet<String>, bool)> {
             None => {
                 // A u:w: row that does not address a window cannot be
                 // proven payload-free — fail closed, block completion.
-                tracing::error!(key = %format_args!("u:w:{rest}"), "sweep: malformed u:w: row key");
+                tracing::error!("sweep: malformed u:w: row key");
                 malformed = true;
             }
         }
@@ -149,7 +149,7 @@ pub(super) fn compact_all_windows(
         if parse_window_key_str(label).is_none() {
             // Engine-written labels always validate; a foreign/corrupt row
             // cannot be loaded or proven payload-free — fail closed.
-            tracing::error!(window = %label, "sweep: invalid persisted window label");
+            tracing::error!("sweep: invalid persisted window label");
             if matches!(state, WindowSweepState::AllCompacted) {
                 state =
                     WindowSweepState::Failed(format!("{:?}", crate::error::ErrorKind::InvalidKey));
@@ -163,7 +163,7 @@ pub(super) fn compact_all_windows(
         // would resurrect the carrier over the shallow row, even after forced
         // deregistration removed the manager registry entry.
         if vault_window_is_live(vault, &key) {
-            tracing::warn!(window = %label, "sweep: window live or retained — deferred");
+            tracing::warn!("sweep: window live or retained — deferred");
             run.windows_deferred_live += 1;
             if matches!(state, WindowSweepState::AllCompacted) {
                 state = WindowSweepState::Deferred;
@@ -175,10 +175,7 @@ pub(super) fn compact_all_windows(
             Ok(CompactOutcome::Compacted) => run.windows_compacted += 1,
             Ok(CompactOutcome::Empty) => {}
             Ok(CompactOutcome::RacedDefer) => {
-                tracing::warn!(
-                    window = %label,
-                    "sweep: window raced between read and compaction write — deferred"
-                );
+                tracing::warn!("sweep: window raced between read and compaction write — deferred");
                 run.windows_deferred_raced += 1;
                 // Outcome precedence (pinned): Failed > Deferred(raced) >
                 // Deferred(live) > AllCompacted. A raced window downgrades
@@ -191,7 +188,6 @@ pub(super) fn compact_all_windows(
             }
             Err(err) => {
                 tracing::error!(
-                    window = %label,
                     kind = ?err.kind(),
                     "sweep: window compaction FAILED — obligation kept for retry"
                 );
