@@ -42,7 +42,7 @@ pub(super) fn thread_tasks_capped(
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     // Off this device a TASK a device-local world keeps is no match, nor
     // counts toward the census guard (DEC-0005).
-    let kept = crate::settings::device_local_worlds_at(&vault.store, &txn, memory.locality())?;
+    let kept = crate::settings::device_local_worlds_at(vault, &txn, memory.locality())?;
     let mut candidates = Vec::new();
     for row in vault
         .store

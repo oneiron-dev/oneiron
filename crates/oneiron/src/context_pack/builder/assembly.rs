@@ -411,7 +411,7 @@ impl<'a> ContextPackBuilder<'a> {
             .then_some(&stale_worlds);
             let device_local = if self.off_device {
                 Some(crate::settings::device_local_worlds_at(
-                    &self.vault.store,
+                    self.vault,
                     &rtxn,
                     crate::claim::CallerLocality::OffDevice,
                 )?)

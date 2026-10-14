@@ -233,7 +233,7 @@ pub(super) fn discover_in(
     };
     #[cfg(feature = "sync")]
     let device_only = crate::settings::device_local_worlds_at(
-        &vault.store,
+        vault,
         txn,
         crate::claim::CallerLocality::OffDevice,
     )?;
@@ -443,7 +443,7 @@ fn newest_claims(
     // The worlds this device keeps to itself; none without sync.
     #[cfg(feature = "sync")]
     let device_only = crate::settings::device_local_worlds_at(
-        &vault.store,
+        vault,
         txn,
         crate::claim::CallerLocality::OffDevice,
     )?;

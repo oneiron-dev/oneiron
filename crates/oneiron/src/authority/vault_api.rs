@@ -239,7 +239,7 @@ impl Vault {
 
     /// Advance the persisted authority-observation floor in test fixtures.
     /// The generic sync-state write door remains guarded.
-    #[cfg(feature = "test-hooks")]
+    #[cfg(any(test, feature = "test-hooks"))]
     #[doc(hidden)]
     pub fn advance_authority_clock_for_test(&self, observed_secs: u64) -> Result<()> {
         self.with_write_txn_grouped(|wtxn| {

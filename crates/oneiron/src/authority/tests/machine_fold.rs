@@ -62,6 +62,7 @@ fn a_cloud_root_never_vouches_for_a_machine() {
                     role,
                     revision: 1,
                     machine_proof: request.machine_proof,
+                    seen_world_edits: BTreeSet::new(),
                 }),
                 key.clone(),
                 seq as u64 + 2,
@@ -235,6 +236,7 @@ fn profile_op(host: &Host, machine: EntityId, key: &SigningKey) -> AuthorityOp {
         role: MachineRole::Owned(MachineOwnership::Yours),
         revision: 1,
         machine_proof: request.machine_proof,
+        seen_world_edits: BTreeSet::new(),
     })
 }
 
@@ -563,6 +565,7 @@ fn an_uncarried_mark_never_outlives_the_stale_window() {
                     role: MachineRole::Owned(MachineOwnership::Yours),
                     revision: 1,
                     machine_proof: request.machine_proof,
+                    seen_world_edits: BTreeSet::new(),
                 }),
                 authority_key_from_ed(signer),
                 2,
@@ -782,6 +785,7 @@ fn owned_mark(
                 role: MachineRole::Owned(MachineOwnership::Yours),
                 revision: 1,
                 machine_proof: request.machine_proof,
+                seen_world_edits: BTreeSet::new(),
             }),
             authority_key_from_ed(signer),
             2,

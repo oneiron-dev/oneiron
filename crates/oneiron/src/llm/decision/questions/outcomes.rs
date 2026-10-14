@@ -45,7 +45,7 @@ pub fn calibration_pairs(
     locality: crate::claim::CallerLocality,
 ) -> Result<Vec<CalibrationPair>> {
     let txn = vault.store.env.read_txn()?;
-    let kept = crate::settings::device_local_worlds_at(&vault.store, &txn, locality)?;
+    let kept = crate::settings::device_local_worlds_at(vault, &txn, locality)?;
     let Some(head) = QUESTION_HEAD.get(&vault.store, &txn, &HeadKey(question))? else {
         return Ok(Vec::new());
     };

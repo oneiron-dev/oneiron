@@ -18,7 +18,7 @@ impl Vault {
     ) -> Result<Vec<ScopedRecord>> {
         let txn = self.store.env.read_txn()?;
         let device_only = crate::settings::device_local_worlds_at(
-            &self.store,
+            self,
             &txn,
             crate::claim::CallerLocality::OffDevice,
         )?;

@@ -752,7 +752,9 @@ fn residence_ack_clears_past_a_row_a_device_only_world_keeps() {
     let (mut client, _events) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
     conn.queue().push(private.as_str(), b"private").unwrap();
     let sent = conn.queue().push("2026-03", b"portable").unwrap();
-    vault.set_world_device_only(world, true).unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
     let mut payload = sent.to_be_bytes().to_vec();
     payload.extend_from_slice(blake3::hash(b"portable").as_bytes());
     let ack = transport::encode_window_sync("2026-03", window_sub_tags::RESIDENCE_ACK, &payload)

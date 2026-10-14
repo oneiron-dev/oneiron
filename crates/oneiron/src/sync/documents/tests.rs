@@ -555,7 +555,9 @@ fn an_own_device_never_receives_the_document_of_a_note_in_a_device_only_world() 
     vault
         .put_edge(&note, crate::EdgeKind::InWorld, &world, 1.0)
         .unwrap();
-    vault.set_world_device_only(world, true).unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
     let manager = Arc::new(WindowManager::new(
         vault,
         Arc::new(Materializer::new()),
@@ -608,7 +610,9 @@ fn a_note_frame_exported_before_its_world_turns_device_only_is_withheld_at_relea
         .export_owner_document(note, &loro::VersionVector::new().encode())
         .unwrap();
     assert!(!document_frame_withheld(&vault, &state));
-    vault.set_world_device_only(world, true).unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
 
     assert!(document_frame_withheld(&vault, &state));
     for kind in [document_sub_tags::NOTE_OPS, document_sub_tags::NOTE_RECEIPT] {

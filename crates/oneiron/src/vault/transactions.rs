@@ -132,7 +132,7 @@ impl Vault {
         locality: crate::claim::CallerLocality,
     ) -> Result<Option<u64>> {
         let txn = self.store.env.read_txn()?;
-        let flagged = crate::settings::device_local_worlds_at(&self.store, &txn, locality)?;
+        let flagged = crate::settings::device_local_worlds_at(self, &txn, locality)?;
         for row in self.store.port_entity_timeline(
             &txn,
             crate::ports::TimelineQuery {

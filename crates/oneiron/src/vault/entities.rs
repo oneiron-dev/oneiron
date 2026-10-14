@@ -505,7 +505,7 @@ impl Vault {
         cap: usize,
     ) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
-        let flagged = crate::settings::device_local_worlds_at(&self.store, &rtxn, locality)?;
+        let flagged = crate::settings::device_local_worlds_at(self, &rtxn, locality)?;
         let mut ids = Vec::new();
         for entry in self
             .store
@@ -625,7 +625,7 @@ impl Vault {
         locality: crate::claim::CallerLocality,
     ) -> Result<u64> {
         let rtxn = self.store.env.read_txn()?;
-        let flagged = crate::settings::device_local_worlds_at(&self.store, &rtxn, locality)?;
+        let flagged = crate::settings::device_local_worlds_at(self, &rtxn, locality)?;
         let mut total = 0_u64;
         for entry in self
             .store

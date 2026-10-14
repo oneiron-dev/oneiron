@@ -203,6 +203,9 @@ side_tables! {
     /// Receipt of one owner change to the secret-scan switch, in revision order. Key: u64be
     /// revision.
     OWNER_POLICY_SECRET_SCAN_RECEIPT: VaultMeta b"owner_policy:secret_scan:receipt:v1:" Named;
+    /// Receipt of one owner change to a world's privacy settings on this machine, in revision
+    /// order. Key: u64be revision.
+    OWNER_POLICY_WORLD_PRIVACY_RECEIPT: VaultMeta b"owner_policy:world_privacy:receipt:v1:" Named;
     /// Marker (engine version string) that the built-in connector packs have been seeded. Key: ().
     SKILL_HUB_PACK_BUILTIN_SEED: VaultMeta b"pack.builtin.seeded.v1" Raw;
     /// Candidate knowledge-pack receipt. Key: lowercase hex content hash.

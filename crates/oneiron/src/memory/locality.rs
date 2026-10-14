@@ -81,7 +81,7 @@ impl Memory<'_> {
     ) -> MemoryResult<()> {
         self.produced_from([row]);
         let store = &self.vault.store;
-        let kept = crate::settings::device_local_worlds_at(store, txn, self.locality)?;
+        let kept = crate::settings::device_local_worlds_at(self.vault, txn, self.locality)?;
         if crate::settings::device_local_keeps_among(store, txn, &kept, &row)? {
             return Err(MemoryError::from(crate::error::Error::EntityNotFound));
         }

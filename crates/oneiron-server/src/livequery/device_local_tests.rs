@@ -96,7 +96,14 @@ async fn a_resume_off_this_device_replays_no_push_naming_a_device_local_row() {
     let claim = put_claim(&server, world);
     let view = ScopedView::default();
     for locality in [CallerLocality::OnDevice, CallerLocality::OffDevice] {
-        server.vault().set_world_device_only(world, false).unwrap();
+        server
+            .vault()
+            .keep_world_on_this_machine_under_for_test(
+                &crate::test_credentials::host_issuer(&server),
+                world,
+                false,
+            )
+            .unwrap();
         let (queries, source) = subscriptions(&server, locality);
         let anchor = queries
             .open(7, view.clone(), Channel::Receipts, None, None)
@@ -127,7 +134,14 @@ async fn a_resume_off_this_device_replays_no_push_naming_a_device_local_row() {
         assert!(names(&resumed, &claim[..8]), "{locality:?}: {resumed:?}");
         queries.close(7).unwrap();
 
-        server.vault().set_world_device_only(world, true).unwrap();
+        server
+            .vault()
+            .keep_world_on_this_machine_under_for_test(
+                &crate::test_credentials::host_issuer(&server),
+                world,
+                true,
+            )
+            .unwrap();
         let resumed = queries
             .open(7, view.clone(), Channel::Receipts, Some(&anchor), None)
             .unwrap();
@@ -172,7 +186,14 @@ async fn a_body_queued_off_this_device_is_not_released_once_its_row_is_device_lo
             .all(|frame| socket.release(off, frame).is_some())
     );
 
-    server.vault().set_world_device_only(world, true).unwrap();
+    server
+        .vault()
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            world,
+            true,
+        )
+        .unwrap();
     assert!(names(&here.buffered().unwrap(), &claim));
     let on = CallerLocality::OnDevice;
     assert!(
@@ -209,7 +230,14 @@ async fn a_frame_queued_for_a_closed_subscription_reaches_no_reopened_one() {
     let (mut socket, queued) = open_socket(&server, 3, &view);
     assert!(queued.iter().any(|frame| spells(frame)));
 
-    server.vault().set_world_device_only(world, true).unwrap();
+    server
+        .vault()
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            world,
+            true,
+        )
+        .unwrap();
     let auth = crate::test_credentials::authenticate(&server, &token("human"));
     socket
         .control(&auth, SubRequest::Close { subscription_id: 3 })

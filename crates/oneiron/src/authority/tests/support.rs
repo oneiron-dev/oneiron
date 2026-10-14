@@ -329,10 +329,13 @@ impl LocalFoldContext {
     pub(super) fn context(&self) -> FoldContext<'_> {
         FoldContext {
             sequence_floors: None,
+            floor_vouched: None,
+            install_held: None,
             entry_ancestors: None,
             peer_consent_roots: &self.peer_consent_roots,
             consent_arm: folded_device_can_authority_consent,
             hosted: false,
+            machine_standing: &crate::authority::world_privacy::every_admitted_machine,
             pre_handoff_entries: None,
         }
     }
@@ -384,6 +387,8 @@ pub(super) fn single_owner_state(
         machines: BTreeMap::new(),
         machine_keys: BTreeMap::new(),
         host_custody_keys: BTreeSet::new(),
+        worlds: BTreeMap::new(),
+        refused_world_edits: BTreeSet::new(),
         key_admitters: BTreeMap::new(),
         hosted: false,
         actor_rows: BTreeSet::new(),

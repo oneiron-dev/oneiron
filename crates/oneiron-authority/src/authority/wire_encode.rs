@@ -290,6 +290,7 @@ pub fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_delay: bool
         AuthorityOp::MachineProfile(profile) => {
             super::machine_profile::machine_profile_value(profile)
         }
+        AuthorityOp::WorldPrivacy(edit) => super::world_privacy::world_privacy_value(edit),
     }
 }
 

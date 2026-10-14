@@ -390,8 +390,9 @@ impl AuthorityFold {
             && entry_signer_keys(entry).any(|key| self.retired_keys.contains(key))
     }
 
-    /// Whether `entry` stands on a retired key: it, or a row in its ancestry
-    /// that this fold does not hold, is signed by a key a handoff retired.
+    /// Whether `entry` stands on a retired key: it, or, for a main-log row, a
+    /// row in its ancestry that this fold does not hold, is signed by a key a
+    /// handoff retired.
     /// The fold refuses such a row with its descendants, so a door refuses a
     /// new row that descends from one, whoever signs it. `row` reads an
     /// ancestor by hash, stored or arriving beside `entry`; the walk stops at
@@ -407,7 +408,10 @@ impl AuthorityFold {
         if self.signed_by_retired_key(hash, entry) {
             return Ok(true);
         }
-        if self.retired_keys.is_empty() {
+        // A world's edit stands on no main-log row the fold refuses: it is
+        // judged with each such row crossed (`refold_world_edits`), so only its
+        // own signer counts here (Wonder P2 round 1, W4).
+        if self.retired_keys.is_empty() || super::world_privacy::side_world(&entry.op).is_some() {
             return Ok(false);
         }
         let expired: BTreeSet<&AuthorityEntryHash> = self
