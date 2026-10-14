@@ -8,6 +8,7 @@ use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 use super::backup::BackupConfig;
 use super::embedder::EmbedderConfig;
 use super::feedback::FeedbackConfig;
+use super::limits::LimitsConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
 use super::oneironer::OneironerConfig;
 use super::recall::RecallConfig;
@@ -235,6 +236,8 @@ pub struct ServeConfig {
     pub feedback: FeedbackConfig,
     /// The `[recall]` section: call mode's deadline.
     pub recall: RecallConfig,
+    /// The `[limits]` section: the bounds on work a remote caller can start.
+    pub limits: LimitsConfig,
     /// The `[import]` section: the queue a running `serve` imports session
     /// logs from, off unless set.
     pub import: super::ImportConfig,
@@ -293,6 +296,7 @@ impl Default for ServeConfig {
             backup: BackupConfig::default(),
             feedback: FeedbackConfig::default(),
             recall: RecallConfig::default(),
+            limits: LimitsConfig::default(),
             import: super::ImportConfig::default(),
             models: None,
             // Hosting is opt-in: an operator must name the posture AND supply
@@ -352,6 +356,7 @@ impl fmt::Debug for ServeConfig {
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
             .field("recall", &self.recall)
+            .field("limits", &self.limits)
             .field("import", &self.import)
             .field("models", &self.models)
             .field("privacy_posture", &self.privacy_posture)
