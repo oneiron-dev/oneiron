@@ -204,8 +204,8 @@ impl<'a> MaintenanceBuilder<'a> {
         self
     }
 
-    /// Manual ARCH-0038 historical-carrier sweep (ONE-1087/ONE-1091 phase
-    /// 1; scheduling is M6): drains pending `h:{seq:8BE}` hard-erase
+    /// ARCH-0038 historical-carrier sweep (ONE-1087/ONE-1091 phase 1, run
+    /// on a cadence by the housekeeping pass, here on demand): drains pending `h:{seq:8BE}` hard-erase
     /// obligations, shallow-compacts every CLOSED persisted window doc
     /// (dropping the pre-delete Loro op history — the dominant residual
     /// byte carrier — while preserving live state, doc identity and VV),

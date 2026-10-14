@@ -231,8 +231,17 @@ bound; a pass stops starting sweeps after 20 seconds and the rest run on the nex
 | `hard_erase_sweep` | day; hour while an erasure waits | the history an erase left in sync carriers (the 30-day erasure deadline) |
 | `ppr_cache_eviction` | day | cached graph walks older than the longest serve window (168 h) |
 
-A sweep that fails is logged by kind and retried within the hour; it never stops the others.
-The vault keeps each sweep's schedule, so a restart neither repeats a sweep early nor drops one.
+The signing sweeps and the cache eviction walk their records a page at a time and go on from
+where they stopped on the next pass. A sweep that fails, or that could not finish some of its
+records, is logged by kind and retried within the hour; it never stops the others. The vault
+keeps each sweep's schedule, so a restart neither repeats a sweep early nor drops one. Before an
+erasure runs, the server writes down and closes the sync windows no client is using, so their
+history can be compacted; a window in use waits for the next run.
+
+A managed vault that is stopped between uses tells its supervisor when to wake it: a
+`housekeeping` entry in its wake ledger carries the next secret-lease expiry, voice-print
+retention deadline, critical-confirm window or waiting erasure. Cache and retention hygiene never
+wake a vault.
 Signing reminders, consult digests, moderation-hold pruning, the TASK attribution pump, attempt
 lease reclaim and self-heal detector runs need authority only the host holds; the report lists
 them as `host_only` with the reason.
@@ -243,7 +252,7 @@ To run every sweep now, on a stopped vault, and print the report:
 oneiron maintain
 ```
 
-It exits nonzero when a sweep failed. It also runs repairs you name: `--rebuild-vector-graph`
+It exits nonzero when a sweep failed or could not finish some of its records. It also runs repairs you name: `--rebuild-vector-graph`
 (with `--heal-invalid-vectors` to leave out stored vectors that do not validate),
 `--recompute-short-ids`, `--backfill-gate-claim-index`, `--migrate-conversation-dags`, and
 `--reindex-text`, which rebuilds the text index from the text each record was indexed with; it is

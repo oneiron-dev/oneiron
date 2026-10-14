@@ -107,7 +107,8 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-/// Executes one manual sweep pass (phase 1; scheduling is M6).
+/// Executes one sweep pass (phase 1). The housekeeping pass schedules it:
+/// daily, hourly while an obligation waits.
 pub(crate) fn run_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
     let now = vault.store.clock.now_recorded_at();
     let mut run = HardEraseSweepRun::default();
