@@ -140,32 +140,40 @@ impl Vault {
             entry.signer.signature = key.sign(&authority_transcript(&entry)?).to_bytes().to_vec();
             Ok::<_, Error>(entry)
         };
-        // The edit names only the rows its standing rests on: the head
-        // revisions of this machine, of each machine the world's read names
-        // and of a one-machine target. An unrelated main-log head adds no
-        // safety, and one a handoff later fences would wedge a replica that
-        // refused it (Engine ruling 2026-10-14 on Wonder P2 round 1, W4).
-        let roster_read = fold.world_roster_read(world);
-        let named = match &roster_read {
-            EffectiveRead::OneMachine(only) => BTreeSet::from([*only]),
-            EffectiveRead::Conflicted { contenders } => contenders.clone(),
-            EffectiveRead::Everywhere | EffectiveRead::MyMachines => BTreeSet::new(),
-        };
+        // The edit names only the rows its standing rests on. A machine that
+        // holds the world names its own head revision and a one-machine
+        // target's: an unrelated main-log head adds no safety, and one a
+        // handoff later fences would wedge a replica that refused it (Engine
+        // ruling E7 on Wonder P2 round 1, W4). A world readable nowhere before
+        // the edit (a conflict, an orphan) names the main-log heads instead:
+        // whether its contenders or named machines still stand may rest on
+        // any main-log row (a shared key, custody), and an edit stuck on a
+        // replica leaves the world unreadable there (Sol P2 round 5, F2, F3).
         let target = match settings.read {
             ReadLocation::OneMachine(target) => Some(target),
             ReadLocation::MyMachines | ReadLocation::Everywhere => None,
         };
-        let standing_rows: BTreeSet<AuthorityEntryHash> = std::iter::once(machine)
-            .chain(named)
-            .chain(target)
-            .filter_map(|id| fold.machine(id).map(|folded| folded.entry))
-            .collect();
+        let standing_rows: BTreeSet<AuthorityEntryHash> = match standing {
+            WorldEditStanding::Holds => std::iter::once(machine)
+                .chain(target)
+                .filter_map(|id| fold.machine(id).map(|folded| folded.entry))
+                .collect(),
+            WorldEditStanding::Contends | WorldEditStanding::RepicksOrphan => {
+                fold.append_heads.clone()
+            }
+        };
         // The edit replaces the live edits it names; a refused edit replaces
         // nothing and is never named. More than one entry may name are
         // replaced a share at a time, each share's edit picking this machine
         // alone, which keeps its standing, and the last edit carries the
         // owner's settings. The first share leads with the edits that pick this
-        // machine, so a contender stays one (Wonder P2 round 1, W5).
+        // machine, so a contender stays one (Wonder P2 round 1, W5). A share
+        // reaches a replica before the last edit may, so it only narrows a
+        // world this machine holds, or picks the machine the owner moves the
+        // world to; a world readable nowhere moves to this machine first, and
+        // on in a second edit (Sol P2 round 5, F5).
+        let picks_this_machine =
+            !matches!(settings.read, ReadLocation::OneMachine(only) if only != machine);
         let mut live = Vec::new();
         for hash in fold
             .worlds
@@ -184,6 +192,11 @@ impl Vault {
         let mut entries = Vec::new();
         let mut parents = standing_rows.clone();
         while parents.len() + live.len() > MAX_PARENTS {
+            if standing != WorldEditStanding::Holds && !picks_this_machine {
+                return Err(refused(
+                    "a world with this many concurrent edits moves to this machine first",
+                ));
+            }
             let room = MAX_PARENTS
                 .checked_sub(parents.len())
                 .filter(|room| *room > 0)
@@ -207,7 +220,7 @@ impl Vault {
         entries.push(entry);
         let previous = fold.world_privacy(world);
         let orphaned_from = if standing == WorldEditStanding::RepicksOrphan {
-            super::world_privacy::orphaned_from(&roster_read, |id| {
+            super::world_privacy::orphaned_from(&fold.world_roster_read(world), |id| {
                 fold.machine(id)
                     .is_some_and(super::world_privacy::mine_by_roster)
             })

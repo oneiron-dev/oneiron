@@ -246,6 +246,174 @@ fn a_replica_that_refused_a_fenced_row_takes_the_next_edit() {
     assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(here));
 }
 
+/// A conflict among more machines than one entry may name never locks a
+/// contender out: the door names the main-log heads for a world readable
+/// nowhere and replaces the picks a share at a time (Sol P2 round 5, F2).
+#[test]
+fn a_contender_re_picks_a_conflict_among_many_machines() {
+    let host = host();
+    let world = world_row(&host);
+    let here = enrol_here(&host);
+    // 31 machines pick themselves on the snapshot before this machine does.
+    let picks: Vec<_> = (0..31)
+        .map(|seed| {
+            let (other, key) = other_machine(
+                &host,
+                90 + seed,
+                MachineRole::Owned(MachineOwnership::Yours),
+            );
+            edit_by(
+                &host,
+                other,
+                &key,
+                world,
+                settings(ReadLocation::OneMachine(other)),
+            )
+        })
+        .collect();
+    set(
+        &host,
+        EditOrigin::ThisMachine,
+        world,
+        ReadLocation::OneMachine(here),
+    )
+    .unwrap();
+    land(&host, &picks);
+    let EffectiveRead::Conflicted { contenders } = read_of(&host, world) else {
+        panic!("32 concurrent picks conflict");
+    };
+    assert_eq!(contenders.len(), 32);
+
+    set(
+        &host,
+        EditOrigin::ThisMachine,
+        world,
+        ReadLocation::OneMachine(here),
+    )
+    .unwrap();
+    assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(here));
+}
+
+/// A world whose named machine lost its standing only to a shared install
+/// key, a fact outside that machine's own revisions, is re-picked through the
+/// door (Sol P2 round 5, F3).
+#[test]
+fn a_world_orphaned_by_a_shared_key_is_re_picked() {
+    let host = host();
+    let world = world_row(&host);
+    let here = enrol_here(&host);
+    let (laptop, laptop_key) =
+        other_machine(&host, 66, MachineRole::Owned(MachineOwnership::Yours));
+    land(
+        &host,
+        &[edit_by(
+            &host,
+            laptop,
+            &laptop_key,
+            world,
+            settings(ReadLocation::OneMachine(laptop)),
+        )],
+    );
+    // The owner's root marks a second machine with the laptop's install key.
+    let fold = host.vault.authority_fold().unwrap();
+    let twin = EntityId::now();
+    let request = request_for(host.vault_id, twin, &laptop_key);
+    let twin_mark = next_entry(
+        &host.issuer,
+        &fold,
+        AuthorityOp::MachineProfile(MachineProfile {
+            machine: twin,
+            owner: host.owner.actor(),
+            machine_key: request.machine_key,
+            encryption_key: request.encryption_key,
+            role: MachineRole::Owned(MachineOwnership::Yours),
+            revision: 1,
+            machine_proof: request.machine_proof,
+            seen_world_edits: BTreeSet::new(),
+        }),
+        3,
+    )
+    .unwrap();
+    land(&host, &[twin_mark]);
+    let fold = host.vault.authority_fold().unwrap();
+    assert!(fold.machine(laptop).is_some_and(|folded| folded.conflicted));
+    assert!(!fold.world_readable_on(world, Destination::Machine(here)));
+
+    set(
+        &host,
+        EditOrigin::ThisMachine,
+        world,
+        ReadLocation::OneMachine(here),
+    )
+    .unwrap();
+    assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(here));
+}
+
+/// A conflicted world with more concurrent edits than one entry may name is
+/// never moved straight to another machine: a share of the consolidation
+/// would grant this machine the world on a replica that missed the last edit.
+/// Moved here first, it then moves on (Sol P2 round 5, F5).
+#[test]
+fn a_flooded_conflict_moves_here_before_it_moves_on() {
+    let host = host();
+    let world = world_row(&host);
+    let here = enrol_here(&host);
+    let yours = MachineRole::Owned(MachineOwnership::Yours);
+    let (other, other_key) = other_machine(&host, 67, yours);
+    let (flooder, flooder_key) = other_machine(&host, 68, yours);
+    let mut concurrent = vec![edit_by(
+        &host,
+        other,
+        &other_key,
+        world,
+        settings(ReadLocation::OneMachine(other)),
+    )];
+    concurrent.extend((0..38).map(|ts| {
+        let mut entry = edit_by(
+            &host,
+            flooder,
+            &flooder_key,
+            world,
+            settings(ReadLocation::Everywhere),
+        );
+        entry.ts = ts;
+        sign_ed(entry, &flooder_key)
+    }));
+    set(
+        &host,
+        EditOrigin::ThisMachine,
+        world,
+        ReadLocation::OneMachine(here),
+    )
+    .unwrap();
+    land(&host, &concurrent);
+    let conflicted = EffectiveRead::Conflicted {
+        contenders: BTreeSet::from([here, other]),
+    };
+    assert_eq!(read_of(&host, world), conflicted);
+
+    assert!(
+        set(
+            &host,
+            EditOrigin::ThisMachine,
+            world,
+            ReadLocation::OneMachine(other)
+        )
+        .is_err()
+    );
+    let fold = host.vault.authority_fold().unwrap();
+    assert_eq!(fold.worlds[&world].live.len(), 40);
+    assert_eq!(read_of(&host, world), conflicted);
+
+    for read in [
+        ReadLocation::OneMachine(here),
+        ReadLocation::OneMachine(other),
+    ] {
+        set(&host, EditOrigin::ThisMachine, world, read).unwrap();
+    }
+    assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(other));
+}
+
 #[test]
 fn only_the_owner_on_a_machine_holding_the_world_changes_it() {
     let host = host();
@@ -328,7 +496,7 @@ fn only_the_owner_on_a_machine_holding_the_world_changes_it() {
         world,
         settings(ReadLocation::Everywhere),
     );
-    land(&host, &[widen.clone()]);
+    land(&host, std::slice::from_ref(&widen));
     let fold = host.vault.authority_fold().unwrap();
     assert!(
         fold.refused_world_edits
@@ -401,7 +569,7 @@ fn no_agent_writer_root_or_borrowed_key_signs_a_settings_edit() {
             2,
         )
         .unwrap();
-    land(&host, &[root_edit.clone()]);
+    land(&host, std::slice::from_ref(&root_edit));
 
     let fold = host.vault.authority_fold().unwrap();
     for entry in forged.iter().chain([&root_edit]) {
@@ -583,7 +751,7 @@ fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
     );
     crossing.parent_hashes.push(edit);
     let crossing = sign_ed(crossing, &later_key);
-    land(&host, &[crossing.clone()]);
+    land(&host, std::slice::from_ref(&crossing));
     let fold = host.vault.authority_fold().unwrap();
     let crossing = authority_entry_hash(&crossing).unwrap();
     assert!(!fold.valid_entries.contains(&crossing));
@@ -645,7 +813,7 @@ fn a_replica_without_a_worlds_entries_folds_the_same_main_log() {
             2,
         )
         .unwrap();
-    land(&host, &[revoke.clone()]);
+    land(&host, std::slice::from_ref(&revoke));
     let fold = host.vault.authority_fold().unwrap();
     assert!(
         !fold

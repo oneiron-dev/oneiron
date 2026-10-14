@@ -54,7 +54,7 @@ fn a_machine_removed_while_it_widened_never_widens() {
     host.vault
         .set_machine_role(&host.issuer, &host.owner, laptop, MachineRole::Removed)
         .unwrap();
-    land(&host, &[widen.clone()]);
+    land(&host, std::slice::from_ref(&widen));
 
     let fold = host.vault.authority_fold().unwrap();
     assert!(
@@ -73,7 +73,7 @@ fn a_machine_removed_while_it_widened_never_widens() {
         kept,
         settings(ReadLocation::Everywhere),
     );
-    land(&host, &[late.clone()]);
+    land(&host, std::slice::from_ref(&late));
     assert!(
         !host
             .vault
@@ -197,8 +197,8 @@ fn a_chain_of_raced_widens_never_widens() {
             .set_machine_role(&host.issuer, &host.owner, laptop, MachineRole::Removed)
             .unwrap();
         if second_first {
-            land(&host, &[second.clone()]);
-            land(&host, &[first.clone()]);
+            land(&host, std::slice::from_ref(&second));
+            land(&host, std::slice::from_ref(&first));
         } else {
             land(&host, &[first.clone(), second.clone()]);
         }
@@ -252,7 +252,7 @@ fn a_later_revision_never_acknowledges_a_raced_widening() {
                     MachineRole::Owned(MachineOwnership::WorkSchool),
                 )
                 .unwrap();
-            land(&host, &[widen.clone()]);
+            land(&host, std::slice::from_ref(&widen));
             assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(laptop));
 
             if listed {
@@ -284,6 +284,105 @@ fn a_later_revision_never_acknowledges_a_raced_widening() {
             assert!(!fold.world_readable_on(world, Destination::Unknown));
         }
     }
+}
+
+/// A removal keeps the widening it saw, though the machine was not the
+/// owner's once before: what an earlier "yours" taken away had seen never
+/// narrows what a later one saw (Sol P2 round 5, F1).
+#[test]
+fn a_removal_keeps_what_it_saw_after_an_earlier_not_mine_period() {
+    let yours = MachineRole::Owned(MachineOwnership::Yours);
+    let work = MachineRole::Owned(MachineOwnership::WorkSchool);
+    for earlier in [vec![work, yours], vec![yours, work, yours]] {
+        let host = host();
+        let world = world_row(&host);
+        let (laptop, laptop_key) = other_machine(&host, 84, earlier[0]);
+        for role in &earlier[1..] {
+            host.vault
+                .set_machine_role(&host.issuer, &host.owner, laptop, *role)
+                .unwrap();
+        }
+        for read in [ReadLocation::MyMachines, ReadLocation::Everywhere] {
+            land(
+                &host,
+                &[edit_by(&host, laptop, &laptop_key, world, settings(read))],
+            );
+        }
+        host.vault
+            .set_machine_role(&host.issuer, &host.owner, laptop, MachineRole::Removed)
+            .unwrap();
+        assert_eq!(read_of(&host, world), EffectiveRead::Everywhere);
+    }
+}
+
+/// A main-log row a machine's install key signed at a high sequence bounds
+/// that machine's later edits even when the fold refuses the row and a world
+/// edit above it is folded with the row crossed (Sol P2 round 5, F4).
+#[test]
+fn a_crossed_row_still_bounds_its_signers_sequence() {
+    let host = host();
+    let world = world_row(&host);
+    let (laptop, laptop_key) =
+        other_machine(&host, 85, MachineRole::Owned(MachineOwnership::Yours));
+    let narrow = edit_by(
+        &host,
+        laptop,
+        &laptop_key,
+        world,
+        settings(ReadLocation::MyMachines),
+    );
+    land(&host, std::slice::from_ref(&narrow));
+    let fold = host.vault.authority_fold().unwrap();
+    let mark = fold.machine(laptop).unwrap().clone();
+    let unauthorised = sign_ed(
+        unsigned_entry(
+            fold.vault_id,
+            100,
+            vec![mark.entry],
+            AuthorityOp::MachineProfile(MachineProfile {
+                revision: mark.profile.revision + 1,
+                ..mark.profile
+            }),
+            authority_key_from_ed(&laptop_key),
+            3,
+        ),
+        &laptop_key,
+    );
+    let mut parents = vec![
+        authority_entry_hash(&narrow).unwrap(),
+        authority_entry_hash(&unauthorised).unwrap(),
+    ];
+    parents.sort();
+    let widen = sign_ed(
+        unsigned_entry(
+            fold.vault_id,
+            2,
+            parents,
+            AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
+                world,
+                owner: host.owner.actor(),
+                machine: laptop,
+                settings: settings(ReadLocation::Everywhere),
+            }),
+            authority_key_from_ed(&laptop_key),
+            3,
+        ),
+        &laptop_key,
+    );
+    let mut entries = stored_entries(&host.vault);
+    entries.extend([unauthorised.clone(), widen.clone()]);
+    let fold = fold_authority_log(&entries);
+    assert!(
+        !fold
+            .valid_entries
+            .contains(&authority_entry_hash(&unauthorised).unwrap())
+    );
+    assert!(
+        !fold
+            .valid_entries
+            .contains(&authority_entry_hash(&widen).unwrap())
+    );
+    assert_eq!(fold.world_privacy(world).read, EffectiveRead::MyMachines);
 }
 
 #[test]
@@ -742,6 +841,54 @@ fn a_narrowing_above_a_fenced_row_stays() {
         replica.world_privacy(world).unwrap().read,
         EffectiveRead::OneMachine(laptop)
     );
+}
+
+/// A world edit above a row whose parents belong to two vaults folds
+/// without a panic: such a row is never crossed, and the fold reads the
+/// conflicting roots (Sol P2 round 5, F6).
+#[test]
+fn a_world_edit_above_a_two_vault_row_folds_closed() {
+    let root = ed_key(155);
+    let first = genesis_entry(155, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let second = genesis_entry(156, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&first).unwrap();
+    let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
+    let mut parents = vec![hash(&first), hash(&second)];
+    parents.sort();
+    let joined = sign_ed(
+        unsigned_entry(
+            Some(id),
+            1,
+            parents,
+            AuthorityOp::SetTierFloor {
+                tier_floor: AuthorityTier::Software,
+            },
+            authority_key_from_ed(&root),
+            2,
+        ),
+        &root,
+    );
+    let key = ed_key(157);
+    let edit = sign_ed(
+        unsigned_entry(
+            Some(id),
+            1,
+            vec![hash(&joined)],
+            AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
+                world: EntityId::now(),
+                owner: EntityId::now(),
+                machine: EntityId::now(),
+                settings: settings(ReadLocation::Everywhere),
+            }),
+            authority_key_from_ed(&key),
+            2,
+        ),
+        &key,
+    );
+    let fold = fold_authority_log(&[first, second, joined.clone(), edit.clone()]);
+    assert!(fold.vault_root_is_conflicted());
+    assert!(!fold.valid_entries.contains(&hash(&joined)));
+    assert!(!fold.valid_entries.contains(&hash(&edit)));
 }
 
 /// A mark that still says "yours" acknowledges no edit when its signer turns

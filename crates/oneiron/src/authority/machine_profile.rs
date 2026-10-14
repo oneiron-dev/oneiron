@@ -70,12 +70,39 @@ pub(super) struct MachineChain {
     pub(super) head: FoldedMachine,
     /// The highest revision an owner-held key signed.
     pub(super) owner_held: Option<FoldedMachine>,
-    /// While the machine is not the owner's: the world edits the revision
-    /// that took "yours" away had seen, and on concurrent branches only those
-    /// every such revision had seen. A later revision of a machine already
-    /// not the owner's took nothing away and acknowledges nothing (Wonder P2
-    /// round 1, W2).
-    pub(super) acknowledged: Option<BTreeSet<AuthorityEntryHash>>,
+    /// While the machine is not the owner's: what the revision that took
+    /// "yours" away had seen. A later revision of a machine already not the
+    /// owner's took nothing away and acknowledges nothing (Wonder P2 round 1,
+    /// W2).
+    pub(super) acknowledged: Option<Acknowledged>,
+}
+
+/// The world edits the revisions that took one "yours" mark away had seen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Acknowledged {
+    /// The revision of the "yours" mark taken away; 0 for a machine that
+    /// never was the owner's.
+    from: u64,
+    seen: BTreeSet<AuthorityEntryHash>,
+}
+
+impl Acknowledged {
+    /// A later "yours" mark taken away supersedes an earlier one's; revisions
+    /// that took the same mark away concurrently keep only what all of them
+    /// had seen (Sol P2 round 5, F1).
+    fn merge(left: Option<&Self>, right: Option<&Self>) -> Option<Self> {
+        match (left, right) {
+            (Some(left), Some(right)) => Some(match left.from.cmp(&right.from) {
+                Ordering::Greater => left.clone(),
+                Ordering::Less => right.clone(),
+                Ordering::Equal => Self {
+                    from: left.from,
+                    seen: left.seen.intersection(&right.seen).copied().collect(),
+                },
+            }),
+            (one, other) => one.or(other).cloned(),
+        }
+    }
 }
 
 impl FoldedMachine {
@@ -163,8 +190,14 @@ pub(super) fn apply_machine_profile(
     let acknowledged = match chain {
         _ if profile.says_mine() => None,
         Some(chain) if !chain.head.profile.says_mine() => chain.acknowledged.clone(),
-        Some(_) => Some(profile.seen_world_edits.clone()),
-        None => Some(BTreeSet::new()),
+        Some(chain) => Some(Acknowledged {
+            from: chain.head.profile.revision,
+            seen: profile.seen_world_edits.clone(),
+        }),
+        None => Some(Acknowledged {
+            from: 0,
+            seen: BTreeSet::new(),
+        }),
     };
     if key_is_authority(state, &profile.machine_key)
         || machine_is_actor(state, profile.machine)
@@ -234,7 +267,10 @@ pub(super) fn acknowledged_world_edits(
     state: &FoldState,
     machine: EntityId,
 ) -> Option<&BTreeSet<AuthorityEntryHash>> {
-    roster_chain(state, machine)?.acknowledged.as_ref()
+    roster_chain(state, machine)?
+        .acknowledged
+        .as_ref()
+        .map(|acknowledged| &acknowledged.seen)
 }
 
 fn roster_chain(state: &FoldState, machine: EntityId) -> Option<&MachineChain> {
@@ -284,10 +320,7 @@ fn merge_chain(left: &MachineChain, right: &MachineChain) -> MachineChain {
             (Some(left), Some(right)) => Some(merge_machine(left, right)),
             (one, other) => one.clone().or_else(|| other.clone()),
         },
-        acknowledged: match (&left.acknowledged, &right.acknowledged) {
-            (Some(left), Some(right)) => Some(left.intersection(right).copied().collect()),
-            (one, other) => one.clone().or_else(|| other.clone()),
-        },
+        acknowledged: Acknowledged::merge(left.acknowledged.as_ref(), right.acknowledged.as_ref()),
     }
 }
 

@@ -37,10 +37,11 @@
 //! world reads as readable nowhere and the withheld set cannot be named.
 //!
 //! Edits are per-world side entries. An entry for world W takes as parents
-//! the head revisions its standing rests on (its machine's, each machine W's
-//! read names, a one-machine target's) and W's live edits. It is never a
-//! parent of a main-log entry or of another world's entry, so a replica that
-//! may not hold W folds the main log without W's entries.
+//! the rows its standing rests on (from a machine holding W, its own and a
+//! one-machine target's head revisions; for a W readable nowhere, the
+//! main-log heads) and W's live edits. It is never a parent of a main-log
+//! entry or of another world's entry, so a replica that may not hold W folds
+//! the main log without W's entries.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -593,7 +594,8 @@ pub(super) fn refold_world_edits(
         return;
     }
     // A main-log row the fold did not keep stands for the merge of its
-    // parents, each kept or crossed in turn.
+    // parents, each kept or crossed in turn. Its signed sequence still bounds
+    // what its signer signs after it (Sol P2 round 5, F4).
     let crossed = causal(
         lost.iter()
             .filter_map(|hash| ancestors.get(hash))
@@ -604,16 +606,24 @@ pub(super) fn refold_world_edits(
     );
     let mut stand_ins = BTreeMap::<AuthorityEntryHash, FoldState>::new();
     for hash in crossed {
-        let mut parents = by_hash[&hash]
+        let entry = &by_hash[&hash];
+        let mut parents = entry
             .parent_hashes
             .iter()
             .map(|parent| states.get(parent).or_else(|| stand_ins.get(parent)));
+        // Parents of two vaults stand for nothing (Sol P2 round 5, F6).
         let merged = parents.next().flatten().and_then(|first| {
             parents.try_fold(first.clone(), |merged, next| {
-                next.map(|state| merge_states(&merged, state))
+                next.filter(|state| state.vault_id == merged.vault_id)
+                    .map(|state| merge_states(&merged, state))
             })
         });
-        if let Some(state) = merged {
+        if let Some(mut state) = merged.filter(|state| entry.vault_id == Some(state.vault_id)) {
+            let seq = state
+                .seqs
+                .entry(entry.signer_key().clone())
+                .or_insert(entry.seq);
+            *seq = (*seq).max(entry.seq);
             stand_ins.insert(hash, state);
         }
     }

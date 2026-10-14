@@ -30,7 +30,7 @@ fn a_stolen_machines_world_is_re_picked_from_another_of_the_owners_machines() {
             settings(ReadLocation::OneMachine(stolen)),
         );
         if seen {
-            land(&host, &[theft.clone()]);
+            land(&host, std::slice::from_ref(&theft));
             // While the stolen machine is still the owner's, nobody else
             // re-picks its world.
             assert!(
@@ -47,7 +47,7 @@ fn a_stolen_machines_world_is_re_picked_from_another_of_the_owners_machines() {
             .set_machine_role(&host.issuer, &host.owner, stolen, role)
             .unwrap();
         if !seen {
-            land(&host, &[theft.clone()]);
+            land(&host, std::slice::from_ref(&theft));
         }
         let fold = host.vault.authority_fold().unwrap();
         assert!(
@@ -132,7 +132,7 @@ fn a_conflict_with_one_live_contender_is_not_orphaned() {
         world,
         settings(ReadLocation::OneMachine(d)),
     );
-    land(&host, &[early.clone()]);
+    land(&host, std::slice::from_ref(&early));
     let fold = host.vault.authority_fold().unwrap();
     let early = authority_entry_hash(&early).unwrap();
     assert!(fold.refused_world_edits.contains(&early));
@@ -177,7 +177,7 @@ fn a_stale_holders_world_is_re_picked_after_a_handoff() {
         world,
         settings(ReadLocation::OneMachine(old)),
     );
-    land(&host, &[kept.clone()]);
+    land(&host, std::slice::from_ref(&kept));
 
     let next = HostSlipIssuer::from_secret(b"stale holder successor root").unwrap();
     let handoff = host
@@ -314,7 +314,7 @@ fn a_world_orphaned_by_a_removal_that_arrived_late_is_re_picked() {
     );
     // The higher row first, in a write of its own.
     land(&host, &[sibling]);
-    land(&host, &[removal.clone()]);
+    land(&host, std::slice::from_ref(&removal));
 
     let fold = host.vault.authority_fold().unwrap();
     assert!(
