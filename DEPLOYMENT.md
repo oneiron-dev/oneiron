@@ -84,6 +84,13 @@ lists the host's assistant voice names. Stored turns spoken under one of those
 names count as assistant turns during consolidation, beside the generic
 `assistant`, `agent`, `ai`, and `model` speakers. The default is empty.
 
+`trusted_proxies` (flag `--trusted-proxies`, env `ONEIRON_TRUSTED_PROXIES`,
+comma-separated `ip` or `ip/prefix`) names the reverse proxies whose
+`X-Forwarded-For` the server believes when it keys per-address booking quotas.
+Behind such a proxy each client is charged as itself; from any other peer the
+header is ignored. An entry that does not parse stops startup. The default is
+empty: every caller is keyed by its own connection.
+
 ## CJK Dictionaries
 
 Oneiron can run without CJK dictionaries, but Japanese, Chinese, and Korean

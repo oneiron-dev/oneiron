@@ -75,3 +75,18 @@ fn serve_config_debug_redacts_hosted_kms_key_ref() {
 
     assert!(!debug.contains("serve-secret-ref"));
 }
+
+#[test]
+fn an_unreadable_trusted_proxy_stops_startup() {
+    for entry in ["10.0.0.0/33", "proxy.internal", "10.0.0.0/8/1"] {
+        let env = EnvConfig::from_pairs([("ONEIRON_TRUSTED_PROXIES", entry)]).expect("env");
+        assert!(
+            resolve_serve_config_with_sources(&ServeArgs::default(), env, None).is_err(),
+            "{entry} must not start serve"
+        );
+    }
+    let env = EnvConfig::from_pairs([("ONEIRON_TRUSTED_PROXIES", "10.0.0.0/8, ::1")]).expect("env");
+    let config =
+        resolve_serve_config_with_sources(&ServeArgs::default(), env, None).expect("readable");
+    assert_eq!(config.trusted_proxies.len(), 2);
+}

@@ -386,6 +386,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Refused(NO_AUTH_LAYER_REASON),
     ),
     (
+        "trusted-proxies",
+        |args| args.trusted_proxies.is_some(),
+        ArgvUse::Refused(NO_AUTH_LAYER_REASON),
+    ),
+    (
         "failure-signal-export",
         |args| args.failure_signal_export.is_some(),
         ArgvUse::Refused(NO_TUNING_LAYER_REASON),

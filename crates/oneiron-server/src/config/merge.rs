@@ -22,6 +22,7 @@ use super::oneironer::{OneironerConfig, OneironerConfigOverride, lookup_oneirone
 use super::recall::{RecallConfigOverride, lookup_recall_override};
 use super::serve_args::{ServeArgs, runtime_override_from_args};
 use super::server_config::ServeConfig;
+use super::trusted_proxy::parse_trusted_proxies;
 use crate::runtime::{
     RuntimeConfigOverride, RuntimeMode, RuntimeProviderKind, RuntimeRole, RuntimeRoleTargetOverride,
 };
@@ -81,6 +82,7 @@ impl EnvConfig {
         values.allow_unauthenticated =
             lookup_bool(&mut lookup, "ONEIRON_INSECURE_ALLOW_UNAUTHENTICATED")?;
         values.allowed_origins = lookup_list(&mut lookup, "ONEIRON_ALLOWED_ORIGINS");
+        values.trusted_proxies = lookup_list(&mut lookup, "ONEIRON_TRUSTED_PROXIES");
         values.lease_vault_id = lookup_parse(&mut lookup, "ONEIRON_LEASE_VAULT_ID")?;
         values.dimensions = lookup_parse(&mut lookup, "ONEIRON_DIMENSIONS")?;
         values.map_size = lookup_parse(&mut lookup, "ONEIRON_MAP_SIZE")?;
@@ -450,6 +452,7 @@ struct FileServeConfig {
     oauth_resource_indicator: Option<String>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
+    trusted_proxies: Option<Vec<String>>,
     lease_vault_id: Option<u64>,
     dimensions: Option<usize>,
     map_size: Option<usize>,
@@ -496,6 +499,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             oauth_resource_indicator: value.oauth_resource_indicator,
             allow_unauthenticated: value.allow_unauthenticated,
             allowed_origins: value.allowed_origins,
+            trusted_proxies: value.trusted_proxies,
             lease_vault_id: value.lease_vault_id,
             dimensions: value.dimensions,
             map_size: value.map_size,
@@ -543,6 +547,7 @@ struct PartialServeConfig {
     oauth_resource_indicator: Option<String>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
+    trusted_proxies: Option<Vec<String>>,
     lease_vault_id: Option<u64>,
     dimensions: Option<usize>,
     map_size: Option<usize>,
@@ -590,6 +595,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("oauth_resource_indicator", &self.oauth_resource_indicator)
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
+            .field("trusted_proxies", &self.trusted_proxies)
             .field("lease_vault_id", &self.lease_vault_id)
             .field("dimensions", &self.dimensions)
             .field("map_size", &self.map_size)
@@ -667,6 +673,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.allowed_origins {
             resolved.allowed_origins = normalize_list(value);
+        }
+        if let Some(value) = self.trusted_proxies {
+            resolved.trusted_proxies = parse_trusted_proxies(&normalize_list(value))?;
         }
         if let Some(value) = self.lease_vault_id {
             resolved.lease_vault_id = value;
@@ -794,6 +803,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             oauth_resource_indicator: value.oauth_resource_indicator.clone(),
             allow_unauthenticated: value.insecure_allow_unauthenticated,
             allowed_origins: value.allowed_origins.clone(),
+            trusted_proxies: value.trusted_proxies.clone(),
             lease_vault_id: value.lease_vault_id,
             dimensions: value.dimensions,
             map_size: value.map_size,

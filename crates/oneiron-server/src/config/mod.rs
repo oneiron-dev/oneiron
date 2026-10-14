@@ -14,6 +14,7 @@ mod recall;
 pub mod remote_embedder;
 pub mod serve_args;
 pub mod server_config;
+mod trusted_proxy;
 
 pub use backup::{BackupConfig, default_backup_dir};
 pub use embedder::{
@@ -35,6 +36,7 @@ pub use oneironer::{
 pub use recall::RecallConfig;
 pub use serve_args::ServeArgs;
 pub use server_config::{ServeConfig, SyncServerConfig};
+pub use trusted_proxy::TrustedProxy;
 
 #[cfg(test)]
 mod embedder_tests;
