@@ -489,3 +489,99 @@ fn a_leader_tie_meets_each_branch_at_its_frontier_in_either_order() -> Result<()
     }
     Ok(())
 }
+
+/// Bug repro (Astra #1434 r10 F2, Sol r10 F2): S0's leader L also sits on
+/// its board. The board holder H replaces L as leader and drops it from the
+/// board (D), then restores L to both (E), and L removes X (N). D deposes L
+/// once, though from two roles, and it is N's own ancestor: N installs live
+/// and on two replicas in both orders, and X stays out.
+#[cfg(feature = "sync")]
+#[test]
+fn a_leader_on_its_own_board_reappointed_after_a_deposition_still_acts() -> Result<()> {
+    let x = EntityId::now();
+    let origin = tempfile::tempdir()?;
+    let project = board_signed_s0(&open(&origin)?, &[x], &[], |row| {
+        let leader = row.leader.clone();
+        row.board.push(leader);
+    })?;
+    let (id, holder, leader) = (project.id, project.board, project.leader);
+    let copies = [copy_of(&origin)?, copy_of(&origin)?];
+    let vault = open(&origin)?;
+    let d = signed_over(&vault, id, &project.s0, holder, |row| {
+        row.leader = holder.to_hex();
+        row.board = vec![holder.to_hex()];
+        row.roster = vec![holder.to_hex(), x.to_hex()];
+    })?;
+    vault.put_project(id, &d, 3)?;
+    let e = signed_over(&vault, id, &d, holder, |row| {
+        row.leader = leader.to_hex();
+        row.board = vec![holder.to_hex(), leader.to_hex()];
+        row.roster = vec![leader.to_hex(), holder.to_hex(), x.to_hex()];
+    })?;
+    vault.put_project(id, &e, 4)?;
+    let n = signed_over(&vault, id, &e, leader, without(x))?;
+    vault.put_project(id, &n, 5)?;
+    let head = head_of(id, &n)?;
+    for ((_dir, replica), order) in copies.into_iter().zip([[&d, &e, &n], [&n, &e, &d]]) {
+        replay_authority(&vault, &replica)?;
+        for (at, row) in (10..).zip(order) {
+            replay_project(&replica, id, row, at)?;
+        }
+        let served = frontier(&replica, id)?;
+        assert_eq!(served.disposition, ProjectDisposition::Settled);
+        assert_eq!(served.witness.map(|witness| witness.head), Some(head));
+        assert_eq!(effective(&replica, id)?.leader, leader.to_hex());
+        assert!(!seats_of(&replica, id).contains(&x));
+    }
+    Ok(())
+}
+
+/// Bug repro (Sol #1434 r10 F3): the board replaces L (S1) while L removes
+/// Y (S2) and, over S2, removes X (D1) or lowers the depth (D2). S1 excludes
+/// S2 with its subtree, yet the fork at S2 is still recorded, off the served
+/// path, in both orders.
+#[cfg(feature = "sync")]
+#[test]
+fn a_fork_under_an_excluded_act_is_still_recorded_in_either_order() -> Result<()> {
+    let (successor, x, y) = (EntityId::now(), EntityId::now(), EntityId::now());
+    let origin = tempfile::tempdir()?;
+    let project = board_signed_s0(&open(&origin)?, &[x, y], &[], |_| {})?;
+    let id = project.id;
+    let copies = [copy_of(&origin)?, copy_of(&origin)?];
+    let vault = open(&origin)?;
+    let s1 = signed_over(&vault, id, &project.s0, project.board, |row| {
+        row.leader = successor.to_hex();
+        row.roster = vec![successor.to_hex()];
+    })?;
+    let s2 = signed_over(&vault, id, &project.s0, project.leader, without(y))?;
+    let d1 = signed_over(&vault, id, &s2, project.leader, without(x))?;
+    let d2 = signed_over(&vault, id, &s2, project.leader, |row| {
+        row.depth_remaining -= 1;
+    })?;
+    let (anchor, winner, excluded) = (
+        head_of(id, &project.s0)?,
+        head_of(id, &s1)?,
+        head_of(id, &s2)?,
+    );
+    let children = BTreeSet::from([head_of(id, &d1)?, head_of(id, &d2)?]);
+    for ((_dir, replica), order) in copies
+        .into_iter()
+        .zip([[&s1, &s2, &d1, &d2], [&d2, &d1, &s2, &s1]])
+    {
+        replay_authority(&vault, &replica)?;
+        for (at, row) in (10..).zip(order) {
+            replay_project(&replica, id, row, at)?;
+        }
+        assert_eq!(effective(&replica, id)?.leader, successor.to_hex());
+        let forks = replica.project_forks();
+        assert_eq!(forks.len(), 2, "{forks:?}");
+        let at = |hash| forks.iter().find(|fork| fork.anchor == hash);
+        assert!(at(anchor).is_some_and(
+            |fork| fork.on_path && fork.outcome == ProjectForkOutcome::Ranked { winner }
+        ));
+        assert!(at(excluded).is_some_and(|fork| !fork.on_path
+            && fork.children == children
+            && fork.outcome == ProjectForkOutcome::Excluded));
+    }
+    Ok(())
+}

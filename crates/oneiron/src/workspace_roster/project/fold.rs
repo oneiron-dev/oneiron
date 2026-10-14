@@ -687,7 +687,7 @@ fn finish(cx: &FoldCx<'_, '_, '_>, fold: &mut ProjectFold, walk: Option<&Walk>) 
             continue;
         }
         let outcome = match fork.step {
-            Step::Head => continue,
+            Step::Head => ProjectForkOutcome::Excluded,
             Step::Advance {
                 winner,
                 resolution: Some(resolution),

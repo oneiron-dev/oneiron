@@ -33,6 +33,9 @@ pub enum ProjectForkOutcome {
     Tied {
         rank: ProjectRank,
     },
+    /// No valid child takes authority here: a deposition or a standing
+    /// settlement excludes each, or the anchor lies under an excluded act.
+    Excluded,
 }
 
 impl ProjectForkEvidence {

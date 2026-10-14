@@ -508,3 +508,57 @@ fn revoking_a_settlement_a_frozen_view_rested_on_serves_no_authority() -> Result
     assert_eq!(frozen_head(&vault, id)?, None);
     Ok(())
 }
+
+/// Bug repro (Astra #1434 r10 F3): L removes Y (A) over S0; over A, B2 drops
+/// B1 (D) or lowers the depth (E), and B3 signs two resolutions of A's tie
+/// that build on neither, one for D and one for E. Neither stands, so D
+/// excludes no one and B1's removal of X over S0 (C) holds in the tie.
+/// Past the budget the frozen view rests on both resolutions: revoking
+/// either one's slip serves no authority.
+#[cfg(feature = "sync")]
+#[test]
+fn revoking_a_conflicting_resolution_a_frozen_view_rested_on_serves_no_authority() -> Result<()> {
+    for revoked in [0, 1] {
+        let (b1, b2, b3, x, y) = (
+            EntityId::now(),
+            EntityId::now(),
+            EntityId::now(),
+            EntityId::now(),
+            EntityId::now(),
+        );
+        let dir = tempfile::tempdir()?;
+        let vault = open(&dir)?;
+        let project = board_signed_s0(&vault, &[x, y], &[b1, b2, b3], |_| {})?;
+        let (id, s0) = (project.id, &project.s0);
+        let a = signed_over(&vault, id, s0, project.leader, without(y))?;
+        let d = signed_over(&vault, id, &a, b2, off_board(b1))?;
+        let e = signed_over(&vault, id, &a, b2, |row| row.depth_remaining -= 1)?;
+        let c = signed_over(&vault, id, s0, b1, without(x))?;
+        for (at, row) in (3..).zip([&a, &d, &e, &c]) {
+            replay_project(&vault, id, row, at)?;
+        }
+        let (ha, hd, he) = (head_of(id, &a)?, head_of(id, &d)?, head_of(id, &e)?);
+        let mut slips = Vec::new();
+        for (at, next) in (10..).zip([hd, he]) {
+            let settle = resolution(&vault, id, b3, ha, vec![], sorted(vec![hd, he]), next)?;
+            slips.push(
+                CapabilitySlip::from_token(&settle.slip_wire)?
+                    .claims
+                    .slip_id,
+            );
+            put_companion(&vault, &envelope(id, settle), at)?;
+        }
+        assert!(!seats_of(&vault, id).contains(&x));
+        vault.set_project_history_policy(
+            &owner(&vault)?,
+            ProjectHistoryPolicy { max_revisions: 1 },
+        )?;
+        assert!(over(&vault, id)?.is_some());
+        assert!(vault.project(id)?.is_some());
+        let issuer = HostSlipIssuer::from_secret(FIXTURE_HOST)?;
+        vault.revoke_capability_slip(&issuer, slips[revoked])?;
+        assert!(vault.project(id)?.is_none());
+        assert_eq!(frozen_head(&vault, id)?, None);
+    }
+    Ok(())
+}

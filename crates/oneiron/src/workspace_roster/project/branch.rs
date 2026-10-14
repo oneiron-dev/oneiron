@@ -8,7 +8,6 @@
 //! a resolution included, unless that act itself takes none. Every step is
 //! a function of the held set: no arrival order, no arbitrary winner.
 use super::fold::{ProjectEffective, ProjectRank, rank_at};
-use super::read::ProjectVerdict;
 use super::revision::{ProjectRevision, ProjectRevisionHash};
 use super::validity::{FoldCx, Settlement};
 use super::*;
@@ -64,7 +63,7 @@ struct Act {
     parent: Option<usize>,
     end: usize,
     signer: String,
-    /// The principals whose rank this act lowers from its parent's.
+    /// The principals whose rank this act lowers from its parent's, each once.
     deposes: Vec<String>,
 }
 
@@ -279,11 +278,7 @@ impl FoldCx<'_, '_, '_> {
                 parent: parent_at,
                 end: 0,
                 signer,
-                deposes: std::iter::once(&prior.leader)
-                    .chain(&prior.board)
-                    .filter(|held| rank_at(next, held) < rank_at(prior, held))
-                    .cloned()
-                    .collect(),
+                deposes: deposed(prior, next),
             });
             let at = acts.len() - 1;
             for child in self.valid_children(hash)?.into_iter().rev() {
@@ -302,6 +297,32 @@ impl FoldCx<'_, '_, '_> {
         }
         Ok(acts)
     }
+}
+
+/// The principals whose rank (as `rank_at` reads it) `next` lowers from
+/// `prior`'s, each once: a leader who also sits on the board is one
+/// principal. Each board is read into a set once, so an act costs the size
+/// of its two authorities.
+fn deposed(prior: &ProjectAuthority, next: &ProjectAuthority) -> Vec<String> {
+    let rank = |authority: &ProjectAuthority, board: &BTreeSet<&str>, held: &str| {
+        if held == "host" || board.contains(held) {
+            Some(ProjectRank::Board)
+        } else if authority.leader == held {
+            Some(ProjectRank::Leader)
+        } else {
+            None
+        }
+    };
+    let before: BTreeSet<&str> = prior.board.iter().map(String::as_str).collect();
+    let after: BTreeSet<&str> = next.board.iter().map(String::as_str).collect();
+    let principals: BTreeSet<&str> = std::iter::once(prior.leader.as_str())
+        .chain(before.iter().copied())
+        .collect();
+    principals
+        .into_iter()
+        .filter(|&held| rank(next, &after, held) < rank(prior, &before, held))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Who deposes each principal, among some acts, by act index in order.
