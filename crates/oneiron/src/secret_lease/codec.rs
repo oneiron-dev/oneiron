@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use rmpv::Value;
 
 use super::types::{
-    LocalRegistration, SECRET_MATERIALIZATION_RECEIPT_KIND, SecretLease, SecretLeaseStatus,
-    SecretMaterializationReceipt, StoredLocalRegistration,
+    FileIdentity, LocalRegistration, SECRET_MATERIALIZATION_RECEIPT_KIND, SecretLease,
+    SecretLeaseStatus, SecretMaterializationReceipt, StoredLocalRegistration,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
@@ -352,14 +352,16 @@ pub(super) fn decode_materialization_receipt_body(
 
 /// The local-registration body's MessagePack keys. `removal_error` and
 /// `removal_attempted_at` are the teardown record: both `Nil` while the
-/// registration is live.
-const SECRET_LOCAL_REGISTRATION_BODY_KEYS: [&str; 6] = [
+/// registration is live. `file_dev` and `file_ino` name the file written.
+const SECRET_LOCAL_REGISTRATION_BODY_KEYS: [&str; 8] = [
     "lease_id",
     "path",
     "content_hash",
     "project_id",
     "removal_error",
     "removal_attempted_at",
+    "file_dev",
+    "file_ino",
 ];
 
 pub(super) fn encode_local_registration_body(stored: &StoredLocalRegistration) -> Result<Vec<u8>> {
@@ -394,6 +396,14 @@ pub(super) fn encode_local_registration_body(stored: &StoredLocalRegistration) -
                 Some(at) => Value::from(at),
                 None => Value::Nil,
             },
+        ),
+        (
+            SECRET_LOCAL_REGISTRATION_BODY_KEYS[6],
+            Value::from(stored.file_identity.dev),
+        ),
+        (
+            SECRET_LOCAL_REGISTRATION_BODY_KEYS[7],
+            Value::from(stored.file_identity.ino),
         ),
     ])
 }
@@ -442,6 +452,18 @@ pub(crate) fn decode_local_registration_body(bytes: &[u8]) -> Result<StoredLocal
                 &entries,
                 SECRET_LOCAL_REGISTRATION_BODY_KEYS[3],
                 "registration project_id",
+            )?,
+        },
+        file_identity: FileIdentity {
+            dev: u64_at(
+                &entries,
+                SECRET_LOCAL_REGISTRATION_BODY_KEYS[6],
+                "registration file_dev",
+            )?,
+            ino: u64_at(
+                &entries,
+                SECRET_LOCAL_REGISTRATION_BODY_KEYS[7],
+                "registration file_ino",
             )?,
         },
         removal_error,
