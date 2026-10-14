@@ -52,12 +52,23 @@ impl GeminiAccumulator {
                 raw_provider: usage.clone(),
             });
         }
-        let Some(candidate) = chunk.pointer("/candidates/0") else {
+        // Candidates or a candidate of a shape this decoder cannot walk could
+        // hold a tool request, so they fail the decode rather than read as
+        // none.
+        let candidate = match chunk.get("candidates") {
+            None | Some(Value::Null) => None,
+            Some(Value::Array(candidates)) => candidates.first(),
+            Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+        };
+        let Some(candidate) = candidate else {
             if chunk.pointer("/promptFeedback/blockReason").is_some() {
                 return Err(FatalLlmError::ContentFiltered.into());
             }
             return Ok(vec![]);
         };
+        if !candidate.is_object() {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
         let mut events = Vec::new();
         // Content this decoder cannot walk could hold a tool request behind
         // the text before it, so content or parts of any other shape fail the

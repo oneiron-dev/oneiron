@@ -42,8 +42,8 @@ impl OpenAiCompatStreamAccumulator {
         }
         let mut events = Vec::new();
         // A chunk this decoder cannot walk could hold a tool request behind
-        // the text before it, so choices or a delta of any other shape fail
-        // the stream rather than read as empty.
+        // the text before it, so choices, a choice or a delta of any other
+        // shape fail the stream rather than read as empty.
         let choices = match chunk.get("choices") {
             None | Some(JsonValue::Null) => None,
             Some(JsonValue::Array(choices)) => choices.first(),
@@ -55,6 +55,9 @@ impl OpenAiCompatStreamAccumulator {
             } else {
                 Ok(events)
             };
+            if !choice.is_object() {
+                return Err(FatalLlmError::InvalidRequest.into());
+            }
         };
         if choice
             .get("index")

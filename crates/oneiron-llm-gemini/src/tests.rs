@@ -5,7 +5,8 @@ use serde_json::json;
 /// decoded as its text alone, a `Stop` the policy classifier took for a
 /// finished, tool-free answer: an Allow. A part holds one piece of data, so a
 /// second one beside the text fails the decode, buffered and streamed, and so
-/// does content or parts of a shape the decoder cannot walk (Astra, round 8).
+/// do candidates, a candidate, content or parts of a shape the decoder cannot
+/// walk (Astra, rounds 8 and 9).
 /// A text part with its thought markers and a lone function call still
 /// decode, and so does a final chunk with no content.
 #[test]
@@ -50,6 +51,22 @@ fn a_function_call_beside_text_never_decodes_as_a_finished_answer() {
                 .push(json!({ "candidates": [{ "content": content, "finishReason": "STOP" }] }))
                 .is_err(),
             "H122: a streamed {content} finished the text as a tool-free answer"
+        );
+    }
+
+    // Nor candidates or a candidate of another shape (Astra, round 9).
+    let call = json!({ "role": "model", "parts": [{ "functionCall": { "name": "check_policy", "args": {} } }] });
+    for chunk in [
+        json!({ "candidates": { "content": call } }),
+        json!({ "candidates": [[{ "content": call }]] }),
+    ] {
+        let mut stream = super::stream::GeminiAccumulator::default();
+        stream
+            .push(json!({ "candidates": [{ "content": { "role": "model", "parts": [{ "text": allow }] } }] }))
+            .expect("the answer's text streams");
+        assert!(
+            stream.push(chunk.clone()).is_err(),
+            "H122: a streamed {chunk} left the text a tool-free answer"
         );
     }
 

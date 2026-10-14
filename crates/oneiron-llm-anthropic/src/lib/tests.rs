@@ -1,7 +1,7 @@
 use oneiron::FinishReason;
 use serde_json::json;
 
-use super::parse_anthropic_messages_response;
+use super::{AnthropicMessagesStreamAccumulator, parse_anthropic_messages_response};
 
 /// A reply that names no stop reason is not a finished one. The decoder used
 /// to fill in `Stop`, which every caller that demands a finished answer (the
@@ -49,4 +49,32 @@ fn an_unreadable_block_never_decodes_as_a_finished_answer() {
     });
     let answer = parse_anthropic_messages_response(&body).expect("redacted reasoning decodes");
     assert_eq!(answer.finish_reason, FinishReason::Stop);
+}
+
+/// F14 H122 (Astra, round 9): the stream read only usage from the opening
+/// message, so a tool block it carried vanished and the text that followed
+/// finished as a tool-free answer. Blocks arrive as their own events; an
+/// opening message that carries any, or is no object, fails the stream. The
+/// ordinary opening with empty content still streams.
+#[test]
+fn an_opening_message_with_blocks_never_finishes_as_a_tool_free_answer() {
+    let tool = json!({ "type": "tool_use", "id": "call-1", "name": "check_policy", "input": {} });
+    for message in [
+        json!({ "role": "assistant", "content": [tool], "usage": { "input_tokens": 3 } }),
+        json!({ "role": "assistant", "content": tool }),
+        json!([{ "content": [tool] }]),
+    ] {
+        let mut stream = AnthropicMessagesStreamAccumulator::new();
+        assert!(
+            stream
+                .push_event(json!({ "type": "message_start", "message": message }))
+                .is_err(),
+            "H122: an opening {message} streamed on"
+        );
+    }
+    let mut stream = AnthropicMessagesStreamAccumulator::new();
+    stream
+        .push_event(json!({ "type": "message_start", "message": {
+            "role": "assistant", "content": [], "usage": { "input_tokens": 3 } } }))
+        .expect("the ordinary opening streams");
 }
