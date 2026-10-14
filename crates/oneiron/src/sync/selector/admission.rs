@@ -355,6 +355,9 @@ fn downweight_federated_claim(
 /// retryable: a peer cannot confirm bytes that materialization must discard.
 #[cfg(feature = "sync")]
 fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]) -> Result<()> {
+    if entity_type != crate::registry::ENTITY_TYPE_AGENT_DEF {
+        crate::agent_def::validate_put_at_seeded_id(id, entity_type, None)?;
+    }
     match entity_type {
         crate::companion::ENTITY_TYPE_COMPANION_REGISTER => {
             return Err(Error::Record(RecordError::InvalidCompanionRecordBody(
@@ -379,6 +382,7 @@ fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]
         crate::registry::ENTITY_TYPE_AGENT_DEF => {
             let definition = crate::agent_def::decode_agent_definition(body)?;
             crate::agent_def::validate_reserved_logical_id(id, &definition)?;
+            crate::agent_def::validate_put_at_seeded_id(id, entity_type, Some(&definition))?;
         }
         crate::registry::ENTITY_TYPE_FACET if crate::companion::is_identity_facet_body(body) => {
             return Err(Error::Record(RecordError::InvalidCompanionRecordBody(

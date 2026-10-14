@@ -95,16 +95,7 @@ pub(crate) fn agent_id_pin_for_put_in_txn(
             forked_from: def.forked_from,
         },
         Some(pin) => {
-            if def.ceiling.widens_beyond(pin.ceiling) {
-                return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-                    "an agent id's ceiling cannot widen beyond the narrowest it has held",
-                )));
-            }
-            if def.forked_from != pin.forked_from {
-                return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-                    "an agent id keeps the lineage it was born with, across a delete too",
-                )));
-            }
+            answer_to_pin(pin, def)?;
             AgentIdPin {
                 ceiling: def.ceiling,
                 forked_from: pin.forked_from,
@@ -115,6 +106,49 @@ pub(crate) fn agent_id_pin_for_put_in_txn(
         return Ok(None);
     }
     PIN.stage(id, &next).map(Some)
+}
+
+/// Refuses `def` when it widens beyond `pin` or names another parent.
+fn answer_to_pin(pin: AgentIdPin, def: &AgentDefinition) -> Result<()> {
+    if def.ceiling.widens_beyond(pin.ceiling) {
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "an agent id's ceiling cannot widen beyond the narrowest it has held",
+        )));
+    }
+    if def.forked_from != pin.forked_from {
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+            "an agent id keeps the lineage it was born with, across a delete too",
+        )));
+    }
+    Ok(())
+}
+
+/// The stateless half of the pin, for a door that reads no transaction (the
+/// federation admission prefilter): a seeded row id holds only an AGENT_DEF,
+/// no wider than its seed and on its seed's lineage. `def` is the decoded
+/// body when `entity_type` is AGENT_DEF.
+///
+/// # Errors
+///
+/// As [`agent_id_pin_for_put_in_txn`] and [`refuse_agent_id_retype_in_txn`],
+/// for a seeded row id.
+#[cfg(feature = "sync")]
+pub(crate) fn validate_put_at_seeded_id(
+    id: &EntityId,
+    entity_type: u8,
+    def: Option<&AgentDefinition>,
+) -> Result<()> {
+    let Some(seed) = seeded_pin(id)? else {
+        return Ok(());
+    };
+    match def {
+        Some(def) if entity_type == ENTITY_TYPE_AGENT_DEF => answer_to_pin(seed, def),
+        _ => Err(Error::Registry(RegistryError::EntityTypeImmutable {
+            id: *id,
+            existing: ENTITY_TYPE_AGENT_DEF,
+            attempted: entity_type,
+        })),
+    }
 }
 
 /// The ceiling a row at `id` may hold at most, when the id is pinned: what
