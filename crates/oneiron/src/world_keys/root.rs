@@ -115,14 +115,30 @@ impl RecoveryRootSeed {
 }
 
 /// Stack bytes wiped after the owner anchor's key is built or signs: Ed25519 expands its
-/// secret in plain stack arrays (Wonder code-R4 W4-F1). Sized as `oneiron-crypto`'s
-/// Ed25519 signer wipe, whose stack painting covers a whole signature, this expansion
-/// included: 152,728 bytes below its caller in a dev build and 62,248 in a release build.
-pub(crate) const ANCHOR_STACK_WIPE: usize = if cfg!(debug_assertions) {
+/// secret in plain stack arrays (Wonder code-R4 W4-F1). Sized from stack painting
+/// (`root::tests`), one per build, as `oneiron-crypto` sizes its own wipes.
+const ANCHOR_STACK_WIPE: usize = if cfg!(debug_assertions) {
     256 * 1024
 } else {
     128 * 1024
 };
+
+/// `message` signed by the owner anchor's key, with the stack the signature reached
+/// wiped after it.
+pub(crate) fn sign_as_anchor(anchor: &ed25519_dalek::SigningKey, message: &[u8]) -> Vec<u8> {
+    let signature = anchor_signature(anchor, message);
+    zeroize::zeroize_stack::<ANCHOR_STACK_WIPE>();
+    signature
+}
+
+/// Out of line, so the wipe in [`sign_as_anchor`] covers the signer's expansion of the
+/// anchor's secret.
+#[inline(never)]
+fn anchor_signature(anchor: &ed25519_dalek::SigningKey, message: &[u8]) -> Vec<u8> {
+    ed25519_dalek::Signer::sign(anchor, message)
+        .to_bytes()
+        .to_vec()
+}
 
 /// Out of line, so the wipe in [`RecoveryRootSeed::anchor`] covers its frames.
 #[inline(never)]
@@ -156,3 +172,10 @@ impl RecoveryRoot {
             && record.recovery_key.key == self.recovery_key.to_bytes()
     }
 }
+
+#[cfg(all(
+    test,
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    any(target_os = "linux", target_os = "macos")
+))]
+mod tests;

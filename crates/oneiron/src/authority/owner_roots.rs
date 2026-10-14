@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, btree_map::Entry};
 
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::SigningKey;
 
 use super::*;
 use crate::Vault;
@@ -150,14 +150,7 @@ pub(crate) fn anchor_signed_entry(
         cosigns: Vec::new(),
         ts: now,
     };
-    entry.signer.signature = anchor_signature(signer, &authority_transcript(&entry)?);
-    zeroize::zeroize_stack::<{ crate::world_keys::ANCHOR_STACK_WIPE }>();
+    entry.signer.signature =
+        crate::world_keys::sign_as_anchor(signer, &authority_transcript(&entry)?);
     Ok(entry)
-}
-
-/// Out of line, so the wipe after it covers the signer's expansion of the anchor's
-/// secret (Wonder code-R4 W4-F1).
-#[inline(never)]
-fn anchor_signature(signer: &SigningKey, transcript: &[u8]) -> Vec<u8> {
-    signer.sign(transcript).to_bytes().to_vec()
 }

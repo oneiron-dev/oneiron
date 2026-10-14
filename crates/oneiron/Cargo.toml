@@ -236,6 +236,8 @@ tempfile = "3"
 proptest = "1"
 # The process-memory keystore the engine's tests share; never a host's adapter.
 oneiron-keystore = { path = "../oneiron-keystore", features = ["test-keystore"] }
+# The stack painter that sizes the owner anchor's stack wipes.
+oneiron-crypto = { path = "../oneiron-crypto", features = ["stack-probe"] }
 # Bounded DOCX fixture probes inspect central-directory sizes in unit tests.
 zip = "0.6.6"
 # ONE-1572 (B11-2b): compile-fail proof that the sealed relay-attestation

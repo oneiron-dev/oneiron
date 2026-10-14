@@ -4,8 +4,6 @@
 //! value, so copies of its own halves sit above the wipe, in the frames that hold the key.
 //! The check is the wipe's own: it ran below `from_seed` as deep as its constant, which
 //! covers the build's reach, and no secret is left below the frames that hold the key.
-//! Run in a release build, this is also the check that `from_seed_inner` stays out of
-//! line.
 
 use hkdf::Hkdf;
 use sha2::Sha256;

@@ -27,7 +27,7 @@ mod wrap;
 mod tests;
 
 pub use self::machine::{machine_encryption_key, machine_secret};
-pub(crate) use self::root::ANCHOR_STACK_WIPE;
+pub(crate) use self::root::sign_as_anchor;
 pub use self::root::{RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin};
 pub use self::root_issue::PreparedRoot;
 pub use self::state::{WorldRecoveryState, recovery_state};
