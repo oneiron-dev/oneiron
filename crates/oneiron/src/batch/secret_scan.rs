@@ -1,9 +1,15 @@
 mod shapes;
+mod whole_read;
 mod wordlist;
 
 use heed::{RoTxn, RwTxn};
 
 use self::shapes::Door;
+pub(crate) use self::whole_read::{
+    Encoding, encode_as_stored, release_body_reads_whole_as_stored, release_parts_read_whole,
+    release_reads_json_text, release_reads_whole, release_reads_whole_json,
+    sanitize_messagepack_credentials_in, write_door_refuses_raw,
+};
 use super::BatchOp;
 use super::export::ExportSecretsNulledManifest;
 use crate::error::{Error, GateError, Result};
@@ -15,6 +21,7 @@ const REASON_DETECTED: &str = "gate.secret_scan.detected";
 const REASON_AWS_ACCESS_KEY_ID: &str = "gate.secret_scan.aws_access_key_id";
 const REASON_GITHUB_TOKEN: &str = "gate.secret_scan.github_token";
 const REASON_GOOGLE_API_KEY: &str = "gate.secret_scan.google_api_key";
+const REASON_MNEMONIC: &str = "gate.secret_scan.mnemonic";
 const REASON_OPENAI_KEY: &str = "gate.secret_scan.openai_key";
 const REASON_PRIVATE_KEY: &str = "gate.secret_scan.private_key";
 const REASON_SLACK_TOKEN: &str = "gate.secret_scan.slack_token";
@@ -261,164 +268,71 @@ fn byte_values(items: impl Iterator<Item = Option<u64>>) -> Option<Vec<u8>> {
         .collect()
 }
 
-/// The release doors' reading of a whole decoded value once its parts are
-/// judged: every text it carries, one per line in order, at any depth (each
-/// string and map key, binary and extension bytes, each array of byte values).
-/// A walk that judges each part, and each array's items joined, can still
-/// leave a secret spread over parts it keeps apart (a phrase one word per
-/// nested item), as the write door reads it in a body's raw bytes; a value
-/// that reads as one leaves whole-redacted. The value's own encoding is also
-/// read as the write door reads a body: there a number, a length or a header
-/// carries bytes as a string does.
-pub(crate) fn release_reads_whole(value: &rmpv::Value) -> bool {
-    let mut text = String::new();
-    messagepack_leaves(value, &mut text);
-    detect(&text, Door::Release).is_some() || write_door_refuses_encoding(value)
-}
-
-/// [`release_reads_whole`] over a JSON value. A JSON value can be the
-/// projection of a MessagePack body, so it is also read through the
-/// MessagePack it projects from: a float as either width it may have had.
-pub(crate) fn release_reads_whole_json(value: &serde_json::Value) -> bool {
-    if release_reads_json_text(value) {
-        return true;
-    }
-    let mut narrows = false;
-    write_door_refuses_encoding(&messagepack_form(value, false, &mut narrows))
-        || (narrows && write_door_refuses_encoding(&messagepack_form(value, true, &mut narrows)))
-}
-
-/// [`release_reads_whole_json`] over the text alone, for JSON whose stored
-/// encoding was already read as stored.
-fn release_reads_json_text(value: &serde_json::Value) -> bool {
-    let mut text = String::new();
-    json_leaves(value, &mut text);
-    detect(&text, Door::Release).is_some()
-}
-
-/// The parts a release door emits from one body, read before it projects them
-/// (a projection loses a float's width and a byte's type): whether one part,
-/// once its parts are judged, or all of them together, still reads as a
-/// secret as [`release_reads_whole`] reads it.
-pub(crate) fn release_parts_read_whole(parts: &[&rmpv::Value]) -> bool {
-    let mut judged = Vec::with_capacity(parts.len());
-    for part in parts {
-        let mut part = (*part).clone();
-        sanitize_messagepack(&mut part, true, Door::Release);
-        if release_reads_whole(&part) {
-            return true;
-        }
-        judged.push(part);
-    }
-    release_reads_whole(&rmpv::Value::Array(judged))
-}
-
-/// The write door's text rules over bytes a release door returns as they are
-/// stored: an encoding can differ from the value's own (a wider header, a
-/// length that reads as a line break), and the write door reads the bytes.
-pub(crate) fn write_door_refuses_raw(bytes: &[u8]) -> bool {
-    detect_bytes(bytes, Door::Write)
-}
-
-/// The write door's text rules over a value's MessagePack encoding, the raw
-/// bytes it reads in a body. A value that cannot be encoded reads as a secret.
-fn write_door_refuses_encoding(value: &rmpv::Value) -> bool {
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, value).is_err() || write_door_refuses_raw(&bytes)
-}
-
-/// A JSON value as MessagePack. `narrow` writes a float that a single-width
-/// float holds exactly at that width; `narrows` records whether there is one.
-fn messagepack_form(value: &serde_json::Value, narrow: bool, narrows: &mut bool) -> rmpv::Value {
-    use serde_json::Value;
-    match value {
-        Value::Null => rmpv::Value::Nil,
-        Value::Bool(flag) => rmpv::Value::Boolean(*flag),
-        Value::Number(number) => {
-            if let Some(number) = number.as_u64() {
-                return rmpv::Value::from(number);
-            }
-            if let Some(number) = number.as_i64() {
-                return rmpv::Value::from(number);
-            }
-            let number = number.as_f64().unwrap_or_default();
-            let single = number as f32;
-            if f64::from(single) == number {
-                *narrows = true;
-                if narrow {
-                    return rmpv::Value::F32(single);
-                }
-            }
-            rmpv::Value::F64(number)
-        }
-        Value::String(text) => rmpv::Value::from(text.as_str()),
-        Value::Array(values) => rmpv::Value::Array(
-            values
-                .iter()
-                .map(|value| messagepack_form(value, narrow, narrows))
-                .collect(),
-        ),
-        Value::Object(fields) => rmpv::Value::Map(
-            fields
-                .iter()
-                .map(|(key, value)| {
-                    (
-                        rmpv::Value::from(key.as_str()),
-                        messagepack_form(value, narrow, narrows),
-                    )
-                })
-                .collect(),
-        ),
-    }
-}
-
-fn messagepack_leaves(value: &rmpv::Value, out: &mut String) {
-    use rmpv::Value;
-    match value {
-        Value::String(text) => push_line(out, text.as_bytes()),
-        Value::Binary(bytes) | Value::Ext(_, bytes) => push_line(out, bytes),
-        Value::Array(values) => match byte_values(values.iter().map(Value::as_u64)) {
-            Some(bytes) if !bytes.is_empty() => push_line(out, &bytes),
-            _ => values
-                .iter()
-                .for_each(|value| messagepack_leaves(value, out)),
-        },
-        Value::Map(entries) => entries.iter().for_each(|(key, value)| {
-            messagepack_leaves(key, out);
-            messagepack_leaves(value, out);
-        }),
-        _ => {}
-    }
-}
-
-fn json_leaves(value: &serde_json::Value, out: &mut String) {
-    use serde_json::Value;
-    match value {
-        Value::String(text) => push_line(out, text.as_bytes()),
-        Value::Array(values) => match byte_values(values.iter().map(Value::as_u64)) {
-            Some(bytes) if !bytes.is_empty() => push_line(out, &bytes),
-            _ => values.iter().for_each(|value| json_leaves(value, out)),
-        },
-        Value::Object(fields) => fields.iter().for_each(|(key, value)| {
-            push_line(out, key.as_bytes());
-            json_leaves(value, out);
-        }),
-        _ => {}
-    }
-}
-
-fn push_line(out: &mut String, bytes: &[u8]) {
-    out.push_str(&String::from_utf8_lossy(bytes));
-    out.push('\n');
-}
-
 /// The write door's text rules over text a stream scanner joined across a
-/// chunk edge. Like the batch door, it follows the owner's switch: its caller
-/// reads it.
+/// chunk edge, but for the recovery-phrase rule: a phrase's run of one-word
+/// segments crosses the line breaks that end such text, so a
+/// [`PhraseStream`] reads it over the whole stream instead. Like the batch
+/// door, it follows the owner's switch: its caller reads it.
 pub(crate) fn scan_write_seam(text: &str) -> Result<()> {
-    match detect(text, Door::Write) {
+    match detect_in(text, Door::Write, false) {
         Some(reason) => Err(secret_scan_error(reason)),
         None => Ok(()),
+    }
+}
+
+/// [`scan_write_seam`] for a segment a reader kept in parts, its middle
+/// dropped: the assignment rule over its first `=` or `:` alone (see
+/// `shapes::cut_assignment`), for the rules that match anywhere read the
+/// whole stream. Where the parts cannot tell, the door refuses.
+pub(crate) fn scan_cut_seam(
+    head: Option<&str>,
+    key: &str,
+    value: &str,
+    value_cut: bool,
+) -> Result<()> {
+    match shapes::cut_assignment(head, key, value, value_cut) {
+        Some(false) => Ok(()),
+        _ => Err(secret_scan_error("gate.secret_scan.sensitive_env")),
+    }
+}
+
+/// The write door's blocklist over a body read in parts, in order: it finds
+/// what one read of the whole finds, an entry an edge cut included.
+#[derive(Default)]
+pub(crate) struct BlocklistStream(Vec<u8>);
+
+impl BlocklistStream {
+    pub(crate) fn feed(&mut self, bytes: &[u8]) -> Result<()> {
+        self.0.extend_from_slice(bytes);
+        if shapes::blocklisted(&String::from_utf8_lossy(&self.0)) {
+            return Err(secret_scan_error("gate.secret_scan.blocklist"));
+        }
+        // What an entry the next part ends could start in.
+        let keep = shapes::blocklist_longest().saturating_sub(1);
+        self.0.drain(..self.0.len().saturating_sub(keep));
+        Ok(())
+    }
+}
+
+/// The write door's recovery-phrase rule over a body's text read in parts,
+/// in order: it finds what one read of the whole text finds.
+#[derive(Default)]
+pub(crate) struct PhraseStream(shapes::MnemonicStream);
+
+impl PhraseStream {
+    pub(crate) fn feed(&mut self, text: &str) -> Result<()> {
+        if self.0.feed(text) {
+            return Err(secret_scan_error(REASON_MNEMONIC));
+        }
+        Ok(())
+    }
+
+    /// Reads the end of the text.
+    pub(crate) fn finish(&mut self) -> Result<()> {
+        if self.0.finish() {
+            return Err(secret_scan_error(REASON_MNEMONIC));
+        }
+        Ok(())
     }
 }
 
@@ -514,6 +428,11 @@ fn has_redaction_marker(haystack: &str) -> bool {
 }
 
 fn detect(haystack: &str, door: Door) -> Option<&'static str> {
+    detect_in(haystack, door, true)
+}
+
+/// [`detect`], with the recovery-phrase rule only when `phrases`.
+fn detect_in(haystack: &str, door: Door, phrases: bool) -> Option<&'static str> {
     let private_key = match door {
         Door::Write => shapes::private_key_block(haystack),
         Door::Release => shapes::private_key_header(haystack),
@@ -525,8 +444,8 @@ fn detect(haystack: &str, door: Door) -> Option<&'static str> {
     if shapes::blocklisted(haystack) {
         return Some("gate.secret_scan.blocklist");
     }
-    if shapes::mnemonic(haystack) {
-        return Some("gate.secret_scan.mnemonic");
+    if phrases && shapes::mnemonic(haystack) {
+        return Some(REASON_MNEMONIC);
     }
     // Preserve precise provider reason codes before the generic env class.
     let provider = haystack
@@ -628,8 +547,16 @@ fn sanitize_json(value: &mut serde_json::Value, null: bool, door: Door) -> bool 
 /// Scan MessagePack before any lossy JSON projection. Safe binary and extension
 /// values retain their original type on raw transports.
 pub(crate) fn sanitize_messagepack_credentials(value: &mut rmpv::Value, null: bool) -> bool {
+    sanitize_messagepack_whole(value, null, release_reads_whole)
+}
+
+fn sanitize_messagepack_whole(
+    value: &mut rmpv::Value,
+    null: bool,
+    reads_whole: impl Fn(&rmpv::Value) -> bool,
+) -> bool {
     let changed = sanitize_messagepack(value, null, Door::Release);
-    if release_reads_whole(value) {
+    if reads_whole(value) {
         *value = if null {
             rmpv::Value::Nil
         } else {

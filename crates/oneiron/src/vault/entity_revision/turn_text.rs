@@ -61,21 +61,33 @@ pub(crate) struct TurnText {
     /// The text revision; the row's own for a turn whose messages show no
     /// text, which its row revision pins whole.
     pub(crate) revision: RevisionRef,
-    /// Each source message the revision joins, with its text there, in
-    /// message order. Every reader is given only those it may read.
-    pub(crate) messages: Vec<(EntityId, String)>,
+    /// Each source message the revision joins, with its text there and the
+    /// body that text is read from (empty unless the read was for release),
+    /// in message order. Every reader is given only those it may read.
+    pub(crate) messages: Vec<(EntityId, String, Vec<u8>)>,
 }
 
 impl TurnText {
-    /// The messages `readable` admits: the turn as one reader is shown it.
-    pub(crate) fn readable(
+    /// The messages a door that releases the words gives the reader
+    /// `readable` admits, from a read for release. A turn's text is its
+    /// messages' words without the rest of their bodies, so a message whose
+    /// body the write door refuses gives none: the body its words are read
+    /// from, its document's text in it, at the state the revision read, as a
+    /// lossy door withholds a refused body whole. A message with no body kept
+    /// gives none either. Words the write door's text rules refuse are given
+    /// by none.
+    pub(crate) fn released(
         self,
         mut readable: impl FnMut(&EntityId) -> Result<bool>,
     ) -> Result<Vec<(EntityId, String)>> {
         let mut messages = Vec::with_capacity(self.messages.len());
-        for (id, text) in self.messages {
-            if readable(&id)? {
-                messages.push((id, text));
+        for (id, words, body) in self.messages {
+            if readable(&id)?
+                && !body.is_empty()
+                && !crate::batch::export::write_door_refuses_body(&body)
+                && !crate::batch::secret_scan::write_door_refuses_raw(words.as_bytes())
+            {
+                messages.push((id, words));
             }
         }
         Ok(messages)
@@ -87,18 +99,21 @@ impl TurnText {
 /// words; a pin at a text revision reads the words it was served with, or
 /// nothing once they can no longer be found. `None` also for a turn that is
 /// gone or archived. `store` is the content read: the vault's own, or a
-/// room's view, whose turns and messages compose with base.
+/// room's view, whose turns and messages compose with base. A read for a
+/// door that releases the words (`release`) keeps each message's body for
+/// [`TurnText::released`]; any other read keeps none.
 pub(crate) fn served_turn_text_in_txn(
     vault: &Vault,
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     turn: &EntityId,
     mode: ReadMode,
+    release: bool,
 ) -> Result<Option<TurnText>> {
     let row = match mode {
         ReadMode::Pinned(revision) => {
             if !entity_owns_revision_in_txn(store, txn, turn, revision)? {
-                return Ok(resolve_in_txn(vault, store, txn, turn, revision)?
+                return Ok(resolve_in_txn(vault, store, txn, turn, revision, release)?
                     .map(|(_, messages)| TurnText { revision, messages }));
             }
             revision
@@ -117,7 +132,7 @@ pub(crate) fn served_turn_text_in_txn(
             )
         }
     };
-    let Some(sources) = current_sources_in_txn(vault, store, txn, turn)? else {
+    let Some(sources) = current_sources_in_txn(vault, store, txn, turn, release)? else {
         return Ok(None);
     };
     let revision = if sources.is_empty() {
@@ -133,7 +148,7 @@ pub(crate) fn served_turn_text_in_txn(
         revision,
         messages: sources
             .into_iter()
-            .map(|(id, state)| (id, state.text))
+            .map(|(id, state)| (id, state.text, state.body))
             .collect(),
     }))
 }
@@ -148,14 +163,15 @@ pub(crate) fn turn_row_for_text_revision_in_txn(
     turn: &EntityId,
     revision: RevisionRef,
 ) -> Result<Option<RevisionRef>> {
-    Ok(resolve_in_txn(vault, store, txn, turn, revision)?.map(|(row, _)| row))
+    Ok(resolve_in_txn(vault, store, txn, turn, revision, false)?.map(|(row, _)| row))
 }
 
 /// One state of a source message: what a text revision commits to for it,
-/// and the text it shows there.
+/// the text it shows there, and its body there, that text read from it.
 struct SourceState {
     commitment: Vec<u8>,
     text: String,
+    body: Vec<u8>,
 }
 
 /// The row revision and words `revision` was served with: the turn's current
@@ -166,6 +182,7 @@ fn resolve_in_txn(
     txn: &RoTxn<'_>,
     turn: &EntityId,
     revision: RevisionRef,
+    release: bool,
 ) -> Result<Option<Served>> {
     if revision.0[..2] != turn_hint(turn) {
         return Ok(None);
@@ -174,7 +191,8 @@ fn resolve_in_txn(
     if rows.is_empty() {
         return Ok(None);
     }
-    let Some(members) = crate::tagging::turn_members_in_txn(vault, store, txn, turn)? else {
+    let Some(members) = crate::tagging::turn_members_in_txn(vault, store, txn, turn, release)?
+    else {
         return Ok(None);
     };
     let target = Target {
@@ -183,8 +201,8 @@ fn resolve_in_txn(
         rows,
     };
     let mut current = Vec::with_capacity(members.len());
-    for (id, text) in members {
-        let state = current_state_in_txn(vault, store, txn, &id, text)?;
+    for (id, text, body) in members {
+        let state = current_state_in_txn(vault, store, txn, &id, text, body)?;
         current.push((id, state));
     }
     let now: Vec<_> = current
@@ -201,13 +219,14 @@ fn resolve_in_txn(
     HISTORY_SEARCHES.with(|count| count.set(count.get() + 1));
     let mut sources = Vec::with_capacity(current.len());
     for (id, state) in current {
-        sources.push(source_in_txn(vault, store, txn, id, state)?);
+        sources.push(source_in_txn(vault, store, txn, id, state, release)?);
     }
     Ok(target.search(&sources))
 }
 
-/// A row revision and the words read with it, in message order.
-type Served = (RevisionRef, Vec<(EntityId, String)>);
+/// A row revision and the words read with it, in message order, as
+/// [`TurnText::messages`] holds them.
+type Served = (RevisionRef, Vec<(EntityId, String, Vec<u8>)>);
 
 /// A text revision being looked for: its turn, and the row revisions it may
 /// have been read at.
@@ -240,7 +259,7 @@ impl Target<'_> {
             .find(|row| text_revision(self.turn, *row, &sources) == self.revision)?;
         let messages = chosen
             .iter()
-            .map(|(id, state)| (*id, state.text.clone()))
+            .map(|(id, state)| (*id, state.text.clone(), state.body.clone()))
             .collect();
         Some((row, messages))
     }
@@ -308,21 +327,24 @@ fn current_sources_in_txn(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     turn: &EntityId,
+    release: bool,
 ) -> Result<Option<Vec<(EntityId, SourceState)>>> {
-    let Some(members) = crate::tagging::turn_members_in_txn(vault, store, txn, turn)? else {
+    let Some(members) = crate::tagging::turn_members_in_txn(vault, store, txn, turn, release)?
+    else {
         return Ok(None);
     };
     let mut sources = Vec::with_capacity(members.len());
-    for (id, text) in members {
-        if let Some(state) = current_state_in_txn(vault, store, txn, &id, text)? {
+    for (id, text, body) in members {
+        if let Some(state) = current_state_in_txn(vault, store, txn, &id, text, body)? {
             sources.push((id, state));
         }
     }
     Ok(Some(sources))
 }
 
-/// The state `message` stands at, when it shows `text`. An entity document
-/// is the vault's, so its frontier is read on the vault's own store.
+/// The state `message` stands at, when it shows `text`, read from `body`.
+/// An entity document is the vault's, so its frontier is read on the vault's
+/// own store.
 fn current_state_in_txn(
     #[cfg_attr(
         not(feature = "sync"),
@@ -333,6 +355,7 @@ fn current_state_in_txn(
     txn: &RoTxn<'_>,
     message: &EntityId,
     text: Option<String>,
+    body: Vec<u8>,
 ) -> Result<Option<SourceState>> {
     let Some(text) = text else {
         return Ok(None);
@@ -348,7 +371,11 @@ fn current_state_in_txn(
         Some(frontier) => document_commitment(message, &raw, &frontier),
         None => row_commitment(message, &raw),
     };
-    Ok(Some(SourceState { commitment, text }))
+    Ok(Some(SourceState {
+        commitment,
+        text,
+        body,
+    }))
 }
 
 /// Whether `message`'s words live in its entity document, which no row
@@ -366,31 +393,37 @@ pub(crate) fn message_has_document_in_txn(
 /// which it shows text, `current` first. A row-backed message's are its
 /// row at each retained revision; a document-backed one's are its
 /// document's retained states alone, which a build without `sync` does not
-/// read ([`MAX_SOURCE_STATES`] of each).
+/// read ([`MAX_SOURCE_STATES`] of each). Each keeps its body for `release`.
 fn source_in_txn(
     vault: &Vault,
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     message: EntityId,
     current: Option<SourceState>,
+    release: bool,
 ) -> Result<Source> {
     let mut source = Source {
         id: message,
         may_be_absent: current.is_none(),
         states: current.into_iter().collect(),
     };
-    let mut push = |commitment: Vec<u8>, text: Option<String>| match text {
-        Some(text) => {
-            if !source
-                .states
-                .iter()
-                .any(|state| state.commitment == commitment)
-            {
-                source.states.push(SourceState { commitment, text });
+    let mut push =
+        |commitment: Vec<u8>, body: Vec<u8>| match crate::tagging::shown_message_text(&body) {
+            Some(text) => {
+                if !source
+                    .states
+                    .iter()
+                    .any(|state| state.commitment == commitment)
+                {
+                    source.states.push(SourceState {
+                        commitment,
+                        text,
+                        body: if release { body } else { Vec::new() },
+                    });
+                }
             }
-        }
-        None => source.may_be_absent = true,
-    };
+            None => source.may_be_absent = true,
+        };
     // Once its text lives in its document, its rows from before the move
     // never stand for it, whether or not this build reads the document.
     if DOCUMENT_HEADS.contains(&vault.store, txn, &HexId(message))? {
@@ -409,17 +442,19 @@ fn source_in_txn(
             for state in history {
                 push(
                     document_commitment(&message, &raw, &state.frontier),
-                    crate::tagging::shown_message_text(&state.body),
+                    state.body,
                 );
             }
         }
         return Ok(source);
     }
     for raw in retained_rows_in_txn(store, txn, &message, MAX_SOURCE_STATES)? {
-        let text = raw
-            .get(ENTITY_METADATA_HEADER_LEN..)
-            .and_then(crate::tagging::shown_message_text);
-        push(row_commitment(&message, &raw), text);
+        push(
+            row_commitment(&message, &raw),
+            raw.get(ENTITY_METADATA_HEADER_LEN..)
+                .unwrap_or_default()
+                .to_vec(),
+        );
     }
     Ok(source)
 }

@@ -523,3 +523,310 @@ fn fields_that_spell_a_phrase_together_leave_no_context_writer() {
     let results = format!("{:?}", projected.results);
     assert!(!results.contains("sausage"), "{results}");
 }
+
+#[test]
+fn an_entitys_own_alias_in_its_own_fields_never_becomes_its_name() {
+    // A host stores an ASSET whose own alias (its identity key, or its id)
+    // closes the first half of the phrase and whose name holds the second:
+    // no stored run and no field spells it, but its name set in place of
+    // its own alias would. Sol R1: an identity key equal to its own short id
+    // must not bring the name back after the alias becomes that short id;
+    // Wonder R3: nor one two abutting renders of it spell again.
+    let words: Vec<&str> =
+        "legal winner thank year wave sausage worth useful legal winner thank yellow"
+            .split(' ')
+            .collect();
+    let name = words[6..].join(" ");
+    let id = EntityId::from_bytes_unchecked([0x96; 16]);
+    let person = EntityId::from_bytes_unchecked([0x95; 16]);
+    let entity =
+        |id: EntityId, short_id: &str, entity_type: u8, fields: &[(&str, String)]| ContextEntity {
+            source_revision_ref: None,
+            critical: false,
+            id,
+            short_id: short_id.to_owned(),
+            content_hash: 0x01,
+            entity_type,
+            score: 0.5,
+            fields: Some(
+                fields
+                    .iter()
+                    .map(|(key, value)| ((*key).to_owned(), Value::String(value.clone())))
+                    .collect(),
+            ),
+            edges: None,
+            vector: None,
+        };
+    // The identity key, its mention, and what the mention renders as.
+    for (identity_key, alias, rendered) in [
+        ("zq9", "zq9".to_owned(), "as01"),
+        ("as01", id.to_hex(), "as01"),
+        (
+            "-as01as01-",
+            "--as01as01--as01as01--".to_owned(),
+            "-as01as01-",
+        ),
+    ] {
+        let headline = format!("{} {alias}", words[..6].join(" "));
+        let body = rmpv::Value::Map(vec![
+            ("headline".into(), headline.as_str().into()),
+            ("identity_key".into(), identity_key.into()),
+            ("name".into(), name.as_str().into()),
+            ("owner".into(), person.to_hex().into()),
+        ]);
+        let mut stored = Vec::new();
+        rmpv::encode::write_value(&mut stored, &body).unwrap();
+        assert!(crate::batch::secret_scan::scan_write_payload(&stored).is_ok());
+        let pack = ContextPack {
+            capabilities: Vec::new(),
+            l2_base: None,
+            retrieval_quality: Default::default(),
+            results: vec![entity(
+                id,
+                "as01",
+                crate::registry::ENTITY_TYPE_ASSET,
+                &[
+                    ("headline", headline),
+                    ("identity_key", identity_key.to_owned()),
+                    ("name", name.clone()),
+                    ("owner", person.to_hex()),
+                ],
+            )],
+            neighbors: vec![entity(
+                person,
+                "pe01",
+                crate::registry::ENTITY_TYPE_PERSON,
+                &[("name", "Alice".to_owned())],
+            )],
+            stats: empty_stats(),
+            empty: None,
+        };
+        for format in [
+            PackFormat::Json,
+            PackFormat::Yaml,
+            PackFormat::Toon,
+            PackFormat::Markdown,
+            PackFormat::Plaintext,
+        ] {
+            let text = String::from_utf8_lossy(&serialize_pack(
+                &pack,
+                &savings_config(format, FieldProfile::Full),
+            ))
+            .into_owned();
+            let case = format!("{identity_key} {format:?}: {text}");
+            assert!(text.contains(&format!("sausage {rendered}")), "{case}");
+            assert!(!text.contains("sausage worth"), "{case}");
+            // Its own name still shows in its name, and another entity's id
+            // in its fields still becomes that entity's name.
+            assert!(text.contains(&name), "{case}");
+            assert!(text.contains("Alice (pe01)"), "{case}");
+        }
+    }
+}
+
+#[test]
+fn an_entitys_own_id_under_a_body_id_or_name_key_never_becomes_its_name() {
+    // Sol R6, Wonder R6: no key in a row's body names the row or its name
+    // field. Its own id stands as its short id under an object holding
+    // another row's ref as its `id`, under a nested `name`, and beside a
+    // body field `id` that a serialized row's ref gives way to; another
+    // row's id there still becomes that row's name at its first mention.
+    let words: Vec<&str> =
+        "legal winner thank year wave sausage worth useful legal winner thank yellow"
+            .split(' ')
+            .collect();
+    let name = words[6..].join(" ");
+    let id = EntityId::from_bytes_unchecked([0x99; 16]);
+    let about = format!("{} {}", words[..6].join(" "), id.to_hex());
+    let person = EntityId::from_bytes_unchecked([0x9a; 16]);
+    let with = format!("zebra {}", person.to_hex());
+    let entity = |id: EntityId, short_id: &str, entity_type: u8, fields: &Value| ContextEntity {
+        source_revision_ref: None,
+        critical: false,
+        id,
+        short_id: short_id.to_owned(),
+        content_hash: 0x01,
+        entity_type,
+        score: 0.5,
+        fields: fields
+            .as_object()
+            .map(|map| map.clone().into_iter().collect()),
+        edges: None,
+        vector: None,
+    };
+    for fields in [
+        serde_json::json!({
+            "about": { "id": "pe01:01", "text": about, "with": with },
+            "name": name,
+        }),
+        serde_json::json!({
+            "about": { "id": "as01:01", "name": about, "with": with },
+            "name": name,
+        }),
+        serde_json::json!({ "about": about, "id": "pe01:01", "name": name, "with": with }),
+    ] {
+        let mut stored = Vec::new();
+        rmpv::encode::write_value(&mut stored, &rmpv::ext::to_value(&fields).unwrap()).unwrap();
+        assert!(crate::batch::secret_scan::scan_write_payload(&stored).is_ok());
+        let pack = ContextPack {
+            capabilities: Vec::new(),
+            l2_base: None,
+            retrieval_quality: Default::default(),
+            results: vec![entity(
+                id,
+                "as01",
+                crate::registry::ENTITY_TYPE_ASSET,
+                &fields,
+            )],
+            neighbors: vec![entity(
+                person,
+                "pe01",
+                crate::registry::ENTITY_TYPE_PERSON,
+                &serde_json::json!({ "name": "Alice" }),
+            )],
+            stats: empty_stats(),
+            empty: None,
+        };
+        for format in [
+            PackFormat::Json,
+            PackFormat::Yaml,
+            PackFormat::Toon,
+            PackFormat::Markdown,
+            PackFormat::Plaintext,
+        ] {
+            // Its row comes first, before the neighbor's.
+            let config = SerializeConfig {
+                merge_neighbors: false,
+                ..savings_config(format, FieldProfile::Full)
+            };
+            let text = String::from_utf8_lossy(&serialize_pack(&pack, &config)).into_owned();
+            let case = format!("{fields} {format:?}: {text}");
+            assert!(text.contains("sausage as01"), "{case}");
+            assert!(!text.contains("sausage worth"), "{case}");
+            assert!(text.contains("zebra Alice (pe01)"), "{case}");
+        }
+    }
+}
+
+#[test]
+fn json_and_toon_name_an_entity_at_the_first_mention_they_emit() {
+    // Sol R7: JSON and TOON read a row's fields in the order they emit them,
+    // so an entity's first emitted mention carries its name: past a body
+    // field `id` or `stats`, which stays as it is, and where a body `score`
+    // takes the place JSON gives the row's score.
+    let person = EntityId::from_bytes_unchecked([0x9a; 16]);
+    let hex = person.to_hex();
+    let entity = |id: EntityId, short_id: &str, entity_type: u8, fields: &Value| ContextEntity {
+        source_revision_ref: None,
+        critical: false,
+        id,
+        short_id: short_id.to_owned(),
+        content_hash: 0x01,
+        entity_type,
+        score: 0.5,
+        fields: fields
+            .as_object()
+            .map(|map| map.clone().into_iter().collect()),
+        edges: None,
+        vector: None,
+    };
+    // The body, and whether the person's id stands in it as it is.
+    for (fields, verbatim) in [
+        (
+            serde_json::json!({ "id": hex, "ztext": format!("zebra {hex}") }),
+            true,
+        ),
+        (
+            serde_json::json!({ "stats": hex, "ztext": format!("zebra {hex}") }),
+            true,
+        ),
+        (
+            serde_json::json!({ "about": format!("yak {hex}"), "score": format!("zebra {hex}") }),
+            false,
+        ),
+    ] {
+        let pack = ContextPack {
+            capabilities: Vec::new(),
+            l2_base: None,
+            retrieval_quality: Default::default(),
+            results: vec![entity(
+                EntityId::from_bytes_unchecked([0x99; 16]),
+                "as01",
+                crate::registry::ENTITY_TYPE_ASSET,
+                &fields,
+            )],
+            neighbors: vec![entity(
+                person,
+                "pe01",
+                crate::registry::ENTITY_TYPE_PERSON,
+                &serde_json::json!({ "name": "Alice" }),
+            )],
+            stats: empty_stats(),
+            empty: None,
+        };
+        for format in [PackFormat::Json, PackFormat::Toon] {
+            let config = SerializeConfig {
+                merge_neighbors: false,
+                ..savings_config(format, FieldProfile::Full)
+            };
+            let text = String::from_utf8_lossy(&serialize_pack(&pack, &config)).into_owned();
+            let case = format!("{fields} {format:?}: {text}");
+            let first = text.find("pe01").expect(&case);
+            assert!(text[..first].ends_with("Alice ("), "{case}");
+            assert_eq!(text.contains(&hex), verbatim, "{case}");
+        }
+    }
+}
+
+#[test]
+fn another_entitys_identity_key_holding_a_short_id_still_becomes_its_name() {
+    // Sol R2: the own-alias rule kept every identity key that holds a short
+    // id out of the aliases, another entity's too; Sol R4: or its own.
+    let entity = |id: u8, short_id: &str, fields: &[(&str, &str)]| ContextEntity {
+        source_revision_ref: None,
+        critical: false,
+        id: EntityId::from_bytes_unchecked([id; 16]),
+        short_id: short_id.to_owned(),
+        content_hash: 0x01,
+        entity_type: crate::registry::ENTITY_TYPE_ASSET,
+        score: 0.5,
+        fields: Some(
+            fields
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), Value::String((*value).to_owned())))
+                .collect(),
+        ),
+        edges: None,
+        vector: None,
+    };
+    for key in ["catalog-as02", "catalog-as01b"] {
+        let headline = format!("see {key}");
+        let pack = ContextPack {
+            capabilities: Vec::new(),
+            l2_base: None,
+            retrieval_quality: Default::default(),
+            results: vec![
+                entity(0x97, "as01", &[("name", "Catalog"), ("identity_key", key)]),
+                entity(0x98, "as02", &[("headline", &headline)]),
+            ],
+            neighbors: Vec::new(),
+            stats: empty_stats(),
+            empty: None,
+        };
+        for format in [
+            PackFormat::Json,
+            PackFormat::Yaml,
+            PackFormat::Toon,
+            PackFormat::Markdown,
+            PackFormat::Plaintext,
+        ] {
+            let text = String::from_utf8_lossy(&serialize_pack(
+                &pack,
+                &savings_config(format, FieldProfile::Full),
+            ))
+            .into_owned();
+            assert!(!text.contains(key), "{format:?}: {text}");
+            assert!(text.contains("Catalog (as01)"), "{format:?}: {text}");
+        }
+    }
+}

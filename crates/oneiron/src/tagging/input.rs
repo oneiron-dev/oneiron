@@ -109,7 +109,7 @@ fn read_in_txn(
     turn: &EntityId,
     tokens: u32,
 ) -> Result<TurnInput> {
-    let Some(members) = members_in_txn(vault, &vault.store, txn, turn)? else {
+    let Some(members) = members_in_txn(vault, &vault.store, txn, turn, false)? else {
         return Ok(TurnInput::Gone);
     };
     let speaker = turn_role(
@@ -153,13 +153,15 @@ pub(crate) fn turn_messages_in_txn(
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<Vec<EncoderMessage>>> {
-    Ok(members_in_txn(vault, &vault.store, txn, turn)?
+    Ok(members_in_txn(vault, &vault.store, txn, turn, false)?
         .map(|members| members.into_iter().filter_map(Member::sent).collect()))
 }
 
 /// A live MESSAGE child of a turn, with the text it shows there
-/// ([`shown_message_text`]): `None` for a hidden or empty one.
-pub(crate) type TurnMember = (EntityId, Option<String>);
+/// ([`shown_message_text`]): `None` for a hidden or empty one; and, when it
+/// was asked for and the message shows text, the body that text is read
+/// from, its entity document's text in it (else empty).
+pub(crate) type TurnMember = (EntityId, Option<String>, Vec<u8>);
 
 /// Every live MESSAGE child of a live TURN, in message order. `None` for a
 /// turn [`turn_messages_in_txn`] reads as gone.
@@ -171,21 +173,26 @@ pub(crate) fn turn_members_in_txn(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
+    bodies: bool,
 ) -> Result<Option<Vec<TurnMember>>> {
-    Ok(members_in_txn(vault, store, txn, turn)?.map(|members| {
-        members
-            .into_iter()
-            .map(|member| (member.id, member.text))
-            .collect()
-    }))
+    Ok(
+        members_in_txn(vault, store, txn, turn, bodies)?.map(|members| {
+            members
+                .into_iter()
+                .map(|member| (member.id, member.text, member.body))
+                .collect()
+        }),
+    )
 }
 
-/// A live MESSAGE child of a turn: its text as [`TurnMember`] has it, and
-/// its stored author's bytes (empty when it names none as a string).
+/// A live MESSAGE child of a turn: its text as [`TurnMember`] has it, its
+/// stored author's bytes (empty when it names none as a string), and the
+/// body both are read from.
 struct Member {
     id: EntityId,
     text: Option<String>,
     author: Vec<u8>,
+    body: Vec<u8>,
 }
 
 impl Member {
@@ -198,12 +205,14 @@ impl Member {
     }
 }
 
-/// [`turn_members_in_txn`] with each message's stored author.
+/// [`turn_members_in_txn`] with each message's stored author. A body is kept
+/// only for a message that shows text, and only when `bodies` asks for it.
 fn members_in_txn(
     vault: &Vault,
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
+    bodies: bool,
 ) -> Result<Option<Vec<Member>>> {
     match live_entity_row_in_txn(store, txn, turn)? {
         LiveEntityRow::Live { entity_type, .. } if entity_type == ENTITY_TYPE_TURN => {}
@@ -239,7 +248,14 @@ fn members_in_txn(
             Some(rmpv::Value::String(author)) => author.as_bytes().to_vec(),
             _ => Vec::new(),
         };
-        rows.push((message.order, id, message.shown(), author));
+        let order = message.order;
+        let text = message.shown();
+        let body = if bodies && text.is_some() {
+            body
+        } else {
+            Vec::new()
+        };
+        rows.push((order, id, text, author, body));
     }
     rows.sort_by(|left, right| {
         left.0
@@ -248,7 +264,12 @@ fn members_in_txn(
     });
     Ok(Some(
         rows.into_iter()
-            .map(|(_, id, text, author)| Member { id, text, author })
+            .map(|(_, id, text, author, body)| Member {
+                id,
+                text,
+                author,
+                body,
+            })
             .collect(),
     ))
 }
