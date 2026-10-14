@@ -23,6 +23,13 @@ impl ScopedRead<'_> {
         }
     }
 
+    /// Whether the row `id`, as a snapshot of its own reads it, sits inside
+    /// the facets this read is limited to; see [`Self::facets_allow_in`].
+    pub(crate) fn facets_allow_id(&self, id: &EntityId) -> Result<bool> {
+        let txn = self.vault.store.env.read_txn()?;
+        self.facets_allow_shell_in(&txn, id)
+    }
+
     /// Whether the stored row `row` of `id` sits outside the facets this read
     /// is limited to: such a row has no name and no count, as one outside
     /// the credential's worlds has none (DEC-0005).

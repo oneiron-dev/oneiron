@@ -1,6 +1,7 @@
-//! Sol R1 F1 on FACET-READ: a room turn holds the facet its project's slice
-//! had when the turn opened. An owner re-signing that slice to another facet
-//! mid-turn only narrows the turn; a new turn reads the new facet.
+//! Sol R1 F1 and R2 F1 on FACET-READ: a room turn holds the facet its
+//! project's slice had when the turn opened. An owner re-signing that slice to
+//! another facet mid-turn only narrows the turn, its room record included; a
+//! new turn reads the new facet.
 use super::super::*;
 use super::authority::{FIXTURE_HOST, sign_project};
 use crate::authority::HostSlipIssuer;
@@ -97,6 +98,13 @@ fn a_room_turn_keeps_the_facet_it_opened_with() -> Result<()> {
         ScopeAxis::Some([ScopeId(work)].into()),
         "the turn reports the room's facet"
     );
+    let lists_the_room = |turn: &crate::memory::RoomTurnHandle<'_>| {
+        turn.invoke("rooms.list", serde_json::json!({}))
+            .expect("rooms.list")
+            .to_string()
+            .contains(&room.to_hex())
+    };
+    assert!(lists_the_room(&turn));
     assert!(reads(&turn, &at_work));
     assert!(
         !reads(&turn, &at_home),
@@ -120,6 +128,10 @@ fn a_room_turn_keeps_the_facet_it_opened_with() -> Result<()> {
         "the open turn never reads a facet it opened without"
     );
     assert!(!reads(&turn, &at_work), "and keeps the narrowing");
+    assert!(
+        !lists_the_room(&turn),
+        "nor lists its room's record (Sol R2 F1)"
+    );
     assert_eq!(turn.scope().expect("turn scope").facets, ScopeAxis::Bottom);
     Ok(())
 }

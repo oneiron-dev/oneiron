@@ -54,12 +54,17 @@ impl Memory<'_> {
 
     /// Whether the caller's own grants admit the room's record, which holds
     /// its roster and origin. It decides a room read beside membership and
-    /// never serves the row.
+    /// never serves the row. Through a turn the record must also sit in the
+    /// facets the turn holds, which only narrow.
     pub(crate) fn room_record_readable(&self, room: EntityId) -> MemoryResult<bool> {
         let read = self
             .own_read_lane(crate::claim::ClaimReadStatus::Recorded)?
             .read(&[PointRead::id(room)], None)?;
-        Ok(read.value.into_iter().flatten().next().is_some())
+        Ok(read.value.into_iter().flatten().next().is_some()
+            && (self.room_turn().is_none()
+                || self
+                    .read_lane(crate::claim::ClaimReadStatus::Recorded)?
+                    .facets_allow_id(&room)?))
     }
 
     /// P7 for one rule `room` renders under `terms`, judged in the snapshot
