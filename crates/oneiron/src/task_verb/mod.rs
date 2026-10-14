@@ -155,6 +155,7 @@ mod production_ports_tests;
 
 pub(crate) use symbol_lease::forget_symbols;
 
+mod recall_door;
 pub mod sdk;
 
 #[cfg(test)]

@@ -12,6 +12,10 @@
 //! cut here: the async door stops waiting when the answer is due and answers
 //! with the best pack ready, so a slow stage, a writer it waits on or a busy
 //! blocking pool never holds the turn (retrieval hub #call-mode).
+//!
+//! High, xhigh and max rerank on the `[models]` reranker under the recall's
+//! own budget line ([`super::recall_rerank`]). Without a reranker route they
+//! run unreranked and say so; with one, nothing stands in for it.
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -37,10 +41,18 @@ impl SyncServer {
     pub(crate) fn recall(
         &self,
         memory: &Memory<'_>,
+        actor: EntityId,
+        class: EdgeActorClass,
         input: RecallRequest,
     ) -> MemoryResult<MemoryPack> {
+        let effort = input.effort.map_or(Effort::Medium, RecallEffort::level);
+        let rerank = self.door_rerank(effort, actor, class)?;
         let embed = self.recall_embed(input.effort);
-        oneiron::task_verb::sdk::recall_with_vector(memory, input, embed)
+        let door = RecallDoor {
+            rerank: rerank.engine(),
+            ..RecallDoor::now()
+        };
+        oneiron::task_verb::sdk::recall_at_door(memory, input, embed, &door)
     }
 
     /// The query embedder recall runs with. Light is pure retrieval with no
@@ -95,11 +107,12 @@ impl SyncServer {
         let listing = Arc::clone(&producers);
         let pack: MemoryResult<MemoryPack> = async move {
             let arrived = Instant::now();
-            let (_, budget) = oneiron::memory::resolve_recall_dial(
+            let (effort, budget) = oneiron::memory::resolve_recall_dial(
                 input.effort,
                 input.deadline_ms,
                 self.vault.call_mode_deadline(),
             )?;
+            let rerank = self.door_rerank(effort, actor, class)?;
             let ready = CutSlot::default();
             let publish = ready.clone();
             let server = Arc::clone(self);
@@ -108,6 +121,7 @@ impl SyncServer {
                 let door = RecallDoor {
                     arrived,
                     on_cut: budget.map(|_| &publish as &(dyn Fn(MemoryPack) + Sync)),
+                    rerank: rerank.engine(),
                 };
                 let memory = reader(&server.vault, actor, class, proof.as_ref())
                     .at(locality)
@@ -182,7 +196,7 @@ impl SyncServer {
             let memory = reader(&self.vault, actor, class, proof.as_ref())
                 .at(locality)
                 .listing_producers(producers);
-            return blocking(|| self.recall(&memory, input));
+            return blocking(|| self.recall(&memory, actor, class, input));
         };
         let ready = CutSlot::default();
         let publish = ready.clone();
@@ -196,6 +210,7 @@ impl SyncServer {
                 let door = RecallDoor {
                     arrived,
                     on_cut: Some(&publish),
+                    rerank: oneiron::memory::RecallRerank::Required,
                 };
                 let memory = reader(&vault, actor, class, proof.as_ref())
                     .at(locality)

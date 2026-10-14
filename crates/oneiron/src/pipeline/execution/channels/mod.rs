@@ -416,6 +416,7 @@ impl PipelineBuilder<'_> {
             if acc.ranked_lists.is_empty() {
                 return Ok(RetrievalTxnOutput {
                     revisions: HashMap::new(),
+                    words_bound: Default::default(),
                     diagnostics,
                     scores: Vec::new(),
                     cited_messages: HashMap::new(),
@@ -603,13 +604,18 @@ impl PipelineBuilder<'_> {
             let RerankApplied {
                 merged_components: rerank_merged_components,
                 reranked_trace_scores,
+                words_revisions,
+                unpinned_turns,
             } = self.apply_rerank_ladder(
+                rtxn,
                 &mut scores,
+                &mut metadata_cache,
+                &mut claim_gate,
                 RerankLadderInputs {
                     ladder_scores: rerank_ladder_scores.as_ref(),
                     blend_access_factors: &blend_access_factors,
                     blend_components: &blend_components,
-                    claim_gate: &claim_gate,
+                    filter_config,
                     rerank_query,
                     capture_retrieval_trace,
                     trace_candidate_limit,
@@ -649,6 +655,11 @@ impl PipelineBuilder<'_> {
                     &mut claim_gate,
                 )?
             };
+            // A turn with no words to pin is not served under scores its
+            // later words were not given.
+            if !unpinned_turns.is_empty() {
+                scores.retain(|hit| !unpinned_turns.contains(&hit.id));
+            }
 
             let capabilities = self.prepare_pack_candidates(
                 rtxn,
@@ -735,9 +746,14 @@ impl PipelineBuilder<'_> {
             // A hit whose indexed revision cannot be read has no pin, so it
             // leaves the pack instead of failing the run. A MESSAGE whose text
             // moved into an entity document is one: the migration replaced its
-            // body without retaining the revision its state still names.
+            // body without retaining the revision its state still names. A
+            // reranked hit is pinned where its words were scored.
             let mut revisions = HashMap::new();
             for hit in &scores {
+                if let Some(revision) = words_revisions.get(&hit.id) {
+                    revisions.insert(hit.id, *revision);
+                    continue;
+                }
                 match self.vault.indexed_revision_in_txn(rtxn, &hit.id) {
                     Ok(Some(revision)) => {
                         revisions.insert(hit.id, revision);
@@ -748,6 +764,7 @@ impl PipelineBuilder<'_> {
             }
             Ok(RetrievalTxnOutput {
                 revisions,
+                words_bound: words_revisions.into_keys().collect(),
                 diagnostics,
                 scores,
                 cited_messages,

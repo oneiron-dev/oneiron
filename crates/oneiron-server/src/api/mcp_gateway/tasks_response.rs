@@ -357,10 +357,21 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         oneiron::MEMORY_CODE_NOT_FOUND => -32004,
         oneiron::MEMORY_CODE_FORBIDDEN
         | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
+        | oneiron::memory::MEMORY_CODE_BUDGET_SPENT
         | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
-        oneiron::MEMORY_CODE_INTERNAL => -32603,
+        oneiron::MEMORY_CODE_INTERNAL | oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => -32603,
         _ => -32602,
     };
+    // A paid call's own refusals keep their names: a client tells a spent
+    // line from a model that did not answer without reading the sentence.
+    let kind = match error.code.as_str() {
+        oneiron::memory::MEMORY_CODE_BUDGET_SPENT => Some("budget_spent"),
+        oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => Some("model_unavailable"),
+        _ => None,
+    };
+    if let Some(kind) = kind {
+        return McpGatewayError::new(code, kind, error.message);
+    }
     // A facade refusal carrying a successor keeps the same stable kind and
     // typed data the engine-error path emits (ONE-1936) — one vocabulary for
     // one condition, whichever door reported it.

@@ -49,7 +49,7 @@ def long_signature(params):
 def rust_type(value):
     return value.replace('crate::', 'oneiron::') if value.startswith('crate::') else 'oneiron::task_verb::sdk::' + value
 
-SERVER_RECALL_DOC = "/// `POST /v1/core/facade/recall` → `SyncServer::recall`, the recall door every\n/// server transport shares: it embeds the query whenever the vault's embedder\n/// is serving.\n///\n/// The lease argument is `None` and is not a client input: no lease-issuer\n/// exists, and a bearer slip is not one. `Effort::High` therefore returns the\n/// engine's own `LEASE_REQUIRED`, which this projection forwards as that exact\n/// code — the bindings neither mint nor simulate a lease.\n"
+SERVER_RECALL_DOC = "/// `POST /v1/core/facade/recall` → `SyncServer::recall_off_runtime`, the\n/// recall door every server transport shares: it embeds the query whenever\n/// the vault's embedder is serving.\n///\n/// The lease is not a client input, and a bearer slip is not one. At high,\n/// xhigh and max the door admits the recall on a line of its own and\n/// reranks on the `[models]` reranker; its refusals (`BUDGET_SPENT`,\n/// `MODEL_UNAVAILABLE`) are forwarded as those exact codes. With no\n/// reranker route the recall runs unreranked and reports\n/// `skipped / no_reranker` in `retrieval_meta.rerank`.\n"
 
 # Boundary codecs are selected by argument/result type, never by verb name.
 ARGUMENTS = {
