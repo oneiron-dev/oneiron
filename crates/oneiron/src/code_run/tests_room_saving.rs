@@ -672,10 +672,11 @@ fn a_later_save_names_its_saver_in_each_copy() {
     );
 }
 
-/// H203 (Sol and Astra R2 F1, F4): a slip the owner narrowed and handed on
-/// to another key still names them, but it is not their act. Narrowed to
-/// reading, or to nothing at all, it saves nothing and the room hears
-/// nothing: the save takes only the slip this vault minted, as minted.
+/// H203 (Sol and Astra R2 F1, F4; R4 F1): a slip the owner narrowed and
+/// handed on to another key still names them, but it is not their act.
+/// Narrowed to reading, or to nothing at all, it saves nothing and the room
+/// hears nothing, nor does one narrowed under the owner's own key: the save
+/// takes only the slip this vault minted, as minted.
 #[test]
 fn a_room_save_refuses_a_slip_the_owner_handed_on() {
     use ed25519_dalek::{Signer, SigningKey};
@@ -719,6 +720,30 @@ fn a_room_save_refuses_a_slip_the_owner_handed_on() {
             "a slip handed on saved the room: {refused:?}"
         );
     }
+    // Narrowed under the owner's own key, it is still not the slip as minted
+    // (Sol and Astra R4 F1).
+    let mut kept = minted(&vault, room.owner, "human", 0xB4);
+    issuer
+        .attenuate(
+            &mut kept,
+            crate::authority::SlipCaveat {
+                ttl_secs: Some(30),
+                ..Default::default()
+            },
+        )
+        .expect("narrow the slip");
+    let refused = session
+        .save_talk_by(room.owner, &verified(&vault, &kept))
+        .err();
+    assert!(
+        matches!(
+            &refused,
+            Some(Error::OffRecord(
+                crate::error::OffRecordError::OffRecordPromoteUnauthenticated { .. }
+            ))
+        ),
+        "a slip narrowed under the owner's key saved the room: {refused:?}"
+    );
     assert!(vault.get_raw(&message(0)).expect("read").is_none());
     let heard = session
         .record_for(room.owner)
