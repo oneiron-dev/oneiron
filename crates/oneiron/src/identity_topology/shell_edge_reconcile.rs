@@ -457,4 +457,31 @@ impl Vault {
             wtxn,
         )
     }
+
+    /// Re-decides the stored shell edges when seal standing moved with no
+    /// authority write, before any caller observes this vault: a reopen
+    /// under another privacy posture, or a restore whose image edges sit
+    /// beside the authority it carried in (H161). A vault with no topology
+    /// event, or whose mine signers are the ones its edges were drawn under,
+    /// pays only the check.
+    pub(crate) fn reconcile_identity_topology_on_open(&self) -> Result<()> {
+        {
+            let rtxn = self.store.env.read_txn()?;
+            if self
+                .store
+                .type_index
+                .prefix_iter(&rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])?
+                .next()
+                .is_none()
+            {
+                return Ok(());
+            }
+        }
+        self.with_write_txn_grouped(|wtxn| {
+            if super::admission_disposition::mine_signers_changed_in_txn(&self.store, wtxn)? {
+                self.reconcile_identity_topology_edges_in_txn(wtxn)?;
+            }
+            Ok(())
+        })
+    }
 }

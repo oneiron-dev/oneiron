@@ -571,8 +571,6 @@ fn a_restore_keeping_authority_keeps_own_merges_in_force() {
         120,
     )
     .unwrap();
-    copy.with_write_txn(|wtxn| copy.reconcile_identity_topology_edges_in_txn(wtxn))
-        .unwrap();
     assert!(shell_edge(&copy, loser, survivor));
     assert_eq!(folded_state(&copy, loser), EntityLifecycleState::Merged);
 }
@@ -598,8 +596,6 @@ fn own_merges_survive_a_beside_restore_and_never_bind_a_stranger() {
     .unwrap();
     let machine = |vault: &Vault| vault.local_machine().unwrap().map(|machine| machine.id);
     assert!(machine(&copy).is_none() || machine(&copy) != machine(&source));
-    copy.with_write_txn(|wtxn| copy.reconcile_identity_topology_edges_in_txn(wtxn))
-        .unwrap();
     assert!(shell_edge(&copy, loser, survivor));
     assert_eq!(folded_state(&copy, loser), EntityLifecycleState::Merged);
 
@@ -607,4 +603,82 @@ fn own_merges_survive_a_beside_restore_and_never_bind_a_stranger() {
     deliver_merge(&stranger, &source, loser, survivor);
     assert!(!shell_edge(&stranger, loser, survivor));
     assert_eq!(folded_state(&stranger, loser), EntityLifecycleState::Active);
+}
+
+/// A restore that keeps current authority re-decides the image's shell edges
+/// under the roster it carries in, both ways: a machine removed since the
+/// image no longer holds its merge, and one marked mine since now does.
+#[test]
+fn a_restore_keeping_authority_redecides_edges_under_the_current_roster() {
+    let yours = MachineRole::Owned(MachineOwnership::Yours);
+    for (then, now) in [
+        (yours, MachineRole::Removed),
+        (MachineRole::Owned(MachineOwnership::Rented), yours),
+    ] {
+        let host = host();
+        let (_dir, laptop) = install();
+        let machine = enroll(&host, &laptop, then);
+        let (loser, survivor) = (EntityId::now(), EntityId::now());
+        merge_locally(&laptop, loser, survivor);
+        deliver_merge(&host.vault, &laptop, loser, survivor);
+        assert_eq!(shell_edge(&host.vault, loser, survivor), then == yours);
+        let root = tempfile::tempdir().unwrap();
+        let image = root.path().join("image");
+        host.vault.snapshot_checkpoint(&image, 100).unwrap();
+        host.vault
+            .set_machine_role(&host.issuer, &host.owner, machine, now)
+            .unwrap();
+
+        let (copy, _) = Vault::restore_checkpoint_keeping_authority(
+            &image,
+            &root.path().join("copy"),
+            VaultConfig::default(),
+            &host.vault,
+            120,
+        )
+        .unwrap();
+        assert_eq!(
+            shell_edge(&copy, loser, survivor),
+            now == yours,
+            "{then:?} then {now:?}"
+        );
+        assert_eq!(
+            folded_state(&copy, loser) == EntityLifecycleState::Merged,
+            now == yours
+        );
+    }
+}
+
+/// Standing follows the posture a vault opens with. Reopened as a hosted
+/// vault, whose root never vouches that a machine is the owner's, a paired
+/// laptop's merge leaves force with no authority write in between.
+#[test]
+fn a_reopen_under_another_posture_redecides_the_stored_edges() {
+    let host = host();
+    let (_laptop_dir, laptop) = install();
+    enroll(&host, &laptop, MachineRole::Owned(MachineOwnership::Yours));
+    let (loser, survivor) = (EntityId::now(), EntityId::now());
+    merge_locally(&laptop, loser, survivor);
+    deliver_merge(&host.vault, &laptop, loser, survivor);
+    assert!(shell_edge(&host.vault, loser, survivor));
+
+    let Host {
+        _dir: dir, vault, ..
+    } = host;
+    drop(vault);
+    let hosted = Vault::open(
+        dir.path(),
+        VaultConfig {
+            privacy: crate::config::VaultPrivacyConfig {
+                posture: crate::config::HostingPrivacyPosture::Hosted,
+                data_key_custody: crate::config::VaultDataKeyCustody::HostManagedKms {
+                    key_ref: "kms://example/placeholder".to_owned(),
+                },
+            },
+            ..VaultConfig::default()
+        },
+    )
+    .unwrap();
+    assert!(!shell_edge(&hosted, loser, survivor));
+    assert_eq!(folded_state(&hosted, loser), EntityLifecycleState::Active);
 }
