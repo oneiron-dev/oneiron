@@ -347,6 +347,18 @@ pub(in crate::dreamer_consolidation) fn extraction_reply(
         }
         Err(_) => return Err(invalid_consolidation("extraction response must be JSON")),
     };
+    // A derived struct also reads a JSON array positionally; the contract
+    // names objects only.
+    let objects = reply.is_object()
+        && reply
+            .get("persons")
+            .and_then(serde_json::Value::as_array)
+            .is_none_or(|people| people.iter().all(serde_json::Value::is_object));
+    if !objects {
+        return Err(invalid_consolidation(
+            "extraction response breaks its contract",
+        ));
+    }
     let reply: ExtractionReply = serde_json::from_value(reply)
         .map_err(|_| invalid_consolidation("extraction response breaks its contract"))?;
     let hex = |id: &str| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit());

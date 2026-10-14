@@ -115,13 +115,17 @@ impl Vault {
         }
     }
 
-    /// The level a call outside any seat birth carries for `purpose`: the
-    /// vault's authored default, composed as a birth composes it, else
-    /// `fallback` held under the vault ceiling. A ceiling below `fallback`
-    /// is the vault's own word, so it comes back as authored.
+    /// The level a call outside any seat birth carries for `purpose` on
+    /// `model`: the vault's authored default, composed as a birth composes
+    /// it, else `fallback` held under the vault ceiling. A level the model's
+    /// ladder lacks comes down to its highest rung below that level (`none`
+    /// for a plain or Gemini model), and is the vault's word, so it comes back
+    /// as authored, as a ceiling below `fallback` does.
     pub fn purpose_effort(
         &self,
         purpose: &super::CallPurpose,
+        model: &ModelId,
+        reasoning: bool,
         fallback: ReasoningEffort,
     ) -> Result<PurposeEffort> {
         let policy = self.seat_policy()?;
@@ -129,13 +133,26 @@ impl Vault {
             &super::routing::purpose_key(purpose),
             self.description_policy()?.as_ref(),
         )?;
-        Ok(match composed {
-            Some(effort) => PurposeEffort::Authored(effort),
-            None if policy::effort_rank(fallback) > policy::effort_rank(policy.vault_ceiling) => {
-                PurposeEffort::Authored(policy.vault_ceiling)
-            }
-            None => PurposeEffort::Fallback(fallback),
-        })
+        let wire = self
+            .model_registry_row(model)?
+            .map_or(ModelWireFormat::OpenaiCompat, |row| row.wire);
+        let ladder = policy.ladder(model, wire, reasoning);
+        let wanted = composed.unwrap_or(fallback);
+        if composed.is_none() && policy.admits(fallback, &ladder) {
+            return Ok(PurposeEffort::Fallback(fallback));
+        }
+        if policy.admits(wanted, &ladder) {
+            return Ok(PurposeEffort::Authored(wanted));
+        }
+        let rank = policy::effort_rank;
+        Ok(PurposeEffort::Authored(
+            ladder
+                .iter()
+                .copied()
+                .filter(|rung| rank(*rung) <= rank(wanted) && policy.admits(*rung, &ladder))
+                .max_by_key(|rung| rank(*rung))
+                .unwrap_or(ReasoningEffort::None),
+        ))
     }
 
     /// Set a revision-pinned description for a registered MODEL identity.

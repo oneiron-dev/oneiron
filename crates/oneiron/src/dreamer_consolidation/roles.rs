@@ -101,8 +101,9 @@ const DEFAULT_BUDGET_TOKENS: u64 = 4_096;
 
 /// Pins `request`'s reasoning level, for the backend that will serve it: the
 /// vault's authored level for the call's purpose, else medium with its
-/// thinking budget. A backend that takes no reasoning controls for the model
-/// is pinned to `none`, the only level it can be sent.
+/// thinking budget, each within what the model's ladder takes. A backend
+/// that takes no reasoning controls for the model is pinned to `none`, the
+/// only level it can be sent.
 pub(super) fn bind_reasoning(
     vault: &Vault,
     backend: &dyn LlmBackend,
@@ -113,7 +114,12 @@ pub(super) fn bind_reasoning(
         request.envelope.seat_effort = Some(ReasoningEffort::None);
         return Ok(());
     }
-    match vault.purpose_effort(&request.envelope.purpose, DEFAULT_EFFORT)? {
+    match vault.purpose_effort(
+        &request.envelope.purpose,
+        &request.model,
+        true,
+        DEFAULT_EFFORT,
+    )? {
         PurposeEffort::Authored(effort) => request.envelope.seat_effort = Some(effort),
         PurposeEffort::Fallback(effort) => {
             request.envelope.seat_effort = Some(effort);

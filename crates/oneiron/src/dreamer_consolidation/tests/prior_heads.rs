@@ -3243,7 +3243,16 @@ fn every_dreamer_call_names_medium_with_its_budget_unless_the_vault_authors_a_le
             let reply = crate::dreamer_consolidation::executor::extraction::extraction_reply(
                 &text_response(answer.clone()),
             )?;
-            assert_eq!(reply.candidates.len(), lines.len() - 2, "one per line");
+            let added: Vec<_> = reply.persons.iter().map(|person| &person.id).collect();
+            assert_eq!(
+                reply.candidates.len() + reply.persons.len() + usize::from(!added.is_empty()),
+                lines.len() - 2,
+                "one per line"
+            );
+            for person in &reply.persons {
+                assert!(person.name.starts_with("Placeholder") && input.contains(&person.name));
+                assert!(person.id.starts_with(&person.id[..1].repeat(28)));
+            }
             for candidate in &reply.candidates {
                 let predicate = candidate["predicate"].as_str().unwrap();
                 assert!(predicate.starts_with("placeholder."), "{predicate}");
@@ -3252,7 +3261,10 @@ fn every_dreamer_call_names_medium_with_its_budget_unless_the_vault_authors_a_le
                     let Some(id) = id.and_then(serde_json::Value::as_str) else {
                         continue;
                     };
-                    assert!(input.contains(id) && id.starts_with(&id[..1].repeat(28)));
+                    assert!(
+                        (input.contains(id) || added.iter().any(|added| *added == id))
+                            && id.starts_with(&id[..1].repeat(28))
+                    );
                 }
                 let cited = &candidate["evidence_refs"][0];
                 let turn = cited["source_id"].as_str().unwrap();
@@ -3272,8 +3284,9 @@ fn every_dreamer_call_names_medium_with_its_budget_unless_the_vault_authors_a_le
 }
 
 /// DREAMER-SEAT done-means: a reply that stopped exactly one `}` short is
-/// mended and lands; one two short is refused (the attempt parks), paid and
-/// not memoized, so the attempt's next run asks the model again.
+/// mended and lands; one two short is refused: the attempt parks with the
+/// call's spend (Sol r1 F2), and the reply is not memoized, so the next run
+/// asks the model again.
 #[test]
 fn a_reply_one_brace_short_is_mended_and_one_two_short_is_refused_and_asked_again() -> Result<()> {
     let (_dir, vault) = open_vault();
@@ -3293,8 +3306,12 @@ fn a_reply_one_brace_short_is_mended_and_one_two_short_is_refused_and_asked_agai
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
     let refused = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?;
     assert!(
-        matches!(refused, DreamerAttemptExecution::Park { .. }),
-        "two short is refused: {refused:?}"
+        matches!(
+            &refused,
+            DreamerAttemptExecution::ParkWithSpend { reason, completed_units: 50, .. }
+                if reason.starts_with("extraction reply refused")
+        ),
+        "two short is refused and its spend kept: {refused:?}"
     );
     assert_eq!(names(&vault, fx.subject)?, vec![fx.head]);
     let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());

@@ -83,6 +83,11 @@ enum PartitionRun {
     Trapped,
     /// The response was charged but the run must stop before publishing it.
     Checkpoint,
+    /// The reply broke the extraction contract: charged, not memoized, and
+    /// the attempt parks with the reason, to ask again on resume.
+    Refused {
+        reason: String,
+    },
     Held {
         candidates: Vec<VerifiedCandidate>,
         retry_at_ms: u64,
@@ -152,13 +157,16 @@ impl ConsolidationExecutor<'_> {
                 charges.record_usage(&usage);
                 return Ok(PartitionRun::Checkpoint);
             }
-            // A reply that broke the contract is paid and not memoized; a
-            // wake with no room left for another call asks again on resume.
-            Err(crate::llm::DurableStepError::SpentSchemaValidation { usage, .. })
-                if ctx.deadline.in_finalize_window() =>
-            {
+            // A reply that broke the contract is paid and not memoized: the
+            // attempt parks with its spend and asks again on resume.
+            Err(crate::llm::DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
                 charges.record_usage(&usage);
-                return Ok(PartitionRun::Checkpoint);
+                if ctx.deadline.in_finalize_window() {
+                    return Ok(PartitionRun::Checkpoint);
+                }
+                return Ok(PartitionRun::Refused {
+                    reason: format!("extraction reply refused: {}", errors.join("; ")),
+                });
             }
             Err(error) => return Err(error),
         };
@@ -900,6 +908,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 Ok(charges.checkpoint())
             }
             Ok(PartitionRun::Checkpoint) => Ok(charges.checkpoint()),
+            Ok(PartitionRun::Refused { reason }) => Ok(charges.park(&reason)),
             Ok(PartitionRun::Completed { candidates }) => {
                 resources.accept_verified(resources.scope(), self.sink, candidates)?;
                 Ok(DreamerAttemptExecution::Completed {
