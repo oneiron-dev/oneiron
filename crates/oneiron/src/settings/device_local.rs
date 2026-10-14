@@ -21,8 +21,7 @@ impl Vault {
     pub fn rows_may_leave_device(&self, rows: &[EntityId]) -> Result<bool> {
         let _acceptance = self.device_only_acceptance();
         let rtxn = self.store.env.read_txn()?;
-        let flagged =
-            device_local_worlds_at(&self.store, &rtxn, crate::claim::CallerLocality::OffDevice)?;
+        let flagged = device_local_worlds_at(self, &rtxn, crate::claim::CallerLocality::OffDevice)?;
         for row in rows {
             match device_only_withholds(&self.store, &rtxn, &flagged, row) {
                 Ok(false) => {}
@@ -38,7 +37,7 @@ impl Vault {
     pub fn world_is_device_only(&self, world: EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
         Ok(
-            device_local_worlds_at(&self.store, &rtxn, crate::claim::CallerLocality::OffDevice)?
+            device_local_worlds_at(self, &rtxn, crate::claim::CallerLocality::OffDevice)?
                 .contains(&world),
         )
     }
@@ -48,7 +47,7 @@ impl Vault {
     /// kept too.
     pub fn device_local_keeps(&self, id: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        device_local_keeps_in(&self.store, &rtxn, id)
+        device_local_keeps_in(self, &rtxn, id)
     }
 
     /// The rows of `ids` a caller off this device may count or name: each one
@@ -56,8 +55,7 @@ impl Vault {
     /// one read.
     pub fn off_device_readable(&self, ids: Vec<EntityId>) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
-        let flagged =
-            device_local_worlds_at(&self.store, &rtxn, crate::claim::CallerLocality::OffDevice)?;
+        let flagged = device_local_worlds_at(self, &rtxn, crate::claim::CallerLocality::OffDevice)?;
         let mut readable = Vec::with_capacity(ids.len());
         for id in ids {
             if !device_local_keeps_among(&self.store, &rtxn, &flagged, &id)? {
@@ -69,24 +67,21 @@ impl Vault {
 }
 
 /// [`Vault::device_local_keeps`], read in the caller's transaction.
-pub(crate) fn device_local_keeps_in(
-    store: &crate::store::Store,
-    txn: &RoTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
-    let flagged = device_local_worlds_at(store, txn, crate::claim::CallerLocality::OffDevice)?;
-    device_local_keeps_among(store, txn, &flagged, id)
+pub(crate) fn device_local_keeps_in(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    let flagged = device_local_worlds_at(vault, txn, crate::claim::CallerLocality::OffDevice)?;
+    device_local_keeps_among(&vault.store, txn, &flagged, id)
 }
 
 /// The device-local worlds whose rows a caller at `locality` reads nothing
-/// of: every flagged one off this device, none on it.
+/// of: every world the world settings withhold from another machine, off
+/// this device; none on it.
 pub(crate) fn device_local_worlds_at(
-    store: &crate::store::Store,
+    vault: &Vault,
     txn: &RoTxn<'_>,
     locality: crate::claim::CallerLocality,
 ) -> Result<std::collections::BTreeSet<EntityId>> {
     match locality {
-        crate::claim::CallerLocality::OffDevice => device_only_worlds_in(store, txn),
+        crate::claim::CallerLocality::OffDevice => device_only_worlds_in(vault, txn),
         crate::claim::CallerLocality::OnDevice => Ok(std::collections::BTreeSet::new()),
     }
 }

@@ -22,12 +22,19 @@ const MAX_SYNC_STATE_KEYS: usize = 10_000;
 
 /// Generic sync diagnostics may not edit the inputs to an authority fold.
 /// Authority-owned writers use their own validated doors and advance the
-/// snapshot generation in the same transaction as their row changes.
+/// snapshot generation in the same transaction as their row changes. Nor may
+/// they edit the record of which identity-topology seals this vault wrote and
+/// whose it last counted: only the seal writes it (H161).
 #[cfg(feature = "sync")]
 fn check_generic_sync_state_key(key: &str) -> Result<()> {
     if key.starts_with("authlog:") || key.starts_with("peerauth:") {
         return Err(Error::InvalidConfig(
             "authority-owned sync_state key requires its authority door".to_owned(),
+        ));
+    }
+    if key.starts_with("it:sealed:") || key.starts_with("it:mine_signers") {
+        return Err(Error::InvalidConfig(
+            "identity-topology seal trust is written only by the seal".to_owned(),
         ));
     }
     Ok(())
@@ -132,7 +139,7 @@ impl Vault {
         locality: crate::claim::CallerLocality,
     ) -> Result<Option<u64>> {
         let txn = self.store.env.read_txn()?;
-        let flagged = crate::settings::device_local_worlds_at(&self.store, &txn, locality)?;
+        let flagged = crate::settings::device_local_worlds_at(self, &txn, locality)?;
         for row in self.store.port_entity_timeline(
             &txn,
             crate::ports::TimelineQuery {

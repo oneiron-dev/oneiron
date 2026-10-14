@@ -109,7 +109,7 @@ pub fn scoped_subscription_pending(
                 continue;
             }
             if locality == CallerLocality::OffDevice
-                && crate::settings::device_local_keeps_in(&vault.store, &txn, &id)?
+                && crate::settings::device_local_keeps_in(vault, &txn, &id)?
             {
                 continue;
             }

@@ -53,7 +53,7 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
     let mut state = State::default();
     let txn = vault.store.env.read_txn()?;
     let flagged = crate::settings::device_local_worlds_at(
-        &vault.store,
+        vault,
         &txn,
         crate::claim::CallerLocality::OffDevice,
     )?;
@@ -217,7 +217,7 @@ pub(crate) fn copy_judged(vault: &Vault, source: &LoroDoc, out: &LoroDoc) -> Res
         .collect::<Result<BTreeSet<_>>>()?;
     let txn = vault.store.env.read_txn()?;
     let flagged = crate::settings::device_local_worlds_at(
-        &vault.store,
+        vault,
         &txn,
         crate::claim::CallerLocality::OffDevice,
     )?;
