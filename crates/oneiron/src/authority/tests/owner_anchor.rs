@@ -259,8 +259,8 @@ fn a_foreign_chain_never_lends_the_owners_machine_its_keys() {
         profile(&clone, YOURS, 1),
     );
     let entries = vec![
-        genesis.clone(),
-        owner_published.clone(),
+        genesis,
+        owner_published,
         host_published,
         mark.clone(),
         cloned,
@@ -319,7 +319,7 @@ fn a_root_record_binds_its_vault_and_both_keys() {
     };
     assert!(refused(copied, &substitute));
     assert!(refused(root_record(&root), &ed_key(137)));
-    let mut cosigned = published.clone();
+    let mut cosigned = published;
     cosigned.cosigns.push(AuthoritySignature {
         suite: AuthoritySignatureSuite::Ed25519,
         public_key: authority_key_from_ed(&ed_key(138)),

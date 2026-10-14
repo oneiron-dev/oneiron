@@ -51,7 +51,7 @@ thread_local! {
 
 /// `vault`'s own encryption key for `vault_id`, from this test's host keystore.
 pub(super) fn own_encryption_key(vault: &Vault, vault_id: [u8; 32]) -> MachineEncryptionKey {
-    vault.install_device_keystore(HOST_KEYS.with(|keys| keys.clone()));
+    vault.install_device_keystore(HOST_KEYS.with(std::sync::Arc::clone));
     vault.machine_encryption_key(vault_id).unwrap()
 }
 
