@@ -525,10 +525,11 @@ pub(crate) fn require_facet_placement_in(
     let in_scope = reader
         .authority_scope()
         .is_none_or(|scope| scope.facets.contains(&crate::federation::ScopeId(tgt)));
+    // An owner key's standing is rechecked in this snapshot, as every point
+    // read rechecks it: a key kept past its owner's revocation places nothing.
+    let lane = vault.scoped_read(reader.clone());
     if in_scope
-        && vault
-            .scoped_read(reader.clone())
-            .is_entity_readable_in(txn, &src)?
+        && lane.is_entity_readable_with_policy_in(txn, &lane.live_policy_manifest_in(txn)?, &src)?
     {
         return Ok(());
     }

@@ -446,6 +446,16 @@ fn an_owner_lane_read_after_revocation_keeps_the_binding_code() {
         MemoryError::from(error).code,
         MEMORY_CODE_OWNER_BINDING_REQUIRED
     );
+    // So does code mode's facet placement, judged in the edge's own write
+    // transaction: a door that kept the key places no row (Sol R4 F5 on #1432).
+    let txn = vault.store.env.read_txn().expect("read txn");
+    let error =
+        crate::code_run::require_facet_placement_in(&vault, lane.actor_key(), &txn, subject, owner)
+            .expect_err("the owner key no longer holds");
+    assert_eq!(
+        MemoryError::from(error).code,
+        MEMORY_CODE_OWNER_BINDING_REQUIRED
+    );
 }
 
 /// Astra #1413-003: a narrower credential of the owner's skipped the
