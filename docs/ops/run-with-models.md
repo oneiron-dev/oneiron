@@ -449,25 +449,49 @@ rerank_budget_units = 32000   # each recall's own line; the default
 ```
 
 Each paid recall runs on a line of its own under the vault's budget policy,
-as a chat turn does. The rerank call is admitted on its own permit, sent
-through the run's gate and settled: the tokens the reranker reports, or the
-call's reservation (one call's 8000 units, or the whole line if smaller) when
-it reports none. Its `Admitted`, `Dispatched` and `Settled` rows go to the
-server's run receipts. If the vault has a model manifest, its binding for the
-`reranker` role picks the model, as for chat.
+as a chat turn does. Before a call leaves it is priced on its words, a unit
+per byte of each document plus the query once per document, and 16 more
+per document for the marks a cross-encoder puts around each pair. A line
+that cannot cover that refuses the call unsent with `BUDGET_SPENT`. The
+default line covers 50 documents of 500 ASCII characters beside a query of
+about 120; longer documents, text outside ASCII (several bytes a
+character), or a model whose template wraps each pair in a longer prompt
+need a larger `rerank_budget_units`. Each rung of the `reranker` route the
+call reaches is admitted on its own permit, reserving that price (at least
+one call's 8000 units, or the whole line if smaller), sent through the run's
+gate and settled: the tokens the reranker reports, or the reservation when
+it reports none. A rung that failed after it went out pays its reservation,
+and a fallback rung goes out only while the line still covers the price.
+The `Admitted`, `Dispatched` and `Settled` rows go to the server's run
+receipts. If the vault has a model manifest, its binding for the `reranker`
+role picks the model, as for chat.
 
 The recall scores exactly the block it would rerank: the candidates the
 reader may read, with each one's text as the reader's own read serves it.
-A message whose words live in its document (a streamed message, the
-server's own chat replies among them, or an edited one) is found but not
-reranked yet: it follows the reranked rows in its first-stage order.
+A row with no revision that holds its words (a message whose words live in
+its document: a streamed message, the server's own chat replies among them,
+or an edited one; or a turn whose messages show none) is found but not
+reranked yet: it follows the reranked rows in its first-stage order. Each
+text is judged by the write door as it would leave, a turn's messages
+joined as the reranker would read them, and one the door refuses is sent
+empty. So is a row a device-only world keeps, at the revision scored: a
+`[models]` reranker is reached over HTTP, never on the device. A row sent
+empty scores last. A block with no text to send makes no call and says
+`skipped` with `no_candidates`. Each rung, a fallback's too, goes out only
+while that device-only verdict, run again, keeps none of the rows it sends
+with words. Once it keeps one (its world was flagged while a rung was out),
+nothing more is sent, and the recall ranks by fusion and says `skipped` with
+`device_only` to a caller on this device; a caller off it reads
+`no_candidates`, as it reads no hint of a device-local row. The pack repeats
+the name the endpoint says
+answered as `served_model` only when it is at most 200 printable characters.
 The model runs outside every vault transaction, and the scores apply only to
 that same block. A block that changed while it was scored (the vault was
 written to) is scored once more; if it changes again the recall is refused
 with `INVALID_STATE` (409) and nothing stale is used. The pack's
 `retrieval_meta.rerank` says what happened: `{"status": "applied", "model",
 "served_model", "candidates", "calls"}` or `{"status": "skipped", "reason":
-"no_reranker" | "no_candidates" | "deadline"}`.
+"no_reranker" | "no_candidates" | "deadline" | "device_only"}`.
 
 Without a `reranker` route, `high` and above run their graph expansion
 unreranked, and say `skipped` with `no_reranker`. With one, nothing stands in

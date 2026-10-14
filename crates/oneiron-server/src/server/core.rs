@@ -117,6 +117,9 @@ pub struct SyncServer {
     /// Model seats, background AI status and the Dreamer's session hints.
     /// Inert unless the serve path attaches a configured host.
     pub(crate) ai: crate::ai_host::AiHandle,
+    /// Where rerank calls run when their door cannot drive them on its
+    /// caller's runtime.
+    pub(crate) rerank_runtime: super::recall_rerank::CallRuntime,
     /// Host-injected, request-by-request egress decision for nonlocal extraction.
     pub(crate) extraction_egress: Option<Arc<dyn oneiron::llm::ExtractionEgressPredicate>>,
     /// The vault's path, backup plan and schedule, set by `serve`. `None`
@@ -265,6 +268,7 @@ impl SyncServer {
             llm: None,
             run_receipts: Arc::default(),
             ai: crate::ai_host::AiHandle::inert(),
+            rerank_runtime: Default::default(),
             extraction_egress: None,
             owner_host: None,
             feedback: None,
