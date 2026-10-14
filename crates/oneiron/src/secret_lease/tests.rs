@@ -1116,6 +1116,128 @@ fn revoke_records_a_failed_file_removal() {
 }
 
 // ---------------------------------------------------------------------------
+// C9: T2 custody follows the file the vault wrote, not the path string
+// ---------------------------------------------------------------------------
+
+/// A registered T2 file under a live lease, for the substitution checks.
+fn registered_t2() -> (tempfile::TempDir, Vault, PathBuf, EntityId) {
+    let (tmp, vault, _declared, path) = t2_vault();
+    let lease_id = vault
+        .materialize_secret_lease("local", EFFECTOR, 3600)
+        .expect("lease")
+        .lease
+        .lease_id;
+    vault
+        .register_secret_local(&lease_id, &path, "project-alpha")
+        .expect("registration");
+    (tmp, vault, path, lease_id)
+}
+
+#[cfg(unix)]
+#[test]
+fn rematerialization_writes_no_byte_into_a_substituted_or_shared_inode() {
+    // C9 (secscan 2026-10-14): the same-path replace re-checked the path and
+    // truncated whatever regular file answered to it. A hard link planted at
+    // the name, or a second name on the vault's own file, received the value.
+    let (tmp, vault, path, lease_id) = registered_t2();
+    let unrelated = tmp.path().join("unrelated.txt");
+    std::fs::write(&unrelated, b"unrelated bytes").expect("unrelated file");
+    std::fs::remove_file(&path).expect("unlink the registered name");
+    std::fs::hard_link(&unrelated, &path).expect("plant a hard link");
+    let err = vault
+        .register_secret_local(&lease_id, &path, "project-alpha")
+        .expect_err("a substituted inode is not this lease's file");
+    assert!(
+        matches!(
+            err,
+            Error::Secret(SecretError::SecretLeasePathRefused { .. })
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(std::fs::read(&unrelated).expect("read"), b"unrelated bytes");
+
+    // The vault's own file with a second name elsewhere: a rotated value
+    // written through it would land in the other name too.
+    let (tmp, vault, path, lease_id) = registered_t2();
+    let second_name = tmp.path().join("second-name");
+    std::fs::hard_link(&path, &second_name).expect("second name");
+    let id = vault
+        .resolve_secret_ref("local")
+        .expect("resolve")
+        .expect("id");
+    rotate_record_for_test(&vault, &id, VALUE_V2);
+    let err = vault
+        .register_secret_local(&lease_id, &path, "project-alpha")
+        .expect_err("a file with two names is refused");
+    assert!(
+        matches!(
+            err,
+            Error::Secret(SecretError::SecretLeasePathRefused { .. })
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(std::fs::read(&second_name).expect("read"), VALUE_V1);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_ancestor_swapped_before_the_open_redirects_no_byte() {
+    // C9: ancestors were checked by path and the file opened by path, so a
+    // directory swapped for a symlink in between sent the value elsewhere.
+    for fresh in [true, false] {
+        let (tmp, vault, _declared, path) = t2_vault();
+        let lease_id = vault
+            .materialize_secret_lease("local", EFFECTOR, 3600)
+            .expect("lease")
+            .lease
+            .lease_id;
+        if !fresh {
+            vault
+                .register_secret_local(&lease_id, &path, "project-alpha")
+                .expect("registration");
+        }
+        let parent = path.parent().expect("parent").to_path_buf();
+        let moved = tmp.path().join("moved");
+        let elsewhere = tmp.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).expect("elsewhere");
+        let bait = elsewhere.join("api.key");
+        if !fresh {
+            std::fs::write(&bait, b"unrelated bytes").expect("bait");
+        }
+        let (from, to, target) = (parent.clone(), moved.clone(), elsewhere.clone());
+        path_swap_hook::arm(move || {
+            std::fs::rename(&from, &to).expect("move the real directory");
+            std::os::unix::fs::symlink(&target, &from).expect("plant the symlink");
+        });
+        let _ = vault.register_secret_local(&lease_id, &path, "project-alpha");
+        let landed = std::fs::read(&bait).ok();
+        assert!(
+            landed.is_none() || landed.as_deref() == Some(b"unrelated bytes".as_slice()),
+            "fresh={fresh}: the value was written through the swapped ancestor"
+        );
+    }
+}
+
+#[test]
+fn teardown_leaves_a_substituted_file_and_keeps_the_row() {
+    // C9: teardown unlinked whatever answered to the stored path and then
+    // dropped the row, deleting an unrelated file and stranding the secret.
+    let (_tmp, vault, path, lease_id) = registered_t2();
+    std::fs::remove_file(&path).expect("unlink the registered name");
+    std::fs::write(&path, b"unrelated bytes").expect("plant an unrelated file");
+    let revoked = vault
+        .revoke_secret_lease(&lease_id, 1_700_000_100)
+        .expect("revoke flips the status");
+    assert_eq!(revoked.status, SecretLeaseStatus::Revoked);
+    assert_eq!(std::fs::read(&path).expect("read"), b"unrelated bytes");
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let stored = read_local_registration_in_txn(&vault.store, &rtxn, &lease_id)
+        .expect("read registration")
+        .expect("the row stays while its file is unaccounted for");
+    assert!(stored.removal_error.is_some());
+}
+
+// ---------------------------------------------------------------------------
 // S6 lease-scoped staleness
 // ---------------------------------------------------------------------------
 

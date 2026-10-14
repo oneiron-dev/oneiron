@@ -119,6 +119,8 @@ pub(super) fn write_secret_file(
     use std::os::unix::fs::PermissionsExt;
 
     check_secret_file_policy(target_path, replace)?;
+    #[cfg(test)]
+    path_swap_hook::fire();
     let mut options = fs::OpenOptions::new();
     options
         .write(true)
@@ -196,5 +198,31 @@ pub(super) mod file_write_fault_hook {
     /// Returns and clears the armed flag (one-shot).
     pub(super) fn take_file_write_failure() -> bool {
         FILE_WRITE_FAILURE.with(|c| c.replace(false))
+    }
+}
+
+#[cfg(test)]
+pub(super) mod path_swap_hook {
+    //! One-shot test-only seam between resolving a T2 target's directory and
+    //! opening its file: the window a racing local process would use to swap
+    //! an ancestor for a symlink.
+
+    use std::cell::RefCell;
+
+    type Swap = Box<dyn FnOnce()>;
+
+    thread_local! {
+        static SWAP: RefCell<Option<Swap>> = const { RefCell::new(None) };
+    }
+
+    /// Runs `swap` once, at the next T2 file write on this thread.
+    pub(in crate::secret_lease) fn arm(swap: impl FnOnce() + 'static) {
+        SWAP.with_borrow_mut(|armed| *armed = Some(Box::new(swap)));
+    }
+
+    pub(super) fn fire() {
+        if let Some(swap) = SWAP.with_borrow_mut(Option::take) {
+            swap();
+        }
     }
 }
