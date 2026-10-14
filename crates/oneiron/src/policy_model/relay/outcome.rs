@@ -145,6 +145,20 @@ pub enum RelayResolution {
 }
 
 impl RelayResolution {
+    /// Every resolution, for the checks that must cover each one. A variant
+    /// added above belongs here too; the attestation table's exhaustive match
+    /// stops compiling until it is placed.
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 7] = [
+        Self::PatternDecided,
+        Self::ModelDecided,
+        Self::PatternGatedAllow,
+        Self::LogOnly,
+        Self::NoPolicyInPlay,
+        Self::VaultSideDecided,
+        Self::Unresolved,
+    ];
+
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {

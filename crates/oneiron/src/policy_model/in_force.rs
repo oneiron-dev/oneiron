@@ -160,3 +160,65 @@ impl Vault {
         Ok(!verdict.is_inert_clean_allow())
     }
 }
+
+/// Declares [`SettlingDoor`] and its `ALL` list from one list of doors, so
+/// the list a check walks cannot miss a door the enum names.
+#[cfg(test)]
+macro_rules! settling_doors {
+    ($($(#[doc = $doc:literal])* $door:ident,)*) => {
+        /// Every door that hands out a settled result, named by the point
+        /// just before the transactions that settle it.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub(super) enum SettlingDoor {
+            $($(#[doc = $doc])* $door,)*
+        }
+
+        impl SettlingDoor {
+            pub(super) const ALL: &'static [Self] = &[$(Self::$door,)*];
+        }
+    };
+}
+
+#[cfg(test)]
+settling_doors! {
+    /// `record_bare_classify_receipt`: the bare classify doors.
+    BareClassify,
+    /// `enforcement_from_verdict` writing its own row: the classify-and-enforce
+    /// doors.
+    RecordAndEnforce,
+    /// `stale_owner_plane_fail_open`: an enforce door whose pass would not
+    /// hold still.
+    StaleFailOpen,
+    /// `enforcement_from_verdict` on a verdict another door recorded:
+    /// `enforce_policy_model_verdict`.
+    EnforceRecorded,
+    /// `classify_both_planes`, before its final transaction.
+    DualPlane,
+    /// `record_relay_receipt`: `relay_boundary_pass`, and the relay half of
+    /// the dual-plane door.
+    RelayBoundary,
+    /// `stateless_owner_classification`: the anonymous chat turn.
+    AnonymousChat,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Runs as a door reaches the transactions that settle what it hands
+    /// out: the window between a pinned pass and the door's last
+    /// transaction.
+    pub(super) static BEFORE_SETTLING: std::cell::RefCell<Option<Box<dyn FnMut(SettlingDoor)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn before_settling(door: SettlingDoor) {
+    // Out of the slot while it runs, so a hook that drives a door does not
+    // find itself there.
+    let Some(mut hook) = BEFORE_SETTLING.with(|slot| slot.borrow_mut().take()) else {
+        return;
+    };
+    hook(door);
+    BEFORE_SETTLING.with(|slot| {
+        slot.borrow_mut().get_or_insert(hook);
+    });
+}

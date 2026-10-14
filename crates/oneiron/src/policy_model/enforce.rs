@@ -233,6 +233,8 @@ impl Vault {
         request: PolicyClassifyRequest,
         config: &PolicyModelConfig,
     ) -> Result<PolicyModelEnforcement> {
+        #[cfg(test)]
+        super::in_force::before_settling(super::in_force::SettlingDoor::StaleFailOpen);
         let mut wtxn = self.store.env.write_txn()?;
         let verdict = self.owner_plane_fail_open_in_txn(&wtxn, &request, config)?;
         let action = PolicyEnforcementAction::for_decision(verdict.decision);
@@ -395,9 +397,10 @@ impl Vault {
         ledger: DecisionLedger,
     ) -> Result<PolicyModelEnforcement> {
         #[cfg(test)]
-        if ledger == DecisionLedger::Record {
-            super::classify::before_owner_receipt();
-        }
+        super::in_force::before_settling(match ledger {
+            DecisionLedger::Record => super::in_force::SettlingDoor::RecordAndEnforce,
+            DecisionLedger::AlreadyRecorded => super::in_force::SettlingDoor::EnforceRecorded,
+        });
         // An allow that learned nothing carries no signal and is not
         // receipted. An allow that DID learn something — a pattern fired and
         // the model overruled it, say — is exactly the row the substrate owner

@@ -921,3 +921,24 @@ pub(super) fn edge_auth_identity(
     )
     .expect("test identity must pass edge-auth validation")
 }
+
+/// Moves the owner's manifest to `manifest`, once, as `door` reaches the
+/// transactions that settle what it hands out.
+pub(super) fn move_policy_before(
+    vault: &std::rc::Rc<Vault>,
+    door: SettlingDoor,
+    manifest: Vec<u8>,
+) {
+    let hook_vault = std::rc::Rc::clone(vault);
+    let mut pending = Some(manifest);
+    BEFORE_SETTLING.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(move |reached| {
+            if reached == door
+                && let Some(manifest) = pending.take()
+            {
+                put_policy_manifest_bytes(&hook_vault, test_id(0x48), &manifest)
+                    .expect("settle-time manifest write");
+            }
+        }));
+    });
+}

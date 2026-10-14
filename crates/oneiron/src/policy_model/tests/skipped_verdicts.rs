@@ -629,13 +629,11 @@ fn a_bare_classify_never_hands_out_a_verdict_the_policy_moved_under() -> Result<
         let (_tmp, vault) = temp_vault();
         let vault = std::rc::Rc::new(vault);
         put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
-        let hook_vault = std::rc::Rc::clone(&vault);
-        crate::policy_model::classify::BEFORE_OWNER_RECEIPT.with(|slot| {
-            *slot.borrow_mut() = Some(Box::new(move || {
-                put_policy_manifest_bytes(&hook_vault, test_id(0x48), &spoilers_manifest("block"))
-                    .expect("receipt-time manifest write");
-            }));
-        });
+        move_policy_before(
+            &vault,
+            SettlingDoor::BareClassify,
+            spoilers_manifest("block"),
+        );
         let verdict = block_on(vault.classify_policy_model_with_backend(
             request.clone(),
             &config,
@@ -767,18 +765,6 @@ fn a_dual_plane_hosted_half_never_relays_on_a_binding_the_owner_repin_moved() ->
     Ok(())
 }
 
-/// Moves the owner's manifest to `manifest` as the next owner receipt writer
-/// starts.
-fn move_policy_before_owner_receipt(vault: &std::rc::Rc<Vault>, manifest: Vec<u8>) {
-    let hook_vault = std::rc::Rc::clone(vault);
-    crate::policy_model::classify::BEFORE_OWNER_RECEIPT.with(|slot| {
-        *slot.borrow_mut() = Some(Box::new(move || {
-            put_policy_manifest_bytes(&hook_vault, test_id(0x48), &manifest)
-                .expect("receipt-time manifest write");
-        }));
-    });
-}
-
 /// H121, the classify-and-enforce doors' last window: the pass is pinned,
 /// then the owner edits the policy before the row the door writes. The doors
 /// used to record and return the decision reached for the replaced policy: a
@@ -797,7 +783,11 @@ fn an_enforce_door_never_records_a_verdict_the_policy_moved_under() -> Result<()
         let (_tmp, vault) = temp_vault();
         let vault = std::rc::Rc::new(vault);
         put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
-        move_policy_before_owner_receipt(&vault, spoilers_manifest("block"));
+        move_policy_before(
+            &vault,
+            SettlingDoor::RecordAndEnforce,
+            spoilers_manifest("block"),
+        );
         let enforcement = match body {
             Some(body) => block_on(vault.enforce_policy_model_with_backend(
                 request.clone(),
@@ -853,7 +843,7 @@ fn an_owner_opt_out_before_the_row_releases_the_content() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let vault = std::rc::Rc::new(vault);
     put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
-    move_policy_before_owner_receipt(&vault, opted_out.clone());
+    move_policy_before(&vault, SettlingDoor::BareClassify, opted_out.clone());
     let verdict = block_on(vault.classify_policy_model_with_backend(
         request.clone(),
         &config,
@@ -872,7 +862,7 @@ fn an_owner_opt_out_before_the_row_releases_the_content() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let vault = std::rc::Rc::new(vault);
     put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
-    move_policy_before_owner_receipt(&vault, opted_out);
+    move_policy_before(&vault, SettlingDoor::RecordAndEnforce, opted_out);
     let enforcement = block_on(vault.enforce_policy_model_with_backend(
         request,
         &config,
@@ -915,7 +905,7 @@ fn a_dual_plane_cloud_reuse_is_checked_in_the_last_transaction() -> Result<()> {
         .attesting_hosted_plane(&registered_policy(&registry), &config, &hosted_pass),
         requested_hash: Mutex::new(None),
     };
-    move_policy_before_owner_receipt(&vault, spoilers_manifest("block"));
+    move_policy_before(&vault, SettlingDoor::DualPlane, spoilers_manifest("block"));
     let backend = clean_backend();
     let pass = block_on(vault.classify_both_planes(
         request.clone(),

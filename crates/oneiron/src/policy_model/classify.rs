@@ -208,7 +208,7 @@ impl Vault {
         config: &PolicyModelConfig,
     ) -> Result<PolicyClassifyVerdict> {
         #[cfg(test)]
-        before_owner_receipt();
+        super::in_force::before_settling(super::in_force::SettlingDoor::BareClassify);
         // F107's window, on the doors F94 and F99 built: the verdict was bound
         // to a policy frontier, and the door hands it out after a LATER
         // transaction. The silence rule only drops an Allow that still
@@ -526,6 +526,8 @@ pub(crate) async fn stateless_owner_classification(
         let pass = vault
             .owner_plane_pass_with_budget(&request, config, backend, budget)
             .await?;
+        #[cfg(test)]
+        super::in_force::before_settling(super::in_force::SettlingDoor::AnonymousChat);
         if !vault.policy_model_verdict_is_stale_with_config(&pass.verdict, &request, config)? {
             let verdict = pass.verdict;
             // A human hold needs a durable queue. This route cannot create
@@ -544,23 +546,6 @@ pub(crate) async fn stateless_owner_classification(
     Err(Error::ConcurrentWrite(
         "anonymous chat policy changed during classification",
     ))
-}
-
-#[cfg(test)]
-thread_local! {
-    /// Runs once as an owner receipt writer starts: the window between a
-    /// pinned pass and the row that hands it out.
-    pub(super) static BEFORE_OWNER_RECEIPT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-#[cfg(test)]
-pub(super) fn before_owner_receipt() {
-    BEFORE_OWNER_RECEIPT.with(|hook| {
-        if let Some(hook) = hook.take() {
-            hook();
-        }
-    });
 }
 
 /// What the owner plane concluded. A pass whose model did not get to speak
