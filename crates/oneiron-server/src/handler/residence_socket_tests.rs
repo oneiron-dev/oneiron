@@ -1198,3 +1198,138 @@ async fn v11_owner_client_gets_no_residence_sub_tags() {
     assert_socket_refused(&mut second, residence_update, "RESIDENCE_UPDATE").await;
     fixture.server_task.abort();
 }
+
+/// Whether `bytes`, imported into an empty document, set `id`'s entity carrier anywhere in the
+/// history they carry.
+fn history_sets_entity(bytes: &[u8], id: EntityId) -> bool {
+    let doc = loro::LoroDoc::new();
+    if doc.import(bytes).is_err() {
+        return false;
+    }
+    let entities = loro::ContainerID::new_root("entities", loro::ContainerType::Map);
+    doc.export_json_updates(&loro::VersionVector::default(), &doc.oplog_vv())
+        .changes
+        .iter()
+        .flat_map(|change| &change.ops)
+        .any(|op| {
+            op.container == entities
+                && matches!(
+                    &op.content,
+                    loro::json::JsonOpContent::Map(loro::json::MapOp::Insert { key, .. })
+                        if *key == id.to_hex()
+                )
+        })
+}
+
+/// Bug repro (SOL-R6-001 / ASTRA-R6-003) and done-means: home erased a CLAIM in the world-month
+/// window before the device promoted it, so the erased body sits in the window's history. A
+/// promoted connection that asks with an empty version vector must not receive that history:
+/// home answers from its own promotion baseline or refuses.
+#[tokio::test]
+async fn a_promoted_connection_gets_no_history_from_before_its_promotion() {
+    let fixture = WorldResidence::start(false).await;
+    let home_doc = fixture
+        .server
+        .get_or_create_window(&fixture.window)
+        .await
+        .unwrap();
+    let subject = EntityId::now();
+    fixture
+        .home
+        .put_entity(
+            &subject,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            fixture.at(),
+            fixture.now,
+            b"erased subject",
+        )
+        .unwrap();
+    let mut body = ClaimBody::new(
+        "test.world_residence",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("erased world fact"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(fixture.world);
+    let erased = EntityId::now();
+    fixture
+        .home
+        .put_claim(&erased, &body, fixture.at(), fixture.now)
+        .unwrap();
+    if !window_map_has(&home_doc, erased) {
+        let raw = fixture.home.get_raw(&erased).unwrap().unwrap();
+        home_doc
+            .get_map("entities")
+            .insert(&erased.to_hex(), raw.as_slice())
+            .unwrap();
+        home_doc.commit();
+    }
+    fixture
+        .home
+        .delete_entity_with_reason(&erased, oneiron::DeleteReason::GdprDelete)
+        .unwrap();
+    assert!(!window_map_has(&home_doc, erased));
+    assert!(
+        history_sets_entity(
+            &home_doc.export(loro::ExportMode::all_updates()).unwrap(),
+            erased
+        ),
+        "fixture: the erased body stays in home's window history"
+    );
+
+    let (mut client, _events) =
+        SyncClient::new(fixture.manager.clone(), fixture.config.clone()).unwrap();
+    let mut socket = fixture
+        .device_socket(&mut client, "residence-promotion-baseline")
+        .await;
+    for (tag, payload) in [
+        (
+            window_sub_tags::PROMOTION_REQUEST,
+            oneiron::sync::encode_sync_selector(&fixture.selector).unwrap(),
+        ),
+        (
+            window_sub_tags::VV_REQUEST,
+            loro::VersionVector::default().encode(),
+        ),
+    ] {
+        let frame = transport::encode_window_sync(fixture.window.as_str(), tag, &payload)
+            .into_result()
+            .unwrap();
+        socket.send(Message::Binary(frame.into())).await.unwrap();
+    }
+    let mut seen = Vec::new();
+    let answered = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let frame = match socket.next().await {
+                Some(Ok(Message::Binary(frame))) => frame,
+                None | Some(Ok(Message::Close(_)) | Err(_)) => return "refused",
+                Some(Ok(_)) => continue,
+            };
+            if frame.first() != Some(&transport::TAG_WINDOW_SYNC) {
+                continue;
+            }
+            let (key, tag, payload) = transport::decode_window_sync(&frame[1..]).unwrap();
+            if key != fixture.window.as_str() {
+                continue;
+            }
+            seen.push(tag);
+            assert!(
+                !history_sets_entity(payload, erased),
+                "a promoted connection received the body home erased before its promotion: {seen:?}"
+            );
+            if tag == window_sub_tags::VV_RESPONSE {
+                return "answered";
+            }
+        }
+    })
+    .await;
+    assert!(answered.is_ok(), "home never answered: {seen:?}");
+    assert!(
+        seen.contains(&window_sub_tags::PROMOTION_GRANTED),
+        "home refused the promotion itself: {seen:?}"
+    );
+    fixture.server_task.abort();
+}

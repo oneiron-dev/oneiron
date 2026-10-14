@@ -551,6 +551,32 @@ pub(crate) fn exchange_docs(a_name: &str, doc_a: &LoroDoc, b_name: &str, doc_b: 
     5
 }
 
+/// Brings both [`WINDOW`]s level the way a sync connection does: each side answers the other's
+/// version vector through the window export door, and the other imports that reply. Panics if
+/// either side is still behind after five rounds, the bound past which ARCH-0023b re-bootstraps.
+pub(crate) fn sync_through_doors(a: &TestNode, b: &TestNode) {
+    let key = WindowKey::new(WINDOW);
+    for _ in 0..5 {
+        let (vv_a, vv_b) = (a.doc(WINDOW).oplog_vv(), b.doc(WINDOW).oplog_vv());
+        if vv_a == vv_b {
+            return;
+        }
+        let to_b =
+            window::export_window_updates_since(&a.vault, &key, a.doc(WINDOW), &vv_b.encode())
+                .unwrap();
+        b.doc(WINDOW).import(&to_b).unwrap();
+        let to_a =
+            window::export_window_updates_since(&b.vault, &key, b.doc(WINDOW), &vv_a.encode())
+                .unwrap();
+        a.doc(WINDOW).import(&to_a).unwrap();
+    }
+    assert_eq!(
+        a.doc(WINDOW).oplog_vv(),
+        b.doc(WINDOW).oplog_vv(),
+        "a peer behind the other's window never caught up through its export door"
+    );
+}
+
 /// First-divergent-key diff of two ordered byte-maps.
 fn assert_btree_eq(
     what: &str,
