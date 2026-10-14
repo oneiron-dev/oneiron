@@ -20,7 +20,7 @@ use super::types::{AgentCeiling, AgentDefinition};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, RegistryError, Result};
 use crate::ports::EntityStoreRead;
-use crate::registry::ENTITY_TYPE_AGENT_DEF;
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_AUTHORITY_LOG};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable, StagedRow};
 use crate::store::Store;
 
@@ -259,7 +259,10 @@ pub(super) fn pinned_ceiling_in_txn(
 
 /// An id that has been an agent stays one: a put of another entity type at a
 /// pinned or seeded agent id is refused, so a delete cannot reopen the id as a
-/// row the gate reads no ceiling off.
+/// row the gate reads no ceiling off. A signed authority entry is the one
+/// exception: its id is its content's hash, which no one aims at an agent id,
+/// and it takes its id from any row there (ONE-1604-D1), so an agent put
+/// first cannot keep it out. The gate holds the id at `Proposed` after.
 ///
 /// # Errors
 ///
@@ -271,7 +274,10 @@ pub(crate) fn refuse_agent_id_retype_in_txn(
     id: &EntityId,
     entity_type: u8,
 ) -> Result<()> {
-    if entity_type == ENTITY_TYPE_AGENT_DEF || !is_agent_id_in_txn(store, txn, id)? {
+    if entity_type == ENTITY_TYPE_AGENT_DEF
+        || entity_type == ENTITY_TYPE_AUTHORITY_LOG
+        || !is_agent_id_in_txn(store, txn, id)?
+    {
         return Ok(());
     }
     Err(Error::Registry(RegistryError::EntityTypeImmutable {
