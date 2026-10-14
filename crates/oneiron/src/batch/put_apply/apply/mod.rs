@@ -641,6 +641,13 @@ pub(in crate::batch) fn apply_put(
         }
     }
 
+    if replicated
+        && body_changed
+        && let Some(body) = decoded_claim_body.as_ref()
+    {
+        crate::gate::attach_replicated_critical_confirm_in_txn(store, wtxn, &id, body)?;
+    }
+
     // Past every check that can reject this row remotely: a replicated row
     // under a provisional id retires the local provisional entity only when
     // it lands (see `release_held_id_in_txn`).

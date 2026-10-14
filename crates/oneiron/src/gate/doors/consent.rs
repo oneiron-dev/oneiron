@@ -23,7 +23,10 @@ pub(in crate::gate) struct GateConsentBinding {
 }
 
 impl GateConsentBinding {
-    pub(super) fn for_claim(body: &ClaimBody, policy: &PolicyManifestResolution) -> Result<Self> {
+    pub(in crate::gate) fn for_claim(
+        body: &ClaimBody,
+        policy: &PolicyManifestResolution,
+    ) -> Result<Self> {
         let mut normalized = body.clone();
         normalized.approval = ClaimApprovalStatus::Proposed;
         let encoded = crate::claim::encode_claim_body(&normalized)?;

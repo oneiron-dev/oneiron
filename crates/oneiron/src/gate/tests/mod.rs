@@ -61,6 +61,7 @@ mod manifest_authenticity;
 mod manifest_auto;
 mod policy_inputs;
 mod posture_override;
+mod replicated_critical_confirm;
 mod scoped_policy_values;
 mod scoped_read;
 mod special_doors;

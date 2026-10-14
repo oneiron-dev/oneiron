@@ -47,6 +47,7 @@ mod project_conversion;
 pub(crate) mod project_depth;
 pub(crate) mod proposal_observation;
 mod repair;
+mod replicated_confirm;
 mod resolution;
 mod tracker_limits;
 pub use self::dreamer_grant::DreamerWeaveReach;
@@ -176,6 +177,7 @@ pub(crate) use self::project_conversion::{
     LeaderFallback, ProjectConversionPolicy, RosterSelection, TaskHolderFallback,
 };
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
+pub(crate) use self::replicated_confirm::attach_replicated_critical_confirm_in_txn;
 pub(crate) use self::resolution::{
     GateDecisionRetentionPolicy, GateRetentionContext, LeaderChatDefault, ManifestDecodeMemo,
     PolicyManifestResolution, ProjectWidenAskFallback, ResidenceOperationBudgetLimits,
