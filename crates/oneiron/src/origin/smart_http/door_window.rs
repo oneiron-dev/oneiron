@@ -2,6 +2,7 @@
 //! pre-check, seam scan, verdict publish.
 
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,8 +12,8 @@ use super::door::{DoorAdmissionStamp, DoorHook, DoorSeam};
 use super::evidence::{RefUpdate, receive_pack_provenance_refused};
 use super::hooks::DoorHooksDir;
 use super::paths::{
-    DOOR_MAX_SCAN_LINES, DOOR_REFUSAL_NAME_CHARS, DOOR_VERDICT_OK, DOOR_WINDOW_POLL,
-    ORIGIN_MAX_REF_UPDATES, ORIGIN_REFUSED_REF_PREFIX, serve_failed,
+    DOOR_MAX_FRAMED_BYTES, DOOR_MAX_SCAN_LINES, DOOR_REFUSAL_NAME_CHARS, DOOR_VERDICT_OK,
+    DOOR_WINDOW_POLL, ORIGIN_MAX_REF_UPDATES, ORIGIN_REFUSED_REF_PREFIX, serve_failed,
 };
 use crate::Vault;
 use crate::codebase::RepoRef;
@@ -217,12 +218,24 @@ fn door_window_inputs(
     hooks: &DoorHooksDir,
 ) -> Result<(DoorWindowRequest, Vec<PushedBlob>, usize)> {
     let request = parse_door_request(&fs::read(request_path)?)?;
-    let (blobs, tip_blobs) = parse_door_streams(
-        &fs::read(hooks.blobs_path())?,
-        &fs::read(hooks.history_path())?,
-        DOOR_MAX_SCAN_LINES,
-    )?;
+    let mut framed = DOOR_MAX_FRAMED_BYTES;
+    let tip = read_framed(&hooks.blobs_path(), &mut framed)?;
+    let history = read_framed(&hooks.history_path(), &mut framed)?;
+    let (blobs, tip_blobs) = parse_door_streams(&tip, &history, DOOR_MAX_SCAN_LINES)?;
     Ok((request, blobs, tip_blobs))
+}
+
+/// Reads one framed stream whole, charging its bytes to `remaining`; a
+/// stream past it is refused before more of it is held.
+pub(super) fn read_framed(path: &Path, remaining: &mut u64) -> Result<Vec<u8>> {
+    let mut framed = Vec::new();
+    fs::File::open(path)?
+        .take(remaining.saturating_add(1))
+        .read_to_end(&mut framed)?;
+    *remaining = remaining
+        .checked_sub(framed.len() as u64)
+        .ok_or_else(|| serve_failed("door streams frame more bytes than it holds"))?;
+    Ok(framed)
 }
 
 /// Both streams' blobs, tip blobs first, and how many came from the tip
@@ -436,7 +449,7 @@ fn parse_framed_blobs(
             .ok_or_else(|| serve_failed("door blob record is truncated"))?;
         let content = &framed[start..stop];
         *lines = lines
-            .checked_sub(content_line_count(content))
+            .checked_sub(content_line_count(content).max(1))
             .ok_or_else(|| serve_failed("door scan splits into more lines than it holds"))?;
         blobs.push(PushedBlob {
             path,

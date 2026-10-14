@@ -272,10 +272,12 @@ fn history_blobs_under_names_rev_list_cannot_pass_on_still_land() {
 
 // The scan caps below are new with the history walk; they have no before.
 
-/// H263 review r2 (Astra F4): the byte cap bounds no memory on its own, since
-/// the door holds each line as its own allocation. Blobs under the byte cap
-/// whose lines pass the budget across both streams are refused before any
-/// line is split; at the budget they still parse whole.
+/// H263 review r2 (Astra F4) and r3 (Sol F2, Astra F8): the byte cap bounds no
+/// memory on its own, since the door holds each line and each record as its
+/// own allocation. Blobs under the byte cap whose lines, each record counting
+/// as one at least, pass the budget across both streams are refused before
+/// any line is split; at the budget they still parse whole. Framed streams,
+/// headers included, past their own bound are refused as they are read.
 #[test]
 fn door_streams_past_the_line_budget_are_refused_before_splitting() {
     let record = |oid: &str, content: &[u8], terminated: bool| {
@@ -286,14 +288,27 @@ fn door_streams_past_the_line_budget_are_refused_before_splitting() {
         }
         record
     };
-    let tip = record(&"1".repeat(40), &b"\n".repeat(3), false);
+    let mut tip = record(&"1".repeat(40), &b"\n".repeat(3), false);
+    tip.extend(record(&"3".repeat(40), b"", false));
     let history = record(&"2".repeat(40), b"first\nsecond\n", true);
-    assert!(parse_door_streams(&tip, &history, 4).is_err());
+    assert!(parse_door_streams(&tip, &history, 5).is_err());
     let (blobs, tip_blobs) =
-        parse_door_streams(&tip, &history, 5).expect("at the budget both streams parse");
-    assert_eq!(tip_blobs, 1);
+        parse_door_streams(&tip, &history, 6).expect("at the budget both streams parse");
+    assert_eq!(tip_blobs, 2);
     let lines: Vec<usize> = blobs.iter().map(|blob| blob.added_lines.len()).collect();
-    assert_eq!(lines, [3, 2]);
+    assert_eq!(lines, [3, 0, 2]);
+
+    let dir = tempfile::tempdir().expect("framed tempdir");
+    let path = dir.path().join("stream");
+    fs::write(&path, &tip).expect("write framed stream");
+    let mut short = tip.len() as u64 - 1;
+    assert!(read_framed(&path, &mut short).is_err());
+    let mut exact = tip.len() as u64;
+    assert_eq!(
+        read_framed(&path, &mut exact).expect("within the bound"),
+        tip
+    );
+    assert_eq!(exact, 0);
 }
 
 #[cfg(unix)]
