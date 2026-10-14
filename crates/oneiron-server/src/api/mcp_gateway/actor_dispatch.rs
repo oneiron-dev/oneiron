@@ -113,6 +113,7 @@ pub(crate) async fn resolve_mcp_gateway_actor(
         session,
         &actor.scope.facets,
         actor.scope.facet_ref,
+        locality,
     );
     Ok(McpCallContext {
         actor,

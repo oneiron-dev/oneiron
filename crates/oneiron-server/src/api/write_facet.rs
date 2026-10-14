@@ -4,6 +4,7 @@
 //! otherwise in the credential's write facet. MCP and the facade both ask here.
 use axum::http::HeaderMap;
 use oneiron::EntityId;
+use oneiron::claim::CallerLocality;
 use oneiron::federation::{ScopeAxis, ScopeId};
 
 /// Names the session a request is made in; its mode may name the facet the
@@ -32,17 +33,28 @@ pub(crate) fn request_session(headers: &HeaderMap) -> Result<Option<EntityId>, (
 /// The facet a write by a credential reading `facets` lands in. `None` for a
 /// credential never narrowed to facets: its writes keep their derived
 /// placement. Otherwise the session's facet when the credential reads it,
-/// else `write_facet` (the owner's pick at pairing), else the smallest.
+/// else `write_facet` (the owner's pick at pairing), else the smallest. A
+/// session a device-local world keeps from a caller at `locality` places
+/// nothing and answers as a missing one (DEC-0005).
 pub(crate) fn landing_facet(
     vault: &oneiron::Vault,
     session: Option<EntityId>,
     facets: &ScopeAxis<ScopeId>,
     write_facet: Option<EntityId>,
+    locality: CallerLocality,
 ) -> Result<Option<EntityId>, LandingRefused> {
     let ScopeAxis::Some(set) = facets else {
         return Ok(None);
     };
     let session_facet = match session {
+        Some(session)
+            if locality != CallerLocality::OnDevice
+                && vault
+                    .device_local_keeps(&session)
+                    .map_err(|_| LandingRefused)? =>
+        {
+            return Err(LandingRefused);
+        }
         Some(session) => vault.session_facet(session).map_err(|_| LandingRefused)?,
         None => None,
     };

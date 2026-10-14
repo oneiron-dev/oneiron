@@ -200,13 +200,19 @@ fn facade_landing(
         .vault
         .paired_write_facet(&proof.claims().slip_id)
         .map_err(MemoryError::from)?;
-    let landing = landing_facet(&server.vault, session, &proof.scope().facets, write_facet)
-        .map_err(|_| {
-            FacadeApiError::forbidden(
-                "the session this request names does not place this credential's writes",
-                ["Name a session whose facet this credential reads, or none."],
-            )
-        })?;
+    let landing = landing_facet(
+        &server.vault,
+        session,
+        &proof.scope().facets,
+        write_facet,
+        auth.locality(),
+    )
+    .map_err(|_| {
+        FacadeApiError::forbidden(
+            "the session this request names does not place this credential's writes",
+            ["Name a session whose facet this credential reads, or none."],
+        )
+    })?;
     auth.require_record_scope_carried(
         ScopeAxis::All,
         landing.map_or(ScopeAxis::All, |facet| {
@@ -234,8 +240,9 @@ fn facade_invoke_born(
     value: serde_json::Value,
     position: BirthPosition,
 ) -> Result<serde_json::Value, FacadeApiError> {
-    let memory =
-        credential_memory(&server.vault, Some(auth), actor, class).with_birth_position(position);
+    let memory = credential_memory(&server.vault, Some(auth), actor, class)
+        .at(auth.locality())
+        .with_birth_position(position);
     Ok(match facade_room_turn(headers)? {
         Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
         None => oneiron::task_verb::sdk::invoke(&memory, verb, value)?,
