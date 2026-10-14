@@ -9,6 +9,27 @@ use subtle::ConstantTimeEq;
 
 use super::args::ManagedError;
 
+/// The host's authority on a vault past its open gates: its logged root and
+/// the engine's MACHINE writers, which sign with host-held keys (ONE-1634).
+/// Then this install's key slots, only where the supervisor put them, and
+/// with them the host's own node in the roster: never the owner's, never a
+/// world key's recipient.
+pub(super) fn provision_host_authority(
+    vault: &oneiron::Vault,
+    issuer: &oneiron::authority::HostSlipIssuer,
+    keystore: &crate::config::KeystoreConfig,
+    data_dir: &Path,
+) -> oneiron::Result<()> {
+    vault.ensure_host_root_slip(issuer)?;
+    vault.provision_engine_machine_identities(issuer)?;
+    if keystore.install_on(vault, data_dir)
+        && let Err(error) = vault.provision_host_node(issuer)
+    {
+        tracing::warn!(%error, "this host's node is not in the roster; serving on");
+    }
+    Ok(())
+}
+
 /// Marks a vault as a synthetic canary: the only thing a contract-v1 managed
 /// open will accept in place of the probed hardened-tenant preconditions.
 pub const CANARY_MARKER_KEY: &str = "managed:canary:v1";

@@ -86,7 +86,8 @@ pub struct FoldedMachine {
     /// The roster revisions a key P1 accepts for an owned mark signed (owner
     /// held, and not in the host's custody on a hosted fold, judged on the
     /// merged history), merged as a chain of their own. Custody that reaches
-    /// its signer later empties it; it never falls back to an older revision.
+    /// its head's signer later leaves only the accepted removals; it never
+    /// falls back to an older owned revision.
     pub roster_trusted: Option<MachineRevision>,
     /// Each owner anchor's chain, by anchor key.
     pub anchored: BTreeMap<[u8; 32], MachineRevision>,
@@ -108,8 +109,12 @@ pub struct TrustedMachine<'a> {
 pub(super) struct MachineChain {
     pub(super) head: MachineRevision,
     /// The roster's chain only: the highest revision an owner-held key
-    /// signed, with only those revisions' removals.
+    /// signed. Its removal is judged again from `owner_held_removals`.
     pub(super) owner_held: Option<MachineRevision>,
+    /// The roster's chain only: each owner-held signer's removal, so one
+    /// stands while its own signer stays accepted, whatever custody later
+    /// finds of the key that signed the head.
+    pub(super) owner_held_removals: BTreeMap<AuthorityKey, MachineRevision>,
 }
 
 /// One install key a revision named, and under whose authority.
@@ -359,6 +364,13 @@ pub(super) fn apply_machine_profile(
     let prior = chains.remove(&MachineAdmitter::Roster);
     // The owner-held chain keeps only its own removals: a custodian's
     // removal stays in the roster's chain and never reaches it.
+    let mut owner_held_removals = prior
+        .as_ref()
+        .map(|chain| chain.owner_held_removals.clone())
+        .unwrap_or_default();
+    if signer_class == SignerClass::OwnerHeld && profile.role == MachineRole::Removed {
+        add_removal(&mut owner_held_removals, signer, &folded);
+    }
     let owner_held = match prior {
         _ if signer_class == SignerClass::OwnerHeld => Some(MachineRevision {
             removed: profile.role == MachineRole::Removed
@@ -376,6 +388,7 @@ pub(super) fn apply_machine_profile(
         MachineChain {
             head: folded,
             owner_held,
+            owner_held_removals,
         },
     );
     state
@@ -427,6 +440,7 @@ pub(super) fn apply_anchor_profile(
         MachineChain {
             head: folded,
             owner_held: None,
+            owner_held_removals: BTreeMap::new(),
         },
     );
     state
@@ -518,13 +532,31 @@ pub(super) fn merge_machine(left: &MachineRevision, right: &MachineRevision) -> 
 }
 
 fn merge_chain(left: &MachineChain, right: &MachineChain) -> MachineChain {
+    let mut owner_held_removals = left.owner_held_removals.clone();
+    for (signer, removal) in &right.owner_held_removals {
+        add_removal(&mut owner_held_removals, signer, removal);
+    }
     MachineChain {
         head: merge_machine(&left.head, &right.head),
         owner_held: match (&left.owner_held, &right.owner_held) {
             (Some(left), Some(right)) => Some(merge_machine(left, right)),
             (one, other) => one.clone().or_else(|| other.clone()),
         },
+        owner_held_removals,
     }
+}
+
+/// Records `signer`'s removal, merged with any it signed before.
+fn add_removal(
+    removals: &mut BTreeMap<AuthorityKey, MachineRevision>,
+    signer: &AuthorityKey,
+    removal: &MachineRevision,
+) {
+    let merged = match removals.get(signer) {
+        Some(earlier) => merge_machine(earlier, removal),
+        None => removal.clone(),
+    };
+    removals.insert(signer.clone(), merged);
 }
 
 fn join_chains(
@@ -628,6 +660,31 @@ impl<'s> ClaimIndex<'s> {
         }
     }
 
+    /// The roster revisions a key P1 accepts signed, judged on the merged
+    /// history: the owner-held head while its signer stays accepted, removed
+    /// once any accepted signer removed the machine. A custodian's removal
+    /// never counts, and an accepted one outlives a head whose signer custody
+    /// reached since (Sol code-R1 S1-F5).
+    fn accepted_roster(&self, chain: &MachineChain) -> Option<MachineRevision> {
+        let removal = chain
+            .owner_held_removals
+            .iter()
+            .filter(|(signer, _)| self.accepted(signer))
+            .map(|(_, removal)| removal.clone())
+            .reduce(|left, right| merge_machine(&left, &right));
+        match chain
+            .owner_held
+            .clone()
+            .filter(|held| self.accepted(&held.signer))
+        {
+            Some(held) => Some(MachineRevision {
+                removed: removal.is_some(),
+                ..held
+            }),
+            None => removal,
+        }
+    }
+
     /// P1's poison within one scope: the machine named another key there,
     /// another machine claims its key there, or its key or row is authority.
     fn poisoned(&self, id: EntityId, key: &[u8; 32], scope: ClaimScope<'_>) -> bool {
@@ -682,15 +739,15 @@ impl<'s> ClaimIndex<'s> {
             head.admitter_unsettled = roster_unsettled;
             head
         });
-        let roster_trusted = roster
-            .and_then(|chain| chain.owner_held.clone())
-            .filter(|held| self.accepted(&held.signer))
-            .map(|mut held| {
-                held.conflicted |=
-                    self.poisoned(id, &held.profile.machine_key, ClaimScope::Accepted);
-                held.admitter_unsettled = roster_unsettled;
-                held
-            });
+        let roster_trusted =
+            roster
+                .and_then(|chain| self.accepted_roster(chain))
+                .map(|mut held| {
+                    held.conflicted |=
+                        self.poisoned(id, &held.profile.machine_key, ClaimScope::Accepted);
+                    held.admitter_unsettled = roster_unsettled;
+                    held
+                });
         let anchored: BTreeMap<_, _> = chains
             .iter()
             .filter_map(|(admitter, chain)| match admitter {

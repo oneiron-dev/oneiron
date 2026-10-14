@@ -1,4 +1,5 @@
-//! Process memory only: for tests and for hosts that hold no secret at rest.
+//! Process memory only, for tests: a restart loses every slot, so no host keeps
+//! its machine's seed here.
 
 use std::collections::HashMap;
 use std::sync::Mutex;

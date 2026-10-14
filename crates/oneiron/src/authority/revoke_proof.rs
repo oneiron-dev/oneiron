@@ -33,7 +33,7 @@ enum Restriction {
     MachineRemoval {
         machine: EntityId,
         admitter: MachineAdmitter,
-        chain: MachineChain,
+        chain: Box<MachineChain>,
     },
 }
 
@@ -146,10 +146,16 @@ pub(super) fn derive_revoke_facts(
                 Restriction::MachineRemoval {
                     machine: profile.machine,
                     admitter: *admitter,
-                    chain: MachineChain {
+                    chain: Box::new(MachineChain {
                         head: chain.head.clone(),
                         owner_held: chain.owner_held.clone().filter(|held| held.entry == *hash),
-                    },
+                        owner_held_removals: chain
+                            .owner_held_removals
+                            .iter()
+                            .filter(|(_, removal)| removal.entry == *hash)
+                            .map(|(signer, removal)| (signer.clone(), removal.clone()))
+                            .collect(),
+                    }),
                 }
             }
             _ => continue,

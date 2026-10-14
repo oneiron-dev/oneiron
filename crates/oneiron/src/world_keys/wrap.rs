@@ -34,11 +34,7 @@ pub fn seal_world_key(
     }
     let key_id = binding.key.envelope_key_id();
     let to = recipient.envelope_recipient();
-    let mut payload = Zeroizing::new(Vec::with_capacity(PAYLOAD_LEN));
-    payload.extend_from_slice(PAYLOAD_LABEL);
-    payload.extend_from_slice(binding.owner.as_bytes());
-    payload.extend_from_slice(&binding.policy.0);
-    payload.extend_from_slice(key.expose());
+    let payload = world_key_payload(binding, key);
     let params = SealParams {
         suite: AEAD,
         purpose: Purpose::WorldDek,
@@ -57,6 +53,16 @@ pub fn seal_world_key(
         &mut SysRng,
     )
     .map_err(|_| refused("sealing failed"))
+}
+
+/// The plaintext a wrap of `key` under `binding` seals.
+pub(super) fn world_key_payload(binding: &WorldKeyBinding, key: &WorldKey) -> Zeroizing<Vec<u8>> {
+    let mut payload = Zeroizing::new(Vec::with_capacity(PAYLOAD_LEN));
+    payload.extend_from_slice(PAYLOAD_LABEL);
+    payload.extend_from_slice(binding.owner.as_bytes());
+    payload.extend_from_slice(&binding.policy.0);
+    payload.extend_from_slice(key.expose());
+    payload
 }
 
 /// Opens `envelope` with `recipient`'s secret, refusing any envelope not made for

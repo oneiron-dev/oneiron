@@ -687,11 +687,11 @@ impl Vault {
 #[cfg(test)]
 mod tests;
 
-/// An AUTHORITY_LOG row whose body the shared authority validator refuses.
+/// An AUTHORITY_LOG row whose body the shared authority validator refuses,
+/// an empty one included: no authority row is a bodiless shell.
 fn malformed_authority_row(blob: &[u8]) -> bool {
     crate::batch::EntityMetadataHeader::parse(blob).is_some_and(|header| {
         header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
-            && blob.len() > crate::batch::ENTITY_METADATA_HEADER_LEN
             && crate::authority::validate_authority_log_entry_body_bytes(
                 &blob[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             )

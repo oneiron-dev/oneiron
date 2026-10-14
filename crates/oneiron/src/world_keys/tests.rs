@@ -169,9 +169,11 @@ fn a_mismatched_world_generation_or_suite_is_refused() {
         assert!(open_world_key(&wrong, to, &machine, &wrap).is_err());
     }
 
-    // The same payload under a suite the reader does not accept, and under another purpose.
+    // This wrap's own payload under a suite the reader does not accept, and under
+    // another purpose: only the header field differs (Sol code-R1 S1-F9).
     let key_id = bound.key.envelope_key_id();
     let recipient = to.envelope_recipient();
+    let payload = super::wrap::world_key_payload(&bound, &key);
     let reseal = |suite, purpose, kem_suite| {
         seal(
             &SealParams {
@@ -186,10 +188,17 @@ fn a_mismatched_world_generation_or_suite_is_refused() {
                 recipient: machine.public_key(),
                 kem_suite,
             },
-            b"any payload",
+            &payload,
             &mut getrandom::SysRng,
         )
     };
+    let resealed = reseal(
+        SuiteId::XCHACHA20POLY1305_V1,
+        Purpose::WorldDek,
+        SuiteId::KEM_X25519_MLKEM1024_V1,
+    )
+    .unwrap();
+    assert!(open_world_key(&bound, to, &machine, &resealed).is_ok());
     let wrong: Vec<Envelope> = [
         (
             SuiteId::AES256GCM_V1,

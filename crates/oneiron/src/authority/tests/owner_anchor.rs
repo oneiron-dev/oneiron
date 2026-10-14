@@ -2,9 +2,11 @@
 //! marks machines in a chain of its own, the pin decides which anchor counts,
 //! and nothing a host signs under its own root or its roster takes the
 //! owner's mark away (contract §4, checks 7 and 7d).
+use super::history_transfer::re_root_entry;
 use super::machine_identity::request_for;
 use super::support::{
-    RosterChain, authority_key_from_ed, device, ed_key, genesis_entry, sign_ed, unsigned_entry,
+    RosterChain, authority_key_from_ed, cosign_ed, device, ed_key, enroll_entry, genesis_entry,
+    sign_ed, unsigned_entry,
 };
 use super::*;
 use crate::world_keys::{RecoveryRoot, RecoveryRootSeed};
@@ -341,6 +343,25 @@ fn fold_seen_at(
     fold_authority_log_for_posture(entries, &first_seen, now, &BTreeMap::new(), posture)
 }
 
+/// The host's roster enrols the anchor's public key as an agent, with its
+/// second key's cosign, on `parent`.
+fn enrol_anchor(
+    id: AuthorityVaultId,
+    parent: &AuthorityLogEntry,
+    (cloud, second): (&SigningKey, &SigningKey),
+    seq: u64,
+    root: &RecoveryRoot,
+) -> AuthorityLogEntry {
+    let op = AuthorityOp::EnrollDevice {
+        device: device(
+            AuthorityKey::Ed25519(root.anchor_key),
+            ROLE_AGENT,
+            AuthorityTier::Software,
+        ),
+    };
+    cosign_ed(signed(id, &[parent], cloud, seq, op), cloud, second)
+}
+
 /// Anyone may enrol a public key, so the host enrols the owner's anchor key
 /// in its roster as an agent, then revokes it. The anchor still marks and
 /// removes machines in its own chain, and the revocation never makes its mark
@@ -348,36 +369,34 @@ fn fold_seen_at(
 /// a roster that named the anchor's key took its marks off the anchor's chain.
 #[test]
 fn a_roster_that_names_the_anchor_key_never_takes_its_chain() {
-    let cloud = ed_key(140);
+    let (cloud, second) = (ed_key(140), ed_key(145));
     let genesis = hosted_genesis(&cloud);
     let id = genesis_vault_id(&genesis).unwrap();
     let (root, anchor, published) = publish(id, &genesis);
-    let anchor_key = AuthorityKey::Ed25519(root.anchor_key);
-    let enrolled = signed(
-        id,
-        &[&published],
-        &cloud,
-        1,
-        AuthorityOp::EnrollDevice {
-            device: device(anchor_key.clone(), ROLE_AGENT, AuthorityTier::Software),
-        },
-    );
+    let host_second = enroll_entry(id, &published, &cloud, 145, 1, 2);
+    let enrolled = enrol_anchor(id, &host_second, (&cloud, &second), 2, &root);
     let request = request_for(id, EntityId::now(), &ed_key(141));
     let mark = signed(id, &[&enrolled], &anchor, 2, profile(&request, YOURS, 1));
-    let revoked = signed(
-        id,
-        &[&mark],
+    let revoked = cosign_ed(
+        signed(
+            id,
+            &[&mark],
+            &cloud,
+            3,
+            AuthorityOp::RevokeDevice {
+                revoked_key: AuthorityKey::Ed25519(root.anchor_key),
+            },
+        ),
         &cloud,
-        2,
-        AuthorityOp::RevokeDevice {
-            revoked_key: anchor_key,
-        },
+        &second,
     );
-    let mut entries = vec![genesis, published, enrolled, mark, revoked];
+    let revocation = authority_entry_hash(&revoked).unwrap();
+    let mut entries = vec![genesis, published, host_second, enrolled, mark, revoked];
     let hosted = crate::HostingPrivacyPosture::Hosted;
     let late = 100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1;
     for now in [100, late] {
         let fold = fold_seen_at(&entries, now, hosted);
+        assert!(fold.valid_entries.contains(&revocation), "{now}");
         let trusted = fold
             .machine(request.machine)
             .and_then(|folded| folded.trusted(Some(&pin(&root))));
@@ -433,5 +452,143 @@ fn a_foreign_anchors_copy_never_renews_a_stale_roster_mark() {
     );
     let folded = late.machine(request.machine).unwrap();
     assert!(folded.roster_chain().stale);
+    assert!(!folded.is_mine(None));
+}
+
+/// The host enrols the owner's anchor key on a branch without the owner's
+/// root, then hands its roster to a new key there, which fences every key of
+/// that roster, the anchor's too. The owner's root, its mark and a mark made
+/// after the handoff all still stand, and no door refuses a new anchor row
+/// for the fence (Sol code-R1 S1-F7). Fails before: the fence pruned the
+/// owner's root and marks as rows of a retired signer.
+#[test]
+fn a_host_handoff_never_retires_the_owners_anchor() {
+    let (cloud, second, next) = (ed_key(146), ed_key(147), ed_key(148));
+    let genesis = hosted_genesis(&cloud);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let (root, anchor, published) = publish(id, &genesis);
+    let request = request_for(id, EntityId::now(), &ed_key(149));
+    let mark = signed(id, &[&published], &anchor, 2, profile(&request, YOURS, 1));
+    let host_second = enroll_entry(id, &genesis, &cloud, 147, 1, 2);
+    let enrolled = enrol_anchor(id, &host_second, (&cloud, &second), 2, &root);
+    let handoff = cosign_ed(
+        re_root_entry(id, &enrolled, &cloud, 3, &next),
+        &cloud,
+        &second,
+    );
+    let after = signed(
+        id,
+        &[&mark, &handoff],
+        &anchor,
+        3,
+        profile(&request, YOURS, 2),
+    );
+    let entries = vec![
+        genesis,
+        published.clone(),
+        mark.clone(),
+        host_second,
+        enrolled,
+        handoff.clone(),
+        after.clone(),
+    ];
+    let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
+    let fold = hosted_fold(&entries);
+    assert!(fold.valid_entries.contains(&hash(&handoff)));
+    assert!(
+        fold.retired_keys
+            .contains(&AuthorityKey::Ed25519(root.anchor_key))
+    );
+    for entry in [&published, &mark, &after] {
+        assert!(fold.valid_entries.contains(&hash(entry)));
+    }
+    let trusted = fold
+        .machine(request.machine)
+        .and_then(|folded| folded.trusted(Some(&pin(&root))))
+        .unwrap();
+    assert_eq!(trusted.profile.revision, 2);
+
+    let removal = signed(
+        id,
+        &[&after],
+        &anchor,
+        4,
+        profile(&request, MachineRole::Removed, 3),
+    );
+    let by_hash: BTreeMap<_, _> = entries
+        .iter()
+        .map(|entry| (hash(entry), entry.clone()))
+        .collect();
+    let mut row = |at: &AuthorityEntryHash| Ok::<_, crate::error::Error>(by_hash.get(at).cloned());
+    assert!(
+        !fold
+            .stands_on_retired_key(&hash(&removal), &removal, &mut row)
+            .unwrap()
+    );
+}
+
+/// On a hosted fold the owner's root key R marks machine M, then removes it.
+/// Key A, which R enrolled as an ordinary key, marks M again after that, and
+/// on a sibling branch R enrols A once more for the cloud, so custody reaches
+/// A on the merged history. A's mark leaves the trusted roster chain, but R's
+/// removal stays in it: with the owner's anchor marking M too, M is still not
+/// mine under the pin (Sol code-R1 S1-F5). Fails before: custody reaching the
+/// head's signer dropped the whole trusted chain, R's removal with it.
+#[test]
+fn custody_reaching_a_later_signer_keeps_an_accepted_removal() {
+    let (root_key, later) = (ed_key(150), ed_key(151));
+    let genesis = genesis_entry(150, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let (root, anchor, published) = publish(id, &genesis);
+    let enrol = |seq, roles, tier| {
+        signed(
+            id,
+            &[&genesis],
+            &root_key,
+            seq,
+            AuthorityOp::EnrollDevice {
+                device: device(authority_key_from_ed(&later), roles, tier),
+            },
+        )
+    };
+    let plain = enrol(1, ROLE_OWNER | ROLE_ADMIN, AuthorityTier::Software);
+    let request = request_for(id, EntityId::now(), &ed_key(152));
+    let marked = signed(id, &[&plain], &root_key, 2, profile(&request, YOURS, 1));
+    let removed = signed(
+        id,
+        &[&marked],
+        &root_key,
+        3,
+        profile(&request, MachineRole::Removed, 2),
+    );
+    let remarked = signed(id, &[&removed], &later, 1, profile(&request, YOURS, 3));
+    let custody = enrol(
+        4,
+        ROLE_OWNER | ROLE_ADMIN | ROLE_CLOUD,
+        AuthorityTier::CloudCustodial,
+    );
+    let anchor_mark = signed(id, &[&published], &anchor, 2, profile(&request, YOURS, 1));
+    let entries = [
+        genesis,
+        published,
+        plain,
+        marked,
+        removed,
+        remarked.clone(),
+        custody,
+        anchor_mark,
+    ];
+    let fold = hosted_fold(&entries);
+    assert!(
+        fold.valid_entries
+            .contains(&authority_entry_hash(&remarked).unwrap())
+    );
+    let folded = fold.machine(request.machine).unwrap();
+    assert_eq!(folded.roster_chain().signer_class, SignerClass::Custodial);
+    let trusted = folded.roster_trusted.as_ref().unwrap();
+    assert!(trusted.removed);
+    assert_eq!(trusted.signer, authority_key_from_ed(&root_key));
+    assert!(folded.admits(&MachineAdmitter::Anchor(root.anchor_key)));
+    assert!(!folded.is_mine(Some(&pin(&root))));
     assert!(!folded.is_mine(None));
 }

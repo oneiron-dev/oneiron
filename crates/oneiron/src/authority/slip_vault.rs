@@ -47,13 +47,14 @@ impl HostSlipIssuer {
         self.signing.verifying_key().to_bytes()
     }
     /// The roster row this host's key holds as the vault's root. A Hosted root is
-    /// stamped `ROLE_CLOUD`: the host holds it, so it never counts as an owner-held key
-    /// (E2). That is a fact in the log, so every replica's fold sees it.
+    /// stamped `ROLE_CLOUD` and `CloudCustodial`: the host holds it, so it never counts
+    /// as an owner-held key (E2). That is a fact in the log, so every replica's fold
+    /// sees it.
     pub(super) fn root_device(&self, posture: crate::HostingPrivacyPosture) -> DeviceAuthority {
-        let cloud = if posture == crate::HostingPrivacyPosture::Hosted {
-            ROLE_CLOUD
+        let (cloud, tier) = if posture == crate::HostingPrivacyPosture::Hosted {
+            (ROLE_CLOUD, AuthorityTier::CloudCustodial)
         } else {
-            0
+            (0, AuthorityTier::Software)
         };
         DeviceAuthority {
             key: self.public_key(),
@@ -62,7 +63,7 @@ impl HostSlipIssuer {
                 kind: HOST_ROOT_ATTESTATION.into(),
                 evidence: Vec::new(),
             },
-            tier: AuthorityTier::Software,
+            tier,
             roles: ROLE_OWNER | ROLE_ADMIN | cloud,
         }
     }

@@ -357,6 +357,7 @@ fn a_hosted_root_is_cloud_stamped_and_its_own_rows_still_validate() {
     let fold = vault.authority_fold().unwrap();
     let root = &fold.roster[&host.public_key()];
     assert_ne!(root.roles & ROLE_CLOUD, 0);
+    assert_eq!(root.tier, AuthorityTier::CloudCustodial);
     assert!(!folded_device_can_authority_consent(root));
 
     let replicated = host
@@ -379,11 +380,22 @@ fn a_hosted_root_is_cloud_stamped_and_its_own_rows_still_validate() {
         vault.privacy_posture(),
     )
     .unwrap();
+    drop(wtxn);
+
+    // So is the root a host re-root hands the vault to (Sol code-R1 S1-F11).
+    let next = HostSlipIssuer::from_secret(b"hosted-successor-for-the-stamp").unwrap();
+    vault.re_root_host(&host, &next).unwrap();
+    let fold = vault.authority_fold().unwrap();
+    let successor = &fold.roster[&next.public_key()];
+    assert_ne!(successor.roles & ROLE_CLOUD, 0);
+    assert_eq!(successor.tier, AuthorityTier::CloudCustodial);
 
     // A self-host vault keeps an unstamped root.
     let dir = tempfile::tempdir().unwrap();
     let local = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
     local.ensure_host_root_slip(&host).unwrap();
     let fold = local.authority_fold().unwrap();
-    assert_eq!(fold.roster[&host.public_key()].roles & ROLE_CLOUD, 0);
+    let root = &fold.roster[&host.public_key()];
+    assert_eq!(root.roles & ROLE_CLOUD, 0);
+    assert_eq!(root.tier, AuthorityTier::Software);
 }

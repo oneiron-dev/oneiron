@@ -1482,3 +1482,49 @@ fn restore_refuses_another_kinds_job_row_in_the_owner_retained_range() {
         }
     }
 }
+
+/// A checkpoint whose authority row lost its body is refused before any
+/// destination exists: no restore stores an authority row the shared
+/// validator refuses, an empty one included (Sol code-R1 S1-F8).
+#[test]
+fn restore_refuses_an_authority_row_without_its_body() {
+    let root = tempfile::tempdir().unwrap();
+    let vault = Vault::open(root.path().join("source"), VaultConfig::default()).unwrap();
+    vault
+        .ensure_host_root_slip(&crate::test_support::test_host_issuer())
+        .unwrap();
+    let image = root.path().join("checkpoint");
+    vault.snapshot_checkpoint(&image, 1).unwrap();
+    let bytes = std::fs::read(&image).unwrap();
+    let mut crafted: CheckpointImage = rmp_serde::from_slice(&bytes[41..]).unwrap();
+    let (_, blob) = crafted
+        .databases
+        .get_mut("entities")
+        .unwrap()
+        .iter_mut()
+        .find(|(_, blob)| {
+            crate::batch::EntityMetadataHeader::parse(blob).is_some_and(|header| {
+                header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
+            })
+        })
+        .expect("the host root's genesis is an authority row");
+    blob.truncate(crate::batch::ENTITY_METADATA_HEADER_LEN);
+    let body = rmp_serde::to_vec_named(&crafted).unwrap();
+    let mut file = b"ONEIRONC1".to_vec();
+    file.extend_from_slice(blake3::hash(&body).as_bytes());
+    file.extend_from_slice(&body);
+    let crafted_path = root.path().join("crafted");
+    std::fs::write(&crafted_path, file).unwrap();
+    let destination = root.path().join("restored");
+    assert!(
+        Vault::restore_checkpoint(
+            &crafted_path,
+            &destination,
+            VaultConfig::default(),
+            RestoreReason::Restore,
+            2,
+        )
+        .is_err()
+    );
+    assert!(!destination.exists(), "refused before the destination");
+}

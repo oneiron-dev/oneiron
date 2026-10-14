@@ -13,6 +13,8 @@
 //! - Other Unix: `LocalFileKeystore`, 0600 files in a 0700 directory outside the
 //!   vault, tagged so that backup tools skip it.
 //! - Windows has no adapter yet: [`platform_keystore`] returns `Unavailable` there.
+//! - Tests: `MemoryKeystore`, process memory only, built under `cfg(test)` or the
+//!   `test-keystore` feature and never for a host.
 
 use zeroize::Zeroizing;
 
@@ -20,12 +22,14 @@ use zeroize::Zeroizing;
 mod apple;
 #[cfg(all(unix, not(target_vendor = "apple")))]
 mod file;
+#[cfg(any(test, feature = "test-keystore"))]
 mod memory;
 
 #[cfg(target_vendor = "apple")]
 pub use apple::AppleKeychain;
 #[cfg(all(unix, not(target_vendor = "apple")))]
 pub use file::LocalFileKeystore;
+#[cfg(any(test, feature = "test-keystore"))]
 pub use memory::MemoryKeystore;
 
 /// What a slot holds. One variant per secret the engine keeps at rest.

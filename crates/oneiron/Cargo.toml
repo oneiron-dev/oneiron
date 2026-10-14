@@ -228,6 +228,8 @@ oneiron-guest = { path = "../oneiron-guest" }
 oneiron = { path = ".", features = ["test-support"] }
 tempfile = "3"
 proptest = "1"
+# The process-memory keystore the engine's tests share; never a host's adapter.
+oneiron-keystore = { path = "../oneiron-keystore", features = ["test-keystore"] }
 # Bounded DOCX fixture probes inspect central-directory sizes in unit tests.
 zip = "0.6.6"
 # ONE-1572 (B11-2b): compile-fail proof that the sealed relay-attestation
