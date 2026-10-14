@@ -2473,6 +2473,245 @@ fn observer_b_quarantines_a_replicated_fact_link_removal() {
     );
 }
 
+/// The owner, tasks and Owner facts the replayed-fact checks below share,
+/// written in the 2026-03 window: `(owner, [(task, owner_fact)])`.
+fn owned_tasks_for_fact_replay(
+    vault: &Vault,
+    learned_at: u64,
+    n: usize,
+) -> (EntityId, Vec<(EntityId, EntityId)>) {
+    use crate::task_authority::{
+        TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
+    };
+    let at = TimeRange {
+        start: learned_at,
+        end: learned_at,
+    };
+    let owner = EntityId::now();
+    vault
+        .put_entity(
+            &owner,
+            crate::registry::ENTITY_TYPE_PERSON,
+            at,
+            learned_at,
+            b"x",
+        )
+        .unwrap();
+    let mut tasks = Vec::with_capacity(n);
+    for _ in 0..n {
+        let task = EntityId::now();
+        vault
+            .put_entity(
+                &task,
+                ENTITY_TYPE_TASK,
+                at,
+                learned_at,
+                &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
+            )
+            .unwrap();
+        let owner_fact = vault
+            .with_write_txn(|wtxn| {
+                put_task_authority_fact_in_txn(
+                    vault,
+                    wtxn,
+                    TaskAuthorityFact {
+                        task_ref: task,
+                        kind: TaskAuthorityFactKind::Owner,
+                        actor_ref: owner,
+                        assigned_ref: None,
+                        actor_generation: None,
+                        assigned_generation: None,
+                        occurred_at: learned_at,
+                    },
+                )
+            })
+            .unwrap();
+        tasks.push((task, owner_fact));
+    }
+    (owner, tasks)
+}
+
+fn task_reads_cancelled(vault: &Vault, task: EntityId) -> bool {
+    vault
+        .task_authority_state(task)
+        .unwrap()
+        .is_some_and(|state| state.cancelled)
+}
+
+fn tombstone_value(reason: crate::deletion::TombstoneReason, deleted_at: u64) -> Vec<u8> {
+    crate::deletion::TombstoneValueV2 {
+        reason,
+        deleted_at,
+        request_id: [0x5A; 16],
+    }
+    .encode()
+}
+
+/// F24 round 6 (H219): an own-device tombstone for a stored task authority
+/// fact, soft or hard, is refused by the replay's protection gate and
+/// quarantined, with no retry flagged; the cancellation still reads. Positive
+/// control: the same delta's hard tombstone for an ordinary TASK applies.
+#[test]
+fn observer_b_refuses_a_replayed_tombstone_for_a_fact() {
+    use crate::deletion::TombstoneReason;
+    use crate::task_authority::{
+        TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
+    };
+    let vault = test_vault();
+    let learned_at = 1_772_400_000u64; // 2026-03 window
+    let (owner, tasks) = owned_tasks_for_fact_replay(&vault, learned_at, 2);
+    let ((task, owner_fact), (other, _)) = (tasks[0], tasks[1]);
+    let cancelled = vault
+        .with_write_txn(|wtxn| {
+            put_task_authority_fact_in_txn(
+                &vault,
+                wtxn,
+                TaskAuthorityFact {
+                    task_ref: task,
+                    kind: TaskAuthorityFactKind::Cancelled,
+                    actor_ref: owner,
+                    assigned_ref: None,
+                    actor_generation: None,
+                    assigned_generation: None,
+                    occurred_at: learned_at,
+                },
+            )
+        })
+        .unwrap();
+    assert!(task_reads_cancelled(&vault, task), "precondition");
+
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    let forged = forged_update_against(&doc, |fork| {
+        let tombstones = fork.get_map("tombstones");
+        for (id, reason) in [
+            (cancelled, TombstoneReason::GdprDelete),
+            (owner_fact, TombstoneReason::UserDelete),
+            (other, TombstoneReason::GdprDelete),
+        ] {
+            map_insert_bytes(
+                &tombstones,
+                &id.to_hex(),
+                &tombstone_value(reason, learned_at),
+            )
+            .unwrap();
+        }
+    });
+    import_doc(&doc, &forged).unwrap();
+
+    assert!(
+        task_reads_cancelled(&vault, task),
+        "a replayed tombstone never lifts a cancellation or its owner"
+    );
+    for id in [cancelled, owner_fact] {
+        assert!(
+            vault.live_entity_row(&id).unwrap().is_live(),
+            "the fact row stays"
+        );
+    }
+    let refused = crate::sync::quarantine::quarantined_records(&vault)
+        .unwrap()
+        .into_iter()
+        .filter(|(_, record)| record.container == QuarantineContainer::Tombstones)
+        .count();
+    assert_eq!(
+        refused, 2,
+        "each refused tombstone leaves quarantine evidence"
+    );
+    assert!(
+        crate::sync::quarantine::pending_remat_windows(&vault)
+            .unwrap()
+            .is_empty(),
+        "a refusal flags no retry"
+    );
+    assert!(
+        vault.get(&other).unwrap().is_none(),
+        "positive control: an ordinary TASK's hard tombstone applies"
+    );
+}
+
+/// F24 round 6 (H219): a tombstone that reaches this vault before its fact
+/// row cannot suppress the fact. A soft and a hard tombstone name two
+/// cancellations in one import; the rows and their links arrive in later
+/// ones, and both tasks read cancelled.
+#[test]
+fn a_tombstone_before_a_fact_row_cannot_suppress_it() {
+    use crate::deletion::TombstoneReason;
+    use crate::task_authority::{
+        TaskAuthorityFact, TaskAuthorityFactKind, encode_task_authority_fact_body,
+    };
+    let vault = test_vault();
+    let learned_at = 1_772_400_000u64; // 2026-03 window
+    let at = TimeRange {
+        start: learned_at,
+        end: learned_at,
+    };
+    let (owner, tasks) = owned_tasks_for_fact_replay(&vault, learned_at, 2);
+    let cancellations: Vec<_> = tasks
+        .iter()
+        .map(|(task, _)| (EntityId::now(), *task))
+        .collect();
+
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    let tombstones = forged_update_against(&doc, |fork| {
+        let map = fork.get_map("tombstones");
+        for ((fact, _), reason) in cancellations
+            .iter()
+            .zip([TombstoneReason::UserDelete, TombstoneReason::GdprDelete])
+        {
+            map_insert_bytes(&map, &fact.to_hex(), &tombstone_value(reason, learned_at)).unwrap();
+        }
+    });
+    import_doc(&doc, &tombstones).unwrap();
+    let rows = forged_update_against(&doc, |fork| {
+        for (fact, task) in &cancellations {
+            let body = encode_task_authority_fact_body(&TaskAuthorityFact {
+                task_ref: *task,
+                kind: TaskAuthorityFactKind::Cancelled,
+                actor_ref: owner,
+                assigned_ref: None,
+                actor_generation: None,
+                assigned_generation: None,
+                occurred_at: learned_at,
+            });
+            map_insert_bytes(
+                &fork.get_map("entities"),
+                &fact.to_hex(),
+                &entity_blob(ENTITY_TYPE_TASK, at, learned_at, &body),
+            )
+            .unwrap();
+        }
+    });
+    import_doc(&doc, &rows).unwrap();
+    let value =
+        encode_edge_value_for_crdt(EdgeKind::ScopedTo, 0.7, learned_at, None, None).unwrap();
+    let links = forged_update_against(&doc, |fork| {
+        for (fact, task) in &cancellations {
+            map_insert_bytes(
+                &fork.get_map("edges"),
+                &format_edge_key(fact, EdgeKind::ScopedTo, task),
+                &value,
+            )
+            .unwrap();
+        }
+    });
+    import_doc(&doc, &links).unwrap();
+
+    for (fact, task) in &cancellations {
+        assert!(
+            vault.live_entity_row(fact).unwrap().is_live(),
+            "a fact tombstoned before it arrived still materializes"
+        );
+        assert!(
+            task_reads_cancelled(&vault, *task),
+            "a cancellation tombstoned before it arrived still reads"
+        );
+    }
+}
+
 /// ONE-1608 forged-retirement regression: `blocks` is retirable ONLY through
 /// `remove_blocks_edge`, so NEITHER a forged edges-map row NOR a forged
 /// edges-map REMOVAL of the key may touch the local rows.
