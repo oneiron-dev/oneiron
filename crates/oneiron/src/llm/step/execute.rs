@@ -155,8 +155,15 @@ async fn durable_step(
             .get_claim(&claim_id)?
             .ok_or(Error::InvalidClaimBody("dreamer step index claim missing"))?;
         let decoded = decode_step_claim_value(&body.value)?;
-        if step_claim_matches_request(&decoded, &request)? {
-            let response = load_step_response(ctx.vault, &decoded)?;
+        // A checked step returns only a stored reply its check passes; any
+        // other misses and the step asks again.
+        let response = if step_claim_matches_request(&decoded, &request)? {
+            Some(load_step_response(ctx.vault, &decoded)?)
+                .filter(|response| check.is_none_or(|check| check(response).is_ok()))
+        } else {
+            None
+        };
+        if let Some(response) = response {
             let failure_policy = failure_policy(ctx.vault, &response)?;
             return Ok(StepOutcome::Finished {
                 response,
@@ -175,15 +182,17 @@ async fn durable_step(
         && let Some(payload) = row.response_payload.as_deref()
     {
         let response: LlmResponse = serde_json::from_slice(payload)?;
-        let failure_policy = failure_policy(ctx.vault, &response)?;
-        log_terminal_step(ctx, &step_hash, &request, &response, payload)?;
-        step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
-        return Ok(StepOutcome::Finished {
-            response,
-            memoized: true,
-            legibility: step_legibility(ctx, guard),
-            failure_policy,
-        });
+        if check.is_none_or(|check| check(&response).is_ok()) {
+            let failure_policy = failure_policy(ctx.vault, &response)?;
+            log_terminal_step(ctx, &step_hash, &request, &response, payload)?;
+            step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
+            return Ok(StepOutcome::Finished {
+                response,
+                memoized: true,
+                legibility: step_legibility(ctx, guard),
+                failure_policy,
+            });
+        }
     }
 
     // Graceful wrap (ONE-1305): once the finalize window opens, NEW steps

@@ -127,14 +127,15 @@ impl ConsolidationExecutor<'_> {
         let call = self.role(DREAMER_EXTRACTION_ROLE);
         let mut request =
             Self::extraction_request(&call, &partition, &transcript, &resources.request_scope())?;
-        super::roles::bind_reasoning(ctx.vault, call.backend, &mut request)?;
         if let Some(rules) = &rules {
             rules.bind(Stage::Extraction, &mut request);
         }
-        let request = ctx
+        let mut request = ctx
             .vault
             .authorize_model_role(DREAMER_EXTRACTION_ROLE, request, &call.inference)?
             .into_request();
+        // The level is for the model and route the call goes out on.
+        super::roles::bind_reasoning(ctx.vault, call.backend, &mut request)?;
         let step_hash = request.canonical_hash()?;
         let check = |response: &LlmResponse| {
             extraction::extraction_reply(response)
@@ -321,7 +322,6 @@ impl ConsolidationExecutor<'_> {
                 &prior_heads,
                 resources.scope(),
             )?;
-            super::roles::bind_reasoning(ctx.vault, call.backend, &mut request)?;
 
             let step_ctx = DurableStepContext {
                 vault: ctx.vault,
@@ -335,10 +335,11 @@ impl ConsolidationExecutor<'_> {
             if let Some(rules) = rules {
                 rules.bind(Stage::Conflict, &mut request);
             }
-            let request = ctx
+            let mut request = ctx
                 .vault
                 .authorize_model_role(DREAMER_VERDICT_ROLE, request, &call.inference)?
                 .into_request();
+            super::roles::bind_reasoning(ctx.vault, call.backend, &mut request)?;
             let step_hash = request.canonical_hash()?;
             let outcome = call_as_step(&step_ctx, call.backend, self.guard, request).await;
             let response = match outcome {

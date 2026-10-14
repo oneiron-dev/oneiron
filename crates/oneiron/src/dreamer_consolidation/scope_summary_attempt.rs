@@ -130,7 +130,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             .inference
             .selected_locality()
             .ok_or_else(|| Error::InvalidConfig("summary host binding needs locality".into()))?;
-        let mut request = LlmRequest {
+        let request = LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
                 seat_effort: None,
@@ -170,11 +170,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
         };
-        super::roles::bind_reasoning(ctx.vault, self.backend, &mut request)?;
-        let request = ctx
+        let mut request = ctx
             .vault
             .authorize_model_role(super::DREAMER_NARRATIVE_ROLE, request, &self.inference)?
             .into_request();
+        super::roles::bind_reasoning(ctx.vault, self.backend, &mut request)?;
         let step_hash = request
             .canonical_hash()
             .map_err(|_| invalid_consolidation("summary request did not hash"))?;
