@@ -57,11 +57,11 @@ impl ScopedRead<'_> {
         // Persist the injected authorization clock in the SAME writer before
         // relationship grants are checked against its floor.
         let now = crate::ports::recorded_at_in_txn(&self.vault.store, &mut txn)?;
-        auth.revalidate_in_txn(self.vault, &txn)?;
+        let actor = auth.revalidate_in_txn(self.vault, &txn)?;
         self.require_visible_weave_link_in(&txn, reader, link)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &txn)?;
         let limit = policy
-            .weave_correction_limit(&auth.actor().to_hex())
+            .weave_correction_limit(&actor.to_hex())
             .ok_or(Error::InvalidConfig(
                 "weave correction policy unavailable".into(),
             ))?;
@@ -78,7 +78,7 @@ impl ScopedRead<'_> {
         let correction = WeaveLinkCorrection {
             id: EntityId::now(),
             link,
-            actor: auth.actor(),
+            actor: actor,
             recorded_at: now,
         };
         LABELS.put(

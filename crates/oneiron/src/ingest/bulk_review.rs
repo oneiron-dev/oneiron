@@ -142,7 +142,7 @@ impl Vault {
         batch: &ImportedClaimBatch,
         digest: crate::consent::EffectDigest,
     ) -> Result<ImportedClaimBatchReceipt> {
-        owner.revalidate_in_txn(self, txn)?;
+        let actor = owner.revalidate_in_txn(self, txn)?;
         let authorization =
             crate::consent::approve_once_authorization_in_txn(&self.store, txn, &digest)?;
         // The batch's one decision slot: an earlier approval or decline, by
@@ -160,7 +160,7 @@ impl Vault {
             self.ensure_decision_slot_open_in_txn(txn, &slot)?;
             ClaimApprovalStatus::Proposed
         };
-        let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
+        let actor = WriteActor::new(actor, EdgeActorClass::Human);
         // A fresh id is required. Consent names one immutable candidate set;
         // it must not authorize replacing an earlier import or another kind.
         for entry in &batch.entries {

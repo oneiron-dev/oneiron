@@ -110,8 +110,8 @@ impl ScopedRead<'_> {
                 Some(id)
             }
             WeaveReader::Owner(owner) => {
-                owner.revalidate_in_txn(self.vault, txn)?;
-                if self.actor_key.actor_ref() != owner.actor().to_hex()
+                let actor = owner.revalidate_in_txn(self.vault, txn)?;
+                if self.actor_key.actor_ref() != actor.to_hex()
                     && self.actor_key.actor_ref() != owner.principal_ref()
                 {
                     return Err(Error::InvalidConfig(

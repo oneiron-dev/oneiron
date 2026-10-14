@@ -72,6 +72,24 @@ impl AuthenticatedOwner {
         Ok(self.actor)
     }
 
+    /// [`Self::actor_for_read`] for the principal reference: never for an
+    /// act of owner authority.
+    pub fn principal_ref_for_read(&self, vault: &Vault) -> Result<&str> {
+        self.check_vault(vault)?;
+        Ok(&self.principal_ref)
+    }
+
+    /// [`Self::revalidate_in_txn`], for a door that names its actor by
+    /// principal reference.
+    pub(crate) fn principal_ref_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<&str> {
+        self.revalidate_in_txn(vault, txn)?;
+        Ok(&self.principal_ref)
+    }
+
     fn check_vault(&self, vault: &Vault) -> Result<()> {
         if self.vault_path.as_path() != vault.store.env.path() {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(

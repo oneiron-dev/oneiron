@@ -397,7 +397,7 @@ impl Vault {
             row.validate_named(act)?;
         }
         let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
+        let actor = owner.revalidate_in_txn(self, &txn)?;
         let creation = check_vault(self, &txn, vault_id)?;
         let mut policies = self.act_policies_in_txn(&txn, &creation)?;
         let default = policies.effective(DEFAULT_ROW)?;
@@ -414,10 +414,10 @@ impl Vault {
             .filter(|holder| holder.can(&current.policy_editor_roles, &current.required_verb))
             .map(|holder| holder.member)
             .collect();
-        let mut approvals = BTreeSet::from([owner.actor()]);
+        let mut approvals = BTreeSet::from([actor]);
         for co_owner in co_owners {
-            co_owner.revalidate_in_txn(self, &txn)?;
-            if !approvals.insert(co_owner.actor()) {
+            let co_owner_actor = co_owner.revalidate_in_txn(self, &txn)?;
+            if !approvals.insert(co_owner_actor) {
                 return Err(invalid());
             }
         }
@@ -520,7 +520,7 @@ impl Vault {
             return Err(invalid());
         }
         let mut txn = self.store.env.write_txn()?;
-        starter.revalidate_in_txn(self, &txn)?;
+        let starter_actor = starter.revalidate_in_txn(self, &txn)?;
         let creation = check_vault(self, &txn, vault_id)?;
         let base = self.act_policies_in_txn(&txn, &creation)?.effective(act)?;
         let policy = match selection {
@@ -546,7 +546,7 @@ impl Vault {
         }
         let holders = self.live_act_holders(&txn, vault_id, now)?;
         if !holders.iter().any(|holder| {
-            holder.member == starter.actor()
+            holder.member == starter_actor
                 && holder.can(&policy.initiator_roles, &policy.required_verb)
         }) {
             return Err(invalid());
@@ -559,7 +559,7 @@ impl Vault {
             vault_id,
             act: act.to_owned(),
             payload,
-            starter: starter.actor().to_hex(),
+            starter: starter_actor.to_hex(),
             started_at: now,
             deadline,
             objector_roles: policy.objector_roles.clone(),
@@ -610,16 +610,16 @@ impl Vault {
         now: u64,
     ) -> Result<Vec<PendingActStarted>> {
         let txn = self.store.env.read_txn()?;
-        holder.revalidate_in_txn(self, &txn)?;
+        let holder_actor = holder.revalidate_in_txn(self, &txn)?;
         check_vault(self, &txn, vault_id)?;
         if !self
             .live_act_holders(&txn, vault_id, now)?
             .iter()
-            .any(|entry| entry.member == holder.actor())
+            .any(|entry| entry.member == holder_actor)
         {
             return Err(invalid());
         }
-        let prefix = key(EVENT_PREFIX, &format!("{}:", holder.actor().to_hex()));
+        let prefix = key(EVENT_PREFIX, &format!("{}:", holder_actor.to_hex()));
         let mut events = Vec::new();
         for entry in self.store.vault_meta.prefix_iter(&txn, &prefix)? {
             let (_, bytes) = entry?;
@@ -641,20 +641,19 @@ impl Vault {
     ) -> Result<PendingAuthorityAct> {
         let id = EntityId::from_hex(id)?;
         let mut txn = self.store.env.write_txn()?;
-        holder.revalidate_in_txn(self, &txn)?;
+        let holder_actor = holder.revalidate_in_txn(self, &txn)?;
         let k = key(ACT_PREFIX, &id.to_hex());
         let raw = self.store.vault_meta.get(&txn, &k)?.ok_or_else(invalid)?;
         let mut record: PendingAuthorityAct = decode(&raw)?;
         if record.completed
             || now < record.started_at
-            || (holder.actor().to_hex() == record.starter && !record.starter_may_object)
+            || (holder_actor.to_hex() == record.starter && !record.starter_may_object)
         {
             return Err(invalid());
         }
         let holders = self.live_act_holders(&txn, record.vault_id, now)?;
         if !holders.iter().any(|entry| {
-            entry.member == holder.actor()
-                && entry.can(&record.objector_roles, &record.required_verb)
+            entry.member == holder_actor && entry.can(&record.objector_roles, &record.required_verb)
         }) {
             return Err(invalid());
         }
@@ -662,9 +661,9 @@ impl Vault {
             return Err(invalid());
         }
         if object {
-            record.objections.insert(holder.actor().to_hex());
+            record.objections.insert(holder_actor.to_hex());
         } else {
-            record.objections.remove(&holder.actor().to_hex());
+            record.objections.remove(&holder_actor.to_hex());
         }
         reconcile(&mut record, &holders, now);
         self.store.vault_meta.put(&mut txn, &k, &encode(&record)?)?;

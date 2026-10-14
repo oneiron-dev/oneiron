@@ -132,7 +132,7 @@ impl Vault {
         let tap_key = *blake3::hash(card.card_id.as_bytes()).as_bytes();
         let source = EntityId::from_hex(&intent.source_message_ref).map_err(|_| invalid())?;
         let txn = self.store.env.read_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
+        let actor = owner.revalidate_in_txn(self, &txn)?;
         if let Some(receipt) = self.project_tap_in_txn(&txn, &tap_key, &digest)? {
             return Ok(receipt);
         }
@@ -177,7 +177,7 @@ impl Vault {
         };
         let mut minted = None;
         let result = self
-            .memory(owner.actor(), EdgeActorClass::Human)
+            .memory(actor, EdgeActorClass::Human)
             .witness_with_room_birth(&header, |txn| {
                 let receipt = self
                     .mint_project_in_txn(
@@ -226,7 +226,7 @@ impl Vault {
         digest: &[u8; 32],
         at: u64,
     ) -> Result<ProjectMintReceipt> {
-        owner.revalidate_in_txn(self, txn)?;
+        let actor = owner.revalidate_in_txn(self, txn)?;
         if self.project_tap_in_txn(txn, tap_key, digest)?.is_some() {
             return Err(invalid());
         }
@@ -269,8 +269,8 @@ impl Vault {
         )?;
         project.board = board.iter().map(EntityId::to_hex).collect();
         project.roster.extend(project.board.iter().cloned());
-        if !project.roster.contains(&owner.actor().to_hex()) {
-            project.roster.push(owner.actor().to_hex());
+        if !project.roster.contains(&actor.to_hex()) {
+            project.roster.push(actor.to_hex());
         }
         project.born_from = Some(born_from.to_hex());
         project.why = Some(intent.goal.why.clone());

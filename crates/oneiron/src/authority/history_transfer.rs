@@ -284,11 +284,11 @@ impl Vault {
         if self.privacy_posture() != crate::HostingPrivacyPosture::Hosted {
             return Err(invalid_authority());
         }
-        owner.revalidate(self)?;
+        let actor = owner.revalidate(self)?;
         let txn = self.store.env.read_txn()?;
         self.verify_owner_write_actor_in_txn(
             &txn,
-            &crate::WriteActor::new(owner.actor(), crate::EdgeActorClass::Human),
+            &crate::WriteActor::new(actor, crate::EdgeActorClass::Human),
         )?;
         drop(txn);
         self.re_root_authority(new_device, signer_key, signer)

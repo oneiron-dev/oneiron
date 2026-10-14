@@ -212,9 +212,9 @@ impl Vault {
         let machine = match answer {
             None => None,
             Some((owner, ownership)) => {
-                owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+                let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
                 Some(PendingMachine {
-                    owner: owner.actor(),
+                    owner: actor,
                     ownership,
                 })
             }

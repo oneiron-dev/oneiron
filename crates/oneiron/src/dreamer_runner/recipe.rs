@@ -95,7 +95,7 @@ impl Vault {
         now: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
         self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
+            let actor = owner.revalidate_in_txn(self, txn)?;
             let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
             if policy.is_fail_closed() {
                 return Err(invalid());
@@ -152,7 +152,7 @@ impl Vault {
                 receipt_reasons: Vec::new(),
                 system_notices: Vec::new(),
                 actor_class: "human".into(),
-                actor_ref: Some(owner.actor().to_hex()),
+                actor_ref: Some(actor.to_hex()),
                 content_kind: "dreamer_recipe".into(),
                 policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
                 claim_id: None,

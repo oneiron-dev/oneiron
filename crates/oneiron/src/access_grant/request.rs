@@ -158,7 +158,7 @@ impl Vault {
         now: u64,
     ) -> Result<AccessRequest> {
         let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
+        let actor = owner.revalidate_in_txn(self, &txn)?;
         let row = REQUESTS
             .get(&self.store, &txn, &id)?
             .ok_or(Error::EntityNotFound)?;
@@ -171,7 +171,7 @@ impl Vault {
         } else {
             AccessRequestStatus::Denied
         };
-        request.decided_by = Some(owner.actor());
+        request.decided_by = Some(actor);
         request.decided_at = Some(now);
         if approve {
             if crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?.is_some() {

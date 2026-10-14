@@ -245,7 +245,7 @@ impl Vault {
             prepared.push((page, segments, summaries, annotation, predicted));
         }
         let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
+        let actor = owner.revalidate_in_txn(self, &txn)?;
         require_docs_corpus_project(self, &txn, docs.project_id)?;
         let authorization =
             crate::consent::approve_once_authorization_in_txn(&self.store, &txn, &digest)?
@@ -296,7 +296,7 @@ impl Vault {
                 &page.text,
                 ceiling.allow_derivations,
                 super::docs_deep::DeepApproval {
-                    owner: owner.actor(),
+                    owner: actor,
                     digest: &digest.to_hex(),
                     project_id: docs.project_id,
                 },

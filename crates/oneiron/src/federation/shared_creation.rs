@@ -102,14 +102,14 @@ impl Vault {
             return Err(invalid("shared vault id cannot be zero"));
         }
         let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
+        let actor = owner.revalidate_in_txn(self, &txn)?;
         if SHARED_VAULT_CREATION.contains(&self.store, &txn, &())? || has_member_grant(self, &txn)?
         {
             return Err(invalid("shared membership has already been initialized"));
         }
         let mut rows = std::collections::BTreeMap::new();
         if preset.is_some() {
-            rows.insert(owner.actor(), Role::Owner);
+            rows.insert(actor, Role::Owner);
         }
         for member in members {
             let role = member
@@ -123,7 +123,7 @@ impl Vault {
         let mut creation = SharedVaultCreation {
             vault_id,
             preset,
-            owner_ref: owner.actor().to_hex(),
+            owner_ref: actor.to_hex(),
             grant_refs: Vec::new(),
             policy_ref: None,
         };

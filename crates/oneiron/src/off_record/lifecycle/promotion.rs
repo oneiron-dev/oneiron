@@ -96,13 +96,13 @@ impl OffRecordSession<'_> {
                 if let (Some(room), Some(owner)) = (room, owner) {
                     let times = state.kept_times(*turn);
                     let txn = self.vault.store.env.read_txn()?;
-                    owner.revalidate_as_vault_owner_in_txn(self.vault, &txn)?;
+                    let actor = owner.revalidate_as_vault_owner_in_txn(self.vault, &txn)?;
                     super::room::require_sight_in_txn(
                         self.vault,
                         &txn,
                         &self.session_ref,
                         room,
-                        owner.actor(),
+                        actor,
                         &times,
                     )?;
                     let hearing = Hearing::in_txn(self.vault, &txn, Some(room));
@@ -110,7 +110,7 @@ impl OffRecordSession<'_> {
                     post_notice(
                         &mut state,
                         super::types::OffRecordNoticeAct::SavedTurn,
-                        owner.actor(),
+                        actor,
                         hearing,
                     );
                     self.entry.publish_state(&state);

@@ -413,8 +413,8 @@ impl Memory<'_> {
         &self,
         owner: &AuthenticatedOwner,
     ) -> MemoryResult<()> {
-        owner.revalidate(self.vault())?;
-        verify_actor_binding(self.vault(), owner.actor(), crate::EdgeActorClass::Human)
+        let actor = owner.revalidate(self.vault())?;
+        verify_actor_binding(self.vault(), actor, crate::EdgeActorClass::Human)
     }
 
     pub(super) fn require_fanout_ceiling(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {

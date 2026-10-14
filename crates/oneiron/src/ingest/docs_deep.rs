@@ -255,14 +255,14 @@ impl Vault {
         }
         let (text, corpus, page, hash, approval_digest, project_id) = {
             let txn = self.store.env.read_txn()?;
-            owner.revalidate_in_txn(self, &txn)?;
+            let owner_actor = owner.revalidate_in_txn(self, &txn)?;
             if let Some((reader, _)) = read
                 && !reader.is_entity_readable_in(&txn, &asset)?
             {
                 return Err(invalid("docs source no longer readable by scoped actor"));
             }
             let (text, corpus, page, hash, approval_digest, project_id) =
-                self.deep_source_in(&txn, asset, owner.actor())?;
+                self.deep_source_in(&txn, asset, owner_actor)?;
             if read.is_some_and(|(_, expected)| expected != hash) {
                 return Err(invalid("docs source changed since authorized expansion"));
             }
@@ -298,7 +298,7 @@ impl Vault {
             }
         }
         let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
+        let owner_actor = owner.revalidate_in_txn(self, &txn)?;
         if let Some((reader, _)) = read
             && !reader.is_entity_readable_in(&txn, &asset)?
         {
@@ -311,7 +311,7 @@ impl Vault {
             current_hash,
             current_approval_digest,
             current_project,
-        ) = self.deep_source_in(&txn, asset, owner.actor())?;
+        ) = self.deep_source_in(&txn, asset, owner_actor)?;
         if (
             current_corpus.as_str(),
             current_page.as_str(),
@@ -349,7 +349,7 @@ impl Vault {
             trigger,
             claim_refs: Vec::new(),
         };
-        let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
+        let actor = WriteActor::new(owner_actor, EdgeActorClass::Human);
         let mut claims = Vec::new();
         for (block, segment_text, segment_hash, claim) in prepared {
             let chunk = self.deep_chunk_in(&txn, asset, &corpus, &page, &block, &segment_text)?;
