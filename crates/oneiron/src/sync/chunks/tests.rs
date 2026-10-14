@@ -328,7 +328,7 @@ fn an_object_only_a_device_only_world_owns_leaves_by_no_chunk_door() -> Result<(
         serve(request)?;
     }
 
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     for request in &requests {
         assert!(serve(request).is_err());
     }
