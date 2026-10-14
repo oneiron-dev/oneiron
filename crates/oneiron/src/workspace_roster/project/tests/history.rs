@@ -1,6 +1,6 @@
-//! Signed project history (PR 3 checks 1, 2 and 4): siblings over one anchor
-//! fold by rank on every replica, whatever order they arrive in, and a tie
-//! seats only what every contender keeps.
+//! Signed project history (PR 3 checks 1, 2, 4 and 13): sibling branches
+//! over one anchor fold by rank on every replica, whatever order they arrive
+//! in, and a tie seats only what every branch's frontier keeps.
 use super::super::revision::revisions_of_row;
 use super::super::*;
 use super::authority::{
@@ -330,5 +330,162 @@ fn two_leader_siblings_install_neither_meet_their_bounds_and_a_board_sibling_res
                 }),
         "{forks:?}"
     );
+    Ok(())
+}
+
+/// Checks the board act of check 13 standing on `vault`.
+fn assert_board_act_stands(
+    vault: &Vault,
+    project: &Project,
+    successor: EntityId,
+    removed: EntityId,
+    head: ProjectRevisionHash,
+) -> Result<()> {
+    let served = frontier(vault, project.id)?;
+    assert_eq!(served.disposition, ProjectDisposition::Settled);
+    assert_eq!(served.witness.map(|witness| witness.head), Some(head));
+    assert_eq!(effective(vault, project.id)?.leader, successor.to_hex());
+    assert!(!seats_of(vault, project.id).contains(&removed));
+    let room = home_room_id(project.id)?;
+    assert!(
+        vault.bind_room_handle(room, "@removed", removed).is_err(),
+        "a member the board removed binds a handle"
+    );
+    let spawn = |actor| {
+        spawn_signed(
+            vault,
+            project.id,
+            EntityId::now(),
+            actor,
+            actor,
+            project.s0.slice.clone(),
+            30,
+        )
+    };
+    assert!(spawn(project.leader).is_err(), "the deposed leader spawned");
+    spawn(successor)?;
+    Ok(())
+}
+
+/// Bug repro (Astra #1434 F1): over board-signed S0 the leader L narrows
+/// (S1), the board deposes L and removes X over S1 (S2), and L signs a stale
+/// sibling S3 over S0. The fork at S0 compared only S1 and S3, both leader
+/// rank, so S2 never took part: L led again and X sat again. S1's branch
+/// holds a board act, so it outranks S3's, and L, deposed there, takes no
+/// authority from S3, in both arrival orders and after reopen.
+#[cfg(feature = "sync")]
+#[test]
+fn a_stale_leader_sibling_never_undoes_a_later_board_act_in_either_order() -> Result<()> {
+    let (x, y, z, successor) = (
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+        EntityId::now(),
+    );
+    let origin = tempfile::tempdir()?;
+    let project = board_signed_s0(&open(&origin)?, &[x, y, z], &[], |_| {})?;
+    let copies = [copy_of(&origin)?, copy_of(&origin)?];
+    let vault = open(&origin)?;
+    let id = project.id;
+    let s1 = signed_over(&vault, id, &project.s0, project.leader, without(y))?;
+    vault.put_project(id, &s1, 3)?;
+    let s2 = signed_over(&vault, id, &s1, project.board, |row| {
+        row.leader = successor.to_hex();
+        row.roster = vec![successor.to_hex(), z.to_hex()];
+    })?;
+    vault.put_project(id, &s2, 4)?;
+    let s3 = signed_over(&vault, id, &project.s0, project.leader, without(z))?;
+    // Control: the live door refuses S3 over the current S2.
+    assert!(vault.put_project(id, &s3, 5).is_err());
+    let head = head_of(id, &s2)?;
+    for ((dir, replica), order) in copies.into_iter().zip([[&s1, &s2, &s3], [&s3, &s1, &s2]]) {
+        replay_authority(&vault, &replica)?;
+        for (at, row) in (10..).zip(order) {
+            replay_project(&replica, id, row, at)?;
+        }
+        assert_board_act_stands(&replica, &project, successor, x, head)?;
+        drop(replica);
+        assert_board_act_stands(&open(&dir)?, &project, successor, x, head)?;
+    }
+    Ok(())
+}
+
+/// Checks the leader tie of check 13's narrowing case on `vault`.
+fn assert_frontiers_meet(
+    vault: &Vault,
+    project: &Project,
+    removed: EntityId,
+    anchor: ProjectRevisionHash,
+    kept: &ScopeResource,
+) -> Result<()> {
+    assert_eq!(seats_of(vault, project.id), ids(&[project.leader]));
+    let room = home_room_id(project.id)?;
+    assert!(
+        vault.bind_room_handle(room, "@removed", removed).is_err(),
+        "a member the leader removed binds a handle"
+    );
+    let view = effective(vault, project.id)?;
+    assert_eq!(view.leader, project.leader.to_hex());
+    assert_eq!(view.depth_remaining, 1);
+    assert_eq!(
+        view.slice.map(|slice| slice.readable),
+        Some(BTreeSet::from([kept.clone()]))
+    );
+    assert!(matches!(
+        frontier(vault, project.id)?.disposition,
+        ProjectDisposition::Fork { anchor: at, rank: ProjectRank::Leader, .. } if at == anchor
+    ));
+    Ok(())
+}
+
+/// Bug repro (Astra #1434 F1, its narrowing case): the leader narrows S0
+/// (S1), then removes X and narrows the slice and depth over S1 (S2), and
+/// signs a stale sibling S3 over S0. The honest leader tie still meets, now
+/// with each branch at its frontier: X stays out, and the slice and depth
+/// stay narrowed, in both arrival orders and after reopen.
+#[cfg(feature = "sync")]
+#[test]
+fn a_leader_tie_meets_each_branch_at_its_frontier_in_either_order() -> Result<()> {
+    let (x, y, z) = (EntityId::now(), EntityId::now(), EntityId::now());
+    let (kept, dropped) = (
+        ScopeResource::Bucket { key: "kept".into() },
+        ScopeResource::Bucket {
+            key: "dropped".into(),
+        },
+    );
+    let wide = BTreeSet::from([kept.clone(), dropped]);
+    let origin = tempfile::tempdir()?;
+    let project = {
+        let vault = open(&origin)?;
+        let (root_id, mut root, holder) = root_leader(&vault)?;
+        root.slice.readable = wide.clone();
+        super::authority::put_signed_project(&vault, root_id, &mut root, holder, 1)?;
+        board_signed_s0(&vault, &[x, y, z], &[], |row| {
+            row.slice.readable = wide;
+            row.depth_remaining = 3;
+        })?
+    };
+    let copies = [copy_of(&origin)?, copy_of(&origin)?];
+    let vault = open(&origin)?;
+    let (id, leader) = (project.id, project.leader);
+    let s1 = signed_over(&vault, id, &project.s0, leader, without(y))?;
+    vault.put_project(id, &s1, 3)?;
+    let s2 = signed_over(&vault, id, &s1, leader, |row| {
+        row.roster.retain(|seat| *seat != x.to_hex());
+        row.slice.readable = BTreeSet::from([kept.clone()]);
+        row.depth_remaining = 1;
+    })?;
+    vault.put_project(id, &s2, 4)?;
+    let s3 = signed_over(&vault, id, &project.s0, leader, without(z))?;
+    let anchor = head_of(id, &project.s0)?;
+    for ((dir, replica), order) in copies.into_iter().zip([[&s1, &s2, &s3], [&s3, &s2, &s1]]) {
+        replay_authority(&vault, &replica)?;
+        for (at, row) in (10..).zip(order) {
+            replay_project(&replica, id, row, at)?;
+        }
+        assert_frontiers_meet(&replica, &project, x, anchor, &kept)?;
+        drop(replica);
+        assert_frontiers_meet(&open(&dir)?, &project, x, anchor, &kept)?;
+    }
     Ok(())
 }

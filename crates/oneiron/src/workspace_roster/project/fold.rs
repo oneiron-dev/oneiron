@@ -1,16 +1,20 @@
 //! The fold over a project's held revisions (decisions 5-7). It is a set
 //! fold: every replica that holds the same revisions and the same folded
 //! authority view reaches the same frontier, whatever order they arrived in.
-//! Rank decides between siblings, the board settles its own ties with a
-//! signed resolution, the owner's seal re-roots the history, and a tie that
-//! stays open seats only the members every contender keeps.
+//! Rank decides between sibling branches (`branch.rs`), the board settles its
+//! own ties with a signed resolution, the owner's seal re-roots the history,
+//! and a tie that stays open seats only the members every frontier keeps.
+use super::branch::{Excluded, Fork, Step};
 use super::fork_evidence::{ProjectForkEvidence, ProjectForkOutcome};
-use super::history_policy::{ProjectDependencies, ProjectEvidenceSet, ProjectHistoryOverBudget};
+use super::history_policy::{
+    ProjectDependencies, ProjectEvidenceSet, ProjectHistoryOverBudget, counted_set,
+};
 use super::read::{ProjectReader, ProjectVerdict};
 use super::revision::{ProjectRevision, ProjectRevisionHash, RevisionOrigin, anchor_of};
-use super::validity::{FoldCx, Step, parent_view};
+use super::validity::{FoldCx, parent_view};
 use super::*;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 /// Why a revision or a project carries no authority. Kept as one list so a
 /// persisted reason maps back to the same static text.
@@ -163,14 +167,25 @@ impl ProjectEffective {
                 .as_ref()
                 .is_none_or(|slice| parent_slice.attenuate(slice.clone()).is_ok())
     }
+    /// A state's own bounds: its members seated, its slice and depth.
+    pub(super) fn bounds(authority: &ProjectAuthority) -> Self {
+        let seats = members_of(authority)
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        Self::of(authority, seats, true)
+    }
     /// Narrows this view by another state: seats it does not keep leave,
     /// the slices meet, and the depths take the minimum.
     pub(super) fn meet(&mut self, other: &ProjectAuthority) {
-        let keep: BTreeSet<&str> = members_of(other);
-        self.seats.retain(|seat| keep.contains(seat.as_str()));
-        self.slice = match &self.slice {
-            Some(slice) => slice_meet(slice, &other.slice),
-            None => None,
+        self.meet_view(&Self::bounds(other));
+    }
+    /// Narrows this view by another view's seats, slice and depth.
+    pub(super) fn meet_view(&mut self, other: &ProjectEffective) {
+        self.seats.retain(|seat| other.seats.contains(seat));
+        self.slice = match (&self.slice, &other.slice) {
+            (Some(slice), Some(other)) => slice_meet(slice, other),
+            _ => None,
         };
         self.depth_limit = self.depth_limit.min(other.depth_limit);
         self.depth_remaining = self.depth_remaining.min(other.depth_remaining);
@@ -341,6 +356,8 @@ struct Walk {
     path: Vec<ProjectRevisionHash>,
     resolutions: BTreeSet<ProjectRevisionHash>,
     end: Option<(ProjectRank, BTreeSet<ProjectRevisionHash>)>,
+    /// The root folded to its frontier: what the walk serves.
+    served: Rc<Fork>,
 }
 
 /// Folds one project's held revisions within budget. `stored` is the PROJECT
@@ -367,40 +384,36 @@ pub(crate) fn fold_project(cx: &FoldCx<'_, '_, '_>, stored: &ProjectRecord) -> R
             return Ok(fold);
         }
     };
-    let head = *walk.path.last().unwrap_or(&walk.root);
-    let (disposition, witness_head, contenders) = match &walk.end {
-        None => (ProjectDisposition::Settled, head, BTreeSet::new()),
-        Some((rank, contenders)) => (
-            ProjectDisposition::Fork {
-                anchor: head,
-                rank: *rank,
-                contenders: contenders.clone(),
-            },
-            head,
-            contenders.clone(),
-        ),
+    let witness_head = *walk.path.last().unwrap_or(&walk.root);
+    let disposition = match &walk.end {
+        None => ProjectDisposition::Settled,
+        Some((rank, contenders)) => ProjectDisposition::Fork {
+            anchor: witness_head,
+            rank: *rank,
+            contenders: contenders.clone(),
+        },
     };
-    let Some(head_authority) = cx.authority_of(&witness_head) else {
+    let (Some(_), Some(view)) = (cx.authority_of(&witness_head), &walk.served.view) else {
         fold.frontier.disposition = ProjectDisposition::unauthorized(reason::NOT_A_STATE);
         finish(cx, &mut fold, Some(&walk))?;
         return Ok(fold);
     };
-    let bound = cx
-        .signer(&witness_head)
-        .is_some_and(|signer| signer != "host");
-    let seats = members_of(head_authority)
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-    let mut effective = ProjectEffective::of(head_authority, seats, bound);
-    for contender in &contenders {
-        if let Some(authority) = cx.authority_of(contender) {
-            effective.meet(authority);
-        }
-    }
+    let effective = ProjectEffective {
+        bound_by_parents: cx
+            .signer(&witness_head)
+            .is_some_and(|signer| signer != "host"),
+        ..view.clone()
+    };
+    // Beside the path: each tie branch to its frontier, and the
+    // settlements and depositions that decided a fork.
+    let listed: BTreeSet<&ProjectRevisionHash> =
+        walk.path.iter().chain(&walk.resolutions).collect();
     fold.dependencies = ProjectDependencies {
         path: walk.path.clone(),
-        contenders: contenders.iter().copied().collect(),
+        contenders: (walk.served.nodes.iter())
+            .filter(|node| !listed.contains(node))
+            .copied()
+            .collect(),
         resolutions: walk.resolutions.iter().copied().collect(),
         seal: walk.seal,
     };
@@ -565,28 +578,27 @@ fn root_and_walk(
         path: vec![root],
         resolutions: BTreeSet::new(),
         end: None,
+        served: cx.fork(root, &Excluded::new())?,
     };
-    let mut node = root;
+    let (mut node, mut excluded) = (root, Excluded::new());
     loop {
-        let (step, valid, settlement) = cx.step(node)?;
+        let fork = cx.fork(node, &excluded)?;
         // A settlement that excluded a valid child shapes what is served,
         // whether one winner or a tie's meet follows: the frozen reader
         // re-verifies it with the path.
-        if settlement
-            .superseded
-            .iter()
-            .any(|lost| valid.contains(lost))
-        {
-            walk.resolutions.extend(settlement.closure.iter().copied());
+        if (fork.settlement.superseded.iter()).any(|lost| fork.valid.contains(lost)) {
+            walk.resolutions
+                .extend(fork.settlement.closure.iter().copied());
         }
-        match step {
+        match &fork.step {
             Step::Head => break,
             Step::Advance { winner, .. } => {
-                walk.path.push(winner);
-                node = winner;
+                excluded = fork.below.get(winner).cloned().unwrap_or_default();
+                walk.path.push(*winner);
+                node = *winner;
             }
             Step::Tie { rank, contenders } => {
-                walk.end = Some((rank, contenders));
+                walk.end = Some((*rank, contenders.clone()));
                 break;
             }
         }
@@ -661,22 +673,30 @@ fn finish(cx: &FoldCx<'_, '_, '_>, fold: &mut ProjectFold, walk: Option<&Walk>) 
             .collect(),
     };
     let mut seen = BTreeSet::new();
-    let mut todo = roots;
-    while let Some(node) = todo.pop() {
+    // Each node folds under the exclusions its parent's fork hands it, as
+    // the walk saw it on the path.
+    let mut todo: Vec<(ProjectRevisionHash, Excluded)> = roots
+        .into_iter()
+        .map(|root| (root, Excluded::new()))
+        .collect();
+    while let Some((node, excluded)) = todo.pop() {
         if !seen.insert(node) {
             continue;
         }
-        let (step, valid, settlement) = cx.step(node)?;
-        todo.extend(valid.iter().copied());
-        if valid.len() < 2 {
+        let fork = cx.fork(node, &excluded)?;
+        todo.extend(fork.valid.iter().map(|child| {
+            let below = fork.below.get(child).unwrap_or(&excluded);
+            (*child, below.clone())
+        }));
+        if fork.valid.len() < 2 {
             continue;
         }
-        let outcome = match step {
+        let outcome = match fork.step {
             Step::Head => continue,
             Step::Advance {
                 winner,
                 resolution: Some(resolution),
-            } if settlement.tip == Some(resolution) => {
+            } if fork.settlement.tip == Some(resolution) => {
                 ProjectForkOutcome::Resolved { resolution, winner }
             }
             Step::Advance { winner, .. } => ProjectForkOutcome::Ranked { winner },
@@ -685,7 +705,7 @@ fn finish(cx: &FoldCx<'_, '_, '_>, fold: &mut ProjectFold, walk: Option<&Walk>) 
         fold.forks.push(ProjectForkEvidence {
             project: cx.id,
             anchor: node,
-            children: valid,
+            children: fork.valid.clone(),
             outcome,
             on_path: on_path.contains(&node),
         });
@@ -724,73 +744,4 @@ pub(super) fn seal_tips(cx: &FoldCx<'_, '_, '_>) -> Result<BTreeSet<ProjectRevis
         .filter(|hash| !superseded.contains(hash))
         .copied()
         .collect())
-}
-
-/// How many revisions the budget counts (point H).
-pub(super) fn budget_count(cx: &FoldCx<'_, '_, '_>) -> Result<u64> {
-    Ok(counted_set(cx)?.len() as u64)
-}
-
-/// What the budget counts (point H): authenticated signed revisions reachable
-/// through the child index from the root, every boundary and every birth,
-/// plus the authenticated envelopes at reachable nodes, read from the index.
-/// Under one standing seal the fold restarts at its revision, so only the
-/// seal and what descends from it count. A row nothing reachable names, such
-/// as an envelope over an anchor this replica lacks, spends nothing.
-fn counted_set(cx: &FoldCx<'_, '_, '_>) -> Result<BTreeSet<ProjectRevisionHash>> {
-    let authenticated = |hash: &ProjectRevisionHash| {
-        cx.held
-            .get(hash)
-            .is_some_and(|row| row.origin == RevisionOrigin::Authenticated)
-    };
-    let tips = seal_tips(cx)?;
-    let mut only = tips.iter();
-    let mut counted = BTreeSet::new();
-    let roots: Vec<ProjectRevisionHash> = match (only.next(), only.next()) {
-        (Some(tip), None) => {
-            let Some(ProjectRevision::Seal { seal, .. }) = cx.row(tip) else {
-                return Ok(counted);
-            };
-            counted.insert(*tip);
-            vec![seal.next]
-        }
-        _ => cx
-            .held
-            .rows
-            .iter()
-            .filter(|(_, row)| {
-                matches!(
-                    row.revision,
-                    ProjectRevision::Boundary { .. } | ProjectRevision::Signed { parent: None, .. }
-                )
-            })
-            .map(|(hash, _)| *hash)
-            .collect(),
-    };
-    let mut seen = BTreeSet::new();
-    let mut todo = roots;
-    while let Some(node) = todo.pop() {
-        if !seen.insert(node) {
-            continue;
-        }
-        if authenticated(&node) && matches!(cx.row(&node), Some(ProjectRevision::Signed { .. })) {
-            counted.insert(node);
-        }
-        counted.extend(
-            cx.held
-                .resolutions_at(&node)
-                .filter(|hash| authenticated(hash)),
-        );
-        todo.extend(cx.held.children_of(&node).copied());
-    }
-    if tips.len() != 1 {
-        for hash in &cx.held.seals {
-            if authenticated(hash)
-                && matches!(cx.row(hash), Some(ProjectRevision::Seal { seal, .. }) if seen.contains(&seal.next))
-            {
-                counted.insert(*hash);
-            }
-        }
-    }
-    Ok(counted)
 }

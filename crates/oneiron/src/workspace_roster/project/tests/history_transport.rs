@@ -396,8 +396,9 @@ fn a_restore_keeps_history_learned_since_its_checkpoint() -> Result<()> {
 
 /// Bug repro (Astra #1434 F2): a retained window still carries a PROJECT
 /// row after its next revision was learned in a later month, and shipped it
-/// without that revision, so a peer seated the removed member again. Both
-/// the rematerialized window and a resident window's export carry it.
+/// without that revision, so a peer seated the removed member again. The
+/// rematerialized window carries it, and so do a resident window's export
+/// and a promoted device's.
 #[cfg(feature = "sync")]
 #[test]
 fn a_retained_window_carries_the_history_learned_after_it() -> Result<()> {
@@ -413,20 +414,29 @@ fn a_retained_window_carries_the_history_learned_after_it() -> Result<()> {
     let id = project.id;
     let key = WindowKey::new("1970-01");
     let january = exported(&vault, &key)?;
-    let resident = exported(&vault, &key)?;
+    let (resident, promoted) = (exported(&vault, &key)?, exported(&vault, &key)?);
     let s1 = signed_over(&vault, id, &project.s0, project.board, without(x))?;
     vault.put_project(id, &s1, next_month)?;
     let s1_row = revision_entity_id(head_of(id, &s1)?)?.to_hex();
 
-    let update = crate::sync::window::export_window_updates_since(
-        &vault,
-        &key,
-        &resident,
-        &loro::VersionVector::default().encode(),
-    )?;
-    let shipped = loro::LoroDoc::new();
-    shipped.import(&update).map_err(|_| invalid())?;
-    assert!(map_get_bytes(&shipped.get_map("entities"), &s1_row).is_some());
+    let none = loro::VersionVector::default().encode();
+    for (door, update) in [
+        (
+            "resident",
+            crate::sync::window::export_window_updates_since(&vault, &key, &resident, &none)?,
+        ),
+        (
+            "promoted",
+            crate::sync::window::export_promoted_window_updates_since(
+                &vault, &key, &promoted, &none,
+            )?,
+        ),
+    ] {
+        let shipped = loro::LoroDoc::new();
+        shipped.import(&update).map_err(|_| invalid())?;
+        let carried = map_get_bytes(&shipped.get_map("entities"), &s1_row).is_some();
+        assert!(carried, "{door}");
+    }
 
     reverse_rematerialize(&vault, &january, &key)?;
     assert!(map_get_bytes(&january.get_map("entities"), &s1_row).is_some());

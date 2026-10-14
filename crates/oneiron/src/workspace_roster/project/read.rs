@@ -4,8 +4,8 @@
 //! into one frontier (decision 7). The stored row supplies content; the
 //! frontier supplies authority. A project whose frontier serves no authority
 //! stays in storage, hidden from ordinary reads and listed for the owner.
-use super::fold::{ProjectEffective, ProjectFrontier, budget_count, fold_project, reason};
-use super::history_policy::{frozen_frontier, policy_in};
+use super::fold::{ProjectEffective, ProjectFrontier, fold_project, reason};
+use super::history_policy::{budget_count, frozen_frontier, policy_in};
 use super::validity::FoldCx;
 use super::*;
 use crate::HostingPrivacyPosture;

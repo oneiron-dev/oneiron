@@ -4,10 +4,10 @@
 //! budget at its last verified frontier, and, while frozen, applies every
 //! valid descendant of the frozen head as a narrowing meet (ruling F2
 //! condition 1), so no flood can freeze a replica ahead of a removal.
-use super::fold::{ProjectEffective, budget_count, fold_project, reason};
+use super::fold::{ProjectEffective, fold_project, reason};
 use super::history_policy::{
     PROJECT_FRONTIER, PROJECT_FROZEN_APPLIED, PROJECT_FROZEN_WAIT_PROJECT, ProjectFreeze,
-    ProjectFrontierRecord, policy_in,
+    ProjectFrontierRecord, budget_count, policy_in,
 };
 use super::read::{ProjectReader, ProjectVerdict};
 use super::revision::{

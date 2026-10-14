@@ -6,9 +6,10 @@
 //! from order-freedom; a huge threshold raises a typed state, never a quiet limit.
 use super::fold::{
     ProjectDisposition, ProjectEffective, ProjectFrontier, ProjectWitness, parent_bounds, reason,
+    seal_tips,
 };
 use super::read::{ProjectReader, ProjectVerdict};
-use super::revision::ProjectRevisionHash;
+use super::revision::{ProjectRevision, ProjectRevisionHash, RevisionOrigin};
 use super::validity::FoldCx;
 use super::*;
 use crate::consent::AuthenticatedOwner;
@@ -251,4 +252,73 @@ impl Vault {
         }
         Ok(over)
     }
+}
+
+/// How many revisions the budget counts (point H).
+pub(super) fn budget_count(cx: &FoldCx<'_, '_, '_>) -> Result<u64> {
+    Ok(counted_set(cx)?.len() as u64)
+}
+
+/// What the budget counts (point H): authenticated signed revisions reachable
+/// through the child index from the root, every boundary and every birth,
+/// plus the authenticated envelopes at reachable nodes, read from the index.
+/// Under one standing seal the fold restarts at its revision, so only the
+/// seal and what descends from it count. A row nothing reachable names, such
+/// as an envelope over an anchor this replica lacks, spends nothing.
+pub(super) fn counted_set(cx: &FoldCx<'_, '_, '_>) -> Result<BTreeSet<ProjectRevisionHash>> {
+    let authenticated = |hash: &ProjectRevisionHash| {
+        cx.held
+            .get(hash)
+            .is_some_and(|row| row.origin == RevisionOrigin::Authenticated)
+    };
+    let tips = seal_tips(cx)?;
+    let mut only = tips.iter();
+    let mut counted = BTreeSet::new();
+    let roots: Vec<ProjectRevisionHash> = match (only.next(), only.next()) {
+        (Some(tip), None) => {
+            let Some(ProjectRevision::Seal { seal, .. }) = cx.row(tip) else {
+                return Ok(counted);
+            };
+            counted.insert(*tip);
+            vec![seal.next]
+        }
+        _ => cx
+            .held
+            .rows
+            .iter()
+            .filter(|(_, row)| {
+                matches!(
+                    row.revision,
+                    ProjectRevision::Boundary { .. } | ProjectRevision::Signed { parent: None, .. }
+                )
+            })
+            .map(|(hash, _)| *hash)
+            .collect(),
+    };
+    let mut seen = BTreeSet::new();
+    let mut todo = roots;
+    while let Some(node) = todo.pop() {
+        if !seen.insert(node) {
+            continue;
+        }
+        if authenticated(&node) && matches!(cx.row(&node), Some(ProjectRevision::Signed { .. })) {
+            counted.insert(node);
+        }
+        counted.extend(
+            cx.held
+                .resolutions_at(&node)
+                .filter(|hash| authenticated(hash)),
+        );
+        todo.extend(cx.held.children_of(&node).copied());
+    }
+    if tips.len() != 1 {
+        for hash in &cx.held.seals {
+            if authenticated(hash)
+                && matches!(cx.row(hash), Some(ProjectRevision::Seal { seal, .. }) if seen.contains(&seal.next))
+            {
+                counted.insert(*hash);
+            }
+        }
+    }
+    Ok(counted)
 }

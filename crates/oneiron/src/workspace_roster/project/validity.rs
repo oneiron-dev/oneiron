@@ -1,5 +1,6 @@
-//! Whether one held revision is valid on its own lineage, and how the walk
-//! leaves one node: rank, the board's resolutions and ties (decisions 5, 6).
+//! Whether one held revision is valid on its own lineage, and the board's
+//! resolutions at one node (decisions 5, 6); `branch.rs` folds a fork.
+use super::branch::{Excluded, Fork};
 use super::fold::{ProjectEffective, ProjectRank, authority_fits, rank_at, reason};
 use super::read::{Holder, ProjectReader, ProjectVerdict};
 use super::resolution::{ProjectResolution, ProjectSeal};
@@ -11,24 +12,11 @@ use super::*;
 use crate::federation::ScopeId;
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 /// Deepest nesting of envelopes (a resolution's `prior`, a seal's
 /// `supersedes`) and revisions the fold follows from one entry.
 const MAX_FOLD_DEPTH: usize = 4 * MAX_PROJECT_ANCHORS;
-
-/// How the walk leaves one node.
-pub(super) enum Step {
-    /// No valid child: the node is the head.
-    Head,
-    Advance {
-        winner: ProjectRevisionHash,
-        resolution: Option<ProjectRevisionHash>,
-    },
-    Tie {
-        rank: ProjectRank,
-        contenders: BTreeSet<ProjectRevisionHash>,
-    },
-}
 
 /// The settlement of the valid resolutions at one node.
 pub(super) struct Settlement {
@@ -46,6 +34,7 @@ pub(super) struct FoldCx<'r, 'a, 't> {
     pub(super) held: &'r HeldRevisions,
     verdicts: RefCell<BTreeMap<ProjectRevisionHash, ProjectVerdict>>,
     signers: RefCell<BTreeMap<ProjectRevisionHash, String>>,
+    pub(super) forks: RefCell<BTreeMap<(ProjectRevisionHash, Excluded), Rc<Fork>>>,
     depth: Cell<usize>,
     /// How often the depth guard refused. A verdict that consumed a refusal
     /// depends on where the walk entered the chain, so it is not memoized.
@@ -64,6 +53,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             held,
             verdicts: RefCell::new(BTreeMap::new()),
             signers: RefCell::new(BTreeMap::new()),
+            forks: RefCell::new(BTreeMap::new()),
             depth: Cell::new(0),
             refusals: Cell::new(0),
         }
@@ -103,6 +93,11 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             self.verdicts.borrow_mut().insert(hash, verdict);
         }
         Ok(verdict)
+    }
+
+    /// How often the depth guard has refused so far.
+    pub(super) fn refusals(&self) -> u64 {
+        self.refusals.get()
     }
 
     /// The verified signer of a valid signed revision.
@@ -477,55 +472,6 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             closure,
             superseded,
         })
-    }
-
-    /// How the walk leaves `node`, with its valid children and settlement.
-    pub(super) fn step(
-        &self,
-        node: ProjectRevisionHash,
-    ) -> Result<(Step, BTreeSet<ProjectRevisionHash>, Settlement)> {
-        let valid = self.valid_children(node)?;
-        let settlement = self.settlement(node)?;
-        if valid.is_empty() {
-            return Ok((Step::Head, valid, settlement));
-        }
-        let Some(node_authority) = self.row(&node).and_then(ProjectRevision::authority) else {
-            return Ok((Step::Head, valid, settlement));
-        };
-        let candidates: BTreeSet<ProjectRevisionHash> =
-            valid.difference(&settlement.superseded).copied().collect();
-        let ranked: Vec<(ProjectRank, ProjectRevisionHash)> = candidates
-            .iter()
-            .filter_map(|child| {
-                let signer = self.signer(child)?;
-                Some((rank_at(node_authority, &signer)?, *child))
-            })
-            .collect();
-        let Some(top) = ranked.iter().map(|(rank, _)| *rank).max() else {
-            return Ok((Step::Head, valid, settlement));
-        };
-        let at_top: Vec<ProjectRevisionHash> = ranked
-            .iter()
-            .filter(|(rank, _)| *rank == top)
-            .map(|(_, child)| *child)
-            .collect();
-        let step = if let [winner] = at_top[..] {
-            Step::Advance {
-                winner,
-                resolution: settlement.tip.filter(|_| {
-                    settlement
-                        .superseded
-                        .iter()
-                        .any(|lost| valid.contains(lost))
-                }),
-            }
-        } else {
-            Step::Tie {
-                rank: top,
-                contenders: candidates,
-            }
-        };
-        Ok((step, valid, settlement))
     }
 
     /// The valid resolutions at `anchor` that no valid resolution there

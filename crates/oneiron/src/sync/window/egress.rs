@@ -429,7 +429,7 @@ pub fn export_window_updates_since(
 /// snapshot on every reply can discard the device's later unconfirmed op
 /// during a merge. If a scrub pinned this window to history-free transport,
 /// retain the existing snapshot policy instead.
-pub(in crate::sync) fn export_promoted_window_updates_since(
+pub(crate) fn export_promoted_window_updates_since(
     vault: &Vault,
     key: &WindowKey,
     doc: &LoroDoc,
@@ -448,6 +448,11 @@ pub(in crate::sync) fn export_promoted_window_updates_since(
     let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;
     let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
     let withdrawn_scrubbed = scrub_withdrawn_delete_carriers(vault, key, doc)?;
+    // A promoted window holds an older window's PROJECT carriers too: the
+    // same closure as a resident one (Astra #1434 F2).
+    if super::project_history::carry_project_history(vault, doc)? {
+        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    }
     let scrubbed = secret_scrubbed || claims_scrubbed || withdrawn_scrubbed;
     if scrubbed
         || history_free_window_required(vault, key)?

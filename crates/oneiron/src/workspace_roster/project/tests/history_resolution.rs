@@ -146,10 +146,13 @@ fn a_board_resolution_settles_a_board_fork_and_conflicting_resolutions_settle_no
     replay_project(&vault, id, &c2, 4)?;
     assert_eq!(leader_of(&vault, id)?, Some(project.leader.to_hex()));
     assert_eq!(seats_of(&vault, id), ids(&[member]));
-    // Z sits on C1's board only: its revision over C1 changes nothing.
+    // Z sits on C1's board only: its revision over C1 installs nothing, but
+    // the tie meets C1's branch at its frontier, so its removal holds
+    // (Astra #1434 F1).
     let by_z = signed_over(&vault, id, &c1, z, without(member))?;
     replay_project(&vault, id, &by_z, 5)?;
-    assert_eq!(seats_of(&vault, id), ids(&[member]));
+    assert_eq!(leader_of(&vault, id)?, Some(project.leader.to_hex()));
+    assert_eq!(seats_of(&vault, id), ids(&[]));
     let tied = |vault: &Vault| {
         vault
             .project_forks()

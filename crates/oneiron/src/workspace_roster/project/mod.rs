@@ -9,6 +9,7 @@ mod mint;
 pub(crate) use mint::project_mint_gate_refs_in_txn;
 mod origin;
 pub use mint::{ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt};
+mod branch;
 mod capture;
 mod doors;
 mod fold;
