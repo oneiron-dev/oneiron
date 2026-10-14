@@ -3180,7 +3180,7 @@ fn an_ask_off_this_device_takes_nothing_from_a_device_local_task() -> Result<()>
     let portable = portable?;
     assert_eq!(listed, vec![task, question]);
 
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     let (kept, listed) = can(CallerLocality::OffDevice);
     assert!(kept.is_err(), "{kept:?}");
     assert_eq!(listed, vec![task]);
@@ -3244,7 +3244,7 @@ fn an_agents_omitted_target_lists_the_assignment_it_comes_from() -> Result<()> {
     assert_eq!(portable.recipients[0].who, human);
     assert_eq!(listed, vec![assignment, question.entity_ref()]);
 
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     let (kept, listed) = can(CallerLocality::OffDevice);
     assert!(kept.is_err(), "{kept:?}");
     assert!(listed.is_empty(), "{listed:?}");
@@ -3336,7 +3336,7 @@ fn an_ask_off_this_device_reads_no_device_local_context_claim() -> Result<()> {
         assert!(listed.contains(&context), "{status}: {listed:?}");
     }
 
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     for status in [false, true] {
         let (kept, listed) = read(CallerLocality::OffDevice, status);
         assert!(kept.is_err(), "{status}: {kept:?}");
@@ -3401,7 +3401,9 @@ fn an_ask_off_this_device_takes_no_class_from_a_device_local_governed_task() -> 
     let portable = portable?;
     assert!(listed.contains(&governed), "{listed:?}");
 
-    fixture.vault.set_world_device_only(world, true)?;
+    fixture
+        .vault
+        .keep_world_on_this_machine_for_test(world, true)?;
     let (kept, listed) = status(CallerLocality::OffDevice);
     assert!(kept.is_err(), "{kept:?}");
     assert!(listed.contains(&governed), "{listed:?}");
@@ -3480,7 +3482,7 @@ fn task_scans_off_this_device_count_no_device_local_task() -> Result<()> {
                 None,
             ))?;
     }
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
 
     let exhausted = |locality| -> Result<bool> {
         let txn = vault.store.env.read_txn()?;

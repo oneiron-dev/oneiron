@@ -44,7 +44,7 @@ fn a_device_local_claim_never_reaches_a_remote_the_host_allows() -> Result<()> {
     let (kept, open) = (entity_id(0x91), entity_id(0x92));
     put_world_claim(&vault, kept, world)?;
     put_claim(&vault, open, "open")?;
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     let local = Arc::new(RecordingEmbedder::new("test/embedder@v1", 4));
     let remote = Arc::new(RemoteFixtureEmbedder::new(
         "test/embedder@v1",
@@ -89,7 +89,8 @@ impl Embedder for FlaggedBeforeSend {
     }
 
     fn embed(&self, inputs: &[PendingEmbeddingInput]) -> Result<Vec<Vec<f32>>> {
-        self.vault.set_world_device_only(self.world, true)?;
+        self.vault
+            .keep_world_on_this_machine_for_test(self.world, true)?;
         self.inner.embed(inputs)
     }
 
@@ -98,7 +99,8 @@ impl Embedder for FlaggedBeforeSend {
         inputs: &[PendingEmbeddingInput],
         release: &dyn Fn(&[EntityId]) -> Result<()>,
     ) -> Result<Vec<(Vec<f32>, crate::embed::EmbeddingProvenance)>> {
-        self.vault.set_world_device_only(self.world, true)?;
+        self.vault
+            .keep_world_on_this_machine_for_test(self.world, true)?;
         let rows: Vec<EntityId> = inputs.iter().map(|input| input.entity_id).collect();
         release(&rows)?;
         self.inner.embed_marked(inputs)
@@ -143,7 +145,7 @@ fn with_no_embedder_on_this_device_a_device_local_row_stays_pending_unsent() -> 
     put_world(&vault, world)?;
     let kept = entity_id(0x96);
     put_world_claim(&vault, kept, world)?;
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     let primary = Arc::new(RemoteFixtureEmbedder::new(
         "test/embedder@v1",
         4,
@@ -157,7 +159,7 @@ fn with_no_embedder_on_this_device_a_device_local_row_stays_pending_unsent() -> 
     assert!(primary.seen().is_empty(), "nothing may leave the device");
     assert!(pending_token(&vault, &kept)?.is_some());
 
-    vault.set_world_device_only(world, false)?;
+    vault.keep_world_on_this_machine_for_test(world, false)?;
     let report = reconciler.reconcile_once_at(20)?;
     assert_eq!(report.filled, 1);
     assert_eq!(primary.seen(), vec![kept]);

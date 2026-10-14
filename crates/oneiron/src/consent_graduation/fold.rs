@@ -361,8 +361,12 @@ impl Vault {
         &self,
         rtxn: &heed::RoTxn<'_>,
     ) -> Result<Vec<(EntityId, crate::identity_topology::StoredIdentityOpEvent)>> {
-        let fold =
-            fold_identity_topology_log(&self.fold_effective_identity_topology_events_in_txn(rtxn)?);
+        let effective = self.fold_effective_identity_topology_events_in_txn(rtxn)?;
+        // Only a ruling in force counts: a peer's ruling no seal this vault
+        // counts binds is no outcome (H161).
+        let in_force: std::collections::BTreeSet<EntityId> =
+            effective.iter().map(|event| event.event_id).collect();
+        let fold = fold_identity_topology_log(&effective);
         let superseded: std::collections::BTreeSet<EntityId> = fold
             .rejections
             .iter()
@@ -379,6 +383,7 @@ impl Vault {
         for event in self.identity_topology_events_in_txn(rtxn)? {
             if !matches!(event.action, IdentityTopologyAction::ResolveProposal { .. })
                 || superseded.contains(&event.event_id)
+                || !in_force.contains(&event.event_id)
             {
                 continue;
             }

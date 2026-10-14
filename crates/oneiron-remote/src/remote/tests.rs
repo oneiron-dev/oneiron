@@ -182,3 +182,84 @@ fn connected_export_dispatches_generic_and_streams_large_typed_document() {
     assert!(large.rendered.bytes().all(|byte| byte == b'x'));
     server.join().unwrap();
 }
+
+/// A loopback peer that answers one export with a valid document whose
+/// `rendered` text is `count` bytes, framed by `Content-Length` or by closing
+/// the connection, and hands back how many bytes it wrote of how many.
+fn export_peer(
+    count: usize,
+    content_length: bool,
+) -> (String, std::thread::JoinHandle<(usize, usize)>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let served = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(&mut stream);
+        let mut length = 0;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" {
+                break;
+            }
+            if let Some((name, value)) = line.split_once(':')
+                && name.eq_ignore_ascii_case("content-length")
+            {
+                length = value.trim().parse().unwrap();
+            }
+        }
+        reader.read_exact(&mut vec![0; length]).unwrap();
+        drop(reader);
+        let mut body = br#"{"format":"json","rendered":""#.to_vec();
+        body.resize(body.len() + count, b'x');
+        body.extend_from_slice(b"\"}");
+        let framing = if content_length {
+            format!("Content-Length: {}\r\n", body.len())
+        } else {
+            String::new()
+        };
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{framing}Connection: close\r\n\r\n").unwrap();
+        let mut written = 0;
+        for block in body.chunks(64 * 1024) {
+            if stream.write_all(block).is_err() {
+                break;
+            }
+            written += block.len();
+        }
+        (written, body.len())
+    });
+    (origin, served)
+}
+
+/// C13: export read whatever the origin sent. It now reads at most its own
+/// ceiling: a body at the ceiling decodes, one byte more is refused, whether
+/// `Content-Length` announces it or not, and the client stops reading.
+#[test]
+fn export_reads_at_most_its_ceiling_with_or_without_content_length() {
+    const LIMIT: usize = 64 * 1024;
+    let framing = br#"{"format":"json","rendered":""}"#.len();
+    let export = |count: usize, content_length: bool| {
+        let (origin, served) = export_peer(count, content_length);
+        // The client, and with it any connection, is gone before the join.
+        let result = {
+            let mut client = RemoteClient::connect(&origin, "local-secret", None).unwrap();
+            client.export_limit = LIMIT;
+            client.call::<_, oneiron::memory::MemoryExport>(
+                "export",
+                &serde_json::json!({"format":"json"}),
+            )
+        };
+        (result, served.join().unwrap())
+    };
+    for content_length in [true, false] {
+        let (at_limit, _) = export(LIMIT - framing, content_length);
+        assert_eq!(at_limit.unwrap().rendered.len(), LIMIT - framing);
+        let (over, _) = export(LIMIT - framing + 1, content_length);
+        assert!(over.is_err(), "one byte over the export ceiling");
+    }
+    // An origin that keeps sending is cut off near the ceiling, not read to
+    // its end.
+    let (endless, (written, total)) = export(1024 * LIMIT, false);
+    assert!(endless.is_err());
+    assert!(written < total, "the client read all {total} bytes");
+}
