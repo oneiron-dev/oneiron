@@ -33,7 +33,7 @@ fn a_device_local_world_moves_no_row_an_off_device_facet_recall_returns() {
     let world = crate::test_util::entity(0x61);
     put(&world, crate::registry::ENTITY_TYPE_WORLD, b"world");
     vault
-        .set_world_device_only(world, true)
+        .keep_world_on_this_machine_for_test(world, true)
         .expect("flag the world");
     // A claim whose words match nothing the recall asks, with a vector and
     // the phonetic code it asks for, if any.

@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::Json;
 use axum::extract::State;
+use oneiron::authority::HostSlipIssuer;
 use oneiron::llm::run_admission::{MemoryReceipts, RunEvent, RunReceipt, RunReceiptSink};
 
 use super::*;
@@ -812,7 +813,14 @@ rerank_budget_units = 32000
     };
     let first = held.taken.recv().await.expect("the first rung took a call");
     assert!(sent(&first, KEPT), "the world was not yet flagged: {first}");
-    server.vault().set_world_device_only(world, true).unwrap();
+    server
+        .vault()
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            world,
+            true,
+        )
+        .unwrap();
     held.go.notify_one();
     let pack = recalling.await.unwrap().unwrap();
 
@@ -830,11 +838,11 @@ rerank_budget_units = 32000
 
 /// A run receipt sink that flags a world device-only when the recall's
 /// rerank call is admitted, as a flag that commits while admission waits on
-/// the host's receipts. Given its vault and world once they exist. It keeps
-/// every receipt.
+/// the host's receipts. Given its vault, the host root it is rooted under
+/// and the world once they exist. It keeps every receipt.
 #[derive(Default)]
 struct FlagOnAdmission {
-    flag: Mutex<Option<(Arc<oneiron::Vault>, oneiron::EntityId)>>,
+    flag: Mutex<Option<(Arc<oneiron::Vault>, HostSlipIssuer, oneiron::EntityId)>>,
     receipts: MemoryReceipts,
 }
 
@@ -842,9 +850,11 @@ impl RunReceiptSink for FlagOnAdmission {
     fn record(&self, receipt: RunReceipt) {
         if receipt.run.starts_with("recall-rerank:")
             && matches!(receipt.event, RunEvent::Admitted(_))
-            && let Some((vault, world)) = self.flag.lock().unwrap().take()
+            && let Some((vault, issuer, world)) = self.flag.lock().unwrap().take()
         {
-            vault.set_world_device_only(world, true).unwrap();
+            vault
+                .keep_world_on_this_machine_under_for_test(&issuer, world, true)
+                .unwrap();
         }
         self.receipts.record(receipt);
     }
@@ -869,7 +879,11 @@ async fn a_world_flagged_while_a_rung_is_admitted_reaches_no_rung() {
         let (_dir, server, _host) = served_with(Some(&models), flag.clone()).await;
         let actor = reader(&server, "rerank-admitted").await;
         let world = world_with(server.vault(), actor, KEPT);
-        *flag.flag.lock().unwrap() = Some((Arc::clone(server.vault()), world));
+        *flag.flag.lock().unwrap() = Some((
+            Arc::clone(server.vault()),
+            crate::test_credentials::host_issuer(&server),
+            world,
+        ));
 
         let pack = recall_spec_from(&server, "rerank-admitted", actor, high_in(world), on_device)
             .await

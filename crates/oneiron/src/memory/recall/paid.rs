@@ -140,7 +140,7 @@ impl RerankEgress<'_> {
         if self.refused() {
             return false;
         }
-        let holds = kept_on_device(&self.vault.store, sent).is_ok_and(|kept| kept.is_empty());
+        let holds = kept_on_device(self.vault, sent).is_ok_and(|kept| kept.is_empty());
         if !holds {
             self.refused.store(true, Ordering::Relaxed);
         }
@@ -603,7 +603,7 @@ impl Memory<'_> {
                 .filter(|(_, text)| !text.is_empty())
                 .map(|((candidate, world), _)| (candidate.id, world))
                 .collect();
-            let kept = kept_on_device(&self.vault.store, &with_words)?;
+            let kept = kept_on_device(self.vault, &with_words)?;
             for (candidate, text) in block.iter().zip(&mut texts) {
                 if kept.contains(&candidate.id) {
                     text.clear();
@@ -636,9 +636,10 @@ impl Memory<'_> {
 /// a scoped read can take the writer, which a flag commit holds while it
 /// waits.
 fn kept_on_device(
-    store: &crate::store::Store,
+    vault: &crate::Vault,
     rows: &[(EntityId, Option<EntityId>)],
 ) -> crate::Result<BTreeSet<EntityId>> {
+    let store = &vault.store;
     let _flags = store
         .device_only_flag_lock
         .read()
@@ -646,7 +647,7 @@ fn kept_on_device(
     let rtxn = store.env.read_txn()?;
     // The reranker sits off this device: a host on it never asks.
     let flagged = crate::settings::device_local_worlds_at(
-        store,
+        vault,
         &rtxn,
         crate::claim::CallerLocality::OffDevice,
     )?;

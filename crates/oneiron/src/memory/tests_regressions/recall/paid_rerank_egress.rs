@@ -319,7 +319,7 @@ fn kept_world(vault: &crate::Vault, owner: EntityId) -> (EntityId, EntityId) {
         "the lantern key is under the mat",
     );
     vault
-        .set_world_device_only(world, true)
+        .keep_world_on_this_machine_for_test(world, true)
         .expect("flag the world");
     (world, kept)
 }
