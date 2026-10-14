@@ -34,12 +34,12 @@ pub(crate) fn preflight_canonical_recovery(
     let mut txn = vault.store.env.write_txn()?;
     crate::recovery::validate_window_documents(doc)?;
     snapshot.preflight_note_recovery(vault, &txn)?;
-    let tombstones_map = doc.get_map("tombstones");
+    let tombstones = crate::sync::loro_support::TombstoneIndex::build(&doc.get_map("tombstones"));
     let ingest = IngestCtx::new(
         vault,
         &snapshot.window,
         materializer.lease_vault_id(),
-        &tombstones_map,
+        &tombstones,
     );
     // AUTHORITY_LOG rows first, parents first, as the forward pass lands
     // them (H72): the door holds a row whose signer's enrollment is not
@@ -62,7 +62,8 @@ pub(crate) fn preflight_canonical_recovery(
     for at in order {
         let entity = &snapshot.entity_blobs[at];
         let id = EntityId::from_bytes(entity.id)?;
-        if let Some((blob, tombstone)) = crate::recovery::retained_soft_shell(doc, &id) {
+        if let Some((blob, tombstone)) = crate::recovery::retained_soft_shell(doc, &tombstones, &id)
+        {
             crate::batch::restore_recovery_shell_in_txn(vault, &mut txn, &id, &blob, &tombstone)?;
         } else if let EntityStep::Quarantine(refusal) =
             ingest_entity_in_txn(&ingest, &mut txn, &id.to_hex(), Some(&entity.blob))?
