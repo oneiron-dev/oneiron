@@ -121,7 +121,8 @@ fn linkedin_send_dm_plan_target_mismatch_fails_before_send()
             1_061,
             OutboundDeliveryWindowDecision::DeliverNow,
         )
-        .counterparty_ref("linkedin:member:mallory"),
+        .counterparty_ref("linkedin:member:mallory")
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
         &mut sink,
     )?;
 
@@ -183,7 +184,8 @@ fn linkedin_send_dm_send_failure_is_ambiguous_without_verification()
             actor,
             "outbound:intent:linkedin-send-failed",
             "intent:linkedin-send-failed",
-        ),
+        )
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
         &mut sink,
     )?;
 
@@ -269,7 +271,8 @@ fn linkedin_send_dm_observed_absent_produces_ambiguous_receipt_without_phantom_s
             actor,
             "outbound:intent:linkedin-absent",
             "intent:linkedin-absent",
-        ),
+        )
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
         &mut sink,
     )?;
 
@@ -297,5 +300,65 @@ fn linkedin_send_dm_observed_absent_produces_ambiguous_receipt_without_phantom_s
         Some("2")
     );
     assert_eq!(sink.transport().send_calls.len(), 1);
+    Ok(())
+}
+
+/// Security pack 2, F14 H132: a LinkedIn send dispatched with no seat policy
+/// has no seat verdict, so the kill switch, the daily cap and the cadence never
+/// ran. It is held before the transport, never sent, under any channel
+/// spelling the capability lookup accepts.
+#[test]
+fn a_linkedin_send_with_no_seat_policy_is_held()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault) = temp_vault();
+    let actor = OutboundDispatchActor::agent(entity(0xB3));
+    vault.put_entity(
+        &entity(0xB3),
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"dispatch actor",
+    )?;
+    allow_linkedin_send(&vault, &actor)?;
+    for (spelling, intent) in [
+        ("linkedin", "linkedin-no-policy"),
+        (" LinkedIn ", "linkedin-no-policy-spelled"),
+    ] {
+        let plan = LinkedInVerifiedSendPlan::new(
+            "linkedin:member:jane-doe",
+            "2-jane-doe-abc",
+            "Happy to share more details.",
+        )?;
+        let mut sink = LinkedInMcpVerifiedSendSink::new(
+            linkedin_adapter()?,
+            ScriptedLinkedInTransport::new(vec![linkedin_conversation(
+                "2-jane-doe-abc",
+                "Jane Doe\n10:01 AM\nThanks for reaching out.",
+            )]),
+        )
+        .with_plan(format!("intent:{intent}"), plan)?;
+        let mut request = linkedin_send_request(
+            actor.clone(),
+            &format!("outbound:intent:{intent}"),
+            &format!("intent:{intent}"),
+        );
+        request.intent.channel = spelling.to_owned();
+        let result = vault.dispatch_outbound_intent(request, &mut sink)?;
+
+        assert!(
+            sink.transport().send_calls.is_empty(),
+            "H132: a send with no seat policy ({spelling:?}) reached the transport ({:?})",
+            result.outcome
+        );
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_engine_policy_reason")
+                .map(String::as_str),
+            Some("linkedin.seat_policy_missing")
+        );
+    }
     Ok(())
 }
