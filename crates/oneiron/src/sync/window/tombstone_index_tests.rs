@@ -6,7 +6,9 @@ use loro::LoroDoc;
 
 use super::{WindowKey, forward_rematerialize, reverse_rematerialize};
 use crate::Vault;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::config::VaultConfig;
+use crate::deletion::TombstoneReason;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -35,17 +37,27 @@ fn carrier_blob(n: usize) -> Vec<u8> {
     blob
 }
 
-/// A v2 hard tombstone value: `[reason:1][deleted_at:8 LE][request_id:16]`.
-fn hard_tombstone() -> Vec<u8> {
-    let mut value = vec![2u8];
+/// The header a soft delete leaves behind: the carrier's type and times, no body.
+fn shell_header() -> Vec<u8> {
+    carrier_blob(0)[..ENTITY_METADATA_HEADER_LEN].to_vec()
+}
+
+/// A v2 tombstone value: `[reason:1][deleted_at:8 LE][request_id:16]`.
+fn tombstone(reason: TombstoneReason) -> Vec<u8> {
+    let mut value = vec![reason.wire_byte()];
     value.extend_from_slice(&(LEARNED_AT + 60).to_le_bytes());
     value.extend_from_slice(&[0xAE; 16]);
     value
 }
 
+fn hard_tombstone() -> Vec<u8> {
+    tombstone(TombstoneReason::UserHardDelete)
+}
+
 /// A peer window holding `CARRIERS` turns chained by mention edges, one of them tombstoned only
-/// under an UPPERCASE alias of its id, beside `PLANTED` tombstone keys that name no carrier.
-fn planted_peer_window() -> Result<(LoroDoc, Vec<EntityId>, EntityId)> {
+/// under an UPPERCASE alias of its id, and `CARRIERS` soft-deleted shells, beside `PLANTED`
+/// tombstone keys that name no carrier.
+fn planted_peer_window() -> Result<(LoroDoc, Vec<EntityId>, EntityId, Vec<EntityId>)> {
     let peer = LoroDoc::new();
     let entities = peer.get_map("entities");
     let edges = peer.get_map("edges");
@@ -63,6 +75,17 @@ fn planted_peer_window() -> Result<(LoroDoc, Vec<EntityId>, EntityId)> {
             &encode_edge_value_for_crdt(EdgeKind::Mentions, 1.0, LEARNED_AT, None, None)?,
         )?;
     }
+    let shells: Vec<EntityId> = (0..CARRIERS)
+        .map(|n| EntityId::from_hex(&format!("5e11{n:028x}")))
+        .collect::<Result<_>>()?;
+    for id in &shells {
+        map_insert_bytes(&entities, &id.to_hex(), &shell_header())?;
+        map_insert_bytes(
+            &tombstones,
+            &id.to_hex(),
+            &tombstone(TombstoneReason::UserDelete),
+        )?;
+    }
     let gated = carriers[CARRIERS / 2];
     let alias = gated.to_hex().to_uppercase();
     assert_ne!(alias, gated.to_hex());
@@ -76,18 +99,18 @@ fn planted_peer_window() -> Result<(LoroDoc, Vec<EntityId>, EntityId)> {
         map_insert_bytes(&tombstones, &key, &hard_tombstone())?;
     }
     peer.commit();
-    Ok((peer, carriers, gated))
+    Ok((peer, carriers, gated, shells))
 }
 
 /// H15 bug repro: a peer plants tombstone keys that name nothing here beside many carriers.
 /// Every rematerialization pass used to rescan the whole tombstones map for each entity and edge
 /// endpoint it checked, so its key parses grew as carriers × tombstones; a pass now parses each
 /// key a bounded number of times. The decisions are the oracle and do not move: the carrier
-/// under an uppercase alias tombstone stays gated with both its edges, and every other carrier
-/// and edge lands.
+/// under an uppercase alias tombstone stays gated with both its edges, every other carrier and
+/// edge lands, and every soft-deleted shell is kept as its bare header.
 #[test]
 fn a_forward_pass_parses_each_tombstone_key_a_bounded_number_of_times() -> Result<()> {
-    let (peer, carriers, gated) = planted_peer_window()?;
+    let (peer, carriers, gated, shells) = planted_peer_window()?;
     let doc = LoroDoc::new();
     import_doc(&doc, &export_snapshot(&peer)?)?;
     let dir = tempfile::tempdir().unwrap();
@@ -115,13 +138,26 @@ fn a_forward_pass_parses_each_tombstone_key_a_bounded_number_of_times() -> Resul
             "an edge lands exactly when neither endpoint is tombstoned"
         );
     }
+    let rtxn = vault.store.env.read_txn()?;
+    for id in &shells {
+        assert_eq!(
+            vault
+                .store
+                .entities
+                .get(&rtxn, id.as_bytes())?
+                .map(|raw| raw.to_vec()),
+            Some(shell_header()),
+            "a soft-deleted shell is kept as its header"
+        );
+    }
+    drop(rtxn);
 
     // The way back out reads the same map against every local carrier and edge.
     let before = parses();
     reverse_rematerialize(&vault, &doc, &WindowKey::new(WINDOW))?;
     let reverse = parses() - before;
 
-    let keys = (PLANTED + 1) as u64;
+    let keys = (PLANTED + 1 + CARRIERS) as u64;
     for (pass, spent) in [("forward", forward), ("reverse", reverse)] {
         assert!(
             spent <= 4 * keys,

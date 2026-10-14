@@ -134,7 +134,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             };
 
             let soft_addressing = kind == crate::edge::EdgeKind::AddressedTo
-                && crate::recovery::retained_soft_shell(ctx.doc, &src).is_some();
+                && crate::recovery::retained_soft_shell(ctx.doc, tombstones, &src).is_some();
             if soft_addressing {
                 // Ordinary peer replay has no body proof after a soft erase.
                 // Only canonical recovery's validated BaseEdge may retain it.
@@ -190,9 +190,9 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             // ANY-value, entity-canonical presence — a non-binary tombstone
             // gates too, and a case-shifted hex alias still names the id.
             if (tombstones.contains(&src)
-                && crate::recovery::retained_soft_shell(ctx.doc, &src).is_none())
+                && crate::recovery::retained_soft_shell(ctx.doc, tombstones, &src).is_none())
                 || (tombstones.contains(&tgt)
-                    && crate::recovery::retained_soft_shell(ctx.doc, &tgt).is_none())
+                    && crate::recovery::retained_soft_shell(ctx.doc, tombstones, &tgt).is_none())
             {
                 return;
             }

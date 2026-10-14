@@ -41,7 +41,8 @@ pub(crate) fn preflight_canonical_recovery(
     );
     for entity in &snapshot.entity_blobs {
         let id = EntityId::from_bytes(entity.id)?;
-        if let Some((blob, tombstone)) = crate::recovery::retained_soft_shell(doc, &id) {
+        if let Some((blob, tombstone)) = crate::recovery::retained_soft_shell(doc, &tombstones, &id)
+        {
             crate::batch::restore_recovery_shell_in_txn(vault, &mut txn, &id, &blob, &tombstone)?;
         } else if let EntityStep::Quarantine(refusal) =
             ingest_entity_in_txn(&ingest, &mut txn, &id.to_hex(), Some(&entity.blob))?

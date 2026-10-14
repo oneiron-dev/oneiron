@@ -230,7 +230,7 @@ fn forward_with_recovery(
             Ok(())
         })?;
     }
-    crate::recovery::materialize_retained_shells(vault, doc)?;
+    crate::recovery::materialize_retained_shells(vault, doc, &ctx.tombstones)?;
     if let Some(snapshot) = trusted.filter(|_| window_key.world().is_some()) {
         // The validated canonical artifact binds every retained soft shell
         // to this world. Persist that address before the edge pass and the

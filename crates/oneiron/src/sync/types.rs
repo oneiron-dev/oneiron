@@ -224,7 +224,7 @@ pub(crate) fn retained_world_shell_belongs_to_window(
         return Ok(false);
     }
     if doc.get_map("entities").get(&id.to_hex()).is_some()
-        && crate::recovery::retained_soft_shell(doc, id).is_none()
+        && crate::recovery::retained_soft_shell(doc, tombstones, id).is_none()
     {
         return Ok(false);
     }

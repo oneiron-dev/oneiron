@@ -170,7 +170,7 @@ pub(super) fn materialize_edges_from_delta(
                     };
 
                     if kind == EdgeKind::AddressedTo
-                        && crate::recovery::retained_soft_shell(doc, &src).is_some()
+                        && crate::recovery::retained_soft_shell(doc, &tombstones, &src).is_some()
                     {
                         // The erased shell has no recipient carrier to prove.
                         continue;

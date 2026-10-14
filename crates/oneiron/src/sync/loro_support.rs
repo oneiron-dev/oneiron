@@ -65,8 +65,10 @@ fn tombstone_value_bytes(value: ValueOrContainer) -> Vec<u8> {
 /// Canonical lowercase keys are read live, so a tombstone this pass writes is seen at once. The
 /// case-shifted aliases are a snapshot: only an import writes or removes them (local doors write
 /// `to_hex` keys and never delete a tombstone), so build the index after the import a pass reads
-/// and never hold it across one. Presence and values follow [`tombstone_map_contains_id`] and
-/// [`tombstone_values_for_id`] exactly.
+/// and never hold it across one. An import into a shared live document from another thread can
+/// still land mid-pass, as it could between any carrier's check and its write before: the
+/// replay of the tombstone it brings purges a carrier the pass admitted. Presence and values
+/// follow [`tombstone_map_contains_id`] and [`tombstone_values_for_id`] exactly.
 pub(crate) struct TombstoneIndex {
     map: LoroMap,
     /// The value of every non-canonical key that parses to an id, keyed by that id, in map
@@ -103,6 +105,11 @@ impl TombstoneIndex {
     /// Whether any key names `id`, under ANY value (fail closed).
     pub(crate) fn contains(&self, id: &EntityId) -> bool {
         map_contains_key(&self.map, &id.to_hex()) || self.aliases.contains_key(id)
+    }
+
+    /// Whether a non-canonical key names `id`.
+    pub(crate) fn has_alias(&self, id: &EntityId) -> bool {
+        self.aliases.contains_key(id)
     }
 
     /// The values of EVERY key naming `id`: the canonical key's first, then each alias's.
