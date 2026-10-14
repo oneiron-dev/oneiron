@@ -23420,7 +23420,7 @@
      "path": "src/memory/caps.rs",
      "purpose": "The boundary cap contract (ONE-1441 §Binding cap contract, I11)",
      "surface": {
-      "const": 12,
+      "const": 13,
       "fn": 11
      }
     },
@@ -45472,7 +45472,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/lib/entity.rs",
@@ -48313,7 +48313,7 @@
      "path": "src/remote/response.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -55291,11 +55291,11 @@
      "path": "src/context.rs",
      "purpose": "Bound formula AST evaluation, keep what only the host knows out of native recalc and find the called names…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FormualizerEngine"
@@ -55303,7 +55303,7 @@
      "path": "src/engine.rs",
      "purpose": "The owned formualizer engine behind the [`RecalcEngine`] seam",
      "surface": {
-      "const": 6,
+      "const": 8,
       "crate-vis": 1,
       "fn": 1,
       "re-export": 1,
@@ -55431,7 +55431,7 @@
     "engine": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The owned formualizer engine behind the [`RecalcEngine`] seam"
     },
