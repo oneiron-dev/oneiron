@@ -531,7 +531,9 @@ impl Vault {
                 &store,
             )?,
             store,
-            vector_evidence: std::sync::RwLock::new(config.vector_evidence),
+            vector_evidence: std::sync::RwLock::new(super::vector_evidence::NoMatchFloors::new(
+                config.vector_evidence,
+            )),
             config,
             analyzer,
             writer_lease: None,
