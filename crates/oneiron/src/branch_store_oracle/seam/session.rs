@@ -47,6 +47,9 @@ pub(in crate::branch_store_oracle) struct SessionVault<'vault> {
     /// `bind_actor` BEFORE taking their census, putting the actor in the
     /// baseline instead of making it look like session residue.
     pub(super) actor: Option<EntityId>,
+    /// The vault owner's proof the flip and promote take, made with the
+    /// actor so that a census taken after `bind_actor` gains no row of it.
+    pub(super) owner: Option<crate::consent::AuthenticatedOwner>,
 }
 
 /// One (key, value) row as the model oracle sees it.
@@ -99,6 +102,7 @@ impl<'vault> SessionVault<'vault> {
                 session,
                 vault,
                 actor: None,
+                owner: None,
             })
             .map_err(map_session_error)
     }
@@ -121,6 +125,7 @@ impl<'vault> SessionVault<'vault> {
                 session,
                 vault,
                 actor: None,
+                owner: None,
             })
             .map_err(map_session_error)
     }
@@ -168,25 +173,16 @@ impl<'vault> SessionVault<'vault> {
             b"branch-store oracle witness actor",
         )?;
         self.actor = Some(actor);
+        self.owner = Some(crate::test_util::embedded_owner_proof(self.vault));
         Ok(actor)
     }
 
-    /// The owner's proof the room's flip and promote take: the bound witness
-    /// actor's, so a census taken after `bind_actor` gains no row, else the
-    /// embedded owner's.
+    /// The vault owner's proof the flip and promote take (H203: alone or in
+    /// a room, only the owner's): the one `bind_actor` made, else a new one.
     pub(in crate::branch_store_oracle) fn owner_proof(&self) -> crate::consent::AuthenticatedOwner {
-        match self.actor {
-            Some(actor) => self
-                .vault
-                .authenticate_owner(
-                    actor,
-                    &actor.to_hex(),
-                    true,
-                    crate::store::GateDecisionId::now(),
-                )
-                .expect("owner proof for the bound actor"),
-            None => crate::test_util::embedded_owner_proof(self.vault),
-        }
+        self.owner
+            .clone()
+            .unwrap_or_else(|| crate::test_util::embedded_owner_proof(self.vault))
     }
 
     /// ONE-1727: witness one turn (+ PartOf MESSAGE, DerivedFrom SUMMARY)
