@@ -590,7 +590,7 @@ impl Vault {
                 ),
                 Ok(None) => {}
                 Err(error) => tracing::warn!(
-                    %error,
+                    kind = ?error.kind(),
                     "the seeded policy manifest was not upgraded; the vault keeps its own until the next open"
                 ),
             }
