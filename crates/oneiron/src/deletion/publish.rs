@@ -430,6 +430,7 @@ impl Vault {
                     )
                 })
                 .and_then(|()| crate::federation::reject_ruling_delete(&self.store, &wtxn, id))
+                .and_then(|()| crate::task_authority::reject_fact_delete(&self.store, &wtxn, id))
                 .and_then(|()| {
                     if value.reason.is_hard() {
                         self.store

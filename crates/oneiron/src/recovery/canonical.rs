@@ -113,6 +113,13 @@ pub struct CanonicalSnapshot {
     pub note_proposals: Vec<crate::note::NoteReviewBundle>,
     pub container_manifests: Vec<CanonicalContainerManifest>,
     pub schema_manifest: CanonicalSchemaManifest,
+    /// The window's TASKs one of whose authority facts the source refused,
+    /// the fact's id having been deleted there first. The fact's body never
+    /// reached the store, so this alone names the task, and its facts read
+    /// as a refusal wherever the window is recovered. Absent when empty, so
+    /// an artifact with none encodes as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suppressed_tasks: Vec<[u8; 16]>,
 }
 
 impl CanonicalSnapshot {
@@ -281,6 +288,7 @@ pub(crate) fn capture_canonical_window_within(
             )
             .as_bytes(),
         },
+        suppressed_tasks: Vec::new(),
     };
     for (key, blob) in binary_rows_within(doc, "entities", budget)? {
         snapshot.entity_blobs.push(CanonicalEntity {
@@ -505,6 +513,11 @@ pub(crate) fn capture_canonical_window_within(
     }
     snapshot.entity_documents.sort_by_key(|row| row.entity_id);
     snapshot.entity_blobs.sort_by_key(|row| row.id);
+    for entity in &snapshot.entity_blobs {
+        if crate::task_authority::fact_suppressed_in(&vault.store, &txn, &id(entity.id)?)? {
+            snapshot.suppressed_tasks.push(entity.id);
+        }
+    }
     let carried: std::collections::BTreeMap<_, _> =
         binary_rows_within(doc, "retained_claim_worlds", budget)?
             .into_iter()

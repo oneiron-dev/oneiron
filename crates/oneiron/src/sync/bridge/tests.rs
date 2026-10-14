@@ -5948,4 +5948,5 @@ fn provenance_claim_tombstone_notifies_both_subject_endpoints_after_commit() {
     }
 }
 
+mod fact_suppression;
 mod resident;

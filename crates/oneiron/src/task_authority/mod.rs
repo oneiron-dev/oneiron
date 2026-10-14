@@ -569,6 +569,7 @@ const SUPPRESSED: SideTable<EntityId, [u8; 1], side_table::Raw> =
 /// task's facts read as a refusal. A tombstone that reached this vault before
 /// a fact would otherwise make a cancellation or a consent requirement read
 /// as never made.
+#[cfg(feature = "sync")]
 pub(crate) fn note_suppressed_fact_in_txn(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -583,6 +584,45 @@ pub(crate) fn note_suppressed_fact_in_txn(
         return Ok(());
     };
     SUPPRESSED.put(store, wtxn, &fact.task_ref, &[1])
+}
+
+/// [`note_suppressed_fact_in_txn`] for a door with no tombstone map: the
+/// row was deleted here when its id is fenced, as a replicated put reads it.
+#[cfg(feature = "sync")]
+pub(crate) fn note_fenced_fact_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    body: &[u8],
+) -> Result<()> {
+    if crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &side_table::HexId(*id))? {
+        note_suppressed_fact_in_txn(store, wtxn, id, entity_type, body)?;
+    }
+    Ok(())
+}
+
+/// Whether `task` is marked as holding an authority fact this vault refused.
+pub(crate) fn fact_suppressed_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    task: &EntityId,
+) -> Result<bool> {
+    SUPPRESSED.contains(store, txn, task)
+}
+
+/// Marks the tasks a recovered canonical window names as holding a fact its
+/// source refused.
+#[cfg(feature = "sync")]
+pub(crate) fn restore_suppressed_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    tasks: &[[u8; 16]],
+) -> Result<()> {
+    for task in tasks {
+        SUPPRESSED.put(store, wtxn, &EntityId::from_bytes(*task)?, &[1])?;
+    }
+    Ok(())
 }
 
 fn fact_suppressed() -> Error {
