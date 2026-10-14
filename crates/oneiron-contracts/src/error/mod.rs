@@ -226,6 +226,8 @@ pub enum ErrorKind {
     IdentityTopologyEventDivergence,
     AuthorityLogAppendOnlyViolation,
     AuthorityLogStoreKeyMismatch,
+    AuthorityLogSignerPending,
+    AuthorityLogFull,
     InvalidSecretCustodyBody,
     SecretNameInUse,
     SecretCustodyNotActive,

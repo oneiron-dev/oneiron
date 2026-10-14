@@ -9,9 +9,10 @@ use super::{RematCtx, RematLedger};
 
 use crate::error::Result;
 use crate::sync::ingest::{
-    EntityStep, IngestCtx, RefusalRetry, Residence, ingest_entity_in_savepoint,
-    waits_for_sibling_row,
+    EntityStep, IngestCtx, RefusalRetry, Residence, authority_parent_order,
+    ingest_entity_in_savepoint, is_authority_row, waits_for_sibling_row,
 };
+use loro::{LoroValue, ValueOrContainer};
 
 /// Run the entity pass: iterate the window `entities` map, ingest each value in its own write
 /// transaction, then scrub local-only companion carriers from the document.
@@ -31,9 +32,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
     });
     let mut entity_error = None;
     let mut companion_scrubs = Vec::new();
-    // Ask facts and project home rooms verify against a sibling row: visit them last.
-    let later = waits_for_sibling_row;
-    map_for_each_value_bytes_deferring(&ctx.entities_map, later, |key, value| {
+    let mut visit = |key: &str, value: Option<&[u8]>| {
         if entity_error.is_some() {
             return;
         }
@@ -81,6 +80,32 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     }
                 }
             }
+        }
+    };
+    // AUTHORITY_LOG rows land first, parents before children: a signer's
+    // enrollment lands before the rows it signs, which its door would
+    // otherwise hold until the next pass, and every later row judges
+    // against the newest roster.
+    let mut authority = Vec::new();
+    ctx.entities_map.for_each(|key, value| {
+        if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value
+            && is_authority_row(&bytes)
+        {
+            authority.push((key.to_owned(), bytes));
+        }
+    });
+    let rows: Vec<(&str, &[u8])> = authority
+        .iter()
+        .map(|(key, bytes)| (key.as_str(), &bytes[..]))
+        .collect();
+    for at in authority_parent_order(&rows) {
+        visit(rows[at].0, Some(rows[at].1));
+    }
+    // Ask facts and project home rooms verify against a sibling row: visit them last.
+    let later = waits_for_sibling_row;
+    map_for_each_value_bytes_deferring(&ctx.entities_map, later, |key, value| {
+        if !value.is_some_and(is_authority_row) {
+            visit(key, value);
         }
     });
     if let Some(err) = entity_error {

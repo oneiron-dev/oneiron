@@ -65,6 +65,9 @@ pub enum AuthorityFoldIssue {
         /// Deterministic rejection reason.
         reason: ActorBindingRejection,
     },
+    /// The log holds more rows, handoffs or ancestor pairs than one fold may
+    /// read (H72). The fold refused all of it and holds no root.
+    FoldBudgetExceeded,
 }
 
 /// Why the fold refused an actor-binding op.
@@ -190,14 +193,18 @@ impl AuthorityFold {
     /// keeps only the [`AuthorityFoldIssue::ConflictingVaultRoot`] rows. Every
     /// authority gate MUST fail closed on the second, so the distinction is
     /// exposed here rather than re-derived (and inevitably mis-derived) at each
-    /// call site.
+    /// call site. A log refused for exceeding the fold bounds
+    /// ([`AuthorityFoldIssue::FoldBudgetExceeded`]) collapses the same way.
     #[must_use]
     pub fn vault_root_is_conflicted(&self) -> bool {
         self.vault_id.is_none()
-            && self
-                .issues
-                .iter()
-                .any(|issue| matches!(issue, AuthorityFoldIssue::ConflictingVaultRoot { .. }))
+            && self.issues.iter().any(|issue| {
+                matches!(
+                    issue,
+                    AuthorityFoldIssue::ConflictingVaultRoot { .. }
+                        | AuthorityFoldIssue::FoldBudgetExceeded
+                )
+            })
     }
 
     /// Pact state governing `grant_ref`, if any lifecycle entries name it.

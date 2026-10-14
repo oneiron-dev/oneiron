@@ -161,6 +161,15 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
         }
         MemoryError::from(err)
     })?;
+    if fold.authority_log_past_bound() {
+        return Err(MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            "authority log is past its fold bound; owner verbs are suspended".to_owned(),
+            &[
+                "The log holds more rows than one fold may read; no binding authorizes until it is back inside the bound.",
+            ],
+        ));
+    }
     if fold.vault_root_is_conflicted() {
         return Err(MemoryError::new(
             MEMORY_CODE_INVALID_STATE,

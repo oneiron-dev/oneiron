@@ -267,6 +267,11 @@ pub(in crate::batch) fn apply_put(
         authority_dominates_key_squatter =
             check_authority_log_store_key(store, wtxn, &id, &entry_hash, data)?
                 == AuthorityLogKeyOccupant::CrossTypeSquatter;
+        // H72: every store door, local or replicated, keeps the log inside
+        // the fold bounds; a row that only restricts always lands.
+        if crate::authority::door_refuses_past_budget(store, wtxn, posture, &entry, &entry_hash)? {
+            return Err(Error::Record(RecordError::AuthorityLogFull { id }));
+        }
         authority_entry_hash_pin = Some(entry_hash);
         authority_entry_observation = Some(entry);
     } else if entity_type == crate::registry::ENTITY_TYPE_FEDERATION_GRANT {

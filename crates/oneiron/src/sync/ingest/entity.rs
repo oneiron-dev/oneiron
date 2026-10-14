@@ -127,6 +127,7 @@ impl RefusalRetry {
                     | ErrorKind::ResidentOwnerDependencyPending
                     | ErrorKind::RemoteMachineHistoryPending
                     | ErrorKind::AskDependencyPending
+                    | ErrorKind::AuthorityLogSignerPending
             )
         {
             Self::DependencyPending

@@ -313,6 +313,15 @@ pub(super) fn active_participant_keys(
                 authority_entry_hash(entry).unwrap_or([0; 32]),
             ));
         }
+        // A cosigner below the floor counts toward neither quorum nor consent
+        // (H71); the primary signer's tier is refused before this.
+        if state
+            .roster
+            .get(key)
+            .is_some_and(|device| !tier_meets_floor(device.tier, state.tier_floor))
+        {
+            continue;
+        }
         participants.insert(key.clone());
     }
     Ok(participants)

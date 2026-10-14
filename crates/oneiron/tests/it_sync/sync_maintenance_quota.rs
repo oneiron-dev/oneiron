@@ -162,7 +162,9 @@ fn enroll_entry(
             seq,
             vec![parent_hash],
             AuthorityOp::EnrollDevice {
-                device: device(authority_key_from_ed(new_key), ROLE_ADMIN | ROLE_AGENT),
+                // Agent-only: the vault door refuses any other client
+                // enrollment, so only this one gives its key standing.
+                device: device(authority_key_from_ed(new_key), ROLE_AGENT),
             },
             signer_key,
             LEARNED_AT + seq,
@@ -384,6 +386,64 @@ fn newly_enrolled_signer_entry_can_replay_before_enrollment() {
         before + 2
     );
     assert_eq!(invalid_authority_log_quarantine_count(&vault), 0);
+}
+
+/// H72 positive control (W2-T3): a row signed by a key whose enrollment has
+/// not arrived is held, never stored. Once the enrollment lands, the next
+/// forward pass replays the held row and it materializes.
+#[test]
+fn a_row_by_a_not_yet_enrolled_signer_lands_after_its_enrollment() {
+    let (_dir, vault) = test_vault();
+    let vault = Arc::new(vault);
+    let window_key = WindowKey::new(WINDOW);
+    let doc = create_window_doc("user", &window_key);
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+    let (owner_key, genesis, vault_id) = seed_local_genesis(&vault, 0x4c);
+    let new_key = SigningKey::from_bytes(&[0x6c; 32]);
+    let enroll = enroll_entry(
+        vault_id,
+        authority_entry_hash(&genesis).unwrap(),
+        &owner_key,
+        &new_key,
+        1,
+    );
+    let child = cosign_entry(
+        set_tier_floor_entry(
+            vault_id,
+            authority_entry_hash(&enroll).unwrap(),
+            &new_key,
+            1,
+        ),
+        &new_key,
+        &owner_key,
+    );
+    let stored = |id: &EntityId| {
+        vault
+            .entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
+            .unwrap()
+            .contains(id)
+    };
+
+    let child_id = insert_authority_entry(&doc, &child);
+    doc.commit();
+    assert!(
+        !stored(&child_id),
+        "a row whose signer is not enrolled is never stored"
+    );
+    assert_eq!(
+        entity_quarantine_reasons(&vault),
+        vec!["AuthorityLogSignerPending".to_owned()]
+    );
+
+    let enroll_id = insert_authority_entry(&doc, &enroll);
+    doc.commit();
+    assert!(stored(&enroll_id));
+    forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+    assert!(
+        stored(&child_id),
+        "the held row lands once its signer is enrolled"
+    );
 }
 
 /// Invalid envelopes retain the existing occupant; valid retries displace it.

@@ -257,6 +257,9 @@ fn fold_authority_log_inner(
     consent_arm: fn(&FoldedDevice) -> bool,
     local: FoldLocalInputs<'_>,
 ) -> AuthorityFold {
+    if let Some(refused) = super::log_budget::refuse_over_budget(entries) {
+        return refused;
+    }
     if local.retire_device_ops {
         // An unrelated retired sibling must not vote in a handoff probe:
         // its tier floor could otherwise disqualify a valid rotation before
@@ -493,7 +496,9 @@ fn fold_authority_log_once(
             Err(_) => issues.push(AuthorityFoldIssue::InvalidEntry([0; 32])),
         }
     }
-    let entry_ancestors = entry_ancestor_index(&by_hash);
+    let Some(entry_ancestors) = entry_ancestor_index(&by_hash) else {
+        return super::log_budget::over_budget_fold();
+    };
     let causal_floors =
         super::sequence_ancestry::causal_sequence_floors(&by_hash, &entry_ancestors, context);
     let context = FoldContext {

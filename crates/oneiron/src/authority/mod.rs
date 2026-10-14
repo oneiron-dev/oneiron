@@ -19,6 +19,7 @@
 //! | `first_seen_clock` | first-seen sidecar keys and the per-vault clock |
 //! | `fold_engine` | top-level fold orchestration |
 //! | `ancestor_index` / `ancestry_bypass` | fold ancestry and revocation bypass |
+//! | `log_budget` | pinned fold-work bounds and the store doors' per-signer bound |
 //! | `entry_transition` | per-entry transition and consent/quorum predicates |
 //! | `op_apply` | applies one op to a fold state |
 //! | `wire_encode` / `wire_decode` | the `rmpv` codec, edited in lockstep |
@@ -40,6 +41,7 @@ mod handoff_equivocation;
 mod history_transfer;
 mod host_re_root;
 mod ingest_observation;
+mod log_budget;
 mod machine_enroll;
 mod machine_identity;
 mod machine_profile;
@@ -109,6 +111,9 @@ pub use handoff_equivocation::AuthorityHandoffEquivocation;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
+pub use log_budget::{
+    MAX_AUTHORITY_FOLD_ENTRIES, MAX_AUTHORITY_FOLD_HANDOFFS, MAX_AUTHORITY_ROWS_PER_SIGNER,
+};
 pub use machine_identity::{
     LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine,
     machine_connection_transcript, machine_proof_header_value,
@@ -134,6 +139,7 @@ pub(crate) use claim_write::{
 };
 pub(crate) use first_seen_clock::*;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
+pub(crate) use log_budget::{door_refuses_past_budget, signer_has_standing};
 pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
 use readonly_fold::authority_view_readonly_for_store_in_txn;

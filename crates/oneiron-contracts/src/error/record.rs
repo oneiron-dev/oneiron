@@ -195,6 +195,20 @@ pub enum RecordError {
         id.to_hex()
     )]
     AuthorityLogStoreKeyMismatch { id: EntityId },
+    /// A replicated AUTHORITY_LOG row is signed by a key no folded row has
+    /// admitted (H72). The row waits for its signer's enrollment and is
+    /// never stored before it; replicated doors classify it as
+    /// dependency-pending.
+    #[error(
+        "authority log row {} waits for its signer to be enrolled",
+        id.to_hex()
+    )]
+    AuthorityLogSignerPending { id: EntityId },
+    /// Storing this AUTHORITY_LOG row would take its signer, or the log's
+    /// handoffs, past the pinned fold bound (H72). Nothing was written; rows
+    /// that only restrict authority are never refused this way.
+    #[error("authority log row {} is past its signer's bound", id.to_hex())]
+    AuthorityLogFull { id: EntityId },
     #[error("MESSAGE stream already active: {}", message.to_hex())]
     StreamAlreadyActive { message: EntityId },
     #[error("MESSAGE stream handle is not active: {}", message.to_hex())]
@@ -269,6 +283,8 @@ impl RecordError {
                 ErrorKind::AuthorityLogAppendOnlyViolation
             }
             Self::AuthorityLogStoreKeyMismatch { .. } => ErrorKind::AuthorityLogStoreKeyMismatch,
+            Self::AuthorityLogSignerPending { .. } => ErrorKind::AuthorityLogSignerPending,
+            Self::AuthorityLogFull { .. } => ErrorKind::AuthorityLogFull,
         }
     }
 }

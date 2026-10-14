@@ -202,10 +202,19 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
             "foreign authority log vault id",
         )));
     }
+    let resident = crate::authority::authority_row_resident(store, wtxn, &entry)?;
+    // H72: a key no folded row admitted signs no valid row. Its row waits
+    // for that enrollment and is never stored before it, so a stranger's
+    // chain never reaches the fold.
+    if !resident && !crate::authority::signer_has_standing(&local_fold, &entry) {
+        return Err(Error::Record(RecordError::AuthorityLogSignerPending {
+            id: *id,
+        }));
+    }
     // Structure, signature and vault are not standing: a key a handoff
     // retired signs nothing new here, and nothing new stands on a row one
     // signed, so its fork never reaches the log.
-    if !crate::authority::authority_row_resident(store, wtxn, &entry)?
+    if !resident
         && crate::authority::door_refuses_retired_standing(
             store,
             &local_fold,

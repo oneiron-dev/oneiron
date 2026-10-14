@@ -1,7 +1,7 @@
 //! Observer B's entity driver: one batch transaction per delta, each entity through the
 //! shared ingest entry, and the `rm:` markers a dead batch leaves behind.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use loro::LoroDoc;
 
@@ -12,7 +12,8 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::sync::ingest::{
-    EntityStep, IngestCtx, Residence, ingest_entity_in_savepoint, waits_for_sibling_row,
+    EntityStep, IngestCtx, Residence, authority_parent_order, ingest_entity_in_savepoint,
+    is_authority_row, waits_for_sibling_row,
 };
 use crate::sync::pack_sync;
 use crate::sync::quarantine;
@@ -66,16 +67,40 @@ pub(super) fn materialize_entities_with_changes(
     let mut revision_changes = Vec::new();
     let mut pending_companion_scrubs = Vec::new();
     let result = vault.with_write_txn_grouped(|wtxn| {
-        // One delta has no row order: an ask word, receipt or project home room
-        // must not reach its sibling check before the row it names.
+        // One delta has no row order. AUTHORITY_LOG rows go first, parents
+        // before children, so a signer's enrollment lands before the rows it
+        // signs; an ask word, receipt or project home room must not reach its
+        // sibling check before the row it names.
         let mut updates: Vec<_> = delta.updated.iter().collect();
-        updates.sort_by_cached_key(|(_, value)| {
-            matches!(
-                value,
+        let authority: Vec<(&str, &[u8])> = updates
+            .iter()
+            .filter_map(|&(key, value)| match value {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob)))
-                    if waits_for_sibling_row(blob)
-            )
-        });
+                    if is_authority_row(blob) =>
+                {
+                    Some((key.as_ref(), &blob[..]))
+                }
+                _ => None,
+            })
+            .collect();
+        let authority_rank: BTreeMap<&str, usize> = authority_parent_order(&authority)
+            .into_iter()
+            .enumerate()
+            .map(|(rank, at)| (authority[at].0, rank))
+            .collect();
+        updates.sort_by_cached_key(
+            |(key, value)| match authority_rank.get::<str>(key.as_ref()) {
+                Some(rank) => (0, *rank),
+                None => match value {
+                    Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob)))
+                        if waits_for_sibling_row(blob) =>
+                    {
+                        (2, 0)
+                    }
+                    _ => (1, 0),
+                },
+            },
+        );
         for (key, new_val) in updates {
             let value = match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {

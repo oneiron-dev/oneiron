@@ -1032,6 +1032,71 @@ fn rejected_authority_envelope_leaves_a_key_squatter_untouched() -> Result<()> {
     Ok(())
 }
 
+/// H72 bug repro (W2-T3): a key this vault never enrolled signs rows naming
+/// the local vault id. The replicated door holds them as dependency-pending
+/// and never stores them, so the fold never sees them; a legitimate sibling
+/// still lands and the roster is unchanged.
+#[cfg(feature = "sync")]
+#[test]
+fn rows_signed_by_an_unenrolled_key_pend_and_are_never_stored() -> Result<()> {
+    let vault = test_vault();
+    let owner = authority_test_key(58);
+    let genesis = authority_genesis_fixture(58);
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let roster_before = vault.authority_fold()?.roster;
+    let doc = LoroDoc::new();
+    let tombstones = doc.get_map("tombstones");
+
+    let stranger = authority_test_key(59);
+    let mut parent = genesis.clone();
+    for seq in 1..=3 {
+        let junk = authority_enroll_fixture(vault_id, &parent, &stranger, 60 + seq as u8, seq);
+        let id = crate::authority::authority_log_entity_id(&junk)?;
+        let blob = authority_log_entity_blob(&junk, seq + 1)?;
+        let step =
+            vault.with_write_txn(|wtxn| ingest_peer_blob(&vault, wtxn, &tombstones, &id, &blob))?;
+        let EntityStep::Quarantine(refusal) = step else {
+            panic!("a row signed by an unenrolled key must be refused, got {step:?}");
+        };
+        assert_eq!(
+            refusal.retry,
+            crate::sync::ingest::RefusalRetry::DependencyPending
+        );
+        assert_eq!(
+            refusal.err.kind(),
+            crate::error::ErrorKind::AuthorityLogSignerPending
+        );
+        assert!(crate::sync::quarantine::remote_rejection_reason(&refusal.err).is_some());
+        assert!(
+            vault.get_raw(&id)?.is_none(),
+            "a pending row is never stored"
+        );
+        parent = junk;
+    }
+
+    let enroll = authority_enroll_fixture(vault_id, &genesis, &owner, 64, 1);
+    let enroll_id = crate::authority::authority_log_entity_id(&enroll)?;
+    let blob = authority_log_entity_blob(&enroll, 9)?;
+    vault.with_write_txn(|wtxn| {
+        assert!(
+            ingest_peer_blob(&vault, wtxn, &tombstones, &enroll_id, &blob)?
+                .written()
+                .is_some()
+        );
+        Ok(())
+    })?;
+    let fold = vault.authority_fold()?;
+    assert_eq!(vault.entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)?.len(), 2);
+    assert_eq!(fold.roster, roster_before);
+    assert!(
+        !fold
+            .roster
+            .contains_key(&authority_key_from_signing(&stranger))
+    );
+    Ok(())
+}
+
 /// Index-aligned metas for direct `apply_materialized_edge_ops` calls.
 fn test_metas_for_ops(ops: &[BatchOp]) -> Vec<EdgeOpMeta> {
     ops.iter()
