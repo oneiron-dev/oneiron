@@ -127,6 +127,38 @@ pub(crate) fn regrant_after(
     Ok(regrant)
 }
 
+/// `op` signed by the [`root_owner`] key `seed`, as entry `seq` after
+/// `parent` in the vault `vault_id`.
+pub(crate) fn sign_child(
+    vault_id: Option<crate::authority::AuthorityVaultId>,
+    parent: crate::authority::AuthorityEntryHash,
+    seq: u64,
+    op: AuthorityOp,
+    seed: u8,
+) -> Result<AuthorityLogEntry> {
+    let signing = SigningKey::from_bytes(&[seed; 32]);
+    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let mut entry = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id,
+        seq,
+        parent_hashes: vec![parent],
+        op,
+        signer: AuthoritySignature {
+            suite: key.suite(),
+            public_key: key,
+            signature: Vec::new(),
+        },
+        cosigns: Vec::new(),
+        ts: 100 + seq,
+    };
+    entry.signer.signature = signing
+        .sign(&authority_transcript(&entry)?)
+        .to_bytes()
+        .to_vec();
+    Ok(entry)
+}
+
 #[test]
 fn unauthorized_initial_anchor_and_non_actor_targets_are_rejected() -> Result<()> {
     let (_dir, vault) = test_vault();

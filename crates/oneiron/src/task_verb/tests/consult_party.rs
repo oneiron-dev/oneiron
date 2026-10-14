@@ -46,6 +46,27 @@ fn raw_rewrite_state(vault: &Vault, task_ref: EntityId, state: &ConsultLadderSta
 
 /// The ConsultAssignee facts a `ScopedTo` edge reaches `task_ref` from.
 pub(super) fn party_facts(vault: &Vault, task_ref: EntityId) -> Vec<EntityId> {
+    facts_of(vault, task_ref, TaskAuthorityFactKind::ConsultAssignee)
+}
+
+/// Removes a fact's link below every door, as a consult minted before
+/// party facts existed never had one.
+pub(super) fn unlink_below_doors(vault: &Vault, fact_ref: EntityId, task_ref: EntityId) {
+    vault
+        .with_write_txn(|wtxn| {
+            crate::ports::EdgeStoreStaging::port_remove_edge_rows(
+                &vault.store,
+                wtxn,
+                &fact_ref,
+                EdgeKind::ScopedTo,
+                &task_ref,
+            )
+        })
+        .expect("unlink the fact below the doors");
+}
+
+/// The facts of `kind` a `ScopedTo` edge reaches `task_ref` from.
+fn facts_of(vault: &Vault, task_ref: EntityId, kind: TaskAuthorityFactKind) -> Vec<EntityId> {
     let txn = vault.store.env.read_txn().expect("read txn");
     vault
         .store
@@ -68,7 +89,7 @@ pub(super) fn party_facts(vault: &Vault, task_ref: EntityId) -> Vec<EntityId> {
                     )
                     .ok()
                 })
-                .is_some_and(|fact| fact.kind == TaskAuthorityFactKind::ConsultAssignee)
+                .is_some_and(|fact| fact.kind == kind)
         })
         .collect()
 }
@@ -212,6 +233,90 @@ fn a_raw_rewrite_cannot_clear_a_required_consent() {
     );
 }
 
+/// F24 round 4 (H219): a fact and its link are permanent. No door unlinks
+/// or deletes the consent fact or the party fact, so a raw rewrite of the
+/// flag after the attempts still waives nothing, and no later fact can
+/// stand as the consult's first.
+#[test]
+fn no_door_removes_a_fact_or_its_link() {
+    let (_dir, vault) = open_vault();
+    let (task_ref, _peer, _question) = open_consult(&vault);
+    let asker = vault.memory(own_agent(&vault), EdgeActorClass::Agent);
+    seed_ladder_state(&vault, task_ref, &working());
+    let waiting = InterruptedState {
+        kind: InterruptionKind::Critical,
+        consent_required: true,
+        case_ref: ladder_id(0xF7),
+        interrupted_at: LADDER_NOW + 1,
+    };
+    let unasked = InterruptedState {
+        consent_required: false,
+        ..waiting
+    };
+    asker
+        .compare_and_set_consult_ladder(task_ref, &working(), LadderTransition::Interrupt(waiting))
+        .expect("a party interrupts for a human verdict");
+    let consent = facts_of(&vault, task_ref, TaskAuthorityFactKind::ConsentRequired);
+    let parties = party_facts(&vault, task_ref);
+    assert_eq!((consent.len(), parties.len()), (1, 1));
+
+    for fact_ref in consent.iter().chain(&parties) {
+        assert!(
+            vault
+                .delete_edge(fact_ref, EdgeKind::ScopedTo, &task_ref)
+                .is_err(),
+            "a fact's link is permanent"
+        );
+        assert!(
+            vault.delete_entity(fact_ref).is_err(),
+            "a fact is permanent"
+        );
+    }
+    assert_eq!(
+        facts_of(&vault, task_ref, TaskAuthorityFactKind::ConsentRequired),
+        consent
+    );
+    assert_eq!(party_facts(&vault, task_ref), parties);
+    raw_rewrite_state(
+        &vault,
+        task_ref,
+        &ConsultLadderState::Interrupted(unasked),
+        LADDER_NOW + 10,
+    );
+    assert!(
+        asker
+            .compare_and_set_consult_ladder(
+                task_ref,
+                &ConsultLadderState::Interrupted(unasked),
+                LadderTransition::Resume(WorkingState {
+                    started_at: LADDER_NOW + 11,
+                    decision_round: 1,
+                }),
+            )
+            .is_err(),
+        "the consent requirement still binds"
+    );
+
+    // Positive control: a link that is not a fact's still comes off.
+    let note = asker
+        .tasks_create(&consult_spec(
+            consult_turn(&vault, 0x81),
+            consult_peer(&vault, 0xE3),
+            CONSULT_DEADLINE,
+        ))
+        .expect("an ordinary TASK")
+        .task_ref
+        .expect("consult mints one TASK");
+    vault
+        .put_edge(&note, EdgeKind::ScopedTo, &task_ref, 0.7)
+        .expect("link it to the consult");
+    assert!(
+        vault
+            .delete_edge(&note, EdgeKind::ScopedTo, &task_ref)
+            .expect("an ordinary link comes off")
+    );
+}
+
 /// F24 round 3 (H219): a deleted party is no party. Its retained facade
 /// moves nothing, while the live asker still does.
 #[test]
@@ -234,8 +339,8 @@ fn a_deleted_party_cannot_move_its_consult() {
         .expect("positive control: the live asker moves it");
 }
 
-/// F24 round 3 (H219): a restore keeping authority brings back neither a
-/// party fact the live vault no longer reaches nor a consent requirement
+/// F24 round 3 (H219): a restore keeping authority undoes neither a fork
+/// that took the live consult's party standing nor a consent requirement
 /// the live vault holds, while one that changes neither goes ahead.
 #[test]
 fn a_restore_never_brings_back_a_removed_party_or_a_waived_consent() {
@@ -258,14 +363,10 @@ fn a_restore_never_brings_back_a_removed_party_or_a_waived_consent() {
     vault.snapshot_checkpoint(&image, 100).expect("backup");
     restore(&vault, &image, "unchanged")
         .expect("positive control: a restore that loosens nothing goes ahead");
-    let facts = party_facts(&vault, task_ref);
-    assert!(!facts.is_empty(), "the consult minted its party fact");
-    for fact_ref in facts {
-        vault
-            .delete_edge(&fact_ref, EdgeKind::ScopedTo, &task_ref)
-            .expect("remove the party fact's edge");
-    }
-    let refused = restore(&vault, &image, "party").expect_err("no removed party comes back");
+    assert_eq!(party_facts(&vault, task_ref).len(), 1);
+    let third = other_actor(&vault);
+    replicate_party_fact(&vault, task_ref, third);
+    let refused = restore(&vault, &image, "party").expect_err("no forked party comes back");
     assert!(refused.to_string().contains(row), "{refused}");
 
     let (_consent_dir, consent) = open_vault();

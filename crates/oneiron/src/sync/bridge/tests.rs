@@ -2367,6 +2367,110 @@ fn forged_update_against(local: &LoroDoc, craft: impl FnOnce(&LoroDoc)) -> Vec<u
     export_updates_since(&fork, &doc_version_vector(local)).unwrap()
 }
 
+/// F24 round 4 (H219): a task authority fact's link is permanent, so a
+/// replicated removal of it is quarantined and the cancellation still reads,
+/// while a replicated removal of an ordinary link of the same kind applies.
+#[test]
+fn observer_b_quarantines_a_replicated_fact_link_removal() {
+    use crate::task_authority::{
+        TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
+    };
+    let vault = test_vault();
+    let learned_at = 1_772_400_000u64; // 2026-03 window
+    let at = TimeRange {
+        start: learned_at,
+        end: learned_at,
+    };
+    let (owner, task, other) = (EntityId::now(), EntityId::now(), EntityId::now());
+    vault
+        .put_entity(
+            &owner,
+            crate::registry::ENTITY_TYPE_PERSON,
+            at,
+            learned_at,
+            b"x",
+        )
+        .unwrap();
+    for id in [&task, &other] {
+        vault
+            .put_entity(
+                id,
+                crate::registry::ENTITY_TYPE_TASK,
+                at,
+                learned_at,
+                &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
+            )
+            .unwrap();
+    }
+    let fact = |kind| TaskAuthorityFact {
+        task_ref: task,
+        kind,
+        actor_ref: owner,
+        assigned_ref: None,
+        actor_generation: None,
+        assigned_generation: None,
+        occurred_at: learned_at,
+    };
+    let cancelled = vault
+        .with_write_txn(|wtxn| {
+            put_task_authority_fact_in_txn(&vault, wtxn, fact(TaskAuthorityFactKind::Owner))?;
+            put_task_authority_fact_in_txn(&vault, wtxn, fact(TaskAuthorityFactKind::Cancelled))
+        })
+        .unwrap();
+    vault
+        .put_edge(&other, EdgeKind::ScopedTo, &task, 0.7)
+        .unwrap();
+    let cancelled_now = |vault: &Vault| {
+        vault
+            .task_authority_state(task)
+            .unwrap()
+            .is_some_and(|state| state.cancelled)
+    };
+    assert!(cancelled_now(&vault), "precondition: the task is cancelled");
+
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    let value =
+        encode_edge_value_for_crdt(EdgeKind::ScopedTo, 0.7, learned_at, None, None).unwrap();
+    let keys = [
+        format_edge_key(&cancelled, EdgeKind::ScopedTo, &task),
+        format_edge_key(&other, EdgeKind::ScopedTo, &task),
+    ];
+    let insert = forged_update_against(&doc, |fork| {
+        for key in &keys {
+            map_insert_bytes(&fork.get_map("edges"), key, &value).unwrap();
+        }
+    });
+    import_doc(&doc, &insert).unwrap();
+    let removal = forged_update_against(&doc, |fork| {
+        for key in &keys {
+            fork.get_map("edges").delete(key).unwrap();
+        }
+    });
+    import_doc(&doc, &removal).unwrap();
+
+    assert!(
+        cancelled_now(&vault),
+        "a replicated removal never lifts a cancellation"
+    );
+    assert!(
+        crate::sync::quarantine::quarantined_records(&vault)
+            .unwrap()
+            .into_iter()
+            .any(|(_, record)| record.container == QuarantineContainer::Edges),
+        "the removal leaves quarantine evidence"
+    );
+    assert!(
+        vault
+            .edges_out(&other)
+            .unwrap()
+            .iter()
+            .all(|edge| edge.kind != EdgeKind::ScopedTo),
+        "positive control: an ordinary link's replicated removal applies"
+    );
+}
+
 /// ONE-1608 forged-retirement regression: `blocks` is retirable ONLY through
 /// `remove_blocks_edge`, so NEITHER a forged edges-map row NOR a forged
 /// edges-map REMOVAL of the key may touch the local rows.

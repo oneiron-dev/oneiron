@@ -589,15 +589,21 @@ fn transcript_message_ids(output: &Value, expected_thread_id: &str) -> Vec<Strin
 
 /// The provider id of the message `send_message` reports it created: the id
 /// of its `message` object, or a top-level message id, of the structured
-/// result or the raw output. `None` when the tool names none.
+/// result, else of the raw output. `None` when the tool names none.
 fn sent_message_id(output: &Value) -> Option<String> {
-    let payload = mcp_payload(output).unwrap_or_else(|_| output.clone());
-    payload.get("message").and_then(message_id).or_else(|| {
-        ["message_id", "messageId"].iter().find_map(|key| {
-            let id = payload.get(*key)?.as_str()?.trim();
-            (!id.is_empty()).then(|| id.to_owned())
+    let named = |payload: &Value| {
+        payload.get("message").and_then(message_id).or_else(|| {
+            ["message_id", "messageId"].iter().find_map(|key| {
+                let id = payload.get(*key)?.as_str()?.trim();
+                (!id.is_empty()).then(|| id.to_owned())
+            })
         })
-    })
+    };
+    mcp_payload(output)
+        .ok()
+        .as_ref()
+        .and_then(named)
+        .or_else(|| named(output))
 }
 
 /// A message's provider id: the first non-blank id field, trimmed.

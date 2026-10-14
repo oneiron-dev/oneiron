@@ -104,7 +104,8 @@ fn strict_v1_bodies_round_trip_and_reject_everything_else() {
         entries.push((Value::from("extra"), Value::from(1_u8)));
     }));
     // A binding generation rides only on a consult's party fact, only as
-    // 32 bytes of binary, and only for a party the fact names.
+    // one to eight 32-byte binaries in strictly ascending order, and only
+    // for a party the fact names.
     cases.push(rewrite_body(&encoded, |entries| {
         entries.push((
             Value::from(BODY_KEY_ACTOR_GENERATION),
@@ -113,7 +114,7 @@ fn strict_v1_bodies_round_trip_and_reject_everything_else() {
     }));
     let parties = TaskAuthorityFact {
         kind: TaskAuthorityFactKind::ConsultAssignee,
-        actor_generation: Some([0xB1; 32]),
+        actor_generation: BindingGeneration::from_bindings([[0xB1; 32], [0xB0; 32]]),
         ..original
     };
     let parties_encoded = encode_task_authority_fact_body(&parties);
@@ -121,11 +122,23 @@ fn strict_v1_bodies_round_trip_and_reject_everything_else() {
         decode_task_authority_fact_body(&parties_encoded).expect("party round trip"),
         parties
     );
-    cases.push(body_with(
-        &parties_encoded,
-        BODY_KEY_ACTOR_GENERATION,
+    let binding = |byte: u8| Value::Binary(vec![byte; 32]);
+    for generation in [
         Value::from("b1".repeat(32)),
-    ));
+        binding(0xB1),
+        Value::Array(Vec::new()),
+        Value::Array(vec![binding(0xB1), binding(0xB0)]),
+        Value::Array(vec![binding(0xB1), binding(0xB1)]),
+        Value::Array(vec![Value::Binary(vec![0xB1; 31])]),
+        Value::Array(vec![Value::from("b1".repeat(32))]),
+        Value::Array((0..=8).map(binding).collect()),
+    ] {
+        cases.push(body_with(
+            &parties_encoded,
+            BODY_KEY_ACTOR_GENERATION,
+            generation,
+        ));
+    }
     cases.push(rewrite_body(&parties_encoded, |entries| {
         entries.push((
             Value::from(BODY_KEY_ASSIGNED_GENERATION),

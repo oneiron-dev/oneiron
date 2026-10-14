@@ -805,3 +805,46 @@ fn only_the_message_the_send_names_proves_delivery()
     );
     Ok(())
 }
+
+/// F24 round 4 (H130): a send result that carries MCP content beside the id
+/// it names still names that id, so the named message proves delivery.
+#[test]
+fn a_named_id_beside_mcp_content_still_proves_delivery()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let message = "Happy to share more details.";
+    let jane = "linkedin:member:jane-doe";
+    let yura = "linkedin:member:yura";
+    let thread = "2-jane-doe-abc";
+    let shapes = [
+        serde_json::json!({"message_id": "m3", "structuredContent": {"status": "sent"}}),
+        serde_json::json!({"messageId": "m3", "structuredContent": {"status": "sent"}}),
+        serde_json::json!({"message": {"id": "m3"}, "structuredContent": {"status": "sent"}}),
+    ];
+    for (seed, sent) in (0xD0..).zip(shapes) {
+        let (_tmp, vault) = temp_vault();
+        let plan = LinkedInVerifiedSendPlan::new(jane, thread, message)?
+            .with_max_observation_attempts(1)?;
+        let transport = ScriptedLinkedInTransport::new(vec![
+            attributed_conversation(thread, &[("m2", jane, "Any news?")]),
+            attributed_conversation(thread, &[("m2", jane, "Any news?"), ("m3", yura, message)]),
+        ])
+        .sending(sent);
+        let intent = format!("intent:linkedin-mcp-{seed}");
+        let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
+            .with_plan(&intent, plan)?;
+        let delivered = vault.dispatch_outbound_intent(
+            linkedin_send_request(
+                linkedin_sender(&vault, seed)?,
+                &format!("outbound:{intent}"),
+                &intent,
+            ),
+            &mut sink,
+        )?;
+        assert_eq!(
+            delivered.outcome,
+            OutboundDispatchOutcome::DeliveredToChannel,
+            "case {seed:#x}"
+        );
+    }
+    Ok(())
+}

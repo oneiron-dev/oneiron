@@ -7,8 +7,9 @@ use crate::ports::EntityStoreRead;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
-use super::{AuthorityEntryHash, AuthorityFold, CausalWriteDisposition};
+use super::{AuthorityFold, AuthorityKey, CausalWriteDisposition, FoldedActorBinding};
 use crate::error::ClaimError;
+use crate::task_authority::{BindingGeneration, BindingId};
 
 impl Vault {
     /// Captures this host's observed authority frontier for a new local write.
@@ -44,57 +45,49 @@ impl Vault {
         Ok(writer)
     }
 
-    /// The binding generation `actor` holds now: a frontier at which one of
-    /// its live bindings had observed every revocation of its key, or `None`
-    /// when it holds no live binding (an unrooted vault included).
+    /// The binding generation `actor` holds now: every live binding it has,
+    /// of any class, or `None` when it holds none (an unrooted vault
+    /// included).
     pub(crate) fn actor_binding_generation_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         actor: EntityId,
-    ) -> Result<Option<AuthorityEntryHash>> {
+    ) -> Result<Option<BindingGeneration>> {
         let fold = self.authority_fold_readonly_in_txn(txn)?;
-        Ok(fold.actor_bindings.iter().find_map(|(key, binding)| {
-            (binding.actor_ref == actor && binding.status == super::ActorBindingStatus::Active)
-                .then(|| {
-                    fold.actor_write_frontiers
-                        .get(key)?
-                        .iter()
-                        .next_back()
-                        .copied()
+        Ok(BindingGeneration::from_bindings(
+            fold.actor_bindings
+                .iter()
+                .filter(|(_, binding)| {
+                    binding.actor_ref == actor
+                        && binding.status == super::ActorBindingStatus::Active
                 })
-                .flatten()
-        }))
+                .map(|(key, binding)| actor_binding_id(key, binding)),
+        ))
     }
 
-    /// [`Self::verify_write_actor_in_txn`] for a writer that must still hold
-    /// the binding generation `generation` records. A writer revoked and
-    /// regranted since holds a new binding, not that one: no frontier of its
-    /// live bindings is the recorded one, and with none recorded it must have
-    /// no revocation in its history.
+    /// [`Self::verify_write_actor_in_txn`] at this host's observed frontier,
+    /// for a writer that must still hold one of the bindings `generation`
+    /// records. A writer rebound or revoked and regranted since holds a new
+    /// binding, not one of those; with none recorded it must have no
+    /// revocation in its history.
     pub(crate) fn verify_write_actor_generation_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         writer: WriteActor,
-        generation: Option<AuthorityEntryHash>,
+        generation: Option<BindingGeneration>,
     ) -> Result<()> {
-        let writer = match generation {
-            Some(hash) => writer.with_authority_frontier(hash),
-            None => writer,
-        };
-        let fold = self.verify_write_actor_in_txn(txn, &writer)?;
+        let writer = self.observed_write_actor_in_txn(txn, writer)?;
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
         if fold.vault_id.is_none() {
             return Ok(());
         }
         let class = writer.actor_class().gate_actor_class();
         let held = match generation {
-            Some(hash) => fold.actor_bindings.iter().any(|(key, binding)| {
+            Some(generation) => fold.actor_bindings.iter().any(|(key, binding)| {
                 binding.actor_ref == writer.entity_ref()
                     && binding.actor_class == class
                     && binding.status == super::ActorBindingStatus::Active
-                    && fold
-                        .actor_write_frontiers
-                        .get(key)
-                        .is_some_and(|frontiers| frontiers.contains(&hash))
+                    && generation.names(&actor_binding_id(key, binding))
             }),
             None => !fold
                 .actor_revocation_affected_writers
@@ -104,7 +97,7 @@ impl Vault {
             Ok(())
         } else {
             Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
-                reason: "writer's binding is newer than the one recorded",
+                reason: "writer's binding is not one the consult recorded",
             }))
         }
     }
@@ -169,4 +162,27 @@ impl Vault {
         }
         Ok(())
     }
+}
+
+/// One binding's identity: its key, epoch, actor and class. A rebind or a
+/// regrant is a new epoch, so a new identity, and every replica holding the
+/// binding names it alike.
+fn actor_binding_id(key: &AuthorityKey, binding: &FoldedActorBinding) -> BindingId {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron/consult-party/v1/binding");
+    match key {
+        AuthorityKey::Ed25519(bytes) => {
+            hasher.update(b"ed25519");
+            hasher.update(bytes);
+        }
+        AuthorityKey::P256(bytes) => {
+            hasher.update(b"p256");
+            hasher.update(&(bytes.len() as u64).to_be_bytes());
+            hasher.update(bytes);
+        }
+    }
+    hasher.update(&binding.epoch.to_be_bytes());
+    hasher.update(binding.actor_ref.as_bytes());
+    hasher.update(binding.actor_class.as_bytes());
+    *hasher.finalize().as_bytes()
 }

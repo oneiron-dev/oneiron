@@ -1,10 +1,9 @@
 //! Task verb tests: the one-time open migration that gives a consult minted
 //! before party facts existed the fact its creation would have minted.
 
-use super::consult_party::{approve, party_facts, working};
+use super::consult_party::{approve, party_facts, unlink_below_doors, working};
 use super::support::*;
 use super::*;
-use crate::edge::EdgeKind;
 
 /// F24 round 3 (H219), the pre-GA switch: a consult minted without a party
 /// fact gets the one its creation would have minted when its vault opens,
@@ -15,9 +14,7 @@ fn a_consult_minted_before_party_facts_gets_its_fact_on_open() {
     let (task_ref, peer, _question) = open_consult(&vault);
     seed_ladder_state(&vault, task_ref, &working());
     for fact_ref in party_facts(&vault, task_ref) {
-        vault
-            .delete_edge(&fact_ref, EdgeKind::ScopedTo, &task_ref)
-            .expect("as a consult minted before party facts");
+        unlink_below_doors(&vault, fact_ref, task_ref);
     }
     vault
         .with_write_txn(|wtxn| {

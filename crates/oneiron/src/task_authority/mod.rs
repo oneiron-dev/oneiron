@@ -26,7 +26,6 @@ use crate::ports::EdgeStoreRead;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::authority::AuthorityEntryHash;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -36,6 +35,9 @@ use crate::registry::ENTITY_TYPE_TASK;
 #[cfg(test)]
 use crate::temporal::TimeRange;
 use crate::vault::MAX_EDGE_QUERY_RESULTS;
+
+mod binding_generation;
+pub use binding_generation::{BindingGeneration, BindingId, MAX_GENERATION_BINDINGS};
 
 /// Strict body schema for authority facts. Version 1 is the only shape ever
 /// written; a row naming any other version is refused rather than guessed at.
@@ -132,12 +134,11 @@ pub struct TaskAuthorityFact {
     /// party the consult was addressed to, absent for one addressed to the
     /// Dreamer. Absent on every other kind.
     pub assigned_ref: Option<EntityId>,
-    /// ConsultAssignee only: the binding generation (an authority frontier
-    /// at which its binding was live) `actor_ref` held when the consult was
-    /// minted, absent when it held no binding.
-    pub actor_generation: Option<AuthorityEntryHash>,
+    /// ConsultAssignee only: the live bindings `actor_ref` held when the
+    /// consult was minted, absent when it held none.
+    pub actor_generation: Option<BindingGeneration>,
     /// ConsultAssignee only: the same for `assigned_ref`.
-    pub assigned_generation: Option<AuthorityEntryHash>,
+    pub assigned_generation: Option<BindingGeneration>,
     pub occurred_at: u64,
 }
 
@@ -188,31 +189,34 @@ pub(crate) enum ConsultParties {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ConsultPartyFact {
     asker: EntityId,
-    asker_generation: Option<AuthorityEntryHash>,
+    asker_generation: Option<BindingGeneration>,
     assignee: Option<EntityId>,
-    assignee_generation: Option<AuthorityEntryHash>,
+    assignee_generation: Option<BindingGeneration>,
 }
 
 impl ConsultPartyFact {
-    /// Two replicas minting the same consult name the same parties but may
-    /// have observed different frontiers of the same binding. They converge
-    /// on the strictest generation, none, rather than either replica's.
+    /// Two replicas minting the same consult name the same parties, and
+    /// converge on the bindings both recorded for each.
     fn meet(self, other: Self) -> Self {
-        let meet =
-            |held: Option<AuthorityEntryHash>, seen| (held == seen).then_some(held).flatten();
         Self {
-            asker_generation: meet(self.asker_generation, other.asker_generation),
-            assignee_generation: meet(self.assignee_generation, other.assignee_generation),
+            asker_generation: BindingGeneration::meet(
+                self.asker_generation,
+                other.asker_generation,
+            ),
+            assignee_generation: BindingGeneration::meet(
+                self.assignee_generation,
+                other.assignee_generation,
+            ),
             ..self
         }
     }
 }
 
-/// An actor's standing as one of a consult's parties: the binding generation
-/// it held when the consult was minted, which its binding must still be.
+/// An actor's standing as one of a consult's parties: the bindings it held
+/// when the consult was minted, one of which it must still hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ConsultStanding {
-    pub(crate) generation: Option<AuthorityEntryHash>,
+    pub(crate) generation: Option<BindingGeneration>,
 }
 
 impl TaskAuthorityFacts {
@@ -375,7 +379,7 @@ pub(crate) fn encode_task_authority_fact_body(fact: &TaskAuthorityFact) -> Vec<u
         (BODY_KEY_ASSIGNED_GENERATION, fact.assigned_generation),
     ] {
         if let Some(generation) = generation {
-            entries.push((Value::from(key), Value::Binary(generation.to_vec())));
+            entries.push((Value::from(key), generation.encode()));
         }
     }
     let value = Value::Map(entries);
@@ -444,18 +448,9 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
     let kind = TaskAuthorityFactKind::from_byte(byte(BODY_KEY_KIND)?).ok_or(Error::Record(
         RecordError::InvalidTaskBody("task authority fact kind"),
     ))?;
-    // Binary only: `Value::as_slice` would also read a string's bytes.
     let generation = |key| {
         optional_fact_body_field(entries, key)?
-            .map(|value| match value {
-                Value::Binary(bytes) => AuthorityEntryHash::try_from(bytes.as_slice()).ok(),
-                _ => None,
-            })
-            .map(|generation| {
-                generation.ok_or(Error::Record(RecordError::InvalidTaskBody(
-                    "task authority fact generation",
-                )))
-            })
+            .map(BindingGeneration::decode)
             .transpose()
     };
     let (assigned_ref, actor_generation, assigned_generation) = match kind {
@@ -538,6 +533,59 @@ fn optional_fact_body_field<'a>(
         )));
     }
     Ok(value)
+}
+
+/// Whether `id` is a stored authority fact.
+pub(crate) fn is_task_authority_fact_in(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)? else {
+        return Ok(false);
+    };
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("task authority fact guard header"))?;
+    Ok(header.entity_type == ENTITY_TYPE_TASK
+        && raw.len() > ENTITY_METADATA_HEADER_LEN
+        && matches!(
+            task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..]),
+            Ok(TaskRole::AuthorityFact)
+        ))
+}
+
+/// A fact is read through its `fact --ScopedTo--> task` link, so removing
+/// the link, or the fact, would read as a requirement never made or a party
+/// never named, and let the next fact stand as the first. No door removes
+/// either; a hard delete of the subject takes the link with its row.
+pub(crate) fn reject_fact_link_delete(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    src: &EntityId,
+    kind: EdgeKind,
+) -> Result<()> {
+    if kind == EdgeKind::ScopedTo && is_task_authority_fact_in(store, txn, src)? {
+        return Err(fact_removal_refused());
+    }
+    Ok(())
+}
+
+/// [`reject_fact_link_delete`] for the fact row itself.
+pub(crate) fn reject_fact_delete(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    if is_task_authority_fact_in(store, txn, id)? {
+        return Err(fact_removal_refused());
+    }
+    Ok(())
+}
+
+pub(crate) fn fact_removal_refused() -> Error {
+    Error::Record(RecordError::InvalidTaskBody(
+        "task authority facts are immutable",
+    ))
 }
 
 impl Vault {
