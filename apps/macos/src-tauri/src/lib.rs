@@ -170,9 +170,16 @@ where
 }
 
 fn open_vault<R: Runtime>(app: &AppHandle<R>) -> Result<Arc<Vault>, Box<dyn std::error::Error>> {
-    let path = app.path().app_data_dir()?.join(VAULT_DIR);
-    std::fs::create_dir_all(&path)?;
-    Ok(Arc::new(Vault::open(&path, VaultConfig::device())?))
+    open_vault_at(&app.path().app_data_dir()?.join(VAULT_DIR))
+}
+
+/// Opens the recorder's vault at `path`. Crash output never carries world
+/// text (owner ruling 2026-10-14, fix 6), so the engine's panic hook goes in
+/// before the vault opens.
+fn open_vault_at(path: &std::path::Path) -> Result<Arc<Vault>, Box<dyn std::error::Error>> {
+    oneiron::panic_report::install_panic_hook();
+    std::fs::create_dir_all(path)?;
+    Ok(Arc::new(Vault::open(path, VaultConfig::device())?))
 }
 
 fn install_menu_bar<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
@@ -232,3 +239,6 @@ fn now_unix() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs())
 }
+
+#[cfg(test)]
+mod tests;

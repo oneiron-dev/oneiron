@@ -393,7 +393,7 @@ pub(crate) fn recover_topology_delete_intents_on_open(vault: &crate::Vault) -> R
                 drop(wtxn);
                 tracing::warn!(
                     entity = %entity.to_hex(),
-                    %error,
+                    kind = ?error.kind(),
                     "topology delete completion deferred to replay"
                 );
             }

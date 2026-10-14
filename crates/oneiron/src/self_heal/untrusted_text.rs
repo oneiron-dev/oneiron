@@ -1,4 +1,9 @@
 //! Untrusted detail-text validation and escaping.
+//!
+//! A code run's blocked receipt is the one carrier of an escaped detail leaf.
+//! Diagnostics carry none: their invariant inputs are numbers and their
+//! `untrusted_detail` key is always nil. A diagnostic stored before the owner
+//! ruling of 2026-10-14 may hold a leaf; decode checks it here and drops it.
 
 use super::event::{MAX_UNTRUSTED_DETAIL_LEN, invalid_diagnostic};
 use crate::error::Result;
@@ -124,10 +129,9 @@ fn escape_end(bytes: &[u8], start: usize) -> Option<usize> {
 /// the text a reader sees would not say which of the two it came from.
 ///
 /// Applying this twice is therefore NOT the identity, and must never happen. A
-/// stored leaf is TERMINAL: decode hands it back escaped and never unescapes
-/// it, so the only door back onto the wire for an already-canonical leaf is
-/// [`encode_stored_diagnostic_event_body`], which validates it instead of
-/// escaping it again. This function's one caller is the raw author door.
+/// stored leaf is TERMINAL: readers get it back escaped and never unescaped,
+/// and a stored leaf is re-checked with [`validate_untrusted_detail`] instead
+/// of being escaped again.
 pub(crate) fn canonical_untrusted_detail(raw: &str) -> Result<String> {
     // Escaping never shrinks the UTF-8 byte length. Bound raw input before
     // allocating or scanning it, and retain the post-escape expansion bound.

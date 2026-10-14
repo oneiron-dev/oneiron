@@ -117,11 +117,3 @@ pub struct RetrievalReplayInputs {
     pub config: serde_json::Value,
     pub corpus_snapshot_ref: Option<String>,
 }
-
-/// Exact serialized output bytes for a finalized context-pack run. The format
-/// identifies the representation; raw structured packs use MessagePack.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct RetrievalPackOutput {
-    pub format: String,
-    pub bytes: Vec<u8>,
-}

@@ -613,7 +613,7 @@ pub(super) fn materialize_edges_from_delta(
         && let Err(e) = scrub_local_only_companions_from_crdt(doc, &pending_companion_scrubs)
     {
         tracing::error!(
-            error = %e,
+            kind = ?e.kind(),
             window = %window_key,
             "observer-b: local-only companion CRDT scrub failed after edge batch commit"
         );
@@ -654,7 +654,7 @@ pub(super) fn materialize_edges_from_delta(
             }
         }
         tracing::error!(
-            error = %e,
+            kind = ?e.kind(),
             window = %window_key,
             applied_ops = applied_edges.len(),
             hydrated_endpoints = hydrated_endpoints.len(),

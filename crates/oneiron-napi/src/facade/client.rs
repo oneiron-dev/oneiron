@@ -81,6 +81,7 @@ impl NativeClient {
     /// Opens an embedded vault; `path` omitted ⇒ `~/.oneiron/default`.
     #[napi(factory)]
     pub fn open(path: Option<String>, dimensions: Option<f64>) -> napi::Result<Self> {
+        crate::facade::before_vault_open();
         let options = oneiron_remote::OpenOptions {
             dimensions: dimensions
                 .map(dimensions_to_engine)

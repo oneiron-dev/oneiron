@@ -115,7 +115,7 @@ pub(crate) async fn core_query(
         fetch_limit,
     )
     .map_err(|error| {
-        tracing::error!(error = %error, "core query failed");
+        tracing::error!(kind = ?error.kind(), "core query failed");
         core_engine_error("core query failed", error)
     })?;
     let mut narrowing = results.receipt;
@@ -336,7 +336,7 @@ pub(crate) fn project_entity_ids(
             continue;
         }
         if let Some(item) = projection::project_entity(vault, &id, view).map_err(|error| {
-            tracing::error!(error = %error, id = %id.to_hex(), "core projection failed");
+            tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core projection failed");
             core_engine_error("core projection failed", error)
         })? {
             items.push(item);
