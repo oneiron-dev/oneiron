@@ -23,6 +23,7 @@ mod repin;
 mod root;
 mod root_doors;
 mod root_issue;
+mod session;
 mod state;
 mod vault_doors;
 mod wrap;
@@ -31,15 +32,17 @@ mod wrap;
 mod tests;
 
 pub use self::doors::WorldKeyStatus;
-pub use self::repin::{NarrowedWorld, RepinReport, Withheld};
-pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore};
-pub use crate::error::KitRecord;
 pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recipients};
 pub use self::machine::{machine_encryption_key, machine_secret};
+pub use self::repin::{NarrowedWorld, RepinReport, Withheld};
 pub use self::root::{RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin};
+pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore};
 pub use self::root_issue::PreparedRoot;
+pub use self::session::WorldKeyFrontierCheck;
+pub(crate) use self::session::WorldKeySession;
 pub use self::state::{WorldRecoveryState, recovery_state};
 pub use self::wrap::{open_world_key, seal_world_key};
+pub use crate::error::KitRecord;
 pub use oneiron_authority::authority::{
     FIRST_GENERATION, PolicyRevision, WORLD_KEY_EPOCH, WorldKeyId, WrapRecipient,
 };

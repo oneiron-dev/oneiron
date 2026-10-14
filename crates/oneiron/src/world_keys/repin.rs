@@ -21,7 +21,9 @@
 //! of its own wrapping it to itself, or (with the door's seed) a counted
 //! wrap of it to the new root. A reached key that is conflicted, or whose
 //! every envelope fails to open, is reported with that reason, never
-//! dropped.
+//! dropped. A key whose world's live edits outgrow one record is withheld
+//! as `FrontierWide` and the door goes on: one wide world never stops a
+//! pin move or a kit restore.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -60,6 +62,12 @@ pub enum Withheld {
     /// wrap, or one sealed to another key. A well-signed record can carry
     /// one, since the fold never sees inside an envelope.
     Unopenable,
+    /// The world's live settings edits outgrew one key record, so this door
+    /// gave the key no new wrap, and raised the world's OF-520 question. The
+    /// key keeps the wraps it had (a kit's root wrap among them): once one
+    /// machine merges the world's settings, a re-run of the door wraps it
+    /// where this machine still reads the world.
+    FrontierWide,
 }
 
 /// A world this install holds whose settings the pin change made differ.
@@ -295,6 +303,9 @@ impl Vault {
         };
         let my_public = door.secret.secret.public_key().clone();
         let mut seq = SequenceCounter::new();
+        // Keys whose world outgrew one record: withheld, and the door goes
+        // on (Engine, 2026-10-15).
+        let mut wide = BTreeSet::new();
         // A key this machine will not read under the new pin is wrapped
         // first on the old pin's rows, to the new root and to itself.
         for (id, reached) in &start.reached {
@@ -307,7 +318,7 @@ impl Vault {
             {
                 continue;
             }
-            let records = self.append_world_key_wraps_in_txn(
+            let Ok(records) = self.append_world_key_wraps_in_txn(
                 txn,
                 &start.old,
                 door.signing,
@@ -319,7 +330,11 @@ impl Vault {
                     (WrapRecipient::Machine(me), my_public.clone()),
                 ],
                 &mut seq,
-            )?;
+            )?
+            else {
+                wide.insert(*id);
+                continue;
+            };
             let after = self.authority_view_readonly_in_txn(txn)?;
             if !records
                 .iter()
@@ -360,7 +375,7 @@ impl Vault {
                 .into_iter()
                 .filter(|(to, _)| !counted.is_some_and(|held| held.wraps.contains_key(to)))
                 .collect();
-            appended.extend(self.append_world_key_wraps_in_txn(
+            match self.append_world_key_wraps_in_txn(
                 txn,
                 &mid,
                 door.signing,
@@ -369,7 +384,12 @@ impl Vault {
                 reached.owner,
                 &missing,
                 &mut seq,
-            )?);
+            )? {
+                Ok(records) => appended.extend(records),
+                Err(_) => {
+                    wide.insert(*id);
+                }
+            }
         }
         self.require_counted_in_txn(txn, &appended)?;
         let after = self.authority_view_readonly_in_txn(txn)?;
@@ -396,6 +416,7 @@ impl Vault {
                 {
                     Err(Withheld::Conflicted)
                 }
+                Reach::Opened(_) if wide.contains(&id) => Err(Withheld::FrontierWide),
                 Reach::Opened(_) if !mine(&after) => Err(Withheld::NotMine),
                 Reach::Opened(_) if !reads(&after, id.world) => {
                     if door.restore

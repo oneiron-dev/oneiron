@@ -427,7 +427,7 @@ impl Vault {
                 // privacy P6b). With no keystore on the handle, a process-memory
                 // one lends it the key for the request alone, so the settings
                 // door below still runs with none, as before.
-                let keystore = &self.device_keystore;
+                let keystore = &self.world_keys.keystore;
                 let lent = keystore
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)

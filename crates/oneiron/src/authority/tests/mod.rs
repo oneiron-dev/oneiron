@@ -58,6 +58,7 @@ mod world_floor;
 mod world_held_chains;
 mod world_hosted;
 mod world_key_doors;
+mod world_key_frontier;
 mod world_kit_gate;
 mod world_orphan;
 mod world_pin_doors;

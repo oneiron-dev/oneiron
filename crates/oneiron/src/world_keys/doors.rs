@@ -191,16 +191,18 @@ impl Vault {
         let Some(current) = fold.current_world_key(world) else {
             let key = WorldKey::mint(world, FIRST_GENERATION)?;
             let id = *key.id();
-            let records = self.append_world_key_wraps_in_txn(
-                txn,
-                &fold,
-                &signing,
-                secret.machine,
-                &key,
-                owner,
-                &allowed,
-                &mut seq,
-            )?;
+            let records = self
+                .append_world_key_wraps_in_txn(
+                    txn,
+                    &fold,
+                    &signing,
+                    secret.machine,
+                    &key,
+                    owner,
+                    &allowed,
+                    &mut seq,
+                )?
+                .map_err(FrontierWide::refused)?;
             self.require_counted_in_txn(txn, &records)?;
             return Ok(WorldKeyStatus::Minted(id));
         };
@@ -219,16 +221,18 @@ impl Vault {
             &secret.secret,
         )
         .ok_or_else(|| refused("this machine holds no wrap of the world's current key"))?;
-        let records = self.append_world_key_wraps_in_txn(
-            txn,
-            &fold,
-            &signing,
-            secret.machine,
-            &key,
-            current.owner,
-            &missing,
-            &mut seq,
-        )?;
+        let records = self
+            .append_world_key_wraps_in_txn(
+                txn,
+                &fold,
+                &signing,
+                secret.machine,
+                &key,
+                current.owner,
+                &missing,
+                &mut seq,
+            )?
+            .map_err(FrontierWide::refused)?;
         self.require_counted_in_txn(txn, &records)?;
         Ok(WorldKeyStatus::Wrapped {
             key: id,
@@ -356,7 +360,9 @@ impl Vault {
     /// the settings revision come from `fold`: the world's live edits, the
     /// rows each named machine's standing rests on, and the root's record.
     /// Recipients are split across records so each stays within the codec's
-    /// bounds. Returns the records' hashes; the caller judges the refold.
+    /// bounds. Returns the records' hashes; the caller judges the refold. A
+    /// world whose rows outgrow one record raises its OF-520 question and
+    /// writes nothing ([`FrontierWide`]).
     #[expect(
         clippy::too_many_arguments,
         reason = "one append: the snapshot, the signer, the key and its recipients"
@@ -371,9 +377,9 @@ impl Vault {
         owner: EntityId,
         recipients: &[(WrapRecipient, HybridPublicKey)],
         seq: &mut SequenceCounter,
-    ) -> Result<Vec<AuthorityEntryHash>> {
+    ) -> Result<std::result::Result<Vec<AuthorityEntryHash>, FrontierWide>> {
         if recipients.is_empty() {
-            return Ok(Vec::new());
+            return Ok(Ok(Vec::new()));
         }
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let world = key.id().world;
@@ -407,9 +413,11 @@ impl Vault {
             base.extend(authors);
         }
         if base.len() > MAX_PARENTS {
-            return Err(refused(
-                "the world's key rests on more rows than one record names",
-            ));
+            self.world_keys.frontier_wide(world, base.len());
+            return Ok(Err(FrontierWide(
+                "the world's key rests on more rows than one record names: merge this world's \
+                 settings from one machine that sees every edit, then retry",
+            )));
         }
         let mut chunks: Vec<(BTreeSet<AuthorityEntryHash>, Vec<_>)> = Vec::new();
         let mut parents = base.clone();
@@ -429,9 +437,13 @@ impl Vault {
                 ));
             }
             if full(&parents, &wraps) {
-                return Err(refused(
-                    "a recipient's standing rests on more rows than one record names",
-                ));
+                self.world_keys
+                    .frontier_wide(world, parents.union(&rows).count());
+                return Ok(Err(FrontierWide(
+                    "a recipient's standing and the world's edits are more rows than one record \
+                     names: merge this world's settings from one machine that sees every edit, \
+                     then retry",
+                )));
             }
             parents.extend(rows);
             wraps.push((*recipient, public));
@@ -475,7 +487,7 @@ impl Vault {
             ));
         }
         self.put_authority_log_entries_in_txn(txn, &rows)?;
-        Ok(hashes)
+        Ok(Ok(hashes))
     }
 
     /// The fold is the judge: every record must count here.
@@ -497,7 +509,8 @@ impl Vault {
     fn world_key_ring(
         &self,
     ) -> std::sync::MutexGuard<'_, std::collections::HashMap<WorldKeyId, Arc<WorldKey>>> {
-        self.world_key_ring
+        self.world_keys
+            .ring
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -511,6 +524,17 @@ impl Vault {
     /// Puts an opened key in the ring.
     pub(crate) fn ring_world_key(&self, key: WorldKey) {
         self.world_key_ring().insert(*key.id(), Arc::new(key));
+    }
+}
+
+/// A world whose live edits, with the standing rows named beside them, are
+/// more parents than one key record names. Its question is raised; the
+/// reason names the way out.
+pub(crate) struct FrontierWide(&'static str);
+
+impl FrontierWide {
+    pub(crate) fn refused(self) -> crate::error::Error {
+        refused(self.0)
     }
 }
 

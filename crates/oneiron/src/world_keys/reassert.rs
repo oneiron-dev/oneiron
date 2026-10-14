@@ -136,16 +136,19 @@ impl Vault {
                         .into_iter()
                         .filter(|(to, _)| !held.is_some_and(|held| held.wraps.contains_key(to)))
                         .collect();
-                    appended.extend(self.append_world_key_wraps_in_txn(
-                        txn,
-                        &after,
-                        &signing,
-                        secret.machine,
-                        &key,
-                        key_owner,
-                        &missing,
-                        &mut seq,
-                    )?);
+                    appended.extend(
+                        self.append_world_key_wraps_in_txn(
+                            txn,
+                            &after,
+                            &signing,
+                            secret.machine,
+                            &key,
+                            key_owner,
+                            &missing,
+                            &mut seq,
+                        )?
+                        .map_err(super::doors::FrontierWide::refused)?,
+                    );
                 }
                 self.require_counted_in_txn(txn, &appended)?;
             }
