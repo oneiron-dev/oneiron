@@ -5297,7 +5297,8 @@ fn the_generic_sync_state_door_cannot_mark_a_carrier_as_written_here() {
 /// wrote from this vault, never from the image: a checkpoint's checksum is
 /// unkeyed, so whoever hands one in could mark a peer's carrier as written
 /// here or unmark this vault's own. Nor does it keep a mark for a carrier
-/// written after the image, which no erasure in the copy could reach.
+/// the copy does not hold as one (written after the image, or retyped in it),
+/// which no erasure in the copy could reach.
 #[test]
 fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
     /// A checkpoint image's wire shape.
@@ -5323,6 +5324,18 @@ fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
     let (peer, blob) = (EntityId::now(), peer_author_carrier(event, &core, other));
     deliver_peer_row(&vault, &peer, &blob);
     let marks = vault.sync_state_keys_with_prefix("it:authored:").unwrap();
+    let (twin, kin) = (EntityId::now(), EntityId::now());
+    for id in [&twin, &kin] {
+        put_test_person(&vault, id);
+    }
+    merge_here(&vault, twin, kin, Some(own));
+    let retyped = vault
+        .sync_state_keys_with_prefix("it:authored:")
+        .unwrap()
+        .into_iter()
+        .find(|key| !marks.contains(key))
+        .and_then(|key| EntityId::from_hex(&key["it:authored:".len()..]).ok())
+        .unwrap();
     let image = root.path().join("image");
     vault.snapshot_checkpoint(&image, 300).unwrap();
     let (later, head, author) = (EntityId::now(), EntityId::now(), EntityId::now());
@@ -5335,7 +5348,7 @@ fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
             .sync_state_keys_with_prefix("it:authored:")
             .unwrap()
             .len(),
-        2
+        3
     );
 
     let bytes = std::fs::read(&image).unwrap();
@@ -5349,6 +5362,14 @@ fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
             .to_vec(),
     ));
     rows.sort();
+    let (_, carrier) = forged
+        .databases
+        .get_mut("entities")
+        .unwrap()
+        .iter_mut()
+        .find(|(key, _)| key.as_slice() == retyped.as_bytes())
+        .unwrap();
+    carrier[crate::batch::ENTITY_TYPE_OFFSET] = crate::registry::ENTITY_TYPE_EVENT;
     let body = rmp_serde::to_vec_named(&forged).unwrap();
     let mut file = b"ONEIRONC1".to_vec();
     file.extend_from_slice(blake3::hash(&body).as_bytes());

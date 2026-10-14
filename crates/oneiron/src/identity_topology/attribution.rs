@@ -138,10 +138,11 @@ fn scrub_carriers_in_txn(
     Ok(())
 }
 
-/// Drops every written-here mark whose carrier this vault does not hold with
-/// the exact body the mark binds. A restore runs it once its rows are in: a
-/// mark carried from the live vault for a carrier the image predates would be
-/// a digest of an author's carrier that no erasure could reach.
+/// Drops every written-here mark whose carrier this vault does not hold as a
+/// type-76 row with the exact body the mark binds, the row `scan_in_txn`
+/// reads. A restore runs it once its rows are in: a mark carried from the
+/// live vault for a carrier the image predates (or holds as another kind)
+/// would be a digest of an author's carrier that no erasure could reach.
 pub(crate) fn drop_unheld_author_marks_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -150,8 +151,9 @@ pub(crate) fn drop_unheld_author_marks_in_txn(
     for row in AUTHORED_HERE.iter_from(store, wtxn, &[])? {
         let (HexId(id), digest) = row?;
         let held = store.entities.get(wtxn, id.as_bytes())?.is_some_and(|raw| {
-            raw.get(ENTITY_METADATA_HEADER_LEN..)
-                .is_some_and(|body| *blake3::hash(body).as_bytes() == digest)
+            EntityMetadataHeader::parse(raw)
+                .is_some_and(|header| header.entity_type == ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+                && *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes() == digest
         });
         if !held {
             unheld.push(id);
