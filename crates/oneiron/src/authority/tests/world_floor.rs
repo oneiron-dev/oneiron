@@ -294,3 +294,79 @@ fn a_floor_never_grants_a_later_edit_standing() {
         }
     }
 }
+
+/// A "yours" revision is evidence too. Two concurrent owner re-marks of a
+/// machine at one revision diverge, and a removal on one of them lists the
+/// machine's widening. A replica that stores the removal before the other
+/// re-mark still finds the divergence, so the removal acknowledges nothing
+/// and the widening keeps no full strength, in both orders.
+#[test]
+fn a_divergent_mark_that_arrives_after_a_removal_still_voids_it() {
+    let host = host();
+    let world = world_row(&host);
+    let (laptop, laptop_key) =
+        other_machine(&host, 95, MachineRole::Owned(MachineOwnership::Yours));
+    let narrowing = edit_by(
+        &host,
+        laptop,
+        &laptop_key,
+        world,
+        settings(ReadLocation::OneMachine(laptop)),
+    );
+    land(&host, std::slice::from_ref(&narrowing));
+    let widening = edit_by(
+        &host,
+        laptop,
+        &laptop_key,
+        world,
+        settings(ReadLocation::Everywhere),
+    );
+    land(&host, std::slice::from_ref(&widening));
+
+    let fold = host.vault.authority_fold().unwrap();
+    let seq = fold.append_sequences[&host.issuer.public_key()];
+    let profile = fold.machine(laptop).unwrap().profile.clone();
+    let remark = |seq, seen: BTreeSet<AuthorityEntryHash>| {
+        revision(
+            &host,
+            &fold,
+            seq,
+            MachineProfile {
+                revision: 2,
+                seen_world_edits: seen,
+                ..profile.clone()
+            },
+        )
+    };
+    let marked = remark(seq + 1, BTreeSet::new());
+    let sibling = remark(
+        seq + 2,
+        BTreeSet::from([authority_entry_hash(&narrowing).unwrap()]),
+    );
+    let removal = host
+        .issuer
+        .sign_entry(
+            Some(host.vault_id),
+            seq + 3,
+            vec![authority_entry_hash(&marked).unwrap()],
+            AuthorityOp::MachineProfile(MachineProfile {
+                role: MachineRole::Removed,
+                revision: 3,
+                seen_world_edits: BTreeSet::from([authority_entry_hash(&widening).unwrap()]),
+                ..profile.clone()
+            }),
+            2,
+        )
+        .unwrap();
+    for (order, rows) in [
+        ("sibling first", [&marked, &sibling, &removal]),
+        ("removal first", [&marked, &removal, &sibling]),
+    ] {
+        let (_dir, replica) = replica_storing(&host, &rows);
+        assert_eq!(
+            judged(&replica, world),
+            (EffectiveRead::OneMachine(laptop), false),
+            "{order}"
+        );
+    }
+}

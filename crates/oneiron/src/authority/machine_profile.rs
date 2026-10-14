@@ -90,6 +90,10 @@ pub(super) struct Revision {
     /// Whether it may acknowledge an edit: not when it landed past this
     /// replica's sequence floor as restriction only (Astra #1430).
     acknowledges: bool,
+    /// A "yours" revision that landed past the floor: evidence only, never a
+    /// head. A divergent copy of a mark's number still keeps the mark, and a
+    /// head of that number, from standing.
+    evidence: bool,
 }
 
 impl Revision {
@@ -110,6 +114,7 @@ impl Revision {
             replaced_mark: left.replaced_mark.min(right.replaced_mark),
             past: Arc::new(left.past.intersection(&right.past).copied().collect()),
             acknowledges: left.acknowledges && right.acknowledges,
+            evidence: left.evidence || right.evidence,
         })
     }
 }
@@ -223,8 +228,19 @@ pub(super) fn apply_machine_profile(
                 .map(|folded| folded.entry),
             past,
             acknowledges: !restriction_only,
+            evidence: restriction_only && profile.says_mine(),
         }),
     );
+    if restriction_only && profile.says_mine() {
+        if let Some(chain) = state
+            .machines
+            .get_mut(&profile.machine)
+            .and_then(|chains| chains.get_mut(&MachineAdmitter::Roster))
+        {
+            chain.revisions = revisions;
+        }
+        return Ok(());
+    }
     let folded = FoldedMachine {
         profile: profile.clone(),
         conflicted: false,
@@ -386,22 +402,26 @@ pub(super) fn merge_machine(left: &FoldedMachine, right: &FoldedMachine) -> Fold
 }
 
 fn merge_chain(left: &MachineChain, right: &MachineChain) -> MachineChain {
+    let mut revisions = left.revisions.clone();
+    for (hash, revision) in &right.revisions {
+        revisions
+            .entry(*hash)
+            .and_modify(|held| *held = Revision::meet(held, revision))
+            .or_insert_with(|| Arc::clone(revision));
+    }
+    let mut head = merge_machine(&left.head, &right.head);
+    head.conflicted |= revisions.values().any(|revision| {
+        revision.evidence
+            && revision.profile.revision == head.profile.revision
+            && revision.profile != head.profile
+    });
     MachineChain {
-        head: merge_machine(&left.head, &right.head),
+        head,
         owner_held: match (&left.owner_held, &right.owner_held) {
             (Some(left), Some(right)) => Some(merge_machine(left, right)),
             (one, other) => one.clone().or_else(|| other.clone()),
         },
-        revisions: {
-            let mut revisions = left.revisions.clone();
-            for (hash, revision) in &right.revisions {
-                revisions
-                    .entry(*hash)
-                    .and_modify(|held| *held = Revision::meet(held, revision))
-                    .or_insert_with(|| Arc::clone(revision));
-            }
-            revisions
-        },
+        revisions,
     }
 }
 

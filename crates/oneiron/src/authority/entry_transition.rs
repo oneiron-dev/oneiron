@@ -306,13 +306,13 @@ pub(super) fn fold_entry_state(
 /// system actors through the authority registry at bootstrap), and an agent
 /// key holds no consent, so it widens no authority.
 /// A row a sequence floor refuses only to restriction: a world edit, or a
-/// machine revision that leaves the machine not the owner's (Astra #1430).
+/// revision of a known machine (Astra #1430): one that leaves the machine not
+/// the owner's lands as restriction only, a "yours" one as evidence only.
 fn lands_restriction_only(op: &AuthorityOp) -> bool {
-    match op {
-        AuthorityOp::WorldPrivacy(_) => true,
-        AuthorityOp::MachineProfile(profile) => !profile.says_mine(),
-        _ => false,
-    }
+    matches!(
+        op,
+        AuthorityOp::WorldPrivacy(_) | AuthorityOp::MachineProfile(_)
+    )
 }
 
 pub(super) fn op_is_retired_device_op(op: &AuthorityOp) -> bool {
