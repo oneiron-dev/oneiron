@@ -234,8 +234,14 @@ fn fact_row(
 }
 
 /// A peer's own `Auto` merge of two persons this vault holds, sealed by
-/// `seal` (a key this vault never enrolled) or not sealed at all.
-fn forged_merge(vault: &Vault, loser: EntityId, survivor: EntityId, seal: Option<&SigningKey>) {
+/// `seal` (a key this vault never enrolled) or not sealed at all; the seal's
+/// row and fact.
+fn forged_merge(
+    vault: &Vault,
+    loser: EntityId,
+    survivor: EntityId,
+    seal: Option<&SigningKey>,
+) -> Option<(EntityId, AdmissionDisposition)> {
     let core = StoredIdentityOpEvent {
         seq: 50,
         validated_at_write: false,
@@ -253,10 +259,11 @@ fn forged_merge(vault: &Vault, loser: EntityId, survivor: EntityId, seal: Option
     };
     let event = EntityId::now();
     deliver_row(vault, event, &core);
-    if let Some(key) = seal {
-        let fact = sealed_by_key_for_test(key, event, &core, AdmissionVerdict::Validated).unwrap();
-        deliver_row(vault, EntityId::now(), &fact_row(&core, 51, fact));
-    }
+    let key = seal?;
+    let fact = sealed_by_key_for_test(key, event, &core, AdmissionVerdict::Validated).unwrap();
+    let id = EntityId::now();
+    deliver_row(vault, id, &fact_row(&core, 51, fact.clone()));
+    Some((id, fact))
 }
 
 /// The bug: a sync peer mints an `Auto` merge naming two existing persons and
@@ -681,4 +688,44 @@ fn a_reopen_under_another_posture_redecides_the_stored_edges() {
     .unwrap();
     assert!(!shell_edge(&hosted, loser, survivor));
     assert_eq!(folded_state(&hosted, loser), EntityLifecycleState::Active);
+}
+
+/// The host's generic sync_state door can neither vouch for a stranger's
+/// seal nor touch whose seals this vault last counted: no door but the seal
+/// writes that record.
+#[test]
+fn the_generic_sync_state_door_cannot_vouch_for_a_seal() {
+    let (_dir, vault) = install();
+    let (loser, survivor) = (EntityId::now(), EntityId::now());
+    put_person(&vault, loser);
+    put_person(&vault, survivor);
+    let stranger = SigningKey::generate(&mut rand_core::OsRng);
+    let (fact_id, fact) = forged_merge(&vault, loser, survivor, Some(&stranger)).unwrap();
+    let mut seal = fact.signer_pk.to_vec();
+    seal.extend_from_slice(&fact.signature);
+
+    for (key, value) in [
+        (format!("it:sealed:{}", fact_id.to_hex()), seal),
+        ("it:mine_signers".to_owned(), vec![0; 32]),
+    ] {
+        assert!(
+            matches!(
+                vault.sync_state_put(&key, &value),
+                Err(crate::Error::InvalidConfig(_))
+            ),
+            "{key}"
+        );
+        assert!(
+            matches!(
+                vault.sync_state_delete(&key),
+                Err(crate::Error::InvalidConfig(_))
+            ),
+            "{key}"
+        );
+    }
+    vault
+        .with_write_txn(|wtxn| vault.reconcile_identity_topology_edges_in_txn(wtxn))
+        .unwrap();
+    assert!(!shell_edge(&vault, loser, survivor));
+    assert_eq!(folded_state(&vault, loser), EntityLifecycleState::Active);
 }
