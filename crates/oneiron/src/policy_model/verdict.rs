@@ -424,11 +424,18 @@ impl PolicyClassifyVerdict {
         // from the posture the caller hands in now. Unattested, a reuse runs
         // its own pass, which halts again.
         //
-        // And the policy is the one the pass READ, stamped where it ran. A
-        // `policy` argument naming any other — one registered after the pass,
-        // say — attests nothing, because the pass is no evidence about it.
-        let read_policy = ran.hosted_policy_read.as_ref().filter(|read| {
-            read.version == policy.version && read.policy_hash == policy.policy_hash
+        // And the evidence is what the pass EXAMINED, stamped where it ran:
+        // the policy it read, and the content, frontier and safeguard selector
+        // this carrier is bound to. A `policy` argument naming another policy
+        // (one registered after the pass, say), or a carrier for another
+        // message, another frontier or another classifier, attests nothing,
+        // because the pass is no evidence about it.
+        let read_policy = ran.hosted_evidence.as_ref().filter(|read| {
+            read.version == policy.version
+                && read.policy_hash == policy.policy_hash
+                && read.verify_content_hash == self.binding.content_hash
+                && ran.verdict.binding.read_frontier_hash == self.binding.read_frontier_hash
+                && ran.verdict.safeguard_binding == self.safeguard_binding
         });
         let Some(read_policy) = read_policy else {
             self.hosted_attestation = None;

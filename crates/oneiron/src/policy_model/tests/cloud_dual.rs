@@ -63,7 +63,7 @@ fn cloud_vault_receipt_with_hosted_attestation_trusts_without_rerunning() -> Res
         .attesting_hosted_plane(
             &registered_policy(&registry),
             &PolicyModelConfig::default(),
-            &answered_pass(&registered_policy(&registry)),
+            &answered_pass(&registered_policy(&registry), binding),
         ),
         requested_hash: Mutex::new(None),
     };
@@ -106,7 +106,7 @@ fn cloud_vault_attestation_of_another_policy_version_is_not_evidence() -> Result
         .attesting_hosted_plane(
             &superseded,
             &PolicyModelConfig::default(),
-            &answered_pass(&superseded),
+            &answered_pass(&superseded, binding),
         ),
         requested_hash: Mutex::new(None),
     };
@@ -522,7 +522,7 @@ fn an_attestation_is_evidence_only_under_the_posture_that_made_it() {
     // A pass that PROCEEDED THROUGH A DEGRADE: the posture that tolerated it
     // is exactly the question, so it is evidence only under that posture.
     let degraded = PolicyClassifyVerdict::clean_allow(binding, &proceed, PolicyPlane::HostedLegal)
-        .attesting_hosted_plane(&policy, &proceed, &degraded_pass(&policy));
+        .attesting_hosted_plane(&policy, &proceed, &degraded_pass(&policy, binding));
     assert!(
         degraded.attests_hosted_plane(&policy, &proceed),
         "the posture that tolerated it is the posture it attests under"
@@ -538,7 +538,7 @@ fn an_attestation_is_evidence_only_under_the_posture_that_made_it() {
     // degrades to a NON-HALTING allow, releasing what the attested verdict
     // blocked. Strictly worse than the staleness being guarded against.
     let answered = PolicyClassifyVerdict::clean_allow(binding, &halt, PolicyPlane::HostedLegal)
-        .attesting_hosted_plane(&policy, &halt, &answered_pass(&policy));
+        .attesting_hosted_plane(&policy, &halt, &answered_pass(&policy, binding));
     assert!(
         answered.attests_hosted_plane(&policy, &proceed),
         "an answered pass survives a posture change; no outage was tolerated to reach it"
@@ -551,7 +551,7 @@ fn an_attestation_is_evidence_only_under_the_posture_that_made_it() {
     // (the halt lives on the pass), so trusting it would convert a stopped
     // pass into one whose `must_halt_relay` is false.
     let halted = PolicyClassifyVerdict::clean_allow(binding, &halt, PolicyPlane::HostedLegal)
-        .attesting_hosted_plane(&policy, &halt, &halted_degraded_pass(&policy));
+        .attesting_hosted_plane(&policy, &halt, &halted_degraded_pass(&policy, binding));
     assert!(
         !halted.attests_hosted_plane(&policy, &halt),
         "a degrade under Halt halted the relay; there is no allow to reuse"
@@ -561,7 +561,7 @@ fn an_attestation_is_evidence_only_under_the_posture_that_made_it() {
     // And the flag is DERIVED, not asserted: the constructor reads the pass,
     // so a caller cannot mark a degraded pass as model-answered.
     let derived = PolicyClassifyVerdict::clean_allow(binding, &proceed, PolicyPlane::HostedLegal)
-        .attesting_hosted_plane(&policy, &proceed, &degraded_pass(&policy));
+        .attesting_hosted_plane(&policy, &proceed, &degraded_pass(&policy, binding));
     assert_eq!(
         derived
             .hosted_attestation
@@ -677,7 +677,7 @@ fn the_owner_enforce_door_refuses_an_attested_hosted_verdict() -> Result<()> {
     let hosted_verdict = owner_verdict.clone().attesting_hosted_plane(
         &registered_policy(&registry),
         &config,
-        &answered_pass(&registered_policy(&registry)),
+        &answered_pass(&registered_policy(&registry), owner_verdict.binding),
     );
     assert!(
         !vault.policy_model_verdict_is_stale_with_config(&hosted_verdict, &request, &config)?,

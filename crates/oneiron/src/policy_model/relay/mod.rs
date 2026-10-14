@@ -49,7 +49,7 @@ mod trust;
 use super::planes;
 
 pub use self::outcome::{
-    DualPlanePass, HostedPolicyRead, InMemoryVaultSideVerdicts, RelayBoundaryDegrade,
+    DualPlanePass, HostedPassEvidence, InMemoryVaultSideVerdicts, RelayBoundaryDegrade,
     RelayBoundaryPass, RelayClassifiedPass, RelayResolution, RelaySafeguardTier,
     VaultSideVerdictSource,
 };

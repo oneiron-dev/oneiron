@@ -454,10 +454,11 @@ fn a_halted_hosted_pass_is_never_a_reusable_attestation() -> Result<()> {
     Ok(())
 }
 
-/// H122, receipt reuse, what the pass decided and over which policy: a real
-/// hosted Block attested onto the owner's Allow carrier, and a real pass over
-/// one hosted policy attested under the policy registered after it, used to
-/// give a later cloud relay a trusted Allow. The same answered pass attested
+/// H122, receipt reuse, what the pass decided and what it examined: a real
+/// hosted Block attested onto the owner's Allow carrier, a real pass over one
+/// hosted policy attested under the policy registered after it, and a real
+/// pass over one message attested onto a carrier for another, used to give a
+/// later cloud relay a trusted Allow. The same answered pass attested
 /// under its own policy is still reused, the control.
 #[test]
 fn a_hosted_pass_attests_only_its_own_policy_and_never_its_halt() -> Result<()> {
@@ -523,6 +524,32 @@ fn a_hosted_pass_attests_only_its_own_policy_and_never_its_halt() -> Result<()> 
         reuse(&amended, &answered, &backend)?,
         RelayBoundaryPass::TrustedVaultSide,
         "H122: a pass over one hosted policy attested the policy registered after it"
+    );
+    assert_eq!(backend.calls(), 1, "the reuse runs its own hosted pass");
+
+    // A pass over one message is no evidence about another.
+    let other = PolicyClassifyRequest::outbound_content("a different message");
+    let other_source = StaticVaultSideVerdicts {
+        verdict: PolicyClassifyVerdict::clean_allow(
+            vault.relay_verify_binding(&other, &config)?,
+            &config,
+            PolicyPlane::OwnerPolicy,
+        )
+        .attesting_hosted_plane(&registered_policy(&registry), &config, &answered),
+        requested_hash: Mutex::new(None),
+    };
+    let backend = CountingPolicyBackend::clean();
+    assert_ne!(
+        block_on(vault.relay_boundary_pass(
+            other,
+            &cloud_witness(),
+            &registry,
+            &config,
+            Some(tier(&backend, &budget)),
+            &other_source,
+        ))?,
+        RelayBoundaryPass::TrustedVaultSide,
+        "H122: a pass over one message attested another"
     );
     assert_eq!(backend.calls(), 1, "the reuse runs its own hosted pass");
 
@@ -854,5 +881,56 @@ fn an_owner_opt_out_before_the_row_releases_the_content() -> Result<()> {
     ))?;
     assert_eq!(enforcement.action, PolicyEnforcementAction::Allow);
     assert_eq!(enforcement.final_content.as_deref(), Some(CLEAN_CONTENT));
+    Ok(())
+}
+
+/// H122, the dual-plane door's CloudVault reuse: the owner edits the policy
+/// after the reuse was verified and before the door's last transaction. The
+/// reused verdict answers the replaced policy; it used to be handed back as a
+/// trusted Allow, because the final check skipped a pass this edge did not
+/// run. Checked at the binding it was verified at, it is the halting
+/// binding-moved degrade.
+#[test]
+fn a_dual_plane_cloud_reuse_is_checked_in_the_last_transaction() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let vault = std::rc::Rc::new(vault);
+    put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
+    let config = PolicyModelConfig::default();
+    let budget = lease("dual-cloud-reuse");
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let hosted_pass = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &registry,
+        &config,
+        Some(tier(&clean_backend(), &budget)),
+    )?;
+    let source = StaticVaultSideVerdicts {
+        verdict: PolicyClassifyVerdict::clean_allow(
+            vault.relay_verify_binding(&request, &config)?,
+            &config,
+            PolicyPlane::OwnerPolicy,
+        )
+        .attesting_hosted_plane(&registered_policy(&registry), &config, &hosted_pass),
+        requested_hash: Mutex::new(None),
+    };
+    move_policy_before_owner_receipt(&vault, spoilers_manifest("block"));
+    let backend = clean_backend();
+    let pass = block_on(vault.classify_both_planes(
+        request.clone(),
+        &cloud_witness(),
+        &registry,
+        &config,
+        Some(tier(&backend, &budget)),
+        &source,
+    ))?;
+    assert_eq!(
+        pass.relay.degraded(),
+        Some(RelayBoundaryDegrade::PolicyBindingMovedMidPass),
+        "H122: a CloudVault reuse was handed out for a replaced policy"
+    );
+    assert!(pass.relay.must_halt_relay());
+    assert!(!vault.policy_model_verdict_is_stale_with_config(&pass.owner, &request, &config)?);
     Ok(())
 }

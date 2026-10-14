@@ -281,55 +281,90 @@ pub(super) fn hosted_row(
 }
 
 /// The hosted policy used by most relay cases: serious crime is a block.
-/// A pass the model ANSWERED over `policy`: no degrade, so posture is not
-/// evidence about it.
-pub(super) fn answered_pass(policy: &HostedLegalPolicy) -> RelayBoundaryPass {
-    RelayBoundaryPass::classified(
-        PolicyClassifyVerdict::clean_allow(
-            PolicyContentBinding {
-                content_hash: [0x01; 32],
-                read_frontier_hash: [0x02; 32],
-            },
-            &PolicyModelConfig::default(),
-            PolicyPlane::HostedLegal,
+/// A pass the model ANSWERED over `policy` about the content `carrier` is
+/// bound to: no degrade, so posture is not evidence about it.
+pub(super) fn answered_pass(
+    policy: &HostedLegalPolicy,
+    carrier: PolicyContentBinding,
+) -> RelayBoundaryPass {
+    examined(
+        RelayBoundaryPass::classified(
+            PolicyClassifyVerdict::clean_allow(
+                hosted_binding(carrier),
+                &PolicyModelConfig::default(),
+                PolicyPlane::HostedLegal,
+            ),
+            None,
+            true,
+            RelayResolution::ModelDecided,
         ),
-        None,
-        true,
-        RelayResolution::ModelDecided,
+        policy,
+        carrier,
     )
-    .read_under(Some(policy))
 }
 
 /// A pass that PROCEEDED THROUGH a model outage, the shape a host running
 /// `ProceedReceipted` raises. Only reusable where proceeding was tolerated,
 /// which is what the attestation has to record.
-pub(super) fn degraded_pass(policy: &HostedLegalPolicy) -> RelayBoundaryPass {
-    RelayBoundaryPass::Classified(Box::new(RelayClassifiedPass {
-        verdict: PolicyClassifyVerdict::skipped(
-            PolicySkipReason::BackendUnavailable,
-            PolicyContentBinding {
-                content_hash: [0x01; 32],
-                read_frontier_hash: [0x02; 32],
-            },
-            &PolicyModelConfig::default(),
-            PolicyPlane::HostedLegal,
-        ),
-        degraded: Some(RelayBoundaryDegrade::SafeguardModelUnavailable),
-        degrade_halts: false,
-        hosted_policy_in_play: true,
-        resolution: RelayResolution::Unresolved,
-        hosted_policy_read: None,
-    }))
-    .read_under(Some(policy))
+pub(super) fn degraded_pass(
+    policy: &HostedLegalPolicy,
+    carrier: PolicyContentBinding,
+) -> RelayBoundaryPass {
+    examined(
+        RelayBoundaryPass::Classified(Box::new(RelayClassifiedPass {
+            verdict: PolicyClassifyVerdict::skipped(
+                PolicySkipReason::BackendUnavailable,
+                hosted_binding(carrier),
+                &PolicyModelConfig::default(),
+                PolicyPlane::HostedLegal,
+            ),
+            degraded: Some(RelayBoundaryDegrade::SafeguardModelUnavailable),
+            degrade_halts: false,
+            hosted_policy_in_play: true,
+            resolution: RelayResolution::Unresolved,
+            hosted_evidence: None,
+        })),
+        policy,
+        carrier,
+    )
 }
 
 /// The same outage under `Halt`: the pass stopped the relay.
-pub(super) fn halted_degraded_pass(policy: &HostedLegalPolicy) -> RelayBoundaryPass {
-    let RelayBoundaryPass::Classified(mut pass) = degraded_pass(policy) else {
+pub(super) fn halted_degraded_pass(
+    policy: &HostedLegalPolicy,
+    carrier: PolicyContentBinding,
+) -> RelayBoundaryPass {
+    let RelayBoundaryPass::Classified(mut pass) = degraded_pass(policy, carrier) else {
         unreachable!("degraded_pass is a classified pass");
     };
     pass.degrade_halts = true;
     RelayBoundaryPass::Classified(pass)
+}
+
+/// A hosted pass's own binding for the content and frontier `carrier` is
+/// bound to (the classify hash family differs; the frontier is shared).
+fn hosted_binding(carrier: PolicyContentBinding) -> PolicyContentBinding {
+    PolicyContentBinding {
+        content_hash: [0x01; 32],
+        read_frontier_hash: carrier.read_frontier_hash,
+    }
+}
+
+/// The evidence the hosted seam stamps: `policy`, and the content `carrier`
+/// is bound to.
+fn examined(
+    mut pass: RelayBoundaryPass,
+    policy: &HostedLegalPolicy,
+    carrier: PolicyContentBinding,
+) -> RelayBoundaryPass {
+    if let RelayBoundaryPass::Classified(ran) = &mut pass {
+        ran.hosted_evidence = Some(HostedPassEvidence {
+            version: policy.version.clone(),
+            policy_hash: policy.policy_hash.clone(),
+            verify_content_hash: carrier.content_hash,
+        });
+    }
+    pass
 }
 
 pub(super) fn hosted_serious_crime_block() -> HostedLegalPolicy {

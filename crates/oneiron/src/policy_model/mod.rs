@@ -124,7 +124,7 @@ pub use planes::{
 pub use prompt::PolicyClassifyPrompt;
 pub use relay::{
     AttestedRelayDomain, AuthenticatedConnectionIdentity, ConnectionClass, DualPlanePass,
-    EdgeServiceRegistry, HostedEdgeAttestation, HostedPolicyRead, InMemoryVaultSideVerdicts,
+    EdgeServiceRegistry, HostedEdgeAttestation, HostedPassEvidence, InMemoryVaultSideVerdicts,
     RelayBoundaryDegrade, RelayBoundaryPass, RelayClassifiedPass, RelayResolution,
     RelaySafeguardTier, RelayTrustDomain, VaultSideVerdictSource,
 };

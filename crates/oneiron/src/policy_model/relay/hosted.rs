@@ -61,7 +61,7 @@ impl Vault {
         Ok(self
             .hosted_relay_pass_pinned(request, hosted, patterns, config, safeguard)
             .await?
-            .read_under(hosted))
+            .read_under(hosted, request))
     }
 
     async fn hosted_relay_pass_pinned(
@@ -273,7 +273,23 @@ impl Vault {
         config: &PolicyModelConfig,
         verdicts: &dyn VaultSideVerdictSource,
     ) -> Result<RelayBoundaryPass> {
-        let binding = self.relay_verify_binding(request, config)?;
+        self.cloud_vault_verified_trust_at(request, hosted, config, verdicts, None)
+    }
+
+    /// [`Self::cloud_vault_verified_trust`] at `verify_at`, the binding a
+    /// caller pinned, or at the binding in force when it pinned none.
+    fn cloud_vault_verified_trust_at(
+        &self,
+        request: &PolicyClassifyRequest,
+        hosted: Option<&HostedLegalPolicy>,
+        config: &PolicyModelConfig,
+        verdicts: &dyn VaultSideVerdictSource,
+        verify_at: Option<PolicyContentBinding>,
+    ) -> Result<RelayBoundaryPass> {
+        let binding = match verify_at {
+            Some(binding) => binding,
+            None => self.relay_verify_binding(request, config)?,
+        };
         let Some(receipt) = verdicts.latest_boundary_verdict(&binding.content_hash)? else {
             return Err(Error::Relay(RelayError::RelayVaultReceiptUntrusted {
                 reason: "missing",
@@ -335,8 +351,9 @@ impl Vault {
         hosted: Option<&HostedLegalPolicy>,
         config: &PolicyModelConfig,
         verdicts: &dyn VaultSideVerdictSource,
+        verify_at: Option<PolicyContentBinding>,
     ) -> Result<CloudVaultPassOrFallback> {
-        match self.cloud_vault_verified_trust(request, hosted, config, verdicts) {
+        match self.cloud_vault_verified_trust_at(request, hosted, config, verdicts, verify_at) {
             Ok(pass) => Ok(CloudVaultPassOrFallback::Pass(pass)),
             Err(Error::Relay(RelayError::RelayVaultReceiptUntrusted { reason })) => {
                 Ok(CloudVaultPassOrFallback::HostedFallback {

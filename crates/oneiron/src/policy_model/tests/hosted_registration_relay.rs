@@ -434,7 +434,7 @@ fn the_registered_hash_covers_the_policy_document() {
     .attesting_hosted_plane(
         &original,
         &PolicyModelConfig::default(),
-        &answered_pass(&original),
+        &answered_pass(&original, binding),
     );
     assert!(receipt.attests_hosted_plane(&original, &PolicyModelConfig::default()));
     assert!(!receipt.attests_hosted_plane(&amended, &PolicyModelConfig::default()));

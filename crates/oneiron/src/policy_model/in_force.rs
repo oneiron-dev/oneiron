@@ -132,7 +132,7 @@ impl Vault {
         ))
     }
 
-    fn policy_model_verdict_is_stale_in_txn(
+    pub(super) fn policy_model_verdict_is_stale_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         verdict: &PolicyClassifyVerdict,

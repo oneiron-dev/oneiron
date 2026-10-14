@@ -457,7 +457,11 @@ impl Vault {
             PolicyPlane::OwnerPolicy,
             None,
         ));
-        let receipt_ref = match wtxn.take() {
+        // The hold's ruling is read in the same transaction that settled the
+        // verdict (and queued its hold), or, for a verdict another door
+        // recorded, in the same snapshot that finds it still in force: a
+        // ruling read later could answer a policy already replaced.
+        let (receipt_ref, held) = match wtxn.take() {
             Some(mut wtxn) => {
                 let mut reason_codes = policy_model_reason_codes(&verdict);
                 if moved {
@@ -471,18 +475,20 @@ impl Vault {
                     reason_codes,
                     system_notices.clone(),
                 )?;
+                let held = self.hold_for_action_in_txn(&wtxn, action, &request, &verdict)?;
                 wtxn.commit()?;
-                Some(receipt_ref)
+                (Some(receipt_ref), held)
             }
-            None => None,
-        };
-        let held = if action == PolicyEnforcementAction::Hold {
-            Some(
-                self.policy_hold_for_verdict(&request, &verdict)?
-                    .ok_or_else(|| Error::Relay(RelayError::PolicyVerdictNotInForce))?,
-            )
-        } else {
-            None
+            None => {
+                let rtxn = self.store.env.read_txn()?;
+                if self.policy_model_verdict_is_stale_in_txn(&rtxn, &verdict, &request, config)? {
+                    return Err(Error::Relay(RelayError::PolicyVerdictNotInForce));
+                }
+                (
+                    None,
+                    self.hold_for_action_in_txn(&rtxn, action, &request, &verdict)?,
+                )
+            }
         };
         let action = match held.as_ref().and_then(|item| item.resolution) {
             Some(super::PolicyHoldResolution::Cleared) => PolicyEnforcementAction::Allow,
@@ -523,5 +529,22 @@ impl Vault {
             barge_in_kill: halts.then(PolicyBargeInKill::full_flush),
             custom_tier_skipped,
         })
+    }
+
+    /// The hold item a `Hold` action is enforced on, read in `txn`. A hold
+    /// the row never queued is not in force.
+    fn hold_for_action_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        action: PolicyEnforcementAction,
+        request: &PolicyClassifyRequest,
+        verdict: &PolicyClassifyVerdict,
+    ) -> Result<Option<super::HeldPolicyItem>> {
+        if action != PolicyEnforcementAction::Hold {
+            return Ok(None);
+        }
+        self.policy_hold_for_verdict_in_txn(txn, request, verdict)?
+            .ok_or_else(|| Error::Relay(RelayError::PolicyVerdictNotInForce))
+            .map(Some)
     }
 }

@@ -7,10 +7,10 @@ use serde::Serialize;
 use crate::error::Result;
 use crate::llm::{BudgetLease, LlmBackend};
 
-use super::super::binding::PolicyContentBinding;
+use super::super::binding::{PolicyContentBinding, relay_verify_content_hash};
 use super::super::pattern::{PatternEvaluation, PolicyPatternRole};
 use super::super::planes::{HostedLegalPolicy, PolicyPlane};
-use super::super::request::{HostedOutagePolicy, PolicyModelConfig};
+use super::super::request::{HostedOutagePolicy, PolicyClassifyRequest, PolicyModelConfig};
 use super::super::verdict::{
     PolicyClassifyDecision, PolicyClassifyVerdict, PolicyPassAudit, PolicySkipReason,
 };
@@ -205,20 +205,23 @@ pub struct RelayClassifiedPass {
     /// the fact travels with the pass rather than being re-derived.
     pub hosted_policy_in_play: bool,
     pub resolution: RelayResolution,
-    /// The hosted legal policy this pass classified against, stamped by the
-    /// hosted seam that handed it the policy. `None` for every pass that seam
-    /// did not run. An attestation names this policy and no other, so a pass
-    /// over one policy is never evidence for the policy registered after it.
+    /// What this pass examined, stamped by the hosted seam that ran it: the
+    /// hosted legal policy it was handed and the content it was asked about.
+    /// `None` for every pass that seam did not run. An attestation names this
+    /// policy and this content and no other, so a pass is never evidence for
+    /// the policy registered after it or for another message.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub hosted_policy_read: Option<HostedPolicyRead>,
+    pub hosted_evidence: Option<HostedPassEvidence>,
 }
 
-/// Which hosted legal policy a pass read: version AND hash, the pair an
-/// attestation is matched on.
+/// What a hosted pass examined: the policy's version AND hash, the pair an
+/// attestation is matched on, and the request's identity-free verification
+/// content hash, the one a CloudVault carrier is bound to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct HostedPolicyRead {
+pub struct HostedPassEvidence {
     pub version: String,
     pub policy_hash: String,
+    pub verify_content_hash: [u8; 32],
 }
 
 impl RelayBoundaryPass {
@@ -238,19 +241,24 @@ impl RelayBoundaryPass {
             degraded,
             hosted_policy_in_play,
             resolution,
-            hosted_policy_read: None,
+            hosted_evidence: None,
         }))
     }
 
-    /// Stamps the hosted policy a pass that ran here classified against.
-    /// Called by the hosted seam with the policy it handed the pass, and by
-    /// nothing else.
+    /// Stamps what a pass that ran here examined. Called by the hosted seam
+    /// with the policy and the request it handed the pass, and by nothing
+    /// else.
     #[must_use]
-    pub(in super::super) fn read_under(mut self, hosted: Option<&HostedLegalPolicy>) -> Self {
+    pub(in super::super) fn read_under(
+        mut self,
+        hosted: Option<&HostedLegalPolicy>,
+        request: &PolicyClassifyRequest,
+    ) -> Self {
         if let Self::Classified(pass) = &mut self {
-            pass.hosted_policy_read = hosted.map(|policy| HostedPolicyRead {
+            pass.hosted_evidence = hosted.map(|policy| HostedPassEvidence {
                 version: policy.version.clone(),
                 policy_hash: policy.policy_hash.clone(),
+                verify_content_hash: relay_verify_content_hash(request),
             });
         }
         self
@@ -494,7 +502,7 @@ pub(super) fn degraded_hosted_pass(
         degrade_halts,
         hosted_policy_in_play,
         resolution: RelayResolution::Unresolved,
-        hosted_policy_read: None,
+        hosted_evidence: None,
     }))
 }
 
