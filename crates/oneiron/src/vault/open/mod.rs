@@ -531,14 +531,15 @@ impl Vault {
                 &store,
             )?,
             store,
-            vector_evidence: std::sync::RwLock::new(config.vector_evidence),
+            vector_evidence: std::sync::RwLock::new(super::vector_evidence::NoMatchFloors::new(
+                config.vector_evidence,
+            )),
             config,
             analyzer,
             writer_lease: None,
             privacy,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
-            // Every vault opens FULL; only an explicit ctl-driven shed parks
-            // it, and only an inbound resume unparks it.
+            // Opens FULL; only a ctl-driven shed parks it, an inbound resume unparks it.
             slim: crate::slim::SlimController::default(),
             wake_policy_timer_owned: std::sync::atomic::AtomicBool::new(false),
             conversation_presence: Default::default(),

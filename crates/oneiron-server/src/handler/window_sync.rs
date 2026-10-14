@@ -64,7 +64,7 @@ pub(super) async fn handle_window_sync(
         let selector = decode_sync_selector(payload)
             .map_err(|_| ProtocolError::InvalidPayload("invalid promotion selector"))?;
         let window = server
-            .get_or_create_window(&key)
+            .serve_window(&key)
             .await
             .map_err(|e| ProtocolError::Persistence(e.to_string()))?;
         let doc = window.doc.clone();
@@ -131,11 +131,11 @@ pub(super) async fn handle_window_sync(
 
     // Loads persisted window state (d:w: + pending u:w:) on first touch.
     // Corrupt persisted state closes the connection rather than serving a
-    // fresh empty window (fail-closed — see SyncServer::get_or_create_window).
+    // fresh empty window (fail-closed — see SyncServer::serve_window).
     // The handle is held to the end of the frame, so the window cannot be
     // unloaded under the import below.
     let window = server
-        .get_or_create_window(&key)
+        .serve_window(&key)
         .await
         .map_err(|e| ProtocolError::Persistence(format!("window load failed: {e}")))?;
     let doc = window.doc.clone();

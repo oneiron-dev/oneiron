@@ -45,7 +45,7 @@ impl SyncServer {
     /// an outstanding handle is what keeps the manager from unloading the
     /// window (housekeeping unloads idle windows before an erasure sweep)
     /// while an import is in flight.
-    pub(crate) async fn get_or_create_window(
+    pub(crate) async fn serve_window(
         &self,
         key: &WindowKey,
     ) -> Result<Arc<LoadedWindow>, oneiron::Error> {
@@ -82,6 +82,15 @@ impl SyncServer {
         }
 
         Ok(window)
+    }
+
+    /// [`Self::serve_window`]'s doc, for a test that need not hold the window.
+    #[cfg(test)]
+    pub(crate) async fn get_or_create_window(
+        &self,
+        key: &WindowKey,
+    ) -> Result<loro::LoroDoc, oneiron::Error> {
+        Ok(self.serve_window(key).await?.doc.clone())
     }
 
     /// Persists an imported client update to sync_state

@@ -84,7 +84,7 @@ pub(super) async fn handle_selector_fetch(
         return Ok(());
     }
     let window = server
-        .get_or_create_window(key)
+        .serve_window(key)
         .await
         .map_err(|e| ProtocolError::Persistence(format!("window load failed: {e}")))?;
     let doc = window.doc.clone();

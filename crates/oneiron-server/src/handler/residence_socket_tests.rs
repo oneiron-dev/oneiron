@@ -473,12 +473,7 @@ async fn thin_first_edit_promotes_causally_and_concurrent_home_edit_converges() 
     .unwrap();
     socket.send(Message::Binary(proof.into())).await.unwrap();
     socket.send(Message::Binary(vv.into())).await.unwrap();
-    let server_before = server
-        .get_or_create_window(&window)
-        .await
-        .unwrap()
-        .doc
-        .clone();
+    let server_before = server.get_or_create_window(&window).await.unwrap();
     let direct_delta = loaded
         .doc
         .export(loro::ExportMode::updates(&server_before.oplog_vv()))
@@ -546,12 +541,7 @@ async fn thin_first_edit_promotes_causally_and_concurrent_home_edit_converges() 
                     seen.push(("out", reply[0], sub, reply.len()));
                     if sub == Some(window_sub_tags::UPDATE) {
                         let (_, _, payload) = transport::decode_window_sync(&reply[1..]).unwrap();
-                        let home_doc = server
-                            .get_or_create_window(&window)
-                            .await
-                            .unwrap()
-                            .doc
-                            .clone();
+                        let home_doc = server.get_or_create_window(&window).await.unwrap();
                         oneiron::sync::window::validate_window_update_locality(&home_doc, payload)
                             .unwrap_or_else(|error| {
                                 panic!("promoted delta rejected locally: {error}")
@@ -578,7 +568,6 @@ async fn thin_first_edit_promotes_causally_and_concurrent_home_edit_converges() 
             .get_or_create_window(&window)
             .await
             .unwrap()
-            .doc
             .oplog_vv();
         panic!(
             "promotion exchange stalled: frames={seen:?}; home={:?}; device={:?}; edited={edited:?}; home_vv={home_vv:?}; device_vv={:?}",
@@ -592,12 +581,7 @@ async fn thin_first_edit_promotes_causally_and_concurrent_home_edit_converges() 
             .unwrap()
             .is_some_and(|raw| raw.ends_with(&second_edit))
     );
-    let home_doc = server
-        .get_or_create_window(&window)
-        .await
-        .unwrap()
-        .doc
-        .clone();
+    let home_doc = server.get_or_create_window(&window).await.unwrap();
     let device_doc = loaded.doc.clone();
     let before_home = home_doc.oplog_vv();
     let before_device = device_doc.oplog_vv();
@@ -877,9 +861,7 @@ impl WorldResidence {
             .server
             .get_or_create_window(&self.window)
             .await
-            .unwrap()
-            .doc
-            .clone();
+            .unwrap();
         let delta = loaded
             .doc
             .export(loro::ExportMode::updates(&home_doc.oplog_vv()))
@@ -1081,16 +1063,12 @@ async fn two_vault_thin_world_claim_edit_promotes_into_its_world_month() {
         .server
         .get_or_create_window(&fixture.window)
         .await
-        .unwrap()
-        .doc
-        .clone();
+        .unwrap();
     let home_base = fixture
         .server
         .get_or_create_window(&fixture.base)
         .await
-        .unwrap()
-        .doc
-        .clone();
+        .unwrap();
     let device_world = fixture.manager.open_window(&fixture.window).unwrap();
     assert!(window_map_has(&home_world, fixture.claim));
     assert!(!window_map_has(&home_base, fixture.claim));

@@ -166,7 +166,7 @@ async fn a_running_server_discharges_an_erasure_obligation_under_a_window_it_ser
     drop(
         running
             .server
-            .get_or_create_window(&window)
+            .serve_window(&window)
             .await
             .expect("serve the window"),
     );

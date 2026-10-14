@@ -115,6 +115,9 @@ pub struct SyncServer {
     /// Model seats, background AI status and the Dreamer's session hints.
     /// Inert unless the serve path attaches a configured host.
     pub(crate) ai: crate::ai_host::AiHandle,
+    /// Where rerank calls run when their door cannot drive them on its
+    /// caller's runtime.
+    pub(crate) rerank_runtime: super::recall_rerank::CallRuntime,
     /// Host-injected, request-by-request egress decision for nonlocal extraction.
     pub(crate) extraction_egress: Option<Arc<dyn oneiron::llm::ExtractionEgressPredicate>>,
     /// The vault's path, backup plan and schedule, set by `serve`. `None`
@@ -134,7 +137,7 @@ impl SyncServer {
     ///
     /// Startup ordering per ARCH-0023b: (1) the root Doc loads from `d:root`
     /// plus pending `u:root:*`; (2) window Docs load on demand from
-    /// `d:w:{key}` plus pending `u:w:{key}:*` in `Self::get_or_create_window`.
+    /// `d:w:{key}` plus pending `u:w:{key}:*` in `Self::serve_window`.
     /// A fresh vault initializes and persists a new root Doc.
     ///
     /// Boot also reconciles `meta.windows` against the persisted `d:w:*`
@@ -262,6 +265,7 @@ impl SyncServer {
             llm: None,
             run_receipts: Arc::default(),
             ai: crate::ai_host::AiHandle::inert(),
+            rerank_runtime: Default::default(),
             extraction_egress: None,
             owner_host: None,
             feedback: None,

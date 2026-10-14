@@ -61,6 +61,7 @@ pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor
 pub use self::reader_table::ReaderTableShortfall;
 #[cfg(test)]
 pub(crate) use self::retrieval_trace_key::unkeyed_for_test;
+pub(crate) use self::vector_evidence::NoMatchFloors;
 
 /// Main vault API wrapping LMDB storage and configuration.
 pub struct Vault {
@@ -76,8 +77,9 @@ pub struct Vault {
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
     /// Where vector evidence starts now: the configured floors until the host
-    /// sets others ([`Vault::set_vector_evidence`]).
-    vector_evidence: std::sync::RwLock<crate::config::VectorEvidenceFloors>,
+    /// sets others ([`Vault::set_vector_evidence`]), and any it set for one
+    /// kind of item in one embedding space ([`Vault::set_vector_evidence_for`]).
+    vector_evidence: std::sync::RwLock<vector_evidence::NoMatchFloors>,
     pub(crate) analyzer: MultilingualAnalyzer,
     /// Which vault this handle belongs to, resolved once at open.
     vault_id: VaultId,

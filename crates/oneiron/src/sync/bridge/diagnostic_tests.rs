@@ -45,7 +45,7 @@ fn peer_diagnostic_output_is_silent_at_live_and_forward_replay() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(VaultConfig::device());
     let (id, blob) = diagnostic_fixture(4, None)?;
     let doc = LoroDoc::new();
-    let tombstones = doc.get_map("tombstones");
+    let tombstones = crate::sync::loro_support::TombstoneIndex::build(&doc.get_map("tombstones"));
     let ingest = IngestCtx::new(&vault, "2026-03", 0, &tombstones);
     vault.with_write_txn(|txn| {
         let step = ingest_entity_in_txn(&ingest, txn, &id.to_hex(), Some(&blob))?;
