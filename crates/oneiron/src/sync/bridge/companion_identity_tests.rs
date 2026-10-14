@@ -612,6 +612,20 @@ fn own_merges_survive_a_beside_restore_and_never_bind_a_stranger() {
     assert_eq!(folded_state(&stranger, loser), EntityLifecycleState::Active);
 }
 
+/// Another pairing after the merge: an authority write while topology rows
+/// exist records whose seals count, so a change after it starts from a
+/// recorded digest, not from none.
+fn record_standing(host: &Host) {
+    let (_dir, other) = install();
+    enroll(host, &other, MachineRole::ExecutionNode);
+    assert!(
+        host.vault
+            .sync_state_get("it:mine_signers")
+            .unwrap()
+            .is_some()
+    );
+}
+
 /// A restore that keeps current authority re-decides the image's shell edges
 /// under the roster it carries in, both ways: a machine removed since the
 /// image no longer holds its merge, and one marked mine since now does.
@@ -629,6 +643,7 @@ fn a_restore_keeping_authority_redecides_edges_under_the_current_roster() {
         merge_locally(&laptop, loser, survivor);
         deliver_merge(&host.vault, &laptop, loser, survivor);
         assert_eq!(shell_edge(&host.vault, loser, survivor), then == yours);
+        record_standing(&host);
         let root = tempfile::tempdir().unwrap();
         let image = root.path().join("image");
         host.vault.snapshot_checkpoint(&image, 100).unwrap();
@@ -658,7 +673,8 @@ fn a_restore_keeping_authority_redecides_edges_under_the_current_roster() {
 
 /// Standing follows the posture a vault opens with. Reopened as a hosted
 /// vault, whose root never vouches that a machine is the owner's, a paired
-/// laptop's merge leaves force with no authority write in between.
+/// laptop's merge leaves force with no authority write in between, and it
+/// comes back when the vault opens self-hosted again.
 #[test]
 fn a_reopen_under_another_posture_redecides_the_stored_edges() {
     let host = host();
@@ -668,6 +684,7 @@ fn a_reopen_under_another_posture_redecides_the_stored_edges() {
     merge_locally(&laptop, loser, survivor);
     deliver_merge(&host.vault, &laptop, loser, survivor);
     assert!(shell_edge(&host.vault, loser, survivor));
+    record_standing(&host);
 
     let Host {
         _dir: dir, vault, ..
@@ -688,6 +705,11 @@ fn a_reopen_under_another_posture_redecides_the_stored_edges() {
     .unwrap();
     assert!(!shell_edge(&hosted, loser, survivor));
     assert_eq!(folded_state(&hosted, loser), EntityLifecycleState::Active);
+
+    drop(hosted);
+    let local = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    assert!(shell_edge(&local, loser, survivor));
+    assert_eq!(folded_state(&local, loser), EntityLifecycleState::Merged);
 }
 
 /// The host's generic sync_state door can neither vouch for a stranger's
