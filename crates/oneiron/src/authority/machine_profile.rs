@@ -56,6 +56,11 @@ pub struct FoldedMachine {
     /// handoff conflict retired its root and installed no successor. Not
     /// live until the conflict settles, when the standing is judged again.
     pub admitter_unsettled: bool,
+    /// The winning revision reached this install past its signer's sequence
+    /// floor: the roster rule reads it as a replica with no floor does, but
+    /// this install does not count the machine until a later revision lands
+    /// (Astra #1430). Not live here.
+    pub floor_held: bool,
     /// The roster key that signed the revision, and its class. The class is
     /// judged again on the merged history: a key found to be in the host's
     /// custody on any branch the fold holds stops its owned revision standing.
@@ -87,13 +92,10 @@ pub(super) struct Revision {
     replaced_mark: Option<AuthorityEntryHash>,
     /// The machine's revisions in this one's own past.
     past: Arc<BTreeSet<AuthorityEntryHash>>,
-    /// Whether it may acknowledge an edit: not when it landed past this
-    /// replica's sequence floor as restriction only (Astra #1430).
-    acknowledges: bool,
-    /// A "yours" revision that landed past the floor: evidence only, never a
-    /// head. A divergent copy of a mark's number still keeps the mark, and a
-    /// head of that number, from standing.
-    evidence: bool,
+    /// It landed past this replica's sequence floor as restriction only: it
+    /// acknowledges no edit here, and as the head it leaves the machine
+    /// uncounted here (Astra #1430).
+    past_floor: bool,
 }
 
 impl Revision {
@@ -113,8 +115,7 @@ impl Revision {
                 && left.replaced_mark == right.replaced_mark,
             replaced_mark: left.replaced_mark.min(right.replaced_mark),
             past: Arc::new(left.past.intersection(&right.past).copied().collect()),
-            acknowledges: left.acknowledges && right.acknowledges,
-            evidence: left.evidence || right.evidence,
+            past_floor: left.past_floor || right.past_floor,
         })
     }
 }
@@ -136,6 +137,7 @@ impl FoldedMachine {
             && !self.removed
             && !self.stale
             && !self.admitter_unsettled
+            && !self.floor_held
             && (self.signer_class == SignerClass::OwnerHeld
                 || !matches!(self.profile.role, MachineRole::Owned(_)))
     }
@@ -201,10 +203,6 @@ pub(super) fn apply_machine_profile(
         return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     let chain = roster_chain(state, profile.machine);
-    // What a revision past the floor restricts is a machine already known.
-    if restriction_only && chain.is_none() {
-        return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
-    }
     let head = chain.map(|chain| &chain.head);
     if key_is_authority(state, &profile.machine_key)
         || machine_is_actor(state, profile.machine)
@@ -227,26 +225,16 @@ pub(super) fn apply_machine_profile(
                 .filter(|folded| folded.profile.says_mine())
                 .map(|folded| folded.entry),
             past,
-            acknowledges: !restriction_only,
-            evidence: restriction_only && profile.says_mine(),
+            past_floor: restriction_only,
         }),
     );
-    if restriction_only && profile.says_mine() {
-        if let Some(chain) = state
-            .machines
-            .get_mut(&profile.machine)
-            .and_then(|chains| chains.get_mut(&MachineAdmitter::Roster))
-        {
-            chain.revisions = revisions;
-        }
-        return Ok(());
-    }
     let folded = FoldedMachine {
         profile: profile.clone(),
         conflicted: false,
         removed: profile.role == MachineRole::Removed || head.is_some_and(|folded| folded.removed),
         stale: false,
         admitter_unsettled: false,
+        floor_held: false,
         signer: signer.clone(),
         signer_class,
         entry: hash,
@@ -353,7 +341,7 @@ pub(super) fn acknowledged(
     stands(mark)
         && takers.peek().is_some()
         && takers.all(|(_, revision)| {
-            (floor_free || revision.acknowledges)
+            (floor_free || !revision.past_floor)
                 && revision.owner_held
                 && !custodial(&revision.signer)
                 && revision.profile.seen_world_edits.contains(edit)
@@ -409,14 +397,8 @@ fn merge_chain(left: &MachineChain, right: &MachineChain) -> MachineChain {
             .and_modify(|held| *held = Revision::meet(held, revision))
             .or_insert_with(|| Arc::clone(revision));
     }
-    let mut head = merge_machine(&left.head, &right.head);
-    head.conflicted |= revisions.values().any(|revision| {
-        revision.evidence
-            && revision.profile.revision == head.profile.revision
-            && revision.profile != head.profile
-    });
     MachineChain {
-        head,
+        head: merge_machine(&left.head, &right.head),
         owner_held: match (&left.owner_held, &right.owner_held) {
             (Some(left), Some(right)) => Some(merge_machine(left, right)),
             (one, other) => one.clone().or_else(|| other.clone()),
@@ -507,8 +489,21 @@ fn derived_head(state: &FoldState, id: EntityId, chain: &MachineChain) -> Folded
     folded
 }
 
-/// The fold's public view: each machine with the derived poison applied, and
-/// with no standing while the roster has no settled root.
+/// One machine as this install counts it: held when its winning revision
+/// reached this install past its signer's sequence floor.
+pub(super) fn counted_machine(state: &FoldState, id: EntityId) -> Option<FoldedMachine> {
+    roster_chain(state, id).map(|chain| FoldedMachine {
+        floor_held: chain
+            .revisions
+            .get(&chain.head.entry)
+            .is_some_and(|revision| revision.past_floor),
+        ..derived_head(state, id, chain)
+    })
+}
+
+/// The fold's public view: each machine with the derived poison applied, as
+/// this install counts it, and with no standing while the roster has no
+/// settled root.
 pub(super) fn folded_machines(
     state: &FoldState,
     roster_unsettled: bool,
@@ -517,7 +512,7 @@ pub(super) fn folded_machines(
         .machines
         .keys()
         .filter_map(|id| {
-            derived_machine(state, *id).map(|mut folded| {
+            counted_machine(state, *id).map(|mut folded| {
                 folded.admitter_unsettled = roster_unsettled;
                 (*id, folded)
             })

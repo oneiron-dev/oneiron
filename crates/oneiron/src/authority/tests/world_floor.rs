@@ -4,8 +4,8 @@
 //! arrival order reads the same narrow world.
 use std::collections::BTreeSet;
 
-use super::machine_identity::{Host, host};
-use super::support::{authority_key_from_ed, sign_ed, unsigned_entry};
+use super::machine_identity::{Host, host, request_for};
+use super::support::{authority_key_from_ed, ed_key, sign_ed, unsigned_entry};
 use super::world_privacy::{edit_by, land, other_machine, read_of, settings, world_row};
 use super::*;
 use crate::{Vault, VaultConfig};
@@ -368,5 +368,281 @@ fn a_divergent_mark_that_arrives_after_a_removal_still_voids_it() {
             (EffectiveRead::OneMachine(laptop), false),
             "{order}"
         );
+    }
+}
+
+/// A world one machine of the owner's holds through `narrowing`, beside
+/// another machine of the owner's.
+struct Held {
+    host: Host,
+    world: EntityId,
+    laptop: (EntityId, SigningKey),
+    desk: (EntityId, SigningKey),
+    narrowing: AuthorityLogEntry,
+}
+
+fn held(seed: u8) -> Held {
+    let host = host();
+    let world = world_row(&host);
+    let laptop = other_machine(&host, seed, MachineRole::Owned(MachineOwnership::Yours));
+    let desk = other_machine(&host, seed + 1, MachineRole::Owned(MachineOwnership::Yours));
+    let narrowing = edit_by(
+        &host,
+        laptop.0,
+        &laptop.1,
+        world,
+        settings(ReadLocation::OneMachine(laptop.0)),
+    );
+    land(&host, std::slice::from_ref(&narrowing));
+    Held {
+        host,
+        world,
+        laptop,
+        desk,
+        narrowing,
+    }
+}
+
+/// The owner's revision of a machine at `seq` on `parents`.
+fn owner_on(
+    host: &Host,
+    seq: u64,
+    parents: Vec<AuthorityEntryHash>,
+    profile: MachineProfile,
+) -> AuthorityLogEntry {
+    host.issuer
+        .sign_entry(
+            Some(host.vault_id),
+            seq,
+            parents,
+            AuthorityOp::MachineProfile(profile),
+            2,
+        )
+        .unwrap()
+}
+
+/// Sol P2 round 13 F1 and Wonder round 7 W1: a "yours" revision past the
+/// floor still heads its machine by the roster rule. Two concurrent owner
+/// re-marks diverge; a demotion over one of them lists the machine's
+/// widening, or the widening is signed under one of them. A replica that
+/// stored a later owner row first takes both re-marks past its floor and
+/// still finds the demotion replaced, or the widening was signed under, a
+/// mark that does not stand: the widening only narrows, in both orders.
+#[test]
+fn a_demotion_over_a_divergent_mark_past_the_floor_acknowledges_nothing() {
+    for signed_under_remark in [false, true] {
+        let Held {
+            host,
+            world,
+            laptop: (laptop, laptop_key),
+            desk: (desk, _),
+            narrowing,
+        } = held(97);
+        let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
+        let landed = (!signed_under_remark).then(|| {
+            let widening = edit_by(
+                &host,
+                laptop,
+                &laptop_key,
+                world,
+                settings(ReadLocation::Everywhere),
+            );
+            land(&host, std::slice::from_ref(&widening));
+            widening
+        });
+        let fold = host.vault.authority_fold().unwrap();
+        let seq = fold.append_sequences[&host.issuer.public_key()];
+        let heads: Vec<_> = fold.append_heads.iter().copied().collect();
+        let profile = fold.machine(laptop).unwrap().profile.clone();
+        let remark = |seq, seen| {
+            owner_on(
+                &host,
+                seq,
+                heads.clone(),
+                MachineProfile {
+                    revision: 2,
+                    seen_world_edits: seen,
+                    ..profile.clone()
+                },
+            )
+        };
+        let marked = remark(seq + 1, BTreeSet::new());
+        let sibling = remark(seq + 2, BTreeSet::from([hash(&narrowing)]));
+        let other = owner_on(
+            &host,
+            seq + 3,
+            heads.clone(),
+            MachineProfile {
+                revision: 2,
+                ..fold.machine(desk).unwrap().profile.clone()
+            },
+        );
+        let widening = landed.unwrap_or_else(|| {
+            edit_on(
+                &host,
+                (laptop, &laptop_key),
+                world,
+                fold.append_sequences[&authority_key_from_ed(&laptop_key)] + 1,
+                vec![hash(&marked), hash(&narrowing)],
+                ReadLocation::Everywhere,
+            )
+        });
+        let demotion = owner_on(
+            &host,
+            seq + 4,
+            if signed_under_remark {
+                heads.clone()
+            } else {
+                vec![hash(&marked)]
+            },
+            MachineProfile {
+                role: MachineRole::Owned(MachineOwnership::WorkSchool),
+                revision: 3,
+                seen_world_edits: BTreeSet::from([hash(&widening)]),
+                ..profile.clone()
+            },
+        );
+        let mut in_order = vec![&marked, &sibling, &other];
+        let mut other_first = vec![&other, &marked, &sibling];
+        for rows in [&mut in_order, &mut other_first] {
+            if signed_under_remark {
+                rows.push(&widening);
+            }
+            rows.push(&demotion);
+        }
+        for (order, rows) in [("in order", in_order), ("other first", other_first)] {
+            let (_dir, replica) = replica_storing(&host, &rows);
+            assert_eq!(
+                judged(&replica, world),
+                (EffectiveRead::OneMachine(laptop), false),
+                "{order}, signed under the re-mark: {signed_under_remark}"
+            );
+        }
+    }
+}
+
+/// Sol P2 round 13 F2 and Wonder round 7 W2: a revision past the floor still
+/// bounds the machine's next revision number. A demotion reusing a re-mark's
+/// number over it is invalid without a floor, and invalid past one too, so
+/// the world is never orphaned for the other machine's widening re-pick, in
+/// both orders.
+#[test]
+fn a_revision_past_the_floor_still_bounds_the_next_number() {
+    let Held {
+        host,
+        world,
+        laptop: (laptop, _),
+        desk: (desk, desk_key),
+        narrowing,
+    } = held(99);
+    let hash = |entry: &AuthorityLogEntry| authority_entry_hash(entry).unwrap();
+    let fold = host.vault.authority_fold().unwrap();
+    let seq = fold.append_sequences[&host.issuer.public_key()];
+    let heads: Vec<_> = fold.append_heads.iter().copied().collect();
+    let profile = fold.machine(laptop).unwrap().profile.clone();
+    let marked = owner_on(
+        &host,
+        seq + 1,
+        heads.clone(),
+        MachineProfile {
+            revision: 2,
+            ..profile.clone()
+        },
+    );
+    let other = owner_on(
+        &host,
+        seq + 3,
+        heads,
+        MachineProfile {
+            revision: 2,
+            ..fold.machine(desk).unwrap().profile.clone()
+        },
+    );
+    let demotion = owner_on(
+        &host,
+        seq + 4,
+        vec![hash(&marked), hash(&other)],
+        MachineProfile {
+            role: MachineRole::Owned(MachineOwnership::WorkSchool),
+            revision: 2,
+            ..profile
+        },
+    );
+    let repick = edit_on(
+        &host,
+        (desk, &desk_key),
+        world,
+        1,
+        vec![hash(&demotion), hash(&narrowing)],
+        ReadLocation::Everywhere,
+    );
+    for (order, rows) in [
+        ("in order", [&marked, &other, &demotion, &repick]),
+        ("other first", [&other, &marked, &demotion, &repick]),
+    ] {
+        let (_dir, replica) = replica_storing(&host, &rows);
+        assert_eq!(
+            judged(&replica, world),
+            (EffectiveRead::OneMachine(laptop), false),
+            "{order}"
+        );
+    }
+}
+
+/// Engine ruling on Astra #1430: a re-key past the floor still poisons. The
+/// owner re-marks a machine under a second install key, and a later owner
+/// row reaches one replica first. A machine whose revisions named two keys
+/// is live under neither, so on both replicas a connection proved under
+/// either key speaks for no machine.
+#[test]
+fn a_rekey_past_the_floor_leaves_both_keys_unknown() {
+    let Held {
+        host,
+        laptop: (laptop, first),
+        desk: (desk, _),
+        ..
+    } = held(103);
+    let second = ed_key(105);
+    let fold = host.vault.authority_fold().unwrap();
+    let seq = fold.append_sequences[&host.issuer.public_key()];
+    let request = request_for(host.vault_id, laptop, &second);
+    let rekey = revision(
+        &host,
+        &fold,
+        seq + 1,
+        MachineProfile {
+            machine_key: request.machine_key,
+            machine_proof: request.machine_proof,
+            revision: 2,
+            ..fold.machine(laptop).unwrap().profile.clone()
+        },
+    );
+    let other = revision(
+        &host,
+        &fold,
+        seq + 2,
+        MachineProfile {
+            revision: 2,
+            ..fold.machine(desk).unwrap().profile.clone()
+        },
+    );
+    let transcript = machine_connection_transcript(&host.vault_id, laptop, "token", 7, "nonce");
+    for (order, rows) in [
+        ("re-key first", [&rekey, &other]),
+        ("other first", [&other, &rekey]),
+    ] {
+        let (_dir, replica) = replica_storing(&host, &rows);
+        for key in [&first, &second] {
+            let proved = replica
+                .verify_machine_connection_proof(
+                    laptop,
+                    &key.sign(&transcript).to_bytes(),
+                    "token",
+                    7,
+                    "nonce",
+                )
+                .unwrap();
+            assert_eq!(proved, PeerMachine::Unknown, "{order}");
+        }
     }
 }

@@ -49,7 +49,9 @@ use std::sync::Arc;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
-use super::machine_profile::{acknowledged, derived_chains, derived_machine, mark_past};
+use super::machine_profile::{
+    acknowledged, counted_machine, derived_chains, derived_machine, mark_past,
+};
 use super::*;
 
 /// Where a world may be read, after every live edit is met.
@@ -214,6 +216,7 @@ pub(super) fn mine_by_roster(folded: &FoldedMachine) -> bool {
     FoldedMachine {
         stale: false,
         admitter_unsettled: false,
+        floor_held: false,
         ..folded.clone()
     }
     .is_mine()
@@ -473,9 +476,10 @@ fn is_mine(state: &FoldState, machine: EntityId) -> bool {
 /// reason (its signer found in a host's custody) it acknowledges no edit (Sol
 /// P2 round 3, F2). An edit that landed as restriction only past a sequence
 /// floor never counts at full strength in the settings this install reads
-/// (Astra #1430). Standing follows the roster rule alone, as a replica with
-/// no floor reads it, so a floor never grants a later edit standing (Sol P2
-/// round 10, F1).
+/// (Astra #1430), nor does any edit of a machine whose winning revision
+/// reached this install past its floor. Standing follows the roster rule
+/// alone, as a replica with no floor reads it, so a floor never grants a
+/// later edit standing (Sol P2 round 10, F1).
 fn full_strength(
     state: &FoldState,
     hash: &AuthorityEntryHash,
@@ -483,11 +487,17 @@ fn full_strength(
     counting: Counting,
 ) -> bool {
     let roster = counting == Counting::Roster;
+    let machine = if roster {
+        derived_machine(state, edit.machine)
+    } else {
+        counted_machine(state, edit.machine)
+    };
     !edit.disputed
         && (roster || !(edit.narrow_only || edit.restriction_only))
-        && derived_machine(state, edit.machine).is_some_and(|folded| {
+        && machine.is_some_and(|folded| {
             folded.is_mine()
                 || (!folded.conflicted
+                    && !folded.floor_held
                     && !folded.profile.says_mine()
                     && acknowledged(state, edit.machine, hash, &edit.mark, &edit.prior, roster)
                     && (!folded.removed || folded.profile.role == MachineRole::Removed))
@@ -615,8 +625,8 @@ pub(super) fn apply_world_privacy(
         state.refused_world_edits.insert(hash);
         return Ok(());
     }
-    let narrow_only =
-        !derived_machine(state, edit.machine).is_some_and(|folded| standing(state, &folded));
+    let narrow_only = !counted_machine(state, edit.machine)
+        .is_some_and(|folded| !folded.floor_held && standing(state, &folded));
     let prior = mark_past(state, edit.machine, &mark);
     let frontier = state.worlds.entry(edit.world).or_default();
     let seen = std::mem::take(&mut frontier.live);

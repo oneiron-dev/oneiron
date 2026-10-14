@@ -305,9 +305,9 @@ pub(super) fn fold_entry_state(
 /// them: it is the host enrolling an engine MACHINE writer (ARCH-0053 seeds
 /// system actors through the authority registry at bootstrap), and an agent
 /// key holds no consent, so it widens no authority.
-/// A row a sequence floor refuses only to restriction: a world edit, or a
-/// revision of a known machine (Astra #1430): one that leaves the machine not
-/// the owner's lands as restriction only, a "yours" one as evidence only.
+/// A row a sequence floor refuses only to restriction (Astra #1430): a world
+/// edit, or a machine revision. The roster rule reads either as a replica
+/// with no floor does; this install never counts what it grants.
 fn lands_restriction_only(op: &AuthorityOp) -> bool {
     matches!(
         op,
