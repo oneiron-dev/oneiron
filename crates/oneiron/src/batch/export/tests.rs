@@ -217,13 +217,84 @@ fn foreign_chain_not_treated_as_restore() -> Result<()> {
     assert_eq!(receipt.local_vault_id, local.authority_fold()?.vault_id);
     assert_ne!(receipt.exported_vault_id, receipt.local_vault_id);
 
-    // Same manifest, offered to the vault that wrote it: a restore. Foreignness
-    // is a relation between artifact and vault, not a property of either.
+    // Same manifest, offered to the vault that wrote it: not foreign.
+    // Foreignness is a relation between artifact and vault, not a property of
+    // either. Unsigned, it is still only a review.
     let home = foreign.classify_vault_import_manifest(artifact.bytes(), Some("shared"))?;
     assert_eq!(
         home.classification,
-        VaultImportClassification::ByteFaithfulOwnerRestore
+        VaultImportClassification::ReviewRequired
     );
+    assert_eq!(
+        home.mismatches,
+        vec![VaultImportMismatch::UnauthenticatedProvenance]
+    );
+    Ok(())
+}
+
+/// H224 (F18): the authority stanza is two public facts, and any export of a
+/// vault states both. A manifest built elsewhere and stamped with this vault's
+/// vault id and valid-entries digest used to classify as this vault's own
+/// byte-faithful restore. Unsigned, a matching chain proves nothing, so it
+/// reads ReviewRequired, the same verdict as the owner's genuine export.
+#[test]
+fn a_copied_chain_identity_is_never_a_byte_faithful_restore() -> Result<()> {
+    let (_target_dir, target) = open_rooted_vault(0x35)?;
+    let (_forger_dir, forger) = open_rooted_vault(0x36)?;
+    let clear = ExportSecretsNulledManifest::from_redacted(false);
+    let published = manifest_value(target.whole_vault_export_manifest_artifact(clear)?.bytes());
+    let mut forged = manifest_value(forger.whole_vault_export_manifest_artifact(clear)?.bytes());
+    forged["authority"] = published["authority"].clone();
+
+    let receipt = target.classify_vault_import_manifest(&manifest_bytes(&forged), None)?;
+
+    assert_eq!(
+        receipt.classification,
+        VaultImportClassification::ReviewRequired,
+        "a copied chain identity must not earn an owner restore"
+    );
+    assert!(!receipt.byte_faithful);
+    assert_eq!(
+        receipt.mismatches,
+        vec![VaultImportMismatch::UnauthenticatedProvenance]
+    );
+    assert_eq!(receipt.exported_vault_id, target.authority_fold()?.vault_id);
+    Ok(())
+}
+
+/// H224 positive control: failing closed costs the owner nothing. Their own
+/// unsigned export, offered to a vault on the same chain, reads ReviewRequired,
+/// and whole-vault import still restores its rows.
+#[test]
+fn an_unsigned_owner_export_still_restores_on_the_review_path() -> Result<()> {
+    let (_source_dir, source) = open_rooted_vault(0x37)?;
+    let (_target_dir, target) = open_rooted_vault(0x37)?;
+    let person = crate::EntityId::now();
+    source.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 2 },
+        3,
+        b"owner row",
+    )?;
+    let export = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+
+    let receipt = target.import_whole_vault_json(export.bytes())?;
+
+    assert_eq!(
+        receipt.authority.classification,
+        VaultImportClassification::ReviewRequired
+    );
+    assert_eq!(
+        receipt.authority.mismatches,
+        vec![VaultImportMismatch::UnauthenticatedProvenance]
+    );
+    assert_eq!(
+        receipt.authority.local_vault_id,
+        source.authority_fold()?.vault_id
+    );
+    assert!(receipt.inserted_entities >= 1);
+    assert_eq!(target.get_raw(&person)?, source.get_raw(&person)?);
     Ok(())
 }
 
@@ -264,7 +335,10 @@ fn mismatch_surfaces_receipt() -> Result<()> {
     );
     assert_eq!(
         receipt.mismatches,
-        vec![VaultImportMismatch::AuthorityChainDigest]
+        vec![
+            VaultImportMismatch::UnauthenticatedProvenance,
+            VaultImportMismatch::AuthorityChainDigest,
+        ]
     );
     assert_eq!(receipt.exported_vault_id, Some(vault_id));
 
@@ -281,7 +355,10 @@ fn mismatch_surfaces_receipt() -> Result<()> {
     assert!(!receipt.byte_faithful);
     assert_eq!(
         receipt.mismatches,
-        vec![VaultImportMismatch::RedactedOrSecretNulled]
+        vec![
+            VaultImportMismatch::UnauthenticatedProvenance,
+            VaultImportMismatch::RedactedOrSecretNulled,
+        ]
     );
     assert_eq!(receipt.exported_vault_id, Some(vault_id));
 
@@ -293,18 +370,34 @@ fn mismatch_surfaces_receipt() -> Result<()> {
         receipt.classification,
         VaultImportClassification::ReviewRequired
     );
-    assert_eq!(receipt.mismatches, vec![VaultImportMismatch::VaultLabel]);
+    assert_eq!(
+        receipt.mismatches,
+        vec![
+            VaultImportMismatch::UnauthenticatedProvenance,
+            VaultImportMismatch::VaultLabel,
+        ]
+    );
+    // A matching label clears the label reason, never the provenance one.
     let receipt = vault.classify_vault_import_manifest(labelled.bytes(), Some("desk machine"))?;
     assert_eq!(
         receipt.classification,
-        VaultImportClassification::ByteFaithfulOwnerRestore
+        VaultImportClassification::ReviewRequired
     );
-    assert!(receipt.byte_faithful);
-    assert!(receipt.mismatches.is_empty());
+    assert!(!receipt.byte_faithful);
+    assert_eq!(
+        receipt.mismatches,
+        vec![VaultImportMismatch::UnauthenticatedProvenance]
+    );
 
     // An expected label against an unlabelled artifact is the same mismatch.
     let receipt = vault.classify_vault_import_manifest(artifact.bytes(), Some("laptop"))?;
-    assert_eq!(receipt.mismatches, vec![VaultImportMismatch::VaultLabel]);
+    assert_eq!(
+        receipt.mismatches,
+        vec![
+            VaultImportMismatch::UnauthenticatedProvenance,
+            VaultImportMismatch::VaultLabel,
+        ]
+    );
     assert!(receipt.exported_label.is_none());
 
     // Reasons accumulate in declaration order, deduped, one receipt.
@@ -316,6 +409,7 @@ fn mismatch_surfaces_receipt() -> Result<()> {
     assert_eq!(
         receipt.mismatches,
         vec![
+            VaultImportMismatch::UnauthenticatedProvenance,
             VaultImportMismatch::AuthorityChainDigest,
             VaultImportMismatch::VaultLabel,
             VaultImportMismatch::RedactedOrSecretNulled,
