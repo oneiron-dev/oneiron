@@ -14,6 +14,9 @@
  * The walk reads the records SheetJS 0.20.3 reads, the way it reads them, and
  * refuses anything it would read differently: ZIP64, several disks,
  * encryption, a method other than stored or deflate, records that disagree.
+ * Each entry's local record (header, data, descriptor) must stand apart from
+ * every other one, so every byte SheetJS reads per entry is a distinct byte of
+ * the package and the budgets count each once.
  */
 
 /** The lines one preview stays within. */
@@ -28,6 +31,11 @@ export interface PreviewBudget {
   readonly expandedBytes: number;
   /** Declared expanded bytes per compressed byte of an entry over 1 MiB. */
   readonly compressionRatio: number;
+  /**
+   * Bytes SheetJS copies to inflate the deflated entries: it copies from each
+   * one's data to the end of the package.
+   */
+  readonly copyBytes: number;
   /** Sheets the workbook lists. */
   readonly sheets: number;
   /** Cells one sheet holds. */
@@ -44,7 +52,8 @@ const MIB = 1024 * 1024;
  * sheets than it has entries. The engine reads at most 1,000,000 XML nodes
  * from one part, and a cell is at least one node. A sheet's text stays within
  * one entry's bytes. Deflate compresses real sheet XML 10 to 20 times; 200 is
- * a tripwire for a crafted entry, not a size line.
+ * a tripwire for a crafted entry, not a size line. A real package of 512 MiB
+ * holds a few dozen deflated entries, about 16 GiB of copying at most.
  */
 export const PREVIEW_BUDGET: PreviewBudget = Object.freeze({
   inputBytes: 512 * MIB,
@@ -52,6 +61,7 @@ export const PREVIEW_BUDGET: PreviewBudget = Object.freeze({
   entryBytes: 64 * MIB,
   expandedBytes: 512 * MIB,
   compressionRatio: 200,
+  copyBytes: 16 * 1024 * MIB,
   sheets: 10_000,
   sheetCells: 1_000_000,
   sheetTextChars: 64 * MIB,
@@ -77,6 +87,7 @@ export class WorkbookBudgetError extends Error {
 const LOCAL = 0x04034b50;
 const CENTRAL = 0x02014b50;
 const ZIP64_LOCATOR = 0x07064b50;
+const DESCRIPTOR = 0x08074b50;
 const ZIP64_EXTRA = 0x0001;
 /** Encrypted, or strong encryption, or masked headers: SheetJS refuses these too. */
 const ENCRYPTED = 0x2041;
@@ -121,6 +132,18 @@ function refuseZip64(bytes: Uint8Array, start: number, length: number): void {
       throw structure("ZIP64 entry");
     }
   }
+}
+
+function sameBytes(bytes: Uint8Array, a: number, b: number, length: number): boolean {
+  if (a + length > bytes.length || b + length > bytes.length) {
+    throw structure("truncated ZIP record");
+  }
+  for (let i = 0; i < length; i += 1) {
+    if (bytes[a + i] !== bytes[b + i]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** SheetJS takes the last end-of-central-directory signature in the file. */
@@ -170,12 +193,16 @@ export function preflightPackage(bytes: Uint8Array, budget: PreviewBudget = PREV
     throw new WorkbookBudgetError("entries", "more entries than the budget");
   }
   const patches: [offset: number, compressed: number, expanded: number][] = [];
+  /** Each local record, and where its name and extra field are checked once records are apart. */
+  const records: [start: number, end: number, centralName: number, nameLength: number, extra: number][] = [];
   let expandedTotal = 0;
+  let copyTotal = 0;
   let at = directory;
   for (let index = 0; index < count; index += 1) {
     if (u32(bytes, at) !== CENTRAL) {
       throw structure("bad central directory entry");
     }
+    const name = at + 46;
     const flags = u16(bytes, at + 8);
     const method = u16(bytes, at + 10);
     const compressed = u32(bytes, at + 20);
@@ -203,7 +230,6 @@ export function preflightPackage(bytes: Uint8Array, budget: PreviewBudget = PREV
     const localExpanded = u32(bytes, offset + 22);
     const localName = u16(bytes, offset + 26);
     const localExtra = u16(bytes, offset + 28);
-    refuseZip64(bytes, offset + 30 + localName, localExtra);
     const data = offset + 30 + localName + localExtra;
     if (u16(bytes, offset + 8) !== method || localFlags & ENCRYPTED) {
       throw structure("local header disagrees with the central directory");
@@ -217,9 +243,19 @@ export function preflightPackage(bytes: Uint8Array, budget: PreviewBudget = PREV
       }
       patches.push([offset, compressed, expanded]);
     }
-    if (data + compressed > directory) {
+    if (localName !== nameLength) {
+      throw structure("local header disagrees with the central directory");
+    }
+    // SheetJS reads a data descriptor after the data, 16 bytes when it starts
+    // with its signature and 12 when not.
+    let recordEnd = data + compressed;
+    if (localFlags & DATA_DESCRIPTOR) {
+      recordEnd += u32(bytes, recordEnd) === DESCRIPTOR ? 16 : 12;
+    }
+    if (recordEnd > directory) {
       throw structure("entry data overruns the central directory");
     }
+    records.push([offset, recordEnd, name, nameLength, localExtra]);
 
     if (expanded > budget.entryBytes) {
       throw new WorkbookBudgetError("entryBytes", "an entry expands past the entry budget");
@@ -241,9 +277,29 @@ export function preflightPackage(bytes: Uint8Array, budget: PreviewBudget = PREV
     if (method === DEFLATE && expanded > RATIO_FLOOR_BYTES && expanded > compressed * budget.compressionRatio) {
       throw new WorkbookBudgetError("compressionRatio", "an entry compresses past the ratio budget");
     }
+    if (method === DEFLATE) {
+      copyTotal += bytes.length - data;
+      if (copyTotal > budget.copyBytes) {
+        throw new WorkbookBudgetError("copyBytes", "inflating the entries copies past the copy budget");
+      }
+    }
   }
   if (at !== end) {
     throw structure("central directory size disagrees with its entries");
+  }
+  // Apart, the local names and extra fields together stay within the package,
+  // however many central entries name one record.
+  records.sort((a, b) => a[0] - b[0]);
+  for (let index = 1; index < records.length; index += 1) {
+    if (records[index]![0] < records[index - 1]![1]) {
+      throw structure("local records overlap");
+    }
+  }
+  for (const [offset, , name, nameLength, extra] of records) {
+    if (!sameBytes(bytes, offset + 30, name, nameLength)) {
+      throw structure("local header disagrees with the central directory");
+    }
+    refuseZip64(bytes, offset + 30 + nameLength, extra);
   }
   if (patches.length === 0) {
     return bytes;

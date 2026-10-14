@@ -180,6 +180,35 @@ function zeros(copies: number): Part["body"] {
   return { stream: Uint8Array.from(bytes), size, crc: Bun.hash.crc32(new Uint8Array(size)) };
 }
 
+/** Where each central directory entry of a test package starts. */
+function centralEntries(bytes: Uint8Array): number[] {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const end = bytes.length - 22;
+  const entries: number[] = [];
+  let at = view.getUint32(end + 16, true);
+  for (let i = 0; i < view.getUint16(end + 10, true); i += 1) {
+    entries.push(at);
+    at += 46 + view.getUint16(at + 28, true) + view.getUint16(at + 30, true) + view.getUint16(at + 32, true);
+  }
+  return entries;
+}
+
+/** `bytes` (one entry) with its central directory entry written `copies` times, all naming the one local record. */
+function sharedRecord(bytes: Uint8Array, copies: number): Uint8Array {
+  const [entry] = centralEntries(bytes);
+  const end = bytes.length - 22;
+  const central = bytes.subarray(entry!, end);
+  const out = new Uint8Array(entry! + central.length * copies + 22);
+  out.set(bytes.subarray(0, entry));
+  for (let i = 0; i < copies; i += 1) out.set(central, entry! + i * central.length);
+  out.set(bytes.subarray(end), out.length - 22);
+  const view = new DataView(out.buffer, out.length - 22);
+  view.setUint16(8, copies, true);
+  view.setUint16(10, copies, true);
+  view.setUint32(12, central.length * copies, true);
+  return out;
+}
+
 function refusedWith(line: BudgetLine, run: () => unknown): void {
   let caught: unknown;
   try {
@@ -269,6 +298,48 @@ describe("preview budgets: a package is refused from its ZIP records, before She
     expect(() => preflightPackage(withCentralExtra(sheet, timestamp))).not.toThrow();
     // A package that is not a ZIP at all.
     refusedWith("structure", () => readWorkbookOutline(text("A1,B1\n1,2\n")));
+  });
+
+  it("refuses local records that overlap, or that name another entry", () => {
+    // Wonder r1: SheetJS reads one local record per central entry, so 1,000
+    // central entries naming one record re-read it (and rebuilt its name) 1,000
+    // times, within every byte budget.
+    const empty = { stream: Uint8Array.of(3, 0), size: 0, crc: 0 };
+    const one = zip([{ name: "[Content_Types].xml", body: empty }]);
+    expect(() => preflightPackage(one)).not.toThrow();
+    refusedWith("structure", () => preflightPackage(sharedRecord(one, 1_000)));
+
+    // An entry whose declared data runs over the next entry's record.
+    const parts = [
+      { name: "[Content_Types].xml", body: text("<Types/>") },
+      { name: SHEET, body: text(SHEET_XML) },
+    ];
+    const apart = zip(parts);
+    const covering = apart.slice();
+    const [first] = centralEntries(covering);
+    const view = new DataView(covering.buffer);
+    const size = first! - (30 + parts[0]!.name.length);
+    for (const at of [first! + 20, first! + 24, 18, 22]) view.setUint32(at, size, true);
+    expect(() => preflightPackage(apart)).not.toThrow();
+    refusedWith("structure", () => preflightPackage(covering));
+
+    // A local header whose name differs from its central directory entry.
+    const renamed = apart.slice();
+    renamed[30] = "_".charCodeAt(0);
+    refusedWith("structure", () => preflightPackage(renamed));
+  });
+
+  it("refuses deflated entries that make SheetJS copy past the copy budget", () => {
+    // SheetJS copies from each deflated entry's data to the end of the
+    // package, so small deflated entries before a large one each copy it.
+    const large = { name: "xl/media/image1.bin", body: new Uint8Array(256 * 1024) };
+    const small = Array.from({ length: 8 }, (_, i) => ({
+      name: `xl/worksheets/s${i}.xml`,
+      body: deflated(text(SHEET_XML)),
+    }));
+    const budget = { ...PREVIEW_BUDGET, copyBytes: MIB };
+    refusedWith("copyBytes", () => preflightPackage(zip([...small, large]), budget));
+    expect(() => preflightPackage(zip([large, ...small]), budget)).not.toThrow();
   });
 
   it("previews a streamed package, which leaves its local sizes at zero, from its declared sizes", () => {
