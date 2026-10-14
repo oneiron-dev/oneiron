@@ -488,6 +488,61 @@ fn a_reviewed_resolution_names_the_head_an_unrelated_write_moved() {
 }
 
 #[test]
+fn an_interrupted_reviewed_resolution_replays_its_receipt_after_fresh_recovery() {
+    let (_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    create_conflicting_branches(&repo);
+    let subject = put_branch_subject(&vault);
+    let open = vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref(&repo),
+            RepoMutationOperation::RecordConflict {
+                branch_subject: subject,
+                branch_name: "left".into(),
+                ours_ref: "left".into(),
+                theirs_ref: "right".into(),
+            },
+        ))
+        .unwrap()
+        .repo_conflict_claim_id
+        .unwrap();
+    let proposed = propose(
+        &vault,
+        &repo,
+        RepoMutationOperation::ResolveConflictFile {
+            branch_subject: subject,
+            open_conflict_claim_id: open,
+            branch_name: "left".into(),
+            path: "README.md".into(),
+            content: b"resolved\n".to_vec(),
+            message: "Reviewed resolution".into(),
+        },
+    );
+    approve(&vault, &proposed);
+    INJECT_REPO_MUTATION_CRASH
+        .with(|cell| cell.set(RepoMutationCrashPoint::AfterActionBeforeApplied));
+    assert!(vault.apply_repo_proposal(proposed.id).is_err());
+
+    // Recovery runs under the HEAD the resolution moved to.
+    vault
+        .recover_prepared_repo_mutations(&repo_ref(&repo))
+        .unwrap();
+    let replayed = vault.apply_repo_proposal(proposed.id).unwrap();
+    assert_eq!(
+        replayed.entry.repo_ref,
+        RepoRef::parse(&proposed.repo).unwrap()
+    );
+    let receipt = replayed.repo_conflict_claim_id.unwrap();
+    let resolutions = vault.repo_conflict_resolution_claims(&subject).unwrap();
+    assert_eq!(resolutions.len(), 1);
+    assert_eq!(resolutions[0].claim_id, receipt);
+    assert_eq!(
+        resolutions[0].repo_ref,
+        RepoRef::parse(&proposed.repo).unwrap()
+    );
+}
+
+#[test]
 fn stale_later_document_refuses_whole_stack_before_first_effect() {
     let (_dir, vault) = open_test_vault();
     let repo = init_repo();
