@@ -70,7 +70,7 @@ pub use self::wire_reads::GitWire;
 
 pub(crate) use self::bridge::{redact_bridged_failure, run_bridged_git_argv};
 use self::process::GitWireProcessOutput;
-pub(crate) use self::repo::lock_repository;
+pub(crate) use self::repo::{lock_repository, try_lock_repository};
 
 // The flat git_wire.rs module used to provide these names to the sibling test
 // module through `use super::*`: its own private crate/std import header, and

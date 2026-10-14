@@ -869,10 +869,12 @@ fn streamed_2_3_gb_generated_fixture_has_bounded_chunks() {
     std::io::copy(&mut RepeatingReader::new(size), &mut expected).unwrap();
     let oid = LfsOid::from_bytes(expected.sha.finalize().into());
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    // Past the default per-object cap, so the upload names its own.
     vault
-        .put_lfs_object_stream(
+        .put_lfs_object_stream_with_cap(
             oid,
             Some(size),
+            size,
             RepeatingReader::new(size),
             time(),
             time().start,
@@ -905,9 +907,10 @@ fn streamed_2_3_gb_generated_fixture_has_bounded_chunks() {
     let edited_oid = LfsOid::from_bytes(edited_hash.sha.finalize().into());
     assert_ne!(oid, edited_oid);
     vault
-        .put_lfs_object_stream(
+        .put_lfs_object_stream_with_cap(
             edited_oid,
             Some(size),
+            size,
             RepeatingReader::edited(size),
             time(),
             time().start,
