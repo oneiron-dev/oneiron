@@ -19,7 +19,7 @@ use crate::store::Store;
 
 use super::provenance::BLOB_VERSION_CLAIM_PREDICATE;
 use super::store_keys::BLOB_ARTIFACT_CONTENT_HASH_LEN;
-use super::versions::{KEY_CONTENT_HASH, blob_artifact_asset_entity_id};
+use super::versions::KEY_CONTENT_HASH;
 
 type ContentHash = [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN];
 
@@ -146,7 +146,7 @@ fn artifact_is_live(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<boo
         store,
         txn,
         id,
-        Some(raw),
+        Some(raw.as_ref()),
     )?)
 }
 
@@ -177,7 +177,7 @@ pub(crate) fn readmit_held_asset_in_txn(
         return Ok(());
     }
     let hash: ContentHash = *blake3::hash(body).as_bytes();
-    if blob_artifact_asset_entity_id(&hash)? != *asset
+    if super::versions::blob_artifact_asset_entity_id(&hash)? != *asset
         || !held_by_live_artifact(store, txn, &hash, None)?
     {
         return Ok(());
