@@ -692,6 +692,8 @@ pub(super) fn fold_authority_log_once(
             }
         }
     }
+    #[cfg(test)]
+    super::install_fold::record_floor_marks(merged.as_ref());
     let actor_bindings = merged.as_ref().map_or_else(BTreeMap::new, |state| {
         folded_actor_bindings(state, context.consent_arm)
     });

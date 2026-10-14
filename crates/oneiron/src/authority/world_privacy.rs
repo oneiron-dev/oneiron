@@ -736,3 +736,19 @@ pub(super) fn live_edits_by(
         .take(MACHINE_SEEN_WORLD_EDITS_MAX)
         .collect()
 }
+
+/// The edits, live or replaced, that landed past their signer's sequence
+/// floor or that this install counts only as narrowing.
+#[cfg(test)]
+pub(super) fn edit_floor_marks(state: &FoldState, marks: &mut super::install_fold::FloorMarks) {
+    for frontier in state.worlds.values() {
+        for (hash, edit) in frontier.live.iter().chain(&frontier.superseded) {
+            if edit.restriction_only {
+                marks.past_floor.insert(*hash);
+            }
+            if edit.narrow_only {
+                marks.narrow_only.insert(*hash);
+            }
+        }
+    }
+}

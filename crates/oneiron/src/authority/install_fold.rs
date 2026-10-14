@@ -36,6 +36,11 @@ pub(super) fn fold_as_install(
         machine_standing: standing,
         pre_handoff_entries: local.pre_handoff_entries,
     };
+    #[cfg(test)]
+    let context = FoldContext {
+        floor_vouched: context.floor_vouched.filter(|_| !VOUCH_WITHHELD.get()),
+        ..context
+    };
     // Staleness is this install's own projection, which the structural fold
     // never sees, and so is a roster left with no settled root. A machine
     // stale here, or one such a roster admitted, is one this install does not
@@ -102,4 +107,46 @@ pub(super) fn fold_authority_log_with_machine_standing(
             ..FoldLocalInputs::VAULT_DOOR
         },
     )
+}
+
+#[cfg(test)]
+thread_local! {
+    /// This thread folds as if no handoff vouched for anything: the install
+    /// view every vouched fold's floor marks must include.
+    static VOUCH_WITHHELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The floor marks of this thread's last fold.
+    static FLOOR_MARKS: std::cell::RefCell<FloorMarks> = std::cell::RefCell::default();
+}
+
+/// The install view's floor marks, by row (Astra #1430b): the machine
+/// revisions and world edits that landed past their signer's sequence floor,
+/// and the world edits this install counts only as narrowing.
+#[cfg(test)]
+#[derive(Debug, Default)]
+pub(super) struct FloorMarks {
+    pub(super) past_floor: BTreeSet<AuthorityEntryHash>,
+    pub(super) narrow_only: BTreeSet<AuthorityEntryHash>,
+}
+
+#[cfg(test)]
+pub(super) fn record_floor_marks(state: Option<&FoldState>) {
+    let mut marks = FloorMarks::default();
+    if let Some(state) = state {
+        super::machine_profile::past_floor_revisions(state, &mut marks.past_floor);
+        super::world_privacy::edit_floor_marks(state, &mut marks);
+    }
+    FLOOR_MARKS.set(marks);
+}
+
+/// `fold` run on this thread with every handoff's vouch, or with none, and
+/// the floor marks it ended with.
+#[cfg(test)]
+pub(super) fn floor_marks_of(
+    vouched: bool,
+    fold: impl FnOnce() -> AuthorityFold,
+) -> (AuthorityFold, FloorMarks) {
+    VOUCH_WITHHELD.set(!vouched);
+    let folded = fold();
+    VOUCH_WITHHELD.set(false);
+    (folded, FLOOR_MARKS.take())
 }
