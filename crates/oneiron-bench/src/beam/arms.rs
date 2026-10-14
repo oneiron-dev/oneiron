@@ -228,13 +228,15 @@ pub(super) fn configured_context_pack_builder<'a>(
         .include_stats(true)
         .token_budget(case.token_budget);
 
+    // The channels fetch their fusion list length whatever they are asked
+    // for, so the case's limit caps the pack itself, as for vanilla RAG.
     match (case.fixture_class, &case.temporal_search) {
-        (FixtureClass::TemporalStaleness, Some(range)) => builder
-            .search_temporal(range.start, range.end, case.limit)
-            .limit(case.limit),
-        (FixtureClass::LowConfidence, _) => builder.limit(case.limit),
+        (FixtureClass::TemporalStaleness, Some(range)) => {
+            builder.search_temporal(range.start, range.end, case.limit)
+        }
         _ => builder,
     }
+    .limit(case.limit)
 }
 pub(super) struct BudgetedContextPack {
     pub(super) raw: ContextPack,

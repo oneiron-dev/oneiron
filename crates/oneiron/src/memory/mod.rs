@@ -111,8 +111,8 @@ pub(crate) use recall::check_recall_request;
 pub use recall::{
     CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, MEMORY_PACK_VERSION,
     MemoryItem, MemoryPack, MemoryProvenance, RecallEffort, RecallRerank, RecallRerankHost,
-    RecallScope, RerankDocument, RerankReport, RerankScores, RerankSkip, RetrievalMeta,
-    ScopeHonesty, resolve_recall_dial,
+    RecallScope, RerankDocument, RerankEgress, RerankReport, RerankScores, RerankSkip,
+    RetrievalMeta, ScopeHonesty, resolve_recall_dial,
 };
 pub use room_turn::RoomTurnHandle;
 pub use skill_authoring::SkillAuthoringReceipt;

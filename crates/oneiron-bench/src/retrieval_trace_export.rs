@@ -68,6 +68,10 @@ struct RetrievalTraceExportRow {
     record_type: String,
     fork_hash: String,
     stages: RetrievalTraceStagesExport,
+    /// How many of each ranked channel's best scores set its fusion scale;
+    /// 0 for a trace from before it was recorded.
+    #[serde(default)]
+    fusion_list_length: u32,
 }
 
 impl RetrievalTraceExportRow {
@@ -87,6 +91,7 @@ impl RetrievalTraceExportRow {
                 reranked: RetrievalTraceStageExport::from_stage(&trace.reranked),
                 final_stage: RetrievalTraceStageExport::from_stage(&trace.final_stage),
             },
+            fusion_list_length: trace.fusion_list_length,
         }
     }
 
@@ -117,6 +122,7 @@ impl RetrievalTraceExportRow {
             blended: self.stages.blended.try_to_stage()?,
             reranked: self.stages.reranked.try_to_stage()?,
             final_stage: self.stages.final_stage.try_to_stage()?,
+            fusion_list_length: self.fusion_list_length,
         })
     }
 }

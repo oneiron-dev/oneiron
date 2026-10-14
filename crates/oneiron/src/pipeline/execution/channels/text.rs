@@ -7,7 +7,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::pipeline::builder::PipelineBuilder;
 use crate::pipeline::channels::{
-    scoped_text_channel_limit, truncate_widened_channel_results_to_scope,
+    fusion_fetch_limit, scoped_text_channel_limit, truncate_widened_channel_results_to_scope,
 };
 use crate::pipeline::execution::types::HydeAttemptOverrides;
 use crate::pipeline::filters::{
@@ -151,7 +151,11 @@ impl PipelineBuilder<'_> {
     ) -> Result<Option<usize>> {
         let mut text_channel_index = None;
         let prefix_probe_claim_gate = std::mem::take(&mut inputs.claim_gate_widening_probe);
-        if let Some((query, limit)) = &self.text_search
+        let text_search = self
+            .text_search
+            .as_ref()
+            .map(|(query, limit)| (query.as_str(), fusion_fetch_limit(*limit)));
+        if let Some((query, limit)) = &text_search
             && let Some(text_results) =
                 self.run_stage(RetrievalSignal::Text, stages_left, || {
                     self.text_stage(

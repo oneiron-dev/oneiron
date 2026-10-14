@@ -38,6 +38,11 @@ pub struct RetrievalDeadline {
     cut_channels: AtomicU32,
     cut_short: AtomicBool,
     cancelled: AtomicBool,
+    /// A deadline test's still clock: how far a slow test stage has moved it
+    /// past `origin` ([`still_deadline_clock_for_test`]); `None` on the
+    /// monotonic clock.
+    #[cfg(any(test, feature = "test-hooks"))]
+    still: Option<AtomicU64>,
 }
 impl RetrievalDeadline {
     /// Raw monotonic deadline, including deadlines that already passed. The
@@ -70,7 +75,19 @@ impl RetrievalDeadline {
             cut_channels: AtomicU32::new(0),
             cut_short: AtomicBool::new(false),
             cancelled: AtomicBool::new(false),
+            #[cfg(any(test, feature = "test-hooks"))]
+            still: STILL_CLOCK
+                .with(std::cell::Cell::get)
+                .then_some(AtomicU64::new(0)),
         }
+    }
+    /// The clock every stage, share and answer check reads.
+    fn now(&self) -> Instant {
+        #[cfg(any(test, feature = "test-hooks"))]
+        if let Some(moved) = &self.still {
+            return self.origin + Duration::from_nanos(moved.load(Ordering::Relaxed));
+        }
+        Instant::now()
     }
     /// When the answer is due. A door that cannot wait longer stops here.
     #[must_use]
@@ -88,10 +105,10 @@ impl RetrievalDeadline {
     /// Whether the answer's time has come: optional work after the stages
     /// (such as the scope census) stops here.
     pub(crate) fn answer_due(&self) -> bool {
-        self.cancelled.load(Ordering::Relaxed) || Instant::now() >= self.at
+        self.cancelled.load(Ordering::Relaxed) || self.now() >= self.at
     }
     pub(crate) fn stop_before_stage(&self) -> bool {
-        if self.cancelled.load(Ordering::Relaxed) || Instant::now() >= self.stages_by {
+        if self.cancelled.load(Ordering::Relaxed) || self.now() >= self.stages_by {
             self.cut_short.store(true, Ordering::Relaxed);
             true
         } else {
@@ -111,7 +128,7 @@ impl RetrievalDeadline {
             self.cut_short.store(true, Ordering::Relaxed);
             return false;
         }
-        let now = Instant::now();
+        let now = self.now();
         let share = self.stages_by.saturating_duration_since(now)
             / u32::try_from(stages_left.max(1)).unwrap_or(u32::MAX);
         let until = (now + share).saturating_duration_since(self.origin);
@@ -132,7 +149,7 @@ impl RetrievalDeadline {
         if until == 0 {
             return Ok(());
         }
-        let elapsed = Instant::now().saturating_duration_since(self.origin);
+        let elapsed = self.now().saturating_duration_since(self.origin);
         if self.cancelled.load(Ordering::Relaxed)
             || u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX) >= until
         {
@@ -148,6 +165,35 @@ impl RetrievalDeadline {
 /// `signal`'s bit in [`RetrievalDeadline`]'s channel sets.
 fn channel_bit(signal: RetrievalSignal) -> u32 {
     1 << signal as u32
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    static STILL_CLOCK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Makes the deadlines this thread creates read a still clock, which moves
+/// only as a slow test stage spends time ([`SlowRetrievalStage`]): whether a
+/// stage opens, where its share ends and whether the answer is late no
+/// longer depend on how fast the host runs. Returns the setting it replaced.
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub fn still_deadline_clock_for_test(still: bool) -> bool {
+    STILL_CLOCK.with(|clock| clock.replace(still))
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+impl RetrievalDeadline {
+    /// Spends `step` of a slow test stage: moves a still clock, or sleeps.
+    fn spend(&self, step: Duration) {
+        match &self.still {
+            Some(moved) => {
+                let nanos = u64::try_from(step.as_nanos()).unwrap_or(u64::MAX);
+                moved.fetch_add(nanos, Ordering::Relaxed);
+            }
+            None => std::thread::sleep(step),
+        }
+    }
 }
 
 /// A deliberately slow retrieval stage, for deadline tests: the stage of
@@ -185,16 +231,16 @@ impl crate::Vault {
         let Some(slow) = armed.filter(|slow| slow.signal == signal) else {
             return Ok(());
         };
-        let until = Instant::now() + slow.duration;
+        let until = deadline.now() + slow.duration;
         loop {
-            let left = until.saturating_duration_since(Instant::now());
+            let left = until.saturating_duration_since(deadline.now());
             if left.is_zero() {
                 return Ok(());
             }
             if slow.yields {
                 deadline.checkpoint()?;
             }
-            std::thread::sleep(left.min(Duration::from_millis(1)));
+            deadline.spend(left.min(Duration::from_millis(1)));
         }
     }
 }

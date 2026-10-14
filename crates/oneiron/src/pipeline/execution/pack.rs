@@ -2,7 +2,7 @@
 
 use super::super::budget::context_pack_evidence_abstains;
 use super::super::builder::PipelineBuilder;
-use super::super::support::normalize_range;
+use super::super::support::{normalize_range, read_entity_metadata};
 use super::super::trace::{merge_retrieval_diagnostics, telemetry_score_breakdown};
 use super::super::types::{FacetMode, PipelineOutput, ScoredEntity};
 use super::types::HydeAttemptOverrides;
@@ -64,6 +64,9 @@ impl PipelineBuilder<'_> {
             state.validate()?;
         }
         let started = Instant::now();
+        // One read of the no-match floors judges the run, keys its fork and
+        // fills its replay inputs, whatever a host sets while it runs.
+        self.no_match_floors = Some(std::sync::Arc::new(self.vault.no_match_floors()));
         let started_at = self.vault.store.clock.now_recorded_at();
         let temporal_now = self.temporal_now.unwrap_or(started_at);
         let (occurred_range, temporal_hints) = self.resolved_occurred_range(temporal_now);
@@ -348,13 +351,11 @@ impl PipelineBuilder<'_> {
             let abstain = second_insufficient
                 || (matches!(verdict, EvidenceVerdict::Insufficient { .. }) && !options.retry_once)
                 || (self.context_pack_budget.is_some()
-                    && context_pack_evidence_abstains(
+                    && self.post_assessment_evidence_abstains(
                         &scores,
                         &signal_components,
-                        self.text_search.as_ref().map(|(query, _)| query.as_str()),
-                        self.vector_search.is_some() || hyde_expansion.is_some(),
-                        self.vault.vector_evidence(),
-                    ));
+                        hyde_expansion.is_some(),
+                    )?);
             if abstain {
                 scores.clear();
                 cited_messages.clear();
@@ -624,6 +625,38 @@ impl PipelineBuilder<'_> {
                 .range
                 .map(|range| normalize_range(range.start, range.end)),
             hints.hints,
+        )
+    }
+
+    /// RET-01 over the scores the HyDE assessment settled on, after every
+    /// read transaction has closed. A kind is read in a transaction of its
+    /// own, opened only when the vault's space keys its floors by kind.
+    fn post_assessment_evidence_abstains(
+        &self,
+        scores: &[ScoredEntity],
+        signal_components: &HashMap<EntityId, Vec<crate::store::RetrievalScoreComponent>>,
+        hyde_expanded: bool,
+    ) -> Result<bool> {
+        let floors = self.no_match_floors();
+        let space = self.vault.evidence_space();
+        let rtxn = if floors.keys_space(space) {
+            Some(self.vault.store.env.read_txn()?)
+        } else {
+            None
+        };
+        context_pack_evidence_abstains(
+            scores,
+            signal_components,
+            self.text_search.as_ref().map(|(query, _)| query.as_str()),
+            self.vector_search.is_some() || hyde_expanded,
+            space,
+            &floors,
+            |id| match rtxn.as_ref() {
+                Some(rtxn) => {
+                    Ok(read_entity_metadata(&self.read, rtxn, id)?.map(|meta| meta.entity_type))
+                }
+                None => Ok(None),
+            },
         )
     }
 }

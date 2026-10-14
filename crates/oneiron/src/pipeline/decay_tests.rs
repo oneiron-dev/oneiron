@@ -151,9 +151,10 @@ fn decay_union_run(
 /// Done-mean 1 — the read-side factor is a surfacing multiplier applied
 /// EXACTLY ONCE after the fused blend, over the full union of every ranked
 /// list (both HyDE lists included). The decayed claim keeps its undecayed
-/// score times the factor — never the factor squared — and sinks to last,
-/// while every candidate the decay did not touch keeps a bit-identical
-/// score and the result set keeps its size: rank changes, never survival.
+/// score times the factor — never the factor squared — and sinks below its
+/// identical twin, while every candidate the decay did not touch keeps a
+/// bit-identical score and the result set keeps its size: rank changes, never
+/// survival.
 #[test]
 fn access_factor_applied_post_fusion() -> Result<()> {
     const OVERRIDE: f32 = 0.25;
@@ -240,16 +241,20 @@ fn access_factor_applied_post_fusion() -> Result<()> {
         "decay changes rank, never survival"
     );
 
-    // ONE-2702: the PPR seed now leads on relevance; the twin claims still tie and order by id.
+    // ONE-2702 made relevance a blend input; EMBED-PACK scores the phonetic
+    // list over every candidate, so the seed, which matched no code, follows
+    // the twin claims. The twins still tie and order by id.
     assert_eq!(
         baseline.iter().map(|scored| scored.id).collect::<Vec<_>>(),
-        vec![seed, decayed, control],
+        vec![decayed, control, seed],
         "undecayed, the decayed claim leads its identical twin"
     );
-    assert_eq!(
-        decayed_run.last().map(|scored| scored.id),
-        Some(decayed),
-        "the decayed claim must sink below every undecayed candidate"
+    // The seed sits below both twins on fused relevance; the factor alone
+    // moves the decayed twin below the one it tied.
+    let place = |id| decayed_run.iter().position(|scored| scored.id == id);
+    assert!(
+        place(decayed) > place(control),
+        "the decayed claim must sink below its undecayed twin: {decayed_run:?}"
     );
     Ok(())
 }

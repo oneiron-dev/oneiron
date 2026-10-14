@@ -154,6 +154,53 @@ neighbors:
         );
     }
 
+    /// Sol R2 on EMBED-PACK: the text channel fetches its fusion list
+    /// length whatever it is asked for, and the deterministic arm passed an
+    /// ordinary case's limit only to it, so it served up to the pack's
+    /// default 20 rows where the case allows 3. It serves at most the case's
+    /// limit, as the vanilla RAG arm does.
+    #[test]
+    fn deterministic_arm_serves_at_most_the_cases_limit() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let vault = Vault::open(tempdir.path(), beam_vault_config()).expect("vault opens");
+        for byte in 0x31..=0x38_u8 {
+            let id = oneiron::EntityId::from_bytes([byte; 16]).expect("an id");
+            vault
+                .batch()
+                .put(
+                    &id,
+                    1,
+                    oneiron::TimeRange { start: 1, end: 1 },
+                    1,
+                    b"payload",
+                )
+                .text(&id, &[("body", "harbour lantern notes")])
+                .commit()
+                .expect("an indexed row");
+        }
+        let case = FixtureCase {
+            ppr_vad_query: None,
+            case_id: "deterministic-limit".to_owned(),
+            query: "lantern".to_owned(),
+            limit: 3,
+            token_budget: BEAM_128K_TOKEN_BUDGET,
+            expected_min_results: 1,
+            pending_vector_count: 0,
+            query_embedding: None,
+            fixture_class: FixtureClass::EvidenceSupported,
+            temporal_search: None,
+            temporal_evidence_ids: Vec::new(),
+            opposing_evidence: None,
+            offline_amortized_cost: CostComponentInput::default(),
+        };
+
+        let pack = super::super::arms::configured_context_pack_builder(&vault, &case)
+            .run()
+            .expect("a pack");
+
+        assert_eq!(pack.results.len(), 3, "{:?}", pack.empty);
+    }
+
     #[test]
     fn budget_discipline_uses_accounting_not_serialized_byte_count() {
         let case = FixtureCase {

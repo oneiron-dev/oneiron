@@ -227,6 +227,11 @@ pub struct RetrievalTrace {
     pub reranked: RetrievalTraceStageRecord,
     #[serde(rename = "final")]
     pub final_stage: RetrievalTraceStageRecord,
+    /// How many of each ranked channel's best scores set its fusion scale
+    /// (`fusion::FUSION_LIST_LENGTH` when the run was traced). Traces from
+    /// before it decode as 0, unknown.
+    #[serde(default)]
+    pub fusion_list_length: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

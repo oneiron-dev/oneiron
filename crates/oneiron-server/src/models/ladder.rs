@@ -90,7 +90,9 @@ fn falls_through(error: &LlmError) -> bool {
     !matches!(error, LlmError::BudgetDenied(_))
 }
 
-/// A started rung that failed keeps its reservation as spend; a settlement
+/// Settles a rung that did not answer. One that started keeps its
+/// reservation as spend; one admitted and never sent never started its
+/// lease, so its reservation is released and it pays nothing. A settlement
 /// the meter refuses is on the run's `Settled` row.
 fn settle_failed(permit: RunPermit) {
     if let Err(denied) = permit.settle(CallOutcome::Failed) {
@@ -236,10 +238,33 @@ impl OfferLadder {
         request: LlmRequest,
         selector: Option<&str>,
     ) -> LlmResult<LlmResponse> {
+        self.generate_while(run, request, selector, &|| true).await
+    }
+
+    /// [`Self::generate`], asking `may_send` before each rung is admitted,
+    /// the first one's too, and again once it is admitted, since admission
+    /// can wait on the run's receipts. Once it says no, no rung is sent (an
+    /// admitted one settles unstarted, for nothing), and the call fails with
+    /// the last rung's error (an invalid request when none went out).
+    pub async fn generate_while(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+    ) -> LlmResult<LlmResponse> {
         self.admits(&request)?;
         let mut last = None;
         for (index, rung) in self.rungs.iter().enumerate() {
+            if !may_send() {
+                break;
+            }
             let (call, permit) = self.admit(run, rung, &request, selector, false)?;
+            if !may_send() {
+                // Unsent: only the gate starts a lease, so this pays nothing.
+                settle_failed(permit);
+                break;
+            }
             let gate = run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
             match gate.generate(call, permit.lease()).await {
                 Ok(mut response) => {
