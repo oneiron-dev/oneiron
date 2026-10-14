@@ -53,8 +53,8 @@ pub use self::endpoint_schema::{
     MCP_PAGE_LIMIT_MIN,
 };
 pub use self::exec_host::{
-    CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider,
-    McpEngineNativeCodeHost, RunCompactionSeat, bind_mcp_code_execution_host,
+    CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest,
+    McpCodeModeProvider, McpEngineNativeCodeHost, RunCompactionSeat, bind_mcp_code_execution_host,
     mcp_code_execution_host, mcp_code_run_id, mcp_scoped_identity_id,
 };
 pub use self::paging::{
