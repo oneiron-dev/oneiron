@@ -14,6 +14,8 @@ struct VerifiedRestriction {
     vault_id: AuthorityVaultId,
     entry_hash: AuthorityEntryHash,
     kind: Restriction,
+    /// The rows its proven branch folded through an owner anchor's branch.
+    routed: BTreeSet<AuthorityEntryHash>,
 }
 
 #[derive(Clone, Debug)]
@@ -166,6 +168,7 @@ pub(super) fn derive_revoke_facts(
                 vault_id: state.vault_id,
                 entry_hash: *hash,
                 kind,
+                routed: state.anchor_entries,
             },
         );
     }
@@ -209,6 +212,7 @@ impl RevokeFacts {
                     vault_id: state.vault_id,
                     entry_hash: *hash,
                     kind,
+                    routed: state.anchor_entries,
                 },
             );
         }
@@ -218,7 +222,8 @@ impl RevokeFacts {
 impl RevokeFacts {
     /// Forgets every restriction that stands on a key a handoff retired: the
     /// old root revokes no actor and withdraws no slip the new root bound or
-    /// minted, whatever its own old branch says.
+    /// minted, whatever its own old branch says. A row the proof took through
+    /// an owner anchor's branch rests on that anchor (Wonder W3-F1).
     pub(super) fn forget_retired(
         &mut self,
         retirements: &super::retired_signers::Retirements,
@@ -226,7 +231,7 @@ impl RevokeFacts {
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     ) {
         self.by_hash
-            .retain(|hash, _| !retirements.excludes(hash, entries, ancestors));
+            .retain(|hash, fact| !retirements.excludes(hash, entries, ancestors, &fact.routed));
     }
 
     /// Forgets every restriction proved through a handoff that did not take

@@ -23,8 +23,9 @@
 //!   installs nothing and retires nothing. The rest settle.
 //! - An owner anchor's entries, its root and its marks, rest on no roster
 //!   key, so no fence holds them, even when a roster enrolled the anchor's
-//!   public key: anyone may enrol a public key. They are judged from the log
-//!   alone, so a removal only its own proof recovers is one too.
+//!   public key: anyone may enrol a public key. Those are the rows the anchor
+//!   fold took, and a removal whose own proof took it through an anchor's
+//!   chain; a root the fold refused makes no row the anchor's.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -34,7 +35,7 @@ use super::*;
 #[derive(Debug, Default)]
 pub(super) struct Retirements {
     fences: Vec<Fence>,
-    /// The entries an owner anchor signs on its own branch (`anchor_signed`).
+    /// The entries that folded through an owner anchor's branch.
     anchored: BTreeSet<AuthorityEntryHash>,
 }
 
@@ -138,18 +139,23 @@ impl Retirements {
         self.fences.iter().any(|fence| fence.conflict)
     }
 
-    /// Whether `hash` stands on a retired key: it, or an entry in its
-    /// ancestry, is signed by a key a closed fence holds, outside that
-    /// handoff's line. Such an entry proves nothing, restrictions included.
+    /// Whether a restriction `hash` stands on a retired key: it, or an entry
+    /// in its ancestry, is signed by a key a closed fence holds, outside that
+    /// handoff's line. Such an entry proves nothing. The rows its own proof
+    /// folded through an owner anchor's branch, `routed`, rest on no roster
+    /// key (Sol code-R2 S2-F2); a row it took through the roster is the
+    /// roster's, whatever root its branch names (Sol code-R3 S3-F1).
     pub(super) fn excludes(
         &self,
         hash: &AuthorityEntryHash,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        routed: &BTreeSet<AuthorityEntryHash>,
     ) -> bool {
+        let anchored: BTreeSet<_> = self.anchored.union(routed).copied().collect();
         self.fences
             .iter()
-            .any(|fence| fence.excludes(hash, entries, ancestors, &self.anchored))
+            .any(|fence| fence.excludes(hash, entries, ancestors, &anchored))
     }
 }
 
@@ -242,22 +248,9 @@ fn close_fences(
     refused: &mut BTreeMap<AuthorityEntryHash, AuthorityFoldIssue>,
 ) -> Retirements {
     let gone = with_descendants(states, refused, ancestors);
-    let roots: BTreeMap<_, _> = entries
+    let anchored: BTreeSet<_> = states
         .iter()
-        .filter_map(|(hash, entry)| match &entry.op {
-            AuthorityOp::OwnerRoot(record) => Some((*hash, record.anchor_key)),
-            _ => None,
-        })
-        .collect();
-    let anchored: BTreeSet<_> = entries
-        .iter()
-        .filter(|(hash, entry)| {
-            anchor_signed(entry, |key| {
-                ancestors
-                    .get(*hash)
-                    .is_some_and(|past| past.iter().any(|row| roots.get(row) == Some(key)))
-            })
-        })
+        .filter(|(hash, state)| state.anchor_entries.contains(*hash))
         .map(|(hash, _)| *hash)
         .collect();
     let fences: Vec<Fence> = states
@@ -360,11 +353,10 @@ fn close_fences(
     retirements
 }
 
-/// Whether an owner anchor signs `entry` on its own branch, which reads no
-/// roster key: a root record, which its anchor signs for itself, or a machine
-/// mark signed alone by a key `anchor` names as the anchor of a root beneath
-/// the mark: the rows the anchor fold routes, judged from the log alone.
-pub(super) fn anchor_signed(entry: &AuthorityLogEntry, anchor: impl Fn(&[u8; 32]) -> bool) -> bool {
+/// Whether a door reads `entry` as an owner anchor's row, which rests on no
+/// roster key: a root record its own anchor signs, or a machine mark signed
+/// alone by a key `anchor` names as the anchor of a root.
+fn anchor_signed(entry: &AuthorityLogEntry, anchor: impl Fn(&[u8; 32]) -> bool) -> bool {
     entry.cosigns.is_empty()
         && match (&entry.op, &entry.signer.public_key) {
             (AuthorityOp::OwnerRoot(record), AuthorityKey::Ed25519(key)) => {

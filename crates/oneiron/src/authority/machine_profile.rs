@@ -193,9 +193,10 @@ impl FoldedMachine {
 
     /// The identity under `T(admitter)`: the accepted roster revisions, plus
     /// that anchor's chain. `None` unless one of those chains admits the
-    /// machine, none is removed or conflicted, they all carry the same machine
-    /// key and encryption key, and no other machine claims that key within
-    /// them. Pin-free.
+    /// machine, none is removed or conflicted, every live one carries the same
+    /// machine key and encryption key, and no other machine claims a key
+    /// within them. A stale chain never vetoes a live one's keys (Sol code-R3
+    /// S3-F3). Pin-free.
     #[must_use]
     pub fn trusted_under(&self, admitter: &MachineAdmitter) -> Option<TrustedMachine<'_>> {
         let anchor = match admitter {
@@ -208,19 +209,27 @@ impl FoldedMachine {
             .map(|chain| (MachineAdmitter::Roster, chain))
             .chain(anchor)
             .collect();
-        let first = chains.first()?.1;
-        let blocked = chains.iter().any(|(_, chain)| {
-            chain.removed
-                || chain.conflicted
-                || chain.profile.machine_key != first.profile.machine_key
-                || chain.profile.encryption_key != first.profile.encryption_key
-                || self
-                    .shared
-                    .get(&chain.profile.machine_key)
-                    .is_some_and(|scopes| {
-                        scopes.contains(&MachineAdmitter::Roster) || scopes.contains(admitter)
-                    })
+        let mut live = chains
+            .iter()
+            .map(|(_, chain)| *chain)
+            .filter(|chain| chain.is_live());
+        let disagree = live.next().is_some_and(|first| {
+            live.any(|chain| {
+                chain.profile.machine_key != first.profile.machine_key
+                    || chain.profile.encryption_key != first.profile.encryption_key
+            })
         });
+        let blocked = disagree
+            || chains.iter().any(|(_, chain)| {
+                chain.removed
+                    || chain.conflicted
+                    || self
+                        .shared
+                        .get(&chain.profile.machine_key)
+                        .is_some_and(|scopes| {
+                            scopes.contains(&MachineAdmitter::Roster) || scopes.contains(admitter)
+                        })
+            });
         if blocked {
             return None;
         }

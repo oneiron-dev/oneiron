@@ -2,18 +2,21 @@
 //! every pass of the fold and at every door (contract §4, R1). A host may enrol
 //! the anchor's public key in its roster, retire it with a handoff, or set a
 //! tier floor over it; none of that removes, prunes or refuses the owner's
-//! root, its marks or its removals (Sol code-R2 S2-F2 to S2-F4).
+//! root, its marks or its removals (Sol code-R2 S2-F2 to S2-F4). Nor does a
+//! root the fold refuses make a roster key's row the anchor's, and a stale
+//! roster mark vetoes none of the anchor's keys (Sol code-R3 S3-F1, S3-F3).
 use super::history_transfer::re_root_entry;
 use super::machine_identity::request_for;
 use super::owner_anchor::{
-    YOURS, agent, enrol_anchor, hosted_fold, hosted_genesis, pin, profile, publish, signed,
+    YOURS, agent, enrol_anchor, fold_seen_at, hosted_fold, hosted_genesis, pin, profile, publish,
+    root_record, signed,
 };
 use super::support::{
     EnrollSpec, authority_key_from_ed, cosign_ed, device, ed_key, enroll_device_entry,
     genesis_entry,
 };
 use super::*;
-use crate::world_keys::RecoveryRoot;
+use crate::world_keys::{RecoveryRoot, RecoveryRootId, RecoveryRootSeed};
 use crate::{Vault, VaultConfig};
 
 /// A self-host log whose root key enrols a second key and then the owner
@@ -229,5 +232,106 @@ fn a_concurrent_tier_floor_never_prunes_an_anchor_row() {
     assert!(
         fold.machine(request.machine)
             .is_some_and(|folded| folded.is_mine(Some(&pin(&root))))
+    );
+}
+
+/// A self-host root key marks M and hands the vault on. On a sibling branch
+/// it publishes a root naming itself the anchor, at a sequence it already
+/// used, so every fold refuses that root, then removes M beneath it. The
+/// removal's own proof skips the refused root and takes the removal through
+/// the key's roster standing: it is the retired root's, and the handoff's
+/// fence forgets it, so M stays mine (Sol code-R3 S3-F1, Wonder W3-F1). Fails
+/// before: any root beneath the removal made it the anchor's.
+#[test]
+fn a_refused_root_never_makes_a_retired_keys_removal_the_anchors() {
+    let (owner, next) = (ed_key(185), ed_key(186));
+    let genesis = genesis_entry(185, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let request = request_for(id, EntityId::now(), &ed_key(187));
+    let mark = signed(id, &[&genesis], &owner, 1, profile(&request, YOURS, 1));
+    let handoff = re_root_entry(id, &mark, &owner, 2, &next);
+    let recovery_key = RecoveryRootSeed::generate()
+        .unwrap()
+        .public(&id)
+        .unwrap()
+        .recovery_key;
+    let anchor_key = owner.verifying_key().to_bytes();
+    let root = RecoveryRoot {
+        id: RecoveryRootId::of(&id, &recovery_key, &anchor_key),
+        recovery_key,
+        anchor_key,
+    };
+    let refused = signed(
+        id,
+        &[&mark],
+        &owner,
+        1,
+        AuthorityOp::OwnerRoot(root_record(&root)),
+    );
+    let removal = signed(
+        id,
+        &[&refused],
+        &owner,
+        3,
+        profile(&request, MachineRole::Removed, 2),
+    );
+    let entries = [genesis, mark, handoff, refused.clone(), removal];
+    let fold = fold_seen_at(&entries, 100, crate::HostingPrivacyPosture::SelfHostLocal);
+    assert!(
+        !fold
+            .valid_entries
+            .contains(&authority_entry_hash(&refused).unwrap())
+    );
+    assert!(fold.root_anchors().is_empty());
+    let folded = fold.machine(request.machine).unwrap();
+    assert!(!folded.roster_trusted.as_ref().unwrap().removed);
+    assert!(folded.is_mine(None));
+}
+
+/// A self-host root key marks M with one encryption key and hands the vault
+/// on; the owner's anchor then marks M with the same machine key and a fresh
+/// encryption key. While both chains are live they disagree, so M is mine
+/// only to an unpinned install. Past the stale-roster window the roster's
+/// mark is stale, and M is mine under the pin with the anchor's keys: a stale
+/// chain vetoes no live chain's keys (Sol code-R3 S3-F3). Fails before: the
+/// stale roster head's key still made M not mine under the pin.
+#[test]
+fn a_stale_roster_mark_never_vetoes_the_anchors_keys() {
+    let (owner, next, machine) = (ed_key(190), ed_key(191), ed_key(192));
+    let genesis = genesis_entry(190, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let request = request_for(id, EntityId::now(), &machine);
+    let mark = signed(id, &[&genesis], &owner, 1, profile(&request, YOURS, 1));
+    let handoff = re_root_entry(id, &mark, &owner, 2, &next);
+    let (root, anchor, published) = publish(id, &handoff);
+    let encryption_key = MachineEncryptionKey {
+        suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+        key: vec![8; MACHINE_ENCRYPTION_KEY_LEN],
+    };
+    let transcript = machine_profile_proof_transcript(
+        &id,
+        request.machine,
+        &request.machine_key,
+        &encryption_key,
+    );
+    let rekeyed = MachineEnrolmentRequest {
+        machine_proof: machine.sign(&transcript).to_bytes(),
+        encryption_key,
+        ..request.clone()
+    };
+    let anchored = signed(id, &[&published], &anchor, 2, profile(&rekeyed, YOURS, 1));
+    let entries = [genesis, mark, handoff, published, anchored];
+    let mine_at = |now| {
+        let fold = fold_seen_at(&entries, now, crate::HostingPrivacyPosture::SelfHostLocal);
+        let folded = fold.machine(request.machine).unwrap();
+        let pinned = folded
+            .trusted(Some(&pin(&root)))
+            .map(|trusted| trusted.profile.encryption_key.clone());
+        (pinned, folded.is_mine(None))
+    };
+    assert_eq!(mine_at(100), (None, true));
+    assert_eq!(
+        mine_at(101 + DEFAULT_STALE_ROSTER_WINDOW_SECS),
+        (Some(rekeyed.encryption_key), false)
     );
 }

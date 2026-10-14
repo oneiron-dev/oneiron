@@ -207,10 +207,12 @@ pub(super) fn apply_stale_roster_window(
     fold
 }
 
-/// The valid roster marks a key P1 accepts for an owned mark signed: one the
-/// owner held as it signed, outside the host's custody on the merged history
-/// of a hosted fold. A key whose custody a later merge reaches renews nothing
-/// in the trusted roster chain, as it stands in none of it.
+/// The valid roster marks a key P1 accepts for an owned mark signed, judged
+/// as the trusted chain judges them (`ClaimIndex::accepted`). An owned mark
+/// folds only when its signer is owner-held in the mark's own parent state, so
+/// each valid one was; on a hosted fold its signer must also stay outside the
+/// host's custody on the merged history. Only these renew a stale trusted
+/// roster revision (Sol code-R2 S2-F1, code-R3 S3-F2).
 pub(super) fn accepted_roster_marks(
     state: &FoldState,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
@@ -221,15 +223,14 @@ pub(super) fn accepted_roster_marks(
         .filter(|hash| !state.anchor_entries.contains(*hash))
         .filter(|hash| {
             entries.get(*hash).is_some_and(|entry| {
-                let signer = entry.signer_key();
-                matches!(entry.op, AuthorityOp::MachineProfile(_))
-                    && state.roster.get(signer).is_some_and(|device| {
-                        folded_device_can_authority_consent(&FoldedDevice {
-                            revoked: false,
-                            ..device.clone()
-                        })
+                matches!(
+                    &entry.op,
+                    AuthorityOp::MachineProfile(MachineProfile {
+                        role: MachineRole::Owned(_),
+                        ..
                     })
-                    && !(state.hosted && super::machine_profile::in_host_custody(state, signer))
+                ) && !(state.hosted
+                    && super::machine_profile::in_host_custody(state, entry.signer_key()))
             })
         })
         .copied()
