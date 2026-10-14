@@ -67,6 +67,20 @@ impl Memory<'_> {
                     .facets_allow_id(&room)?))
     }
 
+    /// Refuses a turn in a room whose own row sits outside the facets this
+    /// caller's credential reads, as it refuses an unknown room (owner ruling
+    /// FACET-READ): the turn would confirm the room and report its Scope.
+    pub(crate) fn require_room_in_facets(&self, room: EntityId) -> MemoryResult<()> {
+        if self
+            .own_read_lane(crate::claim::ClaimReadStatus::Recorded)?
+            .facets_allow_id(&room)?
+        {
+            Ok(())
+        } else {
+            Err(unknown_room())
+        }
+    }
+
     /// P7 for one rule `room` renders under `terms`, judged in the snapshot
     /// that reads the rule: the clearance `terms` captured with `roster`
     /// meets the room's clearance in this snapshot, so a clearance narrowed
