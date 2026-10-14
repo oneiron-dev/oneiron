@@ -411,6 +411,7 @@ pub(super) fn effect_result(
         budget_charge: None,
         dedupe_suppressed: false,
         suppression_receipt: None,
+        ceiling_held: false,
     }
 }
 
@@ -444,6 +445,7 @@ pub(super) fn gate_rejection(
         budget_charge: None,
         dedupe_suppressed: false,
         suppression_receipt: None,
+        ceiling_held: false,
     }
 }
 

@@ -154,6 +154,36 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         }
     };
 
+    // A count bound reads the ledger under THIS writer lock, after an exact
+    // retry has replayed above: the call is held like a parked send, with its
+    // decision recorded and nothing admitted.
+    if let Some(ceiling) = prepared.admission_ceiling {
+        let admitted = crate::outbound_intent_ledger::admitted_calls_since_in_txn(
+            vault,
+            &wtxn,
+            &prepared.server,
+            &prepared.tool,
+            ceiling.since_ms,
+        )?;
+        if ceiling.prior.max(admitted) >= ceiling.cap {
+            let effect =
+                vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
+            let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
+            let (decision_id, decision, _) = gate::check_external_effect_policy(
+                &vault.store,
+                &mut wtxn,
+                &effect,
+                &policy,
+                false,
+            )?;
+            wtxn.commit().map_err(Error::from)?;
+            vault.store.notify_attempt_observers();
+            let mut result = gate_rejection(intent_id, decision_id, decision);
+            result.ceiling_held = true;
+            return Ok(result);
+        }
+    }
+
     // CAL-04 (ONE-1786) verb wall. `calendar.invite` is the one verb whose
     // frozen bytes must carry a payload this lane can vouch for: C7's exact
     // five-field iMIP body. A call that claims the verb without one is a

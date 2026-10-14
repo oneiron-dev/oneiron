@@ -31,7 +31,8 @@ pub(crate) use self::resolution::{
     ConnectorIntentBinding, IntentResolution, RetryDisposition, UnconfirmedDelivery,
 };
 pub(crate) use self::store::{
-    abandon_record, begin_definite_non_delivery_retry, complete_record, force_sync,
+    abandon_record, admitted_calls_since_in_txn, begin_definite_non_delivery_retry, complete_record,
+    force_sync,
     hash_frozen_payload, insert_pending_in_txn, insert_suppressed_in_txn,
     read_intent_for_attempt_in_txn, read_intent_record_in_txn, reconcile_connector_intent_in_txn,
     record_definite_non_delivery, record_possible_delivery,

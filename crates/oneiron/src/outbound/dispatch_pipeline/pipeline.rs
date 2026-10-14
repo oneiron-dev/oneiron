@@ -196,9 +196,12 @@ impl OutboundDispatchPipeline {
             &mut prepared.request,
             &window_decision,
         );
+        let seat_ledger =
+            super::seat_policy::SeatLedgerCount::read(vault, &prepared.request, verb_contract)?;
         let admission = super::admission::AdmissionStage::evaluate(
             &prepared.request,
             verb_contract,
+            seat_ledger,
             window_resolution,
             window_decision,
         );
@@ -244,6 +247,7 @@ impl OutboundDispatchPipeline {
             verified_actor,
             owner_proof,
             parked,
+            admission_ceiling: seat_ledger.ceiling,
             suppression_receipt: crate::outbound::receipt_fields::suppression_receipt_for_dispatch(
                 &request,
                 &admission.window_decision,

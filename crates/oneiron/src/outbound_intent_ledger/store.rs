@@ -125,6 +125,37 @@ pub(super) fn ledger_rows<'txn>(
         .map(move |row| row.map(|(key, value)| ([prefix, key.as_slice()].concat(), value))))
 }
 
+/// How many ledger rows of this server and tool were created at or after
+/// `since_ms`, read in the caller's transaction. Every row is an admitted
+/// call, settled or not; server and tool compare as the capability lookup
+/// spells them (trimmed, ASCII case folded). A row that does not decode counts
+/// as well: an accounting gap never opens a bound.
+pub(crate) fn admitted_calls_since_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    server: &str,
+    tool: &str,
+    since_ms: u64,
+) -> IntentLedgerResult<u32> {
+    let same = |stored: &str, wanted: &str| stored.trim().eq_ignore_ascii_case(wanted.trim());
+    let mut admitted = 0_u32;
+    for row in ledger_rows(vault, txn)? {
+        let (key, raw) = row?;
+        let counts = match decode_record(&key, &raw) {
+            Ok(record) => {
+                same(&record.server, server)
+                    && same(&record.tool, tool)
+                    && record.created_ms >= since_ms
+            }
+            Err(_) => true,
+        };
+        if counts {
+            admitted = admitted.saturating_add(1);
+        }
+    }
+    Ok(admitted)
+}
+
 /// Decodes one raw row already read by a full-table walk ([`ledger_rows`]). Shares the
 /// attempt-binding check with [`read_intent_record_in_txn`].
 pub(super) fn decode_record_in_txn(

@@ -33,6 +33,9 @@ pub(crate) struct OutboundEffectResult {
     /// OF-327 suppression is not a Gate denial or a Gate reason code.
     pub(crate) dedupe_suppressed: bool,
     pub(crate) suppression_receipt: Option<ReceiptRecord>,
+    /// The admission ceiling held this call before its Pending insert:
+    /// nothing was admitted or sent.
+    pub(crate) ceiling_held: bool,
 }
 
 /// The only two commands accepted by the effectful entry.
@@ -76,6 +79,21 @@ pub(crate) struct PreparedEffect {
     pub(crate) dedupe_key: Option<String>,
     /// The caller-facing receipt to commit if this admission is suppressed.
     pub(crate) suppression_receipt: Option<ReceiptRecord>,
+    /// A count bound checked under the admission writer lock; `None` for an
+    /// effect with no such bound.
+    pub(crate) admission_ceiling: Option<AdmissionCeiling>,
+}
+
+/// A deterministic count bound on one server and tool. Admission holds the
+/// call, never sends it, once the larger of `prior` (the host's own count)
+/// and this vault's ledger rows created at or after `since_ms` reaches `cap`.
+/// It is read in the same writer transaction as the Pending insert, so two
+/// admissions cannot both take the last allowance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct AdmissionCeiling {
+    pub(crate) since_ms: u64,
+    pub(crate) prior: u32,
+    pub(crate) cap: u32,
 }
 
 impl PreparedEffect {
