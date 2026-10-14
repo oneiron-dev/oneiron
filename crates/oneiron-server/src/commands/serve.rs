@@ -179,14 +179,15 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
 
 /// With no `auth_secret`, `--insecure-allow-unauthenticated` lets a request
 /// with no credential act as the owner, so that mode serves only loopback.
-/// The address judged is the one this path binds, before the vault opens. A
-/// dev server reachable from the LAN sets a secret instead; there is no
-/// override. Managed serve never comes here: the supervisor owns its socket.
+/// An empty secret counts as none: it can mint and verify nothing. The
+/// address judged is the one this path binds, before the vault opens. A dev
+/// server reachable from the LAN sets a secret instead; there is no override.
+/// Managed serve never comes here: the supervisor owns its socket.
 fn refuse_unauthenticated_public_bind(
     config: &ServeConfig,
     addr: SocketAddr,
 ) -> anyhow::Result<()> {
-    if config.auth_secret.is_none()
+    if config.auth_secret.as_deref().is_none_or(str::is_empty)
         && config.allow_unauthenticated
         && !addr.ip().to_canonical().is_loopback()
     {

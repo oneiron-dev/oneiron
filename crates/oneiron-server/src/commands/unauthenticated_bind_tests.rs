@@ -38,9 +38,16 @@ fn reached_the_vault(error: &anyhow::Error) -> bool {
 
 #[tokio::test]
 async fn unauthenticated_mode_refuses_a_network_listener_before_the_vault_opens() {
-    // The product default host, the IPv6 wildcard and one LAN address.
-    for host in ["0.0.0.0", "[::]", "192.0.2.10"] {
-        let error = start_against_held_vault(host, None).await;
+    // The product default host, the IPv6 wildcard, one LAN address, the
+    // IPv4-mapped wildcard, and the default host with an empty secret.
+    for (host, auth_secret) in [
+        ("0.0.0.0", None),
+        ("[::]", None),
+        ("192.0.2.10", None),
+        ("[::ffff:0.0.0.0]", None),
+        ("0.0.0.0", Some(String::new())),
+    ] {
+        let error = start_against_held_vault(host, auth_secret).await;
         assert!(
             !reached_the_vault(&error),
             "{host}: unauthenticated serve went on to open the vault"
@@ -60,6 +67,7 @@ async fn loopback_or_a_secret_still_clears_the_bind_check() {
     for (host, auth_secret) in [
         ("127.0.0.1", None),
         ("[::1]", None),
+        ("[::ffff:127.0.0.1]", None),
         ("0.0.0.0", Some(secret)),
     ] {
         let error = start_against_held_vault(host, auth_secret).await;
