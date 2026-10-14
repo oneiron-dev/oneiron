@@ -276,12 +276,17 @@ pub(super) fn resolve_policy_model_response(
     prompt: &PolicyClassifyPrompt,
     plane: &AnswerPlane<'_>,
 ) -> Result<ResolvedAnswer> {
-    // A cut, filtered or cancelled answer is a partial verdict, however well
-    // its text parses.
-    if matches!(
-        response.finish_reason,
-        FinishReason::Length | FinishReason::ContentFiltered | FinishReason::Cancelled
-    ) {
+    // Only a finished answer is a verdict, however well its text parses. A
+    // cut, filtered, cancelled, paused or tool-pending answer is partial, and
+    // a fallback runner's reply is no model's read at all. This request
+    // declares no tools, so a tool call is no answer either.
+    if response.finish_reason != FinishReason::Stop
+        || response
+            .message
+            .content
+            .iter()
+            .any(|part| matches!(part, ContentPart::ToolCall { .. }))
+    {
         return Err(Error::InvalidConfig(
             "policy model response did not finish".to_owned(),
         ));

@@ -394,6 +394,18 @@ impl PolicyClassifyVerdict {
         config: &PolicyModelConfig,
         pass: &super::relay::RelayBoundaryPass,
     ) -> Self {
+        // A degrade that halts the relay under either posture (the manifest
+        // moved, no output contract) left no verdict anyone may reuse. The
+        // attestation records only THAT the pass degraded, so minting one
+        // would let a `ProceedReceipted` reuse wave through what this pass
+        // stopped. Unattested, a reuse runs its own hosted pass.
+        if pass
+            .degraded()
+            .is_some_and(|degrade| !degrade.is_model_availability())
+        {
+            self.hosted_attestation = None;
+            return self;
+        }
         self.hosted_attestation = Some(Box::new(HostedPlaneAttestation {
             plane: PolicyPlane::HostedLegal,
             policy_version: policy.version.clone(),

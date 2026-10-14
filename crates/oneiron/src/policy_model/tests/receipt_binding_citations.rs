@@ -210,6 +210,10 @@ fn the_receipt_write_refuses_a_binding_that_moved_after_the_pass() -> Result<()>
         ),
         "the row records the degrade rather than the dead binding"
     );
+    assert_eq!(
+        receipts[0].outcome, "relay_boundary_skipped",
+        "H122: the row of a halted, unexamined pass recorded an Allow outcome"
+    );
 
     // The row is only half of it. A receipt that says the relay stopped, on a
     // pass that says it may proceed, is a record nobody honours — so the write

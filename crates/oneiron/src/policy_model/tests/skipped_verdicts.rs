@@ -223,8 +223,9 @@ impl LlmBackend for UnfinishedBackend {
     }
 }
 
-/// H122, partial answer: a cut, filtered or cancelled answer is not a verdict,
-/// however cleanly its text parses. The finished answer is the control above.
+/// H122, partial answer: a cut, filtered, cancelled, paused or tool-pending
+/// answer is not a verdict, however cleanly its text parses, and neither is a
+/// fallback runner's reply. The finished answer is the control above.
 #[test]
 fn an_unfinished_model_answer_is_never_a_clean_allow() -> Result<()> {
     let (_tmp, vault) = documented_vault()?;
@@ -233,6 +234,16 @@ fn an_unfinished_model_answer_is_never_a_clean_allow() -> Result<()> {
         FinishReason::Length,
         FinishReason::ContentFiltered,
         FinishReason::Cancelled,
+        FinishReason::ToolCalls,
+        FinishReason::Other {
+            name: "pause_turn".to_owned(),
+        },
+        FinishReason::Other {
+            name: "model_context_window_exceeded".to_owned(),
+        },
+        FinishReason::Other {
+            name: "fallback:fail_closed:Unavailable".to_owned(),
+        },
     ] {
         let verdict = block_on(vault.classify_policy_model_with_backend(
             request.clone(),
@@ -271,5 +282,78 @@ fn a_reported_skip_never_rides_an_allow() -> Result<()> {
     );
     let answered = vault.enforce_policy_model_verdict(request, &config, verdict, false)?;
     assert_eq!(answered.action, PolicyEnforcementAction::Allow);
+    Ok(())
+}
+
+/// H122, receipt reuse: a hosted pass that halted because the manifest kept
+/// moving left nothing to reuse. A vault-side runner attesting it under
+/// `ProceedReceipted` used to give a later cloud relay a trusted Allow and
+/// no hosted pass; an availability skip under the same posture is still
+/// reusable, the control.
+#[test]
+fn a_halted_hosted_pass_is_never_a_reusable_attestation() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
+    let proceed = PolicyModelConfig {
+        hosted_outage_policy: HostedOutagePolicy::ProceedReceipted,
+        ..PolicyModelConfig::default()
+    };
+    let registry = hosted_edge_registry(hosted_serious_crime_block());
+    let moving = ManifestMovingBackend {
+        vault: &vault,
+        manifest: spoilers_manifest("block"),
+        body: r#"{"violation":0}"#,
+        keep_moving: true,
+        calls: AtomicUsize::new(0),
+    };
+    let budget = lease("halted-reuse");
+    let halted = relay_pass(
+        &vault,
+        CLEAN_CONTENT,
+        &registry,
+        &proceed,
+        Some(tier(&moving, &budget)),
+    )?;
+    assert_eq!(
+        halted.degraded(),
+        Some(RelayBoundaryDegrade::PolicyBindingMovedMidPass)
+    );
+    assert!(halted.must_halt_relay());
+
+    let request = PolicyClassifyRequest::outbound_content(CLEAN_CONTENT);
+    let binding = vault.relay_verify_binding(&request, &proceed)?;
+    let reuse = |pass: &RelayBoundaryPass, backend: &CountingPolicyBackend| {
+        let source = StaticVaultSideVerdicts {
+            verdict: PolicyClassifyVerdict::clean_allow(
+                binding,
+                &proceed,
+                PolicyPlane::OwnerPolicy,
+            )
+            .attesting_hosted_plane(&registered_policy(&registry), &proceed, pass),
+            requested_hash: Mutex::new(None),
+        };
+        block_on(vault.relay_boundary_pass(
+            request.clone(),
+            &cloud_witness(),
+            &registry,
+            &proceed,
+            Some(tier(backend, &budget)),
+            &source,
+        ))
+    };
+
+    let backend = CountingPolicyBackend::clean();
+    let replayed = reuse(&halted, &backend)?;
+    assert_ne!(
+        replayed,
+        RelayBoundaryPass::TrustedVaultSide,
+        "H122: a halted hosted pass was reused as a trusted Allow"
+    );
+    assert_eq!(backend.calls(), 1, "the reuse runs its own hosted pass");
+
+    let backend = CountingPolicyBackend::clean();
+    let tolerated = reuse(&degraded_pass(), &backend)?;
+    assert_eq!(tolerated, RelayBoundaryPass::TrustedVaultSide);
+    assert_eq!(backend.calls(), 0);
     Ok(())
 }

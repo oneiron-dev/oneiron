@@ -538,7 +538,9 @@ impl Vault {
                     &mut wtxn,
                     receipt.request,
                     &degraded,
-                    "relay_boundary_allow",
+                    // The outcome follows the replacement verdict, as every
+                    // other receipt row's does: a halted pass is no Allow.
+                    &format!("relay_boundary_{}", degraded.decision.ledger_str()),
                     codes,
                     notices,
                 )?;
