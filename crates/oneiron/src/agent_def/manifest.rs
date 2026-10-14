@@ -343,28 +343,24 @@ pub(crate) fn validate_reserved_logical_id(id: &EntityId, def: &AgentDefinition)
     )))
 }
 
-/// The seeded-ceiling pin, enforced beside the `sys.*` reservation at the
-/// same put-decode chokepoint: a seeded row id never holds a ceiling wider
-/// than its seed's, on any road (create, update, replicated). The update
-/// arm's no-widen alone would not hold it, because a delete ends the row and
-/// a create at the pinned id has no prior to compare against.
-pub(crate) fn validate_seeded_ceiling(id: &EntityId, def: &AgentDefinition) -> Result<()> {
-    let Some(seed) = system_agent_manifest()?
+/// The ceiling and lineage the seed manifest gives the row at `id`, when `id`
+/// is a seeded row id: what that id answers to before it holds a pin of its
+/// own (see `id_pin`).
+pub(super) fn seeded_lineage(id: &EntityId) -> Result<Option<(AgentCeiling, Option<EntityId>)>> {
+    system_agent_manifest()?
         .definitions
         .iter()
         .find(|seed| seed.entity_id.0 == *id)
-    else {
-        return Ok(());
-    };
-    let seeded = AgentCeiling::parse(&seed.definition.ceiling).ok_or(Error::Artifact(
-        ArtifactError::InvalidAgentDefBody("manifest ceiling must be one of auto|proposed"),
-    ))?;
-    if def.ceiling.widens_beyond(seeded) {
-        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-            "a seeded agent ceiling cannot widen beyond its seed",
-        )));
-    }
-    Ok(())
+        .map(|seed| {
+            let ceiling = AgentCeiling::parse(&seed.definition.ceiling).ok_or(Error::Artifact(
+                ArtifactError::InvalidAgentDefBody("manifest ceiling must be one of auto|proposed"),
+            ))?;
+            Ok((
+                ceiling,
+                seed.definition.forked_from.as_ref().map(|parent| parent.0),
+            ))
+        })
+        .transpose()
 }
 
 /// Seeds/reconciles the canonical roster inside the caller's write
@@ -428,7 +424,15 @@ pub(super) fn reconcile_system_agent_definitions_in(
                 }
             }
             None => {
-                let definition = seed.definition_row(legacy_enabled)?;
+                let mut definition = seed.definition_row(legacy_enabled)?;
+                // A deleted seeded row comes back no wider than the narrowest
+                // ceiling its id has held (H215): an agent that deleted its
+                // own narrowed row gains nothing from the next open.
+                if let Some(pinned) = super::id_pin::pinned_ceiling_in_txn(store, wtxn, &id)?
+                    && definition.ceiling.widens_beyond(pinned)
+                {
+                    definition.ceiling = pinned;
+                }
                 let data = encode_agent_definition(&definition)?;
                 apply_ops(
                     store,

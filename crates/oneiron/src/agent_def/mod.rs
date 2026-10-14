@@ -13,6 +13,7 @@
 mod codec;
 mod decode;
 mod doors;
+mod id_pin;
 mod manifest;
 mod types;
 pub mod workflow;
@@ -31,9 +32,9 @@ pub use self::types::{
 pub(crate) use self::codec::{
     legacy_logical_id_row, validate_agent_definition_bytes, validate_agent_definition_update,
 };
+pub(crate) use self::id_pin::{agent_id_pin_for_put_in_txn, refuse_agent_id_retype_in_txn};
 pub(crate) use self::manifest::{
     seed_system_agent_definitions, system_export_identity, validate_reserved_logical_id,
-    validate_seeded_ceiling,
 };
 pub(crate) use self::types::forked_from_row_ref;
 
