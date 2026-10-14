@@ -120,12 +120,54 @@ impl AuthenticatedOwner {
         Ok(())
     }
 
+    /// Revalidates this proof as the vault's owner in the writing
+    /// transaction and names the write it authors as the owner's own.
+    ///
+    /// Owner-authored writes carry their own confirmation: a critical claim
+    /// this write lands attaches no confirm. A bound credential must be the
+    /// owner's own unattenuated, undelegated slip (a logged child mint is a
+    /// delegation even when it keeps the owner's scope). A proof that no
+    /// longer holds refuses the write rather than downgrading it.
+    pub(crate) fn owner_authored_write_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<OwnerAuthoredWrite> {
+        if self.credential.as_ref().is_some_and(|credential| {
+            !credential.is_full_vault_owner_grade() || credential.claims().parent_id.is_some()
+        }) {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "owner credential is narrowed or delegated",
+            )));
+        }
+        self.revalidate_as_vault_owner_in_txn(vault, txn)?;
+        Ok(OwnerAuthoredWrite { actor: self.actor })
+    }
+
     pub(super) fn stamp(&self) -> ConsentOwnerStamp {
         ConsentOwnerStamp {
             actor: self.actor,
             principal_ref: self.principal_ref.clone(),
             decision_id: self.decision_id,
         }
+    }
+}
+
+/// A claim write the vault's authenticated owner made in person, revalidated
+/// in the transaction that writes it.
+///
+/// Only [`AuthenticatedOwner::owner_authored_write_in_txn`] builds one, and
+/// it is neither `Clone` nor stored: the writing door takes it by value into
+/// that transaction's gate mode, so no later write can inherit it.
+#[derive(Debug)]
+pub(crate) struct OwnerAuthoredWrite {
+    actor: EntityId,
+}
+
+impl OwnerAuthoredWrite {
+    /// The owner who authored the write.
+    pub(crate) const fn actor(&self) -> EntityId {
+        self.actor
     }
 }
 

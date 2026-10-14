@@ -136,6 +136,7 @@ impl Vault {
                         auto_checker: None,
                         defer_metrics_until_commit: true,
                         transition: None,
+                        owner_authored: None,
                     },
                     &policy,
                     GateWriteMode {
@@ -783,6 +784,7 @@ fn replay_gate_consent_bundle_member(
             auto_checker: None,
             defer_metrics_until_commit: true,
             transition: None,
+            owner_authored: None,
         },
         policy,
         GateWriteMode {

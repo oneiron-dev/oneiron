@@ -44,6 +44,10 @@ pub(crate) struct ClaimGateWrite<'a> {
     pub(crate) defer_metrics_until_commit: bool,
     /// Sealed canonical transition. Presence alone never grants Gate authority.
     pub(crate) transition: Option<&'a crate::batch::VerifiedClaimTransition>,
+    /// The vault owner's in-person authorship of this write, revalidated in
+    /// its transaction. Only a fresh write the owner made directly carries
+    /// one; every other door passes `None`.
+    pub(crate) owner_authored: Option<&'a crate::consent::OwnerAuthoredWrite>,
 }
 
 impl<'a> ClaimGateWrite<'a> {
@@ -59,7 +63,16 @@ impl<'a> ClaimGateWrite<'a> {
             auto_checker: None,
             defer_metrics_until_commit: false,
             transition: None,
+            owner_authored: None,
         }
+    }
+
+    pub(crate) fn with_owner_authored(
+        mut self,
+        owner_authored: Option<&'a crate::consent::OwnerAuthoredWrite>,
+    ) -> Self {
+        self.owner_authored = owner_authored;
+        self
     }
 
     pub(crate) fn with_transition(
