@@ -55,17 +55,15 @@ impl Vault {
         actor: EntityId,
     ) -> Result<Option<BindingGeneration>> {
         let fold = self.authority_fold_readonly_in_txn(txn)?;
-        Ok(BindingGeneration::from_classed_bindings(
-            fold.actor_bindings
-                .iter()
-                .filter(|(_, binding)| {
-                    binding.actor_ref == actor
-                        && binding.status == super::ActorBindingStatus::Active
-                })
-                .map(|(key, binding)| {
-                    (binding.actor_class.as_str(), actor_binding_id(key, binding))
-                }),
-        ))
+        let held: Vec<_> = fold
+            .actor_bindings
+            .iter()
+            .filter(|(_, binding)| {
+                binding.actor_ref == actor && binding.status == super::ActorBindingStatus::Active
+            })
+            .map(|(key, binding)| (binding.actor_class.as_str(), actor_binding_id(key, binding)))
+            .collect();
+        Ok(BindingGeneration::from_classed_bindings(&held))
     }
 
     /// [`Self::verify_write_actor_in_txn`] at this host's observed frontier,

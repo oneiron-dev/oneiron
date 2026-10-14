@@ -48,10 +48,8 @@ impl BindingGeneration {
     /// [`Self::from_bindings`] for bindings of several classes: at the cap,
     /// the lowest binding of each class is kept first, so no class the party
     /// holds is left out, and the rest fill in lowest first.
-    pub(crate) fn from_classed_bindings<'a>(
-        bindings: impl IntoIterator<Item = (&'a str, BindingId)>,
-    ) -> Option<Self> {
-        let mut held: Vec<(&str, BindingId)> = bindings.into_iter().collect();
+    pub(crate) fn from_classed_bindings(bindings: &[(&str, BindingId)]) -> Option<Self> {
+        let mut held = bindings.to_vec();
         held.sort_by(|left, right| left.1.cmp(&right.1));
         let mut kept: Vec<BindingId> = Vec::new();
         let mut classes: BTreeSet<&str> = BTreeSet::new();
