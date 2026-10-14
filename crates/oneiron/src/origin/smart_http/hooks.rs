@@ -29,7 +29,10 @@ use crate::error::Result;
 /// endpoint diff, yet it stays durable in history. So the hook also walks
 /// every object the new tips reach that no existing ref already reaches, and
 /// frames each blob the tip diffs did not, once, into a second stream the door
-/// scans the same way. Both streams together are capped at
+/// scans the same way. The walk alone would still miss a blob the pack carries
+/// that no tip reaches: receive-pack moves the whole quarantine into the store
+/// once the hook admits, so every object in the quarantine is listed too, and
+/// one rev-list named no path for is labelled by its oid. Both streams together are capped at
 /// [`DOOR_MAX_SCAN_BYTES`], substituted for `@DOOR_MAX_SCAN_BYTES@` when the
 /// hook is written; a push past it is refused, never scanned in part.
 pub(super) const DOOR_PRE_RECEIVE_HOOK: &str = r#"#!/bin/sh
@@ -46,8 +49,9 @@ pub(super) const DOOR_PRE_RECEIVE_HOOK: &str = r#"#!/bin/sh
 #
 # The history stream frames every OTHER blob the new tips reach that no existing
 # ref already reaches, so a blob an intermediate commit adds and a later one
-# reverts or deletes is scanned too. Its records come from cat-file --batch:
-# the same header and bytes, then one "\n".
+# reverts or deletes is scanned too, and every other blob the quarantine holds,
+# because receive-pack migrates the whole quarantine, reachable or not. Its
+# records come from cat-file --batch: the same header and bytes, then one "\n".
 #
 # Every git below reads TRUE object bytes: replacement lookup is disabled by the
 # exported GIT_NO_REPLACE_OBJECTS (which reaches any git a git spawns) and again
@@ -135,13 +139,29 @@ while read -r old new ref; do
 		printf '%s\n' "$oid" >> "$seen"
 	done < "$entries"
 done
+: > "$objects"
 if [ -n "$tips" ]; then
 	git --no-replace-objects rev-list --objects $tips --not --all > "$objects"
+fi
+# The pack can carry objects no tip reaches, and receive-pack migrates the whole
+# quarantine once this hook admits. So every object in it is listed as well,
+# after the walk, so a path rev-list named is the label kept. With the
+# alternates unset the listing is the quarantine's alone, not the store's.
+if [ -n "${GIT_QUARANTINE_PATH-}" ]; then
+	(
+		unset GIT_ALTERNATE_OBJECT_DIRECTORIES
+		git --no-replace-objects cat-file --batch-all-objects \
+			--batch-check='%(objectname)'
+	) >> "$objects"
+fi
+if [ -s "$objects" ]; then
 	git --no-replace-objects cat-file \
 		--batch-check='%(objecttype) %(objectname) %(objectsize) %(rest)' \
 		< "$objects" > "$typed"
 	# Keeps each blob the tip diffs did not frame, once, under the first path
 	# rev-list named it by, made printable: the path only labels a refusal.
+	# A blob with no usable path (a quarantine-only object, or a name rev-list
+	# cut at a newline or cat-file read as blank) is labelled by its oid.
 	# Any line that is not a typed object fails the hook.
 	status=0
 	LC_ALL=C awk -v total="$total" -v max="$max" '
@@ -155,6 +175,7 @@ if [ -n "$tips" ]; then
 			path = $0
 			sub(/^[^ ]* [^ ]* [^ ]* /, "", path)
 			gsub(/[^ -~]/, "?", path)
+			if (path !~ /[^ ]/) path = $2
 			print $2 " " path
 		}
 	' "$seen" "$typed" > "$listed" || status=$?

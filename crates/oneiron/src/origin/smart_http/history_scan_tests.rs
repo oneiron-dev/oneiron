@@ -33,9 +33,12 @@ fn commit_removal(root: &Path, path: &str) -> GitOid {
 }
 
 /// A real pack of everything `tip` reaches that `have` does not, as the
-/// client would send it.
-fn pack(source: &Path, tip: &GitOid, have: &[&GitOid]) -> Vec<u8> {
+/// client would send it, plus each `extra` object no tip reaches.
+fn pack(source: &Path, tip: &GitOid, have: &[&GitOid], extra: &[&GitOid]) -> Vec<u8> {
     let mut revs = format!("{}\n", tip.as_str());
+    for oid in extra {
+        revs.push_str(&format!("{}\n", oid.as_str()));
+    }
     for oid in have {
         revs.push_str(&format!("^{}\n", oid.as_str()));
     }
@@ -66,10 +69,21 @@ fn receive_pack(
     name: &str,
     have: &[&GitOid],
 ) -> ServeReport {
+    receive_pack_carrying(vault, source, (old, new, name), have, &[])
+}
+
+/// [`receive_pack`] whose pack also carries `extra` objects no tip reaches.
+fn receive_pack_carrying(
+    vault: &Arc<Vault>,
+    source: &Path,
+    (old, new, name): (Option<&GitOid>, &GitOid, &str),
+    have: &[&GitOid],
+    extra: &[&GitOid],
+) -> ServeReport {
     let old = old.map_or_else(|| "0".repeat(40), |oid| oid.as_str().to_owned());
     let command = format!("{old} {} {name}\0report-status\n", new.as_str());
     let mut bytes = format!("{:04x}{command}0000", command.len() + 4).into_bytes();
-    bytes.extend(pack(source, new, have));
+    bytes.extend(pack(source, new, have, extra));
     let request = ServeRequest {
         method: "POST".into(),
         path_info: "/demo.git/git-receive-pack".into(),
@@ -173,6 +187,87 @@ fn receive_pack_scans_every_new_blob_not_the_tip_diff() {
     assert_eq!(report.door.verdict, DoorWindowVerdict::Clean);
     assert!(report.landing.is_some());
     assert_eq!(work(), next.as_str());
+}
+
+/// Writes `contents` into the source's object store as a blob no commit
+/// names, and returns its oid.
+fn loose_blob(source: &Path, contents: &str) -> GitOid {
+    let file = source.join("loose.tmp");
+    fs::write(&file, contents).expect("write loose blob");
+    let oid = git(source, &["hash-object", "-w", "--", "loose.tmp"]);
+    fs::remove_file(&file).expect("remove loose blob file");
+    GitOid::parse_hex(oid).expect("blob oid")
+}
+
+/// H263 review r1 (Astra F1). receive-pack migrates the whole quarantine
+/// once the hook admits, so a blob the pack carries that no tip reaches is
+/// durable too and must be scanned; it has no path, so its oid labels it.
+#[cfg(unix)]
+#[test]
+fn receive_pack_scans_a_quarantined_blob_no_tip_reaches() {
+    let (_vault_dir, vault) = temp_vault();
+    let (source, repo, _, second) = served_repo(&vault);
+    let source = source.path();
+    let work = || git(&repo, &["rev-parse", "refs/heads/work"]);
+
+    // A clean commit whose pack also carries a blob no commit names.
+    let tip = commit_file(source, "notes.txt", "clean note\n");
+    let stowaway = loose_blob(source, &planted_secret());
+    let report = receive_pack_carrying(
+        &vault,
+        source,
+        (None, &tip, "refs/heads/work"),
+        &[&second],
+        &[&stowaway],
+    );
+    assert_refused_at(&report, stowaway.as_str());
+    assert!(git(&repo, &["for-each-ref", "refs/heads/work"]).is_empty());
+    let kept = Command::new("git")
+        .current_dir(&repo)
+        .args(["cat-file", "-e", stowaway.as_str()])
+        .status()
+        .expect("cat-file");
+    assert!(!kept.success(), "a refused push must not keep the stowaway");
+
+    // Control: a clean stowaway lands with its commit.
+    let clean = loose_blob(source, "an unreferenced clean note\n");
+    let report = receive_pack_carrying(
+        &vault,
+        source,
+        (None, &tip, "refs/heads/work"),
+        &[&second],
+        &[&clean],
+    );
+    assert_eq!(report.door.verdict, DoorWindowVerdict::Clean);
+    assert!(report.landing.is_some());
+    assert_eq!(work(), tip.as_str());
+}
+
+/// H263 review r1 (Astra F5). A name rev-list cannot pass on whole (blank,
+/// or cut at a newline) labels its blob by oid rather than refusing a clean
+/// push. Each file is added and then deleted, so only the history stream
+/// carries it.
+#[cfg(unix)]
+#[test]
+fn history_blobs_under_names_rev_list_cannot_pass_on_still_land() {
+    let (_vault_dir, vault) = temp_vault();
+    let (source, repo, _, second) = served_repo(&vault);
+    let source = source.path();
+    let work = || git(&repo, &["rev-parse", "refs/heads/work"]);
+
+    let tip = commit_file(source, "notes.txt", "clean note\n");
+    let report = receive_pack(&vault, source, None, &tip, "refs/heads/work", &[&second]);
+    assert_eq!(report.door.verdict, DoorWindowVerdict::Clean);
+    let mut old = tip;
+    for name in ["   ", "\nnote.txt"] {
+        commit_file(source, name, "a clean note under an odd name\n");
+        let new = commit_removal(source, name);
+        let report = receive_pack(&vault, source, Some(&old), &new, "refs/heads/work", &[&old]);
+        assert_eq!(report.door.verdict, DoorWindowVerdict::Clean, "{name:?}");
+        assert!(report.landing.is_some(), "{name:?}");
+        assert_eq!(work(), new.as_str());
+        old = new;
+    }
 }
 
 // The scan cap below is new with the history walk; it has no before.
