@@ -8,6 +8,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
+use crate::store::ManifestDbs;
 
 use super::device_only_worlds_in;
 
@@ -92,9 +93,10 @@ pub(crate) fn device_local_worlds_at(
 }
 
 /// [`device_local_keeps_in`] against `flagged`, the flag set read once in
-/// `txn` for many rows.
+/// `txn` for many rows. `store` is the target the row is read from: a room's
+/// overlay ∪ base judges the rows the room stages as well.
 pub(crate) fn device_local_keeps_among(
-    store: &crate::store::Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     flagged: &std::collections::BTreeSet<EntityId>,
     id: &EntityId,
@@ -112,7 +114,7 @@ pub(crate) fn device_local_keeps_among(
 /// (`record_scope::record_world_in`) places in a flagged world: a TASK where
 /// its birth stamp settled it. A record it cannot place is kept.
 pub(crate) fn device_only_withholds(
-    store: &crate::store::Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     flagged: &std::collections::BTreeSet<EntityId>,
     id: &EntityId,
@@ -128,7 +130,7 @@ pub(crate) fn device_only_withholds(
 /// serves (`None` when no row is stored): a CLAIM by the world that revision
 /// names.
 pub(crate) fn device_only_withholds_raw(
-    store: &crate::store::Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     flagged: &std::collections::BTreeSet<EntityId>,
     id: &EntityId,
@@ -182,7 +184,7 @@ pub(crate) fn device_only_withholds_raw(
 /// address that is not a world window's is an error, never portability: the
 /// world is unknown.
 fn claim_in_flagged_world(
-    store: &crate::store::Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     flagged: &std::collections::BTreeSet<EntityId>,
     id: &EntityId,
@@ -202,7 +204,7 @@ fn claim_in_flagged_world(
         }
     }
     let Some(label) = store
-        .sync_state
+        .sync_state()
         .get(txn, &format!("m:dw:{}", id.to_hex()))?
     else {
         return Ok(false);

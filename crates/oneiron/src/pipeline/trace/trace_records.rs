@@ -10,7 +10,7 @@ use crate::fusion;
 use crate::retrieval_quality::{PprCacheOutcome, RetrievalDiagnostics};
 use crate::store::{
     RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal, RetrievalTraceChannelRecord,
-    RetrievalTraceStage, RetrievalTraceStageRecord, Store,
+    RetrievalTraceStage, RetrievalTraceStageRecord, StoreRead,
 };
 
 use super::super::filters::pipeline_candidate_matches_filters_and_gate;
@@ -222,7 +222,7 @@ pub(in crate::pipeline) fn retrieval_trace_candidate_set(
 
 pub(in crate::pipeline) fn filter_retrieval_trace_scores(
     scores: &[ScoredEntity],
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     filters: PipelineFilterConfig<'_>,
     metadata_cache: &mut EntityMetadataCache,

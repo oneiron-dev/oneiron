@@ -27,6 +27,11 @@ use super::types::{
 #[must_use = "PipelineBuilder executes no query until a terminal `.run*()` method is called"]
 pub struct PipelineBuilder<'a> {
     pub(super) vault: &'a Vault,
+    /// The content every channel, filter and hydration step reads: the
+    /// vault's canonical accessors, or a room's overlay ∪ base when the run
+    /// is bound to one ([`Self::reading`]). Policy, gates and blend weights
+    /// stay on `vault.store`.
+    pub(super) read: crate::store::StoreRead<'a>,
     pub(super) vector_search: Option<(Vec<f32>, usize)>,
     pub(super) text_search: Option<(String, usize)>,
     pub(super) rank_profile: Option<crate::config::Bm25RankProfile>,
@@ -104,6 +109,7 @@ impl<'a> PipelineBuilder<'a> {
     pub(crate) fn new(vault: &'a Vault) -> Self {
         Self {
             vault,
+            read: vault.store.read(),
             vector_search: None,
             text_search: None,
             rank_profile: None,
@@ -206,6 +212,14 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
+    /// Reads this run's content through `read`: a room's view, so the run
+    /// sees its overlay ∪ base (ARCH-0052 §2). The read target must be the
+    /// same vault's; telemetry routing stays with [`Self::in_session`].
+    pub(crate) fn reading(mut self, read: crate::store::StoreRead<'a>) -> Self {
+        self.read = read;
+        self
+    }
+
     /// Installs only gate-resolved authority. Public callers use scoped search.
     pub(crate) fn authority_filter(mut self, filter: crate::gate::ResolvedRetrievalFilter) -> Self {
         self.authority_filter = Some(filter);
@@ -245,6 +259,11 @@ impl<'a> PipelineBuilder<'a> {
 
     pub(crate) fn result_limit(&self) -> usize {
         self.result_limit
+    }
+
+    /// The content this run reads ([`Self::reading`]).
+    pub(crate) fn store_read(&self) -> crate::store::StoreRead<'a> {
+        self.read
     }
 
     /// Attaches a host-injected top-N reranker for this run (RET-010,

@@ -31,6 +31,11 @@ impl crate::vault::Vault {
         actor_key: ScopedReadActorKey,
         view: &'a crate::store::SessionStoreView<'a>,
     ) -> ScopedRead<'a> {
+        // A room's rows carry no record-scope stamp (`stamp_put` writes base
+        // only), and a missing stamp is not inferred. A credential that
+        // reads only some worlds cannot place them, so it reads base alone:
+        // the room's rows have no name and no count for it (DEC-0005).
+        let session_view = (!actor_key.has_world_ceiling()).then_some(view);
         ScopedRead {
             vault: self,
             actor_key,
@@ -39,7 +44,7 @@ impl crate::vault::Vault {
             audience_cache: Mutex::new(Default::default()),
             room_ceiling: Mutex::new(None),
             room_ceilings_built: AtomicUsize::new(0),
-            session_view: Some(view),
+            session_view,
             claim_status: ClaimReadStatus::Surfaceable,
             recall_authority: Mutex::new(None),
         }
@@ -187,7 +192,10 @@ impl<'a> ScopedRead<'a> {
     /// Whether a device-local world keeps `id` from this read: a caller off
     /// this device reads none of its rows (DEC-0005), neither the revision
     /// `raw` a door serves nor the row as it stands. A row whose world cannot
-    /// be read stays here too.
+    /// be read stays here too. The flag set is the vault's, read on base; the
+    /// row is judged as this read sees it, so in a room a row the room stages
+    /// is judged as well. Such a row carries no record-scope stamp, and one
+    /// the judge cannot place is kept.
     pub(super) fn device_withholds_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -197,15 +205,15 @@ impl<'a> ScopedRead<'a> {
         if !self.actor_key.off_device() {
             return Ok(false);
         }
-        let store = &self.vault.store;
         let flagged = crate::settings::device_local_worlds_at(
-            store,
+            &self.vault.store,
             txn,
             crate::claim::CallerLocality::OffDevice,
         )?;
+        let read = self.store_read();
         let withholds = match raw {
             Some(raw) => {
-                crate::settings::device_only_withholds_raw(store, txn, &flagged, id, Some(raw))
+                crate::settings::device_only_withholds_raw(&read, txn, &flagged, id, Some(raw))
             }
             None => Ok(false),
         };
@@ -213,7 +221,7 @@ impl<'a> ScopedRead<'a> {
             if held {
                 Ok(true)
             } else {
-                crate::settings::device_only_withholds(store, txn, &flagged, id)
+                crate::settings::device_only_withholds(&read, txn, &flagged, id)
             }
         }) {
             Err(Error::CorruptedIndex(_)) => Ok(true),
@@ -369,6 +377,22 @@ impl<'a> ScopedRead<'a> {
     #[must_use]
     pub fn vault(&self) -> &'a crate::Vault {
         self.vault
+    }
+
+    /// Whether this read sees a room's rows: false outside a room, and for
+    /// a credential that reads base alone in one.
+    pub(crate) fn reads_room(&self) -> bool {
+        self.session_view.is_some()
+    }
+
+    /// The content this read sees: its room's overlay ∪ base, or base alone.
+    /// A reader handed it reads what this read admits from, with no code of
+    /// its own for the room.
+    pub(crate) fn store_read(&self) -> crate::store::StoreRead<'a> {
+        match self.session_view {
+            Some(view) => view.read(),
+            None => self.vault.store.read(),
+        }
     }
 
     /// Both canonical and session reads use the same ports. A session adapter

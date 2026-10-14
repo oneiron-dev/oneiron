@@ -20,6 +20,9 @@ use super::super::types::{
 pub struct ContextPackBuilder<'a> {
     pub(super) pipeline: PipelineBuilder<'a>,
     pub(super) vault: &'a Vault,
+    /// The content this pack retrieves, hydrates and walks: the vault's own,
+    /// or a room's overlay ∪ base ([`Self::reading`]).
+    pub(super) read: crate::store::StoreRead<'a>,
     pub(super) hydrate: bool,
     pub(super) read_mode: crate::vault::ReadMode,
     pub(super) criticality: Option<bool>,
@@ -99,6 +102,7 @@ impl<'a> ContextPackBuilder<'a> {
     pub(crate) fn new(vault: &'a Vault) -> Self {
         Self {
             pipeline: vault.query().telemetry_action(RetrievalAction::ContextPack),
+            read: vault.store.read(),
             vault,
             hydrate: true,
             read_mode: crate::vault::ReadMode::Indexed,
@@ -146,6 +150,16 @@ impl<'a> ContextPackBuilder<'a> {
     ) -> Self {
         self.pipeline = self.pipeline.in_session(session);
         self.session = Some(session);
+        self
+    }
+
+    /// Reads this pack's content through `read`: a room's view, so its
+    /// retrieval, hydration, edges and references see the room's overlay ∪
+    /// base (ARCH-0052 §2). The read target must be the same vault's;
+    /// telemetry routing stays with [`Self::in_session`].
+    pub(crate) fn reading(mut self, read: crate::store::StoreRead<'a>) -> Self {
+        self.pipeline = self.pipeline.reading(read);
+        self.read = read;
         self
     }
 

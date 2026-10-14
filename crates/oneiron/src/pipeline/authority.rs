@@ -3,7 +3,7 @@
 use crate::claim::ClaimBody;
 use crate::gate::ResolvedRetrievalFilter;
 use crate::registry::{ENTITY_TYPE_CLAIM, EntityClassification, entity_type_registry_entry};
-use crate::store::Store;
+use crate::store::StoreRead;
 
 use super::filters::claim_status_gate_allows;
 use super::types::{ClaimStatusGateCache, EntityMetadataCache, ScoredEntity};
@@ -35,11 +35,11 @@ pub(crate) fn claim_ceiling_allowed(filter: &ResolvedRetrievalFilter, body: &Cla
 pub(crate) fn type_allowed(
     filter: &ResolvedRetrievalFilter,
     named: Option<&[u8]>,
-    store: &Store,
+    store: &StoreRead<'_>,
     kind: u8,
 ) -> bool {
     !filter.deny_all
-        && store.validate_entity_type(kind).is_ok()
+        && store.base().validate_entity_type(kind).is_ok()
         && match filter.entity_types.as_ref() {
             Some(types) => types.contains(&kind),
             None => !is_maintenance(kind) || named.is_some_and(|named| named.contains(&kind)),
@@ -55,7 +55,7 @@ pub(super) fn apply_types(
     scores: &mut Vec<ScoredEntity>,
     filter: &ResolvedRetrievalFilter,
     named: Option<&[u8]>,
-    store: &Store,
+    store: &StoreRead<'_>,
     txn: &heed::RoTxn<'_>,
     metadata: &mut EntityMetadataCache,
 ) -> crate::Result<()> {
@@ -76,7 +76,7 @@ pub(super) fn apply_types(
 pub(super) fn candidate_allowed(
     filter: &ResolvedRetrievalFilter,
     named: Option<&[u8]>,
-    store: &Store,
+    store: &StoreRead<'_>,
     txn: &heed::RoTxn<'_>,
     id: &crate::EntityId,
     metadata: &mut EntityMetadataCache,
@@ -110,7 +110,7 @@ pub(super) fn apply(
     scores: &mut Vec<ScoredEntity>,
     filter: &ResolvedRetrievalFilter,
     named: Option<&[u8]>,
-    store: &Store,
+    store: &StoreRead<'_>,
     txn: &heed::RoTxn<'_>,
     metadata: &mut EntityMetadataCache,
     gate: &mut ClaimStatusGateCache,

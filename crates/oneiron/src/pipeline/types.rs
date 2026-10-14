@@ -23,7 +23,7 @@ use crate::registry::{
     ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD,
 };
 use crate::retrieval_quality::RetrievalQualityReport;
-use crate::store::{RetrievalRunId, RetrievalSignal, Store};
+use crate::store::{RetrievalRunId, RetrievalSignal, StoreRead};
 use crate::temporal::TemporalAnchorMode;
 
 // Referenced only by the intra-doc links below; `cfg(doc)` keeps it out of
@@ -170,7 +170,7 @@ pub(super) struct EntityMetadata {
     pub(super) learned_at: u64,
 }
 
-pub(crate) type CandidateFilter<'a> = dyn Fn(&crate::store::Store, &heed::RoTxn<'_>, &EntityId) -> crate::Result<bool>
+pub(crate) type CandidateFilter<'a> = dyn Fn(&crate::store::StoreRead<'_>, &heed::RoTxn<'_>, &EntityId) -> crate::Result<bool>
     + Send
     + Sync
     + 'a;
@@ -324,7 +324,7 @@ impl ClaimStatusGateCache {
     /// Whether a device-local world keeps `id` from this run.
     pub(super) fn keeps_device_local(
         &self,
-        store: &Store,
+        store: &StoreRead<'_>,
         txn: &RoTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
@@ -355,7 +355,7 @@ impl EntityMetadataCache {
     /// nothing of.
     pub(super) fn countable_suppressed(
         &self,
-        store: &Store,
+        store: &StoreRead<'_>,
         txn: &RoTxn<'_>,
         credential: Option<&crate::federation::Scope>,
         device_local: Option<&std::collections::BTreeSet<EntityId>>,
@@ -394,7 +394,7 @@ impl EntityMetadataCache {
 
     pub(super) fn get(
         &mut self,
-        store: &Store,
+        store: &StoreRead<'_>,
         rtxn: &RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<EntityMetadata>> {
