@@ -271,7 +271,6 @@ fn refused_as_body(result: Result<()>, road: &str) {
 }
 
 /// As [`refused_as_body`], by the agent id's pin itself.
-#[cfg(feature = "sync")]
 fn refused_by_pin(result: Result<()>, road: &str) {
     let err = result.expect_err(road);
     assert!(
@@ -898,31 +897,78 @@ fn a_restored_row_narrows_its_pin() -> Result<()> {
     Ok(())
 }
 
-/// H215, round 3: a pin a restore cannot read is no pin to pass. An agent
-/// narrowed and deleted since the backup, whose live pin no longer reads, is
-/// not brought back at the backup's wider ceiling: the restore refuses.
+/// H215, round 3: a pin a restore cannot read is no pin to pass: the restore
+/// refuses, and leaves no destination. The same pin read whole lets the same
+/// restore through (R6 F4: the bytes are ones no pin decodes from).
 #[test]
 fn a_restore_refuses_past_a_pin_it_cannot_read() -> Result<()> {
     use crate::agent_def::AgentCeiling;
 
     let (_dir, vault) = open_test_vault();
-    let (agent_id, agent) = custom_agent(&vault, AgentCeiling::Auto)?;
+    let (agent_id, _) = custom_agent(&vault, AgentCeiling::Proposed)?;
     let backups = tempfile::tempdir()?;
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
-    let mut narrowed = agent;
-    narrowed.version = "2".to_owned();
-    narrowed.ceiling = AgentCeiling::Proposed;
-    vault.update_agent_definition(&agent_id, &narrowed, test_time_range(2, 2), 2)?;
-    vault.batch().delete(&agent_id).commit()?;
     let pin_key = [&b"agent_def/id-pin/v1\0"[..], agent_id.as_bytes()].concat();
+    let pin = vault.with_write_txn(|txn| {
+        let pin = vault
+            .store
+            .vault_meta
+            .get(txn, &pin_key)?
+            .map(<[u8]>::to_vec);
+        vault.store.vault_meta.put(txn, &pin_key, &[3])?;
+        Ok(pin)
+    })?;
+    let pin = pin.expect("the agent's pin");
+    let destination = backups.path().join("restored");
+    assert!(restore_keeping_authority(&vault, &image, &destination).is_err());
+    assert!(!destination.exists());
+    vault.with_write_txn(|txn| {
+        vault.store.vault_meta.put(txn, &pin_key, &pin)?;
+        Ok(())
+    })?;
+    restore_keeping_authority(&vault, &image, &destination)?;
+    Ok(())
+}
+
+/// H215 (Sol R6 F2, Astra R6 F3): a restore that brings back a definition
+/// whose id's pin has not read its lineage names it, as a put would have.
+/// Deleted in the restored vault, the definition comes back only on that
+/// lineage.
+#[test]
+fn a_restore_names_the_lineage_an_unread_pin_waits_for() -> Result<()> {
+    use crate::agent_def::AgentCeiling;
+
+    let (_dir, vault) = open_test_vault();
+    let (herald_id, herald) = seeded_row(&vault, "sys.herald");
+    let fork = |forked_from| {
+        let mut def = herald.clone();
+        def.agent_id = "oneiron.agent.custom".to_owned();
+        def.version = "1".to_owned();
+        def.logical_id = None;
+        def.display_name = None;
+        def.source = ClaimSource::Imported;
+        def.ceiling = AgentCeiling::Proposed;
+        def.forked_from = forked_from;
+        def
+    };
+    let fork_id = crate::test_util::entity(0x5C);
+    vault.put_agent_definition(&fork_id, &fork(Some(herald_id)), test_time_range(1, 1), 1)?;
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("image");
+    vault.snapshot_checkpoint(&image, 100)?;
+    let pin_key = [&b"agent_def/id-pin/v1\0"[..], fork_id.as_bytes()].concat();
     vault.with_write_txn(|txn| {
         vault.store.vault_meta.put(txn, &pin_key, &[2])?;
         Ok(())
     })?;
-    let destination = backups.path().join("restored");
-    assert!(restore_keeping_authority(&vault, &image, &destination).is_err());
-    assert!(!destination.exists());
+    let restored = restore_keeping_authority(&vault, &image, &backups.path().join("restored"))?;
+    restored.batch().delete(&fork_id).commit()?;
+    refused_by_pin(
+        restored.put_agent_definition(&fork_id, &fork(None), test_time_range(3, 3), 3),
+        "the fork reborn off the lineage its restore named",
+    );
+    restored.put_agent_definition(&fork_id, &fork(Some(herald_id)), test_time_range(4, 4), 4)?;
     Ok(())
 }
 

@@ -87,8 +87,11 @@ impl Drop for ForkedCustody {
 /// refused after it made its destination leaves nothing there, and the same
 /// destination can take a later restore. Named by device and inode, and held
 /// open so no other directory takes that inode meanwhile: a directory that
-/// took the path since is never removed. Where no identity reads, nothing
-/// is. Held before the vault opened in it, so the vault closes first.
+/// took the path after the guard named it is not removed. Where no identity
+/// reads, nothing is. The guard names the path's directory just after
+/// `create_dir` and removes by path, so it assumes nothing else renames in
+/// the destination's parent while a restore runs. Held before the vault
+/// opened in it, so the vault closes first.
 struct CreatedDestination<'a>(Option<(&'a Path, (u64, u64), std::fs::File)>);
 impl<'a> CreatedDestination<'a> {
     /// Names the directory `create_dir` just made at `destination`.

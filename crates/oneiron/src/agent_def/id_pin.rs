@@ -328,8 +328,8 @@ pub(crate) fn pin_stored_rows_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>) 
 }
 
 /// Pins the definition stored at `id` as a put of it would have: a row
-/// narrower than its id's pin narrows the pin, and a row whose id holds no
-/// pin is pinned at its own ceiling and lineage (no wider than its seed), or
+/// narrower than its id's pin narrows the pin, a row within a pin whose
+/// lineage is unread names it, and a row whose id holds no pin is pinned at its own ceiling and lineage (no wider than its seed), or
 /// at `Proposed` when it does not decode (a retained shell keeps no body), on
 /// its seed's lineage or, for an unseeded id, with the lineage unread.
 /// Unpinned, a row that reached the store without a put could be deleted and
@@ -343,11 +343,21 @@ pub(crate) fn pin_stored_row_in_txn(
 ) -> Result<()> {
     let row = stored_row_pin(store, wtxn, id)?;
     let pin = match (PIN.get(store, wtxn, id)?, row) {
-        (Some(pin), Some(row)) if pin.ceiling.widens_beyond(row.ceiling) => AgentIdPin {
-            ceiling: row.ceiling,
-            ..pin
-        },
-        (Some(_), _) => return Ok(()),
+        (Some(pin), Some(row)) => {
+            let within = !row.ceiling.widens_beyond(pin.ceiling);
+            let next = AgentIdPin {
+                ceiling: if within { row.ceiling } else { pin.ceiling },
+                lineage: match pin.lineage {
+                    Lineage::Unread if within => row.lineage,
+                    lineage => lineage,
+                },
+            };
+            if next == pin {
+                return Ok(());
+            }
+            next
+        }
+        (Some(_), None) => return Ok(()),
         (None, Some(row)) => bound_in_txn(store, wtxn, id)?.unwrap_or(row),
         (None, None) => AgentIdPin {
             ceiling: AgentCeiling::Proposed,
@@ -360,7 +370,8 @@ pub(crate) fn pin_stored_row_in_txn(
 /// Whether the row at agent id `id` answers to the id's pin: absent, or a
 /// definition no wider than the pin, on its lineage. A restore writes rows
 /// without a put, so it asks this of every row it brings back to an agent id.
-/// A definition that does not decode is within: the gate holds it at
+/// A definition that does not decode is within, as is a signed authority
+/// entry, which takes its id from any row there: the gate holds either at
 /// `Proposed`.
 pub(crate) fn row_within_pin_in_txn(
     store: &Store,
@@ -376,6 +387,7 @@ pub(crate) fn row_within_pin_in_txn(
     };
     Ok(match store.port_entity_record(txn, id)? {
         None => true,
+        Some(row) if row.entity_type == ENTITY_TYPE_AUTHORITY_LOG => true,
         Some(row) if row.entity_type != ENTITY_TYPE_AGENT_DEF => false,
         Some(row) => decode_agent_definition(&row.body)
             .ok()

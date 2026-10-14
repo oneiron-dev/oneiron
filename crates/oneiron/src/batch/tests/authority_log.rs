@@ -267,7 +267,8 @@ fn authority_log_body_divergent_overwrite_rejected_at_store_key() -> Result<()> 
 /// H215 (Astra R5 F1): an agent id stays one across a delete, but a signed
 /// authority entry's id is its content's. A definition put at that id first,
 /// whether it is still there or was deleted, keeps the entry out no more than
-/// any other row there does.
+/// any other row there does, and a restore that keeps this vault's authority
+/// takes the entry back at that id (Sol and Astra R6 F1).
 #[cfg(feature = "sync")]
 #[test]
 fn authority_log_put_lands_at_an_id_an_agent_held() -> Result<()> {
@@ -292,9 +293,20 @@ fn authority_log_put_lands_at_an_id_an_agent_held() -> Result<()> {
         assert_eq!(id, derived);
         assert_eq!(
             vault.get_authority_log_entry(&id)?,
-            Some(genesis),
+            Some(genesis.clone()),
             "deleted first: {deleted}"
         );
+        let backups = tempfile::tempdir()?;
+        let image = backups.path().join("image");
+        vault.snapshot_checkpoint(&image, 100)?;
+        let (restored, _) = Vault::restore_checkpoint_keeping_authority(
+            &image,
+            &backups.path().join("restored"),
+            vault.config.clone(),
+            &vault,
+            1_000,
+        )?;
+        assert_eq!(restored.get_authority_log_entry(&id)?, Some(genesis));
     }
     Ok(())
 }
