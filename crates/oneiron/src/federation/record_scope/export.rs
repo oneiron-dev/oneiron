@@ -48,6 +48,7 @@ impl Vault {
                 &raw[ENTITY_METADATA_HEADER_LEN..],
             )? && admits(&scope, selector, slip, channel, "export")
                 && crate::authority::row_causal_admitted(self, &txn, &id, &raw)?
+                && self.epoch_fence_in(&txn, id, &raw, [selector, slip, channel], "export")?
             {
                 out.push(ScopedRecord {
                     id,

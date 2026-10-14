@@ -10,11 +10,15 @@ use crate::side_table::{self, HexId, Named, Raw, RawValue, SideTable};
 use crate::store::Store;
 
 mod device_local;
+mod device_only;
 pub mod model_versioning;
 
 pub(crate) use device_local::{
-    device_local_keeps_among, device_local_keeps_in, device_local_worlds_at, device_only_withholds,
-    device_only_withholds_raw,
+    device_local_keeps_among, device_local_keeps_in, device_local_worlds_at,
+};
+pub(crate) use device_only::{
+    CarriedWorlds, carried_worlds_in, device_only_withholds, device_only_withholds_raw,
+    minted_worlds_in,
 };
 
 pub use model_versioning::{

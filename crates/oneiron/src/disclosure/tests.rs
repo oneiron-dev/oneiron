@@ -506,3 +506,116 @@ fn corrupt_scope_row_fails_closed_to_absence_clamp_not_error() -> Result<()> {
     );
     Ok(())
 }
+
+/// agent-runtime-v1 §d7 through #1364's resolver: an epoch summary carries
+/// words from every record it was written from, and its own birth scope
+/// cannot stand for them. The clamp admits one only while it admits each
+/// `DerivedFrom` source, through a nested epoch summary too.
+#[test]
+fn an_epoch_summary_reaches_a_guest_only_with_every_record_it_was_written_from() -> Result<()> {
+    use crate::compaction::{
+        EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochSummaryBody,
+        encode_epoch_summary_body,
+    };
+    use crate::registry::ENTITY_TYPE_SUMMARY;
+    let (_tmp, vault) = temp_vault();
+    let contact_id = test_id(0x31);
+    seed_contact(&vault, contact_id, "kenji@example.com");
+    let clearance = DisclosureScope::new(crate::federation::Scope::top(), "guest", 10)?;
+    vault.set_counterparty_disclosure_scope(&contact_id, &clearance)?;
+    let source = test_id(0x32);
+    put_turn(&vault, &source);
+    let epoch = |epoch: u64, text: &str| {
+        encode_epoch_summary_body(&EpochSummaryBody {
+            v: EPOCH_SUMMARY_BODY_VERSION,
+            session: test_id(0x33).to_hex(),
+            epoch,
+            turn_start: epoch * 3,
+            turn_end: epoch * 3 + 2,
+            level: EPOCH_SUMMARY_LEVEL,
+            text: text.into(),
+            actor: test_id(0x34).to_hex(),
+        })
+    };
+    let (summary, nested, lone) = (test_id(0x35), test_id(0x36), test_id(0x37));
+    let at = |second| TimeRange {
+        start: second,
+        end: second,
+    };
+    vault
+        .batch()
+        .put(
+            &summary,
+            ENTITY_TYPE_SUMMARY,
+            at(2),
+            2,
+            &epoch(1, "steps 3-5")?,
+        )
+        .edge(&summary, crate::edge::EdgeKind::DerivedFrom, &source, 1.0)
+        .put(
+            &nested,
+            ENTITY_TYPE_SUMMARY,
+            at(3),
+            3,
+            &epoch(2, "steps 6-8")?,
+        )
+        .edge(&nested, crate::edge::EdgeKind::DerivedFrom, &summary, 1.0)
+        .put(
+            &lone,
+            ENTITY_TYPE_SUMMARY,
+            at(4),
+            4,
+            &epoch(3, "a run that read nothing yet")?,
+        )
+        .commit()?;
+    let ctx = DisclosureContext::resolve(
+        &vault,
+        InterlocutorSet::with_session_owner(vec![known(contact_id, "kenji@example.com")]),
+    )?;
+    assert_eq!(ctx.mode(), DisclosureMode::Supervised);
+    let admits = |id: &EntityId| -> Result<bool> {
+        let rtxn = vault.store.env.read_txn()?;
+        ctx.admits(&vault.store, &rtxn, id, ENTITY_TYPE_SUMMARY, None)
+    };
+    assert!(admits(&summary)? && admits(&nested)?);
+
+    // A room's P7 rule reads the same words: a clearance that takes the
+    // summaries' own stamps, but not their source's, discloses neither of
+    // the two written from it. Facets never bound a disclosure, so the
+    // clearance parts them by kind band.
+    let discloses = |scope: &crate::federation::Scope, id: EntityId| -> Result<bool> {
+        let rtxn = vault.store.env.read_txn()?;
+        let raw = vault.get_raw_in(&rtxn, &id)?.expect("a stored summary");
+        super::discloses_raw(&vault, &rtxn, scope, id, &raw)
+    };
+    let top = crate::federation::Scope::top();
+    assert!(discloses(&top, summary)? && discloses(&top, nested)?);
+    let mut summaries_only = top;
+    summaries_only.bands = crate::federation::ScopeAxis::Some([ENTITY_TYPE_SUMMARY].into());
+    assert!(
+        !discloses(&summaries_only, summary)? && !discloses(&summaries_only, nested)?,
+        "a room clearance short of the source discloses neither summary"
+    );
+    assert!(
+        discloses(&summaries_only, lone)?,
+        "an epoch written from no record carries its own words"
+    );
+
+    vault.set_disclosure_tier_a(&source, 100)?;
+    assert!(!admits(&summary)?, "its source is withheld");
+    assert!(
+        !admits(&nested)?,
+        "the summary it was written from is withheld"
+    );
+
+    // Erasing the source withdraws both: the nested summary repeats its
+    // parent's words.
+    assert!(vault.delete_entity(&source)?);
+    let rtxn = vault.store.env.read_txn()?;
+    for id in [summary, nested] {
+        assert!(
+            crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &rtxn, &id)?.stale
+        );
+    }
+    Ok(())
+}

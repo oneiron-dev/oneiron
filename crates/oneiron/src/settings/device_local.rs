@@ -7,9 +7,8 @@ use heed::RoTxn;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::ports::{EdgeDirection, EdgeStoreRead};
-use crate::store::ManifestDbs;
 
+use super::device_only::device_only_withholds;
 use super::device_only_worlds_in;
 
 impl Vault {
@@ -96,7 +95,7 @@ pub(crate) fn device_local_worlds_at(
 /// `txn` for many rows. `store` is the target the row is read from: a room's
 /// overlay ∪ base judges the rows the room stages as well.
 pub(crate) fn device_local_keeps_among(
-    store: &impl ManifestDbs,
+    store: &impl crate::store::ManifestDbs,
     txn: &RoTxn<'_>,
     flagged: &std::collections::BTreeSet<EntityId>,
     id: &EntityId,
@@ -105,115 +104,4 @@ pub(crate) fn device_local_keeps_among(
         Err(Error::CorruptedIndex(_)) => Ok(true),
         held => held,
     }
-}
-
-/// Whether a device-only world keeps `id` on this device: the flagged WORLD
-/// row itself, a CLAIM whose `worldId` is flagged (an erased or purged one by
-/// the world address its deletion kept), a NOTE with a stored `InWorld` edge
-/// to a flagged world, or any other record the shared resolver
-/// (`record_scope::record_world_in`) places in a flagged world: a TASK where
-/// its birth stamp settled it. A record it cannot place is kept.
-pub(crate) fn device_only_withholds(
-    store: &impl ManifestDbs,
-    txn: &RoTxn<'_>,
-    flagged: &std::collections::BTreeSet<EntityId>,
-    id: &EntityId,
-) -> Result<bool> {
-    if flagged.is_empty() {
-        return Ok(false);
-    }
-    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?;
-    device_only_withholds_raw(store, txn, flagged, id, raw.as_deref())
-}
-
-/// [`device_only_withholds`] judged on `raw`, the revision of `id` a door
-/// serves (`None` when no row is stored): a CLAIM by the world that revision
-/// names.
-pub(crate) fn device_only_withholds_raw(
-    store: &impl ManifestDbs,
-    txn: &RoTxn<'_>,
-    flagged: &std::collections::BTreeSet<EntityId>,
-    id: &EntityId,
-    raw: Option<&[u8]>,
-) -> Result<bool> {
-    if flagged.is_empty() {
-        return Ok(false);
-    }
-    if flagged.contains(id) {
-        return Ok(true);
-    }
-    let Some(raw) = raw else {
-        return claim_in_flagged_world(store, txn, flagged, id, None);
-    };
-    let header = crate::batch::EntityMetadataHeader::parse(raw)
-        .ok_or(Error::CorruptedIndex("entity header"))?;
-    match header.entity_type {
-        crate::registry::ENTITY_TYPE_CLAIM => {
-            claim_in_flagged_world(store, txn, flagged, id, Some(raw))
-        }
-        crate::registry::ENTITY_TYPE_NOTE => {
-            for edge in store.port_edges(
-                txn,
-                id,
-                EdgeDirection::Out,
-                Some(crate::edge::EdgeKind::InWorld),
-                None,
-            )? {
-                if flagged.contains(&edge?.target) {
-                    return Ok(true);
-                }
-            }
-            Ok(false)
-        }
-        kind => {
-            let body = raw
-                .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-                .unwrap_or_default();
-            Ok(
-                crate::federation::record_scope::record_world_in(store, txn, *id, kind, body)?
-                    .is_none_or(|world| world.is_some_and(|world| flagged.contains(&world))),
-            )
-        }
-    }
-}
-
-/// A CLAIM's world from its stored body. An erased claim keeps only its
-/// header (its row fenced as deleted), and a purged one nothing; its deletion
-/// kept the world window's address (`m:dw:`, `<month>@<world>`). A body that
-/// cannot be read, a bare header on a row not fenced as deleted, or an
-/// address that is not a world window's is an error, never portability: the
-/// world is unknown.
-fn claim_in_flagged_world(
-    store: &impl ManifestDbs,
-    txn: &RoTxn<'_>,
-    flagged: &std::collections::BTreeSet<EntityId>,
-    id: &EntityId,
-    raw: Option<&[u8]>,
-) -> Result<bool> {
-    let unknown = || Error::CorruptedIndex("device-only claim world");
-    if let Some(raw) = raw {
-        let body = raw
-            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-            .unwrap_or_default();
-        if !body.is_empty() {
-            let body = crate::claim::decode_claim_body(body, true).map_err(|_| unknown())?;
-            return Ok(body.world.is_some_and(|world| flagged.contains(&world)));
-        }
-        if !crate::deletion::row_deletion_marked(store, txn, id, Some(raw))? {
-            return Err(unknown());
-        }
-    }
-    let Some(label) = store
-        .sync_state()
-        .get(txn, &format!("m:dw:{}", id.to_hex()))?
-    else {
-        return Ok(false);
-    };
-    let world = std::str::from_utf8(&label)
-        .ok()
-        .filter(|label| crate::deletion::parse_window_label(label).is_some())
-        .and_then(|label| label.split_once('@'))
-        .and_then(|(_, world)| EntityId::from_hex(world).ok())
-        .ok_or(Error::CorruptedIndex("deletion window address"))?;
-    Ok(flagged.contains(&world))
 }
