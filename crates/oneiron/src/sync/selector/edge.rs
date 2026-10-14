@@ -96,13 +96,22 @@ pub(super) fn copy_admitted_edges(
             match verdict {
                 Ok(AdmittedEdgeVerdict::Copy) => {}
                 Ok(AdmittedEdgeVerdict::Hold) => {
-                    result = value.ok_or(Error::InvalidKey).map(|value| {
-                        held.push(HeldStamp {
+                    let Some(value) = value else {
+                        result = Err(Error::InvalidKey);
+                        return;
+                    };
+                    // Only a value replay could write is held; any other is
+                    // the peer's rejection, typed as the materializers type it.
+                    match crate::edge::decode_edge_value_for_kind(EdgeKind::FacetOf, value) {
+                        Ok(_) => held.push(HeldStamp {
                             src,
                             tgt,
                             value: value.to_vec(),
-                        });
-                    });
+                        }),
+                        Err(malformed) => {
+                            rejections.push(QuarantineContainer::Edges, key, &malformed, value);
+                        }
+                    }
                     return;
                 }
                 Ok(AdmittedEdgeVerdict::DropRejected(off_table)) => {
@@ -163,17 +172,17 @@ pub(super) fn hold_stamps(vault: &Vault, lane: &str, held: &[HeldStamp]) -> Resu
 }
 
 /// Puts back into `edges` each stamp held under `lane` whose row `brought`,
-/// the update's admitted entities, carries as a birth, so the row's own
-/// sender releases its early stamps with the row. A copy is kept until a
-/// writer that may place the row writes the pair: a deferred update is
-/// admitted again before it is imported.
+/// the update's entities, carries as a birth, so the row's own sender
+/// releases its early stamps with the row, and returns them in key order. A
+/// copy is kept until a writer that may place the row writes the pair: a
+/// deferred update is admitted again before it is imported.
 #[cfg(feature = "sync")]
 pub(super) fn release_stamps(
     vault: &Vault,
     lane: &str,
     brought: &loro::LoroMap,
     edges: &loro::LoroMap,
-) -> Result<()> {
+) -> Result<Vec<(String, Vec<u8>)>> {
     let mut rows = Vec::new();
     map_for_each_value_bytes(brought, |key, _| {
         if let Ok(id) = EntityId::from_hex(key) {
@@ -181,6 +190,7 @@ pub(super) fn release_stamps(
         }
     });
     let rtxn = vault.store.env.read_txn()?;
+    let mut released = Vec::new();
     for src in rows {
         if crate::batch::stored_entity_type(&vault.store, &rtxn, &src)?.is_some() {
             continue;
@@ -189,10 +199,12 @@ pub(super) fn release_stamps(
             let key = super::bridge::format_edge_key(&src, EdgeKind::FacetOf, &tgt);
             if super::loro_support::map_get_bytes(edges, &key).is_none() {
                 map_insert_bytes(edges, &key, &value)?;
+                released.push((key, value));
             }
         }
     }
-    Ok(())
+    released.sort();
+    Ok(released)
 }
 
 /// A `FacetOf` stamp an update sent ahead of its source row.
@@ -346,20 +358,51 @@ fn admitted_facet_of_verdict(
             },
         );
     }
-    if crate::ports::EdgeStoreRead::port_edge_get(
-        &vault.store,
-        rtxn,
-        &src,
-        EdgeKind::FacetOf,
-        &tgt,
-    )?
-    .is_none()
-    {
-        return Ok(AdmittedEdgeVerdict::DropRejected(Error::Registry(
-            RegistryError::FacetStampImmutable { src },
-        )));
-    }
-    Ok(AdmittedEdgeVerdict::Copy)
+    Ok(match restamp_of_stored_row(vault, rtxn, src, tgt)? {
+        Some(refusal) => AdmittedEdgeVerdict::DropRejected(refusal),
+        None => AdmittedEdgeVerdict::Copy,
+    })
+}
+
+/// The refusal for a stamp `src -FacetOf-> tgt` onto a row this vault stores
+/// that does not already hold it; `None` for any other row.
+#[cfg(feature = "sync")]
+fn restamp_of_stored_row(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    src: EntityId,
+    tgt: EntityId,
+) -> Result<Option<Error>> {
+    let stored = crate::batch::stored_entity_type(&vault.store, rtxn, &src)?.is_some()
+        && crate::ports::EdgeStoreRead::port_edge_get(
+            &vault.store,
+            rtxn,
+            &src,
+            EdgeKind::FacetOf,
+            &tgt,
+        )?
+        .is_none();
+    Ok(stored.then_some(Error::Registry(RegistryError::FacetStampImmutable { src })))
+}
+
+/// Judges each facet stamp of already admitted bytes against the vault as it
+/// is now. A stamp admitted with its row's birth that would now land on a row
+/// another writer stored meanwhile is refused (a staged artifact confirmed
+/// after the row arrived).
+#[cfg(feature = "sync")]
+pub(super) fn recheck_admitted_stamps(vault: &Vault, edges: &loro::LoroMap) -> Result<()> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut result = Ok(());
+    map_for_each_value_bytes(edges, |key, _| {
+        if result.is_err() {
+            return;
+        }
+        if let Some((src, EdgeKind::FacetOf, tgt)) = super::bridge::parse_edge_key(key) {
+            result = restamp_of_stored_row(vault, &rtxn, src, tgt)
+                .and_then(|refusal| refusal.map_or(Ok(()), Err));
+        }
+    });
+    result
 }
 
 /// One endpoint's type byte at admission time: the stored row first (permanent

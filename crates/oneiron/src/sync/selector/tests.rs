@@ -1724,6 +1724,119 @@ fn a_staged_stamp_confirmed_after_its_row_arrived_stays_out_of_reads() {
     assert!(vault.row_in_facets(&row, &facet_set(private)).unwrap());
 }
 
+/// Sol R5 F4 and Wonder R5 F1: a foreign artifact brings `row` and its
+/// `row -FacetOf-> work` together, staged while this vault lacks the row. The
+/// row is then born here in `private`, and the operator confirms: the
+/// artifact no longer brings the row's birth, so the confirmation is refused
+/// and a work reader does not read the row.
+#[test]
+fn a_staged_birth_confirmed_after_another_writer_birthed_the_row_is_refused() {
+    let window = "2026-05";
+    let window_key = WindowKey::new(window);
+    let (_dir, vault, _grant_id, mut client) = test_client_with_grant(entity_id(0xD8), window);
+    let [work, private, row, actor] = [1, 2, 3, 4].map(|n| entity_id(0xD8 + n));
+    for facet in [work, private] {
+        put_row(&vault, facet, ENTITY_TYPE_FACET);
+    }
+    let artifact = create_window_doc("foreign", &window_key);
+    insert_entity(&artifact, row, ENTITY_TYPE_EVENT, b"row");
+    insert_edge(&artifact, row, EdgeKind::FacetOf, work);
+    artifact.commit();
+    let classification = crate::batch::export::VaultImportReceipt {
+        manifest_digest: [0xD8; 32],
+        classification: crate::batch::export::VaultImportClassification::ForeignAuthorityChain,
+        mismatches: vec![],
+        exported_vault_id: None,
+        local_vault_id: None,
+        exported_label: None,
+        expected_label: None,
+        byte_faithful: false,
+    };
+    let staged = crate::batch::export::stage_foreign_vault_import(
+        &vault,
+        &classification,
+        crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
+            platform: "elsewhere".into(),
+        },
+        &window_key,
+        &artifact.export(ExportMode::all_updates()).unwrap(),
+    )
+    .unwrap();
+
+    put_row(&vault, row, ENTITY_TYPE_EVENT);
+    vault
+        .put_edge(&row, EdgeKind::FacetOf, &private, 1.0)
+        .unwrap();
+    let confirmation = crate::batch::export::VaultImportConfirmation {
+        receipt_id: staged.receipt.receipt_id,
+        actor,
+        confirmed_at_secs: 1,
+    };
+    assert!(
+        client
+            .confirm_staged_vault_import(staged, confirmation)
+            .is_err(),
+        "an artifact whose row another writer birthed was confirmed"
+    );
+    assert!(!stamp_stored(&vault, row, work));
+    assert!(!vault.row_in_facets(&row, &facet_set(work)).unwrap());
+    assert!(vault.row_in_facets(&row, &facet_set(private)).unwrap());
+}
+
+/// Sol R5 F3: a peer's early stamps reach the owner's two devices apart, `row
+/// -FacetOf-> work` on one and `row -FacetOf-> private` on the other. The same
+/// row update then releases a different stamp on each. Each device authors
+/// its release under its own operation ids, so own-device sync carries both
+/// and the devices converge.
+#[test]
+fn one_row_update_releasing_different_stamps_on_two_devices_converges() {
+    let window_key = WindowKey::new("2026-05");
+    let (_one_dir, one, _) = test_vault_with_grant(entity_id(0xE0));
+    let (_two_dir, two, _) = test_vault_with_grant(entity_id(0xE0));
+    let [peer, work, private, row] = [1, 2, 3, 4].map(|n| entity_id(0xE0 + n));
+    let role = FederationAdmissionRole::Member;
+    let admit = |device: &Vault, doc: &LoroDoc, update: &[u8]| {
+        doc.import(&admit_peer_window_update(device, &window_key, update, role, peer).unwrap())
+            .unwrap();
+    };
+    let birth = create_window_doc("federation-peer", &window_key);
+    insert_entity(&birth, row, ENTITY_TYPE_EVENT, b"row");
+    birth.commit();
+    let birth = birth.export(ExportMode::all_updates()).unwrap();
+    let mut docs = Vec::new();
+    for (device, facet) in [(&one, work), (&two, private)] {
+        put_row(device, work, ENTITY_TYPE_FACET);
+        put_row(device, private, ENTITY_TYPE_FACET);
+        let doc = create_window_doc("local", &window_key);
+        let ahead = create_window_doc("federation-peer", &window_key);
+        insert_edge(&ahead, row, EdgeKind::FacetOf, facet);
+        ahead.commit();
+        admit(
+            device,
+            &doc,
+            &ahead.export(ExportMode::all_updates()).unwrap(),
+        );
+        admit(device, &doc, &birth);
+        docs.push(doc);
+    }
+    docs[0]
+        .import(&docs[1].export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    docs[1]
+        .import(&docs[0].export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+
+    for (device, doc) in [(&one, &docs[0]), (&two, &docs[1])] {
+        rematerialize(device, doc, &window_key);
+        for facet in [work, private] {
+            assert!(
+                stamp_stored(device, row, facet),
+                "own-device sync dropped a released stamp"
+            );
+        }
+    }
+}
+
 /// OUT-OF-ORDER RESIDUE — the leg the admission drop alone cannot close, and
 /// the reason the selector needs a read mirror of the write table.
 ///
@@ -1762,8 +1875,10 @@ fn out_of_order_off_table_residue_cannot_scope_the_export_for_either_role() {
         let event = entity_id(seed + 4);
 
         // Update 1: the stamp lands while its SOURCE is unknowable everywhere
-        // — the H2 defer the admission door must honor. The FACET target rides
-        // along so the row names a facet this peer will select.
+        // — the H2 defer the admission door must honor, now by holding the
+        // stamp out of the window until its sender brings the source. The
+        // FACET target rides along so the row names a facet this peer will
+        // select.
         let first = create_window_doc("federation-peer", &WindowKey::new(window));
         insert_entity(&first, facet_selected, ENTITY_TYPE_FACET, b"facet-a");
         insert_entity(&first, event, ENTITY_TYPE_EVENT, b"event");
@@ -1780,13 +1895,13 @@ fn out_of_order_off_table_residue_cannot_scope_the_export_for_either_role() {
                 &live.doc.get_map("edges"),
                 &edge_key(person, EdgeKind::FacetOf, facet_selected),
             )
-            .is_some(),
-            "{role:?}: precondition — the unknowable-source stamp must SURVIVE \
-             admission, or this test proves nothing about the residue"
+            .is_none(),
+            "{role:?}: precondition — the unknowable-source stamp is held out \
+             of the window until its sender brings the source"
         );
 
-        // Update 2: P arrives typed PERSON. The stamp from update 1 is already
-        // resident and is never revisited.
+        // Update 2: the same sender brings P typed PERSON. Its held stamp is
+        // released into this update and judged there, off-table.
         let second = create_window_doc("federation-peer", &WindowKey::new(window));
         insert_entity(&second, person, ENTITY_TYPE_PERSON, b"person");
         insert_entity(&second, neighbor, ENTITY_TYPE_PERSON, b"neighbor");
@@ -1799,6 +1914,18 @@ fn out_of_order_off_table_residue_cannot_scope_the_export_for_either_role() {
             map_get_bytes(&live.doc.get_map("entities"), &person.to_hex()).is_some(),
             "{role:?}: precondition — PERSON P must be present in the live doc, \
              or its absence from the export below would hold vacuously"
+        );
+        assert!(
+            map_get_bytes(
+                &live.doc.get_map("edges"),
+                &edge_key(person, EdgeKind::FacetOf, facet_selected),
+            )
+            .is_none()
+                && quarantined_records(&vault)
+                    .unwrap()
+                    .iter()
+                    .any(|(_, record)| record.reason_code == "InvalidFacetOfEdge"),
+            "{role:?}: the released off-table stamp is dropped with typed evidence"
         );
         // Owner-verified bodies do not endorse the hostile FacetOf residue.
         // Stamp all known fixture records so the negative observes the facet
@@ -5008,6 +5135,7 @@ fn federation_addressing_copy_requires_stamped_source_and_exact_edge_bytes() {
     edge::copy_admitted_edges(
         &peer,
         &key,
+        &source_doc.get_map("entities"),
         &source_doc.get_map("entities"),
         &source_doc.get_map("edges"),
         &target.get_map("edges"),

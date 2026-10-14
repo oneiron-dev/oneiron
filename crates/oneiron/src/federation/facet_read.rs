@@ -144,12 +144,15 @@ pub(crate) fn parked_under(
     src: EntityId,
     lane: &str,
 ) -> Result<Vec<(EntityId, Vec<u8>)>> {
-    Ok(PARKED_STAMP
-        .scan_from(dbs, txn, src.to_hex().as_bytes())?
-        .into_iter()
-        .filter(|((_, _, by), _)| by == lane)
-        .map(|((_, facet, _), value)| (facet.0, value))
-        .collect())
+    let mut stamps = Vec::new();
+    for key in PARKED_STAMP.scan_keys(dbs, txn, src.to_hex().as_bytes())? {
+        if key.2 == lane
+            && let Some(value) = PARKED_STAMP.get(dbs, txn, &key)?
+        {
+            stamps.push((key.1.0, value));
+        }
+    }
+    Ok(stamps)
 }
 
 impl Vault {
