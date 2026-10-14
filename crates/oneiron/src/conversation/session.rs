@@ -1,5 +1,6 @@
 //! Session mode persists; active participant presence belongs only to this process.
 use super::*;
+use crate::federation::{ScopeAxis, ScopeId};
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -43,16 +44,7 @@ impl Vault {
     /// when it is one of them. `None` when the mode names none.
     pub fn session_facet(&self, session: EntityId) -> Result<Option<EntityId>> {
         let txn = self.store.env.read_txn()?;
-        let raw = require_kind(self, &txn, session, ENTITY_TYPE_SESSION)?;
-        let body: serde_json::Value = decode(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        body.get("facet_ref")
-            .map(|facet| {
-                facet
-                    .as_str()
-                    .and_then(|hex| EntityId::from_hex(hex).ok())
-                    .ok_or(invalid("session facet"))
-            })
-            .transpose()
+        session_facet_of(&require_kind(self, &txn, session, ENTITY_TYPE_SESSION)?)
     }
     /// Sets the session's mode and the facet it names for the writes made in
     /// it, a FACET; with none, the mode names no facet.
@@ -63,9 +55,37 @@ impl Vault {
         facet: Option<EntityId>,
         actor: WriteActor,
     ) -> Result<()> {
+        self.set_session_mode_within(session, mode, facet, actor, &ScopeAxis::All)
+    }
+    /// [`Self::set_session_mode`] by a writer narrowed to `facets` (owner
+    /// ruling FACET-READ): it changes only a session whose mode already names
+    /// one of them, and any other id answers as a missing session. A writer
+    /// never narrowed passes `All`.
+    pub fn set_session_mode_within(
+        &self,
+        session: EntityId,
+        mode: SessionMode,
+        facet: Option<EntityId>,
+        actor: WriteActor,
+        facets: &ScopeAxis<ScopeId>,
+    ) -> Result<()> {
+        let narrowed = !matches!(facets, ScopeAxis::All);
         self.with_write_txn_grouped(|txn| {
             authorize(self, txn, actor)?;
-            let raw = require_kind(self, txn, session, ENTITY_TYPE_SESSION)?;
+            let raw = match require_kind(self, txn, session, ENTITY_TYPE_SESSION) {
+                Err(Error::Record(RecordError::InvalidConversationBody(_))) if narrowed => {
+                    return Err(Error::EntityNotFound);
+                }
+                raw => raw?,
+            };
+            if narrowed
+                && !session_facet_of(&raw)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|placed| facets.contains(&ScopeId(placed)))
+            {
+                return Err(Error::EntityNotFound);
+            }
             if let Some(facet) = facet {
                 require_kind(self, txn, facet, ENTITY_TYPE_FACET)?;
             }
@@ -128,4 +148,17 @@ impl Vault {
         }
         Ok(())
     }
+}
+
+/// The facet the stored SESSION row `raw` names for the writes made in it.
+fn session_facet_of(raw: &[u8]) -> Result<Option<EntityId>> {
+    let body: serde_json::Value = decode(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    body.get("facet_ref")
+        .map(|facet| {
+            facet
+                .as_str()
+                .and_then(|hex| EntityId::from_hex(hex).ok())
+                .ok_or(invalid("session facet"))
+        })
+        .transpose()
 }

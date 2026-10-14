@@ -4,16 +4,15 @@
 //! otherwise in the credential's write facet. MCP and the facade both ask here.
 use axum::http::HeaderMap;
 use oneiron::EntityId;
-use oneiron::claim::CallerLocality;
 use oneiron::federation::{ScopeAxis, ScopeId};
 
 /// Names the session a request is made in; its mode may name the facet the
 /// request's writes land in.
 pub(crate) const SESSION_HEADER: &str = "x-oneiron-session";
 
-/// A write that cannot land: the session it names does not read, or names a
-/// facet the credential does not read. The two answer alike, so the refusal
-/// says nothing about a session the caller cannot read.
+/// A write that cannot land: the session it names is missing or names no
+/// facet the credential reads. Every such session answers alike, so the
+/// refusal says nothing about one the credential may not write in.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct LandingRefused;
 
@@ -32,35 +31,26 @@ pub(crate) fn request_session(headers: &HeaderMap) -> Result<Option<EntityId>, (
 
 /// The facet a write by a credential reading `facets` lands in. `None` for a
 /// credential never narrowed to facets: its writes keep their derived
-/// placement. Otherwise the session's facet when the credential reads it,
-/// else `write_facet` (the owner's pick at pairing), else the smallest. A
-/// session a device-local world keeps from a caller at `locality` places
-/// nothing and answers as a missing one (DEC-0005).
+/// placement. A session places a narrowed credential's writes only when its
+/// mode names a facet the credential reads; any other session, a missing one
+/// included, refuses alike. With no session, the write lands in
+/// `write_facet` (the owner's pick at pairing), else the smallest. A SESSION
+/// sits in base reality, which no device keeps to itself, so the caller's
+/// locality does not judge it.
 pub(crate) fn landing_facet(
     vault: &oneiron::Vault,
     session: Option<EntityId>,
     facets: &ScopeAxis<ScopeId>,
     write_facet: Option<EntityId>,
-    locality: CallerLocality,
 ) -> Result<Option<EntityId>, LandingRefused> {
     let ScopeAxis::Some(set) = facets else {
         return Ok(None);
     };
-    let session_facet = match session {
-        Some(session)
-            if locality != CallerLocality::OnDevice
-                && vault
-                    .device_local_keeps(&session)
-                    .map_err(|_| LandingRefused)? =>
-        {
-            return Err(LandingRefused);
-        }
-        Some(session) => vault.session_facet(session).map_err(|_| LandingRefused)?,
-        None => None,
-    };
-    match session_facet {
-        Some(facet) if set.contains(&ScopeId(facet)) => Ok(Some(facet)),
-        Some(_) => Err(LandingRefused),
+    match session {
+        Some(session) => match vault.session_facet(session) {
+            Ok(Some(facet)) if set.contains(&ScopeId(facet)) => Ok(Some(facet)),
+            _ => Err(LandingRefused),
+        },
         None => Ok(write_facet
             .filter(|facet| set.contains(&ScopeId(*facet)))
             .or_else(|| set.first().map(|facet| facet.0))),

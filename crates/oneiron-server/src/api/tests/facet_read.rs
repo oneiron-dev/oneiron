@@ -375,6 +375,20 @@ async fn a_narrowed_birth_lands_in_its_write_facet_or_its_sessions() {
         session
     };
     let (in_work, in_private) = (session(vault.work.facet), session(vault.private.facet));
+    let unplaced = oneiron::EntityId::now();
+    vault
+        .server
+        .vault
+        .batch()
+        .put(
+            &unplaced,
+            oneiron::registry::ENTITY_TYPE_SESSION,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&json!({})).unwrap(),
+        )
+        .commit()
+        .unwrap();
     let landed = |task: &Value| {
         let task = task
             .as_str()
@@ -474,6 +488,11 @@ async fn a_narrowed_birth_lands_in_its_write_facet_or_its_sessions() {
     );
     let (status, refused) = facade("facade-private", Some(in_private)).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    // Audit 2 L1: a session that names no facet places nothing either, and
+    // refuses as one placed elsewhere does.
+    let (status, unplaced_refusal) = facade("facade-unplaced", Some(unplaced)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{unplaced_refusal}");
+    assert_eq!(unplaced_refusal.get("error"), refused.get("error"));
 
     let (status, refused) = route_json(
         vault.server.clone(),
@@ -489,5 +508,37 @@ async fn a_narrowed_birth_lands_in_its_write_facet_or_its_sessions() {
     assert_eq!(
         vault.server.vault.session_facet(in_work).unwrap(),
         Some(vault.work.facet)
+    );
+    // Audit 2 S1: the credential sets the mode only of a session placed in a
+    // facet it reads. One placed elsewhere answers as a missing session and
+    // keeps its facet.
+    let patch = |session: oneiron::EntityId, facet: oneiron::EntityId| {
+        route_json(
+            vault.server.clone(),
+            core_request_with_authz(
+                "PATCH",
+                &format!("/v1/core/sessions/{}", session.to_hex()),
+                "Bearer fr-write".to_owned(),
+                Some(&json!({ "mode": "direct", "facet_ref": facet.to_hex() })),
+            ),
+        )
+    };
+    let (missing_status, missing) = patch(oneiron::EntityId::now(), vault.work.facet).await;
+    assert_ne!(missing_status, StatusCode::OK, "{missing}");
+    for hidden in [in_private, unplaced] {
+        let (status, body) = patch(hidden, vault.work.facet).await;
+        assert_eq!(status, missing_status, "{body}");
+        assert_eq!(body["error"]["code"], missing["error"]["code"], "{body}");
+    }
+    assert_eq!(
+        vault.server.vault.session_facet(in_private).unwrap(),
+        Some(vault.private.facet)
+    );
+    assert_eq!(vault.server.vault.session_facet(unplaced).unwrap(), None);
+    let (status, body) = patch(in_work, vault.home.facet).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        vault.server.vault.session_facet(in_work).unwrap(),
+        Some(vault.home.facet)
     );
 }
