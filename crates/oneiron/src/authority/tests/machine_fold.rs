@@ -596,7 +596,8 @@ fn an_uncarried_mark_never_outlives_the_stale_window() {
 
 /// Custody is sticky: on a hosted vault a cloud root that hands the vault to
 /// a key labelled owner-held never answers "yours" through that successor
-/// (Astra #1423 F1).
+/// (Astra #1423 F1). The bootstrap fold of the vault's own log judges it the
+/// same way.
 #[test]
 fn a_custodians_successor_never_vouches_for_a_machine() {
     let cloud = ed_key(104);
@@ -627,19 +628,27 @@ fn a_custodians_successor_never_vouches_for_a_machine() {
     let handoff = re_root_entry(id, &genesis, &cloud, 1, &successor);
     let machine = EntityId::now();
     let mark = owned_mark(id, &handoff, &successor, 1, machine, 107);
-    let fold = fold_authority_log_for_posture(
-        &[genesis, handoff.clone(), mark],
-        &BTreeMap::new(),
-        10,
-        &BTreeMap::new(),
-        crate::HostingPrivacyPosture::Hosted,
-    );
-    assert!(
-        fold.valid_entries
-            .contains(&authority_entry_hash(&handoff).unwrap())
-    );
-    assert!(!fold.roster[&authority_key_from_ed(&successor)].revoked);
-    assert!(fold.machine(machine).is_none());
+    let entries = [genesis, handoff.clone(), mark];
+    for fold in [
+        fold_authority_log_for_posture(
+            &entries,
+            &BTreeMap::new(),
+            10,
+            &BTreeMap::new(),
+            crate::HostingPrivacyPosture::Hosted,
+        ),
+        super::super::fold_engine::fold_own_authority_log(
+            &entries,
+            crate::HostingPrivacyPosture::Hosted,
+        ),
+    ] {
+        assert!(
+            fold.valid_entries
+                .contains(&authority_entry_hash(&handoff).unwrap())
+        );
+        assert!(!fold.roster[&authority_key_from_ed(&successor)].revoked);
+        assert!(fold.machine(machine).is_none());
+    }
 }
 
 /// Custody passes along every admission whichever branch carried the mark:
