@@ -1,0 +1,43 @@
+//! Rule five, checked at every `[limits]` row the code lists: crossed by a
+//! burst on one credential, a row turns nobody away and asks whether
+//! everything is okay (ARCH-0044 C5, OF-520). The match below has no
+//! wildcard, so a row added without a driver does not compile.
+
+use crate::admission::Crossing;
+use crate::wire_telemetry::LimitRow;
+
+/// Callers per row: enough to cross a bound of one several times over.
+const CALLERS: usize = 8;
+
+async fn cross(row: LimitRow) -> Crossing {
+    match row {
+        LimitRow::Connections => crate::http_listener::tests::cross_the_floor(CALLERS).await,
+        LimitRow::GitExchanges => {
+            crate::api::git_http::tests_lifetime::cross_the_exchanges(CALLERS).await
+        }
+        LimitRow::LfsTransfers | LimitRow::LfsQuota | LimitRow::LfsObjectSize => {
+            crate::api::git_lfs::tests::cross_the_lfs_row(row, CALLERS).await
+        }
+        LimitRow::CodeRuns => super::mcp_code_admission::cross_the_runs(CALLERS).await,
+        LimitRow::CompactionPasses => {
+            tokio::task::spawn_blocking(|| crate::ai_host::cross_the_passes(CALLERS))
+                .await
+                .unwrap()
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn every_limits_row_queues_its_burst_and_asks() {
+    for row in LimitRow::ALL {
+        assert_eq!(
+            cross(row).await,
+            Crossing {
+                refused: 0,
+                asked: true
+            },
+            "{}: past the row, work waits its turn and the row asks; nothing is refused",
+            row.key()
+        );
+    }
+}
