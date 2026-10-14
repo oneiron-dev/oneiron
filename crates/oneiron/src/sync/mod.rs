@@ -94,9 +94,9 @@ pub use residence::discover_local_window_keys;
 pub use selector::put_selector_test_federation_grant;
 pub use selector::{
     FederationAdmissionRole, RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest,
-    SyncSelector, SyncSelectorWorld, admit_federated_window_update, admit_peer_window_update,
-    authorize_sync_selector, decode_selector_vv_request, decode_sync_selector,
-    encode_selector_vv_request, encode_sync_selector, filtered_window_doc,
+    SyncSelector, SyncSelectorWorld, admit_federated_window_update, authorize_sync_selector,
+    decode_selector_vv_request, decode_sync_selector, encode_selector_vv_request,
+    encode_sync_selector, filtered_window_doc,
 };
 pub use transport::{
     EphemeralWireState, LEGACY_FULL_WINDOW_PROTOCOL_VERSION, MAX_DECODED_PAYLOAD_BYTES,

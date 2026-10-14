@@ -24,8 +24,8 @@ use crate::sync::types::WindowKey;
 
 #[cfg(feature = "sync")]
 use super::edge::{
-    copy_admitted_edges, hold_stamps, recheck_admitted_stamps, refuse_non_binary_edges,
-    release_stamps,
+    EarlyStamps, ReleasedStamps, copy_admitted_edges, hold_stamps, pending_births,
+    refuse_admitted_stamps, refuse_non_binary_edges, release_born_stamps,
 };
 use crate::error::{RecordError, SyncError};
 
@@ -55,9 +55,9 @@ impl FederationAdmissionRole {
 /// so callers can import it through the ordinary replay/materialization path
 /// without giving the original remote op ids trust-blind write authority.
 ///
-/// A facet stamp sent ahead of its row is held out of the returned update
-/// (`copy_admitted_edges`). With no sender named here, each update is its
-/// own sender: only a writer that may place the row lets such a stamp count.
+/// No facet stamp a peer sends onto a row this vault lacks is in the
+/// returned update. With no sender named here, nothing can bind such a stamp
+/// to its row's birth, so it is dropped (`copy_admitted_edges`).
 #[cfg(feature = "sync")]
 pub fn admit_federated_window_update(
     vault: &Vault,
@@ -65,28 +65,28 @@ pub fn admit_federated_window_update(
     update: &[u8],
     role: FederationAdmissionRole,
 ) -> Result<Vec<u8>> {
-    let lane = format!("u{}", blake3::hash(update).to_hex());
-    admit_window_update(vault, key, update, role, &lane)
+    Ok(admit_window_update(vault, key, update, role, None)?.bytes)
 }
 
 /// [`admit_federated_window_update`] for an update the federation peer
-/// `peer` sent. A facet stamp it sends ahead of its row is held until one of
-/// its later updates brings the row, and then enters the document with it.
+/// `peer` sent. Its facet stamps onto rows this vault lacks wait out of the
+/// update ([`AdmittedUpdate`]) until the peer's birth of each row applies.
 #[cfg(feature = "sync")]
-pub fn admit_peer_window_update(
+pub(in crate::sync) fn admit_peer_window_update(
     vault: &Vault,
     key: &WindowKey,
     update: &[u8],
     role: FederationAdmissionRole,
     peer: EntityId,
-) -> Result<Vec<u8>> {
+) -> Result<AdmittedUpdate> {
     let lane = format!("p{}", peer.to_hex());
-    admit_window_update(vault, key, update, role, &lane)
+    admit_window_update(vault, key, update, role, Some(lane))
 }
 
 /// [`admit_federated_window_update`] for a foreign artifact staged under
-/// `receipt_id`. The artifact is one update, so a facet stamp it sends
-/// ahead of its row never enters the document through it.
+/// `receipt_id`. Its facet stamps onto rows this vault lacks wait under the
+/// receipt until the confirmation's import births the rows
+/// ([`staged_births`]).
 #[cfg(feature = "sync")]
 pub(crate) fn admit_staged_window_update(
     vault: &Vault,
@@ -94,9 +94,116 @@ pub(crate) fn admit_staged_window_update(
     update: &[u8],
     role: FederationAdmissionRole,
     receipt_id: &[u8; 32],
-) -> Result<Vec<u8>> {
-    let lane = format!("s{}", crate::entity_id::bytes_to_hex_lower(receipt_id));
-    admit_window_update(vault, key, update, role, &lane)
+) -> Result<AdmittedUpdate> {
+    admit_window_update(vault, key, update, role, Some(staged_lane(receipt_id)))
+}
+
+#[cfg(feature = "sync")]
+fn staged_lane(receipt_id: &[u8; 32]) -> String {
+    format!("s{}", crate::entity_id::bytes_to_hex_lower(receipt_id))
+}
+
+/// An update the federation door admitted, and the facet stamps it sent onto
+/// rows this vault lacks, which wait out of its bytes: the ones whose rows it
+/// brings until those births apply here, the rest held under its sender.
+#[cfg(feature = "sync")]
+pub(crate) struct AdmittedUpdate {
+    bytes: Vec<u8>,
+    rows: u64,
+    early: EarlyStamps,
+    births: Vec<(EntityId, Vec<u8>)>,
+    lane: Option<String>,
+}
+
+#[cfg(feature = "sync")]
+impl AdmittedUpdate {
+    /// The admitted bytes to import.
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub(crate) fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    /// The writes the update asks of this vault: its rows and edges, and the
+    /// stamps that wait out of it (Astra-b F2 on #1432).
+    pub(crate) fn writes(&self) -> u64 {
+        let early = self.early.held.len() + self.early.with_birth.len();
+        self.rows.saturating_add(early as u64).max(1)
+    }
+
+    /// Holds the stamps ahead of their rows under the peer that sent the
+    /// update and the `grant` it sent them under, within the peer's caps.
+    pub(crate) fn hold_from_peer(
+        &self,
+        vault: &Vault,
+        key: &WindowKey,
+        grant: EntityId,
+    ) -> Result<()> {
+        match &self.lane {
+            Some(lane) => hold_stamps(vault, key, (lane, Some(grant)), &self.early.held, true),
+            None => Ok(()),
+        }
+    }
+
+    /// Holds every stamp of a staged artifact under its receipt, the ones
+    /// whose rows it brings too: those births apply only at its confirmation.
+    pub(crate) fn hold_staged(&self, vault: &Vault, key: &WindowKey) -> Result<()> {
+        let Some(lane) = &self.lane else {
+            return Ok(());
+        };
+        hold_stamps(vault, key, (lane, None), &self.early.held, false)?;
+        hold_stamps(vault, key, (lane, None), &self.early.with_birth, false)
+    }
+
+    /// After the update's import, the stamps whose rows it birthed
+    /// ([`release_born_stamps`]).
+    pub(crate) fn release(&self, vault: &Vault, key: &WindowKey) -> Result<Option<ReleasedStamps>> {
+        match &self.lane {
+            Some(lane) => {
+                release_born_stamps(vault, key, lane, &self.births, &self.early.with_birth)
+            }
+            None => Ok(None),
+        }
+    }
+}
+
+/// The rows a staged artifact's admitted bytes bring that this vault lacks
+/// and that its receipt holds stamps on, read before the confirmation imports
+/// them.
+#[cfg(feature = "sync")]
+pub(crate) struct StagedBirths {
+    lane: String,
+    births: Vec<(EntityId, Vec<u8>)>,
+}
+
+#[cfg(feature = "sync")]
+impl StagedBirths {
+    /// After the confirmation's import, the stamps whose rows it birthed.
+    pub(crate) fn release(&self, vault: &Vault, key: &WindowKey) -> Result<Option<ReleasedStamps>> {
+        release_born_stamps(vault, key, &self.lane, &self.births, &[])
+    }
+}
+
+/// [`StagedBirths`] of the artifact staged under `receipt_id`.
+#[cfg(feature = "sync")]
+pub(in crate::sync) fn staged_births(
+    vault: &Vault,
+    key: &WindowKey,
+    receipt_id: &[u8; 32],
+    admitted_update: &[u8],
+) -> Result<StagedBirths> {
+    let admitted = create_window_doc("federation-staged", key);
+    admitted.import(admitted_update).map_err(|source| {
+        Error::Sync(SyncError::CrdtDecodeError {
+            context: "import admitted update",
+            source,
+        })
+    })?;
+    let lane = staged_lane(receipt_id);
+    let births = pending_births(vault, &lane, &admitted.get_map("entities"), &[])?;
+    Ok(StagedBirths { lane, births })
 }
 
 #[cfg(feature = "sync")]
@@ -105,8 +212,8 @@ fn admit_window_update(
     key: &WindowKey,
     update: &[u8],
     role: FederationAdmissionRole,
-    lane: &str,
-) -> Result<Vec<u8>> {
+    lane: Option<String>,
+) -> Result<AdmittedUpdate> {
     let remote = create_window_doc("federation-remote", key);
     remote.import(update).map_err(|source| {
         Error::Sync(SyncError::CrdtDecodeError {
@@ -116,19 +223,13 @@ fn admit_window_update(
     })?;
 
     refuse_non_binary_edges(&remote.get_map("edges"))?;
-    let released = release_stamps(
-        vault,
-        lane,
-        &remote.get_map("entities"),
-        &remote.get_map("edges"),
-    )?;
-    let admitted = create_admission_doc(key, update, role, &released)?;
+    let admitted = create_admission_doc(key, update, role)?;
     let policy = vault
         .with_write_txn_grouped(|wtxn| crate::gate::resolve_policy_manifest(&vault.store, wtxn))?;
 
     reject_federated_tombstones(&remote)?;
     copy_admitted_entities(vault, &policy, &remote, &admitted)?;
-    let held = copy_admitted_edges(
+    let early = copy_admitted_edges(
         vault,
         key,
         &remote.get_map("entities"),
@@ -138,11 +239,27 @@ fn admit_window_update(
     )?;
 
     crate::sync::note::copy_judged(vault, &remote, &admitted)?;
-    hold_stamps(vault, lane, &held)?;
+    let births = match &lane {
+        Some(lane) => pending_births(
+            vault,
+            lane,
+            &admitted.get_map("entities"),
+            &early.with_birth,
+        )?,
+        None => Vec::new(),
+    };
     admitted.commit_with(CommitOptions::new().origin(role.origin()));
-    admitted
+    let rows = admitted.get_map("entities").len() + admitted.get_map("edges").len();
+    let bytes = admitted
         .export(ExportMode::all_updates())
-        .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, e))
+        .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, e))?;
+    Ok(AdmittedUpdate {
+        bytes,
+        rows: rows as u64,
+        early,
+        births,
+        lane,
+    })
 }
 
 /// Re-runs federated claim admission over ALREADY-ADMITTED window bytes using
@@ -192,14 +309,12 @@ pub(in crate::sync) fn revalidate_admitted_federated_claims(
     result
 }
 
-/// Re-runs the facet stamp placement rule over ALREADY-ADMITTED window bytes
-/// against the vault as it is now. A staged artifact's stamp was admitted
-/// with its row's birth, but a row another writer stored while the artifact
-/// waited for confirmation was not born by it, so the confirmation is refused
-/// (non-terminal, as a claim refusal is).
+/// Refuses ALREADY-ADMITTED window bytes that carry a facet stamp
+/// ([`refuse_admitted_stamps`]), so a staged artifact an older door admitted
+/// with its stamps in its bytes is not confirmed (non-terminal, as a claim
+/// refusal is).
 #[cfg(feature = "sync")]
 pub(in crate::sync) fn revalidate_admitted_facet_stamps(
-    vault: &Vault,
     key: &WindowKey,
     admitted_update: &[u8],
 ) -> Result<()> {
@@ -210,7 +325,7 @@ pub(in crate::sync) fn revalidate_admitted_facet_stamps(
             source,
         })
     })?;
-    recheck_admitted_stamps(vault, &admitted.get_map("edges"))
+    refuse_admitted_stamps(&admitted.get_map("edges"))
 }
 
 #[cfg(feature = "sync")]
@@ -237,10 +352,9 @@ fn create_admission_doc(
     key: &WindowKey,
     update: &[u8],
     role: FederationAdmissionRole,
-    released: &[(String, Vec<u8>)],
 ) -> Result<LoroDoc> {
     let doc = LoroDoc::new();
-    doc.set_peer_id(federated_admission_peer_id(key, update, role, released))
+    doc.set_peer_id(federated_admission_peer_id(key, update, role))
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroSetPeerId, e))?;
     let _entities = doc.get_map("entities");
     let _edges = doc.get_map("edges");
@@ -249,15 +363,11 @@ fn create_admission_doc(
     Ok(doc)
 }
 
-/// Stamps released into the update ride its operations, so they name them
-/// too: one update admitted with different held stamps, on two devices or
-/// before and after a release, never authors two contents under one id.
 #[cfg(feature = "sync")]
 fn federated_admission_peer_id(
     key: &WindowKey,
     update: &[u8],
     role: FederationAdmissionRole,
-    released: &[(String, Vec<u8>)],
 ) -> u64 {
     let mut material = Vec::with_capacity(
         b"oneiron.federation.admission.peer.v0".len()
@@ -273,12 +383,6 @@ fn federated_admission_peer_id(
     material.extend_from_slice(key.as_str().as_bytes());
     material.extend_from_slice(&(update.len() as u64).to_le_bytes());
     material.extend_from_slice(update);
-    for (stamp, value) in released {
-        for part in [stamp.as_bytes(), value.as_slice()] {
-            material.extend_from_slice(&(part.len() as u64).to_le_bytes());
-            material.extend_from_slice(part);
-        }
-    }
 
     match xxh3_64(&material) {
         0 => 1,

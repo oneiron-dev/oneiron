@@ -104,9 +104,14 @@ side_tables! {
     /// verdict, keyed by entity then receipt id. Key: hex32 ":" hex32.
     ENTITY_DOC_RECEIPT: SyncState b"entity_doc:v1:receipt:" Named;
     /// A federated `FacetOf` stamp sent ahead of its source row, held out of the window document
-    /// until the same sender brings the row. Local to this vault: never replicated or exported.
-    /// Value: the stamp's edge value. Key: hex32 (source) hex32 (facet) then the sender's lane.
+    /// until the same sender's birth of the row has applied here. Local to this vault: never
+    /// replicated or exported. Value: when it was held (u64 big-endian), the grant it was held
+    /// under (a flag byte, then its 16 raw bytes when set), then the stamp's edge value.
+    /// Key: hex32 (source) hex32 (facet) then the sender's lane.
     FEDERATION_PARKED_FACET_STAMP: SyncState b"fedpark:" Raw;
+    /// What one sender's lane holds in `FEDERATION_PARKED_FACET_STAMP`: its rows, then their
+    /// bytes (u64 big-endian each), so the per-sender caps read one row. Key: the sender's lane.
+    FEDERATION_PARKED_FACET_LANE: SyncState b"fedparklane:" Raw;
     /// First-wins stamp recording that a foreign world's federated content stopped refreshing after a
     /// terminal pact transition. Key: hex32 (world id).
     FEDERATION_STALE: SyncState b"fedstale:" Raw;

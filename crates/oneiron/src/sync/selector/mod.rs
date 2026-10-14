@@ -27,16 +27,16 @@ mod tests;
 use super::bridge;
 use super::loro_support;
 
-pub(crate) use self::admission::admit_staged_window_update;
 #[cfg(feature = "test-hooks")]
 pub use self::admission::put_selector_test_federation_grant;
-pub use self::admission::{
-    FederationAdmissionRole, admit_federated_window_update, admit_peer_window_update,
-};
+pub(crate) use self::admission::{AdmittedUpdate, admit_staged_window_update};
+pub use self::admission::{FederationAdmissionRole, admit_federated_window_update};
 pub(in crate::sync) use self::admission::{
-    revalidate_admitted_facet_stamps, revalidate_admitted_federated_claims,
+    admit_peer_window_update, revalidate_admitted_facet_stamps,
+    revalidate_admitted_federated_claims, staged_births,
 };
 pub use self::authorize::authorize_sync_selector;
+pub(crate) use self::authorize::retire_held_facet_stamps;
 pub(in crate::sync) use self::codec::granted_window_doc;
 pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
@@ -44,6 +44,7 @@ pub use self::codec::{
     encode_selector_vv_request, encode_sync_selector, filtered_window_doc, guest_share_envelope,
     guest_share_envelope_body,
 };
+pub(crate) use self::edge::ReleasedStamps;
 
 #[cfg(test)]
 use self::{authorize::*, codec::*};

@@ -236,7 +236,10 @@ pub fn stage_foreign_vault_import(
         FederationAdmissionRole::Guest,
         &id,
     ) {
-        Ok(a) if a.len() <= MAX_DECODED_PAYLOAD_BYTES => a,
+        Ok(a) if a.bytes().len() <= MAX_DECODED_PAYLOAD_BYTES => {
+            a.hold_staged(vault, key)?;
+            a.into_bytes()
+        }
         Ok(_) => {
             let failed = VaultImportStageReceipt {
                 receipt_id: id,

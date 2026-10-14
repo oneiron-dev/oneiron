@@ -48,8 +48,7 @@ impl SyncClient {
         let admitted =
             admit_peer_window_update(&self.vault, &key, &work.payload, role, peer.principal())
                 .map_err(map_federated_admission_err)?;
-        let window = self.ensure_window(&work.window)?;
-        self.import_accepted_window_update(&work.window, &window, &admitted)?;
+        self.import_peer_update(&work.window, &key, &admitted, peer.grant())?;
         work.complete(&self.vault, &peer)
             .map_err(map_federated_admission_err)?;
         Ok(true)

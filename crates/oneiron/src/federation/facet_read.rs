@@ -18,18 +18,34 @@ use crate::store::ManifestDbs;
 use crate::{EntityId, Vault};
 
 /// A federated `FacetOf` stamp sent ahead of its source row, held out of the
-/// window document under the lane of the sender that brought it, with its
-/// edge value. Admission releases it into the document only with the row's
-/// birth from the same sender; a writer that may place the row and writes the
-/// pair itself discards it.
+/// window document under the lane of the sender that brought it, with when it
+/// was held, the grant it was held under and its edge value. It enters the
+/// document only once that sender's birth of the row has applied here; a
+/// writer that may place the row and writes the pair itself discards it.
 const PARKED_STAMP: SideTable<(HexId, HexId, String), Vec<u8>, Raw> =
     SideTable::new(&side_table::FEDERATION_PARKED_FACET_STAMP);
 
-/// The most stamps one sender holds on one row ahead of it. Every update that
-/// brings the row releases them all, so the bound is the work one small update
-/// can make admission do (Astra R5 F2 on #1432); a row sits in a few facets.
+/// The rows and bytes each sender's lane holds in [`PARKED_STAMP`].
+const PARKED_BY_LANE: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::FEDERATION_PARKED_FACET_LANE);
+
+/// The most stamps one sender holds on one row ahead of it. Every birth of
+/// the row releases them all, so the bound is the work one small update can
+/// make the release do (Astra R5 F2 on #1432); a row sits in a few facets.
 #[cfg(feature = "sync")]
 pub(crate) const MAX_HELD_PER_ROW: usize = 16;
+
+/// The most stamps one sender holds across every row, and the most bytes
+/// their rows take, so a sender that never brings its rows grows this vault
+/// no further (Astra-b F2 on #1432).
+#[cfg(feature = "sync")]
+pub(crate) const MAX_HELD_PER_SENDER: u64 = 4096;
+#[cfg(feature = "sync")]
+pub(crate) const MAX_HELD_BYTES_PER_SENDER: u64 = 1 << 20;
+
+/// How long a stamp stays held while its row does not come: 30 days.
+#[cfg(feature = "sync")]
+pub(crate) const HELD_STAMP_TTL_SECS: u64 = 30 * 24 * 60 * 60;
 
 /// Whether the stored row `id`, with header and body `raw` as `view` holds
 /// it, sits in one of `facets`. A TASK sits in the facet its birth stamp
@@ -113,29 +129,143 @@ fn stamp_prefix(src: EntityId, facet: EntityId) -> String {
     format!("{}{}", src.to_hex(), facet.to_hex())
 }
 
+/// A held row's value: when it was held, the grant it was held under (a flag
+/// byte, then the id when there is one), then the edge value.
+#[cfg(feature = "sync")]
+fn held_value(held_at: u64, grant: Option<EntityId>, edge: &[u8]) -> Vec<u8> {
+    let mut value = held_at.to_be_bytes().to_vec();
+    match grant {
+        Some(grant) => {
+            value.push(1);
+            value.extend_from_slice(grant.as_bytes());
+        }
+        None => value.push(0),
+    }
+    value.extend_from_slice(edge);
+    value
+}
+
+/// [`held_value`] read back, or `None` for a row that does not decode.
+#[cfg(feature = "sync")]
+fn read_held(value: &[u8]) -> Option<(u64, Option<EntityId>, &[u8])> {
+    let (held_at, rest) = value.split_first_chunk::<8>()?;
+    let (grant, edge) = match rest.split_first()? {
+        (0, edge) => (None, edge),
+        (1, rest) => {
+            let (grant, edge) = rest.split_first_chunk::<16>()?;
+            (Some(EntityId::from_bytes(*grant).ok()?), edge)
+        }
+        _ => return None,
+    };
+    Some((u64::from_be_bytes(*held_at), grant, edge))
+}
+
+/// The bytes one held row takes: its key and its value.
+fn row_bytes(lane: &str, value: &[u8]) -> u64 {
+    (64 + lane.len() + value.len()) as u64
+}
+
+/// The rows `lane` holds and the bytes they take.
+fn lane_usage(dbs: &impl SideTableDbs, txn: &heed::RoTxn<'_>, lane: &str) -> Result<(u64, u64)> {
+    let Some(usage) = PARKED_BY_LANE.get(dbs, txn, &lane.to_owned())? else {
+        return Ok((0, 0));
+    };
+    let (rows, bytes) = usage
+        .split_first_chunk::<8>()
+        .and_then(|(rows, bytes)| Some((*rows, <[u8; 8]>::try_from(bytes).ok()?)))
+        .ok_or(Error::CorruptedIndex("held facet stamp lane"))?;
+    Ok((u64::from_be_bytes(rows), u64::from_be_bytes(bytes)))
+}
+
+fn put_lane_usage(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut heed::RwTxn<'_>,
+    lane: &str,
+    (rows, bytes): (u64, u64),
+) -> Result<()> {
+    if rows == 0 {
+        PARKED_BY_LANE.delete(dbs, wtxn, &lane.to_owned())?;
+        return Ok(());
+    }
+    let mut usage = rows.to_be_bytes().to_vec();
+    usage.extend_from_slice(&bytes.to_be_bytes());
+    PARKED_BY_LANE.put(dbs, wtxn, &lane.to_owned(), &usage)
+}
+
+/// Removes one held row, and its share of its lane's usage; `true` when it
+/// was there.
+fn remove_held(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &(HexId, HexId, String),
+) -> Result<bool> {
+    let Some(value) = PARKED_STAMP.get(dbs, wtxn, key)? else {
+        return Ok(false);
+    };
+    PARKED_STAMP.delete(dbs, wtxn, key)?;
+    let (rows, bytes) = lane_usage(dbs, wtxn, &key.2)?;
+    let freed = row_bytes(&key.2, &value);
+    put_lane_usage(
+        dbs,
+        wtxn,
+        &key.2,
+        (rows.saturating_sub(1), bytes.saturating_sub(freed)),
+    )?;
+    Ok(true)
+}
+
+/// What holding one stamp came to.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Hold {
+    Held,
+    /// The sender holds [`MAX_HELD_PER_ROW`] stamps on the row already: the
+    /// stamp is not held, so it never counts (fail-closed).
+    RowFull,
+    /// The sender holds [`MAX_HELD_PER_SENDER`] stamps, or
+    /// [`MAX_HELD_BYTES_PER_SENDER`] bytes of them, already: the stamp is
+    /// refused.
+    SenderFull,
+}
+
 /// Holds the stamp `src -FacetOf-> facet`, with its edge `value`, under the
-/// sender's `lane`. A stamp past the sender's [`MAX_HELD_PER_ROW`] on that row
-/// is not held, so it never counts (fail-closed).
+/// sender's `lane` and the `grant` it sent it under, as of `now`. Only a
+/// `capped` sender, a federation peer, meets the per-sender caps: the owner's
+/// own staged import never does.
 #[cfg(feature = "sync")]
 pub(crate) fn park_stamp(
     dbs: &impl SideTableDbs,
     wtxn: &mut heed::RwTxn<'_>,
     (src, facet): (EntityId, EntityId),
-    lane: &str,
+    (lane, grant): (&str, Option<EntityId>),
     value: &[u8],
-) -> Result<()> {
+    (now, capped): (u64, bool),
+) -> Result<Hold> {
     let key = (HexId(src), HexId(facet), lane.to_owned());
-    if PARKED_STAMP.get(dbs, wtxn, &key)?.is_none() {
-        let held = PARKED_STAMP
+    let prior = PARKED_STAMP.get(dbs, wtxn, &key)?;
+    if prior.is_none()
+        && PARKED_STAMP
             .scan_keys(dbs, wtxn, src.to_hex().as_bytes())?
             .into_iter()
             .filter(|held| held.2 == lane)
-            .count();
-        if held >= MAX_HELD_PER_ROW {
-            return Ok(());
-        }
+            .count()
+            >= MAX_HELD_PER_ROW
+    {
+        return Ok(Hold::RowFull);
     }
-    PARKED_STAMP.put(dbs, wtxn, &key, &value.to_vec())
+    let row = held_value(now, grant, value);
+    let (rows, bytes) = lane_usage(dbs, wtxn, lane)?;
+    let freed = prior.as_deref().map_or(0, |prior| row_bytes(lane, prior));
+    let rows = rows.saturating_add(u64::from(prior.is_none()));
+    let bytes = bytes
+        .saturating_sub(freed)
+        .saturating_add(row_bytes(lane, &row));
+    if capped && (rows > MAX_HELD_PER_SENDER || bytes > MAX_HELD_BYTES_PER_SENDER) {
+        return Ok(Hold::SenderFull);
+    }
+    PARKED_STAMP.put(dbs, wtxn, &key, &row)?;
+    put_lane_usage(dbs, wtxn, lane, (rows, bytes))?;
+    Ok(Hold::Held)
 }
 
 /// Discards every held copy of the stamp `src -FacetOf-> facet`.
@@ -146,8 +276,21 @@ pub(crate) fn unpark_stamp(
     facet: EntityId,
 ) -> Result<()> {
     for key in PARKED_STAMP.scan_keys(dbs, wtxn, stamp_prefix(src, facet).as_bytes())? {
-        PARKED_STAMP.delete(dbs, wtxn, &key)?;
+        remove_held(dbs, wtxn, &key)?;
     }
+    Ok(())
+}
+
+/// Discards the copy of the stamp `src -FacetOf-> facet` held under `lane`,
+/// once it is released.
+#[cfg(feature = "sync")]
+pub(crate) fn unpark_released(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut heed::RwTxn<'_>,
+    (src, facet): (EntityId, EntityId),
+    lane: &str,
+) -> Result<()> {
+    remove_held(dbs, wtxn, &(HexId(src), HexId(facet), lane.to_owned()))?;
     Ok(())
 }
 
@@ -163,11 +306,90 @@ pub(crate) fn parked_under(
     for key in PARKED_STAMP.scan_keys(dbs, txn, src.to_hex().as_bytes())? {
         if key.2 == lane
             && let Some(value) = PARKED_STAMP.get(dbs, txn, &key)?
+            && let Some((_, _, edge)) = read_held(&value)
         {
-            stamps.push((key.1.0, value));
+            stamps.push((key.1.0, edge.to_vec()));
         }
     }
     Ok(stamps)
+}
+
+/// The rows `lane` holds and the bytes they take, by its usage row.
+#[cfg(all(test, feature = "sync"))]
+pub(crate) fn held_by(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    lane: &str,
+) -> Result<(u64, u64)> {
+    lane_usage(dbs, txn, lane)
+}
+
+/// Every held row under `lane`, counted one by one.
+#[cfg(all(test, feature = "sync"))]
+pub(crate) fn held_rows_under(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    lane: &str,
+) -> Result<u64> {
+    Ok(PARKED_STAMP
+        .scan_keys(dbs, txn, &[])?
+        .into_iter()
+        .filter(|key| key.2 == lane)
+        .count() as u64)
+}
+
+/// Retires each held stamp held [`HELD_STAMP_TTL_SECS`] or longer by `now`,
+/// held under a grant `confers` finds no longer conferring, or whose row does
+/// not decode; returns how many went. A row held again since the scan keeps
+/// its new hold.
+#[cfg(feature = "sync")]
+pub(crate) fn retire_held_stamps(
+    vault: &Vault,
+    now: u64,
+    mut confers: impl FnMut(&EntityId) -> Result<bool>,
+) -> Result<u64> {
+    let held = {
+        let txn = vault.store.env.read_txn()?;
+        PARKED_STAMP.scan(&vault.store, &txn)?
+    };
+    let mut verdicts = std::collections::BTreeMap::new();
+    let mut retired = Vec::new();
+    for (key, value) in held {
+        let retire = match read_held(&value) {
+            None => true,
+            Some((held_at, grant, _)) => {
+                now.saturating_sub(held_at) >= HELD_STAMP_TTL_SECS
+                    || match grant {
+                        Some(grant) => match verdicts.get(&grant) {
+                            Some(known) => !known,
+                            None => {
+                                let verdict = confers(&grant)?;
+                                verdicts.insert(grant, verdict);
+                                !verdict
+                            }
+                        },
+                        None => false,
+                    }
+            }
+        };
+        if retire {
+            retired.push((key, value));
+        }
+    }
+    if retired.is_empty() {
+        return Ok(0);
+    }
+    vault.with_write_txn_grouped(|wtxn| {
+        let mut count = 0;
+        for (key, value) in &retired {
+            if PARKED_STAMP.get(&vault.store, wtxn, key)?.as_ref() == Some(value)
+                && remove_held(&vault.store, wtxn, key)?
+            {
+                count += 1;
+            }
+        }
+        Ok(count)
+    })
 }
 
 impl Vault {

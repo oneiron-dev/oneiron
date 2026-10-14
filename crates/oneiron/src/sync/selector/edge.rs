@@ -11,6 +11,8 @@ use crate::sync::loro_support::{map_for_each_value_bytes, map_insert_bytes};
 #[cfg(feature = "sync")]
 use crate::sync::quarantine::{self, QuarantineContainer};
 use crate::sync::types::WindowKey;
+#[cfg(feature = "sync")]
+use loro::{ExportMode, LoroDoc};
 
 /// Copies the federated edges map, rejecting reserved-kind edge keys:
 /// `merged_into` / `split_into` writes are the identity-topology door's
@@ -59,11 +61,12 @@ use crate::sync::types::WindowKey;
 /// [`quarantine::MAX_QUARANTINE_ROWS_PER_PASS`] rows per pass; beyond that
 /// rejections are accounted by count, never silently.
 ///
-/// A stamp whose source row neither this vault holds nor the update brings
-/// (`brought`, the admitted entities) is returned to be held, not copied: no
-/// one can tell yet whether its sender may place that row, and the document
-/// replicates to the owner's other devices as their own (Engine ruling on
-/// Sol R3 F1).
+/// No stamp onto a row this vault does not store is copied: no one can tell
+/// yet whether its sender may place that row, and the document replicates to
+/// the owner's other devices as their own (Engine ruling on Sol R3 F1). One
+/// whose row the update brings (`brought`, the admitted entities) waits for
+/// that birth to apply here, since the row's presence in the update is not
+/// its birth (Astra-b F1 on #1432); any other is held under its sender.
 #[cfg(feature = "sync")]
 pub(super) fn copy_admitted_edges(
     vault: &Vault,
@@ -72,10 +75,10 @@ pub(super) fn copy_admitted_edges(
     brought: &loro::LoroMap,
     source: &loro::LoroMap,
     target: &loro::LoroMap,
-) -> Result<Vec<HeldStamp>> {
+) -> Result<EarlyStamps> {
     let rtxn = vault.store.env.read_txn()?;
     let mut rejections = quarantine::TerminalRejectionBatch::new(window_key.as_str());
-    let mut held = Vec::new();
+    let mut early = EarlyStamps::default();
     let mut result = Ok(());
     map_for_each_value_bytes(source, |key, value| {
         if result.is_err() {
@@ -101,15 +104,22 @@ pub(super) fn copy_admitted_edges(
             match verdict {
                 Ok(AdmittedEdgeVerdict::Copy) => {}
                 Ok(AdmittedEdgeVerdict::Drop) => return,
-                Ok(AdmittedEdgeVerdict::Hold) => {
-                    // Only a value replay could write is held; any other is
+                Ok(verdict @ (AdmittedEdgeVerdict::Hold | AdmittedEdgeVerdict::WithBirth)) => {
+                    // Only a value replay could write waits; any other is
                     // the peer's rejection, typed as the materializers type it.
                     match crate::edge::decode_edge_value_for_kind(EdgeKind::FacetOf, value) {
-                        Ok(_) => held.push(HeldStamp {
-                            src,
-                            tgt,
-                            value: value.to_vec(),
-                        }),
+                        Ok(_) => {
+                            let waits = if matches!(verdict, AdmittedEdgeVerdict::Hold) {
+                                &mut early.held
+                            } else {
+                                &mut early.with_birth
+                            };
+                            waits.push(HeldStamp {
+                                src,
+                                tgt,
+                                value: value.to_vec(),
+                            });
+                        }
                         Err(malformed) => {
                             rejections.push(QuarantineContainer::Edges, key, &malformed, value);
                         }
@@ -142,7 +152,7 @@ pub(super) fn copy_admitted_edges(
     // happened.
     drop(rtxn);
     rejections.commit(vault)?;
-    Ok(held)
+    Ok(early)
 }
 
 /// Refuses the frame for an edge value that is not bytes, whatever rows it
@@ -160,39 +170,67 @@ pub(super) fn refuse_non_binary_edges(edges: &loro::LoroMap) -> Result<()> {
     result
 }
 
-/// Holds the facet stamps an update sent ahead of their rows under the
-/// sender's `lane`, out of the admitted document ([`copy_admitted_edges`]).
+/// The facet stamps an update sent onto rows this vault does not store: the
+/// ones whose rows it brings wait for those births, and the rest are held.
 #[cfg(feature = "sync")]
-pub(super) fn hold_stamps(vault: &Vault, lane: &str, held: &[HeldStamp]) -> Result<()> {
-    if held.is_empty() {
+#[derive(Default)]
+pub(super) struct EarlyStamps {
+    pub(super) held: Vec<HeldStamp>,
+    pub(super) with_birth: Vec<HeldStamp>,
+}
+
+/// Holds `stamps` under the sender's `lane` and the `grant` it sent them
+/// under, out of the admitted document ([`copy_admitted_edges`]). When
+/// `capped`, a stamp past the sender's caps is refused with typed evidence,
+/// and the rest of the update is admitted as it would be without it.
+#[cfg(feature = "sync")]
+pub(super) fn hold_stamps(
+    vault: &Vault,
+    window_key: &WindowKey,
+    (lane, grant): (&str, Option<EntityId>),
+    stamps: &[HeldStamp],
+    capped: bool,
+) -> Result<()> {
+    if stamps.is_empty() {
         return Ok(());
     }
+    let now = vault.store.clock.now_recorded_at();
     vault.with_write_txn_grouped(|wtxn| {
-        for stamp in held {
-            facet_read::park_stamp(
+        let mut refused = quarantine::TerminalRejectionBatch::new(window_key.as_str());
+        for stamp in stamps {
+            let hold = facet_read::park_stamp(
                 &vault.store,
                 wtxn,
                 (stamp.src, stamp.tgt),
-                lane,
+                (lane, grant),
                 &stamp.value,
+                (now, capped),
             )?;
+            if hold == facet_read::Hold::SenderFull {
+                let full =
+                    Error::Sync(crate::error::SyncError::HeldFacetStampsFull { src: stamp.src });
+                refused.push(
+                    QuarantineContainer::Edges,
+                    &stamp.key(),
+                    &full,
+                    &stamp.value,
+                );
+            }
         }
-        Ok(())
+        refused.commit_in_txn(vault, wtxn, now)
     })
 }
 
-/// Puts back into `edges` each stamp held under `lane` whose row `brought`,
-/// the update's entities, carries as a birth, so the row's own sender
-/// releases its early stamps with the row, and returns them in key order. A
-/// copy is kept until a writer that may place the row writes the pair: a
-/// deferred update is admitted again before it is imported.
+/// The rows `brought`, an admitted update's entities, carries that this
+/// vault does not store and that `with_birth` or the stamps `lane` holds
+/// name, each with the bytes the update brings for it.
 #[cfg(feature = "sync")]
-pub(super) fn release_stamps(
+pub(super) fn pending_births(
     vault: &Vault,
     lane: &str,
     brought: &loro::LoroMap,
-    edges: &loro::LoroMap,
-) -> Result<Vec<(String, Vec<u8>)>> {
+    with_birth: &[HeldStamp],
+) -> Result<Vec<(EntityId, Vec<u8>)>> {
     // Only a row's own spelling, with bytes, can be its birth; the entity
     // door refuses any other before it lands (Astra R7 F2 on #1432).
     let mut rows = Vec::new();
@@ -204,29 +242,152 @@ pub(super) fn release_stamps(
         }
     });
     let rtxn = vault.store.env.read_txn()?;
-    let mut released = Vec::new();
+    let mut births = Vec::new();
     for src in rows {
         if crate::batch::stored_entity_type(&vault.store, &rtxn, &src)?.is_some() {
             continue;
         }
-        for (tgt, value) in facet_read::parked_under(&vault.store, &rtxn, src, lane)? {
-            let key = super::bridge::format_edge_key(&src, EdgeKind::FacetOf, &tgt);
-            if super::loro_support::map_get_bytes(edges, &key).is_none() {
-                map_insert_bytes(edges, &key, &value)?;
-                released.push((key, value));
-            }
+        if (with_birth.iter().any(|stamp| stamp.src == src)
+            || !facet_read::parked_under(&vault.store, &rtxn, src, lane)?.is_empty())
+            && let Some(blob) = super::loro_support::map_get_bytes(brought, &src.to_hex())
+        {
+            births.push((src, blob));
         }
     }
-    released.sort();
-    Ok(released)
+    Ok(births)
 }
 
-/// A `FacetOf` stamp an update sent ahead of its source row.
+/// Facet stamps released once their rows' births applied: the update that
+/// writes the ones the type table admits, and the held copies to discard.
+#[cfg(feature = "sync")]
+pub(crate) struct ReleasedStamps {
+    pub(crate) update: Option<Vec<u8>>,
+    lane: String,
+    stamps: Vec<(EntityId, EntityId)>,
+}
+
+#[cfg(feature = "sync")]
+impl ReleasedStamps {
+    /// Discards the held copies of the released stamps, once the update
+    /// that writes them is imported.
+    pub(crate) fn discard(&self, vault: &Vault) -> Result<()> {
+        vault.with_write_txn_grouped(|wtxn| {
+            for stamp in &self.stamps {
+                facet_read::unpark_released(&vault.store, wtxn, *stamp, &self.lane)?;
+            }
+            Ok(())
+        })
+    }
+}
+
+/// After an update's import, the stamps on each of its `births` that the
+/// import birthed: a row stored now with exactly the bytes the update brought
+/// for it, absent before. Its stamps are the update's own (`with_birth`) and
+/// those `lane` holds. A row the write door refused, or one another writer
+/// stored, releases nothing, so no stamp of it enters the window ahead of
+/// its sender's birth (Astra-b F1 on #1432). A released stamp the type table
+/// now proves off-table, its row born typed, is dropped with typed evidence
+/// instead. `None` when nothing is released.
+#[cfg(feature = "sync")]
+pub(super) fn release_born_stamps(
+    vault: &Vault,
+    key: &WindowKey,
+    lane: &str,
+    births: &[(EntityId, Vec<u8>)],
+    with_birth: &[HeldStamp],
+) -> Result<Option<ReleasedStamps>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut stamps = std::collections::BTreeMap::new();
+    for (src, blob) in births {
+        if vault.store.entities.get(&rtxn, src.as_bytes())?.as_deref() != Some(blob.as_slice()) {
+            continue;
+        }
+        for (tgt, value) in facet_read::parked_under(&vault.store, &rtxn, *src, lane)? {
+            stamps.insert((*src, tgt), value);
+        }
+        for stamp in with_birth.iter().filter(|stamp| stamp.src == *src) {
+            stamps.insert((stamp.src, stamp.tgt), stamp.value.clone());
+        }
+    }
+    if stamps.is_empty() {
+        return Ok(None);
+    }
+    let mut refused = quarantine::TerminalRejectionBatch::new(key.as_str());
+    let mut released = Vec::new();
+    for (&(src, tgt), value) in &stamps {
+        let edge = super::bridge::format_edge_key(&src, EdgeKind::FacetOf, &tgt);
+        let src_type = crate::batch::stored_entity_type(&vault.store, &rtxn, &src)?;
+        let tgt_type = crate::batch::stored_entity_type(&vault.store, &rtxn, &tgt)?;
+        if crate::batch::facet_of_endpoints_provably_off_table(src_type, tgt_type) {
+            let off_table = Error::Registry(RegistryError::InvalidFacetOfEdge {
+                src,
+                src_type,
+                tgt,
+                tgt_type,
+            });
+            refused.push(QuarantineContainer::Edges, &edge, &off_table, value);
+        } else {
+            released.push((edge, value.clone()));
+        }
+    }
+    drop(rtxn);
+    refused.commit(vault)?;
+    let update = if released.is_empty() {
+        None
+    } else {
+        Some(release_update(key, &released)?)
+    };
+    Ok(Some(ReleasedStamps {
+        update,
+        lane: lane.to_owned(),
+        stamps: stamps.into_keys().collect(),
+    }))
+}
+
+/// The update that writes `released`, each edge key with its value, into
+/// the window. Its operation ids derive from what it writes, so devices that
+/// release the same stamps author the same operations, and devices that
+/// release different ones never author two contents under one id.
+#[cfg(feature = "sync")]
+fn release_update(key: &WindowKey, released: &[(String, Vec<u8>)]) -> Result<Vec<u8>> {
+    let mut material = b"oneiron.federation.release.peer.v0".to_vec();
+    let parts = released
+        .iter()
+        .flat_map(|(stamp, value)| [stamp.as_bytes(), value.as_slice()]);
+    for part in std::iter::once(key.as_str().as_bytes()).chain(parts) {
+        material.extend_from_slice(&(part.len() as u64).to_le_bytes());
+        material.extend_from_slice(part);
+    }
+    let peer = match xxhash_rust::xxh3::xxh3_64(&material) {
+        0 => 1,
+        u64::MAX => u64::MAX - 1,
+        peer => peer,
+    };
+    let doc = LoroDoc::new();
+    doc.set_peer_id(peer)
+        .map_err(|e| Error::sync_engine(crate::error::SyncEngineContext::LoroSetPeerId, e))?;
+    let edges = doc.get_map("edges");
+    for (stamp, value) in released {
+        map_insert_bytes(&edges, stamp, value)?;
+    }
+    doc.commit();
+    doc.export(ExportMode::all_updates())
+        .map_err(|e| Error::sync_engine(crate::error::SyncEngineContext::LoroExportAllUpdates, e))
+}
+
+/// A `FacetOf` stamp an update sent onto a row this vault does not store.
 #[cfg(feature = "sync")]
 pub(super) struct HeldStamp {
     src: EntityId,
     tgt: EntityId,
     value: Vec<u8>,
+}
+
+#[cfg(feature = "sync")]
+impl HeldStamp {
+    fn key(&self) -> String {
+        super::bridge::format_edge_key(&self.src, EdgeKind::FacetOf, &self.tgt)
+    }
 }
 
 /// What the admission boundary does with one parsed edge row.
@@ -235,6 +396,9 @@ enum AdmittedEdgeVerdict {
     /// On-table, not a `FacetOf` row at all, or a row whose DECIDING endpoint
     /// type is not knowable yet — copy it and let the replay gate own it.
     Copy,
+    /// A stamp onto a row the update brings and this vault does not store:
+    /// it waits for that birth to apply, and enters the document after it.
+    WithBirth,
     /// A stamp whose source row neither this vault holds nor the update
     /// brings: hold it out of the document under the sender's lane.
     Hold,
@@ -357,18 +521,18 @@ fn admitted_facet_of_verdict(
             },
         )));
     }
-    // A peer places only a row it brings. A stamp onto a row this vault
-    // already holds puts the row in a facet it was not born in, and a
-    // narrowed reader reads a row in ANY of its facets, so an added stamp
-    // only widens who reads it (Astra on #1432). A stamp this vault already
-    // holds adds nothing and goes no further either: the checks a frame's
-    // surviving edges meet later would tell the peer which stamps a row it
-    // cannot read holds (Astra R8 F1). A stamp ahead of its row waits for the
-    // row.
+    // A peer places only a row whose birth it brings. A stamp onto a row
+    // this vault already holds puts the row in a facet it was not born in,
+    // and a narrowed reader reads a row in ANY of its facets, so an added
+    // stamp only widens who reads it (Astra on #1432). A stamp this vault
+    // already holds adds nothing and goes no further either: the checks a
+    // frame's surviving edges meet later would tell the peer which stamps a
+    // row it cannot read holds (Astra R8 F1). A stamp onto a row this vault
+    // lacks waits for the row's birth, never for its presence in the update.
     if crate::batch::stored_entity_type(&vault.store, rtxn, &src)?.is_none() {
         return Ok(
             if super::loro_support::map_get_bytes(brought, &src.to_hex()).is_some() {
-                AdmittedEdgeVerdict::Copy
+                AdmittedEdgeVerdict::WithBirth
             } else {
                 AdmittedEdgeVerdict::Hold
             },
@@ -401,21 +565,19 @@ fn restamp_of_stored_row(
     Ok(stored.then_some(Error::Registry(RegistryError::FacetStampImmutable { src })))
 }
 
-/// Judges each facet stamp of already admitted bytes against the vault as it
-/// is now. A stamp admitted with its row's birth that would now land on a row
-/// another writer stored meanwhile is refused (a staged artifact confirmed
-/// after the row arrived).
+/// Refuses already admitted bytes that carry a facet stamp. This door keeps
+/// every stamp onto a row this vault lacks out of the bytes it admits, until
+/// the row's birth from the same sender has applied, so one in staged bytes
+/// was admitted by an older door with no birth bound to it (Astra-b F1 on
+/// #1432).
 #[cfg(feature = "sync")]
-pub(super) fn recheck_admitted_stamps(vault: &Vault, edges: &loro::LoroMap) -> Result<()> {
-    let rtxn = vault.store.env.read_txn()?;
+pub(super) fn refuse_admitted_stamps(edges: &loro::LoroMap) -> Result<()> {
     let mut result = Ok(());
     map_for_each_value_bytes(edges, |key, _| {
-        if result.is_err() {
-            return;
-        }
-        if let Some((src, EdgeKind::FacetOf, tgt)) = super::bridge::parse_edge_key(key) {
-            result = restamp_of_stored_row(vault, &rtxn, src, tgt)
-                .and_then(|refusal| refusal.map_or(Ok(()), Err));
+        if result.is_ok()
+            && let Some((src, EdgeKind::FacetOf, _)) = super::bridge::parse_edge_key(key)
+        {
+            result = Err(Error::Registry(RegistryError::FacetStampImmutable { src }));
         }
     });
     result

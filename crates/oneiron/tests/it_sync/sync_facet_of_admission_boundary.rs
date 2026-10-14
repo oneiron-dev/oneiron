@@ -52,9 +52,7 @@ use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::transport::{self, TAG_WINDOW_SYNC, window_sub_tags};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::forward_rematerialize;
-use oneiron::sync::{
-    FederationAdmissionRole, admit_federated_window_update, admit_peer_window_update,
-};
+use oneiron::sync::{FederationAdmissionRole, admit_federated_window_update};
 use oneiron::temporal::TimeRange;
 use oneiron::{EntityId, Vault};
 
@@ -144,8 +142,8 @@ fn admission_drops_provably_off_table_facet_of_for_member_and_guest() {
             seed(&vault, id, entity_type);
         }
 
-        // The control EVENT is born in this frame with its stamp: a peer
-        // places only a row it brings.
+        // The control EVENT is born in this frame with its stamp: the stamp
+        // is no forgery, and it waits for that birth to apply.
         let remote = create_window_doc("federation-peer", &window_key);
         map_insert_bytes(
             &remote.get_map("entities"),
@@ -175,8 +173,9 @@ fn admission_drops_provably_off_table_facet_of_for_member_and_guest() {
              quarantined row still scopes exports"
         );
         assert!(
-            keys.contains(&control_key),
-            "{role:?}: the on-table EVENT stamp must admit normally"
+            !keys.contains(&control_key),
+            "{role:?}: the on-table EVENT stamp waits for its row's birth to \
+             apply, outside the admitted document"
         );
         assert!(
             keys.contains(&ordinary_key),
@@ -329,30 +328,27 @@ fn admission_drops_one_sided_non_facet_target_with_unknown_source() {
 /// H2 line: a stamp whose endpoints have not arrived is not evidence of
 /// forgery, so admission does not reject it, and it leaves no `x:` row.
 ///
-/// Nor does admission copy it (the Engine's ruling on Sol R3 F1): the window
-/// replicates to the owner's other devices as their own, and no one can tell
-/// yet whether the sender may place a row it has not brought. The stamp is
-/// held under its sender and enters the window with the row when the same
-/// sender brings it, so an out-of-order delivery heals instead of wedging.
-/// The full lifecycle is pinned: held at admission (no `x:` row, no copy) →
-/// released with its row → heals at remat.
+/// Nor does admission copy it, or a stamp onto a row the update brings (the
+/// Engine's rulings on Sol R3 F1 and Astra-b F1): the window replicates to
+/// the owner's other devices as their own, and only the sender's birth of
+/// the row, applied here, lets the stamp count. With no sender named, nothing
+/// binds the stamp to that birth, so it never enters the admitted document,
+/// whether the row comes later or in the same frame.
 #[test]
-fn admission_holds_a_stamp_ahead_of_its_row_until_its_sender_brings_the_row() {
+fn admission_keeps_a_stamp_onto_an_absent_row_out_of_the_document() {
     let (_dir, vault) = test_vault();
     let window_key = WindowKey::new(WINDOW);
-    let peer = EntityId::from_bytes([0xC0; 16]).unwrap();
     let event = EntityId::from_bytes([0xC1; 16]).unwrap();
     let facet = EntityId::from_bytes([0xC2; 16]).unwrap();
     let stamp_key = format_edge_key(&event, EdgeKind::FacetOf, &facet);
     let admit = |doc: &loro::LoroDoc| {
         doc.commit();
         let update = doc.export(ExportMode::all_updates()).unwrap();
-        admit_peer_window_update(
+        admit_federated_window_update(
             &vault,
             &window_key,
             &update,
             FederationAdmissionRole::Member,
-            peer,
         )
         .expect("an unknowable-type row must not fail the admission door")
     };
@@ -370,15 +366,9 @@ fn admission_holds_a_stamp_ahead_of_its_row_until_its_sender_brings_the_row() {
     local.import(&admit(&first)).unwrap();
     assert!(
         !edge_keys().contains(&stamp_key),
-        "a stamp ahead of its row is held, not copied"
-    );
-    assert!(
-        quarantined_records(&vault).unwrap().is_empty(),
-        "a held row leaves no false evidence at admission"
+        "a stamp ahead of its row is not copied"
     );
 
-    // The same sender brings the row and the facet: the held stamp enters
-    // the window with them and heals.
     let second = create_window_doc("federation-peer", &window_key);
     let entities = second.get_map("entities");
     map_insert_bytes(
@@ -391,20 +381,22 @@ fn admission_holds_a_stamp_ahead_of_its_row_until_its_sender_brings_the_row() {
         &facet.to_hex(),
         &entity_blob(ENTITY_TYPE_FACET, b"facet"),
     );
+    map_insert_bytes(&second.get_map("edges"), &stamp_key, &facet_of_value(T0));
     local.import(&admit(&second)).unwrap();
     assert!(
-        edge_keys().contains(&stamp_key),
-        "the held stamp is released with its row"
+        !edge_keys().contains(&stamp_key),
+        "a stamp onto a row the update brings waits for that birth to apply"
     );
     forward_rematerialize(&vault, &local, &Materializer::new(), &window_key).unwrap();
     assert!(
-        vault
+        !vault
             .edge_exists(&event, EdgeKind::FacetOf, &facet)
-            .unwrap(),
-        "the stamp heals once its sender brings its row — dropping it at \
-         admission would have destroyed the only retry source"
+            .unwrap()
     );
-    assert!(quarantined_records(&vault).unwrap().is_empty());
+    assert!(
+        quarantined_records(&vault).unwrap().is_empty(),
+        "a stamp that waits leaves no false evidence"
+    );
 }
 
 /// The Observer-B gate ISOLATED: the ordinary full-window `UPDATE` arm.
