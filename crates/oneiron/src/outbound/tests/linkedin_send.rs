@@ -305,7 +305,8 @@ fn linkedin_send_dm_observed_absent_produces_ambiguous_receipt_without_phantom_s
 
 /// Security pack 2, F14 H132: a LinkedIn send dispatched with no seat policy
 /// has no seat verdict, so the kill switch, the daily cap and the cadence never
-/// ran. It is held before the transport, never sent.
+/// ran. It is held before the transport, never sent, under any channel
+/// spelling the capability lookup accepts.
 #[test]
 fn a_linkedin_send_with_no_seat_policy_is_held()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -319,41 +320,45 @@ fn a_linkedin_send_with_no_seat_policy_is_held()
         b"dispatch actor",
     )?;
     allow_linkedin_send(&vault, &actor)?;
-    let plan = LinkedInVerifiedSendPlan::new(
-        "linkedin:member:jane-doe",
-        "2-jane-doe-abc",
-        "Happy to share more details.",
-    )?;
-    let mut sink = LinkedInMcpVerifiedSendSink::new(
-        linkedin_adapter()?,
-        ScriptedLinkedInTransport::new(vec![linkedin_conversation(
+    for (spelling, intent) in [
+        ("linkedin", "linkedin-no-policy"),
+        (" LinkedIn ", "linkedin-no-policy-spelled"),
+    ] {
+        let plan = LinkedInVerifiedSendPlan::new(
+            "linkedin:member:jane-doe",
             "2-jane-doe-abc",
-            "Jane Doe\n10:01 AM\nThanks for reaching out.",
-        )]),
-    )
-    .with_plan("intent:linkedin-no-policy", plan)?;
-    let result = vault.dispatch_outbound_intent(
-        linkedin_send_request(
+            "Happy to share more details.",
+        )?;
+        let mut sink = LinkedInMcpVerifiedSendSink::new(
+            linkedin_adapter()?,
+            ScriptedLinkedInTransport::new(vec![linkedin_conversation(
+                "2-jane-doe-abc",
+                "Jane Doe\n10:01 AM\nThanks for reaching out.",
+            )]),
+        )
+        .with_plan(&format!("intent:{intent}"), plan)?;
+        let mut request = linkedin_send_request(
             actor,
-            "outbound:intent:linkedin-no-policy",
-            "intent:linkedin-no-policy",
-        ),
-        &mut sink,
-    )?;
+            &format!("outbound:intent:{intent}"),
+            &format!("intent:{intent}"),
+        );
+        request.intent.channel = spelling.to_owned();
+        let result = vault.dispatch_outbound_intent(request, &mut sink)?;
 
-    assert!(
-        sink.transport().send_calls.is_empty(),
-        "H132: a send with no seat policy reached the transport ({:?})",
-        result.outcome
-    );
-    assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
-    assert_eq!(
-        result
-            .receipt
-            .fields
-            .get("linkedin_engine_policy_reason")
-            .map(String::as_str),
-        Some("linkedin.seat_policy_missing")
-    );
+        assert!(
+            sink.transport().send_calls.is_empty(),
+            "H132: a send with no seat policy ({spelling:?}) reached the transport ({:?})",
+            result.outcome
+        );
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_engine_policy_reason")
+                .map(String::as_str),
+            Some("linkedin.seat_policy_missing")
+        );
+    }
     Ok(())
 }
