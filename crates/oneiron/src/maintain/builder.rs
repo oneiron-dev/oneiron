@@ -21,6 +21,7 @@ pub struct MaintenanceBuilder<'a> {
     do_compact_postings: bool,
     do_recompute_hashes: bool,
     do_clear_text_index: bool,
+    do_reindex_text: bool,
     do_hard_erase_sweep: bool,
     do_cleanup_attempt_queue: bool,
     attempt_queue_lease_timeout_secs: u64,
@@ -61,6 +62,8 @@ pub struct MaintenanceReport {
     pub text_doc_field_lengths_removed: u64,
     /// Per-field stats rows removed by `clear_text_index`.
     pub text_bm25_field_stats_removed: u64,
+    /// Documents indexed again by `rebuild_text_index`.
+    pub text_documents_reindexed: u64,
     /// `h:` hard-erase sweep jobs completed (receipts finalized + row
     /// deleted) by `run_hard_erase_sweep` (ONE-1087).
     pub sweep_jobs_processed: u64,
@@ -131,6 +134,7 @@ impl<'a> MaintenanceBuilder<'a> {
             do_compact_postings: false,
             do_recompute_hashes: false,
             do_clear_text_index: false,
+            do_reindex_text: false,
             do_hard_erase_sweep: false,
             do_cleanup_attempt_queue: false,
             attempt_queue_lease_timeout_secs: 0,
@@ -188,6 +192,15 @@ impl<'a> MaintenanceBuilder<'a> {
     /// [`StoreError::Bm25FieldSchemaChanged`]: crate::error::StoreError::Bm25FieldSchemaChanged
     pub fn clear_text_index(mut self) -> Self {
         self.do_clear_text_index = true;
+        self
+    }
+
+    /// [`Self::clear_text_index`], then index every live document again from
+    /// the text it was indexed with, in the same transaction: the repair
+    /// after an analyzer or field-schema change, with no pipeline to re-run.
+    pub fn rebuild_text_index(mut self) -> Self {
+        self.do_clear_text_index = true;
+        self.do_reindex_text = true;
         self
     }
 
@@ -286,12 +299,13 @@ impl<'a> MaintenanceBuilder<'a> {
         }
 
         if self.do_clear_text_index {
-            let counts = clear_text_index(self.vault)?;
+            let counts = clear_text_index(self.vault, self.do_reindex_text)?;
             report.text_postings_removed = counts.postings;
             report.text_meta_removed = counts.meta;
             report.text_forward_removed = counts.forward;
             report.text_doc_field_lengths_removed = counts.doc_field_lengths;
             report.text_bm25_field_stats_removed = counts.field_stats;
+            report.text_documents_reindexed = counts.reindexed;
         }
 
         if self.do_hard_erase_sweep {

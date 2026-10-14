@@ -1,4 +1,5 @@
-//! Periodic lifecycle jobs: lease expiry and reassert-drain with debounce.
+//! Periodic lifecycle jobs: lease expiry, reassert-drain with debounce, and
+//! the engine's housekeeping pass.
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -10,13 +11,11 @@ use oneiron::sync::lease::{self, LeaseStatus, ROOT_LEASES_MAP};
 use oneiron::sync::{self, WindowKey};
 
 use super::core::{SyncServer, unix_seconds_now};
+use super::housekeeping::HousekeepingAdmission;
 use super::leases::SERVER_LEASE_VAULT_ID;
 use super::windows::SERVER_USER_ID;
 
 const LEASE_LIFECYCLE_TICK_INTERVAL: Duration = Duration::from_secs(60);
-/// Lifecycle ticks between gate-decision retention passes: hourly, and once
-/// at start so a key retirement an interrupted erase left behind finishes.
-const GATE_RETENTION_EVERY_TICKS: u64 = 60;
 
 pub(super) static NEXT_LIFECYCLE_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -58,6 +57,7 @@ impl ReassertDrainJobReport {
 pub(super) enum LifecycleJobKind {
     LeaseExpiry,
     ReassertDrain,
+    Housekeeping,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -70,45 +70,33 @@ pub(super) struct LifecycleJobKey {
 impl SyncServer {
     // ─── Device-lease registry (ONE-1140, OD-3) ──────────────────────────
 
-    /// Starts the periodic lease-lifecycle maintenance loop.
-    pub(crate) fn spawn_lifecycle_scheduler(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+    /// Starts the periodic lifecycle loop. Each tick, the first at once,
+    /// expires sync leases, drains reassert markers and starts a housekeeping
+    /// pass through `admit`, the host's write gate.
+    pub(crate) fn spawn_lifecycle_scheduler(
+        self: &Arc<Self>,
+        admit: HousekeepingAdmission,
+    ) -> tokio::task::JoinHandle<()> {
+        self.spawn_lifecycle_scheduler_every(LEASE_LIFECYCLE_TICK_INTERVAL, admit)
+    }
+
+    pub(super) fn spawn_lifecycle_scheduler_every(
+        self: &Arc<Self>,
+        tick: Duration,
+        admit: HousekeepingAdmission,
+    ) -> tokio::task::JoinHandle<()> {
         let server = Arc::clone(self);
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(LEASE_LIFECYCLE_TICK_INTERVAL);
+            let mut interval = tokio::time::interval(tick);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            let mut ticks = 0_u64;
             loop {
                 interval.tick().await;
                 server.run_scheduled_lifecycle_tick().await;
-                if ticks.is_multiple_of(GATE_RETENTION_EVERY_TICKS) {
-                    server.maintain_gate_decision_retention_once().await;
-                }
-                ticks = ticks.wrapping_add(1);
+                // The pass runs on a task of its own, so a long sweep never
+                // holds back the next tick's lease expiry.
+                let _pass = server.start_housekeeping_pass(&admit).await;
             }
         })
-    }
-
-    /// The live caller of the engine's gate-decision retention pass: it
-    /// finishes staged key retirements and ages out rows past the owner's
-    /// horizon. With no horizon set it removes nothing.
-    async fn maintain_gate_decision_retention_once(&self) {
-        let vault = std::sync::Arc::clone(self.vault());
-        match tokio::task::spawn_blocking(move || vault.maintain_gate_decision_retention()).await {
-            Ok(Ok(0)) => {}
-            Ok(Ok(removed)) => {
-                tracing::info!(
-                    removed,
-                    "gate decision retention pass removed aged receipts"
-                );
-            }
-            Ok(Err(error)) => {
-                tracing::warn!(kind = ?error.kind(), "gate decision retention pass failed");
-            }
-            Err(error) => tracing::warn!(
-                panicked = error.is_panic(),
-                "gate decision retention task failed"
-            ),
-        }
     }
 
     async fn run_scheduled_lifecycle_tick(&self) {

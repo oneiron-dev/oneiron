@@ -434,6 +434,9 @@ side_tables! {
     /// in, its MESSAGE and TURN ids, the hash of what was imported, its revision). Key: string
     /// (`source:native message id`).
     INGEST_HISTORY_LEDGER: VaultMeta b"history-import:v1:" Named;
+    /// One engine housekeeping sweep's schedule: when it is next due, when its last run finished,
+    /// and whether a run is in flight. Key: string (the sweep's code).
+    HOUSEKEEPING_SCHEDULE: VaultMeta b"housekeeping:v1:" Named;
     /// Follow-up reminder/escalation cursor state for one human task. Key: id16.
     HUMAN_TASK_FOLLOWUP: VaultMeta b"human_task.followup.v1\0" Raw;
     /// Idempotency marker recording which signal/surface-event a wait's response already produced.

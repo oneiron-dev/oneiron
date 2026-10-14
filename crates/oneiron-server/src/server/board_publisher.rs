@@ -33,10 +33,14 @@ impl ServeBackground {
 }
 
 impl SyncServer {
-    /// Starts the lifecycle scheduler and the board publisher.
-    pub(crate) fn spawn_serve_background(self: &Arc<Self>) -> ServeBackground {
+    /// Starts the lifecycle scheduler, its housekeeping passes admitted
+    /// through `admit`, and the board publisher.
+    pub(crate) fn spawn_serve_background(
+        self: &Arc<Self>,
+        admit: super::HousekeepingAdmission,
+    ) -> ServeBackground {
         ServeBackground([
-            self.spawn_lifecycle_scheduler(),
+            self.spawn_lifecycle_scheduler(admit),
             self.spawn_board_publisher(),
         ])
     }

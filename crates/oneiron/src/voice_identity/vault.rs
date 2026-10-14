@@ -185,7 +185,12 @@ impl Vault {
         let known_threshold = request.policy.known_threshold;
 
         let rtxn = self.store.env.read_txn()?;
-        let candidates = load_match_candidates(&self.store, &rtxn, &request.space_id)?;
+        let candidates = load_match_candidates(
+            &self.store,
+            &rtxn,
+            &request.space_id,
+            self.now_recorded_at(),
+        )?;
         drop(rtxn);
 
         let mut resolved: Vec<Option<VoiceResolvedSegment>> = vec![None; segments.len()];
