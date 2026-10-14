@@ -361,6 +361,8 @@ side_tables! {
     TASK_BY_OWNER_FORWARD: VaultMeta b"tasks.by_owner.v1/" Raw;
     /// Per-actor task-create rate window. Key: id16 + u64be.
     TASK_CREATE_RATE_WINDOW: VaultMeta b"tasks.create.rate.v1\0" Raw;
+    /// An actor's latest advisory task-create threshold crossing. Key: id16.
+    TASK_CREATE_RATE_CHECK: VaultMeta b"tasks.create.rate.check.v1\0" Named;
     /// Follow-up stage idempotency marker. Key: id16 + \x00 + string.
     TASK_FOLLOW_UP_MARKER: VaultMeta b"tasks.followup.v1\0" Raw;
     /// Owner-authority fact to forward index key. Key: id16.

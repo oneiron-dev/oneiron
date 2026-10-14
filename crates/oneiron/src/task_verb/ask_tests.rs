@@ -893,6 +893,22 @@ fn ask_decided_despite_an_uncounted_word_binds_its_outcome() -> Result<()> {
     Ok(())
 }
 
+// H328: one ask counts once on the asker's task-create window, whatever its
+// recipients; its replay never counts again.
+#[test]
+fn an_ask_counts_once_on_the_askers_create_window() -> Result<()> {
+    let fixture = RuledAskFixture::new(2)?;
+    let spec = fixture.spec();
+    let handle = fixture.ask(&spec)?;
+    assert_eq!(fixture.ask(&spec)?, handle);
+    assert_eq!(
+        fixture.vault.task_create_count(fixture.owner, 60)?,
+        1,
+        "H328: an ask was not counted on the asker's create window"
+    );
+    Ok(())
+}
+
 #[test]
 fn ask_three_replies_one_yes_all_has_coverage_but_no_decision_and_fallback() -> Result<()> {
     let fixture = RuledAskFixture::new(3)?;
