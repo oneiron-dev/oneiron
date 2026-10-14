@@ -45,26 +45,40 @@ impl SlotKind {
     }
 }
 
-/// One slot: a vault and what the secret is for.
+/// One slot: a vault, the install that owns the secret, and what it is for.
+///
+/// `install` is the install's incarnation, the engine's machine id. A restore that
+/// makes a new machine gets a new id, so it never opens the slot of the install it
+/// was copied from, even on the same host with the same keystore.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct KeystoreSlot {
     pub vault_id: [u8; 32],
+    pub install: [u8; 16],
     pub kind: SlotKind,
 }
 
 impl KeystoreSlot {
-    /// `<vault id hex>.<kind>`: the backend's name for the slot. It carries no secret.
+    /// `<vault id hex>.<install hex>.<kind>`: the backend's name for the slot. It
+    /// carries no secret.
     #[must_use]
     pub fn name(&self) -> String {
-        let mut name = String::with_capacity(64 + 1 + self.kind.label().len());
+        let mut name = String::with_capacity(64 + 1 + 32 + 1 + self.kind.label().len());
         for byte in self.vault_id {
-            name.push(char::from(HEX[usize::from(byte >> 4)]));
-            name.push(char::from(HEX[usize::from(byte & 0x0f)]));
+            push_hex(&mut name, byte);
+        }
+        name.push('.');
+        for byte in self.install {
+            push_hex(&mut name, byte);
         }
         name.push('.');
         name.push_str(self.kind.label());
         name
     }
+}
+
+fn push_hex(name: &mut String, byte: u8) {
+    name.push(char::from(HEX[usize::from(byte >> 4)]));
+    name.push(char::from(HEX[usize::from(byte & 0x0f)]));
 }
 
 const HEX: &[u8; 16] = b"0123456789abcdef";

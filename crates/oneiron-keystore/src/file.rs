@@ -150,6 +150,7 @@ mod tests {
     fn slot() -> KeystoreSlot {
         KeystoreSlot {
             vault_id: [7; 32],
+            install: [3; 16],
             kind: crate::SlotKind::MachineEncryption,
         }
     }

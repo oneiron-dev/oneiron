@@ -44,13 +44,29 @@ pub(super) fn encryption_key() -> MachineEncryptionKey {
     }
 }
 
+thread_local! {
+    /// This test's host keystore: every vault one test opens runs on one machine.
+    static HOST_KEYS: std::sync::Arc<oneiron_keystore::MemoryKeystore> = std::sync::Arc::default();
+}
+
+/// `vault`'s own encryption key for `vault_id`, from this test's host keystore.
+pub(super) fn own_encryption_key(vault: &Vault, vault_id: [u8; 32]) -> MachineEncryptionKey {
+    vault.install_device_keystore(HOST_KEYS.with(|keys| keys.clone()));
+    vault.machine_encryption_key(vault_id).unwrap()
+}
+
 /// The machine that joins: its own install, asking to join `vault_id`.
 fn joining(vault_id: [u8; 32]) -> (tempfile::TempDir, Vault, MachineEnrolmentRequest) {
     let dir = tempfile::tempdir().unwrap();
     let install = Vault::open(dir.path(), VaultConfig::default()).unwrap();
-    let request = install
-        .machine_enrolment_request(vault_id, encryption_key())
-        .unwrap();
+    let own = own_encryption_key(&install, vault_id);
+    // A key from no slot of this install's is never signed into a request.
+    assert!(
+        install
+            .machine_enrolment_request(vault_id, encryption_key())
+            .is_err()
+    );
+    let request = install.machine_enrolment_request(vault_id, own).unwrap();
     (dir, install, request)
 }
 
@@ -392,7 +408,7 @@ fn enrolled_machine(host: Host) -> (tempfile::TempDir, Vault, MachineEnrolmentRe
         vault_id,
     } = host;
     let request = vault
-        .machine_enrolment_request(vault_id, encryption_key())
+        .machine_enrolment_request(vault_id, own_encryption_key(&vault, vault_id))
         .unwrap();
     vault
         .enroll_machine(
@@ -416,10 +432,13 @@ fn joins_as_a_new_machine(copy: &Vault, vault: &Vault, request: &MachineEnrolmen
     assert_eq!(copy.local_machine().unwrap(), None);
     assert_eq!(proof(copy), None);
     let joined = copy
-        .machine_enrolment_request(request.vault_id, encryption_key())
+        .machine_enrolment_request(request.vault_id, own_encryption_key(copy, request.vault_id))
         .unwrap();
     assert_ne!(joined.machine, request.machine);
     assert_ne!(joined.machine_key, request.machine_key);
+    // Engine ruling on slot names (R2): the copy is a new machine on the same host,
+    // with the same keystore, and still gets a key of its own.
+    assert_ne!(joined.encryption_key, request.encryption_key);
     let (machine, signature) = proof(copy).unwrap();
     assert_eq!(machine, joined.machine);
     assert_eq!(

@@ -10,14 +10,17 @@ use crate::error::{Error, Result, SecretError};
 
 const MACHINE_KEY_LABEL: &[u8] = b"oneiron/machine-encryption/v1";
 
-/// This install's secret for `vault_id`. It is created in the keystore on first use.
-/// The keystore is create-only, so a concurrent first use keeps the slot's first seed.
+/// The secret of install `install` (its machine id) for `vault_id`. It is created in
+/// the keystore on first use. The keystore is create-only, so a concurrent first use
+/// keeps the slot's first seed.
 pub fn machine_secret(
     keystore: &dyn DeviceKeystore,
     vault_id: [u8; 32],
+    install: [u8; 16],
 ) -> Result<HybridSecretKey> {
     let slot = KeystoreSlot {
         vault_id,
+        install,
         kind: SlotKind::MachineEncryption,
     };
     let seed = match keystore.get(&slot).map_err(keystore_error)? {
@@ -39,13 +42,15 @@ pub fn machine_secret(
         .map_err(|_| refused("the machine seed does not expand"))
 }
 
-/// This install's public encryption key for `vault_id`: what its machine profile
-/// carries (P1's `MachineEncryptionKey`, suite 0x0101).
+/// The public half of [`machine_secret`]: what the machine profile carries.
 pub fn machine_encryption_key(
     keystore: &dyn DeviceKeystore,
     vault_id: [u8; 32],
+    install: [u8; 16],
 ) -> Result<HybridPublicKey> {
-    Ok(machine_secret(keystore, vault_id)?.public_key().clone())
+    Ok(machine_secret(keystore, vault_id, install)?
+        .public_key()
+        .clone())
 }
 
 fn keystore_error(e: KeystoreError) -> Error {

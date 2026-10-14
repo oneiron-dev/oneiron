@@ -7,6 +7,7 @@ use oneiron_keystore::{DeviceKeystore, MemoryKeystore};
 use super::*;
 
 const VAULT: [u8; 32] = [0x5a; 32];
+const INSTALL: [u8; 16] = [0x3c; 16];
 
 fn entity(byte: u8) -> EntityId {
     EntityId::from_bytes_unchecked([byte; 16])
@@ -29,8 +30,8 @@ fn binding(key: &WorldKey) -> WorldKeyBinding {
 fn a_world_key_opens_only_for_its_machine_and_for_the_kit() {
     let keys_a = MemoryKeystore::new();
     let keys_b = MemoryKeystore::new();
-    let a = machine_secret(&keys_a, VAULT).unwrap();
-    let b = machine_secret(&keys_b, VAULT).unwrap();
+    let a = machine_secret(&keys_a, VAULT, INSTALL).unwrap();
+    let b = machine_secret(&keys_b, VAULT, INSTALL).unwrap();
     let seed = RecoveryRootSeed::generate().unwrap();
     let root = seed.public(&VAULT).unwrap();
     let key = WorldKey::mint(entity(0x77), FIRST_GENERATION).unwrap();
@@ -62,7 +63,9 @@ fn a_world_key_opens_only_for_its_machine_and_for_the_kit() {
 
     // The machine secret is this install's: a second use returns the same key.
     assert_eq!(
-        machine_secret(&keys_a, VAULT).unwrap().public_key(),
+        machine_secret(&keys_a, VAULT, INSTALL)
+            .unwrap()
+            .public_key(),
         a.public_key()
     );
 }
@@ -76,7 +79,7 @@ fn the_vault_key_alone_opens_no_world_key() {
     let mut vault_key = [0u8; 32];
     os_fill(&mut vault_key).unwrap();
     let keys = MemoryKeystore::new();
-    let machine = machine_secret(&keys, VAULT).unwrap();
+    let machine = machine_secret(&keys, VAULT, INSTALL).unwrap();
     let root = RecoveryRootSeed::generate()
         .unwrap()
         .public(&VAULT)
@@ -136,7 +139,7 @@ fn the_vault_key_alone_opens_no_world_key() {
 #[test]
 fn a_mismatched_world_generation_or_suite_is_refused() {
     let keys = MemoryKeystore::new();
-    let machine = machine_secret(&keys, VAULT).unwrap();
+    let machine = machine_secret(&keys, VAULT, INSTALL).unwrap();
     let key = WorldKey::mint(entity(0x77), FIRST_GENERATION).unwrap();
     let bound = binding(&key);
     let to = WrapRecipient::Machine(entity(0xa1));
@@ -223,7 +226,7 @@ fn a_mismatched_world_generation_or_suite_is_refused() {
 #[test]
 fn a_wrap_with_substituted_key_bytes_is_refused() {
     let keys = MemoryKeystore::new();
-    let machine = machine_secret(&keys, VAULT).unwrap();
+    let machine = machine_secret(&keys, VAULT, INSTALL).unwrap();
     let key = WorldKey::mint(entity(0x77), FIRST_GENERATION).unwrap();
     let bound = binding(&key);
     let to = WrapRecipient::Machine(entity(0xa1));

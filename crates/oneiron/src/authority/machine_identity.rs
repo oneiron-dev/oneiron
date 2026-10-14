@@ -99,15 +99,29 @@ impl Vault {
 
     /// Called on the machine that joins: mints (once) and keeps this install's
     /// machine id and key, and signs its identity for `vault_id` with that key.
+    /// `encryption_key` must be this install's own for `vault_id`
+    /// ([`Vault::machine_encryption_key`]), derived under the machine id the request
+    /// signs: a key from another slot, or one taken before the id changed, is refused.
     pub fn machine_enrolment_request(
         &self,
         vault_id: [u8; 32],
         encryption_key: MachineEncryptionKey,
     ) -> Result<MachineEnrolmentRequest> {
         encryption_key.validate()?;
+        let (derived_under, own_key) = self.machine_encryption_key_with_id(vault_id)?;
+        if encryption_key != own_key {
+            return Err(crate::world_keys::refused(
+                "the encryption key is not this install's own for this vault",
+            ));
+        }
         let mut request = None;
         self.with_write_txn_grouped(|wtxn| {
             let (machine, key) = crate::identity::load_or_mint_machine_in_txn(self, wtxn)?;
+            if machine != derived_under {
+                return Err(crate::world_keys::refused(
+                    "the machine identity changed after its encryption key was read",
+                ));
+            }
             let machine_key = key.verifying_key().to_bytes();
             let machine_proof = key
                 .sign(&machine_profile_proof_transcript(
