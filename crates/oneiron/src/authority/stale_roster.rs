@@ -70,7 +70,9 @@ fn stale_roster_approval_deadlines(
                 return None;
             }
             let hash = authority_entry_hash(entry).ok()?;
-            if !fold.valid_entries.contains(&hash) {
+            // An anchor's mark rests on no roster key, even one a roster
+            // enrolled under the anchor's public key and then revoked.
+            if !fold.valid_entries.contains(&hash) || fold.anchor_entries.contains(&hash) {
                 return None;
             }
             let seen = first_seen.get(&hash)?;
@@ -169,7 +171,7 @@ pub(super) fn apply_stale_roster_window(
     }
     // A machine stands on the revision that won. Once that revision is
     // stale it is not live here, until a key still on the roster signs the
-    // same standing again.
+    // same standing again: a roster entry, never an anchor's copy of it.
     for folded in fold
         .machines
         .values_mut()
@@ -181,7 +183,9 @@ pub(super) fn apply_stale_roster_window(
         let reissued = entries.iter().any(|entry| {
             matches!(&entry.op, AuthorityOp::MachineProfile(profile) if *profile == folded.profile)
                 && authority_entry_hash(entry).is_ok_and(|hash| {
-                    fold.valid_entries.contains(&hash) && !expired.contains(&hash)
+                    fold.valid_entries.contains(&hash)
+                        && !expired.contains(&hash)
+                        && !fold.anchor_entries.contains(&hash)
                 })
         });
         folded.stale = !reissued;

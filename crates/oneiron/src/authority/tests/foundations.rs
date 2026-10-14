@@ -405,6 +405,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         machines: BTreeMap::new(),
         machine_keys: BTreeMap::new(),
         root_anchors: BTreeMap::new(),
+        anchor_entries: BTreeSet::new(),
         host_custody_keys: BTreeSet::new(),
         key_admitters: BTreeMap::new(),
         hosted: false,

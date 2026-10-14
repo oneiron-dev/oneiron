@@ -136,6 +136,10 @@ pub struct AuthorityFold {
     /// accepted roster revisions alone.
     pub pinned_root: Option<PinnedRoot>,
     pub(super) root_anchors: BTreeMap<[u8; 32], BTreeSet<RecoveryRootId>>,
+    /// The entries that folded through an owner anchor's branch: the
+    /// stale-roster window never expires them, and none renews a roster
+    /// revision.
+    pub(super) anchor_entries: BTreeSet<AuthorityEntryHash>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
 }
@@ -263,6 +267,10 @@ pub(super) struct FoldState {
     /// Each valid root's anchor key, mapped to every root id it signed,
     /// merged by union. No root record is fold state.
     pub(super) root_anchors: BTreeMap<[u8; 32], BTreeSet<RecoveryRootId>>,
+    /// The entries that folded through an owner anchor's branch (its roots
+    /// and its marks), merged by union. They rest on no roster key, even when
+    /// a roster also names the anchor's public key.
+    pub(super) anchor_entries: BTreeSet<AuthorityEntryHash>,
     /// Roster keys marked as the host's, merged by union: each key a host
     /// enrolled as its own root, and each key marked for the cloud (role or
     /// tier). Custody also passes along `key_admitters`.
@@ -495,6 +503,9 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .or_default()
             .extend(roots.iter().copied());
     }
+    merged
+        .anchor_entries
+        .extend(right.anchor_entries.iter().copied());
     merged
         .host_custody_keys
         .extend(right.host_custody_keys.iter().cloned());

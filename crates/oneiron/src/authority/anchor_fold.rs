@@ -25,10 +25,14 @@ pub(super) fn fold_anchor_entry(
                     .entry(record.anchor_key)
                     .or_default()
                     .insert(record.root);
+                state.anchor_entries.insert(hash);
             }));
         }
+        // A roster that also names the anchor's public key changes nothing:
+        // anyone can enrol a public key, and that must not take the owner's
+        // anchor off its own chain.
         (AuthorityOp::MachineProfile(_), AuthorityKey::Ed25519(key))
-            if !state.roster.contains_key(signer) && state.root_anchors.contains_key(key) =>
+            if state.root_anchors.contains_key(key) =>
         {
             *key
         }
@@ -42,7 +46,10 @@ pub(super) fn fold_anchor_entry(
     }
     Some(
         advance(state, entry, signer, hash)
-            .and_then(|()| apply_anchor_profile(state, anchor, profile, hash)),
+            .and_then(|()| apply_anchor_profile(state, anchor, profile, hash))
+            .map(|()| {
+                state.anchor_entries.insert(hash);
+            }),
     )
 }
 

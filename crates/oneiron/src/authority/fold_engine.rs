@@ -497,6 +497,9 @@ fn fold_authority_log_once(
             federation_grant_bindings: BTreeMap::new(),
             actor_bindings: BTreeMap::new(),
             machines: BTreeMap::new(),
+            pinned_root: None,
+            root_anchors: BTreeMap::new(),
+            anchor_entries: BTreeSet::new(),
             issues,
         };
     }
@@ -597,6 +600,9 @@ fn fold_authority_log_once(
         root_anchors: merged
             .as_ref()
             .map_or_else(BTreeMap::new, |state| state.root_anchors.clone()),
+        anchor_entries: merged
+            .as_ref()
+            .map_or_else(BTreeSet::new, |state| state.anchor_entries.clone()),
         issues,
     }
 }

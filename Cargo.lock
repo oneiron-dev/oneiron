@@ -8132,7 +8132,9 @@ dependencies = [
 name = "oneiron-keystore"
 version = "0.1.0"
 dependencies = [
+ "core-foundation 0.10.1",
  "security-framework",
+ "security-framework-sys",
  "tempfile",
  "thiserror 2.0.20",
  "zeroize",

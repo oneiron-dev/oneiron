@@ -106,6 +106,7 @@ pub(super) fn fold_entry_state(
             machines: BTreeMap::new(),
             machine_keys: BTreeMap::new(),
             root_anchors: BTreeMap::new(),
+            anchor_entries: BTreeSet::new(),
             host_custody_keys: BTreeSet::new(),
             key_admitters: BTreeMap::new(),
             hosted: context.hosted,

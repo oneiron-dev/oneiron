@@ -3,7 +3,9 @@
 //! and nothing a host signs under its own root or its roster takes the
 //! owner's mark away (contract §4, checks 7 and 7d).
 use super::machine_identity::request_for;
-use super::support::{authority_key_from_ed, device, ed_key, sign_ed, unsigned_entry};
+use super::support::{
+    RosterChain, authority_key_from_ed, device, ed_key, genesis_entry, sign_ed, unsigned_entry,
+};
 use super::*;
 use crate::world_keys::{RecoveryRoot, RecoveryRootSeed};
 
@@ -324,4 +326,112 @@ fn a_root_record_binds_its_vault_and_both_keys() {
     });
     assert!(cosigned.validate_shape().is_err());
     assert!(root.matches(&root_record(&root)));
+}
+
+/// Seen at 100 by this install, and folded at `now` under `posture`.
+fn fold_seen_at(
+    entries: &[AuthorityLogEntry],
+    now: u64,
+    posture: crate::HostingPrivacyPosture,
+) -> AuthorityFold {
+    let first_seen: BTreeMap<_, _> = entries
+        .iter()
+        .map(|entry| (authority_entry_hash(entry).unwrap(), 100))
+        .collect();
+    fold_authority_log_for_posture(entries, &first_seen, now, &BTreeMap::new(), posture)
+}
+
+/// Anyone may enrol a public key, so the host enrols the owner's anchor key
+/// in its roster as an agent, then revokes it. The anchor still marks and
+/// removes machines in its own chain, and the revocation never makes its mark
+/// stale, past the stale-roster window too (Sol code-R1 S1-F3). Fails before:
+/// a roster that named the anchor's key took its marks off the anchor's chain.
+#[test]
+fn a_roster_that_names_the_anchor_key_never_takes_its_chain() {
+    let cloud = ed_key(140);
+    let genesis = hosted_genesis(&cloud);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let (root, anchor, published) = publish(id, &genesis);
+    let anchor_key = AuthorityKey::Ed25519(root.anchor_key);
+    let enrolled = signed(
+        id,
+        &[&published],
+        &cloud,
+        1,
+        AuthorityOp::EnrollDevice {
+            device: device(anchor_key.clone(), ROLE_AGENT, AuthorityTier::Software),
+        },
+    );
+    let request = request_for(id, EntityId::now(), &ed_key(141));
+    let mark = signed(id, &[&enrolled], &anchor, 2, profile(&request, YOURS, 1));
+    let revoked = signed(
+        id,
+        &[&mark],
+        &cloud,
+        2,
+        AuthorityOp::RevokeDevice {
+            revoked_key: anchor_key,
+        },
+    );
+    let mut entries = vec![genesis, published, enrolled, mark, revoked];
+    let hosted = crate::HostingPrivacyPosture::Hosted;
+    let late = 100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1;
+    for now in [100, late] {
+        let fold = fold_seen_at(&entries, now, hosted);
+        let trusted = fold
+            .machine(request.machine)
+            .and_then(|folded| folded.trusted(Some(&pin(&root))));
+        assert_eq!(
+            trusted.map(|trusted| trusted.profile.machine_key),
+            Some(request.machine_key),
+            "{now}"
+        );
+    }
+    let last = entries.last().unwrap().clone();
+    entries.push(signed(
+        id,
+        &[&last],
+        &anchor,
+        3,
+        profile(&request, MachineRole::Removed, 2),
+    ));
+    let fold = fold_seen_at(&entries, late, hosted);
+    let folded = fold.machine(request.machine).unwrap();
+    assert!(folded.anchored[&root.anchor_key].removed);
+    assert!(!folded.is_mine(Some(&pin(&root))));
+}
+
+/// The owner's roster key marks M "yours", then hands the vault to another
+/// key, so the mark goes stale once the window passes. A foreign anchor's
+/// verbatim copy of that mark renews nothing: an unpinned install, which
+/// trusts the roster alone, never counts M mine again (Sol code-R1 S1-F4).
+/// Fails before: any valid entry with the same profile renewed the roster's
+/// revision.
+#[test]
+fn a_foreign_anchors_copy_never_renews_a_stale_roster_mark() {
+    let owner = ed_key(142);
+    let next = ed_key(143);
+    let genesis = genesis_entry(142, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let request = request_for(id, EntityId::now(), &ed_key(144));
+    let op = profile(&request, YOURS, 1);
+    let mark = signed(id, &[&genesis], &owner, 1, op.clone());
+    let handoff = super::history_transfer::re_root_entry(id, &mark, &owner, 2, &next);
+    let (_, anchor, published) = publish(id, &genesis);
+    let copy = signed(id, &[&published], &anchor, 2, op);
+    let entries = [genesis, mark, handoff, published, copy];
+    let self_host = crate::HostingPrivacyPosture::SelfHostLocal;
+    assert!(
+        fold_seen_at(&entries, 100, self_host)
+            .machine(request.machine)
+            .is_some_and(|folded| folded.is_mine(None))
+    );
+    let late = fold_seen_at(
+        &entries,
+        100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1,
+        self_host,
+    );
+    let folded = late.machine(request.machine).unwrap();
+    assert!(folded.roster_chain().stale);
+    assert!(!folded.is_mine(None));
 }

@@ -8,15 +8,21 @@
 //!   An unsigned build gets `errSecMissingEntitlement`, which maps to `Unavailable`.
 //!   There is no fallback to the legacy file keychain: it is copied by Time Machine.
 
+use core_foundation::base::TCFType;
+use core_foundation::data::CFData;
+use core_foundation::dictionary::CFDictionary;
+use core_foundation::string::CFString;
 use security_framework::access_control::{ProtectionMode, SecAccessControl};
 use security_framework::passwords::{
     PasswordOptions, delete_generic_password_options, generic_password,
-    set_generic_password_options,
 };
+use security_framework_sys::item::kSecValueData;
+use security_framework_sys::keychain_item::SecItemAdd;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{DeviceKeystore, KeystoreError, KeystoreLocality, KeystoreSlot, Result};
 
+const ERR_SEC_SUCCESS: i32 = 0;
 const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 const ERR_SEC_DUPLICATE_ITEM: i32 = -25299;
 const ERR_SEC_AUTH_FAILED: i32 = -25293;
@@ -75,12 +81,28 @@ impl DeviceKeystore for AppleKeychain {
             .map_err(|_| KeystoreError::Corrupt("the slot is not 32 bytes"))
     }
 
-    /// Create-only: a present item is `AlreadyExists`. The library call would update it.
+    /// Create-only, in one `SecItemAdd`: a present item is `errSecDuplicateItem`,
+    /// so `AlreadyExists`. The library's set call falls back to an update, and a
+    /// check before it races another first use of the slot.
     fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<()> {
-        if self.get(slot)?.is_some() {
-            return Err(KeystoreError::AlreadyExists);
+        let item = self.new_item(slot)?;
+        #[expect(
+            deprecated,
+            reason = "PasswordOptions has no add-only call; its query is the item"
+        )]
+        let mut attributes = item.query.clone();
+        // SAFETY: `kSecValueData` is an immutable CFString the Security framework
+        // exports for the life of the process; the get rule retains it.
+        let value_key = unsafe { CFString::wrap_under_get_rule(kSecValueData) };
+        attributes.push((value_key, CFData::from_buffer(secret).into_CFType()));
+        let attributes = CFDictionary::from_CFType_pairs(&attributes);
+        // SAFETY: `attributes` is a valid dictionary that outlives the call, and a
+        // null result pointer asks for no returned item.
+        let status = unsafe { SecItemAdd(attributes.as_concrete_TypeRef(), std::ptr::null_mut()) };
+        match status {
+            ERR_SEC_SUCCESS => Ok(()),
+            other => Err(platform(other)),
         }
-        set_generic_password_options(secret, self.new_item(slot)?).map_err(|e| platform(e.code()))
     }
 
     fn delete(&self, slot: &KeystoreSlot) -> Result<()> {
