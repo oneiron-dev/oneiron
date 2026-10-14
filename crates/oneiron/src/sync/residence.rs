@@ -40,7 +40,8 @@ pub fn home_search_candidates(
     let actor = crate::claim::ScopedReadActorKey::from_verified_slip(proof).ok_or(
         Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied),
     )?;
-    let candidates = vault.scoped_read_search_candidate_limit(limit, true, false)?;
+    let candidates =
+        vault.scoped_read_search_candidate_limit(&vault.store.read(), limit, true, false)?;
     let mut results = Vec::new();
     for hit in vault
         .scoped_read(actor)

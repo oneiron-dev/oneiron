@@ -259,6 +259,20 @@ impl SessionOverlay {
             .any(|value| matches!(value, OverlayValue::Present(_))))
     }
 
+    /// Whether this overlay stages anything at all, in any keyspace: a row,
+    /// a tombstone over base or a cleared keyspace. A read through it may
+    /// reflect any of them, an entity, a vector, a posting or a deletion.
+    pub(crate) fn stages_anything(&self) -> bool {
+        let state = self.state.load();
+        state
+            .keyspaces
+            .iter()
+            .any(|keyspace| match keyspace.as_ref() {
+                KeyspaceState::Single { clear_base, rows } => *clear_base || !rows.is_empty(),
+                KeyspaceState::DupSort { clear_base, rows } => *clear_base || !rows.is_empty(),
+            })
+    }
+
     pub(crate) fn snapshot(self: &Arc<Self>) -> Result<OverlaySnapshot> {
         let active = ACTIVE_SEGMENT.with(|slot| {
             let slot = slot.borrow();
