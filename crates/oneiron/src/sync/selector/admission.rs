@@ -159,9 +159,10 @@ impl AdmittedUpdate {
         hold_stamps(vault, key, (lane, None), &self.early.with_birth, false)
     }
 
-    /// The rows the update brings whose births its import must watch.
-    pub(crate) fn birth_rows(&self) -> impl Iterator<Item = EntityId> + '_ {
-        self.births.iter().map(|(row, _)| *row)
+    /// The rows the update brings whose births its import must watch, each
+    /// with the bytes it brings.
+    pub(crate) fn births(&self) -> &[(EntityId, Vec<u8>)] {
+        &self.births
     }
 
     /// After the update's import, the stamps on the rows that import birthed
@@ -192,9 +193,10 @@ pub(crate) struct StagedBirths {
 
 #[cfg(feature = "sync")]
 impl StagedBirths {
-    /// The rows the confirmation's import must watch.
-    pub(crate) fn birth_rows(&self) -> impl Iterator<Item = EntityId> + '_ {
-        self.births.iter().map(|(row, _)| *row)
+    /// The rows the confirmation's import must watch, each with the bytes
+    /// the artifact brings.
+    pub(crate) fn births(&self) -> &[(EntityId, Vec<u8>)] {
+        &self.births
     }
 
     /// After the confirmation's import, the stamps on the rows that import

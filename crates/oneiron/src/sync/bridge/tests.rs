@@ -1349,6 +1349,55 @@ fn observer_b_does_not_rehydrate_tombstoned_edge_endpoint() {
 /// purge txn, or a failed purge) must never count as "ready". Pre-fix
 /// code returned true on ANY existing row and materialized the edge.
 /// Covers binary AND non-binary tombstone values (fail closed).
+/// Sol R11 F1 on #1432: the edges map can reach Observer B before the
+/// entities map, and its batch then hydrates an endpoint from the document.
+/// That write is the row's birth, so a federated import watching the row
+/// counts it, but only when it wrote the bytes the sender brought (Astra R11
+/// F3): another image's birth is not the sender's.
+#[test]
+fn an_endpoint_the_edge_batch_hydrates_is_a_birth_of_the_bytes_it_wrote() {
+    let range = TimeRange { start: 1, end: 1 };
+    let event = crate::registry::ENTITY_TYPE_EVENT;
+    let blob = crate::test_util::entity_record(event, range, 1, b"row");
+    for (leg, sent) in [
+        ("the sender's bytes", blob.clone()),
+        (
+            "another image",
+            crate::test_util::entity_record(event, range, 1, b"other"),
+        ),
+    ] {
+        let vault = test_vault();
+        let doc = LoroDoc::new();
+        let (row, target) = (EntityId::now(), EntityId::now());
+        vault
+            .put_entity(&target, event, range, 1, b"target")
+            .unwrap();
+        map_insert_bytes(&doc.get_map("entities"), &row.to_hex(), &blob).unwrap();
+        doc.commit();
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+
+        let born = crate::sync::ingest::watch_births(&vault, &[(row, sent.clone())], || {
+            map_insert_bytes(
+                &doc.get_map("edges"),
+                &format_edge_key(&row, EdgeKind::Mentions, &target),
+                &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.8, 10, Some(Vad::NEUTRAL), None)
+                    .unwrap(),
+            )
+            .unwrap();
+            doc.commit();
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+
+        assert!(
+            vault.entity_exists(&row).unwrap(),
+            "{leg}: precondition, the edge batch hydrated the row"
+        );
+        assert_eq!(born.contains(&row), sent == blob, "{leg}");
+    }
+}
+
 #[test]
 fn observer_b_does_not_materialize_edge_to_tombstoned_endpoint_with_stale_row() {
     let vault = test_vault();

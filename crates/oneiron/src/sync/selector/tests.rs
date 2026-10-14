@@ -1510,7 +1510,7 @@ fn import_from_peer(
 ) {
     let admitted = admit_peer_window_update(vault, window_key, update, role, peer).unwrap();
     admitted.hold_from_peer(vault, window_key, grant).unwrap();
-    let born = crate::sync::ingest::watch_births(admitted.birth_rows(), || {
+    let born = crate::sync::ingest::watch_births(vault, admitted.births(), || {
         doc.import(admitted.bytes()).unwrap();
         rematerialize(vault, doc, window_key);
         Ok::<_, ()>(())
@@ -2101,7 +2101,7 @@ fn a_stamp_whose_row_the_write_door_refused_never_places_a_later_row() {
 #[test]
 fn a_peer_copy_of_a_row_another_writer_stored_first_releases_no_stamp() {
     let window_key = WindowKey::new("2026-05");
-    for (leg, seed) in [("with the row", 0x40_u8), ("held", 0x48_u8)] {
+    for (leg, seed) in [("with the row", 0x60_u8), ("held", 0x68_u8)] {
         let (_dir, vault, grant_id) = test_vault_with_grant(entity_id(seed));
         let [peer, work, private, row] = [1, 2, 3, 4].map(|n| entity_id(seed + n));
         for facet in [work, private] {
@@ -2135,7 +2135,7 @@ fn a_peer_copy_of_a_row_another_writer_stored_first_releases_no_stamp() {
         vault
             .put_edge(&row, EdgeKind::FacetOf, &private, 1.0)
             .unwrap();
-        let born = crate::sync::ingest::watch_births(admitted.birth_rows(), || {
+        let born = crate::sync::ingest::watch_births(&vault, admitted.births(), || {
             live.import(admitted.bytes()).unwrap();
             rematerialize(&vault, &live, &window_key);
             Ok::<_, ()>(())

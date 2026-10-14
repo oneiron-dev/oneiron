@@ -514,8 +514,10 @@ impl<'a> ExecutorStorage<'a> {
 /// A facet stamp puts its source in front of every reader narrowed to the
 /// facet, so a door's credential places only a row its lane reads, in a facet
 /// its Scope holds, judged in `txn`, the edge's own write transaction (Astra
-/// on #1432). Any other stamp is refused naming no endpoint type, so the
-/// refusal says nothing about a target the lane may not read (Astra R9 F2).
+/// on #1432). The target must be a stored FACET, or the type table refuses
+/// the stamp later naming the target's type. Any other stamp is refused here
+/// naming no endpoint type, so the refusal says nothing about a target the
+/// lane may not read (Astra R9 F2, R11 F1).
 pub(crate) fn require_facet_placement_in(
     vault: &Vault,
     reader: &ScopedReadActorKey,
@@ -530,6 +532,8 @@ pub(crate) fn require_facet_placement_in(
     // read rechecks it: a key kept past its owner's revocation places nothing.
     let lane = vault.scoped_read(reader.clone());
     if in_scope
+        && crate::batch::stored_entity_type(&vault.store, txn, &tgt)?
+            == Some(crate::registry::ENTITY_TYPE_FACET)
         && lane.is_entity_readable_with_policy_in(txn, &lane.live_policy_manifest_in(txn)?, &src)?
     {
         return Ok(());

@@ -1219,7 +1219,7 @@ impl AgentVerbDoor for LaneDoor {
 fn facet_reader(
     vault: &Vault,
     holder: EntityId,
-    facets: [EntityId; 2],
+    facets: crate::federation::ScopeAxis<crate::federation::ScopeId>,
 ) -> Result<crate::claim::ScopedReadActorKey> {
     let tag = b"code-run facet placement";
     let issuer = crate::authority::HostSlipIssuer::from_secret(tag)?;
@@ -1228,7 +1228,7 @@ fn facet_reader(
     claims.parent_id = None;
     claims.holder_ref = holder.to_hex();
     claims.actor_class = Some("agent".into());
-    claims.scope.facets = facets.into_iter().map(crate::federation::ScopeId).collect();
+    claims.scope.facets = facets;
     let slip = vault.mint_capability_slip(&issuer, claims)?;
     let binding = issuer.binding_proof(&slip, tag)?;
     let proof = vault.verify_capability_slip(&issuer.public_key(), &slip, tag, &binding)?;
@@ -1269,7 +1269,10 @@ fn a_door_credential_stamps_only_a_row_it_reads_into_its_own_facets() -> Result<
     .with_agent_verb_door(std::sync::Arc::new(LaneDoor(facet_reader(
         &vault,
         actor,
-        [work, home],
+        [work, home]
+            .into_iter()
+            .map(crate::federation::ScopeId)
+            .collect(),
     )?)));
     let stamp = |src, tgt| {
         dispatcher.dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
@@ -1289,6 +1292,40 @@ fn a_door_credential_stamps_only_a_row_it_reads_into_its_own_facets() -> Result<
         (absent, absent),
     ] {
         let refused = stamp(src, tgt).expect_err("an unplaceable stamp is refused");
+        assert!(
+            matches!(
+                refused,
+                Error::Registry(crate::error::RegistryError::InvalidFacetOfEdge {
+                    src_type: None,
+                    tgt_type: None,
+                    ..
+                })
+            ),
+            "{refused:?}"
+        );
+    }
+    // A credential that holds every facet reads `shared`; its stamp onto a
+    // stored row that is no facet, or onto a missing id, is refused alike
+    // before the type table can name the target (Astra R11 F1).
+    let wide = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-facet-placement-wide",
+    )?
+    .with_agent_verb_door(std::sync::Arc::new(LaneDoor(facet_reader(
+        &vault,
+        actor,
+        crate::federation::ScopeAxis::All,
+    )?)));
+    for tgt in [held, absent] {
+        let refused = wide
+            .dispatch(SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+                shared,
+                EdgeKind::FacetOf,
+                tgt,
+                1.0,
+            )))
+            .expect_err("a stamp onto a row that is no facet is refused");
         assert!(
             matches!(
                 refused,

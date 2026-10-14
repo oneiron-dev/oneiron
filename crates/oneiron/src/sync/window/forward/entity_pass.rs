@@ -45,7 +45,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
         }
         // A row a federated import watches, written where none was stored, is
         // its birth once this transaction commits.
-        let watched = EntityId::from_hex(key).ok().filter(watches);
+        let watched = EntityId::from_hex(key).ok().filter(|id| watches(vault, id));
         let step = match vault.with_write_txn_grouped(|wtxn| {
             let unborn = match &watched {
                 Some(id) => vault.store.entities.get(wtxn, id.as_bytes())?.is_none(),
@@ -55,8 +55,8 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             Ok((step, unborn))
         }) {
             Ok((step, unborn)) => {
-                if unborn {
-                    note_born(step.written());
+                if unborn && let (Some(id), Some(blob)) = (step.written(), value) {
+                    note_born(vault, [(id, blob)]);
                 }
                 step
             }

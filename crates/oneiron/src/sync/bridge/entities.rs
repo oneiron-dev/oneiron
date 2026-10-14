@@ -97,7 +97,9 @@ pub(super) fn materialize_entities_with_changes(
                 .transpose()?
                 .flatten();
             let unborn = match EntityId::from_hex(key.as_ref()) {
-                Ok(id) if watches(&id) => vault.store.entities.get(wtxn, id.as_bytes())?.is_none(),
+                Ok(id) if watches(vault, &id) => {
+                    vault.store.entities.get(wtxn, id.as_bytes())?.is_none()
+                }
                 _ => false,
             };
             match ingest_entity_in_savepoint(&ingest, wtxn, key.as_ref(), value)? {
@@ -107,7 +109,7 @@ pub(super) fn materialize_entities_with_changes(
                 step => {
                     if let (Some(id), Some(blob)) = (step.written(), value) {
                         if unborn {
-                            born.push(id);
+                            born.push((id, blob.to_vec()));
                         }
                         applied_ops.push((id, blob.to_vec()));
                         // The savepoint has no postcommit owner. Carry its
@@ -158,7 +160,7 @@ pub(super) fn materialize_entities_with_changes(
     });
 
     if result.is_ok() {
-        note_born(born);
+        note_born(vault, born.iter().map(|(id, blob)| (*id, blob.as_slice())));
     }
     if result.is_ok()
         && let Err(e) = scrub_local_only_companions_from_crdt(doc, &pending_companion_scrubs)

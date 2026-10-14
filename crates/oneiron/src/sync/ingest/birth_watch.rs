@@ -1,25 +1,35 @@
 //! The rows a federated import watches for their births. A facet stamp a peer
 //! sent onto a row this vault lacks counts only once that sender's own birth
-//! of the row applied: the entity door wrote the row where none was stored, in
-//! the transaction that committed it (Astra-b F1, Sol R10 F2 on #1432). A row
-//! another writer stored first makes the sender's copy an idempotent skip, so
-//! equal bytes after the import are not proof of a birth.
+//! of the row applied: an entity door wrote the sender's exact bytes where no
+//! row was stored, in a transaction that committed (Astra-b F1, Sol R10 F2,
+//! Astra R11 F3 on #1432). A row another writer stored first makes the
+//! sender's copy an idempotent skip, and another writer's image created
+//! during the import is not the sender's birth, so neither counts.
 //!
-//! Both entity doors run on the importing thread: Observer B fires inside the
-//! import, and forward rematerialization is called from it.
+//! Every entity door runs on the importing thread: Observer B's entity batch
+//! and its edge batch's endpoint hydration fire inside the import, and
+//! forward rematerialization is called from it.
 
 use std::cell::RefCell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 
-use crate::EntityId;
+use crate::{EntityId, Vault};
 
 thread_local! {
     static WATCH: RefCell<Option<Watch>> = const { RefCell::new(None) };
 }
 
 struct Watch {
-    rows: BTreeSet<EntityId>,
+    vault: PathBuf,
+    rows: BTreeMap<EntityId, Vec<u8>>,
     born: BTreeSet<EntityId>,
+}
+
+impl Watch {
+    fn of(&self, vault: &Vault) -> bool {
+        self.vault == vault.store.env.path()
+    }
 }
 
 /// Puts back the watch an outer import installed, on every exit.
@@ -32,19 +42,21 @@ impl Drop for Restore {
     }
 }
 
-/// Runs `import` while the entity doors on this thread watch `rows`, and
-/// returns the ones whose births it committed.
+/// Runs `import` while the entity doors writing `vault` on this thread watch
+/// `rows`, each with the bytes its sender brought, and returns the ones whose
+/// births from those bytes it committed.
 pub(in crate::sync) fn watch_births<E>(
-    rows: impl IntoIterator<Item = EntityId>,
+    vault: &Vault,
+    rows: &[(EntityId, Vec<u8>)],
     import: impl FnOnce() -> std::result::Result<(), E>,
 ) -> std::result::Result<BTreeSet<EntityId>, E> {
-    let rows: BTreeSet<_> = rows.into_iter().collect();
     if rows.is_empty() {
         import()?;
         return Ok(BTreeSet::new());
     }
     let watch = Watch {
-        rows,
+        vault: vault.store.env.path().to_path_buf(),
+        rows: rows.iter().cloned().collect(),
         born: BTreeSet::new(),
     };
     let _restore = Restore(WATCH.with(|slot| slot.borrow_mut().replace(watch)));
@@ -57,24 +69,31 @@ pub(in crate::sync) fn watch_births<E>(
     }))
 }
 
-/// Whether an import on this thread watches `id` for its birth.
-pub(in crate::sync) fn watches(id: &EntityId) -> bool {
+/// Whether an import on this thread watches `id` in `vault` for its birth.
+pub(in crate::sync) fn watches(vault: &Vault, id: &EntityId) -> bool {
     WATCH.with(|slot| {
         slot.borrow()
             .as_ref()
-            .is_some_and(|watch| watch.rows.contains(id))
+            .is_some_and(|watch| watch.of(vault) && watch.rows.contains_key(id))
     })
 }
 
-/// Records births of watched rows, once the transaction that wrote them
-/// committed.
-pub(in crate::sync) fn note_born(ids: impl IntoIterator<Item = EntityId>) {
+/// Records the rows a door wrote into `vault` where none was stored, each
+/// with the bytes it wrote, once the transaction that wrote them committed.
+/// Only a watched row written with its sender's bytes is a birth.
+pub(in crate::sync) fn note_born<'a>(
+    vault: &Vault,
+    written: impl IntoIterator<Item = (EntityId, &'a [u8])>,
+) {
     WATCH.with(|slot| {
-        if let Some(watch) = slot.borrow_mut().as_mut() {
-            let rows = &watch.rows;
-            watch
-                .born
-                .extend(ids.into_iter().filter(|id| rows.contains(id)));
+        if let Some(watch) = slot.borrow_mut().as_mut()
+            && watch.of(vault)
+        {
+            for (id, bytes) in written {
+                if watch.rows.get(&id).is_some_and(|sent| sent[..] == *bytes) {
+                    watch.born.insert(id);
+                }
+            }
         }
     });
 }

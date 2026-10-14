@@ -542,7 +542,7 @@ fn admitted_facet_of_verdict(
     // lacks waits for the row's birth, never for its presence in the update.
     if crate::batch::stored_entity_type(&vault.store, rtxn, &src)?.is_none() {
         return Ok(
-            if super::loro_support::map_get_bytes(brought, &src.to_hex()).is_some() {
+            if super::loro_support::map_contains_binary(brought, &src.to_hex()) {
                 AdmittedEdgeVerdict::WithBirth
             } else {
                 AdmittedEdgeVerdict::Hold
@@ -614,10 +614,13 @@ fn admitted_endpoint_type(
     if let Some(stored) = crate::batch::stored_entity_type(&vault.store, rtxn, id)? {
         return Ok(Some(stored));
     }
-    Ok(
-        super::loro_support::map_get_bytes(source_entities, &id.to_hex())
-            .as_deref()
-            .and_then(EntityMetadataHeader::parse)
-            .map(|header| header.entity_type),
-    )
+    // The header only, read in place: a copy of the body per stamp would let
+    // one large row and many stamps multiply admission's work (Astra R11 F2
+    // on #1432).
+    Ok(match source_entities.get(&id.to_hex()) {
+        Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
+            EntityMetadataHeader::parse(&blob[..]).map(|header| header.entity_type)
+        }
+        _ => None,
+    })
 }
