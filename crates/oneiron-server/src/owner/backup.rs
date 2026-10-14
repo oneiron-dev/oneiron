@@ -336,17 +336,32 @@ impl Owned {
         builder
             .create(&dir)
             .map_err(|error| anyhow::anyhow!("create {}: {error}", dir.display()))?;
+        Self::hold(dir)
+    }
+
+    /// Opens the directory `create` just made. The open goes through its name
+    /// again, so a directory moved in under that name meanwhile is held only
+    /// if it could be the one made here: empty, this process's and owner-only.
+    /// Removal then reaches nothing this call did not put there. Any other
+    /// directory is refused and left as it is.
+    fn hold(dir: PathBuf) -> anyhow::Result<Self> {
         #[cfg(unix)]
         let held = {
             use rustix::fs::{Mode, OFlags};
             let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-            match rustix::fs::open(&dir, flags, Mode::empty()) {
+            let held = match rustix::fs::open(&dir, flags, Mode::empty()) {
                 Ok(held) => std::fs::File::from(held),
                 Err(error) => {
                     let _ = std::fs::remove_dir(&dir);
                     anyhow::bail!("open {}: {error}", dir.display());
                 }
-            }
+            };
+            anyhow::ensure!(
+                fresh_private_directory(&held)?,
+                "{} is not the directory this call made; it is left as it is",
+                dir.display()
+            );
+            held
         };
         Ok(Self {
             dir,
@@ -367,6 +382,24 @@ impl Owned {
         #[cfg(not(unix))]
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+/// Whether `held` could be a directory this process just made: its own,
+/// owner-only and empty.
+#[cfg(unix)]
+fn fresh_private_directory(held: &std::fs::File) -> std::io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = held.metadata()?;
+    if metadata.uid() != rustix::process::geteuid().as_raw() || metadata.mode() & 0o077 != 0 {
+        return Ok(false);
+    }
+    for entry in rustix::fs::Dir::read_from(held)? {
+        let entry = entry?;
+        if entry.file_name() != c"." && entry.file_name() != c".." {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Live entity counts by registered kind, zero kinds omitted.

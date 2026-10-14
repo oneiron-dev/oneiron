@@ -1051,6 +1051,40 @@ fn a_swap_that_strands_the_set_aside_vault_is_refused() {
         .expect("the vault in place erases");
 }
 
+/// C8 review r1 (Astra F1): a swap that fails is no proof that nothing
+/// moved. A vault moved off its path before the exchange failed keeps its
+/// mark, so it opens archived anywhere but there. Control: a failed swap with
+/// the vault in place lifts the mark, and the vault still erases.
+#[cfg(unix)]
+#[test]
+fn a_failed_swap_lifts_the_mark_only_from_a_vault_still_in_place() {
+    for moved_off in [true, false] {
+        let root = tempfile::tempdir().unwrap();
+        let vault_path = root.path().join("vault");
+        let (source, replacement, claim, _) = replacement_for(root.path());
+        let moved = root.path().join("moved");
+        let refused = source.swap_in_replacement(&replacement, || {
+            if moved_off {
+                std::fs::rename(&vault_path, &moved)?;
+            }
+            Err(std::io::ErrorKind::NotFound.into())
+        });
+        assert!(refused.is_err(), "{refused:?}");
+        drop((source, replacement));
+        let erased = Vault::open(
+            if moved_off { &moved } else { &vault_path },
+            VaultConfig::device(),
+        )
+        .unwrap()
+        .delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete);
+        if moved_off {
+            assert!(archived(erased), "the moved vault stays archived");
+        } else {
+            erased.expect("the vault in place erases");
+        }
+    }
+}
+
 /// An activation commits only once every receipt it keeps reads under its
 /// forked keys. A key the replacement shreds after the activation checked
 /// the archive's receipts, before the fork, refuses the activation and

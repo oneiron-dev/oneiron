@@ -448,7 +448,12 @@ impl Store {
         self.env.seal();
         wtxn.commit()?;
         if let Err(err) = swap() {
-            if let Err(lift) = self.put_archive_mark(None) {
+            // A failed swap is not proof that nothing moved: the mark is
+            // lifted only while this vault still sits at its path, and one
+            // moved off it stays live only there.
+            if matches!(names(self.env.path(), &live_dir), Ok(true))
+                && let Err(lift) = self.put_archive_mark(None)
+            {
                 tracing::warn!(error = %lift, "a failed swap left its vault marked live only where it is");
             }
             return Err(err.into());

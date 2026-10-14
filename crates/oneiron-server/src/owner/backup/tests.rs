@@ -217,6 +217,38 @@ fn a_restore_whose_swap_cannot_be_confirmed_removes_nothing() {
     person(&vault, b"the vault in place is live");
 }
 
+/// C8 review r1 (Sol F1, Astra F3): a staging directory is opened by name
+/// after it is made. A directory moved in under that name before the open is
+/// held only if it could be the one made, empty and owner-only; any other is
+/// refused and left whole, so no removal reaches what the restore never made.
+#[cfg(unix)]
+#[test]
+fn a_directory_moved_in_before_the_open_is_never_held() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let private = |name: &str, mode: u32| {
+        let dir = root.path().join(name);
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode)).unwrap();
+        dir
+    };
+    let foreign = private("foreign", 0o700);
+    std::fs::write(foreign.join("keep.txt"), b"not the restore's").unwrap();
+    assert!(Owned::hold(foreign.clone()).is_err());
+    assert_eq!(
+        std::fs::read(foreign.join("keep.txt")).unwrap(),
+        b"not the restore's"
+    );
+    let shared = private("shared", 0o755);
+    assert!(Owned::hold(shared.clone()).is_err());
+    assert!(shared.is_dir(), "a refused directory is left");
+
+    // Control: an empty owner-only directory is held, and removed.
+    let fresh = private("fresh", 0o700);
+    Owned::hold(fresh.clone()).unwrap().remove();
+    assert!(!fresh.exists());
+}
+
 /// C8: a swap that fails removes the staging directory the restore made,
 /// and only it. A directory, or a link to one, put under the staging name
 /// while the swap ran is not the restore's: it is left whole, and so is the
