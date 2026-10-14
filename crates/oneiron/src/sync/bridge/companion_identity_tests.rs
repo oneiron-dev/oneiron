@@ -511,6 +511,45 @@ fn a_strangers_ruling_is_no_outcome_receipt_or_ramp_history() {
     );
 }
 
+fn lifecycle_receipts(vault: &Vault) -> usize {
+    vault
+        .receipts(
+            crate::receipt::ReceiptQuery::new(10)
+                .with_kind(crate::receipt::ReceiptKind::IdentityLifecycle),
+        )
+        .unwrap()
+        .len()
+}
+
+/// A stranger's merge is no completed act where this vault reads the raw
+/// ledger either: no lifecycle receipt, and erasing its survivor leaves no
+/// shell the erase census counts. The vault's own merge still projects.
+#[test]
+fn a_strangers_merge_is_no_lifecycle_receipt_or_census_shell() {
+    let stranger = SigningKey::generate(&mut rand_core::OsRng);
+    for seal in [Some(&stranger), None] {
+        let (_dir, vault) = install();
+        let (loser, survivor) = (EntityId::now(), EntityId::now());
+        put_person(&vault, loser);
+        put_person(&vault, survivor);
+        forged_merge(&vault, loser, survivor, seal);
+        assert_eq!(lifecycle_receipts(&vault), 0);
+
+        vault
+            .delete_entity_with_reason(&survivor, crate::deletion::DeleteReason::UserHardDelete)
+            .unwrap();
+        assert_eq!(
+            vault.count_dangling_redirect_payloads().unwrap(),
+            0,
+            "the loser was never a shell, so its own body is no leak"
+        );
+    }
+
+    let (_dir, vault) = install();
+    merge_locally(&vault, EntityId::now(), EntityId::now());
+    assert_eq!(lifecycle_receipts(&vault), 1);
+}
+
 /// A restore that keeps the vault's current authority carries each seal's
 /// marker with the decision it belongs to, and a decision made after the
 /// image does not block it.

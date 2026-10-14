@@ -88,8 +88,8 @@ mod topology_queries;
 mod transition_table;
 mod wire_keys;
 
-pub(crate) use admission_disposition::core_digest;
 pub use admission_disposition::{AdmissionDisposition, AdmissionVerdict};
+pub(crate) use admission_disposition::{SealTrust, core_digest, decision_in_force_by_seal_in_txn};
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use admission_disposition::{sealed_by_key_for_test, signed_validated_row_for_test};
 #[cfg(feature = "sync")]

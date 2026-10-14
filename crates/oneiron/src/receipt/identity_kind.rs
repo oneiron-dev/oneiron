@@ -13,6 +13,8 @@ use crate::store::ChannelIdentityLifecycleReceiptRecord;
 
 /// Projects ARCH-0055 identity-topology ledger events (merge / split / undo
 /// counter-events, effective AND parked) into `IdentityLifecycle` receipts.
+/// An applied decision projects only once a seal this vault counts binds it
+/// (H161); a stranger's merge is no completed act here.
 ///
 /// Scans the type-76 record family NEWEST-FIRST (reverse type-index walk;
 /// UUIDv7 ids order by mint time) and caps EVERY visited row, including rows
@@ -32,6 +34,7 @@ pub(super) fn identity_topology_receipts(
     scan_cap: usize,
 ) -> Result<Vec<ReceiptRecord>> {
     let mut receipts = Vec::new();
+    let mut trust = crate::identity_topology::SealTrust::default();
     for entry in vault
         .store
         .port_entity_ids_by_type_descending(
@@ -57,6 +60,15 @@ pub(super) fn identity_topology_receipts(
         if query.end_at.is_some_and(|end_at| record.at > end_at)
             || query.start_at.is_some_and(|start_at| record.at < start_at)
         {
+            continue;
+        }
+        if !crate::identity_topology::decision_in_force_by_seal_in_txn(
+            &vault.store,
+            rtxn,
+            &event_id,
+            &record,
+            &mut trust,
+        )? {
             continue;
         }
         // Per-kind dispatch: a resolution row NAMED by the fold as a

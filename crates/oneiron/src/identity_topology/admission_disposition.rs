@@ -243,7 +243,7 @@ pub(crate) fn core_digest(record: &StoredIdentityOpEvent) -> Result<[u8; 32]> {
 /// The roster is read once per pass, and only for a fact this vault did not
 /// seal.
 #[derive(Default)]
-pub(super) struct SealTrust {
+pub(crate) struct SealTrust {
     roster: Option<AuthorityFold>,
 }
 
@@ -364,6 +364,29 @@ pub(super) fn joined_verdict_for_store_in_txn(
     Ok(refused
         .map(|(verdict, _)| verdict)
         .or(validated.then_some(AdmissionVerdict::Validated)))
+}
+
+/// Whether seal standing lets `core` count as a completed act (H161): an
+/// `Auto` or `Approved` decision needs a Validated seal `trust` attributes and
+/// no refusal it attributes, as in the effective fold. Other rows need no
+/// seal. The projections that read the raw family read standing here.
+pub(crate) fn decision_in_force_by_seal_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    event: &EntityId,
+    core: &StoredIdentityOpEvent,
+    trust: &mut SealTrust,
+) -> Result<bool> {
+    if !matches!(
+        core.approval,
+        crate::claim::ClaimApprovalStatus::Auto | crate::claim::ClaimApprovalStatus::Approved
+    ) {
+        return Ok(true);
+    }
+    Ok(
+        joined_verdict_for_store_in_txn(store, rtxn, event, core, trust)?
+            == Some(AdmissionVerdict::Validated),
+    )
 }
 
 /// Peer admission check for both arrival orders. A pending target is not
