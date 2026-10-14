@@ -234,6 +234,7 @@ pub fn stage_foreign_vault_import(
         key,
         remote,
         FederationAdmissionRole::Guest,
+        &id,
     ) {
         Ok(a) if a.len() <= MAX_DECODED_PAYLOAD_BYTES => a,
         Ok(_) => {

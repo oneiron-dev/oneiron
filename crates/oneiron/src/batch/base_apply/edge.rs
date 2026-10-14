@@ -155,8 +155,8 @@ fn write_under_local_withdrawal(
 }
 
 /// A local public stamp comes from a writer that may place its row: the
-/// owner, a row's own birth, or a credential its door judged. A federated copy
-/// of the same stamp parked ahead of its row counts from then on.
+/// owner, a row's own birth, or a credential its door judged. It discards any
+/// federated copy of the same stamp held ahead of its row.
 fn unpark_local_stamp(
     store: &Store,
     wtxn: &mut RwTxn<'_>,

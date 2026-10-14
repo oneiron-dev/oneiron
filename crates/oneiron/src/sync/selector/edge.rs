@@ -5,6 +5,8 @@ use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
+#[cfg(feature = "sync")]
+use crate::federation::facet_read;
 use crate::sync::loro_support::{map_for_each_value_bytes, map_insert_bytes};
 #[cfg(feature = "sync")]
 use crate::sync::quarantine::{self, QuarantineContainer};
@@ -56,16 +58,24 @@ use crate::sync::types::WindowKey;
 /// commit is an amplification primitive it controls). Evidence is bounded at
 /// [`quarantine::MAX_QUARANTINE_ROWS_PER_PASS`] rows per pass; beyond that
 /// rejections are accounted by count, never silently.
+///
+/// A stamp whose source row neither this vault holds nor the update brings
+/// (`brought`, the admitted entities) is returned to be held, not copied: no
+/// one can tell yet whether its sender may place that row, and the document
+/// replicates to the owner's other devices as their own (Engine ruling on
+/// Sol R3 F1).
 #[cfg(feature = "sync")]
 pub(super) fn copy_admitted_edges(
     vault: &Vault,
     window_key: &WindowKey,
     source_entities: &loro::LoroMap,
+    brought: &loro::LoroMap,
     source: &loro::LoroMap,
     target: &loro::LoroMap,
-) -> Result<()> {
+) -> Result<Vec<HeldStamp>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut rejections = quarantine::TerminalRejectionBatch::new(window_key.as_str());
+    let mut held = Vec::new();
     let mut result = Ok(());
     map_for_each_value_bytes(source, |key, value| {
         if result.is_err() {
@@ -81,10 +91,20 @@ pub(super) fn copy_admitted_edges(
             let verdict = if kind == EdgeKind::AddressedTo {
                 admitted_addressing_verdict(vault, &rtxn, source_entities, src, tgt, value)
             } else {
-                admitted_facet_of_verdict(vault, &rtxn, source_entities, src, kind, tgt)
+                admitted_facet_of_verdict(vault, &rtxn, source_entities, brought, src, kind, tgt)
             };
             match verdict {
                 Ok(AdmittedEdgeVerdict::Copy) => {}
+                Ok(AdmittedEdgeVerdict::Hold) => {
+                    result = value.ok_or(Error::InvalidKey).map(|value| {
+                        held.push(HeldStamp {
+                            src,
+                            tgt,
+                            value: value.to_vec(),
+                        });
+                    });
+                    return;
+                }
                 Ok(AdmittedEdgeVerdict::DropRejected(off_table)) => {
                     // Quarantine-and-continue: the peer's forged row gets
                     // typed durable evidence, the window's other N-1 rows
@@ -117,83 +137,70 @@ pub(super) fn copy_admitted_edges(
     // this vault refused whole would be an account of a thing that never
     // happened.
     drop(rtxn);
-    rejections.commit(vault)
+    rejections.commit(vault)?;
+    Ok(held)
 }
 
-/// Parks each facet stamp an admitted update carries ahead of its row, under
-/// the sender's `lane`, and lets count the parked stamps whose row this update
-/// brings.
-///
-/// A stamp counts for reads only with placement authority (Astra on #1432).
-/// One that arrives before its row cannot be judged yet and still copies (H2),
-/// so the read rule skips it until the same sender brings the row, the row's
-/// own birth carries the stamp, or a writer that may place the row writes it.
-/// A row that reaches this vault from anyone else (own-device sync, another
-/// peer, a staged import, a local birth) leaves it parked. A stamp onto a row
-/// this vault holds parks too unless it is stored already: admission drops
-/// one, and only a staged artifact confirmed after its row arrived carries
-/// one here.
+/// Holds the facet stamps an update sent ahead of their rows under the
+/// sender's `lane`, out of the admitted document ([`copy_admitted_edges`]).
 #[cfg(feature = "sync")]
-pub(super) fn settle_parked_stamps(
-    vault: &Vault,
-    admitted: &loro::LoroDoc,
-    lane: &str,
-) -> Result<()> {
-    use crate::federation::facet_read::{park_stamp, parked_under, unpark_stamp};
-    let store = &vault.store;
-    let mut stamps = Vec::new();
-    map_for_each_value_bytes(&admitted.get_map("edges"), |key, _| {
-        if let Some((src, EdgeKind::FacetOf, tgt)) = super::bridge::parse_edge_key(key) {
-            stamps.push((src, tgt));
-        }
-    });
-    let mut brought = std::collections::BTreeSet::new();
-    map_for_each_value_bytes(&admitted.get_map("entities"), |key, _| {
-        if let Ok(id) = EntityId::from_hex(key) {
-            brought.insert(id);
-        }
-    });
-    let births = {
-        let rtxn = store.env.read_txn()?;
-        let mut births = Vec::new();
-        for &src in &brought {
-            if !parked_under(store, &rtxn, src, lane)?.is_empty() {
-                births.push(src);
-            }
-        }
-        births
-    };
-    if stamps.is_empty() && births.is_empty() {
+pub(super) fn hold_stamps(vault: &Vault, lane: &str, held: &[HeldStamp]) -> Result<()> {
+    if held.is_empty() {
         return Ok(());
     }
     vault.with_write_txn_grouped(|wtxn| {
-        for &(src, tgt) in &stamps {
-            let unstored = crate::batch::stored_entity_type(store, wtxn, &src)?.is_none();
-            if unstored && brought.contains(&src) {
-                unpark_stamp(store, wtxn, src, tgt)?;
-            } else if unstored
-                || crate::ports::EdgeStoreRead::port_edge_get(
-                    store,
-                    wtxn,
-                    &src,
-                    EdgeKind::FacetOf,
-                    &tgt,
-                )?
-                .is_none()
-            {
-                park_stamp(store, wtxn, src, tgt, lane)?;
-            }
-        }
-        for &src in &births {
-            if crate::batch::stored_entity_type(store, wtxn, &src)?.is_some() {
-                continue;
-            }
-            for facet in parked_under(store, wtxn, src, lane)? {
-                unpark_stamp(store, wtxn, src, facet)?;
-            }
+        for stamp in held {
+            facet_read::park_stamp(
+                &vault.store,
+                wtxn,
+                (stamp.src, stamp.tgt),
+                lane,
+                &stamp.value,
+            )?;
         }
         Ok(())
     })
+}
+
+/// Puts back into `edges` each stamp held under `lane` whose row `brought`,
+/// the update's admitted entities, carries as a birth, so the row's own
+/// sender releases its early stamps with the row. A copy is kept until a
+/// writer that may place the row writes the pair: a deferred update is
+/// admitted again before it is imported.
+#[cfg(feature = "sync")]
+pub(super) fn release_stamps(
+    vault: &Vault,
+    lane: &str,
+    brought: &loro::LoroMap,
+    edges: &loro::LoroMap,
+) -> Result<()> {
+    let mut rows = Vec::new();
+    map_for_each_value_bytes(brought, |key, _| {
+        if let Ok(id) = EntityId::from_hex(key) {
+            rows.push(id);
+        }
+    });
+    let rtxn = vault.store.env.read_txn()?;
+    for src in rows {
+        if crate::batch::stored_entity_type(&vault.store, &rtxn, &src)?.is_some() {
+            continue;
+        }
+        for (tgt, value) in facet_read::parked_under(&vault.store, &rtxn, src, lane)? {
+            let key = super::bridge::format_edge_key(&src, EdgeKind::FacetOf, &tgt);
+            if super::loro_support::map_get_bytes(edges, &key).is_none() {
+                map_insert_bytes(edges, &key, &value)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A `FacetOf` stamp an update sent ahead of its source row.
+#[cfg(feature = "sync")]
+pub(super) struct HeldStamp {
+    src: EntityId,
+    tgt: EntityId,
+    value: Vec<u8>,
 }
 
 /// What the admission boundary does with one parsed edge row.
@@ -202,6 +209,9 @@ enum AdmittedEdgeVerdict {
     /// On-table, not a `FacetOf` row at all, or a row whose DECIDING endpoint
     /// type is not knowable yet — copy it and let the replay gate own it.
     Copy,
+    /// A stamp whose source row neither this vault holds nor the update
+    /// brings: hold it out of the document under the sender's lane.
+    Hold,
     /// PROVABLY off-table on the facts in hand (a known off-table source, or
     /// a known non-FACET target, is each sufficient alone), or a new stamp
     /// onto a row this vault already holds. Drop with this typed rejection.
@@ -287,8 +297,10 @@ fn admitted_addressing_verdict(
 /// Only a row whose DECIDING endpoint stays unknowable passes through: the
 /// endpoint has not arrived, and the remat gate's defer-then-validate owns it.
 /// This is the H2 line — an unknowable type is not evidence of a forgery, and
-/// treating it as one would wedge out-of-order delivery permanently. That
-/// residue is inert on the export path regardless, because
+/// treating it as one would wedge out-of-order delivery permanently. A row
+/// whose SOURCE has not arrived is held instead of copied, and the source's
+/// birth from the same sender releases it, so it still heals. Any residue is
+/// inert on the export path regardless, because
 /// [`facet_scope_by_source`] now honors a scope only from a row whose BOTH
 /// endpoints resolve onto this same table.
 ///
@@ -299,6 +311,7 @@ fn admitted_facet_of_verdict(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     source_entities: &loro::LoroMap,
+    brought: &loro::LoroMap,
     src: EntityId,
     kind: EdgeKind,
     tgt: EntityId,
@@ -322,16 +335,25 @@ fn admitted_facet_of_verdict(
     // already holds puts the row in a facet it was not born in, and a
     // narrowed reader reads a row in ANY of its facets, so an added stamp
     // only widens who reads it (Astra on #1432). A stamp this vault already
-    // holds adds nothing, so a re-sent frame still copies.
-    if crate::batch::stored_entity_type(&vault.store, rtxn, &src)?.is_some()
-        && crate::ports::EdgeStoreRead::port_edge_get(
-            &vault.store,
-            rtxn,
-            &src,
-            EdgeKind::FacetOf,
-            &tgt,
-        )?
-        .is_none()
+    // holds adds nothing, so a re-sent frame still copies. A stamp ahead of
+    // its row waits for the row.
+    if crate::batch::stored_entity_type(&vault.store, rtxn, &src)?.is_none() {
+        return Ok(
+            if super::loro_support::map_get_bytes(brought, &src.to_hex()).is_some() {
+                AdmittedEdgeVerdict::Copy
+            } else {
+                AdmittedEdgeVerdict::Hold
+            },
+        );
+    }
+    if crate::ports::EdgeStoreRead::port_edge_get(
+        &vault.store,
+        rtxn,
+        &src,
+        EdgeKind::FacetOf,
+        &tgt,
+    )?
+    .is_none()
     {
         return Ok(AdmittedEdgeVerdict::DropRejected(Error::Registry(
             RegistryError::FacetStampImmutable { src },

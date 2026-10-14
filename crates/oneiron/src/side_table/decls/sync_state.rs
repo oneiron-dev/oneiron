@@ -103,10 +103,9 @@ side_tables! {
     /// Durable settlement receipt (before/after causal frontier) for one fork's merge/switch/reject
     /// verdict, keyed by entity then receipt id. Key: hex32 ":" hex32.
     ENTITY_DOC_RECEIPT: SyncState b"entity_doc:v1:receipt:" Named;
-    /// A federated `FacetOf` stamp that arrived ahead of its source row, by the sender that brought
-    /// it; the stamp counts for reads only once that sender brings the row. Local to this vault:
-    /// never replicated or exported. Presence-only, empty value. Key: hex32 (source) hex32 (facet)
-    /// then the sender's lane.
+    /// A federated `FacetOf` stamp sent ahead of its source row, held out of the window document
+    /// until the same sender brings the row. Local to this vault: never replicated or exported.
+    /// Value: the stamp's edge value. Key: hex32 (source) hex32 (facet) then the sender's lane.
     FEDERATION_PARKED_FACET_STAMP: SyncState b"fedpark:" Raw;
     /// First-wins stamp recording that a foreign world's federated content stopped refreshing after a
     /// terminal pact transition. Key: hex32 (world id).

@@ -1499,20 +1499,43 @@ fn stamp_stored(vault: &Vault, src: EntityId, facet: EntityId) -> bool {
         .is_some()
 }
 
-/// Sol R3 F1, Engine ruling A: a peer sends `row -FacetOf-> work` before this
-/// vault has the row, and admission must copy it (H2). A second writer then
-/// brings the row, born in `private`: a local birth or another peer. Replay
-/// writes the early stamp onto the stored row, yet a reader narrowed to work
-/// does not read it, because the peer that stamped it never brought it. An
-/// owner's stamp of the same pair lets it count.
+fn rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) {
+    crate::sync::window::forward_rematerialize(
+        vault,
+        doc,
+        &crate::sync::bridge::Materializer::new(),
+        window_key,
+    )
+    .unwrap();
+}
+
+/// The owner's other device: a vault that takes `doc`, this window as the
+/// device holding it sent it, as its own.
+fn synced_device(doc: &LoroDoc, window_key: &WindowKey, device: &Vault) -> LoroDoc {
+    let synced = create_window_doc("device", window_key);
+    synced
+        .import(&doc.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    rematerialize(device, &synced, window_key);
+    synced
+}
+
+/// Sol R3 F1 under the Engine's rulings: a peer sends `row -FacetOf-> work`
+/// before this vault has the row. A second writer then brings the row, born
+/// in `private`: a local birth or another peer. The stamp never enters the
+/// window, so neither this vault nor the owner's other device, which takes
+/// the window as its own, puts the row in front of a work reader. The owner's
+/// stamp of the same pair counts.
 #[test]
-fn a_stamp_ahead_of_its_row_stays_out_of_reads_when_another_writer_brings_the_row() {
+fn a_stamp_ahead_of_its_row_stays_out_of_the_window_when_another_writer_brings_the_row() {
     let window_key = WindowKey::new("2026-05");
     for (leg, seed) in [("local birth", 0x90_u8), ("another peer", 0xA0_u8)] {
         let (_dir, vault, _grant_id) = test_vault_with_grant(entity_id(seed));
+        let (_device_dir, device, _) = test_vault_with_grant(entity_id(seed));
         let [peer, other, work, private, row] = [1, 2, 3, 4, 5].map(|n| entity_id(seed + n));
         for facet in [work, private] {
             put_row(&vault, facet, ENTITY_TYPE_FACET);
+            put_row(&device, facet, ENTITY_TYPE_FACET);
         }
         let live = create_window_doc("local", &window_key);
         let ahead = create_window_doc("federation-peer", &window_key);
@@ -1524,10 +1547,11 @@ fn a_stamp_ahead_of_its_row_stays_out_of_reads_when_another_writer_brings_the_ro
             .unwrap();
 
         if leg == "local birth" {
-            put_row(&vault, row, ENTITY_TYPE_EVENT);
-            vault
-                .put_edge(&row, EdgeKind::FacetOf, &private, 1.0)
-                .unwrap();
+            for born in [&vault, &device] {
+                put_row(born, row, ENTITY_TYPE_EVENT);
+                born.put_edge(&row, EdgeKind::FacetOf, &private, 1.0)
+                    .unwrap();
+            }
         } else {
             let birth = create_window_doc("federation-peer", &window_key);
             insert_entity(&birth, row, ENTITY_TYPE_EVENT, b"row");
@@ -1539,24 +1563,32 @@ fn a_stamp_ahead_of_its_row_stays_out_of_reads_when_another_writer_brings_the_ro
             )
             .unwrap();
         }
-        crate::sync::window::forward_rematerialize(
-            &vault,
-            &live,
-            &crate::sync::bridge::Materializer::new(),
-            &window_key,
-        )
-        .unwrap();
+        rematerialize(&vault, &live, &window_key);
+        synced_device(&live, &window_key, &device);
 
         assert!(
-            stamp_stored(&vault, row, work),
-            "{leg}: precondition, replay wrote the early stamp onto the row"
+            map_get_bytes(
+                &live.get_map("edges"),
+                &edge_key(row, EdgeKind::FacetOf, work)
+            )
+            .is_none(),
+            "{leg}: a stamp whose sender never brought its row entered the window"
         );
+        assert!(!stamp_stored(&vault, row, work), "{leg}");
         assert!(
             !vault.row_in_facets(&row, &facet_set(work)).unwrap(),
-            "{leg}: a stamp whose sender never brought its row put it in front of a work reader"
+            "{leg}"
         );
         assert!(
             vault.row_in_facets(&row, &facet_set(private)).unwrap(),
+            "{leg}"
+        );
+        assert!(
+            !device.row_in_facets(&row, &facet_set(work)).unwrap(),
+            "{leg}: the owner's other device put the row in front of a work reader"
+        );
+        assert!(
+            device.row_in_facets(&row, &facet_set(private)).unwrap(),
             "{leg}"
         );
         vault.put_edge(&row, EdgeKind::FacetOf, &work, 1.0).unwrap();
@@ -1567,9 +1599,11 @@ fn a_stamp_ahead_of_its_row_stays_out_of_reads_when_another_writer_brings_the_ro
     }
 }
 
-/// The positive control for ruling A, on the production client: the same peer
-/// sends the stamp first and the row second, so a reader narrowed to the
-/// stamped facet reads the row.
+/// The positive control, on the production client: the same peer sends the
+/// stamp first and the row second. The stamp enters the window with the row,
+/// so a reader narrowed to the stamped facet reads the row, and the stamp
+/// seeds a facet-limited export, on this vault and on the owner's other
+/// device alike (H2).
 #[test]
 fn a_peer_that_brings_its_row_after_the_stamp_puts_it_in_the_stamped_facet() {
     for (role, seed) in [
@@ -1577,38 +1611,58 @@ fn a_peer_that_brings_its_row_after_the_stamp_puts_it_in_the_stamped_facet() {
         (FederationAdmissionRole::Guest, 0xC0_u8),
     ] {
         let window = "2026-05";
-        let (_dir, vault, _grant_id, mut client) = test_client_with_grant(entity_id(seed), window);
+        let window_key = WindowKey::new(window);
+        let member = entity_id(seed);
+        let (_dir, vault, grant_id, mut client) = test_client_with_grant(member, window);
+        let (_device_dir, device, device_grant) = test_vault_with_grant(member);
         let [work, row] = [1, 2].map(|n| entity_id(seed + n));
-        put_row(&vault, work, ENTITY_TYPE_FACET);
-        let ahead = create_window_doc("federation-peer", &WindowKey::new(window));
+        let ahead = create_window_doc("federation-peer", &window_key);
+        insert_entity(&ahead, work, ENTITY_TYPE_FACET, b"work");
         insert_edge(&ahead, row, EdgeKind::FacetOf, work);
         ahead.commit();
         import_federated(&mut client, window, &ahead, role);
-        let birth = create_window_doc("federation-peer", &WindowKey::new(window));
+        let birth = create_window_doc("federation-peer", &window_key);
         insert_entity(&birth, row, ENTITY_TYPE_EVENT, b"row");
         birth.commit();
         import_federated(&mut client, window, &birth, role);
         let live = client.window(window).expect("window still loaded");
-        crate::sync::window::forward_rematerialize(
-            &vault,
-            &live.doc,
-            &crate::sync::bridge::Materializer::new(),
-            &WindowKey::new(window),
-        )
-        .unwrap();
+        rematerialize(&vault, &live.doc, &window_key);
+        let synced = synced_device(&live.doc, &window_key, &device);
 
-        assert!(stamp_stored(&vault, row, work), "{role:?}: precondition");
-        assert!(
-            vault.row_in_facets(&row, &facet_set(work)).unwrap(),
-            "{role:?}: the peer brought the row it stamped"
-        );
+        for (name, holder, doc, grant) in [
+            ("this vault", &*vault, &live.doc, grant_id),
+            ("the other device", &device, &synced, device_grant),
+        ] {
+            assert!(stamp_stored(holder, row, work), "{role:?} {name}");
+            assert!(
+                holder.row_in_facets(&row, &facet_set(work)).unwrap(),
+                "{role:?} {name}: the peer brought the row it stamped"
+            );
+            stamp_live_rows(holder, doc, &[work, row]);
+            let selector = SyncSelector::new(
+                grant,
+                member,
+                SyncSelectorWorld::All,
+                vec![work],
+                vec![SelectorRange::Semantic, SelectorRange::Core],
+            );
+            let exported =
+                filtered_window_doc(holder, doc, &window_key, test_selector_scope(), &selector)
+                    .unwrap()
+                    .export(ExportMode::all_updates())
+                    .unwrap();
+            assert!(
+                import_ids(&exported).contains(&row),
+                "{role:?} {name}: the released stamp seeds the facet-limited export"
+            );
+        }
     }
 }
 
 /// Sol R3 F1's staged form: a foreign artifact holds only `row -FacetOf->
 /// work`, staged while this vault lacks the row. The row is then born here in
-/// `private`, and the operator confirms the artifact. The confirmed stamp is
-/// written onto the row but stays out of a work reader's reads.
+/// `private`, and the operator confirms the artifact. The stamp never enters
+/// the window, so a work reader does not read the row.
 #[test]
 fn a_staged_stamp_confirmed_after_its_row_arrived_stays_out_of_reads() {
     let window = "2026-05";
@@ -1655,19 +1709,18 @@ fn a_staged_stamp_confirmed_after_its_row_arrived_stays_out_of_reads() {
         .confirm_staged_vault_import(staged, confirmation)
         .unwrap();
     let live = client.window(window).expect("confirm loads the window");
-    crate::sync::window::forward_rematerialize(
-        &vault,
-        &live.doc,
-        &crate::sync::bridge::Materializer::new(),
-        &window_key,
-    )
-    .unwrap();
+    rematerialize(&vault, &live.doc, &window_key);
 
-    assert!(stamp_stored(&vault, row, work), "precondition");
     assert!(
-        !vault.row_in_facets(&row, &facet_set(work)).unwrap(),
-        "an artifact that never brought the row put it in front of a work reader"
+        map_get_bytes(
+            &live.doc.get_map("edges"),
+            &edge_key(row, EdgeKind::FacetOf, work)
+        )
+        .is_none(),
+        "an artifact that never brought the row put its stamp in the window"
     );
+    assert!(!stamp_stored(&vault, row, work));
+    assert!(!vault.row_in_facets(&row, &facet_set(work)).unwrap());
     assert!(vault.row_in_facets(&row, &facet_set(private)).unwrap());
 }
 

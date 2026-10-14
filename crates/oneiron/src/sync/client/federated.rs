@@ -10,7 +10,7 @@ use crate::sync::federation_burst::{
 };
 use crate::sync::selector::{
     FederationAdmissionRole, SyncSelector, admit_peer_window_update, encode_selector_vv_request,
-    revalidate_admitted_federated_claims, settle_confirmed_window_update,
+    revalidate_admitted_federated_claims,
 };
 use crate::sync::transport;
 use crate::sync::transport::{MAX_DECODED_PAYLOAD_BYTES, TransportError, window_sub_tags};
@@ -276,13 +276,6 @@ impl SyncClient {
             &admission_key,
             &staged.admitted_update,
             durable.role,
-        )
-        .map_err(map_federated_admission_err)?;
-        settle_confirmed_window_update(
-            &self.vault,
-            &admission_key,
-            &staged.admitted_update,
-            &durable.receipt_id,
         )
         .map_err(map_federated_admission_err)?;
         let window = self.ensure_window(&durable.window_key)?;

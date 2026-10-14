@@ -23,7 +23,7 @@ use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
 
 #[cfg(feature = "sync")]
-use super::edge::{copy_admitted_edges, settle_parked_stamps};
+use super::edge::{copy_admitted_edges, hold_stamps, release_stamps};
 use crate::error::{RecordError, SyncError};
 
 /// Role carried by a member/guest federation import path.
@@ -52,9 +52,9 @@ impl FederationAdmissionRole {
 /// so callers can import it through the ordinary replay/materialization path
 /// without giving the original remote op ids trust-blind write authority.
 ///
-/// A facet stamp the update carries ahead of its row is parked for reads
-/// ([`settle_parked_stamps`]). With no sender named here, only the row's own
-/// birth in one update, or a writer that may place the row, lets it count.
+/// A facet stamp sent ahead of its row is held out of the returned update
+/// (`copy_admitted_edges`). With no sender named here, each update is its
+/// own sender: only a writer that may place the row lets such a stamp count.
 #[cfg(feature = "sync")]
 pub fn admit_federated_window_update(
     vault: &Vault,
@@ -63,14 +63,14 @@ pub fn admit_federated_window_update(
     role: FederationAdmissionRole,
 ) -> Result<Vec<u8>> {
     let lane = format!("u{}", blake3::hash(update).to_hex());
-    admit_window_update(vault, key, update, role, Some(&lane))
+    admit_window_update(vault, key, update, role, &lane)
 }
 
 /// [`admit_federated_window_update`] for an update the federation peer
-/// `peer` sent: a facet stamp it sends ahead of its row counts for reads once
-/// one of its later updates brings the row.
+/// `peer` sent. A facet stamp it sends ahead of its row is held until one of
+/// its later updates brings the row, and then enters the document with it.
 #[cfg(feature = "sync")]
-pub(crate) fn admit_peer_window_update(
+pub fn admit_peer_window_update(
     vault: &Vault,
     key: &WindowKey,
     update: &[u8],
@@ -78,42 +78,22 @@ pub(crate) fn admit_peer_window_update(
     peer: EntityId,
 ) -> Result<Vec<u8>> {
     let lane = format!("p{}", peer.to_hex());
-    admit_window_update(vault, key, update, role, Some(&lane))
+    admit_window_update(vault, key, update, role, &lane)
 }
 
-/// [`admit_federated_window_update`] for an artifact staged for the owner's
-/// confirmation. Its facet stamps settle when it is confirmed
-/// ([`settle_confirmed_window_update`]), against the vault as it is then.
+/// [`admit_federated_window_update`] for a foreign artifact staged under
+/// `receipt_id`. The artifact is one update, so a facet stamp it sends
+/// ahead of its row never enters the document through it.
 #[cfg(feature = "sync")]
 pub(crate) fn admit_staged_window_update(
     vault: &Vault,
     key: &WindowKey,
     update: &[u8],
     role: FederationAdmissionRole,
-) -> Result<Vec<u8>> {
-    admit_window_update(vault, key, update, role, None)
-}
-
-/// Settles the facet stamps of a confirmed staged artifact's admitted bytes
-/// under the artifact's own lane, so only a row the same artifact brings lets
-/// its stamps count. A stamp onto a row that arrived while the artifact waited
-/// for confirmation stays parked.
-#[cfg(feature = "sync")]
-pub(in crate::sync) fn settle_confirmed_window_update(
-    vault: &Vault,
-    key: &WindowKey,
-    admitted_update: &[u8],
     receipt_id: &[u8; 32],
-) -> Result<()> {
-    let admitted = create_window_doc("federation-staged", key);
-    admitted.import(admitted_update).map_err(|source| {
-        Error::Sync(SyncError::CrdtDecodeError {
-            context: "import admitted update",
-            source,
-        })
-    })?;
+) -> Result<Vec<u8>> {
     let lane = format!("s{}", crate::entity_id::bytes_to_hex_lower(receipt_id));
-    settle_parked_stamps(vault, &admitted, &lane)
+    admit_window_update(vault, key, update, role, &lane)
 }
 
 #[cfg(feature = "sync")]
@@ -122,7 +102,7 @@ fn admit_window_update(
     key: &WindowKey,
     update: &[u8],
     role: FederationAdmissionRole,
-    lane: Option<&str>,
+    lane: &str,
 ) -> Result<Vec<u8>> {
     let remote = create_window_doc("federation-remote", key);
     remote.import(update).map_err(|source| {
@@ -138,19 +118,24 @@ fn admit_window_update(
 
     reject_federated_tombstones(&remote)?;
     copy_admitted_entities(vault, &policy, &remote, &admitted)?;
-    copy_admitted_edges(
+    release_stamps(
+        vault,
+        lane,
+        &admitted.get_map("entities"),
+        &remote.get_map("edges"),
+    )?;
+    let held = copy_admitted_edges(
         vault,
         key,
         &remote.get_map("entities"),
+        &admitted.get_map("entities"),
         &remote.get_map("edges"),
         &admitted.get_map("edges"),
     )?;
 
     crate::sync::note::copy_judged(vault, &remote, &admitted)?;
+    hold_stamps(vault, lane, &held)?;
     admitted.commit_with(CommitOptions::new().origin(role.origin()));
-    if let Some(lane) = lane {
-        settle_parked_stamps(vault, &admitted, lane)?;
-    }
     admitted
         .export(ExportMode::all_updates())
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, e))
