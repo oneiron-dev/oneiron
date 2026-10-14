@@ -1,12 +1,18 @@
 //! Retained soft-delete headers on the standard forward recovery path.
 
 use crate::error::Result;
+use crate::sync::loro_support::TombstoneIndex;
 use crate::{EntityId, Vault};
 use loro::{LoroDoc, LoroValue, ValueOrContainer};
 
 /// Only an exact header paired with a canonical user-delete tombstone qualifies.
 /// Aliases, malformed values, hard deletes and local-only archives never qualify.
-pub(crate) fn retained_soft_shell(doc: &LoroDoc, id: &EntityId) -> Option<(Vec<u8>, Vec<u8>)> {
+/// `tombstones` indexes the tombstones map of `doc`.
+pub(crate) fn retained_soft_shell(
+    doc: &LoroDoc,
+    tombstones: &TombstoneIndex,
+    id: &EntityId,
+) -> Option<(Vec<u8>, Vec<u8>)> {
     let key = id.to_hex();
     let Some(ValueOrContainer::Value(LoroValue::Binary(blob))) = doc.get_map("entities").get(&key)
     else {
@@ -22,9 +28,7 @@ pub(crate) fn retained_soft_shell(doc: &LoroDoc, id: &EntityId) -> Option<(Vec<u
         return None;
     }
 
-    let Some(ValueOrContainer::Value(LoroValue::Binary(value))) =
-        doc.get_map("tombstones").get(&key)
-    else {
+    let Some(ValueOrContainer::Value(LoroValue::Binary(value))) = tombstones.map().get(&key) else {
         return None;
     };
     if crate::deletion::decode_tombstone_value(&value).reason
@@ -32,25 +36,23 @@ pub(crate) fn retained_soft_shell(doc: &LoroDoc, id: &EntityId) -> Option<(Vec<u
     {
         return None;
     }
-    let mut alias = false;
-    doc.get_map("tombstones").for_each(|other, _| {
-        if other != key && EntityId::from_hex(other).ok().as_ref() == Some(id) {
-            alias = true;
-        }
-    });
-    if alias {
+    if tombstones.has_alias(id) {
         None
     } else {
         Some((blob.to_vec(), value.to_vec()))
     }
 }
 
-pub(crate) fn materialize_retained_shells(vault: &Vault, doc: &LoroDoc) -> Result<()> {
+pub(crate) fn materialize_retained_shells(
+    vault: &Vault,
+    doc: &LoroDoc,
+    tombstones: &TombstoneIndex,
+) -> Result<()> {
     let mut shells = Vec::new();
     doc.get_map("entities").for_each(|key, value| {
         if matches!(value, ValueOrContainer::Value(LoroValue::Binary(blob)) if blob.len() == crate::batch::ENTITY_METADATA_HEADER_LEN)
             && let Ok(id) = EntityId::from_hex(key)
-            && let Some((blob, tombstone)) = retained_soft_shell(doc, &id) {
+            && let Some((blob, tombstone)) = retained_soft_shell(doc, tombstones, &id) {
             shells.push((id, blob, tombstone));
         }
     });

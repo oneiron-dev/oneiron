@@ -2,7 +2,7 @@
 
 use super::{DocAuthorization, EntityDoc, invalid};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, StoreError};
 use crate::ports::EntityStoreRead;
 use crate::ports::{
     DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreMaintenance, UpdateSeq,
@@ -119,7 +119,7 @@ pub(super) fn persist(
     crate::batch::secret_scan::scan_metadata_field(&doc.text())?;
     vault.ensure_text_index_trusted()?;
     crate::vault::ensure_text_index_manifest_matches_wtxn(store, txn, &vault.analyzer)?;
-    crate::bm25::index_text(
+    let indexed = crate::bm25::index_text(
         store,
         txn,
         &vault.analyzer,
@@ -131,7 +131,15 @@ pub(super) fn persist(
             },
             doc.text(),
         )],
-    )?;
+    );
+    match indexed {
+        // The document is the record and its search entry is not: text past the analyzer
+        // ceiling is still written, restored and migrated, and is left out of search (H6).
+        Err(Error::Store(StoreError::IndexedTextTooLarge { .. })) => {
+            crate::bm25::deindex_text(store, txn, entity)?;
+        }
+        result => result?,
+    }
     h.generation = h
         .generation
         .checked_add(1)

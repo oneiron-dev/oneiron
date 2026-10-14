@@ -14,6 +14,7 @@ mod sync_harness;
 
 mod ask_option_link_replication;
 mod rung0_cold_start_conformance;
+mod sync_blob_artifact_delete;
 mod sync_bridge;
 mod sync_byzantine_lww;
 mod sync_client_wiring;

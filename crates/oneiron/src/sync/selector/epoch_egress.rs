@@ -12,6 +12,7 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::sync::loro_support::TombstoneIndex;
 
 /// The epoch summaries among `shipped` (what this export of `source` ships
 /// after every other withholding, read in its snapshot `rtxn`) that must
@@ -32,6 +33,7 @@ pub(super) fn unbacked_epochs(
     shipped: &BTreeSet<EntityId>,
 ) -> Result<BTreeSet<EntityId>> {
     let entities = source.get_map("entities");
+    let tombstones = TombstoneIndex::build(&source.get_map("tombstones"));
     let withdrawn = |id: &EntityId| -> Result<bool> {
         let state = crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, rtxn, id)?;
         Ok(state.deleted || state.stale)
@@ -76,7 +78,7 @@ pub(super) fn unbacked_epochs(
                 slot.insert(
                     shipped.contains(&from)
                         && !withdrawn(&from)?
-                        && ships_whole(vault, rtxn, source, &from)?,
+                        && ships_whole(vault, rtxn, source, &tombstones, &from)?,
                 );
             }
         }
@@ -115,6 +117,7 @@ fn ships_whole(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     source: &LoroDoc,
+    tombstones: &TombstoneIndex,
     id: &EntityId,
 ) -> Result<bool> {
     let carried =
@@ -132,7 +135,7 @@ fn ships_whole(
             | crate::registry::ENTITY_TYPE_AUTHORITY_LOG,
         ) => false,
         Some(crate::registry::ENTITY_TYPE_NOTE) => {
-            !crate::sync::note::blocked(vault, rtxn, source, id)?
+            !crate::sync::note::blocked(vault, rtxn, tombstones, id)?
         }
         Some(_) => true,
     })

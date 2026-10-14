@@ -730,3 +730,27 @@ fn a_lent_blob_resolves_a_migrated_body_as_a_read_does() -> Result<()> {
     assert_eq!(lent, b"plain text body");
     Ok(())
 }
+
+/// Bug repro (SOL-R1-006, H6): an entity document whose text passes the analyzer ceiling is
+/// still written and read back whole, and only its search entry goes. Canonical recovery writes
+/// a document through the same persist door, so an artifact holding one still restores.
+#[test]
+fn a_document_past_the_text_ceiling_is_written_and_left_out_of_search() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::config::VaultConfig {
+        map_size: 64 * 1024 * 1024,
+        ..crate::test_util::embedding_test_config()
+    });
+    let (actor, owner) = actor(&vault)?;
+    let id = entity(&vault, actor, &owner, "lantern harbor")?;
+    let found = |term: &str| -> Result<bool> {
+        Ok(vault.search_text(term, 10)?.iter().any(|hit| hit.id == id))
+    };
+    assert!(found("lantern")?);
+
+    // 2.2 MB of text, past the 2 MiB a document may put through the analyzer.
+    let long = " tidewater".repeat(220_000);
+    append(&vault, id, actor, &owner, &long, 20)?;
+    assert_eq!(vault.entity_text(&id)?, format!("lantern harbor{long}"));
+    assert!(!found("lantern")? && !found("tidewater")?);
+    Ok(())
+}

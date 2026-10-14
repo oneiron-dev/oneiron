@@ -9,7 +9,7 @@ use crate::EntityId;
 use crate::batch::EntityMetadataHeader;
 use crate::error::SyncError;
 use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
-use crate::sync::loro_support::{map_for_each_value_bytes, map_get_bytes};
+use crate::sync::loro_support::{TombstoneIndex, map_for_each_value_bytes, map_get_bytes};
 use crate::{Error, Result};
 
 /// Refuses diagnostic carriers before a full-window update can mutate the
@@ -84,6 +84,7 @@ fn validate_window_update(
         }
         candidate
     };
+    let candidate_tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));
     let is_diagnostic = |blob: &[u8]| {
         EntityMetadataHeader::parse(blob)
             .is_some_and(|header| header.entity_type == ENTITY_TYPE_DIAGNOSTIC)
@@ -126,7 +127,14 @@ fn validate_window_update(
                 let id = EntityId::from_hex(&raw).map_err(|_| Error::InvalidKey)?;
                 let txn = vault.store.env.read_txn()?;
                 if !crate::sync::types::retained_world_shell_belongs_to_window(
-                    vault, &txn, &candidate, &id, &blob, key, false,
+                    vault,
+                    &txn,
+                    &candidate,
+                    &candidate_tombstones,
+                    &id,
+                    &blob,
+                    key,
+                    false,
                 )? {
                     return Err(Error::InvalidConfig("unproven world shell".into()));
                 }
@@ -208,7 +216,15 @@ fn validate_window_update(
         let mut edge_keys = Vec::new();
         edges.for_each(|edge, _| edge_keys.push(edge.to_owned()));
         for edge in edge_keys {
-            check_edge_residence(vault, &candidate, &edge, key, &historical, staged)?;
+            check_edge_residence(
+                vault,
+                &candidate,
+                &candidate_tombstones,
+                &edge,
+                key,
+                &historical,
+                staged,
+            )?;
         }
         let tombstones = candidate.get_map("tombstones");
         let mut tombstone_keys = Vec::new();
@@ -256,7 +272,14 @@ fn validate_window_update(
                                         return false;
                                     };
                                     crate::sync::types::retained_world_shell_belongs_to_window(
-                                        vault, &txn, &candidate, &id, &blob, key, false,
+                                        vault,
+                                        &txn,
+                                        &candidate,
+                                        &candidate_tombstones,
+                                        &id,
+                                        &blob,
+                                        key,
+                                        false,
                                     )
                                     .unwrap_or(false)
                                 })))
@@ -273,7 +296,15 @@ fn validate_window_update(
             }
         } else if let (Some(key), Some(vault)) = (key, vault) {
             if op.container == edges {
-                check_edge_residence(vault, &candidate, &map_key, key, &historical, staged)?;
+                check_edge_residence(
+                    vault,
+                    &candidate,
+                    &candidate_tombstones,
+                    &map_key,
+                    key,
+                    &historical,
+                    staged,
+                )?;
             } else if op.container == tombstones {
                 check_tombstone_residence(vault, &map_key, key)?;
             }
@@ -285,6 +316,7 @@ fn validate_window_update(
 fn check_edge_residence(
     vault: &crate::Vault,
     doc: &LoroDoc,
+    tombstones: &TombstoneIndex,
     edge: &str,
     key: &crate::sync::WindowKey,
     historical: &HashMap<EntityId, Vec<u8>>,
@@ -299,7 +331,8 @@ fn check_edge_residence(
         };
     };
     let txn = vault.store.env.read_txn()?;
-    if crate::sync::types::edge_belongs_to_window_in(vault, &txn, doc, &src, &tgt, key)? {
+    if crate::sync::types::edge_belongs_to_window_in(vault, &txn, doc, tombstones, &src, &tgt, key)?
+    {
         return Ok(());
     }
     if key.world().is_none() {

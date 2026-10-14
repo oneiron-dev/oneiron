@@ -81,6 +81,7 @@ where
     if limit == 0 {
         return Ok(Vec::new());
     }
+    let query = super::query::bounded_query(query);
     let mut tokens = Vec::new();
     analyzer.analyze(query, &AnalyzerContext::for_query(), &mut tokens);
     if tokens.is_empty() {

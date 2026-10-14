@@ -177,6 +177,7 @@ pub enum ErrorKind {
     InvalidRankProfile,
     AnalyzerAssetMissing,
     AnalyzerError,
+    IndexedTextTooLarge,
     UpstreamToolFailure,
     RetrievalStageCut,
     #[cfg(feature = "sync")]

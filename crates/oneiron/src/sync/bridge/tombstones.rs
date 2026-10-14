@@ -53,6 +53,7 @@ pub(super) fn materialize_tombstones_from_delta(
     _lease_vault_id: u64,
 ) -> Option<Vec<EntityId>> {
     let entities_map = doc.get_map("entities");
+    let tombstones = crate::sync::loro_support::TombstoneIndex::build(&doc.get_map("tombstones"));
     // Staged BEFORE the batch transaction opens: the door gates below are
     // document reads plus their own committing quarantine writes (pre-batch
     // rejections that never enter the batch at all), and the batch must not
@@ -98,7 +99,14 @@ pub(super) fn materialize_tombstones_from_delta(
                                 && window.world().is_some()
                                 && let Some(raw) = map_get_bytes(&entities_map, &id.to_hex())
                                 && crate::sync::types::retained_world_shell_belongs_to_window(
-                                    vault, &txn, doc, &id, &raw, &window, false,
+                                    vault,
+                                    &txn,
+                                    doc,
+                                    &tombstones,
+                                    &id,
+                                    &raw,
+                                    &window,
+                                    false,
                                 )?
                             {
                                 return Ok(crate::sync::types::TombstoneResidence::Match);

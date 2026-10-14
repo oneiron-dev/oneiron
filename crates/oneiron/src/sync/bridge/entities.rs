@@ -14,6 +14,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::sync::ingest::{
     EntityStep, IngestCtx, Residence, ingest_entity_in_savepoint, waits_for_sibling_row,
 };
+use crate::sync::loro_support::TombstoneIndex;
 use crate::sync::pack_sync;
 use crate::sync::quarantine;
 use crate::vault::ReadMode;
@@ -55,8 +56,8 @@ pub(super) fn materialize_entities_with_changes(
     window_key: &str,
     lease_vault_id: u64,
 ) -> (bool, Vec<crate::vault::EntityRevisionChange>) {
-    let tombstones_map = doc.get_map("tombstones");
-    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones_map)
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
+    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones)
         .with_residence(Residence::Quarantine(doc));
     // ONE-1147: ids + op bytes applied into the batch txn, retained outside
     // it — on whole-txn failure there is no surviving per-entity failure

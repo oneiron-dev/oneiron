@@ -12,10 +12,11 @@ pub(crate) fn apply(
     mut state: State,
     window: &str,
 ) -> Result<Vec<EntityId>> {
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     vault.with_write_txn_grouped(|txn| {
         let mut dropped = BTreeSet::new();
         for note in state.cores.keys() {
-            if blocked(vault, txn, doc, note)?
+            if blocked(vault, txn, &tombstones, note)?
                 || crate::sync::quarantine::unproven_remat_marker_exists_in_txn(
                     vault, txn, window, note,
                 )?

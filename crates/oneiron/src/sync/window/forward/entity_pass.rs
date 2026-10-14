@@ -23,7 +23,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
         vault,
         ctx.window_key.as_str(),
         ctx.lease_vault_id,
-        &ctx.tombstones_map,
+        &ctx.tombstones,
     )
     .with_residence(Residence::Forward {
         doc: ctx.doc,

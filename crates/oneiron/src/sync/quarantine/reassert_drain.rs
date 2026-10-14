@@ -234,9 +234,9 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
     window_key: &WindowKey,
 ) -> Result<bool> {
     use crate::sync::bridge::BRIDGE_ORIGIN;
-    use crate::sync::loro_support::doc_version_vector;
+    use crate::sync::loro_support::{TombstoneIndex, doc_version_vector};
     use crate::sync::window::{
-        apply_tombstone_to_window_doc, export_scrubbed_window_snapshot,
+        apply_tombstone_to_indexed_window_doc, export_scrubbed_window_snapshot,
         export_tombstone_commit_delta, load_window_from_state, merge_persisted_state_into_doc,
         persist_window_doc_in_txn, rebuild_window_from_updates,
     };
@@ -262,8 +262,9 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
             merge_persisted_state_into_doc(vault, &window.doc, window_key)?;
             let _guard = manager.materializer().lock();
             let vv_before = window.doc.oplog_vv();
+            let tombstones = TombstoneIndex::build(&window.doc.get_map("tombstones"));
             for (key, value) in &markers {
-                apply_tombstone_to_window_doc(&window.doc, &key.id, value)?;
+                apply_tombstone_to_indexed_window_doc(&window.doc, &tombstones, &key.id, value)?;
             }
             // BRIDGE_ORIGIN: Observer B must skip this commit — LMDB
             // already holds the delete truth (`dt:` + the origin purge
@@ -292,8 +293,9 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
                 Err(err) => return Err(err),
             };
             let vv_before = doc.oplog_vv();
+            let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
             for (key, value) in &markers {
-                apply_tombstone_to_window_doc(&doc, &key.id, value)?;
+                apply_tombstone_to_indexed_window_doc(&doc, &tombstones, &key.id, value)?;
             }
             doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
             let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;

@@ -102,6 +102,7 @@ pub(crate) fn maintain_claim_projection_index(
     let hash = predicate_hash(&body.predicate);
     let mut reverse_keys = vec![PREDICATE_INDEX.key_bytes(&(hash, id))];
     PREDICATE_INDEX.put(store, txn, &(hash, id), &body.predicate)?;
+    crate::blob_artifact::record_version_claim(store, txn, body)?;
     if body.approval == ClaimApprovalStatus::Proposed
         && body.lifecycle == ClaimLifecycleStatus::Active
         && body.source == Some(ClaimSource::Generated)
