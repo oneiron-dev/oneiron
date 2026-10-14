@@ -8444,6 +8444,8 @@ dependencies = [
  "half",
  "heed",
  "hmac 0.12.1",
+ "hyper",
+ "hyper-util",
  "jsonwebtoken",
  "libc",
  "loro",
