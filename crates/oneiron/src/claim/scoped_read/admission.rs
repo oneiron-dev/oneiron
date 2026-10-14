@@ -206,7 +206,7 @@ impl<'a> ScopedRead<'a> {
             return Ok(false);
         }
         let flagged = crate::settings::device_local_worlds_at(
-            &self.vault.store,
+            self.vault,
             txn,
             crate::claim::CallerLocality::OffDevice,
         )?;

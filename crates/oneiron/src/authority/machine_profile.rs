@@ -15,6 +15,7 @@
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use crate::entity_id::EntityId;
 
@@ -55,6 +56,12 @@ pub struct FoldedMachine {
     /// handoff conflict retired its root and installed no successor. Not
     /// live until the conflict settles, when the standing is judged again.
     pub admitter_unsettled: bool,
+    /// The winning revision reached this install past its signer's sequence
+    /// floor: the roster rule reads it as a replica with no floor does, but
+    /// this install does not count the machine until a later revision lands
+    /// (Astra #1430). Also set when the fold with no vouch does not count the
+    /// machine under that revision (`install_fold::NoVouch`). Not live here.
+    pub floor_held: bool,
     /// The roster key that signed the revision, and its class. The class is
     /// judged again on the merged history: a key found to be in the host's
     /// custody on any branch the fold holds stops its owned revision standing.
@@ -70,6 +77,48 @@ pub(super) struct MachineChain {
     pub(super) head: FoldedMachine,
     /// The highest revision an owner-held key signed.
     pub(super) owner_held: Option<FoldedMachine>,
+    /// Every revision of the machine this history holds. The race rule reads
+    /// the whole set, so no merge order or grouping changes it.
+    pub(super) revisions: BTreeMap<AuthorityEntryHash, Arc<Revision>>,
+}
+
+/// One revision of a machine, as its entry carried it.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct Revision {
+    profile: MachineProfile,
+    signer: AuthorityKey,
+    owner_held: bool,
+    /// The "yours" revision this one replaced, if the head it replaced said
+    /// "yours".
+    replaced_mark: Option<AuthorityEntryHash>,
+    /// The machine's revisions in this one's own past.
+    past: Arc<BTreeSet<AuthorityEntryHash>>,
+    /// It landed past this replica's sequence floor as restriction only: it
+    /// acknowledges no edit here, and as the head it leaves the machine
+    /// uncounted here (Astra #1430).
+    past_floor: bool,
+}
+
+impl Revision {
+    /// One entry applied over two different pasts (a removal's proof beside
+    /// the ordinary fold) keeps what both copies grant: it takes "yours"
+    /// away with acknowledgement only when both would, from the same mark,
+    /// and exempts only the past both saw. The meet is order-free.
+    fn meet(left: &Arc<Self>, right: &Arc<Self>) -> Arc<Self> {
+        if Arc::ptr_eq(left, right) || left == right {
+            return Arc::clone(left);
+        }
+        Arc::new(Self {
+            profile: left.profile.clone(),
+            signer: left.signer.clone(),
+            owner_held: left.owner_held
+                && right.owner_held
+                && left.replaced_mark == right.replaced_mark,
+            replaced_mark: left.replaced_mark.min(right.replaced_mark),
+            past: Arc::new(left.past.intersection(&right.past).copied().collect()),
+            past_floor: left.past_floor || right.past_floor,
+        })
+    }
 }
 
 impl FoldedMachine {
@@ -89,6 +138,7 @@ impl FoldedMachine {
             && !self.removed
             && !self.stale
             && !self.admitter_unsettled
+            && !self.floor_held
             && (self.signer_class == SignerClass::OwnerHeld
                 || !matches!(self.profile.role, MachineRole::Owned(_)))
     }
@@ -128,6 +178,7 @@ pub(super) fn apply_machine_profile(
     profile: &MachineProfile,
     hash: AuthorityEntryHash,
     context: FoldContext<'_>,
+    restriction_only: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let Some(device) = state
         .roster
@@ -152,7 +203,8 @@ pub(super) fn apply_machine_profile(
     if !admitted {
         return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
-    let head = roster_chain(state, profile.machine).map(|chain| &chain.head);
+    let chain = roster_chain(state, profile.machine);
+    let head = chain.map(|chain| &chain.head);
     if key_is_authority(state, &profile.machine_key)
         || machine_is_actor(state, profile.machine)
         || !profile.proof_verifies(&state.vault_id)
@@ -160,12 +212,30 @@ pub(super) fn apply_machine_profile(
     {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
+    let mut revisions = chain
+        .map(|chain| chain.revisions.clone())
+        .unwrap_or_default();
+    let past = Arc::new(revisions.keys().copied().collect());
+    revisions.insert(
+        hash,
+        Arc::new(Revision {
+            profile: profile.clone(),
+            signer: signer.clone(),
+            owner_held: signer_class == SignerClass::OwnerHeld,
+            replaced_mark: head
+                .filter(|folded| folded.profile.says_mine())
+                .map(|folded| folded.entry),
+            past,
+            past_floor: restriction_only,
+        }),
+    );
     let folded = FoldedMachine {
         profile: profile.clone(),
         conflicted: false,
         removed: profile.role == MachineRole::Removed || head.is_some_and(|folded| folded.removed),
         stale: false,
         admitter_unsettled: false,
+        floor_held: false,
         signer: signer.clone(),
         signer_class,
         entry: hash,
@@ -181,6 +251,7 @@ pub(super) fn apply_machine_profile(
         MachineChain {
             head: folded,
             owner_held,
+            revisions,
         },
     );
     state
@@ -212,6 +283,71 @@ fn in_host_custody(state: &FoldState, key: &AuthorityKey) -> bool {
         }
     }
     false
+}
+
+/// The revisions of `machine` in the own past of its revision `mark`: what an
+/// edit signed under that mark followed. Not every revision the edit's parents
+/// carry: an edit naming a concurrent demotion never exempts it (Wonder P2
+/// round 5, W1).
+pub(super) fn mark_past(
+    state: &FoldState,
+    machine: EntityId,
+    mark: &AuthorityEntryHash,
+) -> Arc<BTreeSet<AuthorityEntryHash>> {
+    roster_chain(state, machine)
+        .and_then(|chain| chain.revisions.get(mark))
+        .map(|revision| Arc::clone(&revision.past))
+        .unwrap_or_default()
+}
+
+/// Whether `edit`, signed under the "yours" revision `mark` by a machine that
+/// is no longer the owner's, keeps its effect. The mark must still stand in
+/// this history: its signer in no host's custody, and no divergent revision
+/// of its number. Every revision this history holds outside the mark's own
+/// past (`prior`) that leaves the machine not the owner's must have been
+/// signed by a key the owner holds, have landed in full rather than as
+/// restriction only past a sequence floor, have seen the edit, and, when it took a
+/// "yours" revision away, have taken one that still stands; and there must be
+/// one. Judged `floor_free` (standing, by the roster rule alone), a revision
+/// that landed restriction only counts as the replica with no floor reads it.
+/// A revision that saw nothing, a host's removal, or a mark found later
+/// not to stand narrows the edit; a "yours" text or the order in which
+/// branches meet changes nothing (Sol P2 rounds 7-8, Engine ruling E8).
+pub(super) fn acknowledged(
+    state: &FoldState,
+    machine: EntityId,
+    edit: &AuthorityEntryHash,
+    mark: &AuthorityEntryHash,
+    prior: &BTreeSet<AuthorityEntryHash>,
+    floor_free: bool,
+) -> bool {
+    let Some(chain) = roster_chain(state, machine) else {
+        return false;
+    };
+    let custodial = |key: &AuthorityKey| state.hosted && in_host_custody(state, key);
+    let stands = |mark: &AuthorityEntryHash| {
+        chain.revisions.get(mark).is_some_and(|marked| {
+            !custodial(&marked.signer)
+                && !chain.revisions.values().any(|other| {
+                    other.profile.revision == marked.profile.revision
+                        && other.profile != marked.profile
+                })
+        })
+    };
+    let mut takers = chain
+        .revisions
+        .iter()
+        .filter(|(hash, revision)| !prior.contains(*hash) && !revision.profile.says_mine())
+        .peekable();
+    stands(mark)
+        && takers.peek().is_some()
+        && takers.all(|(_, revision)| {
+            (floor_free || !revision.past_floor)
+                && revision.owner_held
+                && !custodial(&revision.signer)
+                && revision.profile.seen_world_edits.contains(edit)
+                && revision.replaced_mark.as_ref().is_none_or(&stands)
+        })
 }
 
 fn roster_chain(state: &FoldState, machine: EntityId) -> Option<&MachineChain> {
@@ -255,12 +391,20 @@ pub(super) fn merge_machine(left: &FoldedMachine, right: &FoldedMachine) -> Fold
 }
 
 fn merge_chain(left: &MachineChain, right: &MachineChain) -> MachineChain {
+    let mut revisions = left.revisions.clone();
+    for (hash, revision) in &right.revisions {
+        revisions
+            .entry(*hash)
+            .and_modify(|held| *held = Revision::meet(held, revision))
+            .or_insert_with(|| Arc::clone(revision));
+    }
     MachineChain {
         head: merge_machine(&left.head, &right.head),
         owner_held: match (&left.owner_held, &right.owner_held) {
             (Some(left), Some(right)) => Some(merge_machine(left, right)),
             (one, other) => one.clone().or_else(|| other.clone()),
         },
+        revisions,
     }
 }
 
@@ -311,7 +455,23 @@ pub(super) fn merge_machine_maps(
 /// branch counts no more than one signed after. Every reader of a machine's
 /// standing goes through this.
 pub(super) fn derived_machine(state: &FoldState, id: EntityId) -> Option<FoldedMachine> {
-    let mut folded = roster_chain(state, id)?.head.clone();
+    roster_chain(state, id).map(|chain| derived_head(state, id, chain))
+}
+
+/// Each admitter's head for one machine, with the derived poison applied.
+pub(super) fn derived_chains(
+    state: &FoldState,
+    id: EntityId,
+) -> impl Iterator<Item = FoldedMachine> + '_ {
+    state.machines.get(&id).into_iter().flat_map(move |chains| {
+        chains
+            .values()
+            .map(move |chain| derived_head(state, id, chain))
+    })
+}
+
+fn derived_head(state: &FoldState, id: EntityId, chain: &MachineChain) -> FoldedMachine {
+    let mut folded = chain.head.clone();
     if state.hosted && in_host_custody(state, &folded.signer) {
         folded.signer_class = SignerClass::Custodial;
     }
@@ -327,11 +487,24 @@ pub(super) fn derived_machine(state: &FoldState, id: EntityId) -> Option<FoldedM
         || rekeyed
         || key_is_authority(state, &folded.profile.machine_key)
         || machine_is_actor(state, id);
-    Some(folded)
+    folded
 }
 
-/// The fold's public view: each machine with the derived poison applied, and
-/// with no standing while the roster has no settled root.
+/// One machine as this install counts it: held when its winning revision
+/// reached this install past its signer's sequence floor.
+pub(super) fn counted_machine(state: &FoldState, id: EntityId) -> Option<FoldedMachine> {
+    roster_chain(state, id).map(|chain| FoldedMachine {
+        floor_held: chain
+            .revisions
+            .get(&chain.head.entry)
+            .is_some_and(|revision| revision.past_floor),
+        ..derived_head(state, id, chain)
+    })
+}
+
+/// The fold's public view: each machine with the derived poison applied, as
+/// this install counts it, and with no standing while the roster has no
+/// settled root.
 pub(super) fn folded_machines(
     state: &FoldState,
     roster_unsettled: bool,
@@ -340,10 +513,23 @@ pub(super) fn folded_machines(
         .machines
         .keys()
         .filter_map(|id| {
-            derived_machine(state, *id).map(|mut folded| {
+            counted_machine(state, *id).map(|mut folded| {
                 folded.admitter_unsettled = roster_unsettled;
                 (*id, folded)
             })
         })
         .collect()
+}
+
+/// The revisions that landed restriction only on this install.
+pub(super) fn held_revisions(state: &FoldState, out: &mut BTreeSet<AuthorityEntryHash>) {
+    for chain in state.machines.values().flat_map(BTreeMap::values) {
+        out.extend(
+            chain
+                .revisions
+                .iter()
+                .filter(|(_, revision)| revision.past_floor)
+                .map(|(hash, _)| *hash),
+        );
+    }
 }

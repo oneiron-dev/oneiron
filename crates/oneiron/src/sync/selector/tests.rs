@@ -1046,7 +1046,9 @@ fn selector_withholds_a_resident_claim_once_its_world_turns_device_only() {
     insert_edge(&doc, kept_claim, EdgeKind::Supports, private_claim);
     doc.commit();
     seed_doc_stamps(&vault, &doc);
-    vault.set_world_device_only(world, true).unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
 
     let selector = SyncSelector::new(
         grant_id,
@@ -5653,7 +5655,7 @@ fn an_epoch_summary_stays_where_its_world_or_a_source_stays() -> crate::Result<(
         "a summary of W's CLAIM stays home: the CLAIM travels in W's window"
     );
 
-    vault.set_world_device_only(world.entity_id(), true)?;
+    vault.keep_world_on_this_machine_for_test(world.entity_id(), true)?;
     let all = sent(&before, SyncSelectorWorld::All)?;
     assert!(
         !all.contains(&kept),
@@ -5833,9 +5835,9 @@ fn a_device_only_world_keeps_epoch_summaries_packed_while_it_was_portable() -> c
         Ok(())
     };
     ships(true)?;
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     ships(false)?;
-    vault.set_world_device_only(world, false)?;
+    vault.keep_world_on_this_machine_for_test(world, false)?;
     ships(true)
 }
 
@@ -6002,9 +6004,9 @@ fn a_deletion_records_the_worlds_it_withdrew_an_epoch_summary_for() -> crate::Re
         Ok(())
     };
     ships(true)?;
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     ships(false)?;
-    vault.set_world_device_only(world, false)?;
+    vault.keep_world_on_this_machine_for_test(world, false)?;
     ships(true)?;
 
     // A restore over this vault brings the summary back with them.
@@ -6222,7 +6224,7 @@ fn an_unplaced_epoch_summary_stays_home_while_a_world_is_device_only() -> crate:
     assert!(device_b.get_raw(&replica)?.is_some(), "B holds the replica");
     let on_b = packed_window(&device_b, &october)?;
     assert!(owner_window_ships(&device_b, &october, &on_b)?);
-    device_b.set_world_device_only(world, true)?;
+    device_b.keep_world_on_this_machine_for_test(world, true)?;
     assert!(
         !owner_window_ships(&device_b, &october, &on_b)?,
         "B's window door, a replica"
@@ -6233,7 +6235,7 @@ fn an_unplaced_epoch_summary_stays_home_while_a_world_is_device_only() -> crate:
         packed_window(&vault, &december)?,
     );
     assert!(owner_window_ships(&vault, &november, &november_doc)?);
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     assert!(
         !owner_window_ships(&vault, &november, &november_doc)?,
         "the window door, a summary of an unplaced epoch"
@@ -6263,7 +6265,7 @@ fn an_unplaced_epoch_summary_stays_home_while_a_world_is_device_only() -> crate:
         !owner_window_ships(&vault, &november, &november_doc)?,
         "the window door, withdrawn by an unplaced epoch"
     );
-    vault.set_world_device_only(world, false)?;
+    vault.keep_world_on_this_machine_for_test(world, false)?;
     assert!(owner_window_ships(&vault, &november, &november_doc)?);
     Ok(())
 }
@@ -6470,7 +6472,7 @@ fn a_lost_source_edge_withdraws_an_epoch_summary() -> crate::Result<()> {
         Ok(())
     };
     ships(true)?;
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     ships(false)?;
     let (selected, scoped) = selected_and_scoped(&vault, grant_id, member, &october, &october_doc)?;
     assert!(!selected.contains(&batched), "the selector");
@@ -6500,7 +6502,7 @@ fn a_summary_of_a_summary_rewritten_as_no_epoch_keeps_its_world() -> crate::Resu
     let (october, november) = (WindowKey::new("2026-10"), WindowKey::new("2026-11"));
     let world = summary_of_a_summary(&vault, source, &october, nested, &november)?;
     let november_doc = packed_window(&vault, &november)?;
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     assert!(!owner_window_ships(&vault, &november, &november_doc)?);
     let rewritten = october.start_timestamp().unwrap() + 120;
     vault
@@ -6603,7 +6605,7 @@ fn a_summary_of_a_summary_moved_to_the_text_plane_keeps_its_world() -> crate::Re
     let (october, november) = (WindowKey::new("2026-10"), WindowKey::new("2026-11"));
     let world = summary_of_a_summary(&vault, source, &october, nested, &november)?;
     let november_doc = packed_window(&vault, &november)?;
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     assert!(!owner_window_ships(&vault, &november, &november_doc)?);
     move_text_to_document_plane(&vault, &source)?;
     assert!(
@@ -6637,7 +6639,7 @@ fn a_summary_of_a_recovered_summary_on_the_text_plane_stays_home() -> crate::Res
         owner_window_ships(&restored, &november, &november_doc)?,
         "no world flagged: a summary of a recovered summary ships"
     );
-    restored.set_world_device_only(world, true)?;
+    restored.keep_world_on_this_machine_for_test(world, true)?;
     assert!(
         !owner_window_ships(&restored, &november, &november_doc)?,
         "the window door, a summary of a recovered summary on the text plane"
@@ -6682,7 +6684,7 @@ fn a_recovered_summary_stays_an_epoch_whatever_field_its_head_names() -> crate::
     let (nested, november) = (entity_id(0x7a), WindowKey::new("2026-11"));
     nested_summary(&restored, source, nested, &november)?;
     let november_doc = packed_window(&restored, &november)?;
-    restored.set_world_device_only(world, true)?;
+    restored.keep_world_on_this_machine_for_test(world, true)?;
     assert!(
         !owner_window_ships(&restored, &november, &november_doc)?,
         "the window door, a summary of a recovered summary its head names as titled"
@@ -6834,7 +6836,7 @@ fn a_tombstone_that_keeps_a_summary_body_keeps_its_withdrawal_record() -> crate:
     drop(rtxn);
     assert!(owner_window_ships(&vault, &october, &october_doc)?);
     assert!(owner_window_ships(&vault, &november, &november_doc)?);
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     assert!(
         !owner_window_ships(&vault, &october, &october_doc)?,
         "the window door, a tombstoned summary"
@@ -6886,7 +6888,7 @@ fn a_first_purge_of_an_empty_world_records_it_on_its_summary() -> crate::Result<
     vault.with_write_txn_grouped(|txn| {
         crate::compaction::EpochPlacement::default().settle_in(&vault.store, txn, summary)
     })?;
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     vault.delete_entity_with_options(&world, DeleteEntityOptions { purge: true })?;
     let rtxn = vault.store.env.read_txn()?;
     assert_eq!(
