@@ -259,7 +259,7 @@ impl Memory<'_> {
             match admission {
                 FanoutAdmission::Proceed { estimate } => {
                     run.estimate = estimate;
-                    self.mint_fanout_in(txn, &validated, input, &mut run, now, rate_now)?;
+                    self.mint_fanout_in(txn, &validated, input, &mut run, now)?;
                 }
                 FanoutAdmission::Paused {
                     estimate,
@@ -482,9 +482,12 @@ impl Memory<'_> {
         input: &ConsultFanOutSpec,
         run: &mut StoredFanout,
         now: u64,
-        rate_now: u64,
     ) -> MemoryResult<()> {
         self.require_fanout_ceiling(txn)?;
+        // Counted and stamped at the engine's clock as it mints, not as the
+        // admission began: a classifier or an approval can hold a request
+        // across a window boundary (review r2, Astra F1).
+        let dispatched_at = self.vault().now_recorded_at();
         // A fan-out request is counted, never refused for rate (OF-520). The
         // vault's create_rate row is the bound: the first request past it in
         // a window leaves one typed check, and every request lands. One count
@@ -499,7 +502,7 @@ impl Memory<'_> {
             txn,
             OwnRateKind::ConsultFanout,
             self.actor(),
-            rate_now,
+            dispatched_at,
             OwnRate {
                 threshold: rate.limit as u64,
                 window_seconds: rate.window_seconds,
@@ -519,7 +522,7 @@ impl Memory<'_> {
                 .to_hex(),
             );
         }
-        run.dispatched_at = Some(rate_now);
+        run.dispatched_at = Some(dispatched_at);
         Ok(())
     }
 
