@@ -687,8 +687,14 @@ async fn a_step_rung_its_line_cannot_cover_is_denied_and_never_sent() {
     );
 }
 
-/// Runs the saved one-step workflow `workflow` in `world` until it stops.
-async fn step_in(vault: &Arc<Vault>, workflow: EntityId, world: EntityId, host: &AiHost) {
+/// Runs the saved one-step workflow `workflow` in `world`, with `briefing`,
+/// until it stops.
+async fn step_in(
+    vault: &Arc<Vault>,
+    workflow: EntityId,
+    (world, briefing): (EntityId, Option<&str>),
+    host: &AiHost,
+) {
     use oneiron::agent_dispatch::{
         AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
     };
@@ -698,9 +704,13 @@ async fn step_in(vault: &Arc<Vault>, workflow: EntityId, world: EntityId, host: 
             world: Some(world),
             ..oneiron::llm::Scope::default()
         }),
+        context_spec: briefing.map(|text| oneiron::context_projection::ContextSpec {
+            briefing: Some(text.to_owned()),
+            ..oneiron::context_projection::ContextSpec::default()
+        }),
         ..AgentSpawnContext::default()
     };
-    let key = format!("world-step-{}", world.to_hex());
+    let key = format!("world-step-{}-{}", world.to_hex(), briefing.is_some());
     dispatcher
         .dispatch_with_context(
             DispatchAgent {
@@ -727,7 +737,9 @@ async fn step_in(vault: &Arc<Vault>, workflow: EntityId, world: EntityId, host: 
 /// dispatched in and follows that world's setting. A step in a world kept
 /// on this machine never reaches a cloud fallback (each hold receipted); a
 /// step in a world that may leave falls back to it, while that other world
-/// stays here.
+/// stays here. Review repro (Astra R2 P1): a briefing is its dispatcher's
+/// text, which the world does not vouch for, so a briefed step names no
+/// world and stays on the device while that other world does.
 #[tokio::test]
 async fn a_workflow_step_follows_its_worlds_setting_for_a_cloud_fallback() {
     use oneiron::llm::run_admission::{MemoryReceipts, RunDenied, RunEvent};
@@ -786,7 +798,7 @@ retry_backoff_secs = 0
     let receipts = Arc::new(MemoryReceipts::default());
     let host = AiHost::start_receipted(vault.clone(), Some(&config), true, receipts.clone()).await;
 
-    step_in(&vault, workflow, private, &host).await;
+    step_in(&vault, workflow, (private, None), &host).await;
     assert!(
         !device.seen().is_empty(),
         "the step was tried on the device"
@@ -810,7 +822,9 @@ retry_backoff_secs = 0
         .count();
     assert_eq!(held, device.seen().len(), "each held try is receipted");
 
-    step_in(&vault, workflow, portable, &host).await;
+    step_in(&vault, workflow, (portable, None), &host).await;
     assert_eq!(cloud.seen().len(), 1, "the portable world's step fell back");
+    step_in(&vault, workflow, (portable, Some("a note")), &host).await;
+    assert_eq!(cloud.seen().len(), 1, "the briefed step stayed here");
     host.shutdown().await;
 }

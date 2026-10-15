@@ -12,7 +12,7 @@ use oneiron::llm::run_admission::{
 };
 use oneiron::recovery::checkpoint::RestoreReason;
 use oneiron::store::ports::ManualClock;
-use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EntityId, Vault, VaultConfig};
+use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EntityId, LlmStreamEvent, Vault, VaultConfig};
 use serde_json::json;
 
 use super::fallback_tests::{
@@ -111,9 +111,10 @@ async fn a_call_that_names_no_world_stays_on_the_device_while_any_world_does() {
     assert!(held.iter().all(|model| model.contains("big")), "{held:?}");
 }
 
-/// Review repro (Astra R1 P1): a call that names a world this vault does not
-/// hold is no call about a world that may leave: it stays on the device,
-/// while a call about a world the vault holds at its default settings goes.
+/// Review repro (Astra R1 P1, Sol R4 P1): a call that names a world this
+/// vault does not hold, or holds only as a deleted row, is no call about a
+/// world that may leave: it stays on the device, while a call about a live
+/// world the vault holds at its default settings goes.
 #[tokio::test]
 async fn a_call_about_a_world_this_vault_does_not_hold_stays_on_the_device() {
     let first = FakeLlm::start(vec![], Some(Reply::Status(500))).await;
@@ -122,6 +123,13 @@ async fn a_call_about_a_world_this_vault_does_not_hold_stays_on_the_device() {
     let vault = clocked_vault(dir.path(), &clock);
     let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
+    let deleted = portable_world(&vault);
+    assert!(vault.delete_entity(&deleted).unwrap());
+    let error = seat
+        .ladder
+        .generate(&test_run(), about(seat, deleted), None)
+        .await;
+    assert_eq!(error.expect_err("held"), kept_here(None));
     let unknown = about(seat, EntityId::now());
     let error = seat
         .ladder
@@ -196,6 +204,67 @@ async fn a_world_made_private_while_its_fallback_is_admitted_never_goes_out() {
     assert_eq!(holds(&sink.rows.rows()).len(), 2);
 }
 
+/// Review repro (Sol R4 P2): a stream that opens with every offer resting
+/// admits the first one back before it waits. When that admission sees the
+/// world kept on the device, the one wait goes to the offer on the device
+/// instead, which then answers.
+#[tokio::test]
+async fn a_stream_spends_its_one_wait_on_an_offer_its_world_may_use() {
+    let limit = |seconds: &str| {
+        refusal(
+            429,
+            &[("retry-after", seconds)],
+            json!({"error": {"message": "rate limit"}}),
+        )
+    };
+    let first = FakeLlm::start(vec![limit("3")], Some(Reply::text("from the device"))).await;
+    let second = FakeLlm::start(
+        vec![Reply::text("from the cloud"), limit("1"), limit("1")],
+        None,
+    )
+    .await;
+    let (dir, clock) = (tempfile::tempdir().unwrap(), ManualClock::new(T0));
+    let vault = clocked_vault(dir.path(), &clock);
+    let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
+    let seat = runtime.seat(ModelRole::Checker).expect("seat");
+    let (other, world) = (portable_world(&vault), portable_world(&vault));
+    // The offer on the device rests until T0 + 3; the cloud's, after a wait
+    // and a second refusal, until T0 + 2.
+    let answer = seat
+        .ladder
+        .generate(&test_run(), about(seat, other), None)
+        .await;
+    assert_eq!(
+        text_of(&answer.expect("answered").message),
+        "from the cloud"
+    );
+    let error = seat
+        .ladder
+        .generate(&test_run(), about(seat, other), None)
+        .await;
+    assert!(error.is_err(), "both offers rest");
+
+    let sink = Arc::new(PrivateOnAdmission {
+        vault: Arc::clone(&vault),
+        next: Mutex::new(Some(world)),
+        rows: MemoryReceipts::default(),
+    });
+    let run = run_into(sink.clone());
+    let mut events = seat
+        .ladder
+        .stream(&run, about(seat, world), None)
+        .expect("a stream");
+    let mut text = String::new();
+    while let Some(event) = events.next().await {
+        if let LlmStreamEvent::TextDelta { text: delta, .. } = event.expect("an answer") {
+            text.push_str(&delta);
+        }
+    }
+    assert_eq!(text, "from the device");
+    assert_eq!(second.seen().len(), 3, "the world's text stayed here");
+    assert_eq!(holds(&sink.rows.rows()).len(), 1);
+}
+
 /// Review repro (Astra R1 P2): an offer's cooldown belongs to the deployment
 /// that met the refusal. A checkpoint carries none, so a vault restored from
 /// one asks the offer again.
@@ -247,19 +316,24 @@ async fn a_checkpoint_carries_no_offer_cooldown() {
 /// call's world comes from. A call that names no world is held by the
 /// vault-wide floor while any world stays on the device, so a new caller
 /// that passes no world fails closed; this list makes it name its source.
-const LADDER_CALLERS: [(&str, &str); 8] = [
+const LADDER_CALLERS: [(&str, &str); 10] = [
     (
         "api/llm.rs",
         "the caller's envelope; a world it names must be held here",
     ),
+    ("api/ai/chat.rs", "none: the floor"),
+    (
+        "models/declared.rs",
+        "the declared run's envelope; a world it names must be held here",
+    ),
     ("models/raw.rs", "one host-injected offer, never a fallback"),
     (
         "models/run_backend.rs",
-        "the engine's envelope; none names a world yet: the floor",
+        "the engine's envelope: a consolidation pass names its partition's world, the rest none (the floor)",
     ),
     (
         "ai_host/dreamer.rs",
-        "the engine's envelope through a run backend: the floor",
+        "the engine's envelope, through a run backend",
     ),
     (
         "ai_host/code_mode.rs",
@@ -267,7 +341,7 @@ const LADDER_CALLERS: [(&str, &str); 8] = [
     ),
     (
         "ai_host/step.rs",
-        "the world the workflow was dispatched in, else the floor",
+        "the world the workflow was dispatched in, unless briefed; else the floor",
     ),
     ("ai_host/compaction.rs", "none: the floor"),
     (
@@ -276,7 +350,9 @@ const LADDER_CALLERS: [(&str, &str); 8] = [
     ),
 ];
 
-/// How a ladder is reached: its entry points, and the backend that wraps one.
+/// How a ladder is reached: its entry points, and the backend that wraps one,
+/// matched with every whitespace taken out, so a call split over lines is
+/// found too. A caller binds the ladder it reaches as `ladder`.
 const ENTRY_POINTS: [&str; 4] = [
     "ladder.generate(",
     "ladder.stream(",
@@ -311,12 +387,17 @@ fn every_ladder_caller_names_where_its_world_comes_from() {
             .to_string_lossy()
             .replace('\\', "/");
         let test_only = name.ends_with("tests.rs")
+            || name.starts_with("tests/")
             || name.contains("/tests/")
             || name.ends_with("test_support.rs");
         if test_only || name == "models/ladder.rs" {
             continue;
         }
-        let text = std::fs::read_to_string(&file).unwrap();
+        let text: String = std::fs::read_to_string(&file)
+            .unwrap()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
         if ENTRY_POINTS.iter().any(|entry| text.contains(entry)) {
             callers.push(name);
         }

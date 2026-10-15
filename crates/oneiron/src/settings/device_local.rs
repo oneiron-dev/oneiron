@@ -5,7 +5,6 @@
 use heed::RoTxn;
 
 use crate::Vault;
-use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -45,10 +44,12 @@ impl Vault {
 
     /// Whether a model call that names `world`, or none, may go to a model
     /// off this device (world privacy, "Models"). A named world goes when it
-    /// is the base world or a WORLD row this vault holds, and its settings
-    /// let it go to another machine: a world this vault does not hold stays,
-    /// since nothing here can judge it. A call that names no world may carry
-    /// any world's text, so it goes only while no world stays on this device.
+    /// is the base world or a live WORLD row this vault holds, and its
+    /// settings let it go to another machine: a world this vault does not
+    /// hold, or holds only as a deleted, archived or stale row, stays, as the
+    /// world settings door refuses to judge it. A call that names no world
+    /// may carry any world's text, so it goes only while no world stays on
+    /// this device.
     pub fn model_call_may_leave_device(&self, world: Option<EntityId>) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
         let flagged = device_local_worlds_at(self, &rtxn, crate::claim::CallerLocality::OffDevice)?;
@@ -61,12 +62,12 @@ impl Vault {
         if world == crate::claim::base_world_id() {
             return Ok(true);
         }
-        let kind = self
-            .store
-            .entities
-            .get(&rtxn, world.as_bytes())?
-            .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type));
-        Ok(kind == Some(crate::registry::ENTITY_TYPE_WORLD))
+        if self.get_entity_type_in_txn(&rtxn, &world)? != Some(crate::registry::ENTITY_TYPE_WORLD) {
+            return Ok(false);
+        }
+        let visibility =
+            crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, &rtxn, &world)?;
+        Ok(!(visibility.deleted || visibility.archived || visibility.stale))
     }
 
     /// Whether a device-local world keeps `id` on this device, so no caller

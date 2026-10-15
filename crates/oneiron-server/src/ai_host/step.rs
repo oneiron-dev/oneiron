@@ -90,7 +90,11 @@ impl StepRunner {
         {
             messages.push(message(LlmMessageRole::System, instructions.clone()));
         }
-        if let Some(briefing) = context.briefing.filter(|text| !text.trim().is_empty()) {
+        // A briefing is text the step's dispatcher wrote, from whatever it
+        // read: the world the step was dispatched in proves nothing about it.
+        let briefing = context.briefing.filter(|text| !text.trim().is_empty());
+        let briefed = briefing.is_some();
+        if let Some(briefing) = briefing {
             messages.push(message(LlmMessageRole::User, briefing));
         }
         for earlier in &context.workflow_output_refs {
@@ -115,11 +119,17 @@ impl StepRunner {
             envelope: CallEnvelope {
                 seat_effort: None,
                 // The world the step was dispatched in, which every step of
-                // its workflow shares: a fallback goes only where that
-                // world's settings let it. A step dispatched in none is held
-                // on the device while any world stays on it.
+                // its workflow shares with its briefing: a fallback goes only
+                // where that world's settings let it. A step dispatched in
+                // none, or briefed, names none, so it is held on the device
+                // while any world stays on it.
                 scope: oneiron::llm::Scope {
-                    world: step.input.scope.as_ref().and_then(|scope| scope.world),
+                    world: step
+                        .input
+                        .scope
+                        .as_ref()
+                        .and_then(|scope| scope.world)
+                        .filter(|_| !briefed),
                     ..oneiron::llm::Scope::default()
                 },
                 tier: TierPrecedence::for_purpose(

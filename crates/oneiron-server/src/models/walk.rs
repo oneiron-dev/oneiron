@@ -119,6 +119,13 @@ impl Walk {
             .collect()
     }
 
+    /// Whether the call was ever kept from the rung at `index`.
+    pub(super) fn held_from(&self, index: usize) -> bool {
+        self.passed
+            .iter()
+            .any(|(at, passed)| *at == index && matches!(passed, Passed::KeptOnDevice))
+    }
+
     /// Whether the call was last kept from some rung: a fallback to it would
     /// have taken the work off the device.
     pub(super) fn kept(&self) -> bool {

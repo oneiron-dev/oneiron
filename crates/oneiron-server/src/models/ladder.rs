@@ -272,7 +272,9 @@ impl OfferLadder {
     /// this call is held from that rung, the run's receipts get a `Denied`
     /// row for it.
     fn hold(&self, call: Call<'_>, index: usize, walk: &mut Walk) {
-        if !walk.note(index, Passed::KeptOnDevice) {
+        let first = !walk.held_from(index);
+        walk.note(index, Passed::KeptOnDevice);
+        if !first {
             return;
         }
         let rung = &self.rungs[index];
@@ -559,11 +561,26 @@ impl OfferLadder {
             wait,
             mut walk,
         } = opening;
+        let call = Call {
+            run,
+            request,
+            selector,
+        };
         let mut held = Some((start, first));
         // The chain, then, when only rests stopped it, the chain once more
         // after one wait for its first offer back. A stream that opened with
-        // every usable offer resting starts with that wait.
+        // every usable offer resting starts with that wait, unless admitting
+        // the offer it waits for saw the world kept on the device: that rung
+        // is held, and the one wait goes to the first offer back the call
+        // may still use.
         let back = match wait {
+            Some(back) if self.kept_on_device(back.index, request) => {
+                if let Some((index, (_, permit))) = held.take() {
+                    settle_failed(permit);
+                    self.hold(call, index, &mut walk);
+                }
+                self.waits_for(&walk)
+            }
             Some(back) => Some(back),
             None => match self
                 .stream_pass(run, request, selector, &mut held, &mut walk, events)
