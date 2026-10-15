@@ -342,6 +342,34 @@ async fn a_stalled_push_is_ended_and_the_next_push_waits_its_turn_behind_it() {
     );
 }
 
+/// Docs lane on #1456: maintenance took the last git permit with a try, so
+/// the next push was answered 503 at its admission, before the coordinator
+/// could ask the maintenance to give way. Maintenance now waits for its
+/// permit behind every caller and never refuses one; a push that comes while
+/// maintenance holds the last permit waits for it, and lands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_push_that_finds_maintenance_holding_the_last_git_permit_waits_and_lands() {
+    let origin = origin(limits(1, 30_000)).await;
+    let server = Arc::clone(&origin.server);
+    let maintenance =
+        tokio::task::spawn_blocking(move || server.transfers.admit_git_maintenance().ok())
+            .await
+            .unwrap()
+            .expect("maintenance takes the one git permit");
+
+    let push = push_change(&origin, "past-maintenance", "pushed past maintenance");
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    assert!(
+        !push.is_finished(),
+        "the push waits for the permit maintenance holds; it is not answered"
+    );
+    drop(maintenance);
+    tokio::time::timeout(PATIENCE, push)
+        .await
+        .expect("the push gets the permit once maintenance lets it go")
+        .expect("the push lands, never refused");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn reads_never_queue_behind_a_push_that_holds_the_repository() {
     let origin = origin(limits(4, 10_000)).await;
