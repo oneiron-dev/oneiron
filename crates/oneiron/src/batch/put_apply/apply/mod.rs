@@ -661,6 +661,7 @@ pub(in crate::batch) fn apply_put(
     if replicated {
         crate::tagging::release_held_id_in_txn(store, wtxn, &id)?;
     }
+    crate::ports::withdraw_before_rewrite_in_txn(store, wtxn, &id)?;
     crate::ingest::invalidate_docs_source_before_put(store, wtxn, &id, entity_type, data)?;
     crate::ports::keep_worlds_of_unmade_epoch_in_txn(store, wtxn, &id, entity_type, data)?;
 

@@ -24,6 +24,8 @@ pub enum OwnRateKind {
     AutoWrite,
     /// Wrong-link reports one owner filed on one weave link.
     WeaveCorrection,
+    /// Consult fan-out requests by one actor, one count per request.
+    ConsultFanout,
 }
 
 impl OwnRateKind {
@@ -32,6 +34,7 @@ impl OwnRateKind {
             Self::TaskCreate => "task_create",
             Self::AutoWrite => "auto_write",
             Self::WeaveCorrection => "weave_correction",
+            Self::ConsultFanout => "consult_fanout",
         }
     }
 }
