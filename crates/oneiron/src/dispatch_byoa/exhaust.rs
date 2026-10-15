@@ -12,6 +12,7 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 use crate::git_wire::{GitRefName, GitWire, GitWireRepo};
+use crate::secret_lease::SecretTaintRef;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
@@ -43,6 +44,11 @@ pub struct ByoaEgressLease {
     pub allowed_hosts: Vec<String>,
     pub expires_at: u64,
     pub audit_ref: EntityId,
+    /// The secrets the host injected into traffic under this lease, as its
+    /// injection receipts reported them. Every run that used the lease
+    /// carries these refs into its exhaust, so the captured output exports
+    /// redacted.
+    pub secret_taint_refs: Vec<SecretTaintRef>,
 }
 
 impl ByoaEgressLease {
@@ -102,6 +108,10 @@ pub struct ByoaExhaust {
     /// Checkpoint refs as `name@oid`, read through the git seam.
     #[serde(default)]
     pub checkpoint_frontier: Vec<String>,
+    /// The secrets injected while this output was produced. Empty is
+    /// untainted and is not serialized, so untainted exhaust keeps its bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secret_taint_refs: Vec<SecretTaintRef>,
 }
 
 impl ByoaExhaust {
@@ -395,7 +405,18 @@ pub(super) fn validate_canonical_capture(
     provenance: &BlobVersionProvenance,
     requested: &ByoaExhaustEnvelope,
 ) -> ByoaResult<()> {
-    if vault.get_blob_artifact_in_txn(wtxn, artifact_id)?.as_ref() != Some(body) {
+    let stored_body = vault
+        .get_blob_artifact_in_txn(wtxn, artifact_id)?
+        .ok_or_else(|| invalid(ERR_ARTIFACT_COLLISION))?;
+    // An abandoned retry answers with the first capture, so the first
+    // capture's taint stands whatever the retry's exhaust carries.
+    let expected = if requested.disposition == ByoaTerminalDisposition::Abandoned {
+        body.clone()
+            .with_secret_taint_refs(stored_body.secret_taint_refs.clone())
+    } else {
+        body.clone()
+    };
+    if stored_body != expected {
         return Err(invalid(ERR_ARTIFACT_COLLISION));
     }
     let head = read_blob_artifact_head_in_txn(&vault.store, wtxn, artifact_id)?
@@ -427,6 +448,19 @@ pub(super) fn byoa_exhaust_artifact_name(attempt_id: AttemptId) -> String {
         "{BYOA_ATTEMPT_KIND}/{}",
         bytes_to_hex_lower(attempt_id.as_bytes())
     )
+}
+
+/// Adds `refs` to `into`, one ref per secret at the lowest generation seen,
+/// in name order. The lowest generation is the fail-closed choice: a rotation
+/// past it still reads as stale taint.
+pub(super) fn union_taint_refs(into: &mut Vec<SecretTaintRef>, refs: &[SecretTaintRef]) {
+    for r in refs {
+        match into.iter_mut().find(|held| held.secret_ref == r.secret_ref) {
+            Some(held) => held.generation = held.generation.min(r.generation),
+            None => into.push(r.clone()),
+        }
+    }
+    into.sort_by(|a, b| a.secret_ref.cmp(&b.secret_ref));
 }
 
 pub(super) fn encode_exhaust_envelope(envelope: &ByoaExhaustEnvelope) -> ByoaResult<Vec<u8>> {

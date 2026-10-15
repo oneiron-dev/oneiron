@@ -9,8 +9,8 @@ use crate::attempt_queue::{
     FinishAttemptLanding, FinishLandingOutcome, SetAttemptResult,
 };
 use crate::blob_artifact::{
-    BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body,
-    read_blob_artifact_head_in_txn,
+    BlobArtifactBody, BlobVersionProvenance, blob_artifact_asset_entity_id,
+    encode_blob_artifact_body, read_blob_artifact_head_in_txn,
 };
 use crate::checkout::{
     CheckoutFactSink, CheckoutLeaseAct, CheckoutLeaseService, CheckoutLeaseState, CheckoutLiveness,
@@ -31,14 +31,15 @@ use super::connector::{
 use super::error::{
     ByoaError, ByoaResult, ERR_ARTIFACT_COLLISION, ERR_ATTEMPT_MISSING, ERR_CAPTURE_CONFLICT,
     ERR_EXECUTION_CHECKOUT, ERR_EXECUTION_SHAPE, ERR_EXHAUST_TOO_LARGE, ERR_LEASE_EXPIRED,
-    ERR_LEASE_HOST_DENIED, ERR_LEASE_ID_ZERO, ERR_LEASE_PROFILE_MISMATCH, ERR_LEASE_UNBOUNDED,
-    invalid,
+    ERR_LEASE_HOST_DENIED, ERR_LEASE_ID_ZERO, ERR_LEASE_PROFILE_MISMATCH, ERR_LEASE_TAINT,
+    ERR_LEASE_UNBOUNDED, invalid,
 };
 use super::exhaust::{
     ByoaEgressLease, ByoaEgressPort, ByoaExhaust, ByoaExhaustEnvelope, ByoaTerminalDisposition,
     ByoaTerminalReceipt, CaptureByoaExhaust, byoa_exhaust_artifact_id, byoa_exhaust_artifact_name,
     byoa_result_ref, decode_byoa_record, disposition_matches_state, encode_exhaust_envelope,
-    ensure_byoa_runtime_actor, normalize_capture_reason, validate_canonical_capture,
+    ensure_byoa_runtime_actor, normalize_capture_reason, union_taint_refs,
+    validate_canonical_capture,
 };
 use super::validate::{
     encode_execution_transcript, validate_cli_sandbox, validate_connector, validate_endpoint,
@@ -317,19 +318,25 @@ where
             return Err(invalid(ERR_EXECUTION_CHECKOUT));
         }
         let intent = bytes_to_hex_lower(fence.attempt_id.as_bytes());
+        // Every secret a granted lease injected taints this run's output.
+        let mut injected = Vec::new();
         let mut authorize = |host: &str, at: u64| {
             if at < now {
                 return Err(invalid(ERR_LEASE_EXPIRED));
             }
-            self.authorize_cli_egress(&spec, host, &intent, at)
+            let lease = self.authorize_cli_egress(&spec, host, &intent, at)?;
+            union_taint_refs(&mut injected, &lease.secret_taint_refs);
+            Ok(lease)
         };
-        let exhaust = executor.run(
+        let mut exhaust = executor.run(
             &spec,
             &checkout,
             CliSandboxSpec::boundary_contract(),
             budget,
             &mut authorize,
         )?;
+        union_taint_refs(&mut injected, &exhaust.secret_taint_refs);
+        exhaust.secret_taint_refs = injected;
         validate_exhaust(&exhaust)?;
         Ok(exhaust)
     }
@@ -376,6 +383,9 @@ where
         }
         if !lease.permits_host(host, now) {
             return Err(denied(ERR_LEASE_HOST_DENIED));
+        }
+        if crate::secret_rotation::validate_taint_refs(&lease.secret_taint_refs).is_err() {
+            return Err(denied(ERR_LEASE_TAINT));
         }
         Ok(lease)
     }
@@ -424,7 +434,8 @@ where
         let body = BlobArtifactBody::new(
             byoa_exhaust_artifact_name(request.attempt_id),
             BYOA_EXHAUST_MEDIA_TYPE,
-        );
+        )
+        .with_secret_taint_refs(envelope.exhaust.secret_taint_refs.clone());
         let occurred = TimeRange {
             start: request.now,
             end: request.now,
@@ -602,6 +613,20 @@ where
         )?;
         if version.version != 1 {
             return Err(invalid(ERR_ARTIFACT_COLLISION));
+        }
+        if !envelope.exhaust.secret_taint_refs.is_empty() {
+            // The payload bytes are their own exportable ASSET row; taint it
+            // in this transaction too, never weakening taint it already had.
+            let asset = blob_artifact_asset_entity_id(&version.content_hash)?;
+            let mut refs =
+                crate::secret_rotation::exhaust_taint_refs_in_txn(&self.vault.store, wtxn, &asset)?;
+            union_taint_refs(&mut refs, &envelope.exhaust.secret_taint_refs);
+            crate::secret_rotation::mark_exhaust_tainted_in_txn(
+                &self.vault.store,
+                wtxn,
+                &asset,
+                &refs,
+            )?;
         }
         Ok(ByoaTerminalReceipt {
             attempt,

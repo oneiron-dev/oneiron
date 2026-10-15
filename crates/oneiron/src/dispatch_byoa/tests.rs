@@ -109,6 +109,7 @@ struct GrantingEgress {
     expires_at: u64,
     allowed_hosts: Vec<String>,
     profile_ref: Option<String>,
+    secret_taint_refs: Vec<crate::secret_lease::SecretTaintRef>,
 }
 
 impl GrantingEgress {
@@ -117,6 +118,7 @@ impl GrantingEgress {
             expires_at,
             allowed_hosts: vec!["api.example.com".to_owned()],
             profile_ref: None,
+            secret_taint_refs: Vec::new(),
         }
     }
 }
@@ -132,6 +134,7 @@ impl ByoaEgressPort for GrantingEgress {
             allowed_hosts: self.allowed_hosts.clone(),
             expires_at: self.expires_at,
             audit_ref: EntityId::from_bytes([9_u8; 16]).expect("audit ref"),
+            secret_taint_refs: self.secret_taint_refs.clone(),
         })
     }
 }
@@ -290,6 +293,7 @@ fn sample_exhaust() -> ByoaExhaust {
         stderr: b"warning: none".to_vec(),
         diff_bundle: Some(b"diff --git a b".to_vec()),
         checkpoint_frontier: vec!["refs/heads/work@".to_owned() + &"a".repeat(40)],
+        secret_taint_refs: Vec::new(),
     }
 }
 
@@ -1227,6 +1231,113 @@ fn cli_execution_requires_live_checkout_foreign_boundary_and_scoped_egress() {
         .capture_terminal_exhaust(request)
         .expect("capture guest output");
     assert_eq!(receipt.attempt.result_ref, Some(receipt.result_ref));
+}
+
+/// Runs one CLI guest through an egress lease that injected `injected`,
+/// captures its output, and exports the exhaust artifact with its payload
+/// ASSET. The guest's stdout stands for an echoed injected credential: it
+/// matches no pattern the secret scan knows, so only taint can redact it.
+fn export_captured_cli_run(
+    injected: &[crate::secret_lease::SecretTaintRef],
+) -> (
+    serde_json::Value,
+    [crate::secret_rotation::ArtifactTaintState; 2],
+) {
+    let (_dir, vault) = open_vault();
+    let mut egress = GrantingEgress::new(500);
+    egress.secret_taint_refs = injected.to_vec();
+    let mut granted = ByoaDispatcher::new(&vault, StubFactory, egress);
+    let attempt = dispatch_and_claim(
+        &vault,
+        &mut granted,
+        ByoaConnectorSpec::CliSandbox(cli_spec()),
+        "worker",
+    );
+    let mut checkouts = CheckoutLeaseService::new(&vault, CheckoutFacts, CheckoutPulse::default());
+    checkouts
+        .claim(crate::checkout::CheckoutClaimRequest {
+            checkout_id: cli_spec().checkout_id,
+            task_ref: EntityId::from_bytes([5; 16]).expect("task"),
+            repo_ref: crate::codebase::RepoRef::parse(
+                "github:owner/repo#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .expect("repo"),
+            holder_ref: "worker".to_owned(),
+            task_class: crate::checkout::CheckoutTaskClass::Build,
+            ttl_secs: Some(100),
+            now: 25,
+        })
+        .expect("checkout lease");
+    let exhaust = granted
+        .execute_cli(
+            &execution_fence(&attempt),
+            ExecutionBudget::new(30, 128, 8),
+            &checkouts,
+            &mut RecordingCli(0),
+            30,
+        )
+        .expect("guest ran");
+    let mut request = capture_request(&attempt, ByoaTerminalDisposition::Completed);
+    request.exhaust = exhaust;
+    let artifact = granted
+        .capture_terminal_exhaust(request)
+        .expect("capture guest output")
+        .artifact_id;
+    let asset = {
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        let head =
+            crate::blob_artifact::read_blob_artifact_head_in_txn(&vault.store, &rtxn, &artifact)
+                .expect("head read")
+                .expect("captured head");
+        crate::blob_artifact::blob_artifact_asset_entity_id(&head.content_hash).expect("asset id")
+    };
+    let export = vault
+        .export_entity_bundle_json(&[artifact, asset])
+        .expect("bundle export");
+    let states = [artifact, asset].map(|id| vault.artifact_taint_state(&id).expect("taint"));
+    (
+        serde_json::from_slice(&export).expect("export JSON"),
+        states,
+    )
+}
+
+#[test]
+fn cli_output_under_an_injecting_lease_exports_redacted() {
+    use crate::batch::export::ExportManifest;
+    use crate::secret_rotation::ArtifactTaintState;
+    let redacted = |export: &serde_json::Value| {
+        serde_json::from_value::<ExportManifest>(export["manifest"].clone())
+            .expect("manifest")
+            .redacted()
+    };
+    let (clean, states) = export_captured_cli_run(&[]);
+    assert_eq!(states, [ArtifactTaintState::Clean; 2]);
+    assert!(!redacted(&clean), "{clean}");
+    let rows = clean["entities"].as_array().expect("rows");
+    assert_eq!(rows.len(), 2);
+    assert!(
+        rows.iter().all(|row| !row["body"].is_null()),
+        "an uninjected run exports its output in the clear: {clean}"
+    );
+
+    let injected = [crate::secret_lease::SecretTaintRef {
+        secret_ref: "build-registry-login".to_owned(),
+        generation: 3,
+    }];
+    let (tainted, states) = export_captured_cli_run(&injected);
+    assert!(
+        states
+            .iter()
+            .all(|state| *state != ArtifactTaintState::Clean),
+        "the exhaust artifact and its payload ASSET both carry the lease's taint: {states:?}"
+    );
+    assert!(redacted(&tainted), "{tainted}");
+    let rows = tainted["entities"].as_array().expect("rows");
+    assert_eq!(rows.len(), 2);
+    assert!(
+        rows.iter().all(|row| row["body"].is_null()),
+        "output produced under an injected secret must not export: {tainted}"
+    );
 }
 
 mod successor;
