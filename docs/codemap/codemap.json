@@ -1616,7 +1616,7 @@
      "path": "src/authority/entry_transition.rs",
      "purpose": "Per-entry state transition and the consent / quorum predicates",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -1648,6 +1648,16 @@
      "surface": {
       "crate-vis": 11,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/fold_schedule.rs",
+     "purpose": "The fold's per-entry scheduler",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -1715,6 +1725,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/import_order.rs",
+     "purpose": "The order a store door is handed several AUTHORITY_LOG rows in (H72)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -1737,6 +1757,21 @@
      "purpose": "The strict fold as this install reads it, once its handoffs settle: its own sequence floors, the…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AuthorityLogCheck"
+     ],
+     "path": "src/authority/log_budget.rs",
+     "purpose": "Pinned bounds on authority-fold work, and the store-door checks that keep a stored log inside them (H72)",
+     "surface": {
+      "const": 5,
+      "crate-vis": 22,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -1828,8 +1863,8 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 10,
-      "re-export": 23
+      "crate-vis": 13,
+      "re-export": 24
      }
     },
     {
@@ -1841,7 +1876,7 @@
      "path": "src/authority/observation_policy.rs",
      "purpose": "Device-local authority observation policy and its versioned duration row",
      "surface": {
-      "const": 3,
+      "const": 6,
       "crate-vis": 1,
       "fn": 2,
       "struct": 1
@@ -1864,7 +1899,7 @@
      "path": "src/authority/readonly_fold.rs",
      "purpose": "One read-snapshot authority evaluator shared by Vault and the batch write door",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -2083,6 +2118,24 @@
      "surface": {}
     },
     {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/tests/fold_budget.rs",
+     "purpose": "Authority-fold work stays bounded, and the store doors keep a log inside the bounds (H72, W2-T3)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/authority/tests/fold_schedule.rs",
+     "purpose": "Oracle comparison: the queued scheduler folds exactly as the full rescan it replaced (H72), on random logs…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -2146,7 +2199,9 @@
      "notable": [],
      "path": "src/authority/tests/machine_fold.rs",
      "purpose": "World privacy P1 acceptance in the authority fold: who may answer for a machine, and which other authority…",
-     "surface": {}
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "m",
@@ -3245,7 +3300,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/batch/put_apply/apply/mod.rs",
@@ -35582,7 +35637,17 @@
      "path": "src/sync/ingest/mod.rs",
      "purpose": "One ingest entry per replicated container: every entities-map value and every tombstone takes the same…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/ingest/order.rs",
+     "purpose": "The order one pass or delta visits AUTHORITY_LOG rows in",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -40153,7 +40218,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it_sync/sync_maintenance_quota.rs",
@@ -40456,7 +40521,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 78,
+     "files": 83,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40472,7 +40537,7 @@
     "batch": {
      "files": 99,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "—"
     },
@@ -41604,7 +41669,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 123,
+     "files": 124,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -41751,10 +41816,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 40,
+   "over_bar": 41,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2527,
-   "test_files": 824
+   "source_files": 2531,
+   "test_files": 826
   },
   "oneiron-android": {
    "files": [

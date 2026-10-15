@@ -149,26 +149,29 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/checkpoint.rs` | src | m | 1 struct · 7 fn · 1 const | AuthorityCheckpoint | Quorum-signed authority roster checkpoints, linked to exact signed history |
 | `src/authority/claim_write.rs` | src | s | 1 fn · 3 crate-vis | — | Claim write-window admission and read-time quarantine share one causal predicate |
 | `src/authority/engine_machine.rs` | src | s | 3 fn · 2 crate-vis | — | Host-provisioned software identities for the engine's own MACHINE writers |
-| `src/authority/entry_transition.rs` | src | m | 7 crate-vis | — | Per-entry state transition and the consent / quorum predicates |
+| `src/authority/entry_transition.rs` | src | m | 8 crate-vis | — | Per-entry state transition and the consent / quorum predicates |
 | `src/authority/federation_activation.rs` | src | s | 1 fn | — | Grant activation under the folded pact states |
 | `src/authority/first_seen_clock.rs` | src | s | 15 crate-vis | — | First-seen sidecar keys and the per-vault logical observation clock |
 | `src/authority/fold_engine.rs` | src | m | 4 fn · 11 crate-vis | — | Top-level fold orchestration |
+| `src/authority/fold_schedule.rs` | src | s | 1 crate-vis | — | The fold's per-entry scheduler |
 | `src/authority/fold_state.rs` | src | m | 3 struct · 3 enum · 3 fn · 7 crate-vis | ActorBindingRejection, ActorBindingState, ActorBindingStatus, AuthorityFold, AuthorityFoldIssue, FoldedActorBinding | Folded-state data model and the two-state merge |
 | `src/authority/handoff_equivocation.rs` | src | s | 1 struct · 2 fn · 1 const · 4 crate-vis | AuthorityHandoffEquivocation | Evidence that a retired key signed beside the handoff that retired it: the first record of OF-166, ahead of… |
 | `src/authority/history_transfer.rs` | src | m | 1 struct · 6 fn · 2 crate-vis | VaultRecoveryRequest | Signed-history migration and independently authorized per-vault re-root doors |
 | `src/authority/host_re_root.rs` | src | s | 2 struct · 1 fn · 1 crate-vis | HostReRoot, RetiredSlip | A self-host root move to a new host secret, in-chain (OF-455) |
+| `src/authority/import_order.rs` | src | m | 2 crate-vis | — | The order a store door is handed several AUTHORITY_LOG rows in (H72) |
 | `src/authority/ingest_observation.rs` | src | s | 1 struct · 2 fn · 1 const · 1 crate-vis | AuthorityIngestCheck | Non-refusing authority replay observation with one typed check per peer/window |
 | `src/authority/install_fold.rs` | src | m | 3 crate-vis | — | The strict fold as this install reads it, once its handoffs settle: its own sequence floors, the… |
+| `src/authority/log_budget.rs` | src | m | 1 struct · 3 fn · 5 const · 22 crate-vis | AuthorityLogCheck | Pinned bounds on authority-fold work, and the store-door checks that keep a stored log inside them (H72) |
 | `src/authority/machine_enroll.rs` | src | s | 1 fn · 1 crate-vis | — | Host-landed MACHINE enrollment: one EnrollDevice and its BindActor |
 | `src/authority/machine_identity.rs` | src | m | 2 struct · 1 enum · 8 fn · 1 const · 2 crate-vis | LocalMachine, MachineEnrolmentRequest, PeerMachine | A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a… |
 | `src/authority/machine_profile.rs` | src | m | 1 struct · 2 enum · 4 fn · 13 crate-vis | FoldedMachine, MachineAdmitter, SignerClass | Folds `MachineProfile` entries into each physical machine's standing |
 | `src/authority/machine_write.rs` | src | m | 4 fn · 9 crate-vis | — | MACHINE origin signatures for claim writes; enrollment is `machine_enroll` |
 | `src/authority/machine_write/successor.rs` | src | s | 1 crate-vis | — | Re-signing a MACHINE claim's successor with its writer's retained signer |
 | `src/authority/mesh_machine.rs` | src | m | 2 struct · 8 fn · 1 const | MeshMachineAddress, MeshMachineAddressEnvelope | Local host-authorized mesh binding and grants, distinct from address hints |
-| `src/authority/mod.rs` | src | s | 23 re-export · 10 crate-vis | — | AUTHORITY_LOG record substrate |
-| `src/authority/observation_policy.rs` | src | s | 1 struct · 2 fn · 3 const · 1 crate-vis | AuthorityObservationPolicy | Device-local authority observation policy and its versioned duration row |
+| `src/authority/mod.rs` | src | s | 24 re-export · 13 crate-vis | — | AUTHORITY_LOG record substrate |
+| `src/authority/observation_policy.rs` | src | s | 1 struct · 2 fn · 6 const · 1 crate-vis | AuthorityObservationPolicy | Device-local authority observation policy and its versioned duration row |
 | `src/authority/op_apply.rs` | src | m | 7 crate-vis | — | Applies one [`super::AuthorityOp`] to a [`super::fold_state::FoldState`] |
-| `src/authority/readonly_fold.rs` | src | m | 8 crate-vis | — | One read-snapshot authority evaluator shared by Vault and the batch write door |
+| `src/authority/readonly_fold.rs` | src | m | 9 crate-vis | — | One read-snapshot authority evaluator shared by Vault and the batch write door |
 | `src/authority/retired_signers.rs` | src | m | 11 crate-vis | — | A handoff retires its predecessor for good (engine-crates-03) |
 | `src/authority/revoke_proof.rs` | src | m | 8 crate-vis | — | Log-derived, typed restrictive facts (actor revocations, slip withdrawals, slip burns and machine removals)… |
 | `src/authority/sequence_ancestry.rs` | src | s | 1 crate-vis | — | Causally vouched history may arrive after its already-observed descendant |
@@ -190,6 +193,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/tests/federation_confirm.rs` | test | m | — | — | Federation-confirm replay and live-roster binding laws |
 | `src/authority/tests/federation_lifecycle.rs` | test | m | — | — | Federation pact lifecycle transitions and totality table |
 | `src/authority/tests/federation_merge.rs` | test | m | — | — | Federation DAG merges, grant divergence healing and tiebreaks |
+| `src/authority/tests/fold_budget.rs` | test | XL | — | — | Authority-fold work stays bounded, and the store doors keep a log inside the bounds (H72, W2-T3) |
+| `src/authority/tests/fold_schedule.rs` | test | s | 1 crate-vis | — | Oracle comparison: the queued scheduler folds exactly as the full rescan it replaced (H72), on random logs… |
 | `src/authority/tests/foundations.rs` | test | m | — | — | Genesis vectors, wall-clock clock, signature suites, roles and quorum |
 | `src/authority/tests/handoff_arrival_order.rs` | test | m | — | — | Handoff settlement does not depend on the order rows arrive in (Astra review 1 of #1410, Engine ruling… |
 | `src/authority/tests/handoff_settlement.rs` | test | m | — | — | Handoff settlement (engine-crates-03, Sol reviews 2 to 4): forks and cycles of handoffs install no successor… |
@@ -197,7 +202,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/tests/host_re_root.rs` | test | s | — | — | A self-host root move keeps the vault's own writing (OF-455) |
 | `src/authority/tests/hosted_consent.rs` | test | m | — | — | Managed host-root consent is explicit, never inferred in self-host mode |
 | `src/authority/tests/instant_widen.rs` | test | s | — | — | Widening lands at once: no pending state, no seen-time delay, no freeze |
-| `src/authority/tests/machine_fold.rs` | test | L | — | — | World privacy P1 acceptance in the authority fold: who may answer for a machine, and which other authority… |
+| `src/authority/tests/machine_fold.rs` | test | L | 2 crate-vis | — | World privacy P1 acceptance in the authority fold: who may answer for a machine, and which other authority… |
 | `src/authority/tests/machine_identity.rs` | test | m | 4 crate-vis | — | World privacy P1 acceptance: a machine is the owner's only by the owner's own answer at enrolment ("yours… |
 | `src/authority/tests/machine_write.rs` | test | L | — | — | Signed MACHINE claims bind an enrolled software key to exact bytes and vault |
 | `src/authority/tests/mod.rs` | test | s | — | — | — |
@@ -294,7 +299,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/prepared_index.rs` | src | s | 2 crate-vis | — | Index work a committing batch does before its write transaction opens (RESEARCH-1115 Bend 2): the BM25… |
 | `src/batch/put_apply/apply/authority.rs` | src | s | 1 crate-vis | — | — |
 | `src/batch/put_apply/apply/claim.rs` | src | s | 1 crate-vis | — | — |
-| `src/batch/put_apply/apply/mod.rs` | src | m | 1 crate-vis | — | The `apply_put` entity-put chokepoint: validation, claim gate, type dispatch, and staging |
+| `src/batch/put_apply/apply/mod.rs` | src | L | 1 crate-vis | — | The `apply_put` entity-put chokepoint: validation, claim gate, type dispatch, and staging |
 | `src/batch/put_apply/apply/validation.rs` | src | s | 3 crate-vis | — | — |
 | `src/batch/put_apply/claim_admission.rs` | src | s | 4 crate-vis | — | Claim-body and immutable-ledger admission before any put side effect |
 | `src/batch/put_apply/connector_key_guard.rs` | src | s | 1 crate-vis | — | Sealed connector-key admission authority at the generic batch/replay door |
@@ -2926,7 +2931,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/federation_burst/tests.rs` | test | s | 1 crate-vis | — | — |
 | `src/sync/ingest/birth_watch.rs` | src | s | 3 crate-vis | — | The rows a federated import watches for their births |
 | `src/sync/ingest/entity.rs` | src | m | 11 crate-vis | — | The entity-ingest ladder: one admission for every replicated entities-map value |
-| `src/sync/ingest/mod.rs` | src | s | 3 crate-vis | — | One ingest entry per replicated container: every entities-map value and every tombstone takes the same… |
+| `src/sync/ingest/mod.rs` | src | s | 4 crate-vis | — | One ingest entry per replicated container: every entities-map value and every tombstone takes the same… |
+| `src/sync/ingest/order.rs` | src | s | 2 crate-vis | — | The order one pass or delta visits AUTHORITY_LOG rows in |
 | `src/sync/ingest/tombstone.rs` | src | s | 2 crate-vis | — | The tombstone classification every replicated tombstone takes before replay |
 | `src/sync/lease.rs` | src | m | 2 struct · 1 enum · 15 fn · 7 const · 1 mod · 4 crate-vis | LeaseRecord, LeaseRegistryKey, LeaseStatus | Device-lease registry for the REDACTION_AUDIT stream (ONE-1140) |
 | `src/sync/lease/tests.rs` | test | m | — | — | — |
@@ -3334,7 +3340,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it_sync/sync_edge_kind_gating.rs` | test | m | — | — | ONE-1122 seam-7 pin: sync ships ALL edge kinds; retrieval gates at read time |
 | `tests/it_sync/sync_facet_of_admission_boundary.rs` | test | m | — | — | ONE-1645 — the `FacetOf` type table at the FEDERATION ADMISSION BOUNDARY |
 | `tests/it_sync/sync_harness/mod.rs` | test | L | 36 crate-vis | — | Two-vault sync test harness (ONE-1136 / M4-14) |
-| `tests/it_sync/sync_maintenance_quota.rs` | test | m | — | — | — |
+| `tests/it_sync/sync_maintenance_quota.rs` | test | L | — | — | — |
 | `tests/it_sync/sync_quarantine.rs` | test | XL | — | — | ONE-1124 — quarantine (`x:` family) gate-rejection table over Observer B |
 | `tests/it_sync/sync_receipt_replay.rs` | test | L | — | — | ONE-1134 — REDACTION_AUDIT replay validation + immutability + audit-divergence quarantine at both sync… |
 | `tests/it_sync/sync_remat_correctness.rs` | test | m | — | — | ONE-1131 — window.rs re-materialization correctness |
