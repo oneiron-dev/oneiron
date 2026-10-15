@@ -46,8 +46,12 @@ impl SyncConnection {
                     "Convergence not confirmed after {MAX_CONVERGENCE_ROUNDS} rounds — \
                      forcing re-bootstrap"
                 )));
+                // The windows still behind are fetched whole: reloading their durable state
+                // would only stall them again.
+                let mut refetch = force_resync.clone();
+                refetch.extend(session.pending.iter().cloned());
                 return self
-                    .re_bootstrap(write, read, client, event_tx, force_resync)
+                    .re_bootstrap(write, read, client, event_tx, &refetch)
                     .await;
             };
             for frame in frames {
@@ -140,14 +144,17 @@ impl SyncConnection {
             ));
         }
         self.clear_queue_for_re_bootstrap(client)?;
-        client
+        let encode = |e| {
+            crate::error::Error::sync_engine(crate::error::SyncEngineContext::RebootstrapEncode, e)
+        };
+        let mut frames = client
             .generate_re_bootstrap_sync_for_windows(force_resync.iter().cloned())
-            .map_err(|e| {
-                crate::error::Error::sync_engine(
-                    crate::error::SyncEngineContext::RebootstrapEncode,
-                    e,
-                )
-            })
+            .map_err(encode)?;
+        // Each forced window is fetched whole from the server, which answers with its
+        // replacement: the dropped document reloads from the same durable state that could not
+        // come level.
+        frames.extend(client.replacement_requests(force_resync).map_err(encode)?);
+        Ok(frames)
     }
 
     /// Reads server frames until the stream goes quiet (or the frame cap is

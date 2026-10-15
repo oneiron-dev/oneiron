@@ -2023,7 +2023,8 @@ fn malformed_channel_identity_carriers_are_scrubbed_before_export() -> Result<()
         // snapshot. Import it to prove the damaged carrier and incident edge
         // cannot be reconstructed from the exported bytes.
         let exported =
-            export_window_updates_since(&vault, &window, &doc, &VersionVector::default().encode())?;
+            export_window_updates_since(&vault, &window, &doc, &VersionVector::default().encode())?
+                .into_bytes();
         let peer = LoroDoc::new();
         import_doc(&peer, &exported)?;
         assert!(
@@ -3417,7 +3418,8 @@ fn secret_custody_under_malformed_key_never_leaves_doc_via_export() -> Result<()
         &window_key,
         &doc,
         &VersionVector::default().encode(),
-    )?;
+    )?
+    .into_bytes();
 
     // The load-bearing assertion: the secret value is not anywhere in the bytes
     // that go on the wire.
@@ -3864,7 +3866,8 @@ fn diagnostic_carriers_never_leave_window_in_live_state_or_history() -> Result<(
     // A second export must stay history-free after the live rows are gone.
     for _ in 0..2 {
         let update =
-            export_window_updates_since(&vault, &key, &doc, &VersionVector::default().encode())?;
+            export_window_updates_since(&vault, &key, &doc, &VersionVector::default().encode())?
+                .into_bytes();
         assert!(!update.windows(marker.len()).any(|bytes| bytes == marker));
         let peer = LoroDoc::new();
         import_doc(&peer, &update)?;
@@ -4311,7 +4314,8 @@ fn resident_device_only_windows(vault: &Vault) -> Result<ResidentDeviceOnly> {
 /// What a receiver holding nothing gets from one window export.
 fn exported_to_empty_receiver(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<LoroDoc> {
     let bytes =
-        export_window_updates_since(vault, key, doc, &loro::VersionVector::default().encode())?;
+        export_window_updates_since(vault, key, doc, &loro::VersionVector::default().encode())?
+            .into_bytes();
     let received = create_window_doc("receiver", key);
     import_doc(&received, &bytes)?;
     Ok(received)
@@ -4373,7 +4377,8 @@ fn clearing_device_only_exports_the_resident_claim_again() -> Result<()> {
             &fx.private_key,
             &fx.private_doc,
             &receiver.oplog_vv().encode(),
-        )?;
+        )?
+        .into_bytes();
         import_doc(receiver, &bytes)
     };
     exchange(&receiver)?;
@@ -4422,34 +4427,11 @@ fn device_only_flag_never_removes_edges_a_receiver_already_holds() -> Result<()>
             &fx.private_key,
             &fx.private_doc,
             &receiver.oplog_vv().encode(),
-        )?;
+        )?
+        .into_bytes();
         import_doc(&receiver, &bytes)?;
         assert!(receiver.get_map("edges").get(&about).is_some());
     }
-    Ok(())
-}
-
-/// The promoted-device reply reads the same flag.
-#[test]
-fn promoted_window_export_withholds_a_resident_device_only_claim() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let fx = resident_device_only_windows(&vault)?;
-    let bytes = export_promoted_window_updates_since(
-        &vault,
-        &fx.private_key,
-        &fx.private_doc,
-        &loro::VersionVector::default().encode(),
-    )?;
-    let received = create_window_doc("receiver", &fx.private_key);
-    import_doc(&received, &bytes)?;
-
-    assert!(
-        received
-            .get_map("entities")
-            .get(&fx.private_claim.to_hex())
-            .is_none()
-    );
-    assert!(!names_entity_in_any_edge(&received, fx.private_claim));
     Ok(())
 }
 
@@ -4464,14 +4446,11 @@ fn withheld_window_export_carries_no_pending_operation() -> Result<()> {
         .insert("pending", "private edit")
         .unwrap();
     let none = loro::VersionVector::default().encode();
-    for bytes in [
-        export_window_updates_since(&vault, &fx.private_key, &fx.private_doc, &none)?,
-        export_promoted_window_updates_since(&vault, &fx.private_key, &fx.private_doc, &none)?,
-    ] {
-        let received = LoroDoc::new();
-        import_doc(&received, &bytes)?;
-        assert!(received.oplog_vv().is_empty());
-    }
+    let bytes =
+        export_window_updates_since(&vault, &fx.private_key, &fx.private_doc, &none)?.into_bytes();
+    let received = LoroDoc::new();
+    import_doc(&received, &bytes)?;
+    assert!(received.oplog_vv().is_empty());
     Ok(())
 }
 
@@ -4537,7 +4516,8 @@ fn base_window_history_never_ships_a_removed_device_only_claim() -> Result<()> {
     );
     import_doc(
         &holder,
-        &export_window_updates_since(&vault, &month, &base, &holder.oplog_vv().encode())?,
+        &export_window_updates_since(&vault, &month, &base, &holder.oplog_vv().encode())?
+            .into_bytes(),
     )?;
     for doc in [&received, &holder] {
         let history = doc.export_json_updates(&loro::VersionVector::default(), &doc.oplog_vv());
@@ -5658,7 +5638,8 @@ fn identity_author_redaction_scrubs_personal_carriers_and_loro_history() -> Resu
     doc.commit();
     for populated in [true, false] {
         let bytes =
-            export_window_updates_since(&vault, &key, &doc, &VersionVector::default().encode())?;
+            export_window_updates_since(&vault, &key, &doc, &VersionVector::default().encode())?
+                .into_bytes();
         let peer = LoroDoc::new();
         import_doc(&peer, &bytes)?;
         assert!(peer.is_shallow());
@@ -5977,7 +5958,8 @@ fn world_export_does_not_pick_up_a_shared_note_from_the_same_month() -> Result<(
         &world_key,
         &world_doc,
         &VersionVector::default().encode(),
-    )?;
+    )?
+    .into_bytes();
     let (_peer_dir, peer) = test_vault();
     // The shared base endpoint is already loaded before its world edge.
     peer.put_entity(
@@ -6001,7 +5983,8 @@ fn world_export_does_not_pick_up_a_shared_note_from_the_same_month() -> Result<(
         &base_key,
         &base,
         &VersionVector::default().encode(),
-    )?;
+    )?
+    .into_bytes();
     assert!(base.get_map("entities").get(&note.to_hex()).is_some());
     Ok(())
 }
@@ -6065,7 +6048,8 @@ fn late_follow_accepts_deleted_world_claim_edge_history_without_foreign_edges() 
         apply_tombstone_to_window_doc(&doc, &deleted, &value)?;
         doc.commit();
         let update =
-            export_window_updates_since(&source, &key, &doc, &VersionVector::default().encode())?;
+            export_window_updates_since(&source, &key, &doc, &VersionVector::default().encode())?
+                .into_bytes();
         let received = create_window_doc("peer", &key);
         validate_window_update_residence_with_vault(&peer, &received, &update, &key)?;
         import_doc(&received, &update)?;

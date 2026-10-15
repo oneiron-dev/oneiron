@@ -16,8 +16,8 @@ use oneiron::sync::window;
 use oneiron::{DeleteReason, EntityId, Vault, WriteActor};
 
 use crate::sync_harness::{
-    T0, TestNode, WINDOW, exchange, make_entity_blob, map_get_bytes, map_insert_bytes, time_range,
-    vault_pair,
+    T0, TestNode, WINDOW, exchange, make_entity_blob, map_get_bytes, map_insert_bytes,
+    sync_through_doors, time_range, vault_pair,
 };
 
 const UNIQUE: &[u8] = b"H125 bytes only the deleted artifact held";
@@ -63,32 +63,6 @@ fn delete_artifact(node: &mut TestNode, artifact: &EntityId, reason: DeleteReaso
         .delete_entity_with_reason(artifact, reason)
         .unwrap();
     node.recover(WINDOW);
-}
-
-/// Brings both windows level the way a sync connection does: each side answers the other's
-/// version vector through the window export door, and the other imports that reply. Panics if
-/// either side is still behind after five rounds, the bound past which ARCH-0023b re-bootstraps.
-fn sync_through_doors(a: &TestNode, b: &TestNode) {
-    let key = WindowKey::new(WINDOW);
-    for _ in 0..5 {
-        let (vv_a, vv_b) = (a.doc(WINDOW).oplog_vv(), b.doc(WINDOW).oplog_vv());
-        if vv_a == vv_b {
-            return;
-        }
-        let to_b =
-            window::export_window_updates_since(&a.vault, &key, a.doc(WINDOW), &vv_b.encode())
-                .unwrap();
-        b.doc(WINDOW).import(&to_b).unwrap();
-        let to_a =
-            window::export_window_updates_since(&b.vault, &key, b.doc(WINDOW), &vv_a.encode())
-                .unwrap();
-        a.doc(WINDOW).import(&to_a).unwrap();
-    }
-    assert_eq!(
-        a.doc(WINDOW).oplog_vv(),
-        b.doc(WINDOW).oplog_vv(),
-        "a peer behind the other's window never caught up through its export door"
-    );
 }
 
 /// The ASSET row whose body is exactly `bytes`.
@@ -250,12 +224,12 @@ fn a_deleted_artifact_takes_its_version_bytes_off_every_replica() {
     // persists and reloads the window: they leave both vaults, and A, which never saw B's
     // reload, still catches up through B's export door.
     delete_artifact(&mut b, &own, DeleteReason::UserHardDelete);
-    sync_through_doors(&a, &b);
+    sync_through_doors(&a, &mut b);
     assert!(!holds(&a, &shared) && !holds(&b, &shared));
 
     // Positive control: the same bytes uploaded again are a new reference, and they sync.
     upload(&mut a, T0 + 20, &[UNIQUE]);
-    sync_through_doors(&a, &b);
+    sync_through_doors(&a, &mut b);
     assert!(holds(&a, &unique));
     assert!(
         holds(&b, &unique),
@@ -342,7 +316,7 @@ fn a_hard_erase_takes_shared_bytes_and_every_reference_off_every_replica() {
 
     // A peer one change behind still catches up, and each erased carrier the window still
     // holds is one the erase's tombstone names, so every vault refuses it.
-    sync_through_doors(&a, &b);
+    sync_through_doors(&a, &mut b);
     for node in [&a, &b] {
         for (id, _) in &stale {
             assert!(
@@ -365,13 +339,15 @@ fn a_hard_erase_reaches_a_replica_that_never_saw_the_erased_artifact() {
     let erased = upload(&mut a, T0, &[PIERCED]);
     let other = upload(&mut b, T0 + 10, &[PIERCED]);
     // One way only: A learns B's artifact, B learns nothing of A's.
-    let to_a = window::export_window_updates_since(
+    let window::WindowExport::Update(to_a) = window::export_window_updates_since(
         &b.vault,
         &key,
         b.doc(WINDOW),
         &a.doc(WINDOW).oplog_vv().encode(),
     )
-    .unwrap();
+    .unwrap() else {
+        panic!("B's full window answers A with an update");
+    };
     a.doc(WINDOW).import(&to_a).unwrap();
     let reference = b
         .vault
@@ -393,7 +369,7 @@ fn a_hard_erase_reaches_a_replica_that_never_saw_the_erased_artifact() {
             "the erase published no tombstone for a carrier it pierced"
         );
     }
-    sync_through_doors(&a, &b);
+    sync_through_doors(&a, &mut b);
     assert!(
         reads_erased(&b, &other, 1),
         "B's version did not read as erased"
@@ -478,11 +454,11 @@ fn a_derived_text_arriving_after_its_edge_goes_with_the_bytes() {
 /// vault holding only another reference to the bytes learns of the erase too.
 #[test]
 fn a_late_reference_carries_the_erase_to_a_vault_holding_only_another_reference() {
-    let (mut a, b) = vault_pair();
+    let (mut a, mut b) = vault_pair();
     let mut c = TestNode::new("node-c", 3);
     c.open_window(WINDOW);
     let erased = upload(&mut a, T0, &[UNIQUE]);
-    sync_through_doors(&a, &b);
+    sync_through_doors(&a, &mut b);
     // B appends the bytes to A's artifact; A erases it before B's version reaches it.
     let person = EntityId::now();
     b.vault
