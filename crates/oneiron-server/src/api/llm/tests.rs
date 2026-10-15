@@ -702,3 +702,128 @@ async fn a_raw_call_that_picks_its_own_route_has_its_row_with_no_backend_attache
         .collect();
     assert_eq!(denied, ["model", "*.model", "model", "*.model"]);
 }
+
+/// Review repro (Astra R4 P1): the world a raw caller names does not vouch
+/// for the text it sends. A raw call to a `[models]` seat that names a
+/// portable world is held on the device while any world stays on it, on both
+/// routes: the typed `kept_on_device` outcome with its receipt, and the cloud
+/// offer never sees the text.
+#[tokio::test]
+async fn a_raw_call_naming_a_portable_world_stays_while_a_world_does() {
+    use crate::ai_host::AiHost;
+    use crate::ai_host::test_support::{TEST_SECRET, models_toml, rooted_vault};
+    use crate::fake_llm::{FakeLlm, Reply};
+    use oneiron::llm::run_admission::{MemoryReceipts, RunDenied, RunEvent};
+    use tower::ServiceExt;
+    let device = FakeLlm::start(vec![], Some(Reply::Status(500))).await;
+    let cloud = FakeLlm::start(vec![], Some(Reply::text("from the cloud"))).await;
+    let config = models_toml(&format!(
+        r#"
+[providers.first]
+kind = "local-openai-compat"
+base_url = "{}"
+[providers.second]
+kind = "openai-compat"
+base_url = "{}"
+[roles.checker]
+rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
+[dreamer]
+enabled = false
+"#,
+        device.base_url, cloud.base_url
+    ));
+    let (_dir, vault) = rooted_vault();
+    let host = AiHost::start(Arc::clone(&vault), Some(&config), true).await;
+    let receipts = Arc::new(MemoryReceipts::default());
+    let config = crate::config::SyncServerConfig {
+        auth_secret: Some(TEST_SECRET.into()),
+        ..Default::default()
+    };
+    let server = SyncServer::new(Arc::clone(&vault), config)
+        .unwrap()
+        .with_ai(host.handle())
+        .with_run_receipts(receipts.clone());
+    let server = Arc::new(server);
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(TEST_SECRET.as_bytes()).unwrap();
+    let world = |kept: bool| {
+        let world = EntityId::now();
+        let when = TimeRange { start: 1, end: 1 };
+        let kind = oneiron::registry::ENTITY_TYPE_WORLD;
+        vault.put_entity(&world, kind, when, 1, b"world").unwrap();
+        if kept {
+            vault
+                .keep_world_on_this_machine_under_for_test(&issuer, world, true)
+                .unwrap();
+        }
+        world
+    };
+    world(true);
+    let handle = host.handle();
+    let seat = handle.seat(manifest::ModelRole::Checker).expect("seat");
+    let mut wire = request();
+    wire.model = seat.model.clone();
+    wire.envelope.locality = seat.locality;
+    wire.envelope.scope.world = Some(world(false));
+    wire.messages = vec![LlmMessage {
+        role: LlmMessageRole::User,
+        content: vec![ContentPart::Text {
+            text: "about the world".into(),
+        }],
+    }];
+    let (slip, key) = crate::test_credentials::credential(&server, "jti=llm-raw-world");
+    let router = crate::api::api_routes(server.clone());
+    let kept: LlmError = RetryableLlmError::KeptOnDevice {
+        retry_after: None,
+        resets_at: Vec::new(),
+    }
+    .into();
+    for verb in ["generate", "stream"] {
+        let reply = router
+            .clone()
+            .oneshot(crate::test_credentials::bind_slip_request(
+                &server,
+                &slip,
+                &key,
+                axum::http::Request::post(format!("/v1/llm/{verb}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&wire).unwrap()))
+                    .unwrap(),
+            ))
+            .await
+            .unwrap();
+        let status = reply.status();
+        let bytes = axum::body::to_bytes(reply.into_body(), 65_536)
+            .await
+            .unwrap();
+        // A refused call answers whole; a stream may carry its error as its
+        // first line. Either names the same outcome.
+        let line = bytes.split(|byte| *byte == b'\n').next().unwrap();
+        let body: serde_json::Value = serde_json::from_slice(line).unwrap();
+        let error = serde_json::from_value::<LlmError>(body["error"]["llm"].clone()).ok();
+        assert_eq!(error.as_ref(), Some(&kept), "{verb}: {body}");
+        if verb == "generate" {
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+            assert_eq!(body["error"]["code"], "kept_on_device");
+        }
+    }
+    assert!(
+        !device.seen().is_empty(),
+        "the calls were tried on the device"
+    );
+    assert!(cloud.seen().is_empty(), "the text stayed here");
+    let held = receipts
+        .rows()
+        .into_iter()
+        .filter(|row| {
+            matches!(
+                row.event,
+                RunEvent::Denied {
+                    reason: RunDenied::KeptOnDevice,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert!(held >= 2, "each held call is receipted: {held}");
+    host.shutdown().await;
+}
