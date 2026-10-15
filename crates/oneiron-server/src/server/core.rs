@@ -244,6 +244,7 @@ impl SyncServer {
             transfers: crate::api::Transfers::new(
                 &config.limits,
                 Arc::clone(wire_telemetry.limit_questions()),
+                vault.lfs_storage_dir().to_owned(),
             ),
             wire_telemetry,
             vault,

@@ -1,7 +1,6 @@
 //! LFS batch, upload, download, and verify handlers.
 
 use super::gate::{LfsAccess, authorize, require_lfs_write};
-use super::streaming::DiskFloor;
 use super::support::{
     LFS_BATCH_NOT_FOUND, LFS_BATCH_UNPROCESSABLE, LFS_OBJECT_MEDIA_TYPE, declared_size, href_base,
     lfs_disk_floor, lfs_engine_error, lfs_json_response, lfs_waited_out, now_secs,
@@ -160,12 +159,10 @@ pub(crate) async fn lfs_upload(
             .questions
             .ask(LimitRow::LfsObjectSize, size_row, size);
     }
-    let floor = DiskFloor::new(
-        server.vault.lfs_storage_dir().to_owned(),
-        server.transfers.disk_reserve,
-    );
+    // A declared upload writes its spool and then its stored copy.
+    let floor = server.transfers.disk.clone();
     if let Some(size) = declared
-        && !floor.has_room_for(size)
+        && !floor.has_room_for(size.saturating_mul(2))
     {
         return Ok(lfs_disk_floor());
     }
@@ -185,6 +182,14 @@ pub(crate) async fn lfs_upload(
     .map_err(|_| ApiError::internal_server_error("lfs quota worker failed"))?;
     let reservation =
         reserved.map_err(|error| lfs_engine_error("lfs quota could not be read", &error))?;
+    // Claimed at its turn, still before a byte is read: the room this upload
+    // will write is room no other upload counts as free.
+    let claim = floor.claim();
+    if let Some(size) = declared
+        && !floor.hold(&claim, size.saturating_mul(2))
+    {
+        return Ok(lfs_disk_floor());
+    }
     let outcome = super::streaming::upload(
         Arc::clone(&server.vault),
         super::streaming::UploadTerms {
@@ -197,7 +202,7 @@ pub(crate) async fn lfs_upload(
             idle: server.transfers.idle,
         },
         body,
-        (permit, reservation),
+        (permit, reservation, claim),
     )
     .await?;
     let Some(outcome) = outcome else {

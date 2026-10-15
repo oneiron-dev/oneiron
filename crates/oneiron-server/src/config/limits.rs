@@ -49,8 +49,9 @@ pub struct LimitsConfig {
     /// timeout, not a limit. A wait that reaches it ends with nothing started.
     pub queue_wait_timeout_ms: u64,
     /// Free bytes the disk holding the vault keeps. An upload that would take
-    /// the disk below it is refused, before a byte is read when it declares
-    /// its size, and as soon as it gets there when it does not.
+    /// the disk below it, counting the room every other upload in flight has
+    /// claimed, is refused: before a byte is read when it declares its size,
+    /// and as soon as it gets there when it does not.
     pub disk_reserve_bytes: u64,
 }
 

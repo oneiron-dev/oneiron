@@ -4,46 +4,26 @@ use super::support::lfs_engine_error;
 use crate::admission::Permit;
 use crate::api::transfer::{self, BodyReader, Reservation};
 use crate::error::ApiError;
+use crate::machine::{DiskClaim, DiskFloor};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 use axum::body::{Body, Bytes};
 use futures_util::stream;
 use oneiron::origin::lfs::{LFS_CHUNK_MAX, LfsOid, LfsPutOutcome};
 use oneiron::{TimeRange, Vault};
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
-/// What an upload holds while its worker runs: a transfer permit and its
-/// room in the LFS quota. Both go when the worker does, not when the handler
-/// does.
-pub(super) type UploadHold = (Permit, Reservation);
+/// What an upload holds while its worker runs: a transfer permit, its room
+/// in the LFS quota and its claim on the disk. All three go when the worker
+/// does (after the stored copy is written), not when the handler does.
+pub(super) type UploadHold = (Permit, Reservation, Arc<DiskClaim>);
 
 /// How often, in bytes read, an upload looks at the disk again.
 const FLOOR_EVERY_BYTES: u64 = 8 * 1024 * 1024;
-
-/// The vault disk's free-space reserve: the floor an upload is refused at.
-#[derive(Clone)]
-pub(super) struct DiskFloor {
-    dir: PathBuf,
-    reserve: u64,
-}
-
-impl DiskFloor {
-    pub(super) fn new(dir: PathBuf, reserve: u64) -> Self {
-        Self { dir, reserve }
-    }
-
-    /// Whether `bytes` more still leave the reserve free. A disk that cannot
-    /// be read is taken as full: a floor that cannot be checked holds.
-    pub(super) fn has_room_for(&self, bytes: u64) -> bool {
-        crate::machine::free_disk_bytes(&self.dir)
-            .is_ok_and(|free| free >= self.reserve.saturating_add(bytes))
-    }
-}
 
 /// One upload's terms, fixed before its worker starts.
 pub(super) struct UploadTerms {
@@ -79,6 +59,8 @@ pub(super) async fn upload(
     let reader = FloorReader {
         body: BodyReader::new(receiver),
         floor,
+        claim: Arc::clone(&hold.2),
+        declared,
         floored: Arc::clone(&floored),
         size_row,
         questions,
@@ -119,11 +101,15 @@ pub(super) async fn upload(
 }
 
 /// The request body, as the engine reads it, judged against the disk floor
-/// as it goes and against the room its stored copy needs at its end. Past
-/// the size row it carries on and asks once.
+/// as it goes and against the room its stored copy needs at its end. Each
+/// look moves the upload's claim to what it has still to write, so no other
+/// upload counts that room as free. Past the size row it carries on and asks
+/// once.
 struct FloorReader {
     body: BodyReader,
     floor: DiskFloor,
+    claim: Arc<DiskClaim>,
+    declared: Option<u64>,
     floored: Arc<AtomicBool>,
     size_row: u64,
     questions: Arc<LimitQuestions>,
@@ -143,21 +129,28 @@ impl Read for FloorReader {
             self.questions
                 .ask(LimitRow::LfsObjectSize, self.size_row, self.read);
         }
-        // The spool takes the disk as the body arrives; at the end, the
-        // stored copy needs as much again.
+        // The spool takes the disk as the body arrives, so what it wrote is
+        // gone from the free space already; at the end, the stored copy
+        // needs as much again. A declared upload still has its spool's rest
+        // and its stored copy to write; one with no declaration claims its
+        // copy at its end.
         let needed = if count == 0 {
             Some(self.read)
         } else if self
             .looked_at
             .is_none_or(|at| self.read - at >= FLOOR_EVERY_BYTES)
         {
-            Some(0)
+            Some(self.declared.map_or(0, |declared| {
+                declared
+                    .saturating_sub(self.read)
+                    .saturating_add(declared.max(self.read))
+            }))
         } else {
             None
         };
         if let Some(needed) = needed {
             self.looked_at = Some(self.read);
-            if !self.floor.has_room_for(needed) {
+            if !self.floor.hold(&self.claim, needed) {
                 self.floored.store(true, Ordering::SeqCst);
                 return Err(io::Error::other("the vault's disk reached its reserve"));
             }

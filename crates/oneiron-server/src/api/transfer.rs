@@ -22,6 +22,7 @@ use tokio::sync::mpsc;
 
 use crate::admission::{Admission, Permit, WaitTimedOut};
 use crate::config::LimitsConfig;
+use crate::machine::DiskFloor;
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
 /// The permits remotely started transfers take, and how long either side of
@@ -38,15 +39,21 @@ pub(crate) struct Transfers {
     lfs_quota: u64,
     /// Bytes uploads in flight have reserved against `lfs_quota`.
     lfs_reserved: Arc<Mutex<u64>>,
-    /// Free bytes the vault's disk keeps.
-    pub(crate) disk_reserve: u64,
+    /// The vault disk's floor, and the room uploads in flight claim on it.
+    pub(crate) disk: DiskFloor,
     pub(crate) questions: Arc<LimitQuestions>,
     pub(crate) idle: Duration,
     pub(crate) wait: Duration,
 }
 
 impl Transfers {
-    pub(crate) fn new(limits: &LimitsConfig, questions: Arc<LimitQuestions>) -> Self {
+    /// `vault_dir` is where the vault's spools and stored objects are
+    /// written: the disk whose floor holds.
+    pub(crate) fn new(
+        limits: &LimitsConfig,
+        questions: Arc<LimitQuestions>,
+        vault_dir: PathBuf,
+    ) -> Self {
         let wait = limits.queue_wait();
         Self {
             git: Admission::new(
@@ -64,7 +71,7 @@ impl Transfers {
             ),
             lfs_quota: limits.lfs_quota_bytes,
             lfs_reserved: Arc::default(),
-            disk_reserve: limits.disk_reserve_bytes,
+            disk: DiskFloor::new(vault_dir, limits.disk_reserve_bytes),
             questions,
             idle: Duration::from_millis(limits.transfer_idle_timeout_ms),
             wait,

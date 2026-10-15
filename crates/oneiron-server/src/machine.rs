@@ -2,7 +2,9 @@
 //! that are the machine's own (the descriptor floor, the disk floor, how many
 //! code runs fit) are sized from these, never from fleet scale.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// Logical cores this process may run on.
 pub(crate) fn cores() -> usize {
@@ -67,4 +69,81 @@ pub(crate) fn free_disk_bytes(path: &Path) -> std::io::Result<u64> {
         let _ = path;
         Ok(u64::MAX)
     }
+}
+
+/// The disk the vault lives on, the free space it keeps, and the room work in
+/// flight has claimed on it. Free space alone is not the floor: two uploads
+/// that each see room for one stored copy would both take it, so each claims
+/// the bytes it has still to write, and every check counts the others' claims.
+#[derive(Clone)]
+pub(crate) struct DiskFloor {
+    dir: PathBuf,
+    reserve: u64,
+    claimed: Arc<Mutex<u64>>,
+}
+
+/// Room one piece of work holds on the disk: bytes it has still to write.
+/// Dropping it gives the room back.
+pub(crate) struct DiskClaim {
+    claimed: Arc<Mutex<u64>>,
+    /// Changed only under the floor's lock.
+    bytes: AtomicU64,
+}
+
+impl DiskFloor {
+    pub(crate) fn new(dir: PathBuf, reserve: u64) -> Self {
+        Self {
+            dir,
+            reserve,
+            claimed: Arc::default(),
+        }
+    }
+
+    /// Whether `bytes` more still leave the reserve free, past every claim.
+    pub(crate) fn has_room_for(&self, bytes: u64) -> bool {
+        let claimed = lock(&self.claimed);
+        self.room(*claimed, bytes)
+    }
+
+    /// A claim on no room yet.
+    pub(crate) fn claim(&self) -> Arc<DiskClaim> {
+        Arc::new(DiskClaim {
+            claimed: Arc::clone(&self.claimed),
+            bytes: AtomicU64::new(0),
+        })
+    }
+
+    /// Sets `claim` to `bytes` if they leave the reserve free past every
+    /// other claim; a claim that does not fit stays as it was.
+    pub(crate) fn hold(&self, claim: &DiskClaim, bytes: u64) -> bool {
+        debug_assert!(Arc::ptr_eq(&self.claimed, &claim.claimed));
+        let mut claimed = lock(&self.claimed);
+        let others = claimed.saturating_sub(claim.bytes.load(Ordering::Relaxed));
+        if !self.room(others, bytes) {
+            return false;
+        }
+        *claimed = others.saturating_add(bytes);
+        claim.bytes.store(bytes, Ordering::Relaxed);
+        true
+    }
+
+    /// A disk that cannot be read is taken as full: a floor that cannot be
+    /// checked holds.
+    fn room(&self, claimed: u64, bytes: u64) -> bool {
+        free_disk_bytes(&self.dir)
+            .is_ok_and(|free| free >= self.reserve.saturating_add(claimed).saturating_add(bytes))
+    }
+}
+
+impl Drop for DiskClaim {
+    fn drop(&mut self) {
+        let mut claimed = lock(&self.claimed);
+        *claimed = claimed.saturating_sub(*self.bytes.get_mut());
+    }
+}
+
+/// The claim count changes in one step under its lock, so a holder that
+/// panicked left it whole.
+fn lock(mutex: &Mutex<u64>) -> MutexGuard<'_, u64> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
