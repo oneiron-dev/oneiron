@@ -161,10 +161,24 @@ impl<'a> BodyBudget<'a> {
         body: &[u8],
         view: View,
     ) -> Value {
+        self.project_at(id, entity_type, updated_at, body, view, ReadMode::Live)
+    }
+
+    /// [`Self::project`] for a body read at `mode`, so an omitted pinned body
+    /// keeps its revision in the marker's ref.
+    pub(crate) fn project_at(
+        &mut self,
+        id: &EntityId,
+        entity_type: u8,
+        updated_at: u64,
+        body: &[u8],
+        view: View,
+        mode: ReadMode,
+    ) -> Value {
         if self.admits(body.len()) {
             project_entity_parts(id, entity_type, updated_at, body, view)
         } else {
-            self.omitted(id, entity_type, updated_at, body, view, ReadMode::Live)
+            self.omitted(id, entity_type, updated_at, body, view, mode)
         }
     }
 
@@ -204,7 +218,13 @@ impl<'a> BodyBudget<'a> {
                     _ => Map::new(),
                 }
             }
-            View::Standard => Map::new(),
+            View::Standard => {
+                let mut object = Map::new();
+                object.insert("id".to_owned(), Value::String(id_hex));
+                object.insert("kind".to_owned(), Value::String(entity_kind(entity_type)));
+                object.insert("updatedAt".to_owned(), json!(updated_at));
+                object
+            }
             View::Full => {
                 let mut object = Map::new();
                 insert_entity_metadata(

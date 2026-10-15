@@ -586,16 +586,32 @@ pub(crate) fn core_memory_timeline_response(
                 )
                 .map_err(|error| core_engine_error("core memory pinned change failed", error))?;
             narrowing.restrict_with(&pinned.receipt);
-            let Some(((before_kind, before_at, before_body), (after_kind, after_at, after_body))) =
-                pinned.value
+            let Some((
+                (before_kind, before_at, before_body, before_revision),
+                (after_kind, after_at, after_body, after_revision),
+            )) = pinned.value
             else {
                 continue;
             };
             record.changes.push(CoreMemoryChange {
                 before_id: before_id.clone(),
                 after_id: record.id.clone(),
-                before: bodies.project(&old_id, before_kind, before_at, &before_body, view),
-                after: bodies.project(&after_id, after_kind, after_at, &after_body, view),
+                before: bodies.project_at(
+                    &old_id,
+                    before_kind,
+                    before_at,
+                    &before_body,
+                    view,
+                    oneiron::memory::ReadMode::Pinned(before_revision),
+                ),
+                after: bodies.project_at(
+                    &after_id,
+                    after_kind,
+                    after_at,
+                    &after_body,
+                    view,
+                    oneiron::memory::ReadMode::Pinned(after_revision),
+                ),
             });
         }
     }
