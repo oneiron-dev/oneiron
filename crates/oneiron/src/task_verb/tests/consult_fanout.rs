@@ -654,8 +654,9 @@ fn fan_outs_across_scopes_count_in_one_window_against_the_vault_row() {
     facade
         .set_consult_fanout_policy(&human, &row(20, 1_000_000_000))
         .unwrap();
+    // 0x6B: [0xA1; 16] is a reserved system-agent id.
     let project = ConsultFanOutScope {
-        project_ref: Some(consult_peer(&vault, 0xA1).to_hex()),
+        project_ref: Some(consult_peer(&vault, 0x6B).to_hex()),
         ..ConsultFanOutScope::default()
     };
     facade
