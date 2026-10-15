@@ -56869,7 +56869,7 @@
      "path": "src/links.rs",
      "purpose": "Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
