@@ -26,7 +26,10 @@ pub(super) async fn handle_selector_fetch(
     // Owner/shared-secret upgrade is NOT a stable peer identity. The MACed,
     // live app-tier credential must name the actual granted principal.
     let auth = require_bound_app_auth(server, state)?;
+    // The window is the selector grant's, not the credential's lane, so a
+    // credential limited to facets is refused (owner ruling FACET-READ).
     auth.require(CoreScope::Read)
+        .and_then(|()| auth.require_unnarrowed_facets())
         .map_err(|_| ProtocolError::RpcNoPrincipal)?;
     let principal = oneiron::EntityId::from_hex(
         auth.require_registered_principal()
@@ -50,12 +53,11 @@ pub(super) async fn handle_selector_fetch(
         });
     }
     // No queue row, observation, or doc exists before both decoding and
-    // authorization. Keep the independent fabricated-window DoS bound too.
+    // authorization.
     let decoded = decode_and_authorize_selector_request(server, request)?;
     if decoded.selector.member_ref != principal {
         return Err(ProtocolError::InvalidPayload("selector principal mismatch"));
     }
-    state.touch_window(key.clone(), server.config.max_windows_per_connection)?;
     let prepared = match retry {
         Some(id) => replay_selector_fetch(
             server.vault.as_ref(),
@@ -83,10 +85,11 @@ pub(super) async fn handle_selector_fetch(
         send(direct_tx, key, window_sub_tags::SELECTOR_DEFERRED, &retry)?;
         return Ok(());
     }
-    let doc = server
-        .get_or_create_window(key)
+    let window = server
+        .serve_window(key)
         .await
         .map_err(|e| ProtocolError::Persistence(format!("window load failed: {e}")))?;
+    let doc = window.doc.clone();
     let filtered = filtered_window_doc(
         server.vault.as_ref(),
         &doc,

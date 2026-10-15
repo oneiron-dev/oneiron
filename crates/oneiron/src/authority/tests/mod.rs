@@ -24,6 +24,8 @@ mod critical_confirm;
 mod federation_confirm;
 mod federation_lifecycle;
 mod federation_merge;
+mod fold_budget;
+mod fold_schedule;
 mod foundations;
 mod hosted_consent;
 mod instant_widen;

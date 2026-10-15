@@ -396,8 +396,13 @@ fn exported_ids(document: &Value) -> std::collections::BTreeSet<String> {
     ids
 }
 
+/// The read receipt's count. No visible stat counts a withheld claim at all
+/// (F19): it reads zero wherever a pack serves one.
 fn suppression_counts(body: &Value) -> Vec<u64> {
-    ["/stats/claims_suppressed", "/narrowing/suppressed_count"]
+    if let Some(stat) = body.pointer("/stats/claims_suppressed") {
+        assert_eq!(stat, &Value::from(0), "{body}");
+    }
+    ["/narrowing/suppressed_count"]
         .into_iter()
         .filter_map(|pointer| body.pointer(pointer).and_then(Value::as_u64))
         .collect()
@@ -517,19 +522,11 @@ async fn discovery_off_this_device_counts_no_device_local_row() {
             body["session"].clone()
         }
     };
+    // A board counts and dates nothing for any key (F16), here or away.
     let (here, away) = (board(HERE).await, board(AWAY).await);
-    for kind in [
-        oneiron::registry::ENTITY_TYPE_CLAIM,
-        oneiron::registry::ENTITY_TYPE_WORLD,
-    ] {
-        assert_eq!(
-            count(&here, kind),
-            count(&away, kind) + 1,
-            "board type {kind}"
-        );
-    }
-    assert_eq!(here["last_activity"], json!(latest));
-    assert!(away["last_activity"].as_u64().unwrap() < latest, "{away}");
+    assert_eq!(here, away);
+    assert_eq!(here["counts"], json!({}), "{here}");
+    assert!(here["last_activity"].is_null(), "{here}");
 }
 
 /// Sol R2 F2 and F7: a pack off this device for a query only a device-local

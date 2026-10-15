@@ -3,14 +3,23 @@ use super::slip_vault::{random_slip_id, require_host};
 use super::*;
 use crate::Vault;
 use crate::error::Result;
-use crate::federation::{OrgAdminPolicy, OrgAdminPower, Scope, ScopeAxis};
-use crate::side_table::{self, LegacyJson, SideTable};
+use crate::federation::{OrgAdminPolicy, OrgAdminPower, Scope, ScopeAxis, ScopeId};
+use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
 /// One outstanding single-use pairing/enrollment link. Key: hex64 (keyed hash of the code).
 const PAIRING_PENDING: SideTable<String, PairingPending, LegacyJson> =
     SideTable::new(&side_table::AUTHORITY_PAIRING_PENDING);
+/// The facet a paired credential's writes are born in, as the owner named it
+/// on the link. Key: the slip id as hex64 (a SyncState key is text).
+const PAIRED_WRITE_FACET: SideTable<String, crate::EntityId, Raw> =
+    SideTable::new(&side_table::AUTHORITY_PAIRING_WRITE_FACET);
+
+/// The [`PAIRED_WRITE_FACET`] key of a slip id.
+fn write_facet_key(slip_id: &[u8; 32]) -> String {
+    slip_id.iter().map(|byte| format!("{byte:02x}")).collect()
+}
 /// Immutable one-time organization-administration power grant. Key: hex32 (org_ref).
 const ORG_ADMIN_POLICY: SideTable<String, OrgAdminPolicy, LegacyJson> =
     SideTable::new(&side_table::ORG_ADMIN_POLICY);
@@ -48,6 +57,12 @@ pub struct PairingPrincipal {
     pub holder_ref: Option<String>,
     pub actor_class: Option<String>,
     pub org_ref: Option<String>,
+    /// The facet (hex id) the credential's writes are born in, when its
+    /// scope reads several: one of them. With none named, the smallest. The
+    /// slip does not carry it; redemption keeps it beside the slip's id
+    /// ([`Vault::paired_write_facet`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_facet: Option<String>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -212,9 +227,9 @@ impl Vault {
         let machine = match answer {
             None => None,
             Some((owner, ownership)) => {
-                owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+                let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
                 Some(PendingMachine {
-                    owner: owner.actor(),
+                    owner: actor,
                     ownership,
                 })
             }
@@ -223,6 +238,12 @@ impl Vault {
         let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
         let slip_lifetime_secs = slip_lifetime_secs.min(ceiling.initial_owner_secs);
         self.validate_pairing_principal_in_txn(&txn, &principal, &scope)?;
+        self.validate_pairing_facets_in_txn(
+            &txn,
+            &principal,
+            &scope,
+            principal.holder_ref.as_deref(),
+        )?;
         let now = self.instant_in_txn(&txn)?.secs();
         let (code, row_key) = loop {
             let code = draw_code();
@@ -324,6 +345,19 @@ impl Vault {
             return Err(invalid_authority());
         }
         self.validate_pairing_principal_in_txn(&txn, &pending.principal, &pending.scope)?;
+        // The holder is known only now when the link left it open.
+        self.validate_pairing_facets_in_txn(
+            &txn,
+            &pending.principal,
+            &pending.scope,
+            Some(holder_ref),
+        )?;
+        let write_facet = pending
+            .principal
+            .write_facet
+            .as_deref()
+            .map(canonical_id)
+            .transpose()?;
         // Recheck in the actual mint transaction: policy may have narrowed
         // after link issuance while the one-hour link was still outstanding.
         let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
@@ -347,6 +381,14 @@ impl Vault {
             org_ref: pending.principal.org_ref,
         };
         let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
+        if let Some(facet) = write_facet {
+            PAIRED_WRITE_FACET.put(
+                &self.store,
+                &mut txn,
+                &write_facet_key(&slip.claims.slip_id),
+                &facet,
+            )?;
+        }
         let machine = match (pending.machine, request) {
             (Some(answer), Some(request)) => {
                 // The owner who answered must still own the vault at redemption.
@@ -366,6 +408,54 @@ impl Vault {
         PAIRING_PENDING.delete(&self.store, &mut txn, &row_key)?;
         txn.commit()?;
         Ok((slip, machine))
+    }
+    /// The facet a credential redeemed from a link writes in, as the owner
+    /// named it there: `None` for a link that named none.
+    pub fn paired_write_facet(&self, slip_id: &[u8; 32]) -> Result<Option<crate::EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        PAIRED_WRITE_FACET.get(&self.store, &txn, &write_facet_key(slip_id))
+    }
+    /// A facet limit is for agents and rooms, never the owner (owner ruling
+    /// FACET-READ = A): a link held by the vault owner's person takes none,
+    /// judged as the credential's own class, as reads judge it. A write facet
+    /// is one of the link's facets.
+    fn validate_pairing_facets_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        principal: &PairingPrincipal,
+        scope: &Scope,
+        holder_ref: Option<&str>,
+    ) -> Result<()> {
+        if let Some(facet) = principal.write_facet.as_deref() {
+            let facet = ScopeId(canonical_id(facet)?);
+            if !matches!(&scope.facets, ScopeAxis::Some(facets) if facets.contains(&facet)) {
+                return Err(pairing_scope(
+                    "a write facet must be one of the link's facets",
+                ));
+            }
+        }
+        if matches!(scope.facets, ScopeAxis::All)
+            || !matches!(principal.actor_class.as_deref(), None | Some("human"))
+        {
+            return Ok(());
+        }
+        let Some(holder) = holder_ref.and_then(|holder| crate::EntityId::from_hex(holder).ok())
+        else {
+            return Ok(());
+        };
+        let owner = crate::memory::actor_is_vault_owner_in_txn(
+            self,
+            txn,
+            holder,
+            crate::edge::EdgeActorClass::Human,
+        )
+        .map_err(|_| invalid_authority())?;
+        if owner {
+            return Err(pairing_scope(
+                "the vault owner's credential takes no facet limit",
+            ));
+        }
+        Ok(())
     }
     fn validate_pairing_principal_in_txn(
         &self,
@@ -431,4 +521,17 @@ impl Vault {
         }
         Ok(())
     }
+}
+
+/// A lower-case hex id, as every id on a link is written.
+fn canonical_id(hex: &str) -> Result<crate::EntityId> {
+    let id = crate::EntityId::from_hex(hex).map_err(|_| invalid_authority())?;
+    if id.to_hex() != hex {
+        return Err(invalid_authority());
+    }
+    Ok(id)
+}
+
+fn pairing_scope(reason: &'static str) -> crate::error::Error {
+    crate::error::Error::Record(crate::error::RecordError::InvalidPairingScope(reason))
 }

@@ -194,6 +194,8 @@ pub(crate) fn validate_agent_definition_update(
             "source cannot change on update",
         )));
     }
+    // How far the ceiling may go is the id pin's to say (`id_pin`), on every
+    // put road: an update may narrow it, and only the owner's door widens it.
     if prior.version == updated.version {
         return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
             "version must change when updating agent definition body",

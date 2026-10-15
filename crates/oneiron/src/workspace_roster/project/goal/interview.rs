@@ -113,7 +113,7 @@ impl Vault {
         now: u64,
     ) -> Result<EntityId> {
         self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
+            let actor = owner.revalidate_in_txn(self, txn)?;
             let attempt = AttemptQueue::new(self)
                 .get_in_txn(txn, attempt)?
                 .ok_or_else(invalid)?;
@@ -128,7 +128,7 @@ impl Vault {
                 .visible_project_in_txn(txn, project_id)?
                 .ok_or_else(invalid)?;
             let room = EntityId::from_hex(&project.home_room).map_err(|_| invalid())?;
-            require_member(self, txn, room, owner.actor())?;
+            require_member(self, txn, room, actor)?;
             let refs = [
                 turns.question,
                 turns.answer,
@@ -142,8 +142,8 @@ impl Vault {
             if rows.iter().any(|row| row.room_id != room.to_hex())
                 || rows[0].actor != project.leader
                 || rows[2].actor != project.leader
-                || rows[1].actor != owner.actor().to_hex()
-                || rows[3].actor != owner.actor().to_hex()
+                || rows[1].actor != actor.to_hex()
+                || rows[3].actor != actor.to_hex()
                 || !(rows[0].at < rows[1].at
                     && rows[1].at < rows[2].at
                     && rows[2].at < rows[3].at

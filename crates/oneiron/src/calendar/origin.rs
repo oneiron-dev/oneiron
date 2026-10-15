@@ -11,7 +11,7 @@ use crate::ports::EdgeStoreRead;
 use crate::ports::{EntityStore, EntityStoreRead};
 use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Raw, SideTable};
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
@@ -132,7 +132,7 @@ fn encode(value: &Value) -> Result<Vec<u8>> {
 
 /// Reads the live origin claim in this transaction. No origin defaults on the write side.
 pub(crate) fn live_origin(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     event: EntityId,
 ) -> Result<Option<CalendarOrigin>> {
@@ -473,7 +473,7 @@ pub(crate) fn validate_event_write(
 /// A typed body may arrive before its claim, but cannot be read as a legacy
 /// Dreamer while that binding is incomplete.
 pub(crate) fn replay_origin_bound(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     event: EntityId,
 ) -> Result<bool> {
@@ -509,7 +509,7 @@ fn declared_origin(body: &[u8]) -> Result<Option<CalendarOrigin>> {
 /// Native calendar entries are authored state, not derived artifacts. Provenance
 /// links do not let a source deletion remove them from reads or search.
 pub(crate) fn survives_source_deletion(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     event: EntityId,
 ) -> Result<bool> {

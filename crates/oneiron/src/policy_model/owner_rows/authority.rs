@@ -167,8 +167,8 @@ impl Vault {
     /// An authenticated human is not by that alone an owner.
     pub fn is_live_vault_owner(&self, owner: &crate::consent::AuthenticatedOwner) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
-        is_live_vault_owner_in_txn(self, &txn, &owner.actor())
+        let actor = owner.revalidate_in_txn(self, &txn)?;
+        is_live_vault_owner_in_txn(self, &txn, &actor)
     }
 
     /// Authenticates `actor` only if this vault records it as an owner: its

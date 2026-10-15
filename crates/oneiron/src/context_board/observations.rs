@@ -101,6 +101,7 @@ impl SessionReadSet {
                     changed.install_rows.push(receipt);
                 } else {
                     changed.install_overflow += 1;
+                    changed.overflow_rows.push(receipt.entity);
                 }
             }
         }

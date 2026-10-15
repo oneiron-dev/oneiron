@@ -267,6 +267,8 @@ pub struct InboundSurfaceEventInput {
     pub payload_ref: Option<String>,
     pub received_at: u64,
     /// Foreign/provider-authored inbound is claims-not-instructions canon.
+    /// Routing stamps it `true` whatever the adapter sent: an adapter relays
+    /// someone else's words and cannot vouch for them as the owner's.
     pub foreign_inbound: bool,
 }
 
@@ -551,14 +553,35 @@ pub(crate) fn route_inbound_surface_event_in_txn(
     txn: &heed::RoTxn<'_>,
     input: InboundSurfaceEventInput,
 ) -> Result<InboundSurfaceRouteReceipt> {
+    route_inbound_surface_event_admitting_in_txn(vault, txn, input, &|_| Ok(true))
+}
+
+/// [`route_inbound_surface_event_in_txn`] for a submitter that reads only
+/// what `admit` admits. An identity it cannot read routes as an address no
+/// identity holds, and a rejection names no agent it cannot read.
+pub(crate) fn route_inbound_surface_event_admitting_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    mut input: InboundSurfaceEventInput,
+    admit: &dyn Fn(&EntityId) -> Result<bool>,
+) -> Result<InboundSurfaceRouteReceipt> {
     input.validate()?;
-    let claims_not_instructions = input.foreign_inbound;
-    let Some((identity_ref, identity)) = vault.channel_identity_by_assignment_in_txn(
-        txn,
-        &input.channel,
-        &input.receiving_address_or_handle,
-    )?
-    else {
+    // Everything this door routes came in through an adapter, so it is claims
+    // and never instructions (OF-347 R6). The payload's own flag is not
+    // authority: a relayed message cannot declare itself the owner's.
+    input.foreign_inbound = true;
+    let claims_not_instructions = true;
+    let found = vault
+        .channel_identity_by_assignment_in_txn(
+            txn,
+            &input.channel,
+            &input.receiving_address_or_handle,
+        )?
+        .map(|(identity_ref, identity)| {
+            Ok::<_, Error>((admit(&identity_ref)?, identity_ref, identity))
+        })
+        .transpose()?;
+    let Some((true, identity_ref, identity)) = found else {
         return Ok(rejected_receipt(
             input,
             None,
@@ -593,6 +616,8 @@ pub(crate) fn route_inbound_surface_event_in_txn(
 
     // Subject eligibility follows the adapter event, not queue processing time.
     let at = input.received_at;
+    // A rejection names the identity's agent only to a submitter that reads it.
+    let named_agent = admit(&actor_ref)?.then_some(actor_ref);
     // ONE projection, asked of the row, rather than this router's own match on
     // the row's state. The delegated machine has no ROTATING and no QUARANTINE,
     // so a `(shape, state)` match here had to name states one of the two
@@ -617,7 +642,7 @@ pub(crate) fn route_inbound_surface_event_in_txn(
         InboundDisposition::Closed => Ok(rejected_receipt(
             input,
             Some(identity_ref),
-            Some(actor_ref),
+            named_agent,
             false,
             claims_not_instructions,
             InboundSurfaceRejectionReason::TombstonedReceivingIdentity,
@@ -625,7 +650,7 @@ pub(crate) fn route_inbound_surface_event_in_txn(
         InboundDisposition::NotYetRoutable => Ok(rejected_receipt(
             input,
             Some(identity_ref),
-            Some(actor_ref),
+            named_agent,
             false,
             claims_not_instructions,
             InboundSurfaceRejectionReason::InactiveReceivingIdentity,

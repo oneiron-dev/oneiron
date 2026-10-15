@@ -189,6 +189,13 @@ pub enum SyncEvent {
     BulkTransferComplete {
         window_key: String,
     },
+    /// A window replacement could not keep this device's value of these keys: each changed here
+    /// and on the server, each unseen by the other, below the window's own root. The window now
+    /// holds the server's value; each conflict carries the one this device held.
+    ReplacementConflicts {
+        window_key: String,
+        conflicts: Vec<crate::sync::window::ReplacementConflict>,
+    },
     /// The server rejected this device's lease request (ONE-1140: binding
     /// conflict or revoked binding). Sync PROCEEDS — fail-closed lives at
     /// the replay doors (peers quarantine this device's NEW receipts), not

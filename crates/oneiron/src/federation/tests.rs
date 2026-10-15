@@ -3009,7 +3009,7 @@ fn a_restore_never_brings_back_a_relationship_membership_retracted_since() -> Re
     };
     let shared = relationship(0xB1)?;
     let binding = bind_member_person(&vault, shared, person, relationship_time(), 1)?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let refused = |image: &std::path::Path, name: &str| {
         let destination = backups.path().join(name);
         let error = Vault::restore_checkpoint_keeping_authority(

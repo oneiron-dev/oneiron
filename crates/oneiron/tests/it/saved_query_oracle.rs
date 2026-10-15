@@ -919,6 +919,7 @@ fn pack_repair_respects_the_definition_write_door() -> Result<()> {
     assert!(matches!(
         repair_pack_drift(
             &vault,
+            owner,
             stale_plan.query_ref,
             &stale_plan.definition,
             &moved,
@@ -941,6 +942,7 @@ fn pack_repair_respects_the_definition_write_door() -> Result<()> {
     assert!(matches!(
         repair_pack_drift(
             &vault,
+            owner,
             archived.query_ref,
             &archived.definition,
             &moved,
@@ -963,6 +965,7 @@ fn pack_repair_respects_the_definition_write_door() -> Result<()> {
     assert!(matches!(
         repair_pack_drift(
             &vault,
+            owner,
             poisoned.query_ref,
             &poisoned.definition,
             &moved,
@@ -980,5 +983,64 @@ fn pack_repair_respects_the_definition_write_door() -> Result<()> {
         stored.definition.filter, poisoned.definition.filter,
         "an invalid rewrite is never persisted"
     );
+    Ok(())
+}
+
+/// F15 / H185: pack repair loaded the query by id alone, so any caller that
+/// guessed its definition version (1 for a new query) could pause or rewrite
+/// another principal's query. Repair is an owner verb like update and archive:
+/// a query the principal does not own reads as absent and stays as it was.
+/// A drift is also narrowed to the predicates the query reads, as the
+/// install door narrows it, so a drift naming none of them changes nothing.
+#[test]
+fn only_the_owner_repairs_a_saved_query() -> Result<()> {
+    let (_dir, vault) = oracle_vault();
+    let owner = test_id(0xC1);
+    let stranger = test_id(0xC2);
+    let query = drifting_query(&vault, owner)?;
+
+    // No migration map: the unmapped predicate would pause the query.
+    assert!(matches!(
+        repair_pack_drift(
+            &vault,
+            stranger,
+            query.query_ref,
+            &query.definition,
+            &drift(SENIORITY),
+            100
+        ),
+        Err(Error::EntityNotFound)
+    ));
+    // A drift that touches nothing the query reads is refused, not applied.
+    assert!(matches!(
+        repair_pack_drift(
+            &vault,
+            owner,
+            query.query_ref,
+            &query.definition,
+            &drift(UNRELATED),
+            101
+        ),
+        Err(Error::InvalidConfig(_))
+    ));
+    let stored = oneiron::saved_query::read_saved_query(&vault, owner, query.query_ref)?
+        .expect("record survives");
+    assert_eq!(
+        stored.definition, query.definition,
+        "the query is untouched"
+    );
+
+    // The owner's own repair runs the ladder.
+    assert!(matches!(
+        repair_pack_drift(
+            &vault,
+            owner,
+            query.query_ref,
+            &query.definition,
+            &drift(SENIORITY),
+            102
+        )?,
+        PackDriftResolution::Paused { .. }
+    ));
     Ok(())
 }

@@ -181,6 +181,15 @@ pub enum SyncProtocolValidation {
     InvalidDocumentKey,
     PromotionTooLarge,
     ThinItemRequiresPromotion,
+    /// No root keeps the window's withheld history out of a history-free
+    /// snapshot: a branch concurrent with it forces the root back past it.
+    HistoryFreeRootUnavailable,
+    /// A window replacement snapshot that does not install as a whole: not a
+    /// snapshot, over the size bound, refused by admission, or with operations
+    /// left pending.
+    ReplacementRejected,
+    /// A window replacement while another holder still has the live window.
+    ReplacementBusy,
 }
 
 #[cfg(feature = "sync")]
@@ -223,6 +232,13 @@ impl fmt::Display for SyncProtocolValidation {
             }
             Self::ThinItemRequiresPromotion => {
                 f.write_str("thin item requires causal window promotion before write")
+            }
+            Self::HistoryFreeRootUnavailable => {
+                f.write_str("no history-free root excludes the window's withheld history")
+            }
+            Self::ReplacementRejected => f.write_str("window replacement snapshot rejected"),
+            Self::ReplacementBusy => {
+                f.write_str("window replacement refused while the window is held")
             }
             Self::TombstoneRemovalDelta => {
                 f.write_str("tombstone removal delta (tombstones are permanent)")
@@ -393,6 +409,15 @@ pub enum SyncError {
         window_start_secs: u64,
         quota_window_secs: u64,
     },
+    /// A federated `FacetOf` stamp sent ahead of its row was not held: its
+    /// sender already holds the most stamps, or stamp bytes, one sender may.
+    /// The rest of the update is admitted as it would be without it.
+    #[cfg(feature = "sync")]
+    #[error(
+        "facet stamp onto {} not held: its sender holds the most stamps one sender may",
+        src.to_hex()
+    )]
+    HeldFacetStampsFull { src: EntityId },
     /// A REDACTION_AUDIT blob arriving through a sync replay door
     /// failed structural validation against the pinned contracts.ts
     /// `redactionAuditReceipt` field set (request_id, scope, reason,
@@ -527,6 +552,8 @@ impl SyncError {
             Self::MaintenanceIngestQuotaExceeded { .. } => {
                 ErrorKind::MaintenanceIngestQuotaExceeded
             }
+            #[cfg(feature = "sync")]
+            Self::HeldFacetStampsFull { .. } => ErrorKind::HeldFacetStampsFull,
             Self::InvalidRedactionReceiptBody(_) => ErrorKind::InvalidRedactionReceiptBody,
             #[cfg(feature = "sync")]
             Self::RedactionReceiptDivergence { .. } => ErrorKind::RedactionReceiptDivergence,

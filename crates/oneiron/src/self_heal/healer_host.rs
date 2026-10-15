@@ -250,7 +250,7 @@ impl Vault {
             super::validate_ref(release)?;
         }
         self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, &*txn)?;
+            let actor = owner.revalidate_in_txn(self, &*txn)?;
             let mut record = PROPOSAL
                 .get(&self.store, txn, id)?
                 .ok_or(Error::EntityNotFound)?;
@@ -274,7 +274,7 @@ impl Vault {
                 patch_ref: patch,
                 schema,
                 release_ref: release.into(),
-                approved_by: owner.actor(),
+                approved_by: actor,
             });
             record.state = match release {
                 Some(release) => ProposalState::Released {

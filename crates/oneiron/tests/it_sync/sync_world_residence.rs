@@ -54,7 +54,8 @@ fn transfer(
     let doc = manager.open_window(key).expect("open source window");
     let update =
         export_window_updates_since(source, key, &doc.doc, &VersionVector::default().encode())
-            .expect("export source window");
+            .expect("export source window")
+            .into_bytes();
     let frame = transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &update)
         .into_result()
         .expect("encode window update");
@@ -393,7 +394,8 @@ fn late_follow_accepts_valid_soft_and_hard_deleted_world_history() {
             &doc.doc,
             &VersionVector::default().encode(),
         )
-        .unwrap();
+        .unwrap()
+        .into_bytes();
         let (mut client, _) = SyncClient::new(
             manager(&peer),
             SyncClientConfig {
@@ -531,7 +533,8 @@ fn canonical_soft_world_recovery_restores_shell_edge_and_address() {
         &recovered.window,
         &VersionVector::default().encode(),
     )
-    .unwrap();
+    .unwrap()
+    .into_bytes();
     assert!(
         recovered
             .window
@@ -664,7 +667,8 @@ fn canonical_soft_world_recovery_restores_shell_edge_and_address() {
             &live.doc,
             &VersionVector::default().encode(),
         )
-        .unwrap();
+        .unwrap()
+        .into_bytes();
         let (_fourth_dir, fourth) = vault();
         fourth
             .put_entity(

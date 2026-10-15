@@ -35,6 +35,15 @@
 //!   wire at all. Without both, a planted `refs/replace/<oid>` would make the
 //!   door's scan read benign substitute bytes while the original object is what
 //!   the push makes durable.
+//! - **No signed push.** `git receive-pack` writes a push certificate into the
+//!   object store as a blob before any hook runs, where no door window reads
+//!   it. The advertisement never offers `push-cert`, whatever the repository's
+//!   config says, and a request whose command section carries one is refused
+//!   before the backend reads a byte. That section, up to its first flush, is
+//!   the one part of a request body read ahead, under a fixed bound
+//!   (`ORIGIN_MAX_COMMAND_SECTION_BYTES`). A body the backend would inflate
+//!   (gzip, as JGit sends one) is inflated here instead, once, so the section
+//!   read is the one receive-pack reads; the backend gets it plain.
 //! - **Only journalable refs move.** The door window refuses a push whose
 //!   proposed names the landing could not journal — names outside the GitWire
 //!   ref grammar, a name proposed twice, or a batch larger than the GitWire
@@ -78,13 +87,10 @@ mod hooks;
 mod intent;
 mod landing;
 mod landing_lfs;
+mod maintain;
 mod paths;
 mod serve;
 mod serve_cmd;
-
-// The flat module reached its sibling as `super::publication`; the children
-// keep that path through this seam.
-use super::publication;
 
 pub use self::door::{DoorAdmissionStamp, DoorSeam};
 pub use self::door_window::{DoorWindowReport, DoorWindowVerdict};
@@ -93,6 +99,9 @@ pub(super) use self::evidence::{RECEIVE_PACK_ADMISSION_PREDICATE, RECEIVE_PACK_O
 pub use self::hooks::DoorHooksDir;
 pub use self::intent::{ReceivePackRefResult, ReceivePackRefStatus};
 pub use self::landing::{ReceivePackAttribution, ReceivePackLanding, refs_already_applied};
+pub use self::maintain::{
+    SERVED_REPOSITORY_GC_TIMEOUT, ServedRepositoryMaintenance, maintain_served_repositories,
+};
 pub use self::paths::{
     DOOR_PRE_RECEIVE_HOOK_NAME, DOOR_WINDOW_TIMEOUT, ORIGIN_DOOR_ROOT_NAME, ORIGIN_MAX_REF_UPDATES,
     ORIGIN_MAX_REPO_NAME_BYTES, ORIGIN_REFUSED_REF_PREFIX, ORIGIN_REPO_DIR_SUFFIX,
@@ -120,6 +129,12 @@ mod history_scan_tests;
 mod intent_recovery_tests;
 #[cfg(test)]
 mod landing_tests;
+#[cfg(test)]
+mod maintain_tests;
+#[cfg(test)]
+mod push_cert_tests;
+#[cfg(test)]
+mod scan_cap_tests;
 #[cfg(test)]
 mod tests;
 
