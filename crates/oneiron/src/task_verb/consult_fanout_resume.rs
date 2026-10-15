@@ -183,7 +183,7 @@ impl Memory<'_> {
                     let created_at = run.input.now;
                     let entries =
                         self.validate_fanout(&input, correlation, now, run.input.preset.is_some())?;
-                    self.mint_fanout_in(txn, &entries, &input, &mut run, created_at, now)?;
+                    self.mint_fanout_in(txn, &entries, &input, &mut run, created_at)?;
                 }
                 save_run(self.vault(), txn, &run)?;
                 run.receipt()

@@ -220,6 +220,12 @@ impl Store {
         if *marker != *token {
             return Ok(false);
         }
+        // A withdrawn record takes no fill: a dependent a pending walk
+        // withdraws, or one marked stale after its lease, which a put of the
+        // same body marks for embedding again with the same token.
+        if crate::ports::stale_in_txn(self, wtxn, id)? {
+            return Ok(false);
+        }
         let Some(record) = self.entities.get(wtxn, id.as_bytes())? else {
             return Ok(false);
         };

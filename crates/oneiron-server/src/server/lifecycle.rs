@@ -80,6 +80,7 @@ impl SyncServer {
             loop {
                 interval.tick().await;
                 server.run_scheduled_lifecycle_tick().await;
+                server.finish_dependent_walks_once().await;
                 if ticks.is_multiple_of(GATE_RETENTION_EVERY_TICKS) {
                     server.maintain_gate_decision_retention_once().await;
                 }
@@ -108,6 +109,19 @@ impl SyncServer {
                 panicked = error.is_panic(),
                 "gate decision retention task failed"
             ),
+        }
+    }
+
+    /// Finishes the dependent walks an erase, a purge or a changed source
+    /// left past its first batch; reads honour them until then.
+    async fn finish_dependent_walks_once(&self) {
+        let vault = std::sync::Arc::clone(self.vault());
+        match tokio::task::spawn_blocking(move || vault.finish_dependent_walks()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(kind = ?error.kind(), "dependent walk pass failed");
+            }
+            Err(error) => tracing::warn!(panicked = error.is_panic(), "dependent walk task failed"),
         }
     }
 
