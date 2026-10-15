@@ -159,6 +159,7 @@ impl OutboundDispatchPipeline {
             owner_proof,
             parked: None,
             suppression_receipt: None,
+            page_grant: None,
         })?;
         let result = crate::outbound::receipt_fields::dispatch_result_receipt(
             &request,
@@ -220,6 +221,11 @@ impl OutboundDispatchPipeline {
             native_mail_recipient,
             step_binding: _,
         } = prepared;
+        let page_grant = admit_calendar_invite_at_door(
+            vault,
+            &request,
+            verified_actor.as_ref().map(|(actor, _)| *actor),
+        )?;
         let effect = super::govern::gate_input(&request, verb_contract, policy_risk);
         let parked = match admission.decision {
             super::admission::DispatchAdmission::Park { outcome } => Some(outcome),
@@ -249,6 +255,7 @@ impl OutboundDispatchPipeline {
                 &admission.window_decision,
                 &admission.window_resolution,
             ),
+            page_grant,
         })?;
         let result = crate::outbound::receipt_fields::dispatch_result_receipt(
             &request,
@@ -264,4 +271,48 @@ impl OutboundDispatchPipeline {
             replayed: false,
         })
     }
+}
+
+/// Calendar admission for an invite at this door: the UID/SEQUENCE law and
+/// vault-only hygiene every invite-producing door runs, so a caller attaching
+/// an invite here skips none of it. The invite goes only to the recipient it
+/// was admitted for, and the booking-page grant that covers that recipient's
+/// booking of the invite's own EVENT is the one the gate may match.
+fn admit_calendar_invite_at_door(
+    vault: &Vault,
+    request: &OutboundDispatchRequest,
+    verified_actor: Option<EntityId>,
+) -> Result<Option<EntityId>, OutboundDispatchError> {
+    let Some(payload) = request.calendar_invite.as_ref() else {
+        return Ok(None);
+    };
+    let refused = |reason: &'static str| {
+        OutboundDispatchError::Chokepoint(
+            crate::outbound_intent_ledger::IntentLedgerError::InvalidInput(reason),
+        )
+    };
+    let recipient = payload.recipient.trim();
+    if !request.intent.target.trim().eq_ignore_ascii_case(recipient)
+        || request
+            .counterparty_ref
+            .as_deref()
+            .is_some_and(|counterparty| !counterparty.trim().eq_ignore_ascii_case(recipient))
+    {
+        return Err(refused(
+            "calendar.invite must go to the recipient it was admitted for",
+        ));
+    }
+    let actor = verified_actor
+        .or(request.actor.provenance().actor_entity_ref)
+        .ok_or_else(|| refused("calendar.invite requires an acting principal"))?;
+    let admission =
+        crate::calendar::admit_calendar_invite(vault, actor, payload, vault.now_recorded_at())
+            .map_err(|_| refused("calendar.invite failed calendar admission"))?;
+    crate::calendar::invite::booking_page_grant_for_invite(
+        vault,
+        actor,
+        admission.event_ref(),
+        &payload.recipient,
+    )
+    .map_err(|_| refused("calendar.invite failed calendar admission"))
 }

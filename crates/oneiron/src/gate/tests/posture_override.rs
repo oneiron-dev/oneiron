@@ -160,8 +160,6 @@ fn gate_opt_out_escalates_never_denies_owner() -> Result<()> {
     Ok(())
 }
 
-/// The receipt names exactly ONE override source — never both, and never one
-/// when no override decided the send.
 /// H276: a send override is an owner ruling. A well-shaped standing
 /// override written through the public claim door or a raw batch put, with no
 /// human behind it, is refused, and the opted-out send stays held.
@@ -234,6 +232,8 @@ fn forged_send_override_is_refused_and_the_opt_out_still_holds() -> Result<()> {
     Ok(())
 }
 
+/// The receipt names exactly ONE override source — never both, and never one
+/// when no override decided the send.
 #[test]
 fn override_receipt_is_source_specific() -> Result<()> {
     let (_tmp, vault) = temp_vault();

@@ -224,12 +224,13 @@ impl StandingOutboundGrantScope {
                 verb_class.trim() == verb.trim()
                     && brief_ref.is_some_and(|brief_ref| refs_match(grant_brief, brief_ref))
             }
-            Self::ScopedMcp { .. } | Self::ChannelIdentityEnvelope { .. } => false,
-            // Exactly one verb. The page and the recipient are NOT decided
-            // here: the calendar consent door resolves both from persisted
-            // booking claims, so a page grant can never cover a second verb
-            // even when the channel string matches.
-            Self::BookingPageInvites { .. } => verb.trim() == crate::calendar::CALENDAR_INVITE_VERB,
+            // A page grant covers one admitted invite, never a verb: the
+            // calendar door binds it to the invite's own EVENT and recipient
+            // from persisted booking claims and names it to the gate, which
+            // matches it there and nowhere else.
+            Self::ScopedMcp { .. }
+            | Self::ChannelIdentityEnvelope { .. }
+            | Self::BookingPageInvites { .. } => false,
         }
     }
 }

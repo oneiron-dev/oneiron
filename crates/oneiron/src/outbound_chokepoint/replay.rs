@@ -168,7 +168,8 @@ fn send_pending_with_gate<T: OutboundTransport>(
         )?;
         let required_grant_id = match &prepared.authorization {
             PreparedAuthorization::None => None,
-            PreparedAuthorization::ScopedMcp { grant_id, .. } => Some(*grant_id),
+            PreparedAuthorization::ScopedMcp { grant_id, .. }
+            | PreparedAuthorization::BookingPageInvite { grant_id } => Some(*grant_id),
         };
         let posting_gate =
             vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
@@ -180,7 +181,9 @@ fn send_pending_with_gate<T: OutboundTransport>(
             required_grant_id,
             match &prepared.authorization {
                 PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
-                PreparedAuthorization::None => None,
+                PreparedAuthorization::None | PreparedAuthorization::BookingPageInvite { .. } => {
+                    None
+                }
             },
             record
                 .admitted_approval

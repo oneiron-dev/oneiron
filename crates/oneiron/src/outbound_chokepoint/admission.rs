@@ -185,7 +185,8 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     )?;
     let required_grant_id = match &prepared.authorization {
         PreparedAuthorization::None => None,
-        PreparedAuthorization::ScopedMcp { grant_id, .. } => Some(*grant_id),
+        PreparedAuthorization::ScopedMcp { grant_id, .. }
+        | PreparedAuthorization::BookingPageInvite { grant_id } => Some(*grant_id),
     };
     let posting_gate = vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
     let mut governance = gate::evaluate_external_effect_policy(
@@ -196,7 +197,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         required_grant_id,
         match &prepared.authorization {
             PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
-            PreparedAuthorization::None => None,
+            PreparedAuthorization::None | PreparedAuthorization::BookingPageInvite { .. } => None,
         },
         gate::ApprovalContext::FirstAdmission,
     )?;
@@ -282,7 +283,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     // capability authority this admission may carry forward (ONE-1885).
     let gate_capability = governance.scoped_capability().cloned();
     let (authorization_binding, capability_provenance) = match &prepared.authorization {
-        PreparedAuthorization::None => {
+        PreparedAuthorization::None | PreparedAuthorization::BookingPageInvite { .. } => {
             if prepared.resolved_endpoint.is_some() || prepared.gate.scoped_mcp_call.is_some() {
                 return Err(IntentLedgerError::InvalidInput(
                     "endpoint effect requires scoped authorization",

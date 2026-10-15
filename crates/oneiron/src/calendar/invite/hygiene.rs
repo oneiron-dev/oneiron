@@ -197,8 +197,21 @@ pub(crate) fn resolve_consent_basis(
             )
             .map_err(|err| ingest_reason(err.to_string()))
         },
-        || StandingGrants::read(vault)?.covering_invite(vault, actor, event_ref, recipient),
+        || StandingGrants::read(vault)?.covering_invite(vault, actor, event_ref, recipient, false),
     )
+}
+
+/// The booking-page grant that covers one ADMITTED invite: live, held by the
+/// sending `actor`, and bound by the booking layer to the invite's own EVENT
+/// and recipient. The dispatch door names it to the gate, the only way a page
+/// grant ever matches there.
+pub(crate) fn booking_page_grant_for_invite(
+    vault: &Vault,
+    actor: EntityId,
+    event_ref: EntityId,
+    recipient: &str,
+) -> Result<Option<EntityId>, CalendarError> {
+    StandingGrants::read(vault)?.covering_invite(vault, actor, event_ref, recipient, true)
 }
 
 /// The consent basis of one recipient: a prior thread when `touches` counts
@@ -367,6 +380,7 @@ impl StandingGrants {
         actor: EntityId,
         event_ref: EntityId,
         recipient: &str,
+        pages_only: bool,
     ) -> Result<Option<EntityId>, CalendarError> {
         let principal = actor.to_hex();
         let mut matched: Option<EntityId> = None;
@@ -387,6 +401,7 @@ impl StandingGrants {
                     )
                     .map_err(|err| ingest_reason(err.to_string()))?
                 }
+                _ if pages_only => false,
                 scope => recipient_scope_covers(scope, recipient),
             };
             // Converge on one deterministic grant when several cover the same send.

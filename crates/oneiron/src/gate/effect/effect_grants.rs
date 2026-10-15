@@ -89,6 +89,19 @@ pub(super) fn standing_outbound_grant_for_effect(
             }
             continue;
         }
+        // A booking-page grant covers only the invite the dispatch door's
+        // calendar admission bound to it and named here, never a verb.
+        if matches!(
+            grant.scope,
+            crate::outbound_grant::StandingOutboundGrantScope::BookingPageInvites { .. }
+        ) {
+            if required_grant_id == Some(id)
+                && effect.verb.trim() == crate::calendar::CALENDAR_INVITE_VERB
+            {
+                return Ok(Some((id, grant)));
+            }
+            continue;
+        }
         if grant.scope.matches_effect(
             &effect.verb,
             &effect.channel,

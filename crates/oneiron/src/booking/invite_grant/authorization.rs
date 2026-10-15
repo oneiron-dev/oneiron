@@ -10,7 +10,7 @@ use crate::booking::lifecycle::{
     BOOKING_SOURCE_PAGE_PREDICATE, BOOKING_STATUS_PREDICATE, BookingBookerContactValue,
     BookingEventTypeRefValue, BookingSourcePageValue, BookingStatus, BookingStatusValue,
 };
-use crate::calendar::CALENDAR_INVITE_CHANNEL;
+use crate::calendar::CALENDAR_INVITE_VERB;
 use crate::claim::ClaimSubject;
 use crate::entity_id::EntityId;
 use crate::outbound_grant::StandingOutboundGrantScope;
@@ -29,8 +29,8 @@ pub(super) struct BookingInviteBinding {
 
 /// Whether one booking-page grant scope authorizes this exact invite.
 ///
-/// Three independent walls, all of which must hold: the scope dial must cover
-/// the verb (exactly `calendar.invite`), the booking must be persisted on
+/// Three independent walls, all of which must hold: the verb must be exactly
+/// `calendar.invite`, the booking must be persisted on
 /// exactly the scoped page, and the requested recipient must equal the
 /// booker identity that booking recorded. A scope of any other kind answers
 /// `false` rather than falling through to a permissive default.
@@ -48,12 +48,7 @@ pub fn booking_page_invites_authorizes(
     let StandingOutboundGrantScope::BookingPageInvites { page_ref } = scope else {
         return Ok(false);
     };
-    if !scope.matches_effect(
-        context.verb_kind,
-        CALENDAR_INVITE_CHANNEL,
-        Some(context.requested_recipient),
-        None,
-    ) {
+    if context.verb_kind.trim() != CALENDAR_INVITE_VERB {
         return Ok(false);
     }
     let Some(binding) = confirmed_booking_binding(vault, &context.booking_ref)? else {

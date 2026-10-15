@@ -59,7 +59,7 @@ pub use self::payload::{
 
 pub(crate) use self::hygiene::CalendarInviteConsentSnapshot;
 #[cfg(test)]
-pub(crate) use self::hygiene::resolve_consent_basis;
+pub(crate) use self::hygiene::{booking_page_grant_for_invite, resolve_consent_basis};
 
 use super::CalendarError;
 #[cfg(test)]
