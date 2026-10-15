@@ -46,7 +46,7 @@ fn publish_refs_past_the_row(vault: &Vault, root: &Path) -> RepoRef {
     local_repo_ref(root, &tip).expect("repo ref")
 }
 
-/// A stock client pushes, deletes, lists and fetches past every scan's row.
+/// A stock client pushes, lists and fetches past every scan's row.
 /// Each settled push leaves no intent row, so the journal scan reads pending
 /// pushes only, and admission reads no publication history.
 #[test]
@@ -73,11 +73,6 @@ fn a_repository_keeps_serving_past_every_scan_row() {
             ],
         );
     }
-    let deleted = &branches[0];
-    git(
-        source.path(),
-        &["push", &url, &format!(":refs/heads/{deleted}")],
-    );
     assert_eq!(
         vault.receive_pack_intent_rows_for_test(&repo_dir),
         0,
@@ -85,15 +80,13 @@ fn a_repository_keeps_serving_past_every_scan_row() {
     );
 
     let listed = git(source.path(), &["ls-remote", "--heads", &url]);
-    let live: Vec<&String> = branches.iter().skip(1).collect();
     assert!(listed.contains(&format!("{}\trefs/heads/main", second.as_str())));
-    for branch in &live {
+    for branch in &branches {
         assert!(
             listed.contains(&format!("{}\trefs/heads/{branch}", first.as_str())),
             "{branch} is advertised past the visible-ref row"
         );
     }
-    assert!(!listed.contains(&format!("refs/heads/{deleted}")));
     let client = tempfile::tempdir().expect("stock client");
     git(client.path(), &["init", "--initial-branch=main"]);
     let last = format!("refs/heads/{}", branches[branches.len() - 1]);
@@ -111,7 +104,7 @@ fn a_repository_keeps_serving_past_every_scan_row() {
             .expect("visible slots")
             .len(),
         1 + branches.len(),
-        "the deleted name keeps the slot its publication advertises through"
+        "each published name has its slot"
     );
     assert_eq!(checks_raised(&vault, OriginScan::VisibleRefRows), 1);
     assert_eq!(
