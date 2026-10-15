@@ -137,8 +137,9 @@ impl Reach {
 pub(crate) struct RepinStart {
     old: AuthorityView,
     reached: BTreeMap<WorldKeyId, Reached>,
-    /// The keys this machine signed a record of itself.
-    own_keys: BTreeSet<WorldKeyId>,
+    /// The keys this machine signed a record of itself, each with the
+    /// commitment and owner that record named.
+    own_keys: BTreeSet<(WorldKeyId, [u8; 32], EntityId)>,
     /// Each held world's earlier settings and the earlier frontier's signers.
     earlier: BTreeMap<EntityId, (EffectiveWorldPrivacy, Vec<EntityId>)>,
     /// The admitter the pin singleton keeps as `earlier` once the pin moves.
@@ -196,7 +197,10 @@ impl Vault {
         }
         let to_me = WrapRecipient::Machine(me);
         let mut own = own_world_key_records_in_txn(&self.store, txn, &old, me, my_key)?;
-        let own_keys = own.iter().map(|(_, record)| record.key).collect();
+        let own_keys = own
+            .iter()
+            .map(|(_, record)| (record.key, record.commitment, record.owner))
+            .collect();
         own.retain(|(_, record)| record.wraps.iter().any(|(to, _)| *to == to_me));
         let mut reached = BTreeMap::new();
         for key in old.all_world_keys() {
@@ -313,13 +317,15 @@ impl Vault {
         };
         // A key gets a record here only if it stands under the new pin, or
         // stood under the old one and the new pin removes none of its
-        // signers, or this machine signed one of its records itself: this
-        // door's record would make it current (the Engine's Q2 on Astra
-        // #1422c). So a key whose signers the new pin leaves out keeps its
-        // wraps, and the old trust set's silence never overrides a removal
-        // in the new one (Astra #1422d F2). Such a key is still opened, and
-        // a kit restore keeps it usable.
-        let stands = |id: &WorldKeyId| {
+        // signers, or this machine signed a record of these very bytes
+        // itself: this door's record would make it current (the Engine's Q2
+        // on Astra #1422c). So a key whose signers the new pin leaves out
+        // keeps its wraps, and the old trust set's silence never overrides a
+        // removal in the new one (Astra #1422d F2). This machine's record of
+        // one id vouches for no other bytes under it, such as those a seed
+        // retry opens (Astra #1422e F2). Such a key is still opened, and a
+        // kit restore keeps it usable.
+        let stands = |id: &WorldKeyId, key: &WorldKey, owner: EntityId| {
             let stands_in = |fold: &AuthorityFold| {
                 fold.world_key(id)
                     .is_some_and(|key| fold.world_key_stands(key))
@@ -331,7 +337,7 @@ impl Vault {
                     .flat_map(|key| key.signers.iter())
                     .all(|machine| mid.signer_stands(*machine))
             };
-            start.own_keys.contains(id)
+            start.own_keys.contains(&(*id, key.commitment(), owner))
                 || stands_in(&mid)
                 || (stands_in(&start.old) && none_removed())
         };
@@ -349,7 +355,7 @@ impl Vault {
                 continue;
             };
             if !pre_wrap.contains(id)
-                || !stands(id)
+                || !stands(id, key, reached.owner)
                 || mid.world_privacy(id.world).read == EffectiveRead::Everywhere
                 || reads(&mid, id.world)
             {
@@ -415,7 +421,7 @@ impl Vault {
             let Some(key) = reached.key.opened() else {
                 continue;
             };
-            if !reads(&mid, id.world) || !stands(id) {
+            if !reads(&mid, id.world) || !stands(id, key, reached.owner) {
                 continue;
             }
             let counted = mid.world_key(id);
@@ -503,7 +509,7 @@ impl Vault {
                     continue;
                 }
             };
-            if !stands(&id) {
+            if !stands(&id, &key, reached.owner) {
                 if door.restore {
                     finish.usable.push(key);
                 } else {

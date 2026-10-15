@@ -101,6 +101,15 @@ impl WorldKey {
         })
     }
 
+    /// Fresh bytes under `id`: what someone who knows only a key's id mints
+    /// to replace it.
+    #[cfg(test)]
+    pub(crate) fn other_bytes_for_test(id: WorldKeyId) -> Result<Self> {
+        let mut bytes = Zeroizing::new([0u8; 32]);
+        os_fill(&mut bytes[..])?;
+        Ok(Self { id, bytes })
+    }
+
     #[must_use]
     pub fn id(&self) -> &WorldKeyId {
         &self.id

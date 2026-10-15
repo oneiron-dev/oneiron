@@ -171,9 +171,27 @@ pub(crate) struct AuthorityStructure {
     admitters: BTreeSet<AuthorityKey>,
     /// The slip issuers: the admitters that hold the owner role.
     pub(super) issuers: BTreeSet<AuthorityKey>,
-    /// Each machine and the install keys a slip issuer's revisions of it
-    /// named. Such a key signs that machine's world edits.
+    /// Each machine and the install keys a slip issuer's or an owner
+    /// anchor's revisions of it named. Such a key signs that machine's world
+    /// edits and key records.
     machine_keys: BTreeSet<(crate::EntityId, AuthorityKey)>,
+    /// The owner anchors a root record named, each signed by its own anchor
+    /// alone (world privacy P6b). An anchor signs only what the fold's anchor
+    /// rules let it: its own root records and its machine marks. It never
+    /// becomes an admitter or a slip issuer.
+    anchors: BTreeSet<[u8; 32]>,
+}
+
+/// A root record its own anchor signed, alone and verifiably: it names its
+/// anchor, as a genesis names its root.
+fn self_signed_root(entry: &AuthorityLogEntry) -> Option<[u8; 32]> {
+    let AuthorityOp::OwnerRoot(record) = &entry.op else {
+        return None;
+    };
+    (*entry.signer_key() == AuthorityKey::Ed25519(record.anchor_key)
+        && entry.cosigns.is_empty()
+        && verify_entry_signatures(entry).is_ok())
+    .then_some(record.anchor_key)
 }
 
 fn signed_by(entry: &AuthorityLogEntry, keys: &BTreeSet<AuthorityKey>) -> bool {
@@ -231,6 +249,7 @@ pub(super) enum Grant {
     Admitter(AuthorityKey),
     Issuer(AuthorityKey),
     InstallKey(crate::EntityId, AuthorityKey),
+    Anchor(AuthorityKey),
 }
 
 impl<'a> StructureBuilder<'a> {
@@ -247,7 +266,7 @@ impl<'a> StructureBuilder<'a> {
                     self.root_roles |= device.roles;
                 }
             }
-            AuthorityOp::MachineProfile(_) => self.fresh.push(entry),
+            AuthorityOp::MachineProfile(_) | AuthorityOp::OwnerRoot(_) => self.fresh.push(entry),
             op => {
                 if admits_device(op).is_some_and(is_consent_device) {
                     self.fresh.push(entry);
@@ -269,9 +288,10 @@ impl<'a> StructureBuilder<'a> {
             self.structure.admitters.clear();
             self.structure.issuers.clear();
             self.structure.machine_keys.clear();
+            self.structure.anchors.clear();
             return;
         };
-        let (mut admitted, mut issued) = (Vec::new(), Vec::new());
+        let (mut admitted, mut issued, mut anchored) = (Vec::new(), Vec::new(), Vec::new());
         if self.root_roles & ROLE_OWNER != 0 && self.structure.issuers.insert(root.clone()) {
             issued.push(root.clone());
         }
@@ -279,7 +299,13 @@ impl<'a> StructureBuilder<'a> {
             admitted.push(root);
         }
         for entry in std::mem::take(&mut self.fresh) {
-            if matches!(entry.op, AuthorityOp::MachineProfile(_)) {
+            if matches!(entry.op, AuthorityOp::OwnerRoot(_)) {
+                if let Some(anchor) = self_signed_root(entry)
+                    && self.structure.anchors.insert(anchor)
+                {
+                    anchored.push(AuthorityKey::Ed25519(anchor));
+                }
+            } else if matches!(entry.op, AuthorityOp::MachineProfile(_)) {
                 self.file_profile(entry);
             } else if signed_by(entry, &self.structure.admitters) {
                 self.admit(entry, &mut admitted, &mut issued);
@@ -303,6 +329,11 @@ impl<'a> StructureBuilder<'a> {
                     self.file_profile(entry);
                 }
                 self.grown.push(Grant::Issuer(key));
+            } else if let Some(key) = anchored.pop() {
+                for entry in self.profiles.remove(&key).unwrap_or_default() {
+                    self.file_profile(entry);
+                }
+                self.grown.push(Grant::Anchor(key));
             } else {
                 break;
             }
@@ -330,11 +361,11 @@ impl<'a> StructureBuilder<'a> {
         }
     }
 
-    /// Takes a machine revision's install key when a slip issuer signed it,
-    /// or files it under its signer.
+    /// Takes a machine revision's install key when a slip issuer or an
+    /// owner anchor signed it, or files it under its signer.
     fn file_profile(&mut self, entry: &'a AuthorityLogEntry) {
         let signer = entry.signer_key();
-        if !self.structure.issuers.contains(signer) {
+        if !self.structure.issuers.contains(signer) && !self.structure.is_anchor(signer) {
             self.profiles.entry(signer.clone()).or_default().push(entry);
             return;
         }
@@ -355,29 +386,48 @@ impl<'a> StructureBuilder<'a> {
 
 impl AuthorityStructure {
     /// Whether a key that may vouch for `entry` signed or cosigned it: an
-    /// admitter, or, for a world edit, the install key of the machine it
-    /// names, as its primary signer. A genesis vouches for itself only in a
-    /// log that holds none, or as the one it holds: any other, even from the
+    /// admitter, or, for a world edit or a world key record, the install key
+    /// of the machine it names, as its primary signer. A root record vouches
+    /// for itself when its own anchor signed it alone, and an anchor signs
+    /// machine marks alone; as the fold's anchor rules have it, an anchor
+    /// vouches for nothing else. A genesis vouches for itself only in a log
+    /// that holds none, or as the one it holds: any other, even from the
     /// root key with a new nonce, would fork the root. The caller verifies
     /// the signatures.
     pub(super) fn vouches_for(&self, entry: &AuthorityLogEntry) -> bool {
+        let install_key = |machine: crate::EntityId| {
+            self.machine_keys
+                .contains(&(machine, entry.signer_key().clone()))
+        };
         match &entry.op {
             AuthorityOp::Genesis { device, .. } => {
                 device.key == *entry.signer_key()
                     && is_consent_device(device)
                     && self.roots.iter().all(|root| root == entry)
             }
-            AuthorityOp::WorldPrivacy(edit) => self
-                .machine_keys
-                .contains(&(edit.machine, entry.signer_key().clone())),
+            AuthorityOp::WorldPrivacy(edit) => install_key(edit.machine),
+            AuthorityOp::WorldKeyWraps(record) => install_key(record.machine),
+            AuthorityOp::OwnerRoot(_) => self_signed_root(entry).is_some(),
+            AuthorityOp::MachineProfile(_)
+                if self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty() =>
+            {
+                true
+            }
             _ => signed_by(entry, &self.admitters),
         }
     }
 
-    /// Whether `key` signs rows the fold may come to admit: an admitter, or
-    /// an install key, though the local fold may not hold it yet.
+    /// An owner anchor a stored root record named.
+    fn is_anchor(&self, key: &AuthorityKey) -> bool {
+        matches!(key, AuthorityKey::Ed25519(anchor) if self.anchors.contains(anchor))
+    }
+
+    /// Whether `key` signs rows the fold may come to admit: an admitter, an
+    /// install key or an owner anchor, though the local fold may not hold it
+    /// yet.
     fn stands(&self, key: &AuthorityKey) -> bool {
         self.admitters.contains(key)
+            || self.is_anchor(key)
             || self
                 .machine_keys
                 .iter()
@@ -500,9 +550,10 @@ fn door_view(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<Arc<A
 
 /// Whether `entry`'s signer has standing to store a replicated row: a key
 /// some valid row admitted (live, revoked or retired), a machine's install
-/// key, or a key the stored log's structure admits though the fold does
-/// not hold it yet, such as an owner key a pre-handoff rotation named. A
-/// key none of these name signs no valid row, so its rows wait for the
+/// key, a valid root's owner anchor, the anchor of the root record it is,
+/// or a key the stored log's structure admits though the fold does not
+/// hold it yet, such as an owner key a pre-handoff rotation named. A key
+/// none of these name signs no valid row, so its rows wait for the
 /// enrollment instead of being stored.
 pub(crate) fn signer_has_standing(
     store: &Store,
@@ -514,7 +565,9 @@ pub(crate) fn signer_has_standing(
     if fold.roster.contains_key(signer)
         || fold.retired_keys.contains(signer)
         || matches!(signer, AuthorityKey::Ed25519(key)
-            if fold.machines.values().any(|machine| machine.names_key(key)))
+            if fold.machines.values().any(|machine| machine.names_key(key))
+                || fold.root_anchors().contains_key(key))
+        || self_signed_root(entry).is_some()
     {
         return Ok(true);
     }

@@ -32,9 +32,14 @@ fn is_consent_row(op: &AuthorityOp) -> bool {
     matches!(op, AuthorityOp::Genesis { .. }) || admits_device(op).is_some_and(is_consent_device)
 }
 
-/// A row the door's structure reads: a consent row or a machine revision.
+/// A row the door's structure reads: a consent row, a machine revision, or
+/// a root record, which names an owner anchor.
 fn is_structural(op: &AuthorityOp) -> bool {
-    is_consent_row(op) || matches!(op, AuthorityOp::MachineProfile(_))
+    is_consent_row(op)
+        || matches!(
+            op,
+            AuthorityOp::MachineProfile(_) | AuthorityOp::OwnerRoot(_)
+        )
 }
 
 /// A handoff: a replica refuses a row a key it retires signs that arrives
@@ -52,12 +57,20 @@ fn may_restrict(op: &AuthorityOp) -> bool {
 
 /// The grants any one of which lets a key vouch for `entry`, and for a
 /// handoff the grant that makes its signer a slip issuer. A genesis the
-/// stored log does not take as its root waits for nothing: no row admits it.
+/// stored log does not take as its root, or a root record, waits for
+/// nothing: no row admits it. A machine revision also waits for its signer
+/// to be an owner anchor.
 fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
     match &entry.op {
-        AuthorityOp::Genesis { .. } => Vec::new(),
+        AuthorityOp::Genesis { .. } | AuthorityOp::OwnerRoot(_) => Vec::new(),
         AuthorityOp::WorldPrivacy(edit) => {
             vec![Grant::InstallKey(edit.machine, entry.signer_key().clone())]
+        }
+        AuthorityOp::WorldKeyWraps(record) => {
+            vec![Grant::InstallKey(
+                record.machine,
+                entry.signer_key().clone(),
+            )]
         }
         op => std::iter::once(&entry.signer)
             .chain(&entry.cosigns)
@@ -65,6 +78,10 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
             .chain(
                 matches!(op, AuthorityOp::ReRoot { .. })
                     .then(|| Grant::Issuer(entry.signer_key().clone())),
+            )
+            .chain(
+                matches!(op, AuthorityOp::MachineProfile(_))
+                    .then(|| Grant::Anchor(entry.signer_key().clone())),
             )
             .collect(),
     }

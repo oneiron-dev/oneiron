@@ -64,6 +64,7 @@ mod world_key_arrival;
 mod world_key_backdating;
 mod world_key_doors;
 mod world_key_frontier;
+mod world_key_store_gate;
 mod world_kit_gate;
 mod world_orphan;
 mod world_pin_doors;
