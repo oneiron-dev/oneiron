@@ -18,9 +18,6 @@ pub(super) fn complete(
     regenerated_at: u64,
     sources: &[SourceSpan],
 ) -> Result<bool> {
-    if sources.len() > 100_000 {
-        return Err(Error::IndexOverflow("regeneration sources"));
-    }
     let Some(raw) = store
         .vault_meta()
         .get(txn, &super::integrity::stale_key(dependent))?
@@ -33,6 +30,12 @@ pub(super) fn complete(
             .map_err(|_| Error::CorruptedIndex("stale generation"))?,
     );
     if regenerated_at <= stale_revision || store.port_deletion_state(txn, dependent)?.deleted {
+        return Ok(false);
+    }
+    // A dependent a pending walk still withdraws holds the body its mark
+    // covered: no regeneration of it completes, as none would after a
+    // single-transaction walk had marked it again.
+    if super::dependent_walk::withdrawn_directly_in(store, txn, dependent)? {
         return Ok(false);
     }
     let Some(row) = store.port_entity_record(txn, dependent)? else {
@@ -117,6 +120,20 @@ pub(crate) fn dependency_sources_in(
         .collect())
 }
 
+/// The source versions `dependent` is registered as derived from.
+pub(super) fn sources_of(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    dependent: &EntityId,
+) -> Result<Vec<SourceSpan>> {
+    Ok(reverse_rows(store, txn, dependent)?
+        .into_iter()
+        .map(|(_, source)| source)
+        .collect())
+}
+
+/// Every reverse row of `dependent`; a read never refuses for how many
+/// (rule 5).
 fn reverse_rows(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -125,9 +142,6 @@ fn reverse_rows(
     let prefix = reverse_prefix(dependent);
     let mut rows = Vec::new();
     for row in store.vault_meta().prefix_iter(txn, &prefix)? {
-        if rows.len() >= 100_000 {
-            return Err(Error::IndexOverflow("reverse dependency rows"));
-        }
         let (key, _) = row?;
         if key.len() != prefix.len() + 24 {
             return Err(Error::CorruptedIndex("reverse dependency key"));
