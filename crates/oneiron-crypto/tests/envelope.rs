@@ -998,3 +998,29 @@ fn the_recipient_x25519_public_key_bytes_are_bound_into_the_combiner() {
         Err(Error::OpenFailed)
     );
 }
+
+/// Oracle: the two seeds come from RFC 5869 HKDF-SHA256 (no salt), computed outside this
+/// crate (Python `hmac`/`hashlib`) for seed 0x01..=0x20 and label `oneiron/test-label/v1`.
+#[test]
+fn a_seed_key_expands_by_rfc5869_hkdf_under_its_label() {
+    let seed: [u8; 32] = std::array::from_fn(|i| i as u8 + 1);
+    let label = b"oneiron/test-label/v1";
+    let mlkem: [u8; 64] = hex::decode(
+        "071d3eb1e0ff5f451ac63ffe52977fb6c35677c1e4d78932cb7084cb5fefc563\
+         69dda93b5d9ecd7cb1d6f2bba948ea2204a92cd8f1f2f4bb4d994413d8cc0d33",
+    )
+    .unwrap()
+    .try_into()
+    .unwrap();
+    let x25519: [u8; 32] =
+        hex::decode("f16fb7f655ddf5a759275d8bd4ac8ecfc0a2b70e1d4947e9cae0adf8255c36b4")
+            .unwrap()
+            .try_into()
+            .unwrap();
+    let expanded = HybridSecretKey::from_seed(&seed, label).unwrap();
+    let expected = HybridSecretKey::from_seeds(&mlkem, &x25519);
+    assert_eq!(expanded.public_key(), expected.public_key());
+    let other = HybridSecretKey::from_seed(&seed, b"oneiron/other-label/v1").unwrap();
+    assert_ne!(other.public_key(), expected.public_key());
+    assert!(HybridSecretKey::from_seed(&[0; 32], label).is_err());
+}
