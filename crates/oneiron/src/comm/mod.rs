@@ -269,6 +269,7 @@ impl CommProjectorIndex {
             if *candidate_id == source_event_id {
                 continue;
             }
+            note_peer_candidate_read();
             let Some(CommRecord::Event {
                 kind: kind @ (CommEventKind::ThreadJoined | CommEventKind::ThreadLeft),
                 party_ref,
@@ -357,6 +358,21 @@ thread_local! {
 fn note_pending_gate_retain() {
     PENDING_GATE_RETAINS.with(|retains| retains.set(retains.get().saturating_add(1)));
 }
+
+// Test-only tally of peer-candidate row reads a join/leave makes while it
+// decides (F06 H228): one pass must stay linear in its same-slot events.
+#[cfg(test)]
+thread_local! {
+    static PEER_CANDIDATE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn note_peer_candidate_read() {
+    PEER_CANDIDATE_READS.with(|reads| reads.set(reads.get().saturating_add(1)));
+}
+
+#[cfg(not(test))]
+const fn note_peer_candidate_read() {}
 
 #[cfg(not(test))]
 const fn note_pending_gate_retain() {}

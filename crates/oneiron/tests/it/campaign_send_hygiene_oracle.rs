@@ -21,8 +21,8 @@ use crate::common::entity as test_id;
 use oneiron::campaign::claims::{
     CampaignMemberChannel, CampaignMemberDerivation, CampaignMemberState, CampaignMemberValue,
     CommDoNotContactValue, DO_NOT_CONTACT_SCOPE_ALL, PREDICATE_CAMPAIGN_MEMBER,
-    PREDICATE_COMM_BOUNCE, PREDICATE_COMM_DO_NOT_CONTACT, encode_campaign_member_value,
-    encode_do_not_contact_value,
+    PREDICATE_COMM_BOUNCE, PREDICATE_COMM_DO_NOT_CONTACT, decode_campaign_member_value,
+    encode_campaign_member_value, encode_do_not_contact_value,
 };
 use oneiron::campaign::send_hygiene::{
     LIST_UNSUBSCRIBE, ListUnsubscribeTarget, SuppressionCause, SuppressionInput, apply_suppression,
@@ -59,6 +59,7 @@ const SECOND_MEMBER_SEED: u8 = 0x69;
 const PROPOSED_DNC_SEED: u8 = 0x6C;
 const STALE_DNC_SEED: u8 = 0x6D;
 const SEND_GRANT_SEED: u8 = 0x6F;
+const MANIFEST_SEED: u8 = 0x6A;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -142,6 +143,50 @@ fn put_person(vault: &Vault, id: EntityId) {
             b"send hygiene oracle person",
         )
         .unwrap();
+}
+
+/// A policy whose only rule floors `campaign.member` at critical: the
+/// hygiene claims stay auto, and a replacement member head is refused.
+fn critical_membership_manifest() -> Vec<u8> {
+    use rmpv::Value;
+    let axes = |criticality: &str| {
+        Value::Map(vec![
+            (Value::from("criticality"), Value::from(criticality)),
+            (Value::from("sensitivity"), Value::from("normal")),
+        ])
+    };
+    let manifest = Value::Map(vec![
+        (Value::from("schema_version"), Value::from("1.2")),
+        (Value::from("pack_id"), Value::from("send-hygiene-rollback")),
+        (Value::from("pack_version"), Value::from("v1")),
+        (
+            Value::from("min_engine_version"),
+            Value::from(env!("CARGO_PKG_VERSION")),
+        ),
+        (Value::from("defaults"), axes("normal")),
+        (
+            Value::from("rules"),
+            Value::Array(vec![Value::Map(vec![
+                (
+                    Value::from("prefix"),
+                    Value::from(PREDICATE_CAMPAIGN_MEMBER),
+                ),
+                (Value::from("exact"), Value::Boolean(true)),
+                (Value::from("axes"), axes("critical")),
+            ])]),
+        ),
+        (
+            Value::from("actor_ceilings"),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from("actor_class"), Value::from("first_party")),
+                (Value::from("ceiling"), Value::from("auto")),
+            ])]),
+        ),
+        (Value::from("scoped_grants"), Value::Array(Vec::new())),
+    ]);
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &manifest).unwrap();
+    out
 }
 
 /// The cohort row every suppression test starts from: enrolled, one email
@@ -271,33 +316,100 @@ fn assert_opt_out_hold(result: &OutboundDispatchResult) {
 /// The "same turn" half of the law, measured the only way it can be: make the
 /// LAST leg fail and prove the earlier legs are not on disk.
 ///
-/// Two live member heads for one campaign is a torn cohort the membership leg
-/// rejects. If the three legs were three transactions, the bounce fact and the
-/// suppression would have committed before that rejection — and the person
-/// would be left permanently suppressed by a write turn that reported failure.
+/// A policy that floors `campaign.member` at critical refuses the membership
+/// leg's replacement head. If the three legs were three transactions, the
+/// bounce fact and the suppression would have committed before that refusal —
+/// and the person would be left permanently suppressed by a write turn that
+/// reported failure.
 #[test]
 fn hard_bounce_suppression_rolls_back_whole() {
     let (_dir, vault) = oracle_vault();
     let person = test_id(PERSON_SEED);
     put_member(&vault, MEMBER_SEED, &enrolled_member(), person);
-    put_member(&vault, SECOND_MEMBER_SEED, &enrolled_member(), person);
-
-    let error = apply_suppression(
+    oneiron::test_support::put_policy_manifest_bytes(
         &vault,
-        SuppressionCause::HardBounce,
-        &SuppressionInput {
-            person_ref: person,
-            campaign_ref: Some(test_id(CAMPAIGN_SEED)),
-            channel: CHANNEL.to_owned(),
-            sender_ref: Some(test_id(SENDER_SEED)),
-            evidence_ref: test_id(EVIDENCE_SEED),
-            occurred_at: 50,
-        },
-    );
+        test_id(MANIFEST_SEED),
+        &critical_membership_manifest(),
+    )
+    .unwrap();
 
-    assert!(error.is_err(), "a torn cohort must reject the write turn");
+    let mut input = SuppressionInput {
+        person_ref: person,
+        campaign_ref: Some(test_id(CAMPAIGN_SEED)),
+        channel: CHANNEL.to_owned(),
+        sender_ref: Some(test_id(SENDER_SEED)),
+        evidence_ref: test_id(EVIDENCE_SEED),
+        occurred_at: 50,
+    };
+    let error = apply_suppression(&vault, SuppressionCause::HardBounce, &input);
+
+    assert!(
+        error.is_err(),
+        "a refused membership leg must reject the write turn"
+    );
     assert!(live_claims(&vault, person, PREDICATE_COMM_BOUNCE).is_empty());
     assert!(live_claims(&vault, person, PREDICATE_COMM_DO_NOT_CONTACT).is_empty());
+
+    // Control: the same policy admits the bounce and suppression legs, so the
+    // refusal above came from the membership leg alone.
+    input.campaign_ref = None;
+    apply_suppression(&vault, SuppressionCause::HardBounce, &input).unwrap();
+    assert_eq!(live_claims(&vault, person, PREDICATE_COMM_BOUNCE).len(), 1);
+    assert_eq!(
+        live_claims(&vault, person, PREDICATE_COMM_DO_NOT_CONTACT).len(),
+        1
+    );
+}
+
+/// F06 H195: two live member heads for the campaign made the membership leg
+/// refuse, and the refusal rolled back the do-not-contact claim written before
+/// it, so an unsubscribe naming its campaign left the person sendable. Each
+/// head is now suppressed on its own, keeping its own channels and derivation.
+#[test]
+fn duplicate_member_heads_never_veto_an_unsubscribe() -> Result<()> {
+    let (_dir, vault) = oracle_vault();
+    let actor = test_id(PERSON_SEED);
+    let mut sink = HeaderSink::default();
+    let counterparty = oneiron::comm::resolve_or_create_comm_party(&vault, COUNTERPARTY).unwrap();
+    put_member(&vault, MEMBER_SEED, &enrolled_member(), counterparty);
+    put_member(&vault, SECOND_MEMBER_SEED, &enrolled_member(), counterparty);
+    let input = SuppressionInput {
+        person_ref: counterparty,
+        campaign_ref: Some(test_id(CAMPAIGN_SEED)),
+        channel: CHANNEL.to_owned(),
+        sender_ref: None,
+        evidence_ref: test_id(EVIDENCE_SEED),
+        occurred_at: 60,
+    };
+
+    let receipt = apply_suppression(&vault, SuppressionCause::Unsubscribe, &input)?;
+    assert_eq!(
+        live_claims(&vault, counterparty, PREDICATE_COMM_DO_NOT_CONTACT).len(),
+        1
+    );
+    let members = live_claims(&vault, counterparty, PREDICATE_CAMPAIGN_MEMBER);
+    assert_eq!(members.len(), 2, "one suppressed replacement per head");
+    for body in &members {
+        let value = decode_campaign_member_value(&body.value)?;
+        assert_eq!(value.state, CampaignMemberState::Suppressed);
+        assert_eq!(value.channels, enrolled_member().channels);
+        assert_eq!(value.derivation, enrolled_member().derivation);
+    }
+
+    let again = apply_suppression(&vault, SuppressionCause::Unsubscribe, &input)?;
+    assert_eq!(
+        again, receipt,
+        "a redelivered unsubscribe reuses every head"
+    );
+    assert_eq!(
+        live_claims(&vault, counterparty, PREDICATE_CAMPAIGN_MEMBER).len(),
+        2
+    );
+
+    let held = dispatch(&vault, actor, CHANNEL, "intent:torn", None, &mut sink);
+    assert_opt_out_hold(&held);
+    assert!(sink.calls.is_empty());
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
