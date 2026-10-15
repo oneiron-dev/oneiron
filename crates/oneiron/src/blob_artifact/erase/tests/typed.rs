@@ -268,7 +268,9 @@ fn a_late_reference_the_put_refuses_widens_no_erase() -> Result<()> {
         ("a restamp of a live claim", existing, header, data),
     ] {
         let refused = vault.with_write_txn_grouped(|txn| {
-            vault.refuse_erased_blob_arrival_in_txn(txn, &id, &header, data)
+            vault.refuse_erased_blob_arrival_in_txn(txn, &id, &header, data, |probe| {
+                put_replicated_in_txn(vault, probe, &id, &header, data)
+            })
         })?;
         assert!(!refused, "{case}: the gate acted on a body the put refuses");
         let txn = vault.store.env.read_txn()?;
@@ -341,12 +343,10 @@ fn an_ordinary_fence_on_a_derived_text_is_raised_to_the_erase_fence() -> Result<
     let refused = vault.with_write_txn_grouped(|txn| {
         let raw = peer.get_raw(&text)?.expect("the peer's text");
         let header = EntityMetadataHeader::parse(&raw).expect("stored header");
-        vault.refuse_erased_blob_arrival_in_txn(
-            txn,
-            &text,
-            &header,
-            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-        )
+        let data = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+        vault.refuse_erased_blob_arrival_in_txn(txn, &text, &header, data, |probe| {
+            put_replicated_in_txn(vault, probe, &text, &header, data)
+        })
     })?;
     assert!(refused, "the text's arrival was not refused");
     // The soft tombstone replayed again (Astra R5 P2): its ordinary fence leaves the erase's.

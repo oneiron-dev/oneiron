@@ -338,12 +338,10 @@ fn admit(
     // ARCH-0005a: bytes a hard erase took here, a late reference to them, and a text derived from
     // them never materialize, and a late reference teaches which bytes the erase took even at an
     // id a tombstone took: so BEFORE delete-wins.
-    if vault.refuse_erased_blob_arrival_in_txn(
-        wtxn,
-        &id,
-        header,
-        &blob[ENTITY_METADATA_HEADER_LEN..],
-    )? {
+    let body = &blob[ENTITY_METADATA_HEADER_LEN..];
+    if vault.refuse_erased_blob_arrival_in_txn(wtxn, &id, header, body, |probe| {
+        put_replicated_in_txn(vault, probe, &id, header, body)
+    })? {
         return Ok(EntityStep::Skip);
     }
     // H125: artifact version bytes fenced here when their last artifact went come back once an
@@ -470,19 +468,7 @@ fn admit(
     // LMDB. The public gate would drop them; `put_replicated` admits both engine-authored bands
     // while still validating structure: unknown type bytes, ungrammatical predicates, malformed
     // CLAIM bodies and ONE-1159 provenance records fail typed, and come back as refusals.
-    let applied = vault
-        .batch_in()
-        .put_replicated(
-            &id,
-            header.entity_type,
-            crate::temporal::TimeRange {
-                start: header.occurred_start,
-                end: header.occurred_end,
-            },
-            header.learned_at,
-            data,
-        )
-        .apply(wtxn);
+    let applied = put_replicated_in_txn(vault, wtxn, &id, header, data);
     if let Err(err) = applied {
         if let Some(quota_debit) = quota_debit {
             quota::rollback_maintenance_ingest_debit_in_txn(vault, wtxn, quota_debit)?;
@@ -508,6 +494,30 @@ fn admit(
 /// tombstones map is mutable remote input, and a crafted update that REMOVES the tombstone and
 /// re-puts the key must not resurrect a body deleted here, hard or soft. A failed marker read
 /// fails closed.
+/// The replicated put of the body `data` at `id`: the door ingest stores a body through, and the
+/// put the erase gate probes a late reference with.
+fn put_replicated_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    header: &EntityMetadataHeader,
+    data: &[u8],
+) -> Result<()> {
+    vault
+        .batch_in()
+        .put_replicated(
+            id,
+            header.entity_type,
+            crate::temporal::TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            header.learned_at,
+            data,
+        )
+        .apply(wtxn)
+}
+
 fn deleted_here(ctx: &IngestCtx<'_>, txn: &heed::RoTxn<'_>, id: &EntityId) -> bool {
     if ctx.tombstones.contains(id) {
         tracing::debug!(entity = %id.to_hex(), "sync ingest: entity tombstoned in CRDT (delete wins)");

@@ -392,7 +392,8 @@ impl Vault {
     /// learns of the erase too. Only typed evidence of the erase counts (`late_reference_in_txn`).
     ///
     /// Nothing is refused or touched before the put's own checks would pass: another kind at the
-    /// id, or a claim the replicated put would not admit, is left to the put. A walk that would
+    /// id, or a claim the replicated put would not admit, is left to the put. `put` is that
+    /// replicated put of the body, so sync code alone holds the door (OF-060 F1). A walk that would
     /// tear a carrier under a legal hold defers: the body is skipped with nothing marked, and the
     /// window's next pass tries again. Returns whether the body is refused.
     #[cfg(any(feature = "sync", test))]
@@ -402,6 +403,7 @@ impl Vault {
         id: &EntityId,
         header: &EntityMetadataHeader,
         data: &[u8],
+        put: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
     ) -> Result<bool> {
         use crate::blob_artifact::LateReach;
         use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT};
@@ -432,7 +434,7 @@ impl Vault {
                 // it. Any other widens an erase only as far as the replicated put would take it.
                 if ROW_DELETION_FENCE.contains(&self.store, wtxn, &HexId(*id))?
                     || HARD_DELETE_MARKER.contains(&self.store, wtxn, &HexId(*id))?
-                    || !self.put_admits_late_reference_in_txn(wtxn, id, header, data)?
+                    || !self.put_admits_late_reference_in_txn(wtxn, put)?
                 {
                     return Ok(false);
                 }
@@ -532,7 +534,7 @@ impl Vault {
         self.fence_refused_arrival_in_txn(wtxn, id, carriers)
     }
 
-    /// Whether the replicated put of `data` at `id` would be admitted but for being a late
+    /// Whether `put`, the replicated put of the body, would be admitted but for being a late
     /// reference. Probed in a savepoint that is always rolled back and marked as the probe
     /// (`blob_artifact::mark_late_probe_in_txn`), where the reference records nothing and the
     /// batch runs every other check: a body the put refuses for anything else widens no erase.
@@ -540,25 +542,12 @@ impl Vault {
     fn put_admits_late_reference_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        id: &EntityId,
-        header: &EntityMetadataHeader,
-        data: &[u8],
+        put: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
     ) -> Result<bool> {
         let probe = {
             let mut savepoint = self.store.env.nested_write_txn(wtxn)?;
             crate::blob_artifact::mark_late_probe_in_txn(&self.store, &mut savepoint)?;
-            self.batch_in()
-                .put_replicated(
-                    id,
-                    header.entity_type,
-                    crate::TimeRange {
-                        start: header.occurred_start,
-                        end: header.occurred_end,
-                    },
-                    header.learned_at,
-                    data,
-                )
-                .apply(&mut savepoint)
+            put(&mut savepoint)
         };
         Ok(probe.is_ok())
     }

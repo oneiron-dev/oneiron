@@ -6,13 +6,11 @@ use crate::deletion::TombstoneReason;
 fn arrive(source: &Vault, target: &Vault, id: &EntityId) -> Result<bool> {
     let raw = source.get_raw(id)?.expect("stored at the origin");
     let header = EntityMetadataHeader::parse(&raw).expect("stored header");
+    let data = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
     target.with_write_txn_grouped(|txn| {
-        target.refuse_erased_blob_arrival_in_txn(
-            txn,
-            id,
-            &header,
-            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-        )
+        target.refuse_erased_blob_arrival_in_txn(txn, id, &header, data, |probe| {
+            put_replicated_in_txn(target, probe, id, &header, data)
+        })
     })
 }
 

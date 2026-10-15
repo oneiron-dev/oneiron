@@ -391,30 +391,45 @@ fn replicate(source: &Vault, target: &Vault, ids: &[EntityId]) -> Result<Vec<boo
         let header = EntityMetadataHeader::parse(&raw).expect("stored header");
         let data = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
         let stored = target.with_write_txn_grouped(|txn| {
-            if target.refuse_erased_blob_arrival_in_txn(txn, id, &header, data)?
+            let refused =
+                target.refuse_erased_blob_arrival_in_txn(txn, id, &header, data, |probe| {
+                    put_replicated_in_txn(target, probe, id, &header, data)
+                })?;
+            if refused
                 || crate::deletion::HARD_DELETE_MARKER.contains(&target.store, txn, &HexId(*id))?
                 || crate::deletion::ROW_DELETION_FENCE.contains(&target.store, txn, &HexId(*id))?
             {
                 return Ok(false);
             }
-            target
-                .batch_in()
-                .put_replicated(
-                    id,
-                    header.entity_type,
-                    TimeRange {
-                        start: header.occurred_start,
-                        end: header.occurred_end,
-                    },
-                    header.learned_at,
-                    data,
-                )
-                .apply(txn)?;
+            put_replicated_in_txn(target, txn, id, &header, data)?;
             Ok(true)
         });
         taken.push(stored.unwrap_or(false));
     }
     Ok(taken)
+}
+
+/// The replicated put of the body `data` at `id`, as ingest stores it and the erase gate probes it.
+fn put_replicated_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    header: &EntityMetadataHeader,
+    data: &[u8],
+) -> Result<()> {
+    vault
+        .batch_in()
+        .put_replicated(
+            id,
+            header.entity_type,
+            TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            header.learned_at,
+            data,
+        )
+        .apply(txn)
 }
 
 /// A hard tombstone wire value for `reason`, as a peer's erase publishes it.
