@@ -165,6 +165,31 @@ pub(super) fn remove_counterparty_contact_party_channel_index(
     Ok(())
 }
 
+/// Removes `contact_ref` from every pair that lists it, for a record whose
+/// class can no longer be named (its sending identity is gone).
+pub(super) fn remove_counterparty_contact_from_every_party_channel(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    contact_ref: EntityId,
+) -> Result<()> {
+    let mut listed = Vec::new();
+    for item in PARTY_CHANNEL_INDEX.iter_from(store, &*wtxn, &[])? {
+        let (digest, ContactRefs(refs)) = item?;
+        if refs.contains(&contact_ref) {
+            listed.push((digest, refs));
+        }
+    }
+    for (digest, mut refs) in listed {
+        refs.retain(|id| *id != contact_ref);
+        if refs.is_empty() {
+            PARTY_CHANNEL_INDEX.delete(store, wtxn, &digest)?;
+        } else {
+            PARTY_CHANNEL_INDEX.put(store, wtxn, &digest, &ContactRefs(refs))?;
+        }
+    }
+    Ok(())
+}
+
 /// Resolves the channel class a contact record belongs to, or `None` when the
 /// record's sending identity does not resolve to a ChannelIdentity row.
 ///

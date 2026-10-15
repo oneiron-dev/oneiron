@@ -346,6 +346,66 @@ fn put_identity(vault: &Vault, id: EntityId, channel: &str, address: &str) -> Re
     vault.create_channel_identity(&id, &identity)
 }
 
+/// H105: a contact's delete takes both of its index legs, so the lookup
+/// answers `None` and the same counterparty can be introduced again.
+#[test]
+fn deleting_a_contact_drops_both_index_legs() -> Result<()> {
+    use crate::deletion::DeleteReason;
+    let (_tmp, vault) = open_vault();
+    let identity = entity(0x71);
+    put_identity(&vault, identity, "email", "owner@example.com")?;
+    let index_key = storage::counterparty_contact_index_key_parts(&identity, "kenji@example.com")?;
+    let party_channel = |vault: &Vault| -> Result<usize> {
+        let rtxn = vault.store.env.read_txn()?;
+        Ok(storage::counterparty_contacts_by_party_channel(
+            &vault.store,
+            &rtxn,
+            "kenji@example.com",
+            "email",
+        )?
+        .len())
+    };
+    // The soft door goes last: its shell stays a COUNTERPARTY_CONTACT row.
+    let doors = [
+        None,
+        Some(DeleteReason::UserHardDelete),
+        Some(DeleteReason::UserDelete),
+    ];
+    for (index, door) in doors.into_iter().enumerate() {
+        let contact = entity(0x80 + index as u8);
+        vault.create_counterparty_contact(
+            &contact,
+            &CounterpartyContactRecord::user_introduction(identity, "kenji@example.com", 10)?,
+        )?;
+        assert_eq!(party_channel(&vault)?, 1);
+
+        match door {
+            None => {
+                vault.batch().delete(&contact).commit()?;
+            }
+            Some(reason) => {
+                vault.delete_entity_with_reason(&contact, reason)?;
+            }
+        }
+
+        {
+            let rtxn = vault.store.env.read_txn()?;
+            assert!(
+                !storage::CONTACT_INDEX.contains(&vault.store, &rtxn, &index_key)?,
+                "{door:?} left the lookup leg"
+            );
+        }
+        assert_eq!(party_channel(&vault)?, 0, "{door:?} left the party leg");
+        if door != Some(DeleteReason::UserDelete) {
+            assert_eq!(
+                vault.find_counterparty_contact(&identity, "kenji@example.com")?,
+                None
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Party-scoped and channel-scoped opt-out truth reach exactly the rows they
 /// cover, whichever contact the writer was handed.
 ///

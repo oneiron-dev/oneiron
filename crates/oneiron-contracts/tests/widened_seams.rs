@@ -10,8 +10,8 @@ use oneiron_contracts::edge::EdgeActorClass;
 use oneiron_contracts::entity_id::{EntityId, derived_domains, parse_entity_id, serde_hex};
 use oneiron_contracts::error::{Error, RegistryError};
 use oneiron_contracts::registry::{
-    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
-    ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_RECEIPT_RECORD,
+    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, ENTITY_TYPE_NOTE,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_RECEIPT_RECORD,
     ENTITY_TYPE_SKILL_CONTENT_ANCHOR, TYPE_BYTE_FAMILIES, TypeByteFamily,
     VAULT_ID_NAMESPACE_PREFIX, is_delete_protected_engine_record, short_id_prefix,
     static_short_id_prefix_collision, validate_entity_type, validate_entity_type_for_mode,
@@ -134,7 +134,6 @@ fn delete_protection_covers_every_engine_record_and_no_public_kind() {
         ENTITY_TYPE_SKILL_CONTENT_ANCHOR,
         ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
         ENTITY_TYPE_RECEIPT_RECORD,
-        ENTITY_TYPE_CHANNEL_IDENTITY,
     ] {
         assert!(is_delete_protected_engine_record(kind), "{kind}");
     }

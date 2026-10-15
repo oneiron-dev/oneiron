@@ -436,6 +436,17 @@ pub(crate) fn withdraw_body_pin(
     Ok(())
 }
 
+/// The stored body pin of `id`, for checks that a deleted record's pin names
+/// none of its words.
+#[cfg(test)]
+pub(crate) fn stored_body_pin_for_test(
+    vault: &crate::Vault,
+    id: &EntityId,
+) -> Result<Option<[u8; 32]>> {
+    let txn = vault.store.env.read_txn()?;
+    BODY_PINS.get(&vault.store, &txn, id)
+}
+
 /// The delete path's pin: always [`WITHDRAWN_PIN`], never compared.
 ///
 /// A purge may meet a record `user_delete` already reduced to its shell, whose

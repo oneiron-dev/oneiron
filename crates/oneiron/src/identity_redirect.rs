@@ -166,8 +166,9 @@ fn derive_redirect_row_in_txn(
         _ => return Err(Error::CorruptedIndex("identity redirect shell")),
     }
     // No shell edge. Only the ledger can say whether this is a live entity
-    // or a zero-head split's terminal shell.
-    if zero_head_shells.contains(entity) {
+    // or a zero-head split's terminal shell. A shell its purge removed has
+    // neither, and its row went with it (H173).
+    if zero_head_shells.contains(entity) && store.port_entity_raw(rtxn, entity)?.is_some() {
         return Ok(Some(Vec::new()));
     }
     Ok(None)

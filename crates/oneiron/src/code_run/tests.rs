@@ -802,6 +802,69 @@ fn code_run_put_claim_trap_ignores_guest_source_and_g2_sees_generated() -> Resul
     Ok(())
 }
 
+/// H83: a code-run claim overwrite drops the query hints the prior claim
+/// carried, as the batch door's overwrite does.
+#[test]
+fn code_run_claim_overwrite_drops_the_prior_query_hints() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_first_party_actor(&vault);
+    let subject = seed_person(&vault, 0xB5);
+    let claim = EntityId::from_bytes([0xD6; 16]).expect("claim id");
+    let candidate = |value: &str| {
+        ClaimCandidate::new(
+            "profile.favorite_drink",
+            ClaimSubject::Entity(subject),
+            Value::from(value),
+            0.8,
+        )
+    };
+    let envelope = crate::write_envelope::WriteEnvelope::new(
+        WriteActor::new(seed_person(&vault, 0xB6), EdgeActorClass::Human),
+        ClaimSource::UserStated,
+        crate::write_envelope::WriteProvenance::new(Value::from("fixture"))?,
+        crate::claim::ClaimApprovalStatus::Approved,
+    );
+    vault
+        .batch()
+        .claim_candidate_with_lexical_hints(
+            &claim,
+            candidate("sencha"),
+            &envelope,
+            range(10),
+            11,
+            &["staleuniquegamma"],
+        )
+        .commit()?;
+    assert_eq!(vault.claims_for_subject(&claim)?.len(), 1);
+    assert_eq!(
+        vault
+            .search_text("staleuniquegamma", 10)?
+            .first()
+            .map(|hit| hit.id),
+        Some(claim)
+    );
+
+    install_self_memory_allow_policy(&vault, actor)?;
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-hint-overwrite",
+    )?;
+    dispatcher.dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+        claim,
+        candidate("matcha"),
+        range(12),
+        13,
+    )))?;
+
+    assert!(
+        vault.claims_for_subject(&claim)?.is_empty(),
+        "the prior claim's hint records outlive its overwrite"
+    );
+    assert!(vault.search_text("staleuniquegamma", 10)?.is_empty());
+    Ok(())
+}
+
 #[test]
 fn code_run_full_access_write_traps_route_per_op_through_gate_and_receipts() -> Result<()> {
     let (_dir, vault) = open_test_vault();

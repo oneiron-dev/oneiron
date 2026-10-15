@@ -570,9 +570,7 @@ pub fn is_structural_kind(type_byte: u8) -> bool {
 /// is the engine-authored merge/split ledger: dropping an event while its shell
 /// edges survive would orphan the redirect (undo returns `EntityNotFound` and the
 /// shell wedges), and the family's only reversal is an appended counter-event, never
-/// a row deletion. `CHANNEL_IDENTITY` retires only through its own lifecycle:
-/// a self-held row holds its address forever (never-recycle), and a row delete
-/// would free that address for a new row (H102). The deletion/batch engine consults this neutral
+/// a row deletion. The deletion/batch engine consults this neutral
 /// registry predicate instead of naming the protected kinds itself, so the protected
 /// set stays owned by the registry and cannot drift between delete doors.
 #[must_use]
@@ -586,7 +584,6 @@ pub fn is_delete_protected_engine_record(entity_type: u8) -> bool {
             | ENTITY_TYPE_SKILL_CONTENT_ANCHOR
             | ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
             | ENTITY_TYPE_RECEIPT_RECORD
-            | ENTITY_TYPE_CHANNEL_IDENTITY
     )
 }
 

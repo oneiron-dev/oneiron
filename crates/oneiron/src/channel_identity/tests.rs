@@ -658,40 +658,72 @@ fn delegated_custody_must_name_the_exact_mailbox_at_engine_door() -> Result<()> 
 }
 
 #[test]
-fn deletion_clears_assignment_slots_in_the_same_transaction() -> Result<()> {
+fn deleting_a_self_held_identity_lands_and_keeps_its_address_bound() -> Result<()> {
+    use crate::deletion::DeleteReason;
+    use crate::ports::EntityStoreRead;
+    // H102: the owner's delete of a self-held identity lands on every door,
+    // and the address stays bound to the deleted id (never-recycle).
     let (_dir, vault) = test_vault();
-    for (index, address) in ["batch-delete@example.test", "soft-delete@example.test"]
-        .into_iter()
-        .enumerate()
-    {
+    let doors: [(&str, Option<DeleteReason>); 3] = [
+        ("batch-delete@example.test", None),
+        ("soft-delete@example.test", Some(DeleteReason::UserDelete)),
+        (
+            "hard-delete@example.test",
+            Some(DeleteReason::UserHardDelete),
+        ),
+    ];
+    let requested = |address: &str| {
+        ChannelIdentity::requested(
+            EMAIL_CHANNEL,
+            address,
+            SelfHeldShape::DedicatedAddress,
+            ChannelIdentityBinding::agent(entity(0x51)),
+            1_800_000_000,
+        )
+    };
+    for (index, (address, reason)) in doors.into_iter().enumerate() {
         let id = entity(0xD8 + index as u8);
-        vault.create_channel_identity(
-            &id,
-            &ChannelIdentity::requested(
-                EMAIL_CHANNEL,
-                address,
-                SelfHeldShape::DedicatedAddress,
-                ChannelIdentityBinding::agent(entity(0x51)),
-                1_800_000_000,
-            ),
-        )?;
+        vault.create_channel_identity(&id, &requested(address))?;
         assert_eq!(
             vault
                 .channel_identity_by_assignment(EMAIL_CHANNEL, address)?
                 .map(|(id, _)| id),
             Some(id),
         );
-        if index == 0 {
-            vault.batch().delete(&id).commit()?;
-        } else {
-            vault.delete_entity_with_reason(&id, crate::deletion::DeleteReason::UserDelete)?;
+        match reason {
+            None => {
+                vault.batch().delete(&id).commit()?;
+            }
+            Some(reason) => {
+                vault.delete_entity_with_reason(&id, reason)?;
+            }
         }
+        let stored = vault
+            .store
+            .port_entity_record(&vault.store.env.read_txn()?, &id)?;
+        assert!(
+            stored.is_none_or(|row| row.body.is_empty()),
+            "{address}: the delete lands",
+        );
         assert!(
             vault
                 .channel_identity_by_assignment(EMAIL_CHANNEL, address)?
                 .is_none(),
-            "a deleted body must never leave a dangling assignment slot",
+            "{address}: a deleted identity routes nothing",
         );
+        for rebuilt in [false, true] {
+            if rebuilt {
+                vault.rebuild_channel_identity_assignment_index()?;
+            }
+            assert_eq!(
+                vault
+                    .create_channel_identity(&entity(0xB0 + index as u8), &requested(address))
+                    .expect_err("a deleted self-held address is never recycled")
+                    .kind(),
+                ErrorKind::ChannelIdentityAlreadyExists,
+                "{address}, rebuilt: {rebuilt}",
+            );
+        }
     }
     Ok(())
 }
