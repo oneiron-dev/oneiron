@@ -72,6 +72,8 @@ pub struct SyncServer {
     pub(super) lifecycle_session_id: u64,
     /// In-flight lifecycle jobs keyed by `(kind, vault_id, session_id)`.
     pub(super) lifecycle_in_flight: Mutex<HashSet<LifecycleJobKey>>,
+    /// Housekeeping passes in flight, scheduled or asked for by the owner.
+    pub(crate) housekeeping_passes: super::housekeeping::HousekeepingPasses,
     /// Server configuration.
     pub(crate) config: SyncServerConfig,
     /// Permits for git and LFS transfers, sized by `config.limits`.
@@ -141,7 +143,7 @@ impl SyncServer {
     ///
     /// Startup ordering per ARCH-0023b: (1) the root Doc loads from `d:root`
     /// plus pending `u:root:*`; (2) window Docs load on demand from
-    /// `d:w:{key}` plus pending `u:w:{key}:*` in `Self::get_or_create_window`.
+    /// `d:w:{key}` plus pending `u:w:{key}:*` in `Self::serve_window`.
     /// A fresh vault initializes and persists a new root Doc.
     ///
     /// Boot also reconciles `meta.windows` against the persisted `d:w:*`
@@ -253,6 +255,7 @@ impl SyncServer {
             _reactive_tee: reactive_tee,
             lifecycle_session_id: NEXT_LIFECYCLE_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             lifecycle_in_flight: Mutex::new(HashSet::new()),
+            housekeeping_passes: Default::default(),
             standing_block_cache: Mutex::new(
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
             ),
