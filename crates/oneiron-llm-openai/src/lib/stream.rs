@@ -55,10 +55,10 @@ impl OpenAiCompatStreamAccumulator {
             } else {
                 Ok(events)
             };
-            if !choice.is_object() {
-                return Err(FatalLlmError::InvalidRequest.into());
-            }
         };
+        if !choice.is_object() {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
         if choice
             .get("index")
             .and_then(JsonValue::as_u64)
