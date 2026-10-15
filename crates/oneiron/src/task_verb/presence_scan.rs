@@ -8,13 +8,14 @@ use crate::attempt_queue::{
     AttemptCancelReceiptKind, AttemptId, AttemptQueue, AttemptRecord, AttemptState,
     SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD,
 };
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::context_board::{
     CancelRejectionPathology, JobPresence, TaskBoardStatus, TaskIntentPresence, TasksSection,
     fold_up_status, one_line_token, task_is_acked, task_is_cancelled,
 };
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::habit::TaskRole;
 use crate::memory::{BRIDGE_OUTBOUND_ATTEMPT_KIND, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_TASK;
@@ -26,16 +27,14 @@ use super::presence_diagnostics::record_read_failure;
 pub(super) use super::presence_diagnostics::{TaskPresenceReadFailure, TaskPresenceReadStage};
 use super::presence_pages::device_admitted_task_page;
 pub(super) use super::presence_pages::scan_task_entity_pages;
-use super::rate_limit::task_create_owner;
+use super::rate_limit::task_create_owner_in;
 use super::route_receipts::TaskCancelTarget;
 use super::terminal_state::{
     ConsultResultPresence, ConsultResultSummary, TaskExecutionState, TaskTerminalDisposition,
     TaskTerminalRecord, board_status_for_disposition,
 };
 use super::verb_kind::TaskAssignee;
-use super::wire_decode::{
-    task_entity_role, task_entity_role_in, task_verb_body, task_verb_body_in,
-};
+use super::wire_decode::{task_entity_role_in, task_verb_body_in};
 
 /// The attempt/run-tree job projection, shared by the bounded board scan and
 /// the direct-by-id path so both see identical job identity and ordering.
@@ -328,9 +327,45 @@ pub(super) fn task_presence_for_id(
     vault: &Vault,
     task_ref: EntityId,
 ) -> Result<Option<TaskIntentPresence>> {
-    // A cancelled task is absent. An unreadable companion is NOT absent: a
-    // direct caller can name the row, so return the typed failure rather than
-    // silently reporting EntityNotFound. The board scan keeps row isolation.
+    // An unreadable companion is NOT absent: a direct caller can name the row,
+    // so return the typed failure rather than silently reporting
+    // EntityNotFound. The board scan keeps row isolation.
+    let Some((task_hex, jobs, acked)) = by_id_inputs(vault, task_ref)? else {
+        return Ok(None);
+    };
+    let now = vault.store.clock.now_recorded_at();
+    task_intent_presence(vault, task_ref, &task_hex, jobs, acked, now)
+}
+
+/// [`task_presence_for_id`] for a failure's dismissal, which needs only the
+/// row's status. A TASK whose body no longer decodes has no typed status left,
+/// so its status folds up from its jobs, as a role-only TASK's does, and its
+/// owner can still dismiss its failure. `describe` keeps the typed error.
+pub(super) fn task_presence_for_dismissal(
+    vault: &Vault,
+    task_ref: EntityId,
+) -> Result<Option<TaskIntentPresence>> {
+    let Some((task_hex, jobs, acked)) = by_id_inputs(vault, task_ref)? else {
+        return Ok(None);
+    };
+    let now = vault.store.clock.now_recorded_at();
+    match task_intent_presence(vault, task_ref, &task_hex, jobs.clone(), acked, now) {
+        Err(Error::Record(RecordError::InvalidTaskBody(_))) => {
+            let status = fold_up_status(&jobs).unwrap_or(TaskBoardStatus::Queued);
+            Ok(Some(TaskIntentPresence::new(
+                task_hex, status, None, acked, jobs,
+            )))
+        }
+        presence => presence,
+    }
+}
+
+/// A by-id read's hex ref, realizing jobs and ack bit; `None` for a cancelled
+/// task, which is absent.
+fn by_id_inputs(
+    vault: &Vault,
+    task_ref: EntityId,
+) -> Result<Option<(String, Vec<JobPresence>, bool)>> {
     if task_is_cancelled(vault, task_ref)? {
         return Ok(None);
     }
@@ -340,14 +375,7 @@ pub(super) fn task_presence_for_id(
         .remove(&task_hex)
         .unwrap_or_default();
     let acked = task_is_acked(vault, task_ref)?;
-    task_intent_presence(
-        vault,
-        task_ref,
-        &task_hex,
-        jobs,
-        acked,
-        vault.store.clock.now_recorded_at(),
-    )
+    Ok(Some((task_hex, jobs, acked)))
 }
 
 /// One page row, split by whether it could be finished inside the page's
@@ -442,7 +470,7 @@ fn task_page_slot_in(
         // outcome this row has, so the projection reads it off the interrupted
         // register rather than rendering the row as a bare pause.
         let settled_ladder = match &task.state {
-            Some(TaskExecutionState::Interrupted { ladder }) => *ladder,
+            Some(TaskExecutionState::Interrupted { ladder, .. }) => *ladder,
             _ => None,
         };
         let (status, terminal_disposition) = match (&terminal, task.ttl) {
@@ -553,6 +581,74 @@ fn collect_run_tree_nodes<'a>(nodes: &'a [RunTreeNode], out: &mut Vec<&'a RunTre
     }
 }
 
+/// Whether `actor` owns the TASK `task_ref`, the standing `cancel` acts on
+/// directly and a failure's dismissal needs: [`task_owned_in`] through a read
+/// transaction of its own, so a check and the write that acts on it answer by
+/// one rule.
+pub(super) fn task_owned_by(
+    vault: &Vault,
+    actor: EntityId,
+    task_ref: EntityId,
+) -> MemoryResult<Option<bool>> {
+    let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+    task_owned_in(vault, &rtxn, actor, task_ref)
+}
+
+/// Whether `actor` owns the TASK `task_ref`, read through the caller's
+/// transaction: `None` when `task_ref` names no TASK. A TASK body that does
+/// not decode is never an error here; it is simply no proof of ownership.
+pub(super) fn task_owned_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    task_ref: EntityId,
+) -> MemoryResult<Option<bool>> {
+    let Some(raw) = vault.get_raw_in(txn, &task_ref)? else {
+        return Ok(None);
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Err(MemoryError::from(Error::CorruptedIndex(
+            "tasks.owner.header",
+        )));
+    };
+    if header.entity_type != ENTITY_TYPE_TASK {
+        return Ok(None);
+    }
+    // The body is mutable storage and its `owner_ref` is not authority. Only
+    // the Owner authority fact minted atomically by the verified `tasks.create`
+    // path proves ownership, and it is read before any body is decoded: a TASK
+    // born typed keeps its owner whatever its body was rewritten into, even a
+    // shape that no longer decodes or another role.
+    //
+    // The proof REPLICATES, so this is the same answer on the machine that
+    // created the task and on every peer that materialized it: the owner
+    // cancels their own task directly instead of falling to the foreign,
+    // proposal-only ladder.
+    if let Some(owner) = task_create_owner_in(vault, txn, task_ref)? {
+        return Ok(Some(owner == actor));
+    }
+    match crate::habit::task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..]) {
+        Ok(TaskRole::Task) => {}
+        // Goal/Milestone/Habit/HabitCheckin ids are not TASKS (fix-r1 F6)
+        // and read as absent.
+        Ok(_) => return Ok(None),
+        Err(_) => return Ok(Some(false)),
+    }
+    // With no Owner fact, only a validated connector send names its actor. A
+    // typed body proves nothing at all, and neither does a role-only TASK
+    // (P1-c): ONE-1695 role bodies are `{role}` only, and no header /
+    // side-index / ledger records the author of a raw TASK put. Ownership
+    // therefore fails CLOSED to the foreign ladder (propose-only) rather than
+    // vacuously trusting the caller. Visibility (fix-r1 F6) is unaffected:
+    // role-only Tasks still render in `describe` and remain cancellable via a
+    // proposal.
+    match vault.connector_send_task_in(txn, &task_ref) {
+        Ok(task) => Ok(Some(task.is_some_and(|task| task.actor_ref == actor))),
+        Err(Error::Record(RecordError::InvalidTaskBody(_))) => Ok(Some(false)),
+        Err(error) => Err(MemoryError::from(error)),
+    }
+}
+
 pub(super) fn cancel_target_state(
     vault: &Vault,
     actor: EntityId,
@@ -561,34 +657,7 @@ pub(super) fn cancel_target_state(
     match target {
         TaskCancelTarget::Task(task_ref) => {
             let task_hex = task_ref.to_hex();
-            let owned = if task_verb_body(vault, task_ref)?.is_some() {
-                // The typed body is mutable storage and its `owner_ref` is not
-                // authority. Only the Owner authority fact minted atomically by
-                // the verified `tasks.create` path proves direct-cancel
-                // ownership; typed bodies from any other write door fail
-                // closed, and a task with no Owner fact proves nothing at all.
-                //
-                // The proof REPLICATES, so this is the same answer on the
-                // machine that created the task and on every peer that
-                // materialized it: the owner cancels their own task directly
-                // instead of falling to the foreign, proposal-only ladder.
-                task_create_owner(vault, task_ref)? == Some(actor)
-            } else if let Some(task) = vault.connector_send_task(&task_ref)? {
-                task.actor_ref == actor
-            } else if matches!(task_entity_role(vault, task_ref)?, Some(TaskRole::Task)) {
-                // P1-c (role-only ownership): a role-only TASK carries no stored
-                // owner/author provenance (ONE-1695 role bodies are `{role}`
-                // only, and no header / side-index / ledger records the author
-                // of a raw TASK put). Ownership therefore cannot be established,
-                // so fail CLOSED to the foreign ladder (propose-only) rather
-                // than vacuously trusting the caller — no principal may directly
-                // cancel another's role-only task. Visibility (fix-r1 F6) is
-                // unaffected: role-only Tasks still render in `describe` and
-                // remain cancellable via a proposal. (F6 also narrows this
-                // fallback to `Task`; Goal/Milestone/Habit/HabitCheckin ids are
-                // not TASKS and fall through to `EntityNotFound`.)
-                false
-            } else {
+            let Some(owned) = task_owned_by(vault, actor, task_ref)? else {
                 return Err(MemoryError::from(Error::EntityNotFound));
             };
             let attempts = AttemptQueue::new(vault)

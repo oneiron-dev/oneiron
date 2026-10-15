@@ -350,11 +350,12 @@ impl EntityMetadataCache {
     /// A suppressed private NOTE or pair grant contributes no observable
     /// receipt count, even when a pipeline probe rejected it before the
     /// scoped caller's final admission gate. Nor does a TASK outside the
-    /// worlds or facets of the `credential` the run retrieves under, nor a
-    /// row of the `device_local` worlds a caller off this device reads
-    /// nothing of.
+    /// worlds or facets of the `credential` the run retrieves under, nor any
+    /// other row outside its facets (owner ruling FACET-READ), nor a row of
+    /// the `device_local` worlds a caller off this device reads nothing of.
     pub(super) fn countable_suppressed(
         &self,
+        vault: &crate::Vault,
         store: &StoreRead<'_>,
         txn: &RoTxn<'_>,
         credential: Option<&crate::federation::Scope>,
@@ -379,7 +380,15 @@ impl EntityMetadataCache {
                         store, txn, *id, &raw, credential,
                     )?
                 }
-                _ => false,
+                Some(credential) => !crate::federation::facet_read::facets_admit_in(
+                    vault,
+                    store,
+                    txn,
+                    *id,
+                    &raw,
+                    &credential.facets,
+                )?,
+                None => false,
             };
             count += usize::from(
                 !outside
