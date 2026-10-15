@@ -406,6 +406,8 @@ fn subscribe_owner_notes(row: usize) -> (tempfile::TempDir, SyncServer) {
         },
     )
     .unwrap();
+    // The owner lane serves the vault's bound owner only.
+    crate::test_credentials::bind_owner(&server.vault, SECRET, owner);
     let mut state = ConnState::new(transport::REPLACEMENT_FULL_WINDOW_PROTOCOL_VERSION);
     state.bound_auth = Some(crate::test_credentials::authenticate(
         &server,
