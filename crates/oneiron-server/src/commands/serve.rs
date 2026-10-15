@@ -130,7 +130,7 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
         .start_healer_oversight(crate::server::HEALER_OVERSIGHT_EVERY, || Some(()))
         .await?;
     let linear_handle = crate::linear_host::spawn(sync_server.clone()).await?;
-    let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
+    let lifecycle = sync_server.spawn_lifecycle_scheduler(crate::server::admit_every_pass());
     let mut workers = sync_server.spawn_slot_workers();
     workers.push(sync_server.spawn_board_publisher());
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
@@ -160,8 +160,8 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
     // A receipt write already admitted ends before the process does.
     oversight.stop().await;
     host.on_stop()?;
-    lifecycle_handle.abort();
-    let _ = lifecycle_handle.await;
+    // A housekeeping pass in flight stops at its next sweep or page.
+    lifecycle.stop().await;
     if let Some(handle) = linear_handle {
         handle.abort();
         let _ = handle.await;

@@ -606,7 +606,18 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         );
     }
 
-    let background = sync_server.spawn_serve_background();
+    // Housekeeping passes are admitted like a served write: a vault frozen
+    // for reap sweeps nothing, and a pass in flight keeps it from reading
+    // quiescent.
+    let background = sync_server.spawn_serve_background({
+        let state = Arc::clone(&state);
+        Arc::new(move || {
+            state
+                .admit_http_mutation()
+                .ok()
+                .map(|admission| Box::new(admission) as Box<dyn Send>)
+        })
+    });
     // The managed surface, not the bare one: the reap freeze has to be
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.

@@ -448,6 +448,8 @@ fn pre_move_fixture_coverage_is_explicit() {
         "GATE_MANIFEST_SEEDED_CONFIDENCE",
         "GENUI_VOICE_GRANT_OFFER",
         "GMAIL_MAILBOX_CURSOR",
+        "HOUSEKEEPING_SCHEDULE",
+        "HOUSEKEEPING_WAKE",
         "IDENTITY_DEVICE_PK",
         "IDENTITY_DEVICE_SK",
         "IDENTITY_MACHINE_ID",
