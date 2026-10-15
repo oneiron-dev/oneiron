@@ -982,7 +982,12 @@ Current response:
   "results": [],
   "neighbors": [],
   "stats": { "candidates_considered": 0 },
-  "state": { "kind": "missing_data", "reason": "no_data" },
+  "state": {
+    "kind": "missing_data",
+    "reason": "filter_matched_none",
+    "total_in_scope": 0,
+    "hint": "Try removing filters or widening the world, type, or time scope"
+  },
   "evidence": { "telemetry_persisted": true, "result_ids": [], "scores": [] }
 }
 ```
