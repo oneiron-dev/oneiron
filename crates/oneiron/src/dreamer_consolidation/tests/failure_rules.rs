@@ -115,7 +115,7 @@ impl ConsolidationSink for RevokeBeforePromotion<'_> {
 fn execute_with_sink(
     vault: &Vault,
     admitted: &crate::dreamer_runner::DreamerAdmittedAttempt,
-    backend: &ScriptedBackend,
+    backend: &dyn LlmBackend,
     guard: &crate::BudgetGuard,
     deadline: &WakePassDeadline,
     sink: &mut dyn ConsolidationSink,
@@ -634,5 +634,121 @@ fn retracting_the_authoring_claim_takes_its_rules_out_of_force() -> Result<()> {
     // Host configuration carries no claim and is not revoked by one.
     vault.set_dreamer_failure_rules(author, &rows(subject, turn, true))?;
     assert!(super::super::failure_rules::load(&vault)?.is_some());
+    Ok(())
+}
+
+/// Retracts the rules' authoring claim while the extraction call is out.
+struct RetractDuringCall<'a> {
+    vault: &'a Vault,
+    claim: EntityId,
+    inner: ScriptedBackend,
+}
+
+impl LlmBackend for RetractDuringCall<'_> {
+    fn generate<'a>(
+        &'a self,
+        request: LlmRequest,
+        lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        self.vault
+            .retract_claim(&self.claim, 30)
+            .expect("retract while the call is out");
+        self.inner.generate(request, lease)
+    }
+
+    fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        self.inner.stream(request, lease)
+    }
+}
+
+/// H398 (review r1): the executor judges a reply by the rules in force when
+/// it arrives, not by the copy it bound to the request. A claim retracted
+/// while the call is out leaves the manifest alone to decide the fallback,
+/// and this manifest's default keeps it out of memory.
+#[test]
+fn a_claim_retracted_during_the_call_leaves_the_reply_to_the_manifest() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    super::prior_heads::policy(&vault, vault.dreamer_authority()?.entity_ref(), true)?;
+    set_manifest_failure_policy(&vault, true, true, "holder_override_capped_at_vault")?;
+    let store = DreamerRunnerStore::new(&vault);
+    let (admitted, turns, _) =
+        admitted_attempt_fixture(&vault, &store, 0x63, &[("user", "my name is Oleksii")])?;
+    let subject = EntityId::from_bytes([0x65; 16])?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    let resident = EntityId::from_bytes([0x69; 16])?;
+    let definition = crate::agent_def::AgentDefinition::new(
+        "oneiron.agent.resident",
+        "Resident rule author",
+        "1",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        None,
+        crate::agent_def::AgentScope::All,
+        crate::agent_def::AgentCeiling::Auto,
+        None,
+        ClaimApprovalStatus::Approved,
+        crate::ClaimLifecycleStatus::Active,
+        ClaimSource::UserStated,
+        1.0,
+        false,
+        true,
+        Value::Map(vec![("definedVia".into(), "test".into())]),
+        None,
+        true,
+        None,
+    );
+    vault.put_agent_definition(&resident, &definition, occurred(1), 1)?;
+    let author = WriteActor::new(resident, EdgeActorClass::Agent);
+    let authored: serde_json::Value =
+        serde_json::from_slice(&rows(subject, turns[0], true)).expect("valid authored rows");
+    let claim_id = EntityId::from_bytes([0x6a; 16])?;
+    let call = SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+        claim_id,
+        ClaimCandidate::new(
+            crate::dreamer_consolidation::DREAMER_FAILURE_RULES_PREDICATE,
+            ClaimSubject::Entity(resident),
+            super::super::value_projection::json_to_rmpv(&authored),
+            1.0,
+        ),
+        occurred(21),
+        21,
+    ));
+    HostSelfDispatcher::new(&vault, author, "resident-chat-rule")?.dispatch(call)?;
+    assert!(super::super::failure_rules::load(&vault)?.is_some());
+
+    let backend = RetractDuringCall {
+        vault: &vault,
+        claim: claim_id,
+        inner: ScriptedBackend::new(vec![Err(crate::FatalLlmError::Auth.into())]),
+    };
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut sink = CapturingSink::default();
+    let execution = execute_with_sink(&vault, &admitted, &backend, &guard, &deadline, &mut sink)?;
+
+    assert!(
+        super::super::failure_rules::load(&vault)?.is_none(),
+        "the claim was retracted while the call was out"
+    );
+    assert!(matches!(
+        execution,
+        DreamerAttemptExecution::Completed { completed_units: 0 }
+    ));
+    assert!(
+        sink.accepted.is_empty(),
+        "the withdrawn rule admits nothing"
+    );
+    assert!(
+        vault.get_raw(&EntityId::from_bytes([0x68; 16])?)?.is_none(),
+        "no fallback PERSON"
+    );
+    assert_eq!(backend.inner.calls.load(Ordering::SeqCst), 1);
     Ok(())
 }

@@ -1,6 +1,7 @@
 //! Terminal-pact per-world stale stamping (FED-04).
 
 use std::collections::BTreeMap;
+use std::sync::atomic::Ordering;
 
 use crate::authority::FederationPactStatus;
 use crate::entity_id::{EntityId, ForeignWorldId, bytes_to_hex_lower, is_foreign_world_id_range};
@@ -236,46 +237,64 @@ pub(super) fn register_foreign_world_for_pact(
 }
 
 thread_local! {
-    /// Set on the writing thread when a write stages a terminal federation
-    /// lifecycle row (H213). Write closures run on their caller's thread, so
-    /// the transaction's owner reads it back and sweeps once it commits.
+    /// Set on the writing thread when a write stages an AUTHORITY_LOG row
+    /// (H213). Write closures run on their caller's thread, so the
+    /// transaction's owner reads it back and sweeps once it commits.
     static SWEEP_DUE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Notes that the current thread's transaction staged a terminal federation
-/// lifecycle row. Every AUTHORITY_LOG put reaches this, local or replicated.
-pub(crate) fn note_terminal_federation_row() {
+/// Notes that the current thread's transaction staged an AUTHORITY_LOG row.
+/// Every put notes one, local or replicated, terminal-shaped or not: a late
+/// ancestor can make a terminal row already stored take effect in the fold.
+pub(crate) fn note_authority_row() {
     SWEEP_DUE.with(|due| due.set(true));
 }
 
-/// One transaction owner's watch for a terminal federation row (H213): begun
-/// before the transaction, finished after its commit. Dropping it unfinished
-/// (a discarded transaction) forgets the note. Watches nest: an inner owner on
-/// the same thread (another vault's writer) hands the outer note back intact.
-pub(crate) struct StaleSweepWatch {
+/// One transaction owner's watch for an AUTHORITY_LOG row (H213): begun
+/// before the transaction, finished after its commit. Watches nest: an inner
+/// owner on the same thread (another vault's writer) hands the outer note back
+/// intact.
+pub(crate) struct StaleSweepWatch<'v> {
+    vault: &'v Vault,
     outer: bool,
 }
 
-impl StaleSweepWatch {
-    pub(crate) fn begin() -> Self {
+impl<'v> StaleSweepWatch<'v> {
+    pub(crate) fn begin(vault: &'v Vault) -> Self {
         Self {
+            vault,
             outer: SWEEP_DUE.with(|due| due.replace(false)),
         }
     }
 
-    /// Runs the stale-stamp sweep when the committed transaction staged a
-    /// terminal federation row, whichever door stored it.
-    pub(crate) fn finish(self, vault: &Vault) -> Result<()> {
-        if SWEEP_DUE.with(|due| due.replace(self.outer)) {
-            apply_federation_stale_stamps(vault)?;
+    /// Runs the stale-stamp sweep when the committed transaction staged an
+    /// authority row, whichever door stored it, or when this vault still owes
+    /// one. A failed sweep leaves it owed, so the next commit by any writer
+    /// tries again.
+    pub(crate) fn finish(self) -> Result<()> {
+        let noted = SWEEP_DUE.with(|due| due.replace(false));
+        let owed = &self.vault.store.federation_stale_sweep_owed;
+        if (owed.swap(false, Ordering::AcqRel) || noted)
+            && let Err(error) = apply_federation_stale_stamps(self.vault)
+        {
+            owed.store(true, Ordering::Release);
+            return Err(error);
         }
         Ok(())
     }
 }
 
-impl Drop for StaleSweepWatch {
+impl Drop for StaleSweepWatch<'_> {
+    /// A watch dropped unfinished with a note pending (a discarded
+    /// transaction, or an error after the commit and before its sweep) leaves
+    /// the sweep owed. A spare sweep stamps only what the fold justifies.
     fn drop(&mut self) {
-        SWEEP_DUE.with(|due| due.set(self.outer));
+        if SWEEP_DUE.with(|due| due.replace(self.outer)) {
+            self.vault
+                .store
+                .federation_stale_sweep_owed
+                .store(true, Ordering::Release);
+        }
     }
 }
 
@@ -289,6 +308,20 @@ impl Drop for StaleSweepWatch {
 /// how many NEW stamps were written, so a second sweep over unchanged state
 /// returns 0.
 pub fn apply_federation_stale_stamps(vault: &Vault) -> Result<usize> {
+    // No registered world, nothing to stamp: the fold is skipped. Every
+    // authority commit sweeps (H213), so without registrations a sweep costs
+    // one prefix probe.
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        if FEDERATION_WORLD
+            .iter_raw_from(&vault.store, &rtxn, &[])?
+            .next()
+            .transpose()?
+            .is_none()
+        {
+            return Ok(0);
+        }
+    }
     let fold = vault.authority_fold()?;
     let terminal: Vec<([u8; 32], FederationStaleReason, u64)> = fold
         .federation_pacts
