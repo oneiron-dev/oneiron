@@ -238,7 +238,7 @@ impl OffRecordSession<'_> {
     /// the effect policy is supposed to have refused first.
     ///
     /// The write runs the returned landing first in its own transaction:
-    /// `route` must still stand there, and a room on record takes writes only
+    /// `route` must still stand there, and a stretch on record takes writes only
     /// while the saver `route` lands under holds.
     fn base_write_vault<'r>(
         &self,

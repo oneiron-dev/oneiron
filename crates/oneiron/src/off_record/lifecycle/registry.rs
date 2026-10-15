@@ -63,8 +63,8 @@ pub(super) struct OffRecordSessionEntryState {
     /// said in the stretch, or edited since, stays out. Empty for a 1:1,
     /// which has no copy to take.
     pub(super) kept_messages: BTreeMap<EntityId, KeptMessage>,
-    /// Who put a room's stretch on record, while it is; every landing in
-    /// base checks them again. `None` off record and in a 1:1.
+    /// Who put the stretch on record, while it is; every landing in base
+    /// checks them again. `None` off record.
     pub(super) saver: Option<super::on_record::OnRecordSaver>,
 }
 

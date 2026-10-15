@@ -289,6 +289,20 @@ pub(crate) fn sign_machine_candidate(
     envelope
 }
 
+/// A native host's proof for the vault's embedded owner, who is ensured
+/// first: what an owner-bound door (an off-record promote or flip) takes.
+pub(crate) fn embedded_owner_proof(vault: &Vault) -> crate::consent::AuthenticatedOwner {
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner proof")
+}
+
 /// Binds `owner` as the rooted test vault's human owner, so owner verbs keep
 /// working after a fixture roots its vault.
 pub(crate) fn bind_test_owner(vault: &Vault, owner: EntityId) {

@@ -1253,6 +1253,7 @@ fn context_pack_telemetry_finalization_failure_returns_no_run_id() -> Result<()>
 #[test]
 fn a_rooms_context_pack_fails_when_its_finalize_cannot_land() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
 
     let id = EntityId::from_bytes_unchecked([0x7C; 16]);
     put_text_entity(
@@ -1279,7 +1280,7 @@ fn a_rooms_context_pack_fails_when_its_finalize_cannot_land() -> Result<()> {
         .telemetry_run_id
         .expect("the room's provisional registration landed");
 
-    session.flip_on_record()?;
+    session.flip_on_record_as(&proof)?;
 
     let surfaced_result_ids: Vec<[u8; 16]> = run
         .pack

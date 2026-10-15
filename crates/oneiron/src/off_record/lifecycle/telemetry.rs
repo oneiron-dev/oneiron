@@ -21,7 +21,7 @@ use super::on_record::Landing;
 /// holds no route to check — so a recall admitted while the room was ON RECORD
 /// and flipped OFF RECORD mid-assembly published the room's `result_ids`
 /// durably to base, past the K10 boundary. Both targets need the route,
-/// because both of them WRITE. In a room on record the base arm also checks
+/// because both of them WRITE. On record, the base arm also checks
 /// the saver, as every other landing does: the route and the saver go
 /// together as one [`Landing`].
 pub(crate) struct SessionRetrievalTelemetry<'session> {
@@ -150,7 +150,7 @@ impl SessionRetrievalTelemetry<'_> {
     /// The base telemetry door opens its own transaction and refuses to nest,
     /// so `write` hands it the [`Landing`] to run first inside that
     /// transaction, as `witness_with_route` does: the route still stands and,
-    /// in a room on record, the saver still holds, or nothing is written.
+    /// on record, the saver still holds, or nothing is written.
     /// The route is also checked on both sides: the pre-check refuses a room
     /// that flipped before the write, and a row that landed under a route the
     /// room replaced after its transaction checked is withdrawn rather than

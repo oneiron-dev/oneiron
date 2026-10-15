@@ -2039,6 +2039,7 @@ fn ordinary_thought_and_public_witness_cannot_forge_blocked_receipts() -> Result
 #[test]
 fn code_run_claim_doors_preserve_owned_keyed_revisions() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let actor = seed_first_party_actor(&vault);
     let owner = seed_person(&vault, 0xB7);
     // Admit the owner's setup through the real gate before testing another actor.
@@ -2063,7 +2064,7 @@ fn code_run_claim_doors_preserve_owned_keyed_revisions() -> Result<()> {
         "keyed-write-guard",
         crate::off_record::OffRecordBackendClass::Local,
     )?;
-    session.flip_on_record()?;
+    session.flip_on_record_as(&proof)?;
     for session_bound in [false, true] {
         let dispatcher = if session_bound {
             HostSelfDispatcher::for_off_record_session(

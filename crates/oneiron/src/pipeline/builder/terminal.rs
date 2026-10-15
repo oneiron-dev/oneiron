@@ -84,7 +84,7 @@ impl PipelineBuilder<'_> {
         // keyspace, so redirecting is not an option and skipping is the rule.
         // Absence of an overlay is not permission to persist: anonymous
         // routes discard all writes. Only an explicit Base route enqueues,
-        // and in a room on record only while its saver holds.
+        // and on record only while its saver holds.
         // A run that read a room staging anything of its own may have chosen
         // its base rows by the room's postings or vectors, so base keeps no
         // job of it, as it keeps no run row (`run_for_pack`).

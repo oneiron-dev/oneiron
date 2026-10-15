@@ -37,7 +37,7 @@ impl HostSelfDispatcher<'_> {
     ///
     /// A run bound to an off-record session forwards no verb, read or write:
     /// the door runs on the canonical vault, outside the session's route and,
-    /// in a room on record, its saver, so none of the session's checks would
+    /// on record, its saver, so none of the session's checks would
     /// hold in the transactions it opens.
     pub(super) fn dispatch_agent_verb(
         &self,

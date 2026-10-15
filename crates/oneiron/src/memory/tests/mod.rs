@@ -1106,7 +1106,12 @@ fn witness_and_session_witness_run_one_program() {
 
     // The session link.
     assert_eq!(room_vault.get_raw(&turn_id).expect("base get"), None);
-    session.promote_turn(&turn_id).expect("promote the turn");
+    // The vault's owner promotes the speaker's turn (H203: only the owner's
+    // proof promotes); the owner is a row both vaults hold from their open.
+    let proof = crate::test_util::embedded_owner_proof(&room_vault);
+    session
+        .promote_turn_as(&proof, &turn_id)
+        .expect("promote the turn");
     assert_eq!(
         room_vault
             .off_record_promote_receipt(&turn_id)

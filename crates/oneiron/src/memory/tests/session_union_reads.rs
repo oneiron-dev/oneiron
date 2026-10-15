@@ -124,6 +124,7 @@ fn a_context_pack_bound_to_the_room_returns_the_message_only_the_room_holds() {
 #[test]
 fn a_walk_in_the_room_reaches_its_rows_past_a_warm_base_cache_and_caches_nothing() {
     let (_dir, vault) = telemetry_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let (session, actor) = session_witness_fixture(&vault, "sess-union-ppr", 0x63);
     let facade = facade_for(&vault, actor);
     facade
@@ -175,7 +176,7 @@ fn a_walk_in_the_room_reaches_its_rows_past_a_warm_base_cache_and_caches_nothing
     assert_eq!(ppr_cache_rows(&vault), warm_rows, "and caches nothing");
     assert_eq!(base_runs(&vault), runs, "its run stays in the room");
 
-    session.flip_on_record().expect("flip on record");
+    session.flip_on_record_as(&proof).expect("flip on record");
     {
         let route = session.write_route().expect("route");
         let door = session.retrieval_telemetry(&route).expect("door");

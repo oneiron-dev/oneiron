@@ -159,7 +159,7 @@ impl Vault {
     }
 
     /// `landing` runs first in the write transaction; its refusal writes
-    /// nothing. (An off-record room on record checks its saver there.)
+    /// nothing. (An off-record stretch on record checks its saver there.)
     pub(crate) fn put_claim_candidate_without_lexical_query_reconcile(
         &self,
         id: &EntityId,

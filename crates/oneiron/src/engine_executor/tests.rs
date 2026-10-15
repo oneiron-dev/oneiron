@@ -1239,7 +1239,9 @@ const privateStep = true;
         0
     );
 
-    session.flip_on_record().expect("flip room on record");
+    session
+        .flip_on_record_as(&crate::test_util::embedded_owner_proof(&vault))
+        .expect("flip room on record");
     let base_write = GatedActorWrite::for_off_record_session(
         &session,
         WriteActor::new(actor, EdgeActorClass::Agent),
@@ -1642,7 +1644,9 @@ fn session_speech_run(
     let session = sessions.bind(session_ref).expect("bind session");
     // On record, so the bubbles land in base where an ordinary reader sees
     // them. The route, shell and door are the session's either way.
-    session.flip_on_record().expect("flip on record");
+    session
+        .flip_on_record_as(&crate::test_util::embedded_owner_proof(vault))
+        .expect("flip on record");
 
     let actor = seed_person(vault, run_seed);
     let gated_write = GatedActorWrite::for_off_record_session(
@@ -1686,7 +1690,9 @@ fn trailing_implicit_speech_is_checkpoint_bound_across_conflict_and_retry() {
         .expect("enter session");
     let sessions = vault.off_record_session_vault();
     let session = sessions.bind("sess-speech-replay").expect("bind session");
-    session.flip_on_record().expect("flip on record");
+    session
+        .flip_on_record_as(&crate::test_util::embedded_owner_proof(&vault))
+        .expect("flip on record");
     let actor = seed_person(&vault, 0xD6);
     let gated_write = GatedActorWrite::for_off_record_session(
         &session,
@@ -1811,7 +1817,9 @@ fn retry_terminal_speech_after_session_restart(
     let session = sessions
         .bind("sess-implicit-recovery")
         .expect("rebind session after restart");
-    session.flip_on_record().expect("flip rebound session");
+    session
+        .flip_on_record_as(&crate::test_util::embedded_owner_proof(vault))
+        .expect("flip rebound session");
     let gated_write = GatedActorWrite::for_off_record_session(
         &session,
         WriteActor::new(actor, EdgeActorClass::Agent),
@@ -1863,7 +1871,9 @@ fn terminal_retry_recovers_post_commit_implicit_speech_without_duplicates() {
     let session = sessions
         .bind("sess-implicit-recovery")
         .expect("bind session");
-    session.flip_on_record().expect("flip on record");
+    session
+        .flip_on_record_as(&crate::test_util::embedded_owner_proof(&vault))
+        .expect("flip on record");
     let actor = seed_person(&vault, 0xDB);
     let gated_write = GatedActorWrite::for_off_record_session(
         &session,
@@ -1947,7 +1957,9 @@ fn one_1686_mixed_reply_executes_code_speaks_prose_and_discards_forged_console()
         .expect("enter session");
     let sessions = vault.off_record_session_vault();
     let session = sessions.bind("sess-mixed-wire").expect("bind session");
-    session.flip_on_record().expect("flip on record");
+    session
+        .flip_on_record_as(&crate::test_util::embedded_owner_proof(&vault))
+        .expect("flip on record");
 
     let actor = seed_person(&vault, 0xD8);
     let gated_write = GatedActorWrite::for_off_record_session(
@@ -2131,7 +2143,9 @@ fn explicit_speech_survives_a_failed_replay_append_without_a_second_bubble() {
         .expect("enter session");
     let sessions = vault.off_record_session_vault();
     let session = sessions.bind("sess-explicit-replay").expect("bind session");
-    session.flip_on_record().expect("flip on record");
+    session
+        .flip_on_record_as(&crate::test_util::embedded_owner_proof(&vault))
+        .expect("flip on record");
     let actor = seed_person(&vault, 0xE8);
     let gated_write = GatedActorWrite::for_off_record_session(
         &session,
@@ -2267,7 +2281,9 @@ fn witness_ceiling_refusal_stays_typed_through_the_executor_seam() {
         .expect("enter session");
     let sessions = vault.off_record_session_vault();
     let session = sessions.bind("sess-typed-denial").expect("bind session");
-    session.flip_on_record().expect("flip on record");
+    session
+        .flip_on_record_as(&crate::test_util::embedded_owner_proof(&vault))
+        .expect("flip on record");
     let actor = seed_person(&vault, 0xE4);
     // The ceiling row must NAME this writer. Witness MESSAGE ingress is
     // transcript RECORDING, so a class-wide row deliberately does not clamp it
@@ -2408,7 +2424,9 @@ fn prompt_drift_still_recovers_a_terminal_checkpointed_bubble() {
             .enter_off_record_session("sess-prompt-drift", OffRecordBackendClass::Local)
             .expect("enter session");
         let session = sessions.bind("sess-prompt-drift").expect("bind session");
-        session.flip_on_record().expect("flip on record");
+        session
+            .flip_on_record_as(&crate::test_util::embedded_owner_proof(&vault))
+            .expect("flip on record");
         let actor = seed_person(&vault, 0xE7);
         let gated_write = GatedActorWrite::for_off_record_session(
             &session,
@@ -2450,7 +2468,9 @@ fn prompt_drift_still_recovers_a_terminal_checkpointed_bubble() {
         .enter_off_record_session("sess-prompt-drift", OffRecordBackendClass::Local)
         .expect("re-enter session");
     let session = sessions.bind("sess-prompt-drift").expect("rebind session");
-    session.flip_on_record().expect("flip rebound session");
+    session
+        .flip_on_record_as(&crate::test_util::embedded_owner_proof(&vault))
+        .expect("flip rebound session");
     let gated_write = GatedActorWrite::for_off_record_session(
         &session,
         WriteActor::new(actor, EdgeActorClass::Agent),

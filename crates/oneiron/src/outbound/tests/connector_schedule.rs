@@ -854,10 +854,11 @@ fn schedule_denial_is_not_enqueued_and_does_not_block_allowed_task() -> crate::R
 fn off_record_schedule_is_rejected_before_task_or_attempt_persistence() -> crate::Result<()> {
     use crate::attempt_queue::AttemptQueue;
     use crate::memory::{BRIDGE_OUTBOUND_ATTEMPT_KIND, MEMORY_CODE_FORBIDDEN};
-    use crate::off_record::{OffRecordBackendClass, OffRecordMode};
+    use crate::off_record::OffRecordBackendClass;
     use crate::receipt::{ReceiptKind, ReceiptQuery};
 
     let (_tmp, vault) = temp_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let actor = entity(0x38);
     put_connector_task_actor(&vault, actor, 40)?;
     put_policy_manifest_bytes(
@@ -885,7 +886,10 @@ fn off_record_schedule_is_rejected_before_task_or_attempt_persistence() -> crate
         0
     );
 
-    vault.set_off_record_session_mode(session_ref, OffRecordMode::OnRecord)?;
+    vault
+        .off_record_session_vault()
+        .bind(session_ref)?
+        .flip_on_record_as(&proof)?;
     let mut executor = RecordingExecutor::default();
     assert_eq!(
         vault

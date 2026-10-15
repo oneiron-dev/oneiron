@@ -103,6 +103,7 @@ fn on_record_a_recall_over_the_rooms_turn_keeps_no_run_in_base() {
         ..VaultConfig::default()
     };
     let vault = crate::Vault::open(dir.path(), config).expect("open vault");
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let (session, actor) = session_witness_fixture(&vault, "sess-union-recall-runs", 0x65);
     let facade = facade_for(&vault, actor);
     facade
@@ -121,7 +122,7 @@ fn on_record_a_recall_over_the_rooms_turn_keeps_no_run_in_base() {
             None,
         )
         .expect("session witness");
-    session.flip_on_record().expect("flip on record");
+    session.flip_on_record_as(&proof).expect("flip on record");
     let base_runs = || vault.retrieval_runs(64).expect("base runs").len();
     let before = base_runs();
 

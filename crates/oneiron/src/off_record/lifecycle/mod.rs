@@ -7,15 +7,16 @@
 //! * **Enter** — [`Vault::enter_off_record_session`] creates an in-process
 //!   session record and the room's overlay. The engine exposes mode and
 //!   backend-class enums; the host owns all user-facing marker composition.
-//! * **Mode flip** — [`Vault::set_off_record_session_mode`] seals or rearms
-//!   the overlay write path. Off record, writes stage in the overlay; on
-//!   record, they are ORDINARY base writes under the session's continuation
-//!   shell. A flip moves only where NEW writes land; rows already in the room
-//!   stay in the room.
-//! * **Promote** — [`OffRecordSession::promote_turn`] replays exactly ONE
-//!   witnessed turn's typed-journal closure into base on explicit user
-//!   consent, in one transaction, minting a durable
-//!   [`OffRecordPromoteReceipt`] that survives close (ARCH-0052 D4).
+//! * **Mode flip** — [`OffRecordSession::flip_on_record_as`] seals the
+//!   overlay write path on the owner's proof, and
+//!   [`Vault::set_off_record_session_mode`] rearms it. Off record, writes
+//!   stage in the overlay; on record, they are ORDINARY base writes under the
+//!   session's continuation shell. A flip moves only where NEW writes land;
+//!   rows already in the room stay in the room.
+//! * **Promote** — [`OffRecordSession::promote_turn_as`] replays exactly ONE
+//!   witnessed turn's typed-journal closure into base on the owner's proof,
+//!   in one transaction, minting a durable [`OffRecordPromoteReceipt`] that
+//!   survives close (ARCH-0052 D4).
 //! * **Close** — [`Vault::close_off_record_session`] drains the overlay's
 //!   leases, drops the overlay, and consumes the session-local receipt log.
 //!   The transcript evaporates because the rows only ever existed in the

@@ -617,3 +617,39 @@ fn a_removed_agents_run_hears_nothing_of_the_saver() {
         "{refused:?}"
     );
 }
+
+/// H203 (Sol and Astra R2 F3): a run bound while the room was on record
+/// kept its route after the stretch closed through another handle, and its
+/// claim still landed in the owner's vault. Close ends the saving: the run's
+/// later write is refused and nothing of it lands.
+#[test]
+fn a_run_writes_nothing_once_its_stretch_closed() {
+    let (_dir, vault) = open_test_vault();
+    let (room, session) = room_on_record(&vault);
+    let run = bind_run(&session, &room);
+    vault
+        .off_record_session_vault()
+        .bind_in_room("deck", room.id, room.owner)
+        .expect("a second handle")
+        .close()
+        .expect("close the stretch");
+
+    let id = EntityId::now();
+    let refused = run
+        .dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+            id,
+            said_in_the_room(&room),
+            range(60),
+            60,
+        )))
+        .err();
+    assert!(refused.is_some(), "a closed stretch took a run's claim");
+    assert!(vault.get_raw(&id).expect("read the claim").is_none());
+    let decided = vault
+        .gate_decisions(1_000)
+        .expect("read the gate decisions")
+        .into_iter()
+        .filter(|decision| decision.claim_id == Some(*id.as_bytes()))
+        .count();
+    assert_eq!(decided, 0, "a gate decision landed after the close");
+}
