@@ -332,12 +332,19 @@ fn a_stale_base_route_session_witness_commits_no_base_rows() {
 /// The whole race runs in a DETACHED driver thread and the test body waits on a
 /// channel. That is deliberate: a deadlock inside `thread::scope` would hang
 /// the suite (the implicit join blocks even while unwinding), so the watchdog
-/// has to sit outside the scope. A timeout here IS the deadlock.
+/// has to sit outside the scope.
+///
+/// The watchdog counts calls, never time. Every witness, search and flip that
+/// returns, landed or refused, is progress; a deadlock is the race standing
+/// still. A loaded host, or a test process shared with heavy neighbours,
+/// slows every call to seconds but each still returns, so the test fails
+/// only once no call has returned for `STALL`. That stall IS the deadlock.
 #[test]
 fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
     const ROUNDS: usize = 40;
+    const STALL: std::time::Duration = std::time::Duration::from_secs(90);
 
     type Outcome = (
         usize,
@@ -347,7 +354,12 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
         bool,
     );
     let (done_tx, done_rx) = std::sync::mpsc::channel::<Outcome>();
+    let progress = std::sync::Arc::new(AtomicUsize::new(0));
+    let calls = std::sync::Arc::clone(&progress);
     std::thread::spawn(move || {
+        let returned = || {
+            calls.fetch_add(1, AtomicOrdering::Relaxed);
+        };
         let dir = tempfile::tempdir().expect("tempdir");
         let config = VaultConfig {
             retrieval_telemetry_capture: true,
@@ -361,7 +373,7 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
             .overlay_conversation_shell()
             .expect("allocate the room shell up front");
         let witness = |round: usize| {
-            facade
+            let landed = facade
                 .witness_into_session(
                     &session,
                     &WitnessTurn {
@@ -372,12 +384,16 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
                     },
                     None,
                 )
-                .is_ok()
+                .is_ok();
+            returned();
+            landed
         };
         let search = || {
-            session
+            let result = session
                 .search_text("lockorderneedle", 4)
-                .map_err(|error| format!("{:?}", error.kind()))
+                .map_err(|error| format!("{:?}", error.kind()));
+            returned();
+            result
         };
 
         let witnessed = AtomicUsize::new(0);
@@ -418,9 +434,10 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
             });
             scope.spawn(|| {
                 for _ in 0..ROUNDS {
-                    if session.flip_on_record_as(&proof).is_ok()
-                        && session.flip_off_record().is_ok()
-                    {
+                    let flipped = session.flip_on_record_as(&proof).is_ok()
+                        && session.flip_off_record().is_ok();
+                    returned();
+                    if flipped {
                         flips.fetch_add(1, AtomicOrdering::Relaxed);
                     }
                 }
@@ -441,17 +458,26 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
             .ok();
     });
 
-    let (witnessed, searched, flips, search_refusals, shell_leaked) = match done_rx
-        .recv_timeout(std::time::Duration::from_secs(90))
-    {
-        Ok(outcome) => outcome,
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            panic!(
-                "concurrent room witness + telemetry deadlocked (segment permit taken before the base writer)"
-            )
-        }
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            panic!("the concurrency driver thread panicked")
+    let mut seen = progress.load(AtomicOrdering::Relaxed);
+    let mut still_since = std::time::Instant::now();
+    let (witnessed, searched, flips, search_refusals, shell_leaked) = loop {
+        match done_rx.recv_timeout(std::time::Duration::from_secs(1)) {
+            Ok(outcome) => break outcome,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                let now = progress.load(AtomicOrdering::Relaxed);
+                if now != seen {
+                    seen = now;
+                    still_since = std::time::Instant::now();
+                } else if still_since.elapsed() >= STALL {
+                    panic!(
+                        "concurrent room witness + telemetry deadlocked: no call returned for \
+                         {STALL:?} after {seen} calls (segment permit taken before the base writer)"
+                    )
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("the concurrency driver thread panicked")
+            }
         }
     };
     assert!(
