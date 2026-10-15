@@ -68,9 +68,12 @@ fn version(vault: &crate::Vault, artifact: &EntityId, version: u64) -> Option<Ve
         .expect("read version")
 }
 
-/// A shared vault whose embedded owner and one member both write.
+/// A shared vault whose embedded owner and one member both write. Membership resolves its grant
+/// scopes from the default manifest, so the fixture clears that manifest only once the members
+/// exist.
 fn shared_vault() -> (tempfile::TempDir, crate::Vault, EntityId, EntityId) {
-    let (dir, vault) = blob_vault();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
     let proof = crate::test_util::embedded_owner_proof(&vault);
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let member = put_person(&vault, 0xE2);
@@ -92,6 +95,7 @@ fn shared_vault() -> (tempfile::TempDir, crate::Vault, EntityId, EntityId) {
             1,
         )
         .expect("shared vault");
+    crate::test_util::clear_default_policy_manifest_for_legacy_tests(&vault);
     (dir, vault, owner, member)
 }
 
