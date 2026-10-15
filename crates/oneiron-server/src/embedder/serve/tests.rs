@@ -442,6 +442,16 @@ fn embed(addr: SocketAddr, input: &serde_json::Value) -> u16 {
     status(&mut stream).unwrap_or_default()
 }
 
+/// Joins every caller, counting those not answered 200. All of them were
+/// started before any is joined, so they wait at once.
+fn unanswered(calls: Vec<std::thread::JoinHandle<u16>>) -> usize {
+    calls
+        .into_iter()
+        .map(|call| call.join().ok())
+        .filter(|status| *status != Some(200))
+        .count()
+}
+
 /// Rule five at the embedder's request row: `callers` requests past a row
 /// of one all answer, and the row asks.
 pub(crate) fn cross_the_requests(callers: usize) -> crate::admission::Crossing {
@@ -467,11 +477,7 @@ pub(crate) fn cross_the_requests(callers: usize) -> crate::admission::Crossing {
             })
         })
         .collect();
-    let refused = calls
-        .into_iter()
-        .map(|call| call.join().ok())
-        .filter(|status| *status != Some(200))
-        .count();
+    let refused = unanswered(calls);
     crate::admission::Crossing {
         refused,
         asked: served
@@ -511,11 +517,7 @@ pub(crate) fn cross_the_bodies(callers: usize) -> crate::admission::Crossing {
     });
     assert!(queued, "every caller reached the budget");
     drop(holders);
-    let refused = calls
-        .into_iter()
-        .map(|call| call.join().ok())
-        .filter(|status| *status != Some(200))
-        .count();
+    let refused = unanswered(calls);
     crate::admission::Crossing {
         refused,
         asked: served
@@ -543,11 +545,7 @@ pub(crate) fn cross_the_answers(callers: usize) -> crate::admission::Crossing {
     let calls: Vec<_> = (0..callers)
         .map(|n| std::thread::spawn(move || embed(addr, &serde_json::json!([format!("text {n}")]))))
         .collect();
-    let refused = calls
-        .into_iter()
-        .map(|call| call.join().ok())
-        .filter(|status| *status != Some(200))
-        .count();
+    let refused = unanswered(calls);
     crate::admission::Crossing {
         refused,
         asked: served
