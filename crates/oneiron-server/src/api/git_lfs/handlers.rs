@@ -3,7 +3,7 @@
 use super::gate::{LfsAccess, authorize, require_lfs_write};
 use super::support::{
     LFS_BATCH_NOT_FOUND, LFS_BATCH_UNPROCESSABLE, LFS_OBJECT_MEDIA_TYPE, declared_size, href_base,
-    lfs_disk_floor, lfs_engine_error, lfs_json_response, lfs_waited_out, now_secs,
+    lfs_disk_floor, lfs_engine_error, lfs_json_response, lfs_waited_out, now_secs, read_whole,
 };
 use super::wire::{
     LfsAction, LfsBatchObject, LfsBatchOperation, LfsBatchRequest, LfsBatchResponse,
@@ -274,14 +274,23 @@ pub(crate) async fn lfs_download(
     Ok(response)
 }
 
+/// A verify body is one `{oid, size}`; this is room for it many times over.
+const VERIFY_BODY_BYTES: usize = 64 * 1024;
+
 /// `POST /git/{repo}/info/lfs/objects/{oid}/verify` — the stored-bytes verdict.
 pub(crate) async fn lfs_verify(
     State(server): State<Arc<SyncServer>>,
     Path((_repo, route_oid)): Path<(String, String)>,
     headers: HeaderMap,
-    body: Bytes,
+    body: Body,
 ) -> Result<Response, EnvelopedApiError> {
     let auth = authorize(&headers, &server, LfsAccess::Write).map_err(EnvelopedApiError::from)?;
+    // It waits on its headers and reads its body at its turn, so a request
+    // in line holds none of it.
+    let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()).await else {
+        return Ok(lfs_waited_out());
+    };
+    let body = read_whole(body, VERIFY_BODY_BYTES).await?;
     let request: LfsVerifyRequest = serde_json::from_slice(&body)
         .map_err(|_| ApiError::bad_request("lfs verify body is not {oid, size}", None))?;
     let oid = LfsOid::parse_hex(&request.oid)
@@ -295,9 +304,6 @@ pub(crate) async fn lfs_verify(
         )
         .into());
     }
-    let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()).await else {
-        return Ok(lfs_waited_out());
-    };
     let vault = Arc::clone(&server.vault);
     let size = request.size;
     let ok = crate::api::transfer::spawn_worker(move || {

@@ -144,6 +144,9 @@ struct Asked {
     window: u64,
     question: WireLimitQuestion,
     kept: bool,
+    /// Whether what was kept for the window before this server asked (by a
+    /// run before this one) is counted in `question` yet.
+    restored: bool,
 }
 impl LimitQuestions {
     /// `row`, set to `bound`, saw `observed`. Nothing waits on the answer.
@@ -176,6 +179,7 @@ impl LimitQuestions {
                 crossings: 1,
             },
             kept: false,
+            restored: false,
         });
         drop(asked);
         tracing::warn!(
@@ -193,17 +197,42 @@ impl LimitQuestions {
             .and_then(VecDeque::back)
             .map(|open| open.question.clone())
     }
-    /// The questions not kept yet, each with its row and window.
-    fn unkept(&self) -> Vec<(LimitRow, u64, WireLimitQuestion)> {
+    /// The questions not kept yet: each one's row and window, and whether
+    /// what was kept for it before is counted in yet.
+    fn unkept(&self) -> Vec<(LimitRow, u64, bool)> {
         lock(&self.asked)
             .iter()
             .flat_map(|(row, windows)| {
                 windows
                     .iter()
                     .filter(|open| !open.kept)
-                    .map(|open| (*row, open.window, open.question.clone()))
+                    .map(|open| (*row, open.window, open.restored))
             })
             .collect()
+    }
+    /// Counts `earlier`, what was kept for `row`'s `window` before this
+    /// server asked, in its question, once; the question as it now stands.
+    fn restore(
+        &self,
+        row: LimitRow,
+        window: u64,
+        earlier: Option<WireLimitQuestion>,
+    ) -> Option<WireLimitQuestion> {
+        let mut asked = lock(&self.asked);
+        let open = asked
+            .get_mut(&row)?
+            .iter_mut()
+            .find(|open| open.window == window)?;
+        if !open.restored {
+            open.restored = true;
+            if let Some(earlier) = earlier {
+                let question = &mut open.question;
+                question.crossings = question.crossings.saturating_add(earlier.crossings);
+                question.observed = question.observed.max(earlier.observed);
+                question.raised_at = question.raised_at.min(earlier.raised_at);
+            }
+        }
+        Some(open.question.clone())
     }
     /// Marks `question` kept, unless a crossing since changed it, and lets
     /// go of every kept window but the latest.
@@ -239,6 +268,10 @@ struct Active {
 pub struct WireTelemetry {
     vault: Arc<Vault>,
     active: Mutex<Active>,
+    /// Held while limit questions are written, which every request's
+    /// `record` never waits for: it takes `active` only. The reap barrier
+    /// takes it to wait for a write in progress.
+    saving: Mutex<()>,
     flusher_started: std::sync::atomic::AtomicBool,
     limits: Arc<LimitQuestions>,
 }
@@ -253,6 +286,7 @@ impl WireTelemetry {
         Self {
             vault,
             active: Mutex::new(Active::default()),
+            saving: Mutex::new(()),
             flusher_started: std::sync::atomic::AtomicBool::new(false),
             limits: Arc::default(),
         }
@@ -269,16 +303,39 @@ impl WireTelemetry {
             .transpose()
     }
     /// Keeps each pending question; one whose write fails stays pending for
-    /// the next flush.
+    /// the next flush. A run of this server before this one may have kept a
+    /// question for the same window, so its first write counts that in.
     fn save_limit_questions(&self) -> Result<()> {
-        for (row, window, question) in self.limits.unkept() {
-            self.vault.sync_state_put(
-                &format!("{LIMIT_QUESTION}{}:{window:020}", question.row),
-                &encode(&question)?,
-            )?;
+        for (row, window, restored) in self.limits.unkept() {
+            let key = format!("{LIMIT_QUESTION}{}:{window:020}", row.key());
+            let earlier = if restored {
+                None
+            } else {
+                self.vault
+                    .sync_state_get(&key)?
+                    .and_then(|bytes| decode(&bytes).ok())
+            };
+            let Some(question) = self.limits.restore(row, window, earlier) else {
+                continue;
+            };
+            self.vault.sync_state_put(&key, &encode(&question)?)?;
             self.limits.kept(row, window, &question);
         }
         Ok(())
+    }
+    /// Keeps the pending questions outside the lock every request takes, so
+    /// no request waits on their write; unless the reap froze observation.
+    fn save_pending(&self) -> Result<()> {
+        let _saving = lock(&self.saving);
+        let frozen = self
+            .active
+            .lock()
+            .map_err(|_| Error::CorruptedIndex("wire counter lock"))?
+            .frozen;
+        if frozen {
+            return Ok(());
+        }
+        self.save_limit_questions()
     }
     pub fn set_thresholds(&self, thresholds: &WireThresholds) -> Result<()> {
         thresholds.validate()?;
@@ -376,6 +433,7 @@ impl WireTelemetry {
     }
     /// Called at shutdown and by the host's periodic observation tick.
     pub fn flush(&self) -> Result<()> {
+        self.save_pending()?;
         let mut active = self
             .active
             .lock()
@@ -383,10 +441,10 @@ impl WireTelemetry {
         if active.frozen {
             return Ok(());
         }
-        self.save_limit_questions()?;
         self.flush_active(&mut active)
     }
     pub(crate) fn flush_if_expired(&self, now: u64) -> Result<()> {
+        self.save_pending()?;
         let mut active = self
             .active
             .lock()
@@ -394,13 +452,14 @@ impl WireTelemetry {
         if active.frozen {
             return Ok(());
         }
-        self.save_limit_questions()?;
         if active.window.as_ref().is_none_or(|w| now < w.ended_at) {
             return Ok(());
         }
         self.flush_active(&mut active)
     }
     pub(crate) fn freeze_and_flush(&self) -> Result<()> {
+        // A question write in progress ends first, and none starts after.
+        let _saving = lock(&self.saving);
         let mut active = self
             .active
             .lock()
@@ -510,10 +569,13 @@ pub(crate) fn start_window_receipts(server: &Arc<crate::server::SyncServer>) {
             let Some(server) = weak.upgrade() else {
                 break;
             };
-            // The tick only writes after the observation window has elapsed.
-            let _ = server
-                .wire_telemetry
-                .flush_if_expired(oneiron_vault_contract::now_ts());
+            // The tick writes pending limit questions, and the window once it
+            // has elapsed, off the runtime's workers: a write that waits for
+            // the vault's writer holds back only the tick.
+            let now = oneiron_vault_contract::now_ts();
+            let _ =
+                tokio::task::spawn_blocking(move || server.wire_telemetry.flush_if_expired(now))
+                    .await;
         }
     });
 }

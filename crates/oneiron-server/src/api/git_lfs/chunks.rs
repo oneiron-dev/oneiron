@@ -1,7 +1,7 @@
 //! Grant-scoped binary have/want endpoint over the standing bearer identity.
 
 use super::gate::{LfsAccess, authorize};
-use super::support::lfs_waited_out;
+use super::support::{lfs_waited_out, read_whole};
 use crate::admission::Permit;
 use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
@@ -21,7 +21,7 @@ pub(super) async fn exchange(
     State(server): State<Arc<SyncServer>>,
     Path(_repo): Path<String>,
     headers: HeaderMap,
-    body: Bytes,
+    body: Body,
 ) -> Result<Response, EnvelopedApiError> {
     let auth = authorize(&headers, &server, LfsAccess::Read)?;
     let principal = auth.require_registered_principal()?;
@@ -29,10 +29,12 @@ pub(super) async fn exchange(
         .map_err(|_| ApiError::forbidden_scope("registered chunk principal"))?;
     // An LFS transfer like any other: its worker holds the permit until the
     // reply is built, whether or not its caller is still there, and hands it
-    // on to the reply.
+    // on to the reply. It waits on its headers and reads its body at its
+    // turn, so a request in line holds none of it.
     let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()).await else {
         return Ok(lfs_waited_out());
     };
+    let body = read_whole(body, oneiron::sync::chunks::MAX_CHUNK_SYNC_FRAME).await?;
     let vault = Arc::clone(&server.vault);
     let scope = crate::handler::selector_grant_scope();
     let (object, bytes, permit) = crate::api::transfer::spawn_worker(move || {

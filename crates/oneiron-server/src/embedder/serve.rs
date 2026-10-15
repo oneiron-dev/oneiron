@@ -46,7 +46,6 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use axum::Router;
@@ -67,6 +66,9 @@ use super::local::{Embedded, LocalEmbedder, Priority, Side};
 use crate::admission::{Admission, Permit};
 use crate::config::{EmbedderConfig, EmbedderProvider};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
+
+mod budget;
+use budget::{BodyBudget, BodyBytes};
 
 /// Inputs one request may carry, as OpenAI caps them.
 const MAX_INPUTS: usize = 2_048;
@@ -239,83 +241,6 @@ struct Served {
     idle: Duration,
 }
 
-/// Bytes request bodies may hold at once, one permit a byte, taken before a
-/// body is read and held until its request's work ends.
-struct BodyBudget {
-    bytes: Arc<tokio::sync::Semaphore>,
-    total: usize,
-    /// Requests waiting for `bytes` now.
-    waiting: AtomicUsize,
-}
-
-impl BodyBudget {
-    fn new(total: usize) -> Self {
-        Self {
-            bytes: Arc::new(tokio::sync::Semaphore::new(total)),
-            total,
-            waiting: AtomicUsize::new(0),
-        }
-    }
-
-    /// Reserves `bytes`, at once or at its turn: requests that find the
-    /// budget full wait in order, each up to `wait`, and the first to wait
-    /// when none did crosses the row and asks. `None` when the wait ran out.
-    async fn reserve(
-        &self,
-        bytes: usize,
-        wait: Duration,
-        questions: &LimitQuestions,
-    ) -> Option<tokio::sync::OwnedSemaphorePermit> {
-        // Every size fits its budget, and both are far under `u32::MAX`.
-        let wanted = u32::try_from(bytes).ok()?;
-        if let Ok(held) = Arc::clone(&self.bytes).try_acquire_many_owned(wanted) {
-            return Some(held);
-        }
-        let waiting = Waiting::join(&self.waiting);
-        if waiting.first {
-            let held = self.total.saturating_sub(self.bytes.available_permits());
-            questions.ask(
-                LimitRow::EmbedderBodyBytes,
-                self.total as u64,
-                held.saturating_add(bytes) as u64,
-            );
-        }
-        tokio::time::timeout(wait, Arc::clone(&self.bytes).acquire_many_owned(wanted))
-            .await
-            .ok()?
-            .ok()
-    }
-
-    /// Requests waiting for bytes now.
-    #[cfg(test)]
-    fn waiting(&self) -> usize {
-        self.waiting.load(Ordering::SeqCst)
-    }
-}
-
-/// One request's place among those waiting for a budget; dropping it leaves.
-struct Waiting<'a> {
-    count: &'a AtomicUsize,
-    /// Nobody waited before it.
-    first: bool,
-}
-
-impl<'a> Waiting<'a> {
-    fn join(count: &'a AtomicUsize) -> Self {
-        let before = count.fetch_add(1, Ordering::SeqCst);
-        Self {
-            count,
-            first: before == 0,
-        }
-    }
-}
-
-impl Drop for Waiting<'_> {
-    fn drop(&mut self) {
-        self.count.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
 impl Served {
     fn new(
         embedder: Arc<dyn ServedModel>,
@@ -351,8 +276,7 @@ impl Served {
     /// requests whose work has not ended.
     #[cfg(test)]
     fn body_bytes_held(&self) -> usize {
-        SMALL_BODIES_BYTES - self.small_bodies.bytes.available_permits() + LARGE_BODIES_BYTES
-            - self.large_bodies.bytes.available_permits()
+        self.small_bodies.held_bytes() + self.large_bodies.held_bytes()
     }
 }
 
@@ -506,7 +430,7 @@ struct Usage {
 async fn read_body(
     served: &Served,
     request: Request,
-) -> Result<(tokio::sync::OwnedSemaphorePermit, axum::body::Bytes), Response> {
+) -> Result<(BodyBytes, axum::body::Bytes), Response> {
     let declared = request
         .headers()
         .get(header::CONTENT_LENGTH)
