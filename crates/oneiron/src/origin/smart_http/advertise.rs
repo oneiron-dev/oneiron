@@ -183,6 +183,12 @@ impl<'a> AdvertisedRefGate<'a> {
             payload.push(0);
             let mut first = true;
             for capability in capabilities.split(|byte| *byte == b' ') {
+                // A signed push writes its certificate into the object store
+                // before any hook runs, so the door never offers one, whatever
+                // the repository's config says (ticket 7).
+                if capability == b"push-cert" || capability.starts_with(b"push-cert=") {
+                    continue;
+                }
                 if let Some(target) = capability.strip_prefix(b"symref=HEAD:") {
                     let visible = self.projection.as_ref().is_some_and(|projection| {
                         projection
