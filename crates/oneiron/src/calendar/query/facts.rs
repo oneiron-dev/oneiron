@@ -590,17 +590,20 @@ pub(crate) fn visit_calendar_events(
 }
 
 /// Visits the calendar rows an action may act on: an EVENT its settled claims
-/// alone admit, read as written so a held restriction still applies.
+/// alone admit, read as written so a held restriction still applies, and
+/// anchored only when the settled claims anchor it too.
 pub(crate) fn visit_calendar_events_for_effect(
     read: &CalendarRead<'_>,
     mut visit: impl FnMut(CalendarEventRow) -> Result<()>,
 ) -> Result<()> {
     visit_calendar_events_in(read, Hold::Settled, |row, settled| {
-        if settled.is_some() {
-            visit(row)
-        } else {
-            Ok(())
-        }
+        let Some(settled) = settled else {
+            return Ok(());
+        };
+        visit(CalendarEventRow {
+            occurred: row.occurred.filter(|_| settled.occurred.is_some()),
+            ..row
+        })
     })
 }
 

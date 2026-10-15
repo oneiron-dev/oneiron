@@ -138,7 +138,8 @@ fn a_held_claim_keeps_a_slot_busy_and_never_frees_one() {
 /// Emergency reschedule's reader: an action takes no row from a held claim,
 /// and a held restriction still applies. An EVENT that is a calendar
 /// EVENT only through held claims is not taken; a held floating time leaves
-/// its EVENT un-anchored, so no booking there is moved.
+/// its EVENT un-anchored, and a held absolute time never anchors one whose
+/// settled time kind is floating, so no booking there is moved.
 #[test]
 fn an_action_takes_no_row_from_a_held_claim_and_keeps_its_held_restriction() {
     let (_dir, vault) = open_calendar_vault();
@@ -151,17 +152,38 @@ fn an_action_takes_no_row_from_a_held_claim_and_keeps_its_held_restriction() {
         &[origin(), time_kind("floating", "busy")],
         &[1],
     );
-    let settled = event(&vault, 0x38, 500, &[origin(), busy], &[]);
+    let settled = event(&vault, 0x38, 500, &[origin(), busy.clone()], &[]);
+    // Two live time-kind heads: the held absolute one has the lower id, so
+    // main's lowest-id read takes it and anchors the EVENT.
+    let held_absolute = event(
+        &vault,
+        0x39,
+        700,
+        &[origin(), busy, time_kind("floating", "busy")],
+        &[1],
+    );
     let read = CalendarRead::Vault(&vault);
+    let range = |start| TimeRange {
+        start,
+        end: start + 99,
+    };
 
     let mut written = Vec::new();
     visit_calendar_events(&read, |row| {
-        written.push(row.id);
+        written.push((row.id, row.occurred));
         Ok(())
     })
     .expect("main's read");
-    written.sort_unstable();
-    assert_eq!(written, vec![held_event, floating, settled]);
+    written.sort_unstable_by_key(|(id, _)| *id);
+    assert_eq!(
+        written,
+        vec![
+            (held_event, Some(range(100))),
+            (floating, None),
+            (settled, Some(range(500))),
+            (held_absolute, Some(range(700))),
+        ]
+    );
 
     let mut taken = Vec::new();
     visit_calendar_events_for_effect(&read, |row| {
@@ -170,9 +192,12 @@ fn an_action_takes_no_row_from_a_held_claim_and_keeps_its_held_restriction() {
     })
     .expect("action read");
     taken.sort_unstable_by_key(|(id, _)| *id);
-    let anchored = TimeRange {
-        start: 500,
-        end: 599,
-    };
-    assert_eq!(taken, vec![(floating, None), (settled, Some(anchored))]);
+    assert_eq!(
+        taken,
+        vec![
+            (floating, None),
+            (settled, Some(range(500))),
+            (held_absolute, None),
+        ]
+    );
 }

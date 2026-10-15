@@ -421,12 +421,13 @@ impl SavedQueryEvaluator<'_> {
             if edge.kind != EdgeKind::ClaimOf {
                 continue;
             }
-            let Some(body) = self.effective_claim_body(&edge.target, valid_at)? else {
+            let Some((body, claim_held)) = self.effective_claim_body(&edge.target, valid_at)?
+            else {
                 continue;
             };
             if predicates.contains(&body.predicate) && claim_in_scope(&body, &definition.scope) {
                 // Its value is withheld; `evaluate_staged` decides the row.
-                if !self.vault.claim_settled_and_active(&edge.target)? {
+                if claim_held {
                     held = true;
                     continue;
                 }
@@ -450,19 +451,47 @@ impl SavedQueryEvaluator<'_> {
     /// enroll a person on evidence the rest of the engine refuses to read, so
     /// this mirrors `claim.rs`'s `claim_surfaceable` plus `comm.rs`'s
     /// valid-time window rather than inventing a looser rule.
+    ///
+    /// Also whether the claim is held, read on the SAME snapshot as the body:
+    /// an owner's answer landing between two reads would pass a stale body.
     fn effective_claim_body(
         &self,
         claim_ref: &EntityId,
         valid_at: u64,
-    ) -> Result<Option<ClaimBody>> {
-        if self.vault.get_entity_type(claim_ref)? != Some(ENTITY_TYPE_CLAIM) {
-            return Ok(None);
-        }
-        let Some(raw) = self.vault.get(claim_ref)? else {
+    ) -> Result<Option<(ClaimBody, bool)>> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let Some(row) =
+            crate::ports::EntityStoreRead::port_entity_record(&self.vault.store, &rtxn, claim_ref)?
+        else {
             return Ok(None);
         };
+        if row.entity_type != ENTITY_TYPE_CLAIM {
+            return Ok(None);
+        }
+        // `Vault::get` on this snapshot: a soft-erased shell is an empty body.
+        let raw = match crate::ports::safe_read_text(self.vault, &rtxn, claim_ref)? {
+            Some(raw) => raw,
+            None => {
+                let visibility = crate::ports::TombstoneStoreRead::port_deletion_state(
+                    self.vault, &rtxn, claim_ref,
+                )?;
+                let shell = row.body.is_empty()
+                    && visibility.deleted
+                    && !visibility.archived
+                    && !visibility.stale;
+                if !shell {
+                    return Ok(None);
+                }
+                Vec::new()
+            }
+        };
         let body = decode_claim_body(&raw, true)?;
-        Ok(claim_effective_at(&body, valid_at).then_some(body))
+        let held = !crate::gate::claim_critical_confirm_settled_in_txn(
+            &self.vault.store,
+            &rtxn,
+            claim_ref,
+        )?;
+        Ok(claim_effective_at(&body, valid_at).then_some((body, held)))
     }
 
     fn relevant_edge_targets(

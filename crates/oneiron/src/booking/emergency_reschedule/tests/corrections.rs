@@ -414,7 +414,8 @@ fn a_held_status_head_still_competes_and_never_confirms_an_affected_booking() {
     page(&vault, PAGE, OWNER);
     let contested = book(&vault, PAGE, NOW + 3_600).calendar.event_ref;
     let unconfirmed = book(&vault, PAGE, NOW + 5_400).calendar.event_ref;
-    let req = logged(&vault);
+    // A Cancel takes held facts as they stand; any other action does not.
+    let req = logged_update(&vault);
     assert_eq!(
         enumerate_affected_bookings(&vault, &req, NOW)
             .unwrap()
@@ -449,17 +450,7 @@ fn a_held_status_head_still_competes_and_never_confirms_an_affected_booking() {
         )
         .unwrap();
     crate::test_util::hold_claim_for_critical_confirm(&vault, cancel, 0x81);
-    let confirmed = vault
-        .claims_for_subject(&unconfirmed)
-        .unwrap()
-        .into_iter()
-        .find(|claim| {
-            vault
-                .get_claim(claim)
-                .unwrap()
-                .is_some_and(|body| body.predicate == BOOKING_STATUS_PREDICATE)
-        })
-        .unwrap();
+    let confirmed = status_head(&vault, unconfirmed);
     crate::test_util::hold_claim_for_critical_confirm(&vault, confirmed, 0x82);
 
     let mut refusals = Vec::new();
@@ -480,17 +471,7 @@ fn a_lone_held_confirmed_status_still_lets_the_booking_be_cancelled() {
     page(&vault, PAGE, OWNER);
     let receipt = book(&vault, PAGE, NOW + 3_600);
     let event = receipt.calendar.event_ref;
-    let confirmed = vault
-        .claims_for_subject(&event)
-        .unwrap()
-        .into_iter()
-        .find(|claim| {
-            vault
-                .get_claim(claim)
-                .unwrap()
-                .is_some_and(|body| body.predicate == BOOKING_STATUS_PREDICATE)
-        })
-        .unwrap();
+    let confirmed = status_head(&vault, event);
     crate::test_util::hold_claim_for_critical_confirm(&vault, confirmed, 0x83);
     assert!(crate::booking::lifecycle::confirmed_start_for_reminder(&vault, &event).is_err());
 
@@ -507,16 +488,77 @@ fn a_lone_held_confirmed_status_still_lets_the_booking_be_cancelled() {
         slot,
     );
     assert!(matches!(cancelled, BookingVerbReceipt::Cancelled(_)));
-    let status = super::super::enumeration::read_fact::<BookingStatusValue>(
-        &vault,
-        event,
-        BOOKING_STATUS_PREDICATE,
-    )
-    .unwrap()
-    .map(|value| value.status);
-    assert_eq!(status, Some(BookingStatus::Cancelled));
+    assert_eq!(live_status(&vault, event), Some(BookingStatus::Cancelled));
     assert_eq!(
         crate::booking::lifecycle::confirmed_start_for_reminder(&vault, &event).unwrap(),
         None
     );
+}
+
+#[test]
+fn an_emergency_cancel_reaches_a_lone_held_confirmed_booking_and_an_update_does_not() {
+    let (_dir, vault, receipt, plan) = executable(EmergencyActionPolicy::Cancel);
+    let event = receipt.calendar.event_ref;
+    let update = logged_update(&vault);
+    let affected = |request: &EmergencyRescheduleRequest| {
+        enumerate_affected_bookings(&vault, request, NOW)
+            .unwrap()
+            .iter()
+            .map(|booking| booking.calendar.event_ref)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(affected(&update), vec![event]);
+
+    crate::test_util::hold_claim_for_critical_confirm(&vault, status_head(&vault, event), 0x84);
+    assert!(affected(&update).is_empty());
+    assert_eq!(affected(&plan.request), vec![event]);
+    crate::booking::lifecycle::commit_emergency_item(
+        &vault,
+        &plan,
+        &calendars(),
+        &consumer(&vault, NOW),
+    )
+    .unwrap();
+    assert_eq!(live_status(&vault, event), Some(BookingStatus::Cancelled));
+}
+
+/// The booking's one live status head.
+fn status_head(vault: &Vault, event: EntityId) -> EntityId {
+    vault
+        .claims_for_subject(&event)
+        .unwrap()
+        .into_iter()
+        .find(|claim| {
+            vault
+                .get_claim(claim)
+                .unwrap()
+                .is_some_and(|body| body.predicate == BOOKING_STATUS_PREDICATE)
+        })
+        .unwrap()
+}
+
+fn live_status(vault: &Vault, event: EntityId) -> Option<BookingStatus> {
+    super::super::enumeration::live_fact::<BookingStatusValue>(
+        vault,
+        event,
+        BOOKING_STATUS_PREDICATE,
+    )
+    .unwrap()
+    .map(|(value, _)| value.status)
+}
+
+/// A logged owner instruction that asks for an update, not a cancel.
+fn logged_update(vault: &Vault) -> EmergencyRescheduleRequest {
+    let mut req = request();
+    req.action_policy = EmergencyActionPolicy::RequestUpdate;
+    req.authority = append_owner_instruction(
+        vault,
+        req.owner_ref,
+        req.affected_window,
+        &req.reason,
+        req.action_policy,
+        NOW,
+    )
+    .unwrap();
+    req
 }
