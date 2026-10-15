@@ -1,5 +1,6 @@
 //! The crash-durable per-ref intent journal and its reconcile/resume path.
 
+use std::ops::Bound;
 use std::path::Path;
 
 use super::cgi_finish::realized_updates;
@@ -16,9 +17,12 @@ use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{GitOid, GitWire, lock_repository};
-use crate::origin::lfs::{LfsOid, LfsPushedPointer};
+use crate::origin::lfs::{LfsOid, LfsPushedPointer, lfs_repo_id};
 use crate::origin::residence::OriginAuthorityStamp;
+use crate::origin::scan_check::{OriginScan, ScanCount};
 use crate::side_table::{self, Named, SideKey, SideTable};
+use crate::store::Store;
+use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
 // A local operation journal, not an exported claim or caller-supplied authority.
@@ -30,6 +34,13 @@ use serde::{Deserialize, Serialize};
 const INTENTS: SideTable<ReceivePackIntentKey, ReceivePackIntent, Named> =
     SideTable::new(&side_table::ORIGIN_RECEIVE_PACK_INTENT);
 
+/// Settled intents one write transaction prunes when a scan meets them.
+const PRUNE_BATCH: usize = 4096;
+
+type IntentRows<'txn> =
+    Box<dyn Iterator<Item = Result<(ReceivePackIntentKey, ReceivePackIntent)>> + 'txn>;
+
+#[derive(Clone)]
 pub(super) struct ReceivePackIntentKey {
     repo_identity_hex: String,
     operation_id: EntityId,
@@ -105,6 +116,27 @@ pub(super) struct ReceivePackIntent {
     pub(super) transport_bytes: Option<(u64, u64)>,
     pub(super) refs: Vec<ReceivePackIntentRef>,
     pointers: Vec<(String, String, u64)>,
+}
+
+impl ReceivePackIntent {
+    /// Whether every ref reached its final status. Nothing reads a settled
+    /// intent again: its results went to the push that settled it.
+    pub(super) fn is_settled(&self) -> bool {
+        self.refs
+            .iter()
+            .all(|entry| entry.status != ReceivePackRefStatus::Pending)
+    }
+}
+
+/// Removes one intent's rows. Every prune of a settled intent goes here, so
+/// a settled push leaves no row behind.
+fn prune_receive_pack_intent_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    key: &ReceivePackIntentKey,
+) -> Result<()> {
+    INTENTS.delete(store, wtxn, key)?;
+    Ok(())
 }
 
 fn receive_pack_repo_identity_hex(vault: &Vault, repo_root: &Path) -> Result<String> {
@@ -198,12 +230,17 @@ impl Vault {
         })
     }
 
+    /// Saves an intent's progress. The save that settles it prunes it
+    /// instead, in the same transaction, so no settled row outlives it.
     pub(super) fn save_receive_pack_intent(
         &self,
         key: &ReceivePackIntentKey,
         intent: &ReceivePackIntent,
     ) -> Result<()> {
         self.with_write_txn_grouped(|wtxn| {
+            if intent.is_settled() {
+                return prune_receive_pack_intent_in_txn(&self.store, wtxn, key);
+            }
             INTENTS.put(&self.store, wtxn, key, intent)?;
             Ok(())
         })
@@ -221,38 +258,128 @@ impl Vault {
         Ok(())
     }
 
+    /// How many intent rows the repository holds, settled or not, read
+    /// without pruning.
+    #[cfg(test)]
+    pub(super) fn receive_pack_intent_rows_for_test(&self, repo_root: &Path) -> usize {
+        let repo_identity_hex = receive_pack_repo_identity_hex(self, repo_root).expect("identity");
+        let rtxn = self.store.env.read_txn().expect("read txn");
+        INTENTS
+            .iter_from(&self.store, &rtxn, repo_identity_hex.as_bytes())
+            .expect("intent rows")
+            .count()
+    }
+
+    /// Writes an intent row as given, settled or not: the row a crash leaves
+    /// between a settling save and its prune.
+    #[cfg(test)]
+    pub(super) fn put_receive_pack_intent_for_test(
+        &self,
+        key: &ReceivePackIntentKey,
+        intent: &ReceivePackIntent,
+    ) -> Result<()> {
+        self.with_write_txn_grouped(|wtxn| {
+            INTENTS.put(&self.store, wtxn, key, intent)?;
+            Ok(())
+        })
+    }
+
     pub(in crate::origin) fn has_pending_receive_pack_operations(
         &self,
         repo_root: &Path,
     ) -> Result<bool> {
-        Ok(self
-            .receive_pack_intents(repo_root)?
-            .iter()
-            .any(|(_, intent)| {
-                intent
-                    .refs
-                    .iter()
-                    .any(|entry| entry.status == ReceivePackRefStatus::Pending)
-            }))
+        Ok(!self.receive_pack_intents(repo_root)?.is_empty())
     }
 
+    /// One operation's journaled intent, if it is still pending.
+    pub(super) fn receive_pack_intent(
+        &self,
+        repo_root: &Path,
+        operation_id: EntityId,
+    ) -> Result<Option<(ReceivePackIntentKey, ReceivePackIntent)>> {
+        let key = ReceivePackIntentKey {
+            repo_identity_hex: receive_pack_repo_identity_hex(self, repo_root)?,
+            operation_id,
+        };
+        let rtxn = self.store.env.read_txn()?;
+        Ok(INTENTS
+            .get(&self.store, &rtxn, &key)?
+            .map(|intent| (key, intent)))
+    }
+
+    /// The repository's pending intents, in operation order.
+    ///
+    /// A settled row the scan meets is pruned on the way, a batch per write
+    /// transaction: one a crash left between its settling save and its
+    /// prune, or one journaled before settled intents were pruned. So the
+    /// rows a scan reads are the pending pushes, not the repository's
+    /// history. The scan never refuses for their number (rule 5): past its
+    /// threshold row it raises an origin scan check and reads on. Callers
+    /// hold the repository coordinator.
     pub(super) fn receive_pack_intents(
         &self,
         repo_root: &Path,
     ) -> Result<Vec<(ReceivePackIntentKey, ReceivePackIntent)>> {
         let repo_identity_hex = receive_pack_repo_identity_hex(self, repo_root)?;
-        let rtxn = self.store.env.read_txn()?;
-        let mut rows = Vec::new();
-        for (index, row) in INTENTS
-            .iter_from(&self.store, &rtxn, repo_identity_hex.as_bytes())?
-            .enumerate()
-        {
-            if index >= super::publication::ORIGIN_PUBLICATION_MAX_ROWS {
-                return Err(Error::IndexOverflow("receive-pack intents"));
+        let mut count = {
+            let rtxn = self.store.env.read_txn()?;
+            ScanCount::start(
+                &self.store,
+                &rtxn,
+                OriginScan::ReceivePackIntents,
+                Some(lfs_repo_id(&repo_identity_hex)?),
+            )?
+        };
+        let mut pending = Vec::new();
+        let mut after: Option<ReceivePackIntentKey> = None;
+        loop {
+            let mut settled = Vec::new();
+            {
+                let rtxn = self.store.env.read_txn()?;
+                let rows: IntentRows<'_> = match &after {
+                    None => Box::new(INTENTS.iter_from(
+                        &self.store,
+                        &rtxn,
+                        repo_identity_hex.as_bytes(),
+                    )?),
+                    Some(key) => Box::new(INTENTS.iter_range(
+                        &self.store,
+                        &rtxn,
+                        Bound::Excluded(key),
+                        Bound::Unbounded,
+                    )?),
+                };
+                for row in rows {
+                    let (key, intent) = row?;
+                    if key.repo_identity_hex != repo_identity_hex {
+                        break;
+                    }
+                    count.row();
+                    if !intent.is_settled() {
+                        pending.push((key, intent));
+                        continue;
+                    }
+                    settled.push(key);
+                    if settled.len() == PRUNE_BATCH {
+                        break;
+                    }
+                }
             }
-            rows.push(row?);
+            if !settled.is_empty() {
+                self.with_write_txn_grouped(|wtxn| {
+                    for key in &settled {
+                        prune_receive_pack_intent_in_txn(&self.store, wtxn, key)?;
+                    }
+                    Ok(())
+                })?;
+            }
+            if settled.len() < PRUNE_BATCH {
+                break;
+            }
+            after = settled.pop();
         }
-        Ok(rows)
+        count.finish(self);
+        Ok(pending)
     }
 
     pub(super) fn resume_receive_pack_intent(

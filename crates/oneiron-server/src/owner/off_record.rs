@@ -176,7 +176,7 @@ pub(crate) fn record(
     // turns. A room the owner is not in is the same 404 as none.
     if record.room.is_some() {
         let record = bind(vault, owner, session_ref)?
-            .record_for(owner.actor())
+            .record_for(owner.revalidate(vault)?)
             .map_err(|error| session_error(error, session_ref))?;
         return Ok(Session::from(record));
     }
@@ -209,10 +209,10 @@ pub(crate) fn witness(
     owner: &AuthenticatedOwner,
     request: &Witness,
 ) -> OwnerResult<WitnessReceipt> {
-    vault.recheck_owner(owner)?;
+    let actor = owner.revalidate(vault)?;
     let session = bind(vault, owner, &request.session_ref)?;
     vault
-        .memory(owner.actor(), EdgeActorClass::Human)
+        .memory(actor, EdgeActorClass::Human)
         .witness_into_session_as(owner, &session, &request.turn, request.summary.as_deref())
         .map_err(|error| {
             // The proof is rechecked where the turn lands; one revoked while
@@ -315,7 +315,7 @@ fn bind<'vault>(
 ) -> OwnerResult<OffRecordSession<'vault>> {
     vault
         .off_record_session_vault()
-        .bind_for(session_ref, owner.actor())
+        .bind_for(session_ref, owner.revalidate(vault)?)
         .map_err(|error| session_error(error, session_ref))
 }
 

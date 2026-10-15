@@ -27,6 +27,13 @@ impl ScopedRead<'_> {
         }
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
         let policy = self.policy_manifest_in(&txn)?;
+        // A skill or agent this read no longer reads tells it no lifecycle
+        // either, as a missing one does. A claim takes its own floor below.
+        if header.entity_type != ENTITY_TYPE_CLAIM
+            && !self.is_entity_readable_with_policy_in(&txn, &policy, id)?
+        {
+            return Ok(None);
+        }
         let state = match header.entity_type {
             ENTITY_TYPE_CLAIM => {
                 let claim = decode_claim_body(body, true)?;
@@ -47,6 +54,16 @@ impl ScopedRead<'_> {
                     &claim,
                     &facets,
                 ) {
+                    return Ok(None);
+                }
+                // Every other condition of this read holds too: relationship
+                // grants, the credential's caveats and a principal audience,
+                // with only the claim's status waived, so a closed claim the
+                // reader still reads tells its state and no other one does.
+                if !self
+                    .recorded_lane()?
+                    .is_entity_readable_with_policy_in(&txn, &policy, id)?
+                {
                     return Ok(None);
                 }
                 claim.lifecycle

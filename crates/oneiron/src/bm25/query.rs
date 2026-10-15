@@ -475,11 +475,15 @@ where
         options.exact_posting_matches_scope,
     )?;
 
+    let walks = crate::ports::any_pending_walk(store, rtxn)?;
     let mut ranked =
         scoring::score_query_terms(store, rtxn, config, &query_terms, options.recency, |id| {
             Ok(!crate::vault_cleanup::is_archived_in_txn(store, rtxn, id)?
                 && (options.private_note_ids.is_some_and(|ids| ids.contains(id))
-                    || crate::note::ordinary_entity_visible(store, rtxn, id)?))
+                    || crate::note::ordinary_entity_visible(store, rtxn, id)?)
+                // Withdrawn while a walk is pending: out of the ranking, as
+                // its postings will be.
+                && !(walks && scores_for_withdrawn(store, rtxn, id)?))
         })?;
     ranked.sort_by(|a, b| {
         b.1.total_cmp(&a.1)
@@ -487,6 +491,25 @@ where
     });
     ranked.truncate(limit);
     Ok(scoring::scored_entities(ranked))
+}
+
+/// Whether posting `id` scores for a withdrawn record: itself, or the claim
+/// it is a live lexical query hint for, which the hint's score collapses
+/// onto before the limit.
+pub(super) fn scores_for_withdrawn(
+    store: &impl ManifestDbs,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    if crate::ports::stale_in_txn(store, rtxn, id)? {
+        return Ok(true);
+    }
+    match resolve_lexical_query_hint_record(store, rtxn, id)? {
+        LexicalQueryHintResolution::Live { target } => {
+            crate::ports::stale_in_txn(store, rtxn, &target)
+        }
+        LexicalQueryHintResolution::DeadHint | LexicalQueryHintResolution::NonHint => Ok(false),
+    }
 }
 
 pub(super) fn compute_avgdl(

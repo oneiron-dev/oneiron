@@ -22,6 +22,14 @@ mod lmdb_timeline;
 mod lmdb_visibility;
 mod query;
 pub use query::*;
+mod dependent_walk;
+pub use dependent_walk::{
+    DEFAULT_DEPENDENT_WALK_BATCH, DEFAULT_DEPENDENT_WALK_CHECK_THRESHOLD, DependentWalkCheck,
+    DependentWalkPolicy, DependentWalkProgress,
+};
+pub(crate) use dependent_walk::{
+    DependentWalkDoor, any_pending_walk, withdraw_before_rewrite_in_txn,
+};
 mod integrity;
 mod lmdb_aux;
 mod lmdb_claim;

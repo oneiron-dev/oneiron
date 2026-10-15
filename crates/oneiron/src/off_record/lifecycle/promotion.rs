@@ -63,7 +63,9 @@ impl OffRecordSession<'_> {
         // In a room, the owner must be on its roster before anything is
         // answered (read before the state lock, which the roster read takes).
         if self.room()?.is_some() {
-            self.require_in_room(owner.actor())?;
+            let actor = owner
+                .revalidate_as_vault_owner_in_txn(self.vault, &self.vault.store.env.read_txn()?)?;
+            self.require_in_room(actor)?;
         }
         let outcome = {
             let mut state = self.recording_state()?;
@@ -85,7 +87,7 @@ impl OffRecordSession<'_> {
                 // their membership shows every moment of it. The room hears
                 // this save as it heard the first; nothing more is kept.
                 let txn = self.vault.store.env.read_txn()?;
-                owner.revalidate_as_vault_owner_in_txn(self.vault, &txn)?;
+                let actor = owner.revalidate_as_vault_owner_in_txn(self.vault, &txn)?;
                 if let Some(room) = room {
                     let times = state.kept_times(*turn);
                     super::room::require_sight_in_txn(
@@ -93,7 +95,7 @@ impl OffRecordSession<'_> {
                         &txn,
                         &self.session_ref,
                         room,
-                        owner.actor(),
+                        actor,
                         &times,
                     )?;
                     let hearing = Hearing::in_txn(self.vault, &txn, Some(room));
@@ -101,7 +103,7 @@ impl OffRecordSession<'_> {
                     post_notice(
                         &mut state,
                         super::types::OffRecordNoticeAct::SavedTurn,
-                        owner.actor(),
+                        actor,
                         hearing,
                     );
                     self.entry.publish_state(&state);
@@ -125,28 +127,28 @@ impl OffRecordSession<'_> {
             let times = super::saving::turn_times(&snapshot, *turn);
             drop(snapshot);
             // Who hears the save is read in the transaction that keeps it.
-            let initiator = PromoteInitiator::owner(owner);
-            let (mut outcomes, hearing) =
+            let initiator = PromoteInitiator::owner(self.vault, owner)?;
+            let (mut outcomes, (actor, hearing)) =
                 self.promote_plans(&mut state, vec![plan], &initiator, |wtxn| {
                     // Alone or in a room, the turn lands in this vault, so
                     // the proof must show its owner.
-                    owner.revalidate_as_vault_owner_in_txn(self.vault, wtxn)?;
+                    let actor = owner.revalidate_as_vault_owner_in_txn(self.vault, wtxn)?;
                     if let Some(room) = room {
                         super::room::require_sight_in_txn(
                             self.vault,
                             wtxn,
                             &self.session_ref,
                             room,
-                            owner.actor(),
+                            actor,
                             &times,
                         )?;
                     }
-                    Ok(Hearing::in_txn(self.vault, wtxn, room))
+                    Ok((actor, Hearing::in_txn(self.vault, wtxn, room)))
                 })?;
             post_notice(
                 &mut state,
                 super::types::OffRecordNoticeAct::SavedTurn,
-                owner.actor(),
+                actor,
                 hearing,
             );
             self.entry.publish_state(&state);
