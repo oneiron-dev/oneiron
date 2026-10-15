@@ -331,12 +331,13 @@ pub(super) fn collect_temporal_candidates(
         // Every spanner is read, so the exact top-k is kept: past the index's
         // threshold row the scan raises one check and reads on.
         let mut scanned = ScanCount::start(store, rtxn, EngineScan::TemporalSpannerRows, &[])?;
-        for entry in
-            store.port_entity_long_spanning(rtxn, occurred_window_start, occurred_window_end)?
-        {
-            let (id, _) = entry?;
+        for entry in store.port_entity_long_ending_after(rtxn, occurred_window_end)? {
+            let (id, range) = entry?;
             scanned.row();
             checkpoint(deadline)?;
+            if range.start >= occurred_window_start {
+                continue;
+            }
             let Some(meta) = metadata_cache.get(store, rtxn, &id)? else {
                 continue;
             };

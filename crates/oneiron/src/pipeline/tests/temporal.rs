@@ -711,15 +711,21 @@ fn temporal_scans_read_past_their_threshold_rows_and_check_once() -> Result<()> 
         bytes[12..].copy_from_slice(&n.to_be_bytes());
         EntityId::from_bytes(bytes).expect("row id")
     };
-    // Three intervals spanning every window, and three points beside the
-    // anchor: three rows for each scan, one past its row.
+    // One interval spanning every window and two long ones wholly after it,
+    // which the spanner scan reads and passes over; three points beside the
+    // anchor. Three rows for each scan, one past its row.
     let mut batch = vault.batch();
-    for n in 0..3 {
-        let span = TimeRange {
-            start: anchor - 30 * 86_400,
-            end: anchor + 30 * 86_400,
+    let span = TimeRange {
+        start: anchor - 30 * 86_400,
+        end: anchor + 30 * 86_400,
+    };
+    batch = batch.put(&row(0), 1, span, anchor, b"payload");
+    for n in 1..3 {
+        let later = TimeRange {
+            start: anchor + 40 * 86_400,
+            end: anchor + 100 * 86_400,
         };
-        batch = batch.put(&row(n), 1, span, anchor - 60 * u64::from(n), b"payload");
+        batch = batch.put(&row(n), 1, later, anchor - 60 * u64::from(n), b"payload");
     }
     for n in 3..6 {
         let at = anchor + u64::from(n);

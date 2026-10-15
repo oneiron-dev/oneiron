@@ -497,10 +497,9 @@ impl<'a> DreamerWakeDriver<'a> {
                         _ => None,
                     },
                 };
-                if ctx
-                    .prepared_attempt
-                    .is_some_and(|plan| plan.sources_truncated())
-                {
+                if ctx.prepared_attempt.is_some_and(
+                    crate::dreamer_consolidation::PreparedConsolidationAttempt::sources_truncated,
+                ) {
                     report.sources_truncated = report.sources_truncated.saturating_add(1);
                 }
                 // Panic containment at the per-attempt boundary (ONE-1683): a

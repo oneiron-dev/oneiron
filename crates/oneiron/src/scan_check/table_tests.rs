@@ -186,32 +186,26 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
                 }),
             ))
         }
-        EngineScan::PprCacheDepRows => {
-            // Dependency rows of one cache entry that no longer exists.
-            vault
-                .with_write_txn(|wtxn| {
+        EngineScan::PprCacheDepRows => Some((
+            0,
+            // Each read seeds the dependency rows of one cache entry that no
+            // longer exists, then walks them all to delete them.
+            Box::new(move || {
+                vault.with_write_txn(|wtxn| {
                     for index in 0..PAST {
                         let key = [id(0x61, index).as_bytes().as_slice(), &[0x62; 16]].concat();
                         vault.store.ppr_cache_deps.put(wtxn, &key, &[])?;
                     }
-                    Ok(())
+                    crate::ppr::invalidate_ppr_for_edge(
+                        &vault.store,
+                        wtxn,
+                        &id(0x61, 0),
+                        &id(0x61, PAST),
+                    )?;
+                    Ok(vault.store.ppr_cache_deps.iter(wtxn)?.count())
                 })
-                .expect("seed");
-            Some((
-                0,
-                Box::new(move || {
-                    vault.with_write_txn(|wtxn| {
-                        crate::ppr::invalidate_ppr_for_edge(
-                            &vault.store,
-                            wtxn,
-                            &id(0x61, 0),
-                            &id(0x61, PAST),
-                        )?;
-                        Ok(vault.store.ppr_cache_deps.iter(wtxn)?.count())
-                    })
-                }),
-            ))
-        }
+            }),
+        )),
         EngineScan::PackQuarantineRows => {
             vault
                 .with_write_txn(|wtxn| {

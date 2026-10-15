@@ -13,7 +13,7 @@ use crate::entity_id::EntityId;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
-use crate::sync::loro_support::map_for_each_bytes;
+use crate::sync::loro_support::map_for_each_value_bytes;
 use crate::sync::quarantine::remote_rejection_reason;
 use crate::{Result, Vault};
 
@@ -165,8 +165,11 @@ pub(super) fn replayed_child_of_candidates(
     // one check and reads on.
     let mut rows = ScanCount::start(&vault.store, rtxn, EngineScan::ChildOfMapEntries, &[])?;
     let mut keys = Vec::<String>::new();
-    map_for_each_bytes(edges_map, |key, value| {
+    map_for_each_value_bytes(edges_map, |key, value| {
         rows.row();
+        let Some(value) = value else {
+            return;
+        };
         let Some((child, EdgeKind::ChildOf, parent)) = parse_edge_key(key) else {
             return;
         };
