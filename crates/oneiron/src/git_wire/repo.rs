@@ -85,8 +85,37 @@ pub(super) fn repo_identity_for(common_dir: &Path) -> GitWireRepoIdentity {
 }
 
 struct GitWireRepoLockCell {
-    held: Mutex<bool>,
+    hold: Mutex<Hold>,
     released: Condvar,
+}
+
+/// Who holds one repository in this process. Maintenance gives way to a
+/// writer in this process; a writer in another process waits on the
+/// cross-process lock, as it always has.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Hold {
+    Free,
+    /// A writer, until it is done.
+    Writer,
+    /// Maintenance, which gives the repository up to a writer that asks for
+    /// it; `asked` once one has.
+    Maintenance {
+        asked: bool,
+    },
+}
+
+/// How a caller takes the repository.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Take {
+    /// Waits for any holder.
+    Wait,
+    /// Waits for another writer until this moment; asks maintenance for it
+    /// and waits that out.
+    Within(Instant),
+    /// Waits for no one.
+    Try,
+    /// Takes it only when free, as maintenance.
+    AsMaintenance,
 }
 
 static GIT_WIRE_REPO_LOCKS: LazyLock<Mutex<HashMap<Vec<u8>, Arc<GitWireRepoLockCell>>>> =
@@ -111,8 +140,9 @@ pub(crate) struct GitWireRepoGuard {
 }
 
 /// Serializes every engine effect on the repository behind `common_dir`.
+/// Maintenance holding it is asked to give it up.
 pub(crate) fn lock_repository(common_dir: &Path) -> Result<GitWireRepoGuard> {
-    acquire_repository(common_dir, Until::Granted)?.ok_or(Error::ConcurrentWrite(
+    acquire_repository(common_dir, Take::Wait)?.ok_or(Error::ConcurrentWrite(
         "git wire repository lock not granted",
     ))
 }
@@ -121,19 +151,42 @@ pub(crate) fn lock_repository(common_dir: &Path) -> Result<GitWireRepoGuard> {
 /// another process holds the repository. Re-entrant on the holding thread all
 /// the same.
 pub(crate) fn try_lock_repository(common_dir: &Path) -> Result<Option<GitWireRepoGuard>> {
-    acquire_repository(common_dir, Until::Now)
+    acquire_repository(common_dir, Take::Try)
 }
 
-/// [`lock_repository`] that waits at most `wait`: `None` while another thread
-/// or another process still holds the repository then.
+/// [`lock_repository`] for a writer that waits for another writer at most
+/// `wait`: `None` while another thread or another process still holds the
+/// repository then. Maintenance holding it is asked to give it up, and
+/// waited out whatever `wait` is, so maintenance never turns a writer away.
 pub(crate) fn lock_repository_within(
     common_dir: &Path,
     wait: Duration,
 ) -> Result<Option<GitWireRepoGuard>> {
-    acquire_repository(common_dir, Until::Deadline(Instant::now() + wait))
+    acquire_repository(common_dir, Take::Within(Instant::now() + wait))
 }
 
-/// How long an acquisition waits for a repository another holder has.
+/// [`try_lock_repository`] for maintenance: the hold lasts until a writer
+/// asks for the repository, which [`GitWireRepoGuard::asked_to_give_way`]
+/// tells. The holder then ends its work and drops the guard.
+pub(crate) fn try_lock_repository_for_maintenance(
+    common_dir: &Path,
+) -> Result<Option<GitWireRepoGuard>> {
+    acquire_repository(common_dir, Take::AsMaintenance)
+}
+
+impl GitWireRepoGuard {
+    /// Whether a writer has asked for the repository this maintenance hold
+    /// keeps. Never for a writer's hold.
+    pub(crate) fn asked_to_give_way(&self) -> bool {
+        self.cell.as_ref().is_some_and(|cell| {
+            cell.hold
+                .lock()
+                .is_ok_and(|hold| *hold == Hold::Maintenance { asked: true })
+        })
+    }
+}
+
+/// How long an acquisition waits for a holder it waits for at all.
 #[derive(Clone, Copy)]
 enum Until {
     /// Until it is granted.
@@ -158,7 +211,18 @@ impl Until {
     }
 }
 
-fn acquire_repository(common_dir: &Path, until: Until) -> Result<Option<GitWireRepoGuard>> {
+impl Take {
+    /// How long it waits for another writer.
+    fn until(self) -> Until {
+        match self {
+            Self::Wait => Until::Granted,
+            Self::Within(deadline) => Until::Deadline(deadline),
+            Self::Try | Self::AsMaintenance => Until::Now,
+        }
+    }
+}
+
+fn acquire_repository(common_dir: &Path, take: Take) -> Result<Option<GitWireRepoGuard>> {
     let key = common_dir.as_os_str().as_encoded_bytes().to_vec();
     let depth = held_depth(&key);
     if depth > 0 {
@@ -170,10 +234,10 @@ fn acquire_repository(common_dir: &Path, until: Until) -> Result<Option<GitWireR
         }));
     }
     let cell = repo_lock_cell(&key)?;
-    if !acquire_cell(&cell, until)? {
+    if !acquire_cell(&cell, take)? {
         return Ok(None);
     }
-    let file = match acquire_file_lock(common_dir, until) {
+    let file = match acquire_file_lock(common_dir, take.until()) {
         Ok(FileLock::Held(file)) => file,
         Ok(FileLock::Busy) => {
             release_cell(&cell);
@@ -228,36 +292,61 @@ fn repo_lock_cell(key: &[u8]) -> Result<Arc<GitWireRepoLockCell>> {
         .entry(key.to_vec())
         .or_insert_with(|| {
             Arc::new(GitWireRepoLockCell {
-                held: Mutex::new(false),
+                hold: Mutex::new(Hold::Free),
                 released: Condvar::new(),
             })
         })
         .clone())
 }
 
-/// Takes the in-process hold, and says whether it did: `false` only when
-/// another thread still holds it once `until` has run out.
-fn acquire_cell(cell: &Arc<GitWireRepoLockCell>, until: Until) -> Result<bool> {
+/// Takes the in-process hold, and says whether it did: `false` when another
+/// thread holds it and `take` does not wait for that holder, or no longer.
+fn acquire_cell(cell: &Arc<GitWireRepoLockCell>, take: Take) -> Result<bool> {
     fn poisoned<T>(_: std::sync::PoisonError<T>) -> Error {
         Error::ConcurrentWrite("git wire repository lock poisoned")
     }
-    let mut held = cell.held.lock().map_err(poisoned)?;
-    while *held {
-        held = match until.left() {
-            None => return Ok(false),
-            Some(None) => cell.released.wait(held).map_err(poisoned)?,
-            Some(Some(left)) => cell.released.wait_timeout(held, left).map_err(poisoned)?.0,
+    let mut hold = cell.hold.lock().map_err(poisoned)?;
+    loop {
+        hold = match (*hold, take) {
+            (Hold::Free, _) => break,
+            // Maintenance gives way within one of its polls.
+            (Hold::Maintenance { .. }, Take::Wait | Take::Within(_)) => {
+                *hold = Hold::Maintenance { asked: true };
+                cell.released.wait(hold).map_err(poisoned)?
+            }
+            (Hold::Writer, Take::Wait | Take::Within(_)) => match take.until().left() {
+                None => return Ok(false),
+                Some(None) => cell.released.wait(hold).map_err(poisoned)?,
+                Some(Some(left)) => cell.released.wait_timeout(hold, left).map_err(poisoned)?.0,
+            },
+            _ => return Ok(false),
         };
     }
-    *held = true;
+    *hold = if take == Take::AsMaintenance {
+        Hold::Maintenance { asked: false }
+    } else {
+        Hold::Writer
+    };
     Ok(true)
 }
 
 fn release_cell(cell: &Arc<GitWireRepoLockCell>) {
-    if let Ok(mut held) = cell.held.lock() {
-        *held = false;
+    if let Ok(mut hold) = cell.hold.lock() {
+        *hold = Hold::Free;
         cell.released.notify_one();
     }
+}
+
+/// Whether this process holds the repository behind `common_dir`, and
+/// whether a writer has asked maintenance holding it to give it up.
+#[cfg(test)]
+pub(crate) fn repository_hold_for_test(common_dir: &Path) -> (bool, bool) {
+    let cell = repo_lock_cell(common_dir.as_os_str().as_encoded_bytes()).expect("lock map");
+    let hold = *cell.hold.lock().expect("repository hold");
+    (
+        hold != Hold::Free,
+        hold == Hold::Maintenance { asked: true },
+    )
 }
 
 /// What one attempt at the cross-process lock got.

@@ -22,6 +22,7 @@ use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::housekeeping::HousekeepingReport;
 use oneiron::run_tree::GateConsentBundleAction;
 use oneiron::store::GateDecisionId;
 use serde::Deserialize;
@@ -44,6 +45,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/status", get(status))
         .route("/backups", get(list_backups).post(take_backup))
         .route("/backups/rehearse", post(rehearse_backup))
+        .route("/maintain", post(run_housekeeping))
         .route("/secret-scan", get(secret_scan).post(set_secret_scan))
         .route("/secrets/register", post(register_secret))
         .route("/secrets/rotate", post(rotate_secret))
@@ -250,6 +252,22 @@ async fn take_backup(
     Ok(Json(
         blocking(move || host.take(server.vault(), Some(&owner))).await?,
     ))
+}
+
+/// `POST /v1/owner/maintain`: every housekeeping sweep now, due or not, as
+/// `oneiron maintain` runs them on a stopped vault. A sweep left past the
+/// budget is reported and runs on a later tick.
+async fn run_housekeeping(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<HousekeepingReport> {
+    owner(&auth, &server)?;
+    let report = server
+        .housekeeping_now()
+        .await
+        .ok_or_else(|| ApiError::internal_server_error("owner action task failed"))?
+        .map_err(|error| owner_error(error.into()))?;
+    Ok(Json(report))
 }
 
 #[derive(Debug, Default, Deserialize)]

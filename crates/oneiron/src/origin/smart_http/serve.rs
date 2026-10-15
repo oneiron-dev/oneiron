@@ -133,9 +133,11 @@ pub struct ExchangeBounds {
 /// push that finds the repository coordinator taken waits for it, for
 /// `repository_wait` at most, and only then fails with
 /// [`CodeError::GitHttpRepositoryBusy`]; the transport queues its own pushes
-/// to one repository before this, so the wait is for a writer outside it. A
-/// read never waits for the coordinator: it recovers and projects its ref
-/// list under the coordinator only when it finds it free.
+/// to one repository before this, so the wait is for a writer outside it.
+/// The host's repository maintenance gives the coordinator up to it, within
+/// one of the maintenance's polls, and the push waits that out whatever
+/// `repository_wait` is. A read never waits for the coordinator: it recovers
+/// and projects its ref list under the coordinator only when it finds it free.
 ///
 /// [`CodeError::GitHttpRepositoryBusy`]: crate::error::CodeError::GitHttpRepositoryBusy
 pub fn serve_bounded(

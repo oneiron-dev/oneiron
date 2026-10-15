@@ -184,7 +184,6 @@ impl Transfers {
     /// A git exchange permit for the host's own repository maintenance. It
     /// waits behind every caller, so it never takes a permit a writer is
     /// waiting for. Blocking: call it from the maintenance worker.
-    #[expect(dead_code, reason = "the drop-in for #1456's maintenance worker")]
     pub(crate) fn admit_git_maintenance(&self) -> Result<Permit, WaitTimedOut> {
         self.git.admit_background_blocking()
     }
