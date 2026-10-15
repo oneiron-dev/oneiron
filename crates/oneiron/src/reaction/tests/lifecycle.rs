@@ -159,3 +159,90 @@ fn erasing_a_person_erases_every_reaction_they_made_in_the_room() {
         vec![room.dave]
     );
 }
+
+/// Under a policy that makes reactions critical, a reaction waits for its
+/// owner's confirm and nothing is sent meanwhile. The Clear sends it once; a
+/// decline or a timeout never does, whatever answer comes after.
+#[test]
+fn a_held_reaction_is_sent_once_after_its_clear_and_never_otherwise() {
+    use crate::authority::CriticalWriteConfirmDisposition;
+    use crate::gate::CriticalWriteConfirmResolution;
+    for answer in ["clear", "decline", "timeout"] {
+        let slack = room_with(Some("slack:room-1"));
+        crate::test_util::declare_predicates(
+            &slack.vault,
+            &[crate::reaction::PREDICATE_CONVERSATION_REACTION],
+            "critical",
+        )
+        .unwrap();
+        let agent = trust_agent(&slack.vault, slack.dave);
+        let put = slack
+            .vault
+            .react(ReactionInput {
+                actor: agent,
+                ..input(&slack, slack.dave, "👍")
+            })
+            .unwrap();
+        assert!(
+            outbound(&slack.vault).is_empty(),
+            "{answer}: a held reaction was sent"
+        );
+        let pending = slack
+            .vault
+            .pending_gate_consents(10)
+            .unwrap()
+            .into_iter()
+            .find(|row| row.claim_id == *put.id.as_bytes())
+            .expect("the reaction's confirm");
+        let binding = crate::gate::critical_write_confirm_binding(&pending).unwrap();
+        if answer == "timeout" {
+            slack
+                .vault
+                .expire_critical_write_confirms_at(
+                    pending.created_at + crate::gate::CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS + 1,
+                )
+                .unwrap();
+        }
+        let disposition = if answer == "decline" {
+            CriticalWriteConfirmDisposition::Decline
+        } else {
+            CriticalWriteConfirmDisposition::Clear
+        };
+        let (genesis, confirm) =
+            crate::test_util::critical_confirm_owner_entry(&pending, disposition, 0x5a);
+        slack
+            .vault
+            .put_authority_log_entries(&[
+                (genesis, TimeRange { start: 1, end: 1 }, 1),
+                (confirm, TimeRange { start: 2, end: 2 }, 2),
+            ])
+            .unwrap();
+        let settled = slack
+            .vault
+            .settle_critical_write_confirm(binding.confirm_id)
+            .unwrap();
+        let expected = match answer {
+            "clear" => {
+                assert_eq!(settled, CriticalWriteConfirmResolution::Cleared);
+                vec![ReactionOutboundAttempt {
+                    reaction: put.id,
+                    connector: "slack".to_owned(),
+                    room_external_id: "slack:room-1".to_owned(),
+                    remove: false,
+                }]
+            }
+            _ => Vec::new(),
+        };
+        assert_eq!(
+            outbound(&slack.vault),
+            expected,
+            "FAILBEFORE R6 reaction: {answer}"
+        );
+        // A second answer to the same confirm sends nothing more.
+        slack
+            .vault
+            .settle_critical_write_confirm(binding.confirm_id)
+            .unwrap();
+        assert_eq!(outbound(&slack.vault), expected, "{answer}: sent twice");
+    }
+}

@@ -413,7 +413,7 @@ impl Vault {
     }
 
     #[cfg(test)]
-    pub(super) fn expire_critical_write_confirms_at(&self, now: u64) -> Result<usize> {
+    pub(crate) fn expire_critical_write_confirms_at(&self, now: u64) -> Result<usize> {
         self.expire_critical_write_confirms_impl(now)
     }
 
