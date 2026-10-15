@@ -504,7 +504,9 @@ fn file_edges(rel: &str, source: &str) -> Vec<(Edge, usize)> {
     let masked = production_source(source);
     let lines = source.lines().collect::<Vec<_>>();
     let edge = |needle: &str, at: usize| {
-        let line = line_of(&masked, at);
+        // Offsets match the masked text, but its literal stripping can drop a newline after a
+        // `\` string continuation, so lines are counted in the original.
+        let line = line_of(source, at);
         let text = lines.get(line - 1).copied().unwrap_or_default().trim();
         (
             Edge {
