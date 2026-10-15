@@ -14,15 +14,17 @@
 //! restrictions, go after the rest, and a handoff, which retires the keys
 //! before it, after every row beside it; then the order given.
 //!
-//! An import is one write that aborts on the first held row, so it also
-//! stages each row after the rows that let a key vouch for it, and a handoff
-//! after the row that makes its signer a slip issuer. A sync pass holds such
-//! a row as pending and retries it, so it orders without consent.
+//! An import, like a local write of several rows, is one write that aborts
+//! on the first held row, so it also stages each row after the rows that let
+//! a key vouch for it, and a handoff after the row that makes its signer a
+//! slip issuer. A sync pass holds such a row as pending and retries it, so
+//! it orders without consent.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::log_structure::{Grant, LocalRoots, StructureBuilder, admits_device, is_consent_device};
 use super::*;
+use crate::store::Store;
 
 type Row = (AuthorityEntryHash, Vec<u8>, AuthorityLogEntry);
 
@@ -100,19 +102,47 @@ pub(super) fn import_order<'a>(
     let stored: Vec<&'a AuthorityLogEntry> = stored.collect();
     let order = {
         let entries: Vec<_> = rows.iter().map(|(hash, _, entry)| (*hash, entry)).collect();
-        let mut builder = StructureBuilder::under(local);
-        for entry in stored {
-            builder.push(entry);
-        }
-        builder.settle();
-        builder.grown.clear();
-        stage_order(&entries, Some((builder, resident)))
+        consent_order(&stored, resident, local, &entries)
     };
     let mut rows: Vec<_> = rows.into_iter().map(Some).collect();
     order
         .into_iter()
         .filter_map(|index| rows[index].take())
         .collect()
+}
+
+/// Indices of `entries` (hash, row) in the order one local write stages
+/// them over the rows `store` holds: as an import stages them.
+pub(super) fn write_stage_order(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entries: &[(AuthorityEntryHash, &AuthorityLogEntry)],
+) -> crate::error::Result<Vec<usize>> {
+    let (mut stored, mut resident) = (Vec::new(), BTreeSet::new());
+    for (_, body) in authority_log_rows_in_txn(store, txn)? {
+        let entry = decode_authority_log_entry_body(&body)?;
+        resident.insert(authority_entry_hash(&entry)?);
+        stored.push(entry);
+    }
+    let stored: Vec<_> = stored.iter().collect();
+    let local = LocalRoots::read_in_txn(store, txn)?;
+    Ok(consent_order(&stored, &resident, local, entries))
+}
+
+/// Indices of `entries` in the order [`import_order`] stages them.
+fn consent_order(
+    stored: &[&AuthorityLogEntry],
+    resident: &BTreeSet<AuthorityEntryHash>,
+    local: LocalRoots,
+    entries: &[(AuthorityEntryHash, &AuthorityLogEntry)],
+) -> Vec<usize> {
+    let mut builder = StructureBuilder::under(local);
+    for entry in stored {
+        builder.push(entry);
+    }
+    builder.settle();
+    builder.grown.clear();
+    stage_order(entries, Some((builder, resident)))
 }
 
 /// Indices of `entries` (hash, row) in the order a sync pass hands them to

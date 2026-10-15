@@ -536,7 +536,8 @@ fn a_second_key_under_one_id_conflicts_and_the_next_door_mints_afresh() {
 
 /// Check 8: a kit issue that never activates publishes nothing. With no
 /// root the private world warns, and the prepared seed restores nothing and
-/// anchors nothing, whatever the owner confirms, before any write.
+/// anchors nothing, whatever the owner confirms, before any write. Its
+/// fingerprint pins nothing: the root is only awaited (r23).
 #[test]
 fn a_kit_issue_that_never_activates_publishes_nothing() {
     let host = host();
@@ -581,14 +582,19 @@ fn a_kit_issue_that_never_activates_publishes_nothing() {
                 .is_err()
         );
     }
-    assert!(
-        host.vault
-            .pin_owner_root(&host.owner, EditOrigin::ThisMachine, root.id)
-            .is_err()
-    );
+    let report = host
+        .vault
+        .pin_owner_root(&host.owner, EditOrigin::ThisMachine, root.id)
+        .unwrap();
+    assert_eq!(report.awaiting, Some(root.id));
     assert_eq!(stored_entries(&host.vault).len(), stored);
     let view = host.vault.owner_root_view(None, 0).unwrap();
     assert_eq!(view.pinned, None);
+    let awaiting = AwaitedRoot {
+        root: root.id,
+        arrived: false,
+    };
+    assert_eq!(view.awaiting, Some(awaiting));
     assert_eq!(
         host.vault.world_recovery_state(world).unwrap(),
         WorldRecoveryState::NoKit
