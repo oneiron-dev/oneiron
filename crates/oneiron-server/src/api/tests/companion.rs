@@ -166,22 +166,56 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
 
     let revoke_path = format!("/v1/companion/access-grants/{grant_id}/revoke");
     let revoke_request = json!({ "revoked_at": 20_u64 });
-    let (status, body) = route_json(
-        server.clone(),
-        core_request_with_principal_ref(
-            "POST",
-            &revoke_path,
-            "companion:access-grant:write",
-            &other_principal_ref,
-            Some(&revoke_request),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_error_envelope(&body, "FORBIDDEN");
+    // F19 H64: another principal's grant, a row that is no grant, and an id
+    // never written all read alike to a writer bound to another principal,
+    // and a caller without the write verb is refused before any lookup.
+    let not_a_grant = seeded_test_entity_id(0x1265_0008);
+    server
+        .vault
+        .put_entity(
+            &not_a_grant,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"not a grant",
+        )
+        .expect("seed a non-grant row");
+    let revoke_as = |id: String, scope: &'static str| {
+        route_json(
+            server.clone(),
+            core_request_with_principal_ref(
+                "POST",
+                &format!("/v1/companion/access-grants/{id}/revoke"),
+                scope,
+                &other_principal_ref,
+                Some(&revoke_request),
+            ),
+        )
+    };
+    let missing = seeded_test_entity_id(0x1265_0009).to_hex();
+    let mut answers = Vec::new();
+    for id in [&grant_id, &not_a_grant.to_hex(), &missing] {
+        let (status, body) = revoke_as(id.clone(), "companion:access-grant:write").await;
+        answers.push((
+            status,
+            error_envelope(&body)["code"].clone(),
+            error_envelope(&body)["details"].clone(),
+        ));
+        let (status, body) = revoke_as(id.clone(), "core:read").await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(
+            error_envelope(&body)["details"]["requiredScope"],
+            Value::from("companion:access-grant:write")
+        );
+    }
+    assert_eq!(answers[2].0, StatusCode::NOT_FOUND, "{answers:?}");
     assert_eq!(
-        error_envelope(&body)["details"]["requiredScope"],
-        Value::from("core:auth")
+        answers[0], answers[2],
+        "another principal's grant reads as missing"
+    );
+    assert_eq!(
+        answers[1], answers[2],
+        "a row that is no grant reads as missing"
     );
     assert_eq!(
         server
@@ -192,6 +226,117 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
             .status,
         oneiron::access_grant::AccessGrantStatus::Active,
         "cross-principal revoke must not mutate the grant"
+    );
+
+    // F19 review round 1: a grant this writer may not revoke through the
+    // companion door reads as missing as well. Its own principal's calendar
+    // grant (Sol F2) and its own deleted companion grant (Astra F3) give the
+    // same 404, and neither changes.
+    let other_principal = oneiron::EntityId::from_hex(&other_principal_ref).expect("principal id");
+    let calendar_grant = seeded_test_entity_id(0x1265_000a);
+    server
+        .vault
+        .put_access_grant(
+            &calendar_grant,
+            &oneiron::AccessGrant::calendar_disclosure(
+                other_principal,
+                seeded_test_entity_id(0x1265_000b),
+                oneiron::booking::DisclosureRung::Titles,
+                10,
+            ),
+        )
+        .expect("seed a calendar grant");
+    let deleted_grant = seeded_test_entity_id(0x1265_000c);
+    let (status, body) = route_json(
+        server.clone(),
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/companion/access-grants",
+            "companion:access-grant:write",
+            &other_principal_ref,
+            Some(&json!({
+                "id": deleted_grant.to_hex(),
+                "principal_ref": other_principal_ref,
+                "scope": {
+                    "kind": "companion_profile",
+                    "person_ref": other_person_ref,
+                    "persona_ref": persona_ref,
+                },
+                "created_at": 10_u64,
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        server
+            .vault
+            .delete_entity(&deleted_grant)
+            .expect("delete grant")
+    );
+    for id in [calendar_grant, deleted_grant] {
+        let (status, body) = revoke_as(id.to_hex(), "companion:access-grant:write").await;
+        assert_eq!(
+            (
+                status,
+                error_envelope(&body)["code"].clone(),
+                error_envelope(&body)["details"].clone(),
+            ),
+            answers[2],
+            "{body}"
+        );
+    }
+    assert_eq!(
+        server
+            .vault
+            .get_access_grant(&calendar_grant)
+            .expect("read calendar grant")
+            .expect("calendar grant exists")
+            .status,
+        oneiron::access_grant::AccessGrantStatus::Active,
+        "the companion door never revokes a calendar grant"
+    );
+
+    // F19 review round 1 (Astra F4): a writer whose credential names other
+    // records is refused before any lookup, so its own grant stays active and
+    // reads as a missing id does. FACET-READ: so is one limited to a facet.
+    let attenuated = |bound: String, id: String| {
+        route_json(
+            server.clone(),
+            core_request_with_authz(
+                "POST",
+                &format!("/v1/companion/access-grants/{id}/revoke"),
+                test_bearer(&format!(
+                    "scope=companion:access-grant:write;principal_ref={principal_ref};{bound}"
+                )),
+                Some(&revoke_request),
+            ),
+        )
+    };
+    for bound in [
+        format!("records={missing}"),
+        format!("facets={}", seeded_test_entity_id(0x1265_0009).to_hex()),
+    ] {
+        let (own_status, own_body) = attenuated(bound.clone(), grant_id.clone()).await;
+        let (missing_status, missing_body) = attenuated(bound, missing.clone()).await;
+        assert_eq!(own_status, StatusCode::FORBIDDEN, "{own_body}");
+        assert_eq!(
+            (own_status, error_envelope(&own_body)["details"].clone()),
+            (
+                missing_status,
+                error_envelope(&missing_body)["details"].clone()
+            )
+        );
+    }
+    assert_eq!(
+        server
+            .vault
+            .get_access_grant(&oneiron::EntityId::from_hex(&grant_id).expect("test grant id"))
+            .expect("read grant")
+            .expect("grant exists")
+            .status,
+        oneiron::access_grant::AccessGrantStatus::Active,
+        "a records-bound credential never revokes a grant it does not name"
     );
 
     let (status, body) = route_json(

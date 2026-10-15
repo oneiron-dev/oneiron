@@ -53,12 +53,11 @@ pub(super) async fn handle_selector_fetch(
         });
     }
     // No queue row, observation, or doc exists before both decoding and
-    // authorization. Keep the independent fabricated-window DoS bound too.
+    // authorization.
     let decoded = decode_and_authorize_selector_request(server, request)?;
     if decoded.selector.member_ref != principal {
         return Err(ProtocolError::InvalidPayload("selector principal mismatch"));
     }
-    state.touch_window(key.clone(), server.config.max_windows_per_connection)?;
     let prepared = match retry {
         Some(id) => replay_selector_fetch(
             server.vault.as_ref(),
@@ -86,10 +85,11 @@ pub(super) async fn handle_selector_fetch(
         send(direct_tx, key, window_sub_tags::SELECTOR_DEFERRED, &retry)?;
         return Ok(());
     }
-    let doc = server
-        .get_or_create_window(key)
+    let window = server
+        .serve_window(key)
         .await
         .map_err(|e| ProtocolError::Persistence(format!("window load failed: {e}")))?;
+    let doc = window.doc.clone();
     let filtered = filtered_window_doc(
         server.vault.as_ref(),
         &doc,

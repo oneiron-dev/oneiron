@@ -132,7 +132,7 @@ fn an_exchange_that_unwinds_ends_its_backend_and_frees_the_repository() {
 }
 
 /// The objects `to` adds over `from`, as one pack.
-fn pack_between(source: &Path, from: &GitOid, to: &GitOid) -> Vec<u8> {
+pub(super) fn pack_between(source: &Path, from: &GitOid, to: &GitOid) -> Vec<u8> {
     let mut packing = std::process::Command::new("git")
         .current_dir(source)
         .args(["pack-objects", "--stdout", "--revs"])
