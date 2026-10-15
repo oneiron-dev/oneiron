@@ -3553,8 +3553,8 @@ fn task_scans_off_this_device_count_no_device_local_task() -> Result<()> {
 }
 
 /// F13 H431: a room thread read walks the room members' tasks, never every
-/// TASK in the vault. An unrelated TASK no member owns, whose body no longer
-/// reads, costs the read nothing.
+/// TASK in the vault. An unrelated TASK no member owns, whose row no longer
+/// reads, costs the read nothing; a walk over every TASK fails on it.
 #[test]
 fn a_room_thread_read_walks_only_its_members_tasks() -> Result<()> {
     let dir = tempfile::tempdir()?;
@@ -3572,18 +3572,15 @@ fn a_room_thread_read_walks_only_its_members_tasks() -> Result<()> {
             None,
             None,
         ))?;
+    vault.backfill_tasks_by_owner()?;
     let unrelated = EntityId::from_bytes([0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])?;
     vault.with_write_txn(|wtxn| {
-        let payload = crate::test_util::entity_record(
-            crate::registry::ENTITY_TYPE_TASK,
-            crate::TimeRange { start: 1, end: 1 },
-            1,
-            &[0xC1],
-        );
-        vault
-            .store
-            .entities
-            .put(wtxn, unrelated.as_bytes(), &payload)?;
+        // A TASK row with no readable header, filed under no owner.
+        vault.store.entities.put(
+            wtxn,
+            unrelated.as_bytes(),
+            &[crate::registry::ENTITY_TYPE_TASK],
+        )?;
         let type_key =
             crate::store::Store::encode_type_key(crate::registry::ENTITY_TYPE_TASK, &unrelated);
         vault.store.type_index.put(wtxn, &type_key, &[])?;
