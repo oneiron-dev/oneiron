@@ -827,6 +827,6 @@ enabled = false
             )
         })
         .count();
-    assert!(held >= 2, "each held call is receipted: {held}");
+    assert_eq!(held, 2, "each held call is receipted once");
     host.shutdown().await;
 }

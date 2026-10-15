@@ -403,6 +403,50 @@ async fn a_checkpoint_carries_no_offer_cooldown() {
     assert_eq!(first.seen().len(), 2, "the restored vault rests no offer");
 }
 
+/// Overlap check with #1454 (main 40eed5c38): a decoder now fails a reply it
+/// cannot read and no longer reads a reply that names no finish as finished.
+/// Neither takes a call the floor holds off the device. An unreadable tool
+/// request ends the call with its decode error on any world; an empty reply
+/// hands the call on, so it is held with the typed outcome; an unfinished
+/// answer is the device's answer.
+#[tokio::test]
+async fn a_reply_the_device_cannot_read_never_reaches_the_cloud() {
+    let body = |body: serde_json::Value| Reply::Error {
+        status: 200,
+        headers: Vec::new(),
+        body,
+    };
+    let unreadable = body(
+        json!({"choices": [{"index": 0, "finish_reason": "tool_calls",
+        "message": {"role": "assistant", "content": "x", "tool_calls": "unreadable"}}]}),
+    );
+    let empty = body(json!({"choices": [{"index": 0, "finish_reason": "stop"}]}));
+    let unfinished = body(json!({"choices": [{"index": 0,
+        "message": {"role": "assistant", "content": "from the device"}}]}));
+    let first = FakeLlm::start(vec![unreadable, empty, unfinished], None).await;
+    let second = FakeLlm::start(vec![], Some(Reply::text("from the cloud"))).await;
+    let (dir, clock) = (tempfile::tempdir().unwrap(), ManualClock::new(T0));
+    let vault = clocked_vault(dir.path(), &clock);
+    let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
+    let seat = runtime.seat(ModelRole::Checker).expect("seat");
+    private_world(&vault);
+    let (run, call) = (test_run(), || request(&seat.model, "check this"));
+    let error = seat.ladder.generate(&run, call(), None).await;
+    let decode = oneiron::LlmError::from(oneiron::FatalLlmError::InvalidRequest);
+    assert_eq!(error.expect_err("an unreadable tool request"), decode);
+    let error = seat.ladder.generate(&run, call(), None).await;
+    assert_eq!(error.expect_err("an empty reply"), kept_here(None));
+    let answer = seat.ladder.generate(&run, call(), None).await;
+    let answer = answer.expect("the device's unfinished answer");
+    assert_eq!(text_of(&answer.message), "from the device");
+    let unreported = oneiron::FinishReason::Other {
+        name: "unreported".into(),
+    };
+    assert_eq!(answer.finish_reason, unreported);
+    assert_eq!(first.seen().len(), 3);
+    assert!(second.seen().is_empty(), "the text stayed here");
+}
+
 /// Every place in this crate that reaches a fallback ladder, and where its
 /// call's world comes from. A call that names no world is held by the
 /// vault-wide floor while any world stays on the device, so a new caller
