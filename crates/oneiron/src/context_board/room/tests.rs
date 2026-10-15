@@ -839,6 +839,7 @@ fn a_guests_clearance_bounds_every_read_a_room_turn_makes() -> Result<()> {
     // longer admits, and a member the render never checked keeps it out.
     let captured = crate::claim::RoomTerms {
         worlds: Scope::top(),
+        facets: ScopeAxis::All,
         clearance: Some(Scope::top()),
         p7: true,
     };

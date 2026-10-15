@@ -26,7 +26,10 @@ pub(super) async fn handle_selector_fetch(
     // Owner/shared-secret upgrade is NOT a stable peer identity. The MACed,
     // live app-tier credential must name the actual granted principal.
     let auth = require_bound_app_auth(server, state)?;
+    // The window is the selector grant's, not the credential's lane, so a
+    // credential limited to facets is refused (owner ruling FACET-READ).
     auth.require(CoreScope::Read)
+        .and_then(|()| auth.require_unnarrowed_facets())
         .map_err(|_| ProtocolError::RpcNoPrincipal)?;
     let principal = oneiron::EntityId::from_hex(
         auth.require_registered_principal()

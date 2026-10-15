@@ -18,9 +18,13 @@ pub(super) const CONTENT: SideTable<Hex64, Vec<u8>, Raw> =
 /// Key: hex64.
 pub(super) const RECEIPT: SideTable<Hex64, Vec<u8>, Raw> =
     SideTable::new(&side_table::VAULT_IMPORT_RECEIPT);
+/// The facet stamps an artifact staged ahead of their rows, kept exactly as
+/// long as [`CONTENT`]. Key: hex64.
+pub(super) const STAMPS: SideTable<Hex64, Vec<u8>, Raw> =
+    SideTable::new(&side_table::VAULT_IMPORT_STAMPS);
 
 /// A 32-byte id spelled as 64 lower-case hex characters — this family's key
-/// shape, shared by [`RECEIPT`] and [`CONTENT`].
+/// shape, shared by [`RECEIPT`], [`CONTENT`] and [`STAMPS`].
 #[derive(Clone, Copy)]
 pub(super) struct Hex64(pub(super) [u8; 32]);
 
@@ -94,6 +98,11 @@ pub struct VaultImportStageReceipt {
     pub confirmed_by: Option<EntityId>,
     pub confirmed_at_secs: Option<u64>,
     pub failure: Option<VaultImportFailure>,
+    /// The blake3 digest of the record of facet stamps a Pending receipt
+    /// keeps (`VAULT_IMPORT_STAMPS`), the empty record included, which its confirmation
+    /// checks before it holds them again. `None` on a Failed receipt and on
+    /// one staged before the record existed.
+    pub staged_stamps_digest: Option<[u8; 32]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -202,6 +211,7 @@ pub(super) fn encode_vault_import_receipt(r: &VaultImportStageReceipt) -> Result
         }
         VaultImportStageStatus::Failed => {
             if r.admitted_update_digest.is_some()
+                || r.staged_stamps_digest.is_some()
                 || r.confirmed_by.is_some()
                 || r.confirmed_at_secs.is_some()
                 || r.failure.is_none()
@@ -210,7 +220,7 @@ pub(super) fn encode_vault_import_receipt(r: &VaultImportStageReceipt) -> Result
             }
         }
     }
-    let v = rmpv::Value::Map(vec![
+    let mut fields = vec![
         (
             rmpv::Value::from("v"),
             rmpv::Value::from(VAULT_IMPORT_RECEIPT_SCHEMA_VERSION),
@@ -260,7 +270,16 @@ pub(super) fn encode_vault_import_receipt(r: &VaultImportStageReceipt) -> Result
             r.failure
                 .map_or(rmpv::Value::Nil, |x| rmpv::Value::from(x as u8)),
         ),
-    ]);
+    ];
+    // Last and only when set, so a receipt staged before the record existed
+    // encodes as it always did.
+    if let Some(digest) = r.staged_stamps_digest {
+        fields.push((
+            rmpv::Value::from("stamps"),
+            rmpv::Value::Binary(digest.to_vec()),
+        ));
+    }
+    let v = rmpv::Value::Map(fields);
     let mut b = Vec::new();
     rmpv::encode::write_value(&mut b, &v)
         .map_err(|_| Error::InvariantViolation("receipt encode failed"))?;
@@ -297,7 +316,8 @@ pub fn vault_import_stage_receipt(
         "confirmed_at_secs",
         "failure",
     ];
-    if f.len() != names.len() {
+    let stamps_named = f.iter().any(|(k, _)| k.as_str() == Some("stamps"));
+    if f.len() != names.len() + usize::from(stamps_named) {
         return Err(Error::InvalidConfig("receipt shape".into()));
     };
     let mut seen = std::collections::HashSet::new();
@@ -305,7 +325,7 @@ pub fn vault_import_stage_receipt(
         let Some(n) = k.as_str() else {
             return Err(Error::InvalidConfig("receipt key".into()));
         };
-        if !names.contains(&n) || !seen.insert(n) {
+        if !(names.contains(&n) || n == "stamps") || !seen.insert(n) {
             return Err(Error::InvalidConfig("receipt keys".into()));
         }
     }
@@ -395,6 +415,15 @@ pub fn vault_import_stage_receipt(
         ),
         _ => return Err(Error::InvalidConfig("admitted".into())),
     };
+    let stamps = match get("stamps") {
+        None => None,
+        Some(rmpv::Value::Binary(b)) if b.len() == 32 => Some(
+            b.clone()
+                .try_into()
+                .map_err(|_| Error::InvalidConfig("stamps".into()))?,
+        ),
+        _ => return Err(Error::InvalidConfig("stamps".into())),
+    };
     let by = match get("confirmed_by") {
         Some(rmpv::Value::Nil) => None,
         Some(rmpv::Value::Binary(b)) if b.len() == 16 => Some(EntityId::from_bytes(
@@ -437,6 +466,7 @@ pub fn vault_import_stage_receipt(
         confirmed_by: by,
         confirmed_at_secs: at,
         failure,
+        staged_stamps_digest: stamps,
     };
     if encode_vault_import_receipt(&r)? != raw {
         return Err(Error::InvalidConfig("receipt noncanonical".into()));

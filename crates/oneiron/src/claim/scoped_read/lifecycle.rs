@@ -13,8 +13,11 @@ impl ScopedRead<'_> {
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
             return Ok(None);
         };
-        // A caller off this device learns no state of a device-local row.
-        if self.device_withholds_in(&txn, id, Some(&raw))? {
+        // A caller off this device learns no state of a device-local row,
+        // nor a credential limited to facets of a row outside them.
+        if self.device_withholds_in(&txn, id, Some(&raw))?
+            || !self.facets_allow_in(&txn, id, &raw)?
+        {
             return Ok(None);
         }
         if raw.len() == ENTITY_METADATA_HEADER_LEN

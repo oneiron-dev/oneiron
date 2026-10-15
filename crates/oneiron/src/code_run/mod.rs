@@ -55,6 +55,8 @@ pub(crate) use self::storage::{
 use self::storage::canonical_speech_conversation_id;
 #[cfg(test)]
 pub(crate) use self::storage::executor_speech_message_id;
+#[cfg(test)]
+pub(crate) use self::storage::require_facet_placement_in;
 pub use self::types::{
     SelfAgentDefinitionPutCall, SelfAgentDefinitionPutResult, SelfAgentSpawnCall,
     SelfAgentSpawnResult, SelfAskCall, SelfCall, SelfContextCall, SelfContextResult,

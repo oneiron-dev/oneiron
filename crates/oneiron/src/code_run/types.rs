@@ -488,7 +488,8 @@ pub trait AgentVerbDoor: Send + Sync {
     /// Admits one call the run serves itself, before it runs. The host's
     /// ceiling and credential bind these as they bind [`Self::call`], so a run
     /// keeps no authority its door has lost or never had. A search admitted
-    /// with a key reads only what that key's lane admits. A refusal spelled as
+    /// with a key reads only what that key's lane admits, and a facet stamp
+    /// admitted with one places only a row that lane reads. A refusal spelled as
     /// a gate's outcome word (`pending`, `deny`) is taken as that gate's: the
     /// run's bridge halts after it, as after any gate's refusal.
     fn admit_run_call(

@@ -144,9 +144,9 @@ impl<'v> Memory<'v> {
             && let Some(turn) = handle.memory.room_turn.as_mut()
         {
             turn.terms = crate::claim::TurnTerms::new(crate::claim::RoomTerms {
-                worlds: turn.terms.get().worlds,
                 clearance: None,
                 p7: false,
+                ..turn.terms.get()
             });
         }
         Ok(handle)

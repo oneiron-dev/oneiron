@@ -241,7 +241,7 @@ pub(super) async fn redeem(
     let token = slip.to_token().map_err(|_| ApiError::unauthorized())?;
     // The already redeemed/logged slip is the credential. MCP registration
     // only records its immutable adapter ceiling; it creates no authority.
-    if let Some(record) = paired_mcp_record(&slip.claims)? {
+    if let Some(record) = paired_mcp_record(server.vault(), &slip.claims)? {
         server
             .mcp_registry
             .lock()
@@ -254,11 +254,14 @@ pub(super) async fn redeem(
 
 /// The MCP adapter record a paired slip's claims map to, or `None` for a slip
 /// the adapter cannot represent. The one rule for redeem and for a slip the
-/// registry learns later ([`register_live_paired_mcp`]).
+/// registry learns later ([`register_live_paired_mcp`]). A connector that
+/// reads several facets writes in the one the owner named on the link, kept
+/// beside the slip's id, or in the smallest.
 fn paired_mcp_record(
+    vault: &oneiron::Vault,
     claims: &oneiron::authority::SlipClaims,
 ) -> Result<Option<crate::mcp::McpConnectorActorRecord>, ApiError> {
-    use oneiron::federation::{ScopeAxis, ScopeId};
+    use oneiron::federation::ScopeAxis;
     // `read` and `core:read` are one scope on every other door
     // (`CoreAuth::from_verified`); this one reads both spellings too.
     let reads = ["read", crate::auth::CoreScope::Read.as_str()]
@@ -273,26 +276,36 @@ fn paired_mcp_record(
         Some("system") => oneiron::EdgeActorClass::System,
         _ => return Ok(None),
     };
-    // This MCP adapter can represent only all or one id on each legacy axis.
-    // Other paired instruments still work on the canonical /v1 read door.
-    let axis = |axis: &ScopeAxis<ScopeId>| match axis {
-        ScopeAxis::All => Some(None),
-        ScopeAxis::Some(ids) if ids.len() == 1 => ids.first().map(|id| Some(id.0)),
-        _ => None,
+    // This MCP adapter holds all or one world, and all or a set of facets
+    // (owner ruling FACET-READ). Other paired instruments still work on the
+    // canonical /v1 read door.
+    let world = match &claims.scope.worlds {
+        ScopeAxis::All => None,
+        ScopeAxis::Some(ids) if ids.len() == 1 => ids.first().map(|id| id.0),
+        _ => return Ok(None),
     };
-    let (Some(world), Some(facet)) = (axis(&claims.scope.worlds), axis(&claims.scope.facets))
-    else {
-        return Ok(None);
+    let scope = match &claims.scope.facets {
+        ScopeAxis::All => crate::mcp::McpConnectorScope::scoped(world, None),
+        ScopeAxis::Some(ids) => {
+            let write_facet = vault
+                .paired_write_facet(&claims.slip_id)
+                .map_err(|_| ApiError::unauthorized())?;
+            let Some(scope) = crate::mcp::McpConnectorScope::with_facets(
+                world,
+                ids.iter().map(|id| id.0).collect(),
+                write_facet,
+            ) else {
+                return Ok(None);
+            };
+            scope
+        }
+        ScopeAxis::Bottom => return Ok(None),
     };
     let actor =
         oneiron::EntityId::from_hex(&claims.holder_ref).map_err(|_| ApiError::unauthorized())?;
     Ok(Some(
-        crate::mcp::McpConnectorActorRecord::new(
-            actor,
-            class,
-            crate::mcp::McpConnectorScope::scoped(world, facet),
-        )
-        .with_expiry(claims.expires_at),
+        crate::mcp::McpConnectorActorRecord::new(actor, class, scope)
+            .with_expiry(claims.expires_at),
     ))
 }
 
@@ -331,7 +344,7 @@ pub(super) fn register_live_paired_mcp(
     if !holder_exists {
         return false;
     }
-    match paired_mcp_record(slip.claims()) {
+    match paired_mcp_record(server.vault(), slip.claims()) {
         Ok(Some(record)) => registry.register(credential, record).is_ok(),
         _ => false,
     }
@@ -341,8 +354,16 @@ fn with_issuer<T>(
     server: &SyncServer,
     operation: impl FnOnce(&HostSlipIssuer) -> oneiron::Result<T>,
 ) -> Result<T, ApiError> {
+    // A scope the vault refuses on a link says why; every other failure
+    // stays an unexplained 401.
+    let refusal = |error: oneiron::Error| match error.kind() {
+        oneiron::ErrorKind::InvalidPairingScope => {
+            ApiError::bad_request(error.to_string(), Some("scope.facets"))
+        }
+        _ => ApiError::unauthorized(),
+    };
     if let Some(issuer) = server.managed_issuer.as_ref() {
-        return operation(issuer).map_err(|_| ApiError::unauthorized());
+        return operation(issuer).map_err(refusal);
     }
     let secret = server
         .config
@@ -351,7 +372,7 @@ fn with_issuer<T>(
         .ok_or_else(ApiError::unauthorized)?;
     let issuer =
         HostSlipIssuer::from_secret(secret.as_bytes()).map_err(|_| ApiError::unauthorized())?;
-    operation(&issuer).map_err(|_| ApiError::unauthorized())
+    operation(&issuer).map_err(refusal)
 }
 
 #[derive(Deserialize)]

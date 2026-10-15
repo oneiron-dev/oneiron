@@ -435,6 +435,11 @@ impl ScopedRead<'_> {
     ) -> Result<bool> {
         use crate::federation::record_scope::{default_stamp, scope_for_blob};
         use crate::federation::{Scope, ScopeAxis};
+        // A read limited to facets names only a shell that still proves a
+        // place inside them.
+        if !self.facets_allow_in(txn, id, raw)? {
+            return Ok(false);
+        }
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != crate::registry::ENTITY_TYPE_TASK {

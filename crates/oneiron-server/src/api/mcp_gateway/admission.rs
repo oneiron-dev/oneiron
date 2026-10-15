@@ -10,7 +10,6 @@ use crate::mcp::McpResolvedActor;
 use crate::mcp::McpSurfaceMode;
 use crate::mcp::McpValidatedToolArgs;
 use crate::server::SyncServer;
-use oneiron::EdgeKind;
 use std::sync::Arc;
 
 /// The IMMUTABLE connector ceiling, applied BEFORE any executor runs.
@@ -147,7 +146,8 @@ fn mcp_admit_unscoped_execution(
     field: &'static str,
 ) -> Result<(), McpGatewayError> {
     let scope = &actor.scope;
-    let axis = match (scope.world_ref.is_some(), scope.facet_ref.is_some()) {
+    let facets = !matches!(scope.facets, oneiron::federation::ScopeAxis::All);
+    let axis = match (scope.world_ref.is_some(), facets) {
         (false, false) => return Ok(()),
         (true, false) => "world",
         (false, true) => "facet",
@@ -237,13 +237,13 @@ pub(super) fn mcp_credential_reads(
 /// True when the registered world/facet ceiling covers this entity.
 ///
 /// A vault-wide credential covers everything. A facet-scoped credential covers
-/// only rows that actually carry the `FacetOf` edge to that facet.
+/// only rows inside one of its facets, by the engine's one facet rule
+/// (`Vault::row_in_facets`), which every read lane applies too.
 ///
-/// ONE-1704 B5: the world axis is now symmetric with that facet axis, and it
-/// applies to EVERY addressed row rather than to CLAIMs alone. A CLAIM is
-/// covered exactly when its own `world` key is this credential's world. A TASK
-/// carries neither a `world` key nor a `FacetOf` edge, so it is projected
-/// through the engine's record-scope stamp instead (`mcp_task_in_scope`):
+/// ONE-1704 B5: the world axis applies to EVERY addressed row rather than to
+/// CLAIMs alone. A CLAIM is covered exactly when its own `world` key is this
+/// credential's world. A TASK carries no `world` key, so it is projected
+/// through the engine's record-scope stamp instead (`mcp_task_in_world`):
 /// the board's TASK rows, a call addressing a TASK and the STREAM events about
 /// one all take that one projection (ARCH-0067 §5). Any other row that carries
 /// no `world` key cannot be PROVEN in this credential's world and is refused.
@@ -262,9 +262,10 @@ pub(super) fn mcp_scope_covers_entity(
         .get_entity_type(id)
         .map_err(|error| mcp_engine_error("mcp scope type read failed", error))?;
     if entity_type == Some(oneiron::registry::ENTITY_TYPE_TASK) {
-        return mcp_task_in_scope(scoped_read.vault(), scope, id);
-    }
-    if let Some(world_ref) = scope.world_ref {
+        if !mcp_task_in_world(scoped_read.vault(), scope, id)? {
+            return Ok(false);
+        }
+    } else if let Some(world_ref) = scope.world_ref {
         if entity_type != Some(oneiron::registry::ENTITY_TYPE_CLAIM) {
             return Ok(false);
         }
@@ -279,33 +280,25 @@ pub(super) fn mcp_scope_covers_entity(
             return Ok(false);
         }
     }
-    if let Some(facet_ref) = scope.facet_ref {
-        // This is membership evidence, not returned graph data. A facet's
-        // separate read-type ceiling must not erase proof of a claim's scope.
-        // Payload projection still uses the receipted ScopedRead door.
-        let edges = scoped_read
-            .vault()
-            .edges_out(id)
-            .map_err(|error| mcp_engine_error("mcp scope facet read failed", error))?;
-        let carries_facet = edges
-            .iter()
-            .any(|edge| edge.kind == EdgeKind::FacetOf && edge.target == facet_ref);
-        if !carries_facet {
-            return Ok(false);
-        }
-    }
-    Ok(true)
+    // The one facet rule every read lane applies (owner ruling FACET-READ).
+    // This is membership evidence, not returned graph data: a facet's
+    // separate read-type ceiling must not erase proof of a row's scope.
+    // Payload projection still uses the receipted ScopedRead door.
+    scoped_read
+        .vault()
+        .row_in_facets(id, &scope.facets)
+        .map_err(|error| mcp_engine_error("mcp scope facet read failed", error))
 }
 
-/// A TASK is inside a narrowed ceiling when the world and facet the engine
-/// stamped it with at birth are inside it. A TASK is born in its writer's
-/// world and facet: a narrowed connector's inside that connector's ceiling, a
-/// vault-wide writer's in base reality under the TASK's own substrate facet.
-/// So a credential narrowed to base reality reads the vault-wide writers'
-/// TASKs, and one narrowed to another world or to a facet reads those written
-/// inside it. A TASK with no stamp (an opaque replicated row) is outside every
-/// narrowed ceiling.
-fn mcp_task_in_scope(
+/// A TASK is inside a narrowed world when the world the engine stamped it
+/// with at birth is that world; its facets are judged by the one facet rule.
+/// A TASK is born in its writer's world and facet: a narrowed connector's
+/// inside that connector's ceiling, a vault-wide writer's in base reality
+/// under the TASK's own substrate facet. So a credential narrowed to base
+/// reality reads the vault-wide writers' TASKs, and one narrowed to another
+/// world or to a facet reads those written inside it. A TASK with no stamp
+/// (an opaque replicated row) is outside every narrowed ceiling.
+fn mcp_task_in_world(
     vault: &oneiron::Vault,
     scope: &crate::mcp::McpConnectorScope,
     id: &oneiron::EntityId,
@@ -323,7 +316,7 @@ fn mcp_task_in_scope(
                 && stamped.is_narrowing_of(&ScopeAxis::Some([ScopeId(ceiling)].into()))
         })
     };
-    Ok(inside(&position.worlds, scope.world_ref) && inside(&position.facets, scope.facet_ref))
+    Ok(inside(&position.worlds, scope.world_ref))
 }
 
 /// Narrows the TASKS rows to the credential's registered world/facet and its

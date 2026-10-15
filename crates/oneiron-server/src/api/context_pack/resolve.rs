@@ -44,6 +44,9 @@ pub(crate) async fn core_context_pack(
     payload: Result<Json<CoreContextPackRequest>, JsonRejection>,
 ) -> Result<Json<CoreContextPackResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
+    // The pack echoes the room's roster and its pre-filter counts, which no
+    // lane judges, so a facet narrowing is refused rather than half kept.
+    auth.require_unnarrowed_facets()?;
     let req = json_payload(payload)?;
     let (response, _, _) = run_context_pack(&server, &auth, req, None).await?;
     Ok(Json(response))

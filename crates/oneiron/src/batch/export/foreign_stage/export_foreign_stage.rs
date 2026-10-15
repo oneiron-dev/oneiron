@@ -4,13 +4,13 @@ use std::sync::{Arc, Mutex};
 
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::sync::selector::{FederationAdmissionRole, admit_federated_window_update};
+use crate::sync::selector::{FederationAdmissionRole, admit_staged_window_update};
 use crate::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
 use crate::sync::types::WindowKey;
 
 use super::super::export_authority::{VaultImportClassification, VaultImportReceipt};
 use super::export_foreign_receipt::{
-    CONTENT, ForeignVaultImportSource, Hex64, RECEIPT, REMOTE_ENTITY_METADATA_CORRUPT,
+    CONTENT, ForeignVaultImportSource, Hex64, RECEIPT, REMOTE_ENTITY_METADATA_CORRUPT, STAMPS,
     StagedVaultImport, VaultImportFailure, VaultImportStageReceipt, VaultImportStageStatus,
     content_key, encode_vault_import_receipt, receipt_id, source_bytes, vault_import_stage_receipt,
 };
@@ -76,6 +76,7 @@ pub(crate) fn vault_import_confirm_if_pending(
         // wins the receipt leaves Pending forever, so drop the content in the same
         // write txn: the terminal receipt and the GC commit or roll back together.
         CONTENT.delete(&vault.store, w, &key)?;
+        STAMPS.delete(&vault.store, w, &key)?;
         Ok(true)
     })
 }
@@ -90,10 +91,53 @@ pub fn vault_import_staged_content(vault: &Vault, id: &[u8; 32]) -> Result<Optio
     vault.sync_state_get(&content_key(id))
 }
 
+/// The record of the facet stamps the artifact staged under `id` holds ahead
+/// of their rows, kept exactly as long as its content: only while the
+/// receipt is Pending.
+pub(crate) fn vault_import_staged_stamps(vault: &Vault, id: &[u8; 32]) -> Result<Option<Vec<u8>>> {
+    let txn = vault.store.env.read_txn()?;
+    STAMPS.get(&vault.store, &txn, &Hex64(*id))
+}
+
+/// Whether the receipt `id` still keeps a record of staged stamps, that is,
+/// whether it is Pending with stamps of its own, judged in `txn`.
+pub(crate) fn vault_import_keeps_stamps_in(
+    dbs: &impl crate::side_table::SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &[u8; 32],
+) -> Result<bool> {
+    STAMPS.contains(dbs, txn, &Hex64(*id))
+}
+
+/// Writes `record` as the receipt `id`'s record of its staged stamps, as an
+/// edit on disk would, and binds the receipt's digest to it when `bind`.
+#[cfg(test)]
+pub(crate) fn rewrite_staged_stamps_for_test(
+    vault: &Vault,
+    id: &[u8; 32],
+    record: &[u8],
+    bind: bool,
+) -> Result<()> {
+    let key = Hex64(*id);
+    let mut receipt = vault_import_stage_receipt(vault, id)?
+        .ok_or(Error::InvariantViolation("no receipt to rewrite"))?;
+    receipt.staged_stamps_digest = Some(*blake3::hash(record).as_bytes());
+    let encoded = encode_vault_import_receipt(&receipt)?;
+    vault.with_write_txn_grouped(|w| {
+        STAMPS.put(&vault.store, w, &key, &record.to_vec())?;
+        if bind {
+            RECEIPT.put(&vault.store, w, &key, &encoded)?;
+        }
+        Ok(())
+    })
+}
+
+/// Writes `receipt` unless one is stored under its id, with the admitted
+/// `content` and the record of its staged `stamps` when it is Pending.
 fn put_stage_if_absent(
     vault: &Vault,
     receipt: &VaultImportStageReceipt,
-    admitted: Option<&[u8]>,
+    admitted: Option<(&[u8], &[u8])>,
 ) -> Result<bool> {
     let key = Hex64(receipt.receipt_id);
     let encoded = encode_vault_import_receipt(receipt)?;
@@ -101,8 +145,11 @@ fn put_stage_if_absent(
         if RECEIPT.contains(&vault.store, w, &key)? {
             return Ok(false);
         }
-        if let Some(content) = admitted {
+        if let Some((content, stamps)) = admitted {
             CONTENT.put(&vault.store, w, &key, &content.to_vec())?;
+            if !stamps.is_empty() {
+                STAMPS.put(&vault.store, w, &key, &stamps.to_vec())?;
+            }
         }
         RECEIPT.put(&vault.store, w, &key, &encoded)?;
         Ok(true)
@@ -229,13 +276,18 @@ pub fn stage_foreign_vault_import(
             }
         };
     }
-    let admitted = match admit_federated_window_update(
+    let (admitted, stamps) = match admit_staged_window_update(
         vault,
         key,
         remote,
         FederationAdmissionRole::Guest,
+        &id,
     ) {
-        Ok(a) if a.len() <= MAX_DECODED_PAYLOAD_BYTES => a,
+        Ok(a) if a.bytes().len() <= MAX_DECODED_PAYLOAD_BYTES => {
+            a.hold_staged(vault, key)?;
+            let stamps = a.staged_stamps();
+            (a.into_bytes(), stamps)
+        }
         Ok(_) => {
             let failed = VaultImportStageReceipt {
                 receipt_id: id,
@@ -249,6 +301,7 @@ pub fn stage_foreign_vault_import(
                 confirmed_by: None,
                 confirmed_at_secs: None,
                 failure: Some(VaultImportFailure::AdmissionRejected),
+                staged_stamps_digest: None,
             };
             if put_stage_if_absent(vault, &failed, None)? {
                 return Ok(StagedVaultImport {
@@ -317,6 +370,7 @@ pub fn stage_foreign_vault_import(
                 confirmed_by: None,
                 confirmed_at_secs: None,
                 failure: Some(VaultImportFailure::AdmissionRejected),
+                staged_stamps_digest: None,
             };
             if put_stage_if_absent(vault, &failed, None)? {
                 return Ok(StagedVaultImport {
@@ -349,8 +403,9 @@ pub fn stage_foreign_vault_import(
         confirmed_by: None,
         confirmed_at_secs: None,
         failure: None,
+        staged_stamps_digest: Some(*blake3::hash(&stamps).as_bytes()),
     };
-    if put_stage_if_absent(vault, &pending, Some(&admitted))? {
+    if put_stage_if_absent(vault, &pending, Some((&admitted, &stamps)))? {
         return Ok(StagedVaultImport {
             receipt: pending,
             admitted_update: admitted,

@@ -85,11 +85,11 @@ async fn tasks_create(
     headers: HeaderMap,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    let position = facade_landing(&server, &headers, &auth)?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
-    Ok(Json(facade_invoke(
+    Ok(Json(facade_invoke_born(
         &server,
         &headers,
         &auth,
@@ -97,6 +97,7 @@ async fn tasks_create(
         class,
         "tasks.create",
         value,
+        position,
     )?))
 }
 async fn tasks_update(
@@ -132,7 +133,7 @@ async fn witness(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
-
+    auth.require_unnarrowed_facets()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     let output = facade_invoke(&server, &headers, &auth, actor, class, "witness", value)?;
@@ -146,7 +147,7 @@ async fn claim_upsert(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
-
+    auth.require_unnarrowed_facets()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
@@ -176,7 +177,7 @@ async fn recall(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_lane_record_scope()?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("recall", &value)?;
     let (actor, class) = facade_actor(&auth)?;
@@ -279,7 +280,7 @@ async fn key_value_put(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
-
+    auth.require_unnarrowed_facets()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
@@ -299,7 +300,7 @@ async fn key_value_delete(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
-
+    auth.require_unnarrowed_facets()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
@@ -387,7 +388,7 @@ async fn tasks_ask(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
-
+    auth.require_unnarrowed_facets()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
@@ -407,7 +408,7 @@ async fn tasks_wait(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
-
+    auth.require_unnarrowed_facets()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
@@ -427,7 +428,7 @@ async fn tasks_answer(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
-
+    auth.require_unnarrowed_facets()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
@@ -467,7 +468,7 @@ async fn rooms_list(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unnarrowed_facets()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
@@ -487,7 +488,7 @@ async fn rooms_messages(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-
+    auth.require_unnarrowed_facets()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
@@ -587,7 +588,7 @@ async fn rooms_claim(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
-
+    auth.require_unnarrowed_facets()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_invoke(
@@ -607,7 +608,7 @@ async fn rooms_speak(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
-
+    auth.require_unnarrowed_facets()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
     let output = facade_invoke(&server, &headers, &auth, actor, class, "rooms.speak", value)?;

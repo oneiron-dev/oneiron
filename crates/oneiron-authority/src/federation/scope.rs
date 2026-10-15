@@ -258,7 +258,11 @@ impl Scope {
             && record.disclosure_narrows(self)
             && record.disclosure_narrows(channel)
     }
-    // Facets are provenance/relevance masks, never capability boundaries.
+    // Facets are not judged here. On an agent's or a room's credential they are
+    // an opt-in read limit, never on the owner's (owner ruling FACET-READ = A),
+    // and the engine applies it by one rule on MCP and every read lane
+    // (`federation::facet_read`). A grant's or selector's facets stay
+    // provenance/relevance masks.
     fn disclosure_narrows(&self, ceiling: &Self) -> bool {
         self.worlds.is_narrowing_of(&ceiling.worlds)
             && self.bands.is_narrowing_of(&ceiling.bands)

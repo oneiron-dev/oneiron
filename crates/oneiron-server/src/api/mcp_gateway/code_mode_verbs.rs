@@ -106,7 +106,12 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             mcp_admit_run_verb(&self.actor, *verb).map_err(refused)?;
         }
         mcp_execute_code_gate(&self.server, &self.actor).map_err(refused)?;
-        if call != RunCall::Bridge(SelfEffect::MemorySearch) {
+        // A search reads on the credential's lane, and a facet stamp places
+        // only a row that lane reads.
+        if !matches!(
+            call,
+            RunCall::Bridge(SelfEffect::MemorySearch | SelfEffect::MemoryPutEdge)
+        ) {
             return Ok(None);
         }
         let unauthenticated = || AgentVerbRefusal {

@@ -7,10 +7,11 @@ use super::super::loro_support::map_for_each_value_bytes_deferring;
 use super::super::test_hooks;
 use super::{RematCtx, RematLedger};
 
+use crate::EntityId;
 use crate::error::Result;
 use crate::sync::ingest::{
-    EntityStep, IngestCtx, RefusalRetry, Residence, ingest_entity_in_savepoint,
-    waits_for_sibling_row,
+    EntityStep, IngestCtx, RefusalRetry, Residence, ingest_entity_in_savepoint, note_born,
+    waits_for_sibling_row, watches,
 };
 
 /// Run the entity pass: iterate the window `entities` map, ingest each value in its own write
@@ -42,10 +43,23 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             entity_error = Some(err);
             return;
         }
-        let step = match vault
-            .with_write_txn_grouped(|wtxn| ingest_entity_in_savepoint(&ingest, wtxn, key, value))
-        {
-            Ok(step) => step,
+        // A row a federated import watches, written where none was stored, is
+        // its birth once this transaction commits.
+        let watched = EntityId::from_hex(key).ok().filter(|id| watches(vault, id));
+        let step = match vault.with_write_txn_grouped(|wtxn| {
+            let unborn = match &watched {
+                Some(id) => vault.store.entities.get(wtxn, id.as_bytes())?.is_none(),
+                None => false,
+            };
+            let step = ingest_entity_in_savepoint(&ingest, wtxn, key, value)?;
+            Ok((step, unborn))
+        }) {
+            Ok((step, unborn)) => {
+                if unborn && let (Some(id), Some(blob)) = (step.written(), value) {
+                    note_born(vault, id, blob);
+                }
+                step
+            }
             Err(err) => {
                 entity_error = Some(err);
                 return;

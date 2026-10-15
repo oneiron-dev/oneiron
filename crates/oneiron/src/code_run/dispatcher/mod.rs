@@ -381,7 +381,7 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
             SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
             SelfCall::MemorySupersedeClaim(call) => self.dispatch_memory_supersede_claim(call),
-            SelfCall::MemoryPutEdge(call) => self.dispatch_memory_put_edge(call),
+            SelfCall::MemoryPutEdge(call) => self.dispatch_memory_put_edge(call, read_as),
             SelfCall::Ask(call) => self.dispatch_ask(call),
             SelfCall::DestructiveFixture(call) => Ok(self.durable_wait(
                 SelfEffect::DestructiveFixture,

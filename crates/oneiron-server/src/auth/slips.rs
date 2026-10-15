@@ -167,6 +167,30 @@ impl CoreAuth {
         }
         Ok(())
     }
+    /// A door that reads or writes around the credential's lane cannot honour
+    /// a facet narrowing (owner ruling FACET-READ), so it refuses one, as MCP
+    /// refuses a narrowed connector there. Any other bound keeps this door's
+    /// own checks.
+    pub(crate) fn require_unnarrowed_facets(&self) -> Result<(), ApiError> {
+        if self.verified_slip().is_some_and(|proof| {
+            !matches!(proof.scope().facets, oneiron::federation::ScopeAxis::All)
+        }) {
+            return Err(ApiError::forbidden_scope("record-scope"));
+        }
+        Ok(())
+    }
+    /// A door that reads only through the credential's lane, which honours a
+    /// facet narrowing on every row (owner ruling FACET-READ), admits one. Any
+    /// other narrowing, and any record or channel caveat, fails closed as in
+    /// [`Self::require_unrestricted_record_scope`].
+    pub(crate) fn require_lane_record_scope(&self) -> Result<(), ApiError> {
+        let facets = self
+            .verified_slip()
+            .map_or(oneiron::federation::ScopeAxis::All, |proof| {
+                proof.scope().facets.clone()
+            });
+        self.require_record_scope_carried(oneiron::federation::ScopeAxis::All, facets)
+    }
     /// A write whose records are born at `worlds` and `facets` carries those
     /// two axes of the credential's record bounds and no other. The proof may
     /// narrow worlds and facets to cover them; any other narrowing, and any

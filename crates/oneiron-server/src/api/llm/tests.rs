@@ -213,6 +213,7 @@ async fn a_paired_top_scope_credential_carries_llm_results_and_host_usage() {
                 holder_ref: Some(person.clone()),
                 actor_class: Some("human".into()),
                 org_ref: None,
+                write_facet: None,
             },
         )
         .unwrap();

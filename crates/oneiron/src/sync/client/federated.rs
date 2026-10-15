@@ -8,9 +8,11 @@ use crate::error::SyncProtocolValidation;
 use crate::sync::federation_burst::{
     FederationBurstDecision, WorkKind, admit_work, record_outcome,
 };
+use crate::sync::ingest::watch_births;
 use crate::sync::selector::{
-    FederationAdmissionRole, SyncSelector, admit_federated_window_update,
-    encode_selector_vv_request, revalidate_admitted_federated_claims,
+    AdmittedUpdate, FederationAdmissionRole, SyncSelector, admit_peer_window_update,
+    encode_selector_vv_request, revalidate_admitted_facet_stamps,
+    revalidate_admitted_federated_claims, staged_births,
 };
 use crate::sync::transport;
 use crate::sync::transport::{MAX_DECODED_PAYLOAD_BYTES, TransportError, window_sub_tags};
@@ -145,7 +147,8 @@ impl SyncClient {
             .map_err(map_federated_admission_err)?;
         // Validate before retaining bytes. Malformed rows never become durable
         // deferred work, and they cannot reach an observed Loro document.
-        let admitted = match admit_federated_window_update(&self.vault, &key, update, role) {
+        let sender = peer.principal();
+        let admitted = match admit_peer_window_update(&self.vault, &key, update, role, sender) {
             Ok(admitted) => admitted,
             Err(error) => {
                 let error = map_federated_admission_err(error);
@@ -160,13 +163,9 @@ impl SyncClient {
             FederationAdmissionRole::Member => WorkKind::MemberUpdate,
             FederationAdmissionRole::Guest => WorkKind::GuestUpdate,
         };
-        let admitted_doc = loro::LoroDoc::new();
-        admitted_doc
-            .import(&admitted)
-            .map_err(|_| TransportError::InvalidPayload("admitted update decode failed"))?;
-        let writes = (admitted_doc.get_map("entities").len() as u64)
-            .saturating_add(admitted_doc.get_map("edges").len() as u64)
-            .max(1);
+        // The stamps the update holds are charged with it, and a deferred
+        // update holds none (Astra-b F2 on #1432).
+        let writes = admitted.writes();
         let (decision, work) = admit_work(&self.vault, &peer, &key, kind, update, writes)
             .map_err(map_federated_admission_err)?;
         if let FederationBurstDecision::Defer { request_id, inputs } = decision {
@@ -179,8 +178,7 @@ impl SyncClient {
                 });
             return Ok(());
         }
-        let window = self.ensure_window(window_key)?;
-        self.import_accepted_window_update(window_key, &window, &admitted)?;
+        self.import_peer_update(window_key, &key, &admitted, peer.grant())?;
         match work {
             Some(work) => work.complete(&self.vault, &peer),
             None => record_outcome(&self.vault, &peer, false),
@@ -235,6 +233,7 @@ impl SyncClient {
                 || durable.manifest_digest != staged.receipt.manifest_digest
                 || durable.remote_update_digest != staged.receipt.remote_update_digest
                 || durable.admitted_update_digest != staged.receipt.admitted_update_digest
+                || durable.staged_stamps_digest != staged.receipt.staged_stamps_digest
                 || durable.window_key != staged.receipt.window_key
                 || durable.source != staged.receipt.source
                 || durable.role != staged.receipt.role
@@ -291,8 +290,28 @@ impl SyncClient {
             durable.role,
         )
         .map_err(map_federated_admission_err)?;
+        revalidate_admitted_facet_stamps(&admission_key, &staged.admitted_update)
+            .map_err(map_federated_admission_err)?;
+        let births = staged_births(
+            &self.vault,
+            &admission_key,
+            (&durable.receipt_id, durable.staged_stamps_digest),
+            &staged.admitted_update,
+        )
+        .map_err(map_federated_admission_err)?;
         let window = self.ensure_window(&durable.window_key)?;
-        self.import_accepted_window_update(&durable.window_key, &window, &staged.admitted_update)?;
+        let vault = std::sync::Arc::clone(&self.vault);
+        let born = watch_births(&vault, births.births(), || {
+            self.import_accepted_window_update(
+                &durable.window_key,
+                &window,
+                &staged.admitted_update,
+            )
+        })?;
+        let released = births
+            .release(&self.vault, &admission_key, &born)
+            .map_err(map_federated_admission_err)?;
+        self.import_released_stamps(&durable.window_key, released)?;
         let expected_receipt = durable;
         let mut receipt = expected_receipt.clone();
         receipt.status = VaultImportStageStatus::Confirmed;
@@ -323,6 +342,57 @@ impl SyncClient {
                 "receipt terminal transition raced",
             ))
         }
+    }
+}
+
+impl SyncClient {
+    /// Imports an update a federation peer sent under `grant`: holds the
+    /// facet stamps it sent ahead of their rows, imports it, then releases
+    /// each stamp whose row that import's entity door birthed from the peer's
+    /// bytes.
+    pub(super) fn import_peer_update(
+        &mut self,
+        window_key: &str,
+        key: &WindowKey,
+        admitted: &AdmittedUpdate,
+        grant: crate::EntityId,
+    ) -> std::result::Result<(), TransportError> {
+        admitted
+            .hold_from_peer(&self.vault, key, grant)
+            .map_err(map_federated_admission_err)?;
+        let window = self.ensure_window(window_key)?;
+        let vault = std::sync::Arc::clone(&self.vault);
+        let born = watch_births(&vault, admitted.births(), || {
+            self.import_accepted_window_update(window_key, &window, admitted.bytes())
+        })?;
+        let released = admitted
+            .release(&self.vault, key, &born)
+            .map_err(map_federated_admission_err)?;
+        self.import_released_stamps(window_key, released)
+    }
+
+    /// Imports the facet stamps a birth released, then discards their held
+    /// copies. A failure in between leaves them held, so they never count.
+    /// The release is this vault's own update, not the peer's: one the window
+    /// refuses drops its stamps, and the peer learns nothing from it.
+    fn import_released_stamps(
+        &mut self,
+        window_key: &str,
+        released: Option<crate::sync::selector::ReleasedStamps>,
+    ) -> std::result::Result<(), TransportError> {
+        let Some(released) = released else {
+            return Ok(());
+        };
+        if let Some(update) = &released.update {
+            let window = self.ensure_window(window_key)?;
+            match self.import_accepted_window_update(window_key, &window, update) {
+                Ok(()) | Err(TransportError::InvalidPayload(_)) => {}
+                Err(local) => return Err(local),
+            }
+        }
+        released
+            .discard(&self.vault)
+            .map_err(map_federated_admission_err)
     }
 }
 
