@@ -187,8 +187,22 @@ fn a_refused_event_does_not_hold_back_a_later_stop() -> CommResult<()> {
         occurred_at: 10,
         projected: false,
     };
-    vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, source_event, &event))?;
-    record_comm_inbound_stop(&vault, "victim@example.com", "email", 40)?;
+    // The STOP sorts AFTER the refused event, so the pass reaches it only by
+    // carrying on past the refusal.
+    let victim = resolve_or_create_comm_party(&vault, "victim@example.com")?;
+    let stop = CommRecord::Event {
+        sequence: 2,
+        kind: CommEventKind::InboundStop,
+        party_ref: victim,
+        channel_class: Some("email".to_owned()),
+        thread_ref: None,
+        occurred_at: 40,
+        projected: false,
+    };
+    vault.try_with_write_txn(|wtxn| {
+        put_comm_record_in_txn(&vault, wtxn, source_event, &event)?;
+        put_comm_record_in_txn(&vault, wtxn, entity(0x7A), &stop)
+    })?;
 
     let error = run_comm_projector(&vault).expect_err("the squatted event is still refused");
     assert!(matches!(error, CommError::InvalidRecord));
