@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use formualizer_common::LiteralValue;
-use formualizer_parse::TokenStream;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_parse::{TokenStream, TokenSubType};
 
 use crate::Result;
 use crate::xml::unsupported;
@@ -16,6 +16,9 @@ use crate::xml::unsupported;
 const MAX_FORMULA_BYTES: usize = 32 * 1024;
 const MAX_FORMULA_TOKENS: usize = 256;
 const MAX_EVALUATION_DEPTH: usize = 32;
+
+/// Why [`parse_bounded`] refuses a formula over its token bound.
+pub(super) const TOKEN_LIMIT: &str = "formula token limit";
 
 /// What one bounded formula needs from its caller and from the engine.
 pub(super) struct Inspection {
@@ -41,19 +44,7 @@ pub(super) struct Inspection {
 
 /// Prove bounded evaluation and report what the formula needs.
 pub(super) fn inspect_formula(formula: &str) -> Result<Inspection> {
-    if formula.len() > MAX_FORMULA_BYTES {
-        return Err(unsupported("formula byte limit"));
-    }
-    let expression = if formula.starts_with('=') {
-        std::borrow::Cow::Borrowed(formula)
-    } else {
-        std::borrow::Cow::Owned(format!("={formula}"))
-    };
-    let tokens = TokenStream::new(&expression).map_err(|_| unsupported("formula tokenization"))?;
-    if tokens.len() > MAX_FORMULA_TOKENS {
-        return Err(unsupported("formula token limit"));
-    }
-    let node = parse_bounded(&expression)?;
+    let node = parse_bounded(formula)?;
     let mut pending: Vec<(&ASTNode, usize)> = vec![(&node, 1)];
     let mut host_context = None;
     let mut lambda = false;
@@ -185,12 +176,37 @@ fn needs_host(name: &str, args: Option<&[ASTNode]>) -> Option<&'static str> {
 
 /// Parse a formula within the bounds `inspect_formula` proves, with the
 /// parser's mandatory leading `=`.
+///
+/// The byte and token bounds are checked here, so every parse in the crate
+/// holds them before a recursive AST (or its Drop) exists, whoever calls.
 pub(super) fn parse_bounded(formula: &str) -> Result<ASTNode> {
+    if formula.len() > MAX_FORMULA_BYTES {
+        return Err(unsupported("formula byte limit"));
+    }
     let expression = if formula.starts_with('=') {
         std::borrow::Cow::Borrowed(formula)
     } else {
         std::borrow::Cow::Owned(format!("={formula}"))
     };
+    let tokens = TokenStream::new(&expression).map_err(|_| unsupported("formula tokenization"))?;
+    if tokens.len() > MAX_FORMULA_TOKENS {
+        return Err(unsupported(TOKEN_LIMIT));
+    }
+    // The parser reads `[0]` (the workbook itself) off a reference and parses
+    // the rest again, once for each `[0]` the reference opens with, so one
+    // token of thousands recursed as deep as no token bound sees.
+    let repeated = tokens.spans.iter().any(|span| {
+        span.subtype != TokenSubType::Text
+            && tokens
+                .source()
+                .get(span.start..span.end)
+                .is_some_and(|text| text.contains("[0][0]"))
+    });
+    if repeated {
+        return Err(unsupported(
+            "reference repeating the workbook qualifier [0]",
+        ));
+    }
     formualizer_parse::parse(expression.as_ref()).map_err(|_| unsupported("formula parsing"))
 }
 

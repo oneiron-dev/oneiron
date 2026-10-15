@@ -61,21 +61,29 @@ pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor
 pub use self::reader_table::ReaderTableShortfall;
 #[cfg(test)]
 pub(crate) use self::retrieval_trace_key::unkeyed_for_test;
+pub(crate) use self::vector_evidence::NoMatchFloors;
 
 /// Main vault API wrapping LMDB storage and configuration.
 pub struct Vault {
     /// Live seat prefixes are vault-owned, never process-global.
     pub(crate) model_seats: std::sync::Mutex<crate::llm::seat::SeatPool>,
     pub(crate) message_streams: crate::memory::MessageStreamRuntime,
+    /// World privacy P6b: this install's this-device-only keystore, the world
+    /// keys this machine opened, and their OF-520 questions. In memory only,
+    /// never persisted, and never shared across vaults.
+    pub(crate) world_keys: crate::world_keys::WorldKeySession,
     /// Serializes per-request voice-ref uploads with consent withdrawal.
     pub(crate) voice_ref_guard: std::sync::RwLock<()>,
+    /// One housekeeping pass at a time on this handle.
+    pub(crate) housekeeping: std::sync::Mutex<crate::housekeeping::HousekeepingHandle>,
     #[cfg(feature = "sync")]
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
     /// Where vector evidence starts now: the configured floors until the host
-    /// sets others ([`Vault::set_vector_evidence`]).
-    vector_evidence: std::sync::RwLock<crate::config::VectorEvidenceFloors>,
+    /// sets others ([`Vault::set_vector_evidence`]), and any it set for one
+    /// kind of item in one embedding space ([`Vault::set_vector_evidence_for`]).
+    vector_evidence: std::sync::RwLock<vector_evidence::NoMatchFloors>,
     pub(crate) analyzer: MultilingualAnalyzer,
     /// Which vault this handle belongs to, resolved once at open.
     vault_id: VaultId,

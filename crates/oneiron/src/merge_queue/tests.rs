@@ -132,8 +132,17 @@ impl MergeLanding for Host<'_> {
         }
         for proposal in &tested.batch().proposals {
             for file in &proposal.files {
+                // Each write names the HEAD it lands on, which the last one moved.
+                let RepoRef::LocalFolder { path, .. } = &self.repo else {
+                    unreachable!("the fixture repo is local");
+                };
+                let head = String::from_utf8(git(self.root, &["rev-parse", "HEAD"])?).unwrap();
+                let pinned = RepoRef::LocalFolder {
+                    path: path.clone(),
+                    commit: head.trim().to_owned(),
+                };
                 outcomes.push(self.vault.apply_repo_mutation(RepoMutationRequest::new(
-                    self.repo.clone(),
+                    pinned,
                     RepoMutationOperation::CommitFile {
                         path: file.path.clone(),
                         content: file.content.clone().unwrap(),
@@ -452,4 +461,42 @@ fn deletion_is_refused_at_enqueue_without_creating_a_batch_or_worktree() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn no_count_of_batches_ends_a_repository_queue() {
+    // Rule 5: the batch sequence only salts batch ids. Past the 100,000 the
+    // queue once refused at, and past the u64 ceiling, a batch is still
+    // admitted, staged and landed.
+    let fixture = Fixture::new();
+    let queue = fixture.queue();
+    for (sequence, name) in [(100_000, "a"), (u64::MAX, "b")] {
+        let mut state = queue.queue().unwrap();
+        state.sequence = sequence;
+        queue.save(&state, &[]).unwrap();
+        let batch = queue
+            .enqueue(vec![fixture.proposal(name, b"landed\n")])
+            .unwrap();
+        ready(&queue, &batch);
+        let landed = queue.land(&batch.id, &mut fixture.host(None)).unwrap();
+        assert_eq!(landed.state, BatchState::HeadAdvanced);
+        finish(&queue, &batch);
+        assert_eq!(fixture.read(name), b"landed\n");
+    }
+    assert_eq!(queue.queue().unwrap().sequence, 0);
+
+    // A sequence that rolled round onto a kept batch's skips it: one id
+    // names one batch.
+    let kept = queue
+        .enqueue(vec![fixture.proposal("c", b"kept\n")])
+        .unwrap();
+    let mut state = queue.queue().unwrap();
+    state.sequence = 0;
+    queue.save(&state, &[]).unwrap();
+    let next = queue
+        .enqueue(vec![fixture.proposal("c", b"kept\n")])
+        .unwrap();
+    assert_ne!(next.id, kept.id);
+    assert_eq!(queue.batch(&kept.id).unwrap(), kept);
+    assert_eq!(queue.queue().unwrap().sequence, 2);
 }

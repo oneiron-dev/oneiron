@@ -28,10 +28,15 @@ use super::publication_types::{
 pub(super) const PUBLICATIONS: SideTable<EntityId, OriginPublicationRow, Named> =
     SideTable::new(&side_table::ORIGIN_PUBLICATION_RECORD);
 
-/// One in-flight owner of `(repo, ref, expected, new)`, independent of provenance (value =
-/// owning publication id). Key: repo id "\x00" ref_name "\x00" expected_old_oid "\x00" new_oid.
+/// The owner of `(repo, ref, expected, new)`, independent of provenance (value = owning
+/// publication id): in flight while Prepared, and for good once Published, since the move is then
+/// consumed. Key: repo id "\x00" ref_name "\x00" expected_old_oid "\x00" new_oid.
 pub(super) const CAS_INTENT: SideTable<CasIntentKey, EntityId, Raw> =
     SideTable::new(&side_table::ORIGIN_CAS_INTENT);
+
+/// Present once every Published row has its CAS row. Key: ().
+pub(super) const CAS_BACKFILL: SideTable<(), (), Raw> =
+    SideTable::new(&side_table::ORIGIN_CAS_BACKFILL);
 
 /// The publication currently advertised for one repository's ref name (value = publication id).
 /// Key: repo id "\x00" ref_name.
@@ -55,14 +60,27 @@ pub(super) struct CasIntentKey {
 
 impl CasIntentKey {
     pub(super) fn new(record: &OriginPublicationRecord) -> Self {
+        Self::of_move(
+            record.repo_id,
+            &record.ref_name,
+            record.expected_old_oid.as_ref(),
+            &record.new_oid,
+        )
+    }
+
+    /// The key of one move: `ref_name` from `expected_old_oid` to `new_oid`.
+    pub(super) fn of_move(
+        repo_id: EntityId,
+        ref_name: &GitRefName,
+        expected_old_oid: Option<&GitOid>,
+        new_oid: &GitOid,
+    ) -> Self {
         Self {
-            repo_id: record.repo_id,
-            ref_name: record.ref_name.as_str().to_owned(),
-            expected_old_oid: record
-                .expected_old_oid
-                .as_ref()
+            repo_id,
+            ref_name: ref_name.as_str().to_owned(),
+            expected_old_oid: expected_old_oid
                 .map_or_else(String::new, |oid| oid.as_str().to_owned()),
-            new_oid: record.new_oid.as_str().to_owned(),
+            new_oid: new_oid.as_str().to_owned(),
         }
     }
 }

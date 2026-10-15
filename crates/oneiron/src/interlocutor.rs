@@ -476,14 +476,54 @@ impl Vault {
         &self,
         input: &InterlocutorResolutionInput,
     ) -> Result<InterlocutorSet> {
+        let rtxn = self.store.env.read_txn()?;
+        self.resolve_interlocutors_in(&rtxn, input, &|_| Ok(true), true)
+    }
+
+    /// [`Self::resolve_interlocutors`] for a caller that reads as `read`, in
+    /// one snapshot: a contact `read` cannot read resolves as a missing one
+    /// does. An explicit ref to it is `Error::EntityNotFound`, and a channel
+    /// pair that finds it stays the caller's own unknown label. Denial reads
+    /// as absence, so no status, label or id tells them apart. A voice
+    /// roster's segments carry no record scope of their own, so a roster
+    /// resolves only when `read_rosters`, for the owner's own unnarrowed read
+    /// (`ScopedRead::is_unnarrowed_owner`); any other caller gets the one
+    /// unresolved entry a missing roster gives.
+    pub fn resolve_interlocutors_under(
+        &self,
+        input: &InterlocutorResolutionInput,
+        read: &crate::claim::ScopedRead<'_>,
+        read_rosters: bool,
+    ) -> Result<InterlocutorSet> {
+        read.persist_grant_clock()?;
+        let rtxn = self.store.env.read_txn()?;
+        let policy = read.live_policy_manifest_in(&rtxn)?;
+        self.resolve_interlocutors_in(
+            &rtxn,
+            input,
+            &|id| read.is_ref_readable_with_policy_in(&rtxn, &policy, id),
+            read_rosters,
+        )
+    }
+
+    fn resolve_interlocutors_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        input: &InterlocutorResolutionInput,
+        admit: &dyn Fn(&EntityId) -> Result<bool>,
+        read_rosters: bool,
+    ) -> Result<InterlocutorSet> {
         let mut non_owner: Vec<Interlocutor> = Vec::with_capacity(input.parties.len());
         let mut seen_contact_refs: HashSet<String> = HashSet::new();
 
         for party in &input.parties {
             let entry = match party {
                 InterlocutorPartyInput::ContactRef(id) => {
+                    if !admit(id)? {
+                        return Err(Error::EntityNotFound);
+                    }
                     let record = self
-                        .get_counterparty_contact(id)?
+                        .get_counterparty_contact_in_txn(rtxn, id)?
                         .ok_or(Error::EntityNotFound)?;
                     match record.status {
                         CounterpartyContactStatus::Active => self.known_contact_interlocutor(
@@ -499,16 +539,21 @@ impl Vault {
                 InterlocutorPartyInput::ChannelCounterparty {
                     identity_ref,
                     counterparty,
-                } => match self.find_counterparty_contact(identity_ref, counterparty)? {
-                    Some((id, record)) if record.status == CounterpartyContactStatus::Active => {
-                        self.known_contact_interlocutor(
-                            id,
-                            &record.counterparty,
-                            record.first_touch,
-                        )?
+                } => {
+                    match self.find_counterparty_contact_in_txn(rtxn, identity_ref, counterparty)? {
+                        Some((id, record))
+                            if record.status == CounterpartyContactStatus::Active
+                                && admit(&id)? =>
+                        {
+                            self.known_contact_interlocutor(
+                                id,
+                                &record.counterparty,
+                                record.first_touch,
+                            )?
+                        }
+                        _ => Interlocutor::unknown(counterparty.clone(), false),
                     }
-                    _ => Interlocutor::unknown(counterparty.clone(), false),
-                },
+                }
                 InterlocutorPartyInput::UnknownLabel {
                     label,
                     claimed_owner,
@@ -527,7 +572,12 @@ impl Vault {
         // BEFORE the owner branch, so an Owner entry can still only come from
         // `session_owner()` via `with_session_owner`.
         if let Some(voice_session_ref) = input.voice_session_ref.as_deref() {
-            match self.voice_roster_parties(voice_session_ref) {
+            let parties = if read_rosters {
+                self.voice_roster_parties(rtxn, voice_session_ref)
+            } else {
+                Err(Error::EntityNotFound)
+            };
+            match parties {
                 Ok(parties) => {
                     for entry in parties {
                         if let Some(contact_ref) = entry.contact_ref.as_ref()
@@ -570,9 +620,13 @@ impl Vault {
     /// roster that resolves but names nobody legitimately yields no entries.
     /// One party per distinct speaker: repeated segments of the same speaker
     /// collapse before the caller's contact-ref dedupe sees them.
-    fn voice_roster_parties(&self, voice_session_ref: &str) -> Result<Vec<Interlocutor>> {
+    fn voice_roster_parties(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        voice_session_ref: &str,
+    ) -> Result<Vec<Interlocutor>> {
         let roster = self
-            .voice_session_roster(voice_session_ref)?
+            .voice_session_roster_in_txn(rtxn, voice_session_ref)?
             .ok_or(Error::EntityNotFound)?;
 
         let mut parties = Vec::new();
@@ -592,7 +646,7 @@ impl Vault {
             if !seen_speakers.insert(speaker_key) {
                 continue;
             }
-            parties.push(self.voice_roster_party(segment)?);
+            parties.push(self.voice_roster_party(rtxn, segment)?);
         }
         Ok(parties)
     }
@@ -605,7 +659,11 @@ impl Vault {
     /// an ordinary known contact, because elimination is a NON-biometric
     /// naming step and must not borrow the enrolled-print rung. A contact that
     /// is missing or revoked degrades to an anonymous `Unknown`.
-    fn voice_roster_party(&self, segment: &VoiceResolvedSegment) -> Result<Interlocutor> {
+    fn voice_roster_party(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        segment: &VoiceResolvedSegment,
+    ) -> Result<Interlocutor> {
         let anonymous = || Interlocutor::unknown(segment.speaker_label.clone(), false);
         match &segment.evidence {
             VoiceAttributionEvidence::EnrolledPrint { .. } => {
@@ -614,7 +672,7 @@ impl Vault {
                         segment.speaker_label.clone(),
                     ));
                 };
-                let Some(record) = self.active_counterparty_contact(&contact_ref)? else {
+                let Some(record) = self.active_counterparty_contact(rtxn, &contact_ref)? else {
                     return Ok(anonymous());
                 };
                 let mut entry = Interlocutor::voice_matched_contact(
@@ -626,7 +684,7 @@ impl Vault {
                 Ok(entry)
             }
             VoiceAttributionEvidence::InviteElimination { attendee_ref } => {
-                match self.active_counterparty_contact(attendee_ref)? {
+                match self.active_counterparty_contact(rtxn, attendee_ref)? {
                     Some(record) => self.known_contact_interlocutor(
                         *attendee_ref,
                         &record.counterparty,
@@ -641,10 +699,11 @@ impl Vault {
 
     fn active_counterparty_contact(
         &self,
+        rtxn: &heed::RoTxn<'_>,
         contact_ref: &EntityId,
     ) -> Result<Option<CounterpartyContactRecord>> {
         Ok(self
-            .get_counterparty_contact(contact_ref)?
+            .get_counterparty_contact_in_txn(rtxn, contact_ref)?
             .filter(|record| record.status == CounterpartyContactStatus::Active))
     }
 }

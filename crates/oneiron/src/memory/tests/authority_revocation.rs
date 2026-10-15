@@ -375,6 +375,16 @@ fn an_owner_lane_read_after_revocation_keeps_the_binding_code() {
     let (_dir, vault) = open_vault();
     let owner = put_person(&vault, 0x6B);
     let subject = put_person(&vault, 0x6C);
+    let facet = EntityId::from_bytes([0x6D; 16]).expect("facet id");
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            test_time(1),
+            1,
+            b"facet",
+        )
+        .expect("put facet");
     let facade = facade_for(&vault, owner);
 
     let (genesis, signing) = authority_root(0x74);
@@ -442,6 +452,17 @@ fn an_owner_lane_read_after_revocation_keeps_the_binding_code() {
     let error = lane
         .is_entity_readable(&subject)
         .expect_err("the owner key no longer holds");
+    assert_eq!(
+        MemoryError::from(error).code,
+        MEMORY_CODE_OWNER_BINDING_REQUIRED
+    );
+    // So does code mode's facet placement onto a stored facet, judged in the
+    // edge's own write transaction: a door that kept the key places no row
+    // (Sol R4 F5 on #1432).
+    let txn = vault.store.env.read_txn().expect("read txn");
+    let error =
+        crate::code_run::require_facet_placement_in(&vault, lane.actor_key(), &txn, subject, facet)
+            .expect_err("the owner key no longer holds");
     assert_eq!(
         MemoryError::from(error).code,
         MEMORY_CODE_OWNER_BINDING_REQUIRED
@@ -1352,8 +1373,14 @@ fn conflicting_vault_roots_fail_owner_verbs_closed() {
     // valid; together they are a collapse.
     let (genesis_a, _) = authority_root(0x74);
     let (genesis_b, _) = authority_root(0x75);
-    vault
-        .put_authority_log_entries(&[(genesis_a, test_time(1), 1), (genesis_b, test_time(2), 2)])
+    let rows = [(genesis_a, test_time(1), 1), (genesis_b, test_time(2), 2)];
+    // The local door holds a rival genesis (H72): a caller with local put
+    // access cannot brick the vault's authority with one.
+    assert_eq!(
+        vault.put_authority_log_entries(&rows).unwrap_err().kind(),
+        crate::error::ErrorKind::AuthorityLogSignerPending
+    );
+    crate::authority::with_authority_doors_open_for_test(|| vault.put_authority_log_entries(&rows))
         .expect("two independent roots are individually valid rows");
 
     let fold = vault.authority_fold().expect("fold");

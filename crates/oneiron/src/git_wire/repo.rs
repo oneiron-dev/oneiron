@@ -84,8 +84,36 @@ pub(super) fn repo_identity_for(common_dir: &Path) -> GitWireRepoIdentity {
 }
 
 struct GitWireRepoLockCell {
-    held: Mutex<bool>,
+    hold: Mutex<Hold>,
     released: Condvar,
+}
+
+/// Who holds one repository in this process. Maintenance gives way to a
+/// writer in this process; a writer in another process waits on the
+/// cross-process lock, as it always has.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Hold {
+    Free,
+    /// A writer, until it is done.
+    Writer,
+    /// Maintenance, which gives the repository up to a writer that asks for
+    /// it; `asked` once one has.
+    Maintenance {
+        asked: bool,
+    },
+}
+
+/// How a caller takes the repository.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Take {
+    /// Waits for any holder.
+    Wait,
+    /// Waits for no writer; asks maintenance for it and waits that out.
+    BeforeMaintenance,
+    /// Waits for no one.
+    Try,
+    /// Takes it only when free, as maintenance.
+    AsMaintenance,
 }
 
 static GIT_WIRE_REPO_LOCKS: LazyLock<Mutex<HashMap<Vec<u8>, Arc<GitWireRepoLockCell>>>> =
@@ -110,32 +138,82 @@ pub(crate) struct GitWireRepoGuard {
 }
 
 /// Serializes every engine effect on the repository behind `common_dir`.
+/// Maintenance holding it is asked to give it up.
 pub(crate) fn lock_repository(common_dir: &Path) -> Result<GitWireRepoGuard> {
+    acquire_repository(common_dir, Take::Wait)?.ok_or(Error::ConcurrentWrite(
+        "git wire repository lock not granted",
+    ))
+}
+
+/// [`lock_repository`] that never waits: `None` while another thread or
+/// another process holds the repository. Re-entrant on the holding thread all
+/// the same.
+pub(crate) fn try_lock_repository(common_dir: &Path) -> Result<Option<GitWireRepoGuard>> {
+    acquire_repository(common_dir, Take::Try)
+}
+
+/// [`try_lock_repository`] for a writer: it waits for no other writer, but
+/// maintenance holding the repository is asked to give it up, and waited
+/// out, so maintenance never turns a writer away.
+pub(crate) fn lock_repository_before_maintenance(
+    common_dir: &Path,
+) -> Result<Option<GitWireRepoGuard>> {
+    acquire_repository(common_dir, Take::BeforeMaintenance)
+}
+
+/// [`try_lock_repository`] for maintenance: the hold lasts until a writer
+/// asks for the repository, which [`GitWireRepoGuard::asked_to_give_way`]
+/// tells. The holder then ends its work and drops the guard.
+pub(crate) fn try_lock_repository_for_maintenance(
+    common_dir: &Path,
+) -> Result<Option<GitWireRepoGuard>> {
+    acquire_repository(common_dir, Take::AsMaintenance)
+}
+
+impl GitWireRepoGuard {
+    /// Whether a writer has asked for the repository this maintenance hold
+    /// keeps. Never for a writer's hold.
+    pub(crate) fn asked_to_give_way(&self) -> bool {
+        self.cell.as_ref().is_some_and(|cell| {
+            cell.hold
+                .lock()
+                .is_ok_and(|hold| *hold == Hold::Maintenance { asked: true })
+        })
+    }
+}
+
+fn acquire_repository(common_dir: &Path, take: Take) -> Result<Option<GitWireRepoGuard>> {
     let key = common_dir.as_os_str().as_encoded_bytes().to_vec();
     let depth = held_depth(&key);
     if depth > 0 {
         set_held_depth(&key, depth.saturating_add(1));
-        return Ok(GitWireRepoGuard {
+        return Ok(Some(GitWireRepoGuard {
             key,
             cell: None,
             file: None,
-        });
+        }));
     }
     let cell = repo_lock_cell(&key)?;
-    acquire_cell(&cell)?;
-    let file = match acquire_file_lock(common_dir) {
-        Ok(file) => file,
+    if !acquire_cell(&cell, take)? {
+        return Ok(None);
+    }
+    let file = match acquire_file_lock(common_dir, take == Take::Wait) {
+        Ok(FileLock::Held(file)) => file,
+        Ok(FileLock::Busy) => {
+            release_cell(&cell);
+            return Ok(None);
+        }
         Err(error) => {
             release_cell(&cell);
             return Err(error);
         }
     };
     set_held_depth(&key, 1);
-    Ok(GitWireRepoGuard {
+    Ok(Some(GitWireRepoGuard {
         key,
         cell: Some(cell),
         file,
-    })
+    }))
 }
 
 impl Drop for GitWireRepoGuard {
@@ -174,37 +252,72 @@ fn repo_lock_cell(key: &[u8]) -> Result<Arc<GitWireRepoLockCell>> {
         .entry(key.to_vec())
         .or_insert_with(|| {
             Arc::new(GitWireRepoLockCell {
-                held: Mutex::new(false),
+                hold: Mutex::new(Hold::Free),
                 released: Condvar::new(),
             })
         })
         .clone())
 }
 
-fn acquire_cell(cell: &Arc<GitWireRepoLockCell>) -> Result<()> {
-    let mut held = cell
-        .held
+/// Takes the in-process hold, and says whether it did: `false` when another
+/// thread holds it and `take` does not wait for that holder.
+fn acquire_cell(cell: &Arc<GitWireRepoLockCell>, take: Take) -> Result<bool> {
+    let mut hold = cell
+        .hold
         .lock()
         .map_err(|_| Error::ConcurrentWrite("git wire repository lock poisoned"))?;
-    while *held {
-        held = cell
+    loop {
+        match (*hold, take) {
+            (Hold::Free, _) => break,
+            (Hold::Maintenance { .. }, Take::Wait | Take::BeforeMaintenance) => {
+                *hold = Hold::Maintenance { asked: true };
+            }
+            (Hold::Writer, Take::Wait) => {}
+            _ => return Ok(false),
+        }
+        hold = cell
             .released
-            .wait(held)
+            .wait(hold)
             .map_err(|_| Error::ConcurrentWrite("git wire repository lock poisoned"))?;
     }
-    *held = true;
-    Ok(())
+    *hold = if take == Take::AsMaintenance {
+        Hold::Maintenance { asked: false }
+    } else {
+        Hold::Writer
+    };
+    Ok(true)
 }
 
 fn release_cell(cell: &Arc<GitWireRepoLockCell>) {
-    if let Ok(mut held) = cell.held.lock() {
-        *held = false;
+    if let Ok(mut hold) = cell.hold.lock() {
+        *hold = Hold::Free;
         cell.released.notify_one();
     }
 }
 
+/// Whether this process holds the repository behind `common_dir`, and
+/// whether a writer has asked maintenance holding it to give it up.
+#[cfg(test)]
+pub(crate) fn repository_hold_for_test(common_dir: &Path) -> (bool, bool) {
+    let cell = repo_lock_cell(common_dir.as_os_str().as_encoded_bytes()).expect("lock map");
+    let hold = *cell.hold.lock().expect("repository hold");
+    (
+        hold != Hold::Free,
+        hold == Hold::Maintenance { asked: true },
+    )
+}
+
+/// What one attempt at the cross-process lock got.
+enum FileLock {
+    /// The lock, held through this descriptor; none where there is no file
+    /// lock to take.
+    Held(Option<fs::File>),
+    /// Another process holds it, and the caller would not wait.
+    Busy,
+}
+
 #[cfg(unix)]
-fn acquire_file_lock(common_dir: &Path) -> Result<Option<fs::File>> {
+fn acquire_file_lock(common_dir: &Path, wait: bool) -> Result<FileLock> {
     use std::os::fd::AsRawFd;
 
     let file = fs::OpenOptions::new()
@@ -213,19 +326,29 @@ fn acquire_file_lock(common_dir: &Path) -> Result<Option<fs::File>> {
         .create(true)
         .truncate(false)
         .open(common_dir.join(GIT_WIRE_REPO_LOCK_FILE_NAME))?;
-    // SAFETY: `file.as_raw_fd()` is valid for the duration of this call and
-    // `flock(LOCK_EX)` blocks until the kernel grants the advisory lock.
-    let granted = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
-    if granted == 0 {
-        Ok(Some(file))
+    let operation = if wait {
+        libc::LOCK_EX
     } else {
-        Err(std::io::Error::last_os_error().into())
+        libc::LOCK_EX | libc::LOCK_NB
+    };
+    // SAFETY: `file.as_raw_fd()` is valid for the duration of this call and
+    // `flock(LOCK_EX)` blocks until the kernel grants the advisory lock, or
+    // with `LOCK_NB` returns at once.
+    let granted = unsafe { libc::flock(file.as_raw_fd(), operation) };
+    if granted == 0 {
+        return Ok(FileLock::Held(Some(file)));
+    }
+    let error = std::io::Error::last_os_error();
+    if !wait && error.kind() == std::io::ErrorKind::WouldBlock {
+        Ok(FileLock::Busy)
+    } else {
+        Err(error.into())
     }
 }
 
 #[cfg(not(unix))]
-fn acquire_file_lock(_common_dir: &Path) -> Result<Option<fs::File>> {
-    Ok(None)
+fn acquire_file_lock(_common_dir: &Path, _wait: bool) -> Result<FileLock> {
+    Ok(FileLock::Held(None))
 }
 
 #[cfg(unix)]

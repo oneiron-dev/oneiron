@@ -3,6 +3,7 @@
 use heed::RoTxn;
 
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::ManifestDbs;
 
@@ -46,6 +47,7 @@ fn apply_patch(
     rows: &mut Vec<ChannelIdentitySelectionRule>,
     builtins: &[ChannelIdentitySelectionRule],
     writer: &ChannelIdentitySelectionWriter,
+    actor_ref: EntityId,
     patch: ChannelIdentitySelectionPatch,
 ) -> ChannelIdentitySelectionResult<()> {
     match patch {
@@ -53,7 +55,7 @@ fn apply_patch(
             // Provenance is DERIVED here, so whatever the caller put in these
             // two fields is overwritten rather than trusted.
             rule.writer_kind = writer.kind();
-            rule.updated_by = Some(writer.actor_ref());
+            rule.updated_by = Some(actor_ref);
             rule.validate()?;
             let existing = rows
                 .iter()
@@ -145,6 +147,7 @@ impl Vault {
     ) -> ChannelIdentitySelectionResult<ChannelIdentitySelectionRuleSet> {
         let builtins = builtin_channel_identity_selection_rules();
         self.try_with_write_txn_grouped(|wtxn| {
+            let actor_ref = writer.revalidate_in_txn(self, &*wtxn)?;
             let stored = stored_rule_set(&self.store, &*wtxn)?;
             let current = stored.as_ref().map_or(0, |set| set.revision);
             if current != expected_revision {
@@ -154,7 +157,7 @@ impl Vault {
                 });
             }
             let mut rows = stored.map(|set| set.rows).unwrap_or_default();
-            apply_patch(&mut rows, &builtins, writer, patch)?;
+            apply_patch(&mut rows, &builtins, writer, actor_ref, patch)?;
             rows.sort_by(|left, right| left.rule_id.cmp(&right.rule_id));
             let record = ChannelIdentitySelectionRuleSet {
                 schema_version: CHANNEL_IDENTITY_SELECTION_SCHEMA_VERSION,

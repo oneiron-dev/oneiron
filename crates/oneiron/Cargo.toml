@@ -23,8 +23,13 @@ doctest = true
 # module at its old `oneiron::<module>` path.
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
-# The recovery kit stretches its passphrase piece through the crypto contract crate.
+# The OF-570 envelope: world keys (P6b), and the recovery kit's passphrase
+# stretch (P6a).
 oneiron-crypto = { version = "0.1.0", path = "../oneiron-crypto" }
+# World keys (P6b): the this-device-only key slot.
+oneiron-keystore = { version = "0.1.0", path = "../oneiron-keystore" }
+# The OS RNG on the rand_core line oneiron-crypto takes (0.10).
+getrandom = { version = "=0.4.3", features = ["sys_rng"] }
 oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
 oneiron-retrieval = { version = "0.1.0", path = "../oneiron-retrieval" }
 oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
@@ -178,6 +183,9 @@ heed = { workspace = true, features = ["posix-sem"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+# Removing a directory tree relative to the directory that holds each
+# entry, never through a path. The version the workspace already builds.
+rustix = { version = "1.1", features = ["fs", "process"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
@@ -218,7 +226,11 @@ test-hooks = ["oneiron-model/test-hooks"]
 # `--all-features` the production `Vault::open` path always seeds; the unseeded
 # opener is an explicit test-named function, not a silent config field.
 # Also turns on the lower crates' test-only constructors this crate's tests use.
-test-support = ["oneiron-contracts/test-support", "oneiron-model/test-support"]
+test-support = [
+    "oneiron-contracts/test-support",
+    "oneiron-model/test-support",
+    "oneiron-keystore/test-keystore",
+]
 
 [dev-dependencies]
 wat = "1"
@@ -229,6 +241,10 @@ oneiron-guest = { path = "../oneiron-guest" }
 oneiron = { path = ".", features = ["test-support"] }
 tempfile = "3"
 proptest = "1"
+# The process-memory keystore the engine's tests share; never a host's adapter.
+oneiron-keystore = { path = "../oneiron-keystore", features = ["test-keystore"] }
+# The stack painter that sizes the owner anchor's stack wipes.
+oneiron-crypto = { path = "../oneiron-crypto", features = ["stack-probe"] }
 # Bounded DOCX fixture probes inspect central-directory sizes in unit tests.
 zip = "0.6.6"
 # ONE-1572 (B11-2b): compile-fail proof that the sealed relay-attestation

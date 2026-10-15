@@ -2,6 +2,7 @@
 //! pre-check, seam scan, verdict publish.
 
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,8 +12,8 @@ use super::door::{DoorAdmissionStamp, DoorHook, DoorSeam};
 use super::evidence::{RefUpdate, receive_pack_provenance_refused};
 use super::hooks::DoorHooksDir;
 use super::paths::{
-    DOOR_REFUSAL_NAME_CHARS, DOOR_VERDICT_OK, DOOR_WINDOW_POLL, ORIGIN_MAX_REF_UPDATES,
-    ORIGIN_REFUSED_REF_PREFIX, serve_failed,
+    DOOR_MAX_FRAMED_BYTES, DOOR_MAX_SCAN_LINES, DOOR_REFUSAL_NAME_CHARS, DOOR_VERDICT_OK,
+    DOOR_WINDOW_POLL, ORIGIN_MAX_REF_UPDATES, ORIGIN_REFUSED_REF_PREFIX, serve_failed,
 };
 use crate::Vault;
 use crate::codebase::RepoRef;
@@ -127,14 +128,25 @@ pub(super) fn serve_door_window(
     // empty scan — and rather than an unanswered hook left blocking.
     let (ref_updates, lfs_pointers, quarantine_path, verdict) =
         match door_window_inputs(&request_path, hooks) {
-            Ok((request, blobs)) => {
+            Ok((request, blobs, tip_blobs)) => {
                 // The name rule decides FIRST, and it decides here rather than
                 // at the landing: this is the last moment at which refusing
                 // costs nothing, because the hook is still blocked and the
                 // backend has moved no ref. A push whose names the landing
                 // could not journal is refused whole; nothing about a legal
                 // batch changes.
-                let unlandable = unlandable_ref_reasons(&request.ref_updates);
+                let pointers = lfs_pushed_pointers(&blobs[..tip_blobs]);
+                let mut unlandable = unlandable_ref_reasons(&request.ref_updates);
+                if unlandable.is_empty() {
+                    // The same rule for a move a publication already made:
+                    // a push needing more than that publication certified
+                    // could never be certified once the backend moved it.
+                    unlandable = vault
+                        .receive_pack_owner_shortfalls(repo, &request.ref_updates, &pointers)
+                        .unwrap_or_else(|_| {
+                            vec!["receive-pack input could not be verified".to_owned()]
+                        });
+                }
                 let verdict = if unlandable.is_empty() {
                     match context.seam {
                         DoorSeam::Noop => DoorWindowVerdict::Rejected {
@@ -153,7 +165,7 @@ pub(super) fn serve_door_window(
                 };
                 (
                     request.ref_updates,
-                    lfs_pushed_pointers(&blobs),
+                    pointers,
                     request.quarantine_path,
                     verdict,
                 )
@@ -203,17 +215,53 @@ fn lfs_pushed_pointers(blobs: &[PushedBlob]) -> Vec<LfsPushedPointer> {
         .collect()
 }
 
-/// Reads what the hook left behind: the ref list it decided over, and the
-/// complete blob stream it framed. Both are required — the blob stream is moved
-/// into place BEFORE the request file that announces it, so a readable request
+/// Reads what the hook left behind: the ref list it decided over, the
+/// complete blob stream it framed from the tip diffs, and the history stream of
+/// every other new blob. All three are required — both streams are moved into
+/// place BEFORE the request file that announces them, so a readable request
 /// with an unreadable extraction is a fault, never an empty push.
+///
+/// Returns every blob the door scans, tip blobs first, and how many of them
+/// came from the tip diffs: only those carry the tip paths an LFS pointer is
+/// paired with.
 fn door_window_inputs(
     request_path: &Path,
     hooks: &DoorHooksDir,
-) -> Result<(DoorWindowRequest, Vec<PushedBlob>)> {
+) -> Result<(DoorWindowRequest, Vec<PushedBlob>, usize)> {
     let request = parse_door_request(&fs::read(request_path)?)?;
-    let blobs = parse_pushed_blobs(&fs::read(hooks.blobs_path())?)?;
-    Ok((request, blobs))
+    let mut framed = DOOR_MAX_FRAMED_BYTES;
+    let tip = read_framed(&hooks.blobs_path(), &mut framed)?;
+    let history = read_framed(&hooks.history_path(), &mut framed)?;
+    let (blobs, tip_blobs) = parse_door_streams(&tip, &history, DOOR_MAX_SCAN_LINES)?;
+    Ok((request, blobs, tip_blobs))
+}
+
+/// Reads one framed stream whole, charging its bytes to `remaining`; a
+/// stream past it is refused before more of it is held.
+pub(super) fn read_framed(path: &Path, remaining: &mut u64) -> Result<Vec<u8>> {
+    let mut framed = Vec::new();
+    fs::File::open(path)?
+        .take(remaining.saturating_add(1))
+        .read_to_end(&mut framed)?;
+    *remaining = remaining
+        .checked_sub(framed.len() as u64)
+        .ok_or_else(|| serve_failed("door streams frame more bytes than it holds"))?;
+    Ok(framed)
+}
+
+/// Both streams' blobs, tip blobs first, and how many came from the tip
+/// stream. Together they split into at most `max_lines` lines, counted
+/// before any line is allocated; past that the window is refused whole.
+pub(super) fn parse_door_streams(
+    tip: &[u8],
+    history: &[u8],
+    max_lines: usize,
+) -> Result<(Vec<PushedBlob>, usize)> {
+    let mut lines = max_lines;
+    let mut blobs = parse_framed_blobs(tip, false, &mut lines)?;
+    let tip_blobs = blobs.len();
+    blobs.extend(parse_framed_blobs(history, true, &mut lines)?);
+    Ok((blobs, tip_blobs))
 }
 
 /// Runs one bound door through the seam. A scan that cannot run is a refusal,
@@ -371,22 +419,29 @@ fn parse_optional_oid(value: &str) -> Result<Option<GitOid>> {
     Ok(Some(GitOid::parse_hex(value.to_ascii_lowercase())?))
 }
 
-/// Reads the length-framed blob stream the vetted hook emitted inside the
-/// quarantine window.
+/// Reads one length-framed blob stream the vetted hook emitted inside the
+/// quarantine window, charging each blob's lines to `lines` before they are
+/// split.
 ///
 /// One record is `blob <oid> <bytes> <path>\n` followed by exactly `<bytes>`
 /// raw bytes. There is no patch grammar here on purpose: the framing is what
-/// makes the extraction TOTAL. Every added or modified blob the raw diff named
-/// is present with its complete post-image content, so a binary blob, a blob
-/// carrying NUL, and a line beginning `++` or `+++ b/...` are all just bytes —
-/// none of them can look like a header and none of them can go unscanned.
+/// makes the extraction TOTAL. Every blob the hook named is present with its
+/// complete content, so a binary blob, a blob carrying NUL, and a line
+/// beginning `++` or `+++ b/...` are all just bytes — none of them can look
+/// like a header and none of them can go unscanned. The history stream
+/// (`terminated`) carries the same records, each followed by the one `\n`
+/// `git cat-file --batch` writes after an object's bytes.
 ///
-/// The door is handed the blob's whole content, one line per element, because
-/// the entire post-image of an added or modified blob is what the push would
-/// make durable. Content the door cannot scan (binary, invalid UTF-8) is the
-/// door's own rejection, and a stream this function cannot read whole is a
-/// refusal at the window — never a silently empty scan.
-pub(super) fn parse_pushed_blobs(framed: &[u8]) -> Result<Vec<PushedBlob>> {
+/// The door is handed each blob's whole content, one line per element, because
+/// the whole blob is what the push would make durable. Content the door cannot
+/// scan (binary, invalid UTF-8) is the door's own rejection, and a stream this
+/// function cannot read whole is a refusal at the window — never a silently
+/// empty scan.
+fn parse_framed_blobs(
+    framed: &[u8],
+    terminated: bool,
+    lines: &mut usize,
+) -> Result<Vec<PushedBlob>> {
     let mut blobs = Vec::new();
     let mut cursor = 0_usize;
     while cursor < framed.len() {
@@ -403,12 +458,22 @@ pub(super) fn parse_pushed_blobs(framed: &[u8]) -> Result<Vec<PushedBlob>> {
             .checked_add(len)
             .filter(|stop| *stop <= framed.len())
             .ok_or_else(|| serve_failed("door blob record is truncated"))?;
+        let content = &framed[start..stop];
+        *lines = lines
+            .checked_sub(content_line_count(content).max(1))
+            .ok_or_else(|| serve_failed("door scan splits into more lines than it holds"))?;
         blobs.push(PushedBlob {
             path,
             oid,
-            added_lines: content_lines(&framed[start..stop]),
+            added_lines: content_lines(content),
         });
         cursor = stop;
+        if terminated {
+            if framed.get(stop) != Some(&b'\n') {
+                return Err(serve_failed("door history record is not terminated"));
+            }
+            cursor += 1;
+        }
     }
     Ok(blobs)
 }
@@ -431,6 +496,15 @@ fn parse_blob_record_header(header: &str) -> Result<(String, usize, String)> {
         .parse::<usize>()
         .map_err(|_| serve_failed("door blob record declares an unparsable length"))?;
     Ok((oid.to_owned(), len, path.to_owned()))
+}
+
+/// How many lines [`content_lines`] splits `content` into, without splitting.
+fn content_line_count(content: &[u8]) -> usize {
+    if content.is_empty() {
+        return 0;
+    }
+    let trimmed = content.strip_suffix(b"\n").unwrap_or(content);
+    trimmed.iter().filter(|byte| **byte == b'\n').count() + 1
 }
 
 /// One blob's bytes as lines, split on `\n` with no line reshaped: a trailing

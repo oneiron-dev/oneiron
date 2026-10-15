@@ -3,14 +3,16 @@ mod authority;
 mod ledger;
 mod notifications;
 mod secret_scan_switch;
+mod world_privacy_switch;
 
-pub(crate) use authority::is_live_vault_owner_in_txn;
+pub(crate) use authority::{is_live_vault_owner_in_txn, owners_in_txn};
 pub use ledger::{PolicyChangedEvent, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt};
 pub use notifications::{
     PolicyNotificationFailure, PolicyNotificationMode, PolicyNotificationRule,
     PolicyNotificationTarget,
 };
 pub use secret_scan_switch::SecretScanReceipt;
+pub use world_privacy_switch::WorldPrivacyReceipt;
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -92,13 +94,13 @@ fn land_in_txn(
     change: PolicyRowChange,
     now: u64,
 ) -> Result<PolicyRowReceipt> {
-    holder.revalidate_in_txn(vault, txn)?;
+    let holder_actor = holder.revalidate_in_txn(vault, txn)?;
     let holders = holders_for_change_in_txn(vault, txn, &change, now)?;
-    if !holders.contains(&holder.actor()) {
+    if !holders.contains(&holder_actor) {
         return Err(denied());
     }
     crate::gate::apply_owner_policy_row_change_in_txn(vault, holder, txn, &change, now)?;
-    let receipt = ledger::append_change_in_txn(vault, txn, holder.actor(), change, now)?;
+    let receipt = ledger::append_change_in_txn(vault, txn, holder_actor, change, now)?;
     notifications::enqueue_change_in_txn(vault, txn, &receipt, &holders, now)?;
     Ok(receipt)
 }
@@ -113,19 +115,12 @@ impl Vault {
         now: u64,
     ) -> Result<PolicyRowSubmission> {
         let mut txn = self.store.env.write_txn()?;
-        actor.revalidate_in_txn(self, &txn)?;
-        let result =
-            if holders_for_change_in_txn(self, &txn, &change, now)?.contains(&actor.actor()) {
-                PolicyRowSubmission::Landed(land_in_txn(self, &mut txn, actor, change, now)?)
-            } else {
-                PolicyRowSubmission::Proposed(propose_in_txn(
-                    self,
-                    &mut txn,
-                    actor.actor(),
-                    change,
-                    now,
-                )?)
-            };
+        let actor_id = actor.revalidate_in_txn(self, &txn)?;
+        let result = if holders_for_change_in_txn(self, &txn, &change, now)?.contains(&actor_id) {
+            PolicyRowSubmission::Landed(land_in_txn(self, &mut txn, actor, change, now)?)
+        } else {
+            PolicyRowSubmission::Proposed(propose_in_txn(self, &mut txn, actor_id, change, now)?)
+        };
         txn.commit()?;
         Ok(result)
     }
@@ -155,17 +150,16 @@ impl Vault {
         now: u64,
     ) -> Result<Option<PolicyRowReceipt>> {
         let mut txn = self.store.env.write_txn()?;
-        holder.revalidate_in_txn(self, &txn)?;
+        let holder_actor = holder.revalidate_in_txn(self, &txn)?;
         let mut proposal =
             ledger::read_proposal_in(self, &txn, proposal_id)?.ok_or(Error::EntityNotFound)?;
-        if !holders_for_change_in_txn(self, &txn, &proposal.change, now)?.contains(&holder.actor())
-        {
+        if !holders_for_change_in_txn(self, &txn, &proposal.change, now)?.contains(&holder_actor) {
             return Err(denied());
         }
         if !matches!(proposal.status, PolicyProposalStatus::Pending) {
             return Err(Error::InvalidConfig("proposal already answered".to_owned()));
         }
-        if !proposal.holders.contains(&holder.actor().to_hex()) {
+        if !proposal.holders.contains(&holder_actor.to_hex()) {
             return Err(denied());
         }
         let receipt = if approve {
@@ -182,10 +176,10 @@ impl Vault {
         proposal.status = match &receipt {
             Some(receipt) => PolicyProposalStatus::Approved {
                 receipt_id: receipt.receipt_id.clone(),
-                holder: holder.actor().to_hex(),
+                holder: holder_actor.to_hex(),
             },
             None => PolicyProposalStatus::Declined {
-                holder: holder.actor().to_hex(),
+                holder: holder_actor.to_hex(),
             },
         };
         ledger::put_proposal_in(self, &mut txn, &proposal)?;

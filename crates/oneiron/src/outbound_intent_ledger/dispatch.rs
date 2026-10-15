@@ -460,11 +460,11 @@ fn finish_send(
             (Some(done.state), None)
         }
         OutboundSendOutcome::Ambiguous if record.idempotency_supported => {
-            record_possible_delivery(vault, record.id, now_ms)?;
+            record_possible_delivery(vault, record.id)?;
             (Some(IntentState::Pending), None)
         }
         OutboundSendOutcome::Ambiguous => {
-            record_possible_delivery(vault, record.id, now_ms)?;
+            record_possible_delivery(vault, record.id)?;
             let abandoned = abandon_record(
                 vault,
                 record.id,

@@ -65,6 +65,12 @@ pub enum AuthorityFoldIssue {
         /// Deterministic rejection reason.
         reason: ActorBindingRejection,
     },
+    /// The log holds more rows, handoffs or ancestor pairs than one fold may
+    /// read (H72). The fold refused all of it and holds no root.
+    FoldBudgetExceeded {
+        /// The signer whose rows took the log past the bound.
+        signer: AuthorityKey,
+    },
 }
 
 /// Why the fold refused an actor-binding op.
@@ -85,7 +91,15 @@ pub enum ActorBindingRejection {
 /// Deterministic authority fold output.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorityFold {
+    /// The heads a new main-log entry names: every main-log head but the rows
+    /// of anchors this install does not pin.
     pub(super) append_heads: BTreeSet<AuthorityEntryHash>,
+    /// Each unpinned anchor's own heads, which only that anchor's rows name.
+    pub(super) anchor_heads: BTreeMap<[u8; 32], BTreeSet<AuthorityEntryHash>>,
+    /// Each signer's latest valid row of each world, a settings edit or a key
+    /// record, with its sequence: the parent that signer's next row of the
+    /// world names (Astra #1422b F1, #1422c).
+    pub(super) scope_heads: BTreeMap<(AuthorityKey, EntityId), (u64, AuthorityEntryHash)>,
     pub(super) append_sequences: BTreeMap<AuthorityKey, u64>,
     /// Historical actor/class pairs affected by a key revocation, including rebind-away.
     pub actor_revocation_affected_writers: BTreeSet<(EntityId, String)>,
@@ -131,8 +145,45 @@ pub struct AuthorityFold {
     pub actor_bindings: BTreeMap<AuthorityKey, FoldedActorBinding>,
     /// Each physical machine's folded standing, keyed by its MACHINE row.
     pub machines: BTreeMap<EntityId, FoldedMachine>,
+    /// This install's pinned root while the fold holds it as a valid root:
+    /// the pin [`AuthorityFold::trusted_machine`] reads. `None` trusts the
+    /// accepted roster revisions alone.
+    pub pinned_root: Option<PinnedRoot>,
+    pub(super) root_anchors: BTreeMap<[u8; 32], BTreeSet<RecoveryRootId>>,
+    /// The entries that folded through an owner anchor's branch: the
+    /// stale-roster window never expires them, and none renews a roster
+    /// revision.
+    pub(super) anchor_entries: BTreeSet<AuthorityEntryHash>,
+    /// The roster marks a key P1 accepts signed, judged on the merged
+    /// history: the only marks that renew a stale trusted roster revision.
+    pub(super) accepted_roster_marks: BTreeSet<AuthorityEntryHash>,
+    /// Each edited world's settings, keyed by its WORLD row.
+    pub worlds: BTreeMap<EntityId, FoldedWorld>,
+    /// Well-signed world edits from a machine that could not edit that
+    /// world: valid entries without effect.
+    pub refused_world_edits: BTreeSet<AuthorityEntryHash>,
+    /// What this install holds back beside the roster rule (Astra #1430).
+    pub(super) install: InstallBound,
+    /// Every world key with a counted record, keyed by id (world first).
+    pub(super) world_keys: BTreeMap<WorldKeyId, FoldedWorldKey>,
+    /// Well-signed key records that count for nothing under this install's
+    /// pin: valid entries without effect.
+    pub refused_world_keys: BTreeSet<AuthorityEntryHash>,
     /// Fold diagnostics.
     pub issues: Vec<AuthorityFoldIssue>,
+}
+
+/// What bounds this install's view beside the roster rule (Astra #1430).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct InstallBound {
+    /// The machine revisions and world edits this install holds back: each
+    /// revision that landed restriction only, and each edit that never counts
+    /// at full strength here, one valid without effect included.
+    pub(super) held_back: BTreeSet<AuthorityEntryHash>,
+    /// The first still-future second at which the fold with no vouch that
+    /// bounds this view changes (`install_fold::NoVouch`). A cached view
+    /// lasts no longer.
+    pub(super) no_vouch_deadline: Option<u64>,
 }
 
 /// One folded `{signing_key_id, actor_ref, actor_class, epoch, status}` tuple.
@@ -190,14 +241,18 @@ impl AuthorityFold {
     /// keeps only the [`AuthorityFoldIssue::ConflictingVaultRoot`] rows. Every
     /// authority gate MUST fail closed on the second, so the distinction is
     /// exposed here rather than re-derived (and inevitably mis-derived) at each
-    /// call site.
+    /// call site. A log refused for exceeding the fold bounds
+    /// ([`AuthorityFoldIssue::FoldBudgetExceeded`]) collapses the same way.
     #[must_use]
     pub fn vault_root_is_conflicted(&self) -> bool {
         self.vault_id.is_none()
-            && self
-                .issues
-                .iter()
-                .any(|issue| matches!(issue, AuthorityFoldIssue::ConflictingVaultRoot { .. }))
+            && self.issues.iter().any(|issue| {
+                matches!(
+                    issue,
+                    AuthorityFoldIssue::ConflictingVaultRoot { .. }
+                        | AuthorityFoldIssue::FoldBudgetExceeded { .. }
+                )
+            })
     }
 
     /// Pact state governing `grant_ref`, if any lifecycle entries name it.
@@ -252,12 +307,27 @@ pub(super) struct FoldState {
     pub(super) actor_revocation_hashes: BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
     pub(super) seqs: BTreeMap<AuthorityKey, u64>,
     pub(super) machines: BTreeMap<EntityId, BTreeMap<MachineAdmitter, MachineChain>>,
-    /// Every machine row that ever claimed each install key, merged by union.
-    pub(super) machine_keys: BTreeMap<[u8; 32], BTreeSet<EntityId>>,
+    /// Every claim of each install key (the machine, its admitter, and an
+    /// owner-held roster signer), merged by union.
+    pub(super) machine_keys: BTreeMap<[u8; 32], BTreeSet<KeyClaim>>,
+    /// Each valid root's anchor key, mapped to every root id it signed,
+    /// merged by union. No root record is fold state.
+    pub(super) root_anchors: BTreeMap<[u8; 32], BTreeSet<RecoveryRootId>>,
+    /// The entries that folded through an owner anchor's branch (its roots
+    /// and its marks), merged by union. They rest on no roster key, even when
+    /// a roster also names the anchor's public key.
+    pub(super) anchor_entries: BTreeSet<AuthorityEntryHash>,
     /// Roster keys marked as the host's, merged by union: each key a host
     /// enrolled as its own root, and each key marked for the cloud (role or
     /// tier). Custody also passes along `key_admitters`.
     pub(super) host_custody_keys: BTreeSet<AuthorityKey>,
+    pub(super) worlds: BTreeMap<EntityId, WorldFrontier>,
+    pub(super) refused_world_edits: BTreeSet<AuthorityEntryHash>,
+    /// Each world key's counted records, merged by union.
+    pub(super) world_keys:
+        BTreeMap<WorldKeyId, std::sync::Arc<super::world_key_fold::WorldKeyState>>,
+    /// Well-signed key records that count for nothing here, merged by union.
+    pub(super) refused_world_keys: BTreeSet<AuthorityEntryHash>,
     /// Each roster key's admitters, merged by union: the keys that enrolled,
     /// rotated to or re-rooted to it, on any branch. A key is in the host's
     /// custody when it, or any key up this graph, is marked as the host's,
@@ -479,6 +549,24 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .or_insert(*seq);
     }
     merge_machine_maps(&mut merged.machines, &mut merged.machine_keys, right);
+    for (anchor, roots) in &right.root_anchors {
+        merged
+            .root_anchors
+            .entry(*anchor)
+            .or_default()
+            .extend(roots.iter().copied());
+    }
+    merged
+        .anchor_entries
+        .extend(right.anchor_entries.iter().copied());
+    merge_world_frontiers(&mut merged.worlds, &right.worlds);
+    merged
+        .refused_world_edits
+        .extend(right.refused_world_edits.iter().copied());
+    super::world_key_fold::merge_world_keys(&mut merged.world_keys, &right.world_keys);
+    merged
+        .refused_world_keys
+        .extend(right.refused_world_keys.iter().copied());
     merged
         .host_custody_keys
         .extend(right.host_custody_keys.iter().cloned());

@@ -170,6 +170,49 @@ fn force_edge(vault: &Vault, src: EntityId, kind: EdgeKind, tgt: EntityId) {
         .expect("force edge");
 }
 
+/// The owner pairs `writer` into `receiver`'s vault as their own machine, so
+/// `receiver` counts `writer`'s seals (H161).
+fn pair_as_mine(receiver: &Vault, writer: &Vault) {
+    use crate::authority::{MachineOwnership, MachineRole};
+    let issuer = crate::test_support::test_host_issuer();
+    receiver.ensure_host_root_slip(&issuer).expect("host root");
+    let person = crate::vault::embedded_owner_actor_id().expect("owner id");
+    receiver
+        .bind_host_owner_for_test(&issuer, person)
+        .expect("bind owner");
+    let owner = receiver
+        .authenticate_owner(
+            person,
+            &person.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner");
+    let vault_id = receiver
+        .authority_fold()
+        .expect("fold")
+        .vault_id
+        .expect("vault id");
+    // A request carries the writer's own encryption key (world privacy P6b).
+    writer.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    let own = writer
+        .machine_encryption_key(vault_id)
+        .expect("own encryption key");
+    let request = writer
+        .machine_enrolment_request(vault_id, own)
+        .expect("enrolment request");
+    receiver
+        .enroll_machine(
+            &issuer,
+            &owner,
+            &request,
+            MachineRole::Owned(MachineOwnership::Yours),
+        )
+        .expect("pair as yours");
+}
+
 fn identity_receipts(vault: &Vault) -> Vec<crate::receipt::ReceiptRecord> {
     vault
         .receipts(
@@ -1453,9 +1496,11 @@ fn put_validated_identity_event_record(
     put_identity_event_record(vault, event_id, record);
     vault
         .with_write_txn(|wtxn| {
-            let fact = super::admission_disposition::AdmissionDisposition::sign(
+            let witness_id = vault.store.clock.entity_id()?;
+            let fact = super::admission_disposition::AdmissionDisposition::seal(
                 vault,
                 wtxn,
+                witness_id,
                 event_id,
                 record,
                 AdmissionVerdict::Validated,
@@ -1473,7 +1518,6 @@ fn put_validated_identity_event_record(
                 evidence: None,
                 action: StoredIdentityOpAction::AdmissionDisposition(fact),
             };
-            let witness_id = vault.store.clock.entity_id()?;
             let mut raw = vec![ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT];
             raw.extend_from_slice(&record.at.to_be_bytes());
             raw.extend_from_slice(&record.at.to_be_bytes());
@@ -4618,6 +4662,7 @@ fn writer_verified_event_arriving_after_author_and_head_erasure_keeps_history_wi
     };
     for witness_first in [false, true] {
         let (_dir, vault) = open_vault();
+        pair_as_mine(&vault, &writer);
         put_person(&vault, 0x61);
         put_person(&vault, 0x62);
         put_person(&vault, 0x63);
@@ -4789,7 +4834,8 @@ fn reversed_event_ids_still_protect_middle_source_in_chained_merge() {
 #[test]
 fn signed_dispositions_bind_immutable_core_and_join_in_both_orders() {
     use super::admission_disposition::{
-        AdmissionDisposition, AdmissionVerdict, core_digest, joined_verdict_for_store_in_txn,
+        AdmissionDisposition, AdmissionVerdict, SealTrust, core_digest,
+        joined_verdict_for_store_in_txn,
     };
     for disposition_first in [false, true] {
         let (_dir, vault) = open_vault();
@@ -4798,9 +4844,10 @@ fn signed_dispositions_bind_immutable_core_and_join_in_both_orders() {
         let core = replicated_merge_record(vec![id(0x61)], id(0x62), 101);
         let signed = vault
             .with_write_txn(|txn| {
-                AdmissionDisposition::sign(
+                AdmissionDisposition::seal(
                     &vault,
                     txn,
+                    witness,
                     target,
                     &core,
                     AdmissionVerdict::RefusedNonStructural,
@@ -4830,7 +4877,14 @@ fn signed_dispositions_bind_immutable_core_and_join_in_both_orders() {
         }
         let read = vault.store.env.read_txn().unwrap();
         assert_eq!(
-            joined_verdict_for_store_in_txn(&vault.store, &read, &target, &core).unwrap(),
+            joined_verdict_for_store_in_txn(
+                &vault.store,
+                &read,
+                &target,
+                &core,
+                &mut SealTrust::default()
+            )
+            .unwrap(),
             Some(AdmissionVerdict::RefusedNonStructural)
         );
         assert_eq!(

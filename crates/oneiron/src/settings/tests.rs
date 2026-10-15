@@ -61,7 +61,7 @@ fn a_type_scan_off_this_device_never_overflows_on_device_local_rows() -> Result<
     for _ in 0..2 {
         claim(Some(world))?;
     }
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
 
     let claims = |locality| {
         vault.entities_by_type_at_with_cap(

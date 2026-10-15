@@ -14,6 +14,8 @@ struct VerifiedRestriction {
     vault_id: AuthorityVaultId,
     entry_hash: AuthorityEntryHash,
     kind: Restriction,
+    /// The rows its proven branch folded through an owner anchor's branch.
+    routed: BTreeSet<AuthorityEntryHash>,
 }
 
 #[derive(Clone, Debug)]
@@ -30,11 +32,13 @@ enum Restriction {
     /// A verified `SlipConsume`: every id its proven branch had burnt, the
     /// single-use ancestors it spent among them.
     SlipBurn(BTreeSet<[u8; 32]>),
-    /// A verified machine removal: the machine's chains on the removal's own
-    /// branch, whose head is the terminal revision.
+    /// A verified machine removal: the removing admitter's chain on the
+    /// removal's own branch, whose head is the terminal revision. Only the
+    /// removal itself travels: nothing else that branch held.
     MachineRemoval {
         machine: EntityId,
-        chains: BTreeMap<MachineAdmitter, MachineChain>,
+        admitter: MachineAdmitter,
+        chain: Box<MachineChain>,
     },
 }
 
@@ -68,8 +72,12 @@ impl RevokeFacts {
                 Restriction::SlipBurn(burnt) => {
                     state.slips.consumed.extend(burnt.iter().copied());
                 }
-                Restriction::MachineRemoval { machine, chains } => {
-                    super::machine_profile::merge_machine_chains(state, *machine, chains);
+                Restriction::MachineRemoval {
+                    machine,
+                    admitter,
+                    chain,
+                } => {
+                    super::machine_profile::merge_machine_chain(state, *machine, *admitter, chain);
                 }
             }
         }
@@ -86,7 +94,7 @@ pub(super) fn restrictive_withdrawal(op: &AuthorityOp) -> bool {
     }
 }
 
-fn removes_machine(op: &AuthorityOp) -> bool {
+pub(super) fn removes_machine(op: &AuthorityOp) -> bool {
     matches!(op, AuthorityOp::MachineProfile(profile) if profile.role == MachineRole::Removed)
 }
 
@@ -111,10 +119,26 @@ pub(super) fn derive_revoke_facts(
         // records which of a signer's rows this vault saw first, so the proof
         // applies none inside the branch and accepts what the fold accepts
         // when the branch arrives on its own, siblings at one sequence
-        // included (Astra #1423b, Sol #1423 r8 and r9).
-        let context = if removal {
+        // included (Astra #1423b, Sol #1423 r8 and r9). A row of it past its
+        // floor still lands restriction only: the proof's copy acknowledges
+        // nothing the ordinary fold's copy does not (Astra #1430b). The fold
+        // with no vouch (`floor_vouched: None`) vouches for no branch either
+        // (Sol P2 round 18, F2).
+        let removal_vouch = removal && context.floor_vouched.is_some();
+        let branch: BTreeSet<_> = if removal_vouch {
+            ancestors
+                .get(hash)
+                .into_iter()
+                .flatten()
+                .chain([hash])
+                .copied()
+                .collect()
+        } else {
+            BTreeSet::new()
+        };
+        let context = if removal_vouch {
             FoldContext {
-                sequence_floors: None,
+                floor_vouched: Some(&branch),
                 ..context
             }
         } else {
@@ -123,7 +147,7 @@ pub(super) fn derive_revoke_facts(
         let Some(state) = verify_signed_branch(*hash, entries, ancestors, context, !removal) else {
             continue;
         };
-        let vault_id = state.vault_id;
+        let (vault_id, routed) = (state.vault_id, state.anchor_entries.clone());
         let kind = match &entry.op {
             AuthorityOp::RevokeActor {
                 authority_key,
@@ -134,12 +158,37 @@ pub(super) fn derive_revoke_facts(
                 proof: Box::new(state),
             },
             AuthorityOp::MachineProfile(profile) => {
-                let Some(chains) = state.machines.get(&profile.machine) else {
+                let Some((admitter, chain)) = state
+                    .machines
+                    .get(&profile.machine)
+                    .into_iter()
+                    .flatten()
+                    .find(|(_, chain)| chain.head.entry == *hash)
+                else {
                     continue;
                 };
                 Restriction::MachineRemoval {
                     machine: profile.machine,
-                    chains: chains.clone(),
+                    admitter: *admitter,
+                    chain: Box::new(MachineChain {
+                        head: chain.head.clone(),
+                        owner_held: chain.owner_held.clone().filter(|held| held.entry == *hash),
+                        owner_held_removals: chain
+                            .owner_held_removals
+                            .iter()
+                            .filter(|(_, removal)| removal.entry == *hash)
+                            .map(|(signer, removal)| (signer.clone(), removal.clone()))
+                            .collect(),
+                        // The removal's own revision, past its floor here
+                        // still: the proof never erases that mark (Astra
+                        // #1430b).
+                        revisions: chain
+                            .revisions
+                            .iter()
+                            .filter(|(revision, _)| *revision == hash)
+                            .map(|(revision, held)| (*revision, std::sync::Arc::clone(held)))
+                            .collect(),
+                    }),
                 }
             }
             _ => continue,
@@ -150,6 +199,7 @@ pub(super) fn derive_revoke_facts(
                 vault_id,
                 entry_hash: *hash,
                 kind,
+                routed,
             },
         );
     }
@@ -193,6 +243,7 @@ impl RevokeFacts {
                     vault_id: state.vault_id,
                     entry_hash: *hash,
                     kind,
+                    routed: state.anchor_entries,
                 },
             );
         }
@@ -202,7 +253,8 @@ impl RevokeFacts {
 impl RevokeFacts {
     /// Forgets every restriction that stands on a key a handoff retired: the
     /// old root revokes no actor and withdraws no slip the new root bound or
-    /// minted, whatever its own old branch says.
+    /// minted, whatever its own old branch says. A row the proof took through
+    /// an owner anchor's branch rests on that anchor (Wonder W3-F1).
     pub(super) fn forget_retired(
         &mut self,
         retirements: &super::retired_signers::Retirements,
@@ -210,7 +262,7 @@ impl RevokeFacts {
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     ) {
         self.by_hash
-            .retain(|hash, _| !retirements.excludes(hash, entries, ancestors));
+            .retain(|hash, fact| !retirements.excludes(hash, entries, ancestors, &fact.routed));
     }
 
     /// Forgets every actor revocation whose signer falls below a floor that
@@ -228,9 +280,15 @@ impl RevokeFacts {
         self.by_hash.retain(|hash, fact| match &fact.kind {
             Restriction::Actor { proof, .. } => {
                 survivors.contains_key(hash)
-                    || !super::tier_floor::below_a_concurrent_floor(
-                        hash, proof, entries, ancestors, &floors,
+                    || super::tier_floor::below_a_concurrent_floor(
+                        hash,
+                        proof,
+                        entries,
+                        ancestors,
+                        &floors,
+                        &|_| Ok(()),
                     )
+                    .is_none()
             }
             _ => true,
         });

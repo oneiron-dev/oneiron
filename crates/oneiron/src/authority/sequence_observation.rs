@@ -16,7 +16,7 @@ use crate::store::Store;
 use super::*;
 
 /// Durable high-water mark of a signer's highest observed authority-log sequence number.
-/// Key: string (peer id).
+/// Key: string (peer id, or peer id and world for a side entry).
 const SEQ_HWM: SideTable<String, u64, Raw> = SideTable::new(&side_table::AUTHLOG_SEQ_HWM);
 /// First-observation receipt of the signer sequence high-water mark that existed before one
 /// entry hash was first observed. Key: hex64.
@@ -47,21 +47,40 @@ impl RawValue for SequenceReceipt {
 
 pub(super) struct AuthorityLocalObservations {
     pub(super) sequence_floors: BTreeMap<AuthorityEntryHash, u64>,
+    /// Rows a handoff vouches for: no floor refuses them.
+    pub(super) vouched: BTreeSet<AuthorityEntryHash>,
+    /// Neither a handoff nor a removal vouches for anything: the fold that
+    /// bounds every vouched fold's install view (`install_fold::NoVouch`).
+    pub(super) unvouched: bool,
     pub(super) policy: AuthorityObservationPolicy,
 }
 
 impl AuthorityLocalObservations {
-    /// The same observations with no sequence floor on `line`, a handoff's
-    /// line: the handoff vouches for it, so its settlement does not turn on
-    /// which sibling this vault happened to see first.
-    pub(super) fn without_floors_on(&self, line: &BTreeSet<AuthorityEntryHash>) -> Self {
+    /// The same observations with `line`, a handoff's line, vouched for: no
+    /// floor refuses a row of it, so its settlement does not turn on which
+    /// sibling this vault happened to see first. The handoff grants nothing
+    /// this install held back: the install view comes from the fold with no
+    /// vouch (Astra #1430b; the Engine's ruling on Sol P2 round 17).
+    pub(super) fn vouching(&self, line: &BTreeSet<AuthorityEntryHash>) -> Self {
+        let mut vouched = self.vouched.clone();
+        if !self.unvouched {
+            vouched.extend(line);
+        }
         Self {
-            sequence_floors: self
-                .sequence_floors
-                .iter()
-                .filter(|(hash, _)| !line.contains(*hash))
-                .map(|(hash, floor)| (*hash, *floor))
-                .collect(),
+            sequence_floors: self.sequence_floors.clone(),
+            vouched,
+            unvouched: self.unvouched,
+            policy: self.policy,
+        }
+    }
+
+    /// The same observations with no handoff's or removal's vouch, now or
+    /// later.
+    pub(super) fn without_vouch(&self) -> Self {
+        Self {
+            sequence_floors: self.sequence_floors.clone(),
+            vouched: BTreeSet::new(),
+            unvouched: true,
             policy: self.policy,
         }
     }
@@ -84,8 +103,19 @@ pub(super) fn authority_observation_peer_id(signer: &AuthorityKey) -> String {
     hasher.finalize().to_hex().to_string()
 }
 
-fn sequence_key(signer: &AuthorityKey) -> String {
-    authority_observation_peer_id(signer)
+/// A signer's sequences order within one scope: the main log, or one world's
+/// side branch. Entries of different worlds never name each other, so one
+/// world's later entry is no rollback floor for another's. Inside a world
+/// the floor is one stream over settings edits and key records alike, the
+/// defence against backdating either kind (Astra #1422c F2, F3). Each row a
+/// machine signs in a world names its previous one there, so a later row
+/// that arrives first vouches for the earlier (Astra #1422b F1).
+fn sequence_key(entry: &AuthorityLogEntry) -> String {
+    let peer = authority_observation_peer_id(entry.signer_key());
+    match super::world_privacy::side_world(&entry.op) {
+        None => peer,
+        Some(world) => format!("{peer}:{}", world.to_hex()),
+    }
 }
 
 fn receipt_key(hash: &AuthorityEntryHash) -> String {
@@ -109,7 +139,7 @@ pub(crate) fn record_authority_sequence_observation_in_txn(
     if SEQ_OBSERVATION.get(store, txn, &receipt_key)?.is_some() {
         return Ok(false);
     }
-    let key = sequence_key(entry.signer_key());
+    let key = sequence_key(entry);
     let previous = SEQ_HWM.get(store, txn, &key)?;
     SEQ_OBSERVATION.put(store, txn, &receipt_key, &SequenceReceipt(previous))?;
     let next = previous.map_or(entry.seq, |value| value.max(entry.seq));
@@ -125,7 +155,7 @@ pub(super) fn authority_local_observations_in_txn(
     let mut sequence_floors = BTreeMap::new();
     for entry in entries {
         let hash = authority_entry_hash(entry)?;
-        let current = SEQ_HWM.get(store, txn, &sequence_key(entry.signer_key()))?;
+        let current = SEQ_HWM.get(store, txn, &sequence_key(entry))?;
         let receipt = SEQ_OBSERVATION.get(store, txn, &receipt_key(&hash))?;
         let floor = match receipt {
             Some(SequenceReceipt(observed)) => {
@@ -145,6 +175,8 @@ pub(super) fn authority_local_observations_in_txn(
     }
     Ok(AuthorityLocalObservations {
         sequence_floors,
+        vouched: BTreeSet::new(),
+        unvouched: false,
         policy: authority_observation_policy_in_txn(store, txn)?,
     })
 }

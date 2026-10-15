@@ -384,7 +384,10 @@ mod tests {
         let mut duplicate = first.clone();
         duplicate.provenance_claim_id = fixture_provenance(&vault, &duplicate);
         let duplicate_id = origin_publication_id(&duplicate).expect("duplicate id");
-        assert!(vault.publish_origin_ref(&wire, duplicate.clone()).is_err());
+        let resolved = vault
+            .publish_origin_ref(&wire, duplicate.clone())
+            .expect("the duplicate resolves to the owner it drove");
+        assert_eq!(resolved.record.publication_id, id);
         assert_eq!(
             vault
                 .origin_publication(id)
@@ -400,7 +403,11 @@ mod tests {
                 .is_none()
         );
         let log = reflog(&root);
-        assert!(vault.publish_origin_ref(&wire, duplicate).is_err());
+        let resolved = vault
+            .publish_origin_ref(&wire, duplicate)
+            .expect("a live owner answers the duplicate again");
+        assert_eq!(resolved.record.publication_id, id);
+        assert!(resolved.wire.is_none(), "resolution drives no ref effect");
         let replay = vault
             .publish_origin_ref(&wire, first.clone())
             .expect("identical replay");
@@ -604,5 +611,133 @@ mod tests {
         );
         assert_eq!(claim_count(&vault), 1);
         assert_eq!(reflog(&root), log);
+    }
+
+    /// A published move is consumed in one CAS row, not found by reading the
+    /// journal. Past the publication scan's row a new move still publishes,
+    /// and the same move under another provenance resolves to its owner
+    /// without a scan and without a second publication; in a vault whose
+    /// Published rows predate the kept CAS row too, once the open has
+    /// backfilled it.
+    #[test]
+    fn publication_admission_reads_one_cas_row_not_the_history() {
+        use crate::origin::scan_check::OriginScan;
+        use crate::test_util::{
+            clear_default_policy_manifest_for_legacy_tests, embedding_test_config,
+        };
+
+        let (vault_dir, vault) = test_vault();
+        vault
+            .set_origin_scan_threshold(OriginScan::PublicationRows, 2)
+            .expect("lower the row");
+        let (_repo_dir, root, base) = seeded_repo();
+        let moves: Vec<GitOid> = (0..4)
+            .map(|index| commit(&root, &format!("move {index}"), &format!("{index}\n")))
+            .collect();
+        force_ref(&root, &base);
+        let wire = GitWire::new(&vault).expect("wire");
+        let mut from = base;
+        let mut last = None;
+        for next in &moves {
+            let repo = open_repo(&wire, &root, &from);
+            let repo_id = repo_id_of(&vault, &repo);
+            let ask = request(&vault, &repo, repo_id, Some(from.clone()), next.clone());
+            let receipt = vault
+                .publish_origin_ref(&wire, ask.clone())
+                .expect("a new move publishes past the scan's row");
+            assert_eq!(receipt.record.status, OriginPublicationStatus::Published);
+            from = next.clone();
+            last = Some((ask, receipt.record));
+        }
+        let (consumed, record) = last.expect("a published move");
+        let mut duplicate = consumed.clone();
+        duplicate.provenance_claim_id = fixture_provenance(&vault, &duplicate);
+        let resolved = vault
+            .publish_origin_ref(&wire, duplicate.clone())
+            .expect("the duplicate resolves to its owner");
+        assert_eq!(resolved.record, record);
+        assert!(
+            vault
+                .origin_publication(origin_publication_id(&duplicate).expect("id"))
+                .expect("journal")
+                .is_none()
+        );
+        assert!(
+            vault
+                .origin_scan_checks()
+                .expect("checks")
+                .iter()
+                .all(|check| check.scan != OriginScan::PublicationRows.code()),
+            "no admission read the publication history"
+        );
+
+        vault
+            .forget_origin_cas_intent_for_test(&record)
+            .expect("the row a vault from before kept CAS rows lacks");
+        drop(wire);
+        drop(vault);
+        let vault = crate::Vault::open(vault_dir.path(), embedding_test_config()).expect("reopen");
+        clear_default_policy_manifest_for_legacy_tests(&vault);
+        let wire = GitWire::new(&vault).expect("wire");
+        let mut duplicate = consumed;
+        duplicate.provenance_claim_id = fixture_provenance(&vault, &duplicate);
+        let resolved = vault
+            .publish_origin_ref(&wire, duplicate.clone())
+            .expect("the duplicate resolves to its owner after the reopen");
+        assert_eq!(
+            resolved.record.publication_id, record.publication_id,
+            "the open gave the older Published row its CAS row"
+        );
+        assert!(
+            vault
+                .origin_publication(origin_publication_id(&duplicate).expect("id"))
+                .expect("journal")
+                .is_none()
+        );
+    }
+
+    /// The same move asked for again needing an object its Published owner
+    /// never certified is refused, naming that object; nothing is staged or
+    /// moved for it.
+    #[test]
+    fn publication_a_request_needing_more_than_its_owner_is_refused_by_name() {
+        let (_vault_dir, vault) = test_vault();
+        let (_repo_dir, root, base) = seeded_repo();
+        std::fs::write(root.join("independent"), b"not in any commit").expect("bytes");
+        let extra =
+            GitOid::parse_hex(git(&root, &["hash-object", "-w", "independent"])).expect("blob");
+        let next = commit(&root, "next", "next\n");
+        force_ref(&root, &base);
+        let wire = GitWire::new(&vault).expect("wire");
+        let repo = open_repo(&wire, &root, &base);
+        let repo_id = repo_id_of(&vault, &repo);
+        let owner = request(&vault, &repo, repo_id, Some(base), next);
+        let published = vault
+            .publish_origin_ref(&wire, owner.clone())
+            .expect("publish");
+        let mut beyond = owner;
+        beyond.required_objects = vec![extra.clone()];
+        authorize_fixture(&vault, &mut beyond);
+        let log = reflog(&root);
+        let refused = vault
+            .publish_origin_ref(&wire, beyond.clone())
+            .expect_err("the owner never certified the extra object");
+        assert!(
+            refused.to_string().contains(extra.as_str()),
+            "the refusal names the extra object: {refused}"
+        );
+        assert!(
+            vault
+                .origin_publication(origin_publication_id(&beyond).expect("id"))
+                .expect("journal")
+                .is_none()
+        );
+        assert_eq!(reflog(&root), log);
+        assert_eq!(
+            vault
+                .origin_visible_ref_rows(&repo_id)
+                .expect("visible rows"),
+            vec![published.record.publication_id]
+        );
     }
 }

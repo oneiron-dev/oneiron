@@ -4,6 +4,7 @@ use loro::VersionVector;
 
 use oneiron::sync::residence::{admit_promoted_window_update, promotion_covers_full_window};
 use oneiron::sync::schema::read_window_list;
+use oneiron::sync::window::WindowExport;
 use oneiron::sync::{
     SelectorVvRequest, SyncSelector, WindowKey, authorize_sync_selector,
     decode_selector_vv_request, decode_sync_selector,
@@ -52,7 +53,7 @@ pub(super) async fn handle_window_sync(
     }
 
     if sub_tag == window_sub_tags::PROMOTION_REQUEST {
-        if conn_state.protocol_version != protocol::RESIDENCE_PROTOCOL_VERSION
+        if !protocol::is_residence_version(conn_state.protocol_version)
             || payload.len() > 4096
             || !read_window_list(&server.root_doc).contains(&key)
         {
@@ -63,10 +64,11 @@ pub(super) async fn handle_window_sync(
         conn_state.bind_window_sync_mode(WindowSyncMode::Residence)?;
         let selector = decode_sync_selector(payload)
             .map_err(|_| ProtocolError::InvalidPayload("invalid promotion selector"))?;
-        let doc = server
-            .get_or_create_window(&key)
+        let window = server
+            .serve_window(&key)
             .await
             .map_err(|e| ProtocolError::Persistence(e.to_string()))?;
+        let doc = window.doc.clone();
         authorize_promoted_window(
             server,
             require_bound_app_auth(server, conn_state)?,
@@ -74,7 +76,15 @@ pub(super) async fn handle_window_sync(
             &selector,
             &doc,
         )?;
-        conn_state.touch_window(key.clone(), server.config.max_windows_per_connection)?;
+        // The baseline is the root of the snapshot the home would serve this promotion, never a
+        // version the device states. A second promotion can only raise it.
+        let floor =
+            oneiron::sync::window::promotion_baseline(&doc).map_err(map_delta_export_err)?;
+        conn_state
+            .promotion_baselines
+            .entry(key.clone())
+            .or_default()
+            .merge(&floor);
         conn_state.promoted_windows.insert(key, selector);
         let granted =
             protocol::encode_window_sync(window_key, window_sub_tags::PROMOTION_GRANTED, &[])
@@ -98,9 +108,12 @@ pub(super) async fn handle_window_sync(
         conn_state.bind_window_sync_mode(WindowSyncMode::Residence)?;
     } else if matches!(
         sub_tag,
-        window_sub_tags::VV_REQUEST | window_sub_tags::VV_RESPONSE | window_sub_tags::UPDATE
+        window_sub_tags::VV_REQUEST
+            | window_sub_tags::VV_RESPONSE
+            | window_sub_tags::UPDATE
+            | window_sub_tags::REPLACEMENT_REQUEST
     ) {
-        if conn_state.protocol_version == protocol::RESIDENCE_PROTOCOL_VERSION {
+        if protocol::is_residence_version(conn_state.protocol_version) {
             if !conn_state.promoted_windows.contains_key(&key) {
                 return Err(ProtocolError::InvalidPayload(
                     "full-window exchange requires grant-checked promotion",
@@ -117,28 +130,68 @@ pub(super) async fn handle_window_sync(
         window_sub_tags::RESIDENCE_ACK
             | window_sub_tags::PROMOTION_GRANTED
             | window_sub_tags::PROMOTED_INVALIDATE
+            | window_sub_tags::WINDOW_INVALIDATE
     ) {
         return Err(ProtocolError::InvalidPayload(
             "client cannot send server-only residence control",
         ));
     }
+    // The home never installs a device's window. A device that would have to send one asks for
+    // the home's instead and re-authors its own writes on top.
+    if sub_tag == window_sub_tags::REPLACEMENT
+        || (sub_tag == window_sub_tags::REPLACEMENT_REQUEST
+            && (!protocol::installs_window_replacements(conn_state.protocol_version)
+                || !payload.is_empty()))
+    {
+        return Err(ProtocolError::InvalidPayload(
+            "invalid window replacement frame",
+        ));
+    }
 
-    // Count distinct, valid window keys per connection before any load/create.
-    // The default cap is generous so legitimate historical-window tombstone
-    // sync can touch all real windows; it only stops fabricated-key floods.
-    let key = conn_state.touch_window(key, server.config.max_windows_per_connection)?;
+    // A frame that names no exchange, and a residence update for a window this socket never
+    // promoted, are answered before the window is loaded: neither creates one.
+    if !matches!(
+        sub_tag,
+        window_sub_tags::VV_REQUEST
+            | window_sub_tags::VV_RESPONSE
+            | window_sub_tags::UPDATE
+            | window_sub_tags::RESIDENCE_UPDATE
+            | window_sub_tags::REPLACEMENT_REQUEST
+    ) {
+        tracing::warn!(window_key, sub_tag, "unknown WindowSync sub-tag");
+        return Ok(());
+    }
+    if sub_tag == window_sub_tags::RESIDENCE_UPDATE
+        && !conn_state.promoted_windows.contains_key(&key)
+    {
+        return Err(ProtocolError::InvalidPayload("window not promoted"));
+    }
+    // A vector that does not decode is refused before the window is loaded, so the refused frame
+    // creates nothing.
+    if matches!(
+        sub_tag,
+        window_sub_tags::VV_REQUEST | window_sub_tags::VV_RESPONSE
+    ) {
+        VersionVector::decode(payload).map_err(|e| ProtocolError::VvDecode(e.to_string()))?;
+    }
 
     // Loads persisted window state (d:w: + pending u:w:) on first touch.
     // Corrupt persisted state closes the connection rather than serving a
-    // fresh empty window (fail-closed — see SyncServer::get_or_create_window).
-    let doc = server
-        .get_or_create_window(&key)
+    // fresh empty window (fail-closed — see SyncServer::serve_window).
+    // The handle is held to the end of the frame, so the window cannot be
+    // unloaded under the import below.
+    let window = server
+        .serve_window(&key)
         .await
         .map_err(|e| ProtocolError::Persistence(format!("window load failed: {e}")))?;
-    if conn_state.protocol_version == protocol::RESIDENCE_PROTOCOL_VERSION
+    let doc = window.doc.clone();
+    if protocol::is_residence_version(conn_state.protocol_version)
         && matches!(
             sub_tag,
-            window_sub_tags::VV_REQUEST | window_sub_tags::VV_RESPONSE | window_sub_tags::UPDATE
+            window_sub_tags::VV_REQUEST
+                | window_sub_tags::VV_RESPONSE
+                | window_sub_tags::UPDATE
+                | window_sub_tags::REPLACEMENT_REQUEST
         )
     {
         let selector = conn_state
@@ -160,17 +213,7 @@ pub(super) async fn handle_window_sync(
             // is missing (ExportMode::updates via the single delta-export entry
             // point). Malformed VV → typed error, fail-closed: never fall back
             // to a full export.
-            let delta = oneiron::sync::window::export_window_updates_since(
-                server.vault.as_ref(),
-                &key,
-                &doc,
-                payload,
-            )
-            .map_err(map_delta_export_err)?;
-            let response =
-                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
-                    .into_result()
-                    .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
+            let response = export_frame(server, conn_state, &key, &doc, payload)?;
             // Send directly to the requesting client's WebSocket sink, NOT via
             // broadcast. Broadcasting with the requester's conn_id would cause
             // echo suppression to drop the response for the requester.
@@ -196,7 +239,10 @@ pub(super) async fn handle_window_sync(
             .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
             let _ = direct_tx.send(vv_response);
             // Subscribe only after a valid VV and a complete direct catch-up.
-            conn_state.subscribe_window(&key);
+            let bound = server.config.max_windows_per_connection;
+            if let Some(held) = conn_state.subscribe_window(&key, bound) {
+                ask_window_row(server, bound, held);
+            }
         }
         window_sub_tags::UPDATE | window_sub_tags::RESIDENCE_UPDATE => {
             let (residence_seq, update) = if sub_tag == window_sub_tags::RESIDENCE_UPDATE {
@@ -214,14 +260,38 @@ pub(super) async fn handle_window_sync(
             // Admission runs on an isolated document before Observer B or
             // persistence can see the input. Rejected diagnostics must never
             // be relayed as raw history, even if a later export would scrub.
-            oneiron::sync::window::validate_window_update_residence_with_vault(
+            if let Err(error) = oneiron::sync::window::validate_window_update_residence_with_vault(
                 server.vault.as_ref(),
                 &doc,
                 update,
                 &key,
-            )
-            .map_err(map_delta_export_err)?;
-            if conn_state.protocol_version == protocol::RESIDENCE_PROTOCOL_VERSION {
+            ) {
+                // The home's own shallow root cut away what the device's update builds on. The
+                // home never installs a device's window: the device takes the home's and writes
+                // its own state on top, and an old device that cannot is refused.
+                if oneiron::sync::window::update_reaches_below_root(&doc, update) {
+                    // The window goes out whole only as a version request's answer would.
+                    if protocol::is_residence_version(conn_state.protocol_version) {
+                        let selector = conn_state
+                            .promoted_windows
+                            .get(&key)
+                            .ok_or(ProtocolError::InvalidPayload("window not promoted"))?;
+                        authorize_promoted_window(
+                            server,
+                            require_bound_app_auth(server, conn_state)?,
+                            &key,
+                            selector,
+                            &doc,
+                        )?;
+                    }
+                    if let Some(frame) = replacement_frame(server, conn_state, &key, &doc)? {
+                        let _ = direct_tx.send(frame);
+                    }
+                    return Ok(());
+                }
+                return Err(map_delta_export_err(error));
+            }
+            if protocol::is_residence_version(conn_state.protocol_version) {
                 let selector = conn_state
                     .promoted_windows
                     .get(&key)
@@ -242,7 +312,9 @@ pub(super) async fn handle_window_sync(
             }
             // Client sending Loro update bytes — import with origin for echo suppression
             let origin = format!("conn:{conn_id}");
-            doc.import_with(update, &origin)
+            let before = doc.oplog_vv();
+            let imported = doc
+                .import_with(update, &origin)
                 .map_err(|e| ProtocolError::LoroImport(format!("{e}")))?;
             // Durability BEFORE fan-out (ARCH-0023b Observer A duty: "MUST
             // persist synchronously"). `subscribe_local_update` does not fire
@@ -271,8 +343,15 @@ pub(super) async fn handle_window_sync(
             }
 
             // A world flagged device-only on this server stays here, even as
-            // another device's relayed update.
-            if !crate::server::withheld_from_peers(&server.reassert_manager, window_key, update) {
+            // another device's relayed update. An update that adds no operation, such as a
+            // catch-up reply to a vector this home already covers, has nothing to relay: relayed,
+            // it would wake every socket that is not pushed the window, and their catch-ups would
+            // wake each other in turn. It is still appended above, since another handler may hold
+            // the same operations in memory before its own append lands, and the acknowledgment
+            // below must name durable bytes.
+            if (imported.pending.is_some() || doc.oplog_vv() != before)
+                && !crate::server::withheld_from_peers(&server.reassert_manager, window_key, update)
+            {
                 let broadcast_msg =
                     protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, update)
                         .into_result()
@@ -298,25 +377,95 @@ pub(super) async fn handle_window_sync(
         window_sub_tags::VV_RESPONSE => {
             // Client's VV answering our VV_REQUEST — export and send only our
             // local diff. Same fail-closed VV decoding as VV_REQUEST.
-            let delta = oneiron::sync::window::export_window_updates_since(
-                server.vault.as_ref(),
-                &key,
-                &doc,
-                payload,
-            )
-            .map_err(map_delta_export_err)?;
-            let response =
-                protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, &delta)
-                    .into_result()
-                    .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
+            let response = export_frame(server, conn_state, &key, &doc, payload)?;
             let _ = direct_tx.send(response);
         }
-        _ => {
-            tracing::warn!(window_key, sub_tag, "unknown WindowSync sub-tag");
+        window_sub_tags::REPLACEMENT_REQUEST => {
+            // A device that cannot take this window's history asks for the whole of it.
+            if let Some(frame) = replacement_frame(server, conn_state, &key, &doc)? {
+                let _ = direct_tx.send(frame);
+            }
         }
+        _ => {}
     }
 
     Ok(())
+}
+
+/// Asks `max_windows_per_connection`'s question (OF-520): one socket holds `held` windows or
+/// documents past `bound`. Nothing waits on the answer, and nothing is refused.
+pub(super) fn ask_window_row(server: &SyncServer, bound: usize, held: usize) {
+    server.wire_telemetry.limit_questions().ask(
+        crate::wire_telemetry::LimitRow::WindowsPerConnection,
+        u64::try_from(bound).unwrap_or(u64::MAX),
+        u64::try_from(held).unwrap_or(u64::MAX),
+    );
+}
+
+/// Frames this window's answer to the version vector `remote_vv` for this socket. A promoted
+/// residence window answers from its baseline. A peer that holds nothing of the window imports
+/// a replacement as its first update, as before replacements existed; one that holds part of it
+/// installs the replacement, or is refused when its version cannot, since no answer it can apply
+/// exists.
+fn export_frame(
+    server: &SyncServer,
+    conn_state: &ConnState,
+    key: &WindowKey,
+    doc: &loro::LoroDoc,
+    remote_vv: &[u8],
+) -> Result<Vec<u8>, ProtocolError> {
+    let export = oneiron::sync::window::export_window_since(
+        server.vault.as_ref(),
+        key,
+        doc,
+        remote_vv,
+        conn_state.promotion_baselines.get(key),
+    )
+    .map_err(map_delta_export_err)?;
+    let (sub_tag, bytes) = match export {
+        WindowExport::Update(bytes) => (window_sub_tags::UPDATE, bytes),
+        WindowExport::Replacement(bytes)
+            if VersionVector::decode(remote_vv).is_ok_and(|remote| remote.is_empty()) =>
+        {
+            (window_sub_tags::UPDATE, bytes)
+        }
+        WindowExport::Replacement(bytes)
+            if protocol::installs_window_replacements(conn_state.protocol_version) =>
+        {
+            (window_sub_tags::REPLACEMENT, bytes)
+        }
+        WindowExport::Replacement(_) => return Err(ProtocolError::ReplacementUnsupported),
+    };
+    protocol::encode_window_sync(key.as_str(), sub_tag, &bytes)
+        .into_result()
+        .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))
+}
+
+/// The `REPLACEMENT` frame for a peer that must install this window whole: the history-free
+/// snapshot rooted at or after the socket's promotion baseline. A peer that cannot install one is
+/// refused. Nothing goes out for a window withheld as device-only.
+fn replacement_frame(
+    server: &SyncServer,
+    conn_state: &ConnState,
+    key: &WindowKey,
+    doc: &loro::LoroDoc,
+) -> Result<Option<Vec<u8>>, ProtocolError> {
+    if !protocol::installs_window_replacements(conn_state.protocol_version) {
+        return Err(ProtocolError::ReplacementUnsupported);
+    }
+    oneiron::sync::window::export_window_replacement(
+        server.vault.as_ref(),
+        key,
+        doc,
+        conn_state.promotion_baselines.get(key),
+    )
+    .map_err(map_delta_export_err)?
+    .map(|snapshot| {
+        protocol::encode_window_sync(key.as_str(), window_sub_tags::REPLACEMENT, &snapshot)
+            .into_result()
+            .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))
+    })
+    .transpose()
 }
 
 /// A cached promotion is not permanent authority. Recheck the bound actor,

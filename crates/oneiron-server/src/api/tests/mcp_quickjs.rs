@@ -256,7 +256,7 @@ pub(super) fn code_mode_server_with(
             },
         )
         .unwrap()
-        .with_mcp_quickjs_provider(provider)
+        .with_mcp_quickjs_provider(provider, crate::mcp::CodeRunLimits::default())
         // Chosen after the provider is attached: its calls still write here.
         .with_run_receipts(receipts.clone()),
     );
@@ -512,10 +512,8 @@ async fn quickjs_code_mode_keeps_connector_narrowing() {
     .await;
 
     let narrowed = seeded_test_entity_id(0x0024_6522);
-    let scope = crate::mcp::McpConnectorScope {
-        world_ref: Some(seeded_test_entity_id(0x0024_6523)),
-        facet_ref: None,
-    };
+    let scope =
+        crate::mcp::McpConnectorScope::scoped(Some(seeded_test_entity_id(0x0024_6523)), None);
     register_scoped_mcp_actor(&mode.server, "quickjs-world", narrowed, scope.clone()).await;
     let tool = mcp_merge_args(
         mcp_scoped_envelope(narrowed, "read_memory", &scope),

@@ -87,16 +87,17 @@ mod concurrent;
 mod contract;
 mod enforce;
 mod hold_queue;
+mod in_force;
 pub use hold_queue::{HeldPolicyItem, PolicyHoldResolution};
 mod owner_rows;
 pub use crate::batch::secret_scan::SecretScanMode;
 pub use crate::gate::{PolicyRowAction, PolicyRowChange, PolicyRowScope, PolicyWhySource};
-pub(crate) use owner_rows::is_live_vault_owner_in_txn;
 pub use owner_rows::{
     PolicyChangedEvent, PolicyNotificationFailure, PolicyNotificationMode, PolicyNotificationRule,
     PolicyNotificationTarget, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt,
-    PolicyRowSubmission, SecretScanReceipt, policy_row_grant_target,
+    PolicyRowSubmission, SecretScanReceipt, WorldPrivacyReceipt, policy_row_grant_target,
 };
+pub(crate) use owner_rows::{is_live_vault_owner_in_txn, owners_in_txn};
 mod notice;
 mod pattern;
 mod planes;
@@ -123,9 +124,9 @@ pub use planes::{
 pub use prompt::PolicyClassifyPrompt;
 pub use relay::{
     AttestedRelayDomain, AuthenticatedConnectionIdentity, ConnectionClass, DualPlanePass,
-    EdgeServiceRegistry, HostedEdgeAttestation, InMemoryVaultSideVerdicts, RelayBoundaryDegrade,
-    RelayBoundaryPass, RelayClassifiedPass, RelayResolution, RelaySafeguardTier, RelayTrustDomain,
-    VaultSideVerdictSource,
+    EdgeServiceRegistry, HostedEdgeAttestation, HostedPassEvidence, InMemoryVaultSideVerdicts,
+    RelayBoundaryDegrade, RelayBoundaryPass, RelayClassifiedPass, RelayResolution,
+    RelaySafeguardTier, RelayTrustDomain, VaultSideVerdictSource,
 };
 pub use request::{
     HostedOutagePolicy, PolicyClassifyRequest, PolicyClassifySubject, PolicyGenerationParams,
@@ -133,7 +134,7 @@ pub use request::{
 };
 pub use verdict::{
     HostedPlaneAttestation, PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence,
-    PolicyHedgeBucket, PolicyPassAudit, PolicyVerdictCategory,
+    PolicyHedgeBucket, PolicyPassAudit, PolicySkipReason, PolicyVerdictCategory,
 };
 
 #[cfg(test)]

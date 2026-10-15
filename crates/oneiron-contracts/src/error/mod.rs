@@ -26,7 +26,7 @@ pub use self::off_record::OffRecordError;
 pub use self::record::RecordError;
 pub use self::registry::RegistryError;
 pub use self::relay::RelayError;
-pub use self::secret::SecretError;
+pub use self::secret::{KitRecord, SecretError};
 pub use self::store::{SideTableRowProblem, StoreError, VaultRootEntry, VaultRootProblem};
 pub use self::sync::SyncError;
 #[cfg(feature = "sync")]
@@ -177,6 +177,7 @@ pub enum ErrorKind {
     InvalidRankProfile,
     AnalyzerAssetMissing,
     AnalyzerError,
+    IndexedTextTooLarge,
     UpstreamToolFailure,
     RetrievalStageCut,
     #[cfg(feature = "sync")]
@@ -191,6 +192,8 @@ pub enum ErrorKind {
     SyncEngineError,
     #[cfg(feature = "sync")]
     MaintenanceIngestQuotaExceeded,
+    #[cfg(feature = "sync")]
+    HeldFacetStampsFull,
     InvalidRedactionReceiptBody,
     KillSwitchDisabled,
     OffRecordSessionAlreadyExists,
@@ -226,6 +229,8 @@ pub enum ErrorKind {
     IdentityTopologyEventDivergence,
     AuthorityLogAppendOnlyViolation,
     AuthorityLogStoreKeyMismatch,
+    AuthorityLogSignerPending,
+    AuthorityLogFull,
     InvalidSecretCustodyBody,
     SecretNameInUse,
     SecretCustodyNotActive,
@@ -245,6 +250,9 @@ pub enum ErrorKind {
     InvalidSecretLeaseBody,
     InvalidSecretRotationBody,
     TaintedArtifactStale,
+    WorldKeyRefused,
+    KeystoreUnavailable,
+    UnverifiedKitRestore,
     MicroVmBackendUnavailable,
     MicroVmBackendError,
     MicroVmOverlayError,
@@ -276,8 +284,11 @@ pub enum ErrorKind {
     GitHttpInvalidRepoName,
     GitHttpRepoNotFound,
     GitHttpServeFailed,
+    GitHttpExchangeIdle,
+    GitHttpRepositoryBusy,
     ReceivePackDoorRejected,
     ReceivePackLandingRefused,
+    OriginPublicationBeyondOwner,
     VaultCleanupRestoreNotArchived,
     VaultCleanupArchiveMarkerUndecodable,
     VaultCleanupProposalNotFound,
@@ -298,6 +309,7 @@ pub enum ErrorKind {
     HeadAdvanceOffTrunk,
     InvalidConversationDag,
     InvalidScopeSummary,
+    InvalidPairingScope,
     OverlayLimit,
     CooperativeDeletionRequiresTerminalPact,
     InvalidCooperativeDeletionRequest,

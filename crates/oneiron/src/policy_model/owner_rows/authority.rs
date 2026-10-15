@@ -154,8 +154,8 @@ impl Vault {
     /// An authenticated human is not by that alone an owner.
     pub fn is_live_vault_owner(&self, owner: &crate::consent::AuthenticatedOwner) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
-        is_live_vault_owner_in_txn(self, &txn, &owner.actor())
+        let actor = owner.revalidate_in_txn(self, &txn)?;
+        is_live_vault_owner_in_txn(self, &txn, &actor)
     }
 
     /// Everyone whose membership confers authority now: the embedded owner of
@@ -183,7 +183,7 @@ pub(crate) fn is_live_vault_owner_in_txn(
 /// The vault's live owners: the embedded owner of a personal vault, or every
 /// live Owner-role member of a shared one. An Admin or Delegate is no owner,
 /// whatever action grants it holds.
-pub(super) fn owners_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
+pub(crate) fn owners_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
     match live_shared_members_in_txn(vault, txn)? {
         None => personal_owner_in_txn(vault, txn),
         Some(members) => Ok(members.owners.into_iter().collect()),

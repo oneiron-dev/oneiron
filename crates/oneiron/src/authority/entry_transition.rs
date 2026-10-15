@@ -41,13 +41,29 @@ pub(super) fn fold_entry_state(
 
     // A strictly older observed sequence is rollback. Equal-sequence siblings
     // have separate hashes and fold under their own ancestry, not a fork alarm.
-    if context
+    // A restriction still lands (Astra #1430): a machine revision and a world
+    // edit keep their restrictive effect when a later row of their signer
+    // arrived first, as restriction only. A machine removal so stays terminal
+    // on every replica and in the log, where a later edit finds it among its
+    // parents (Sol P2 round 3, F3), but acknowledges nothing here (Astra
+    // #1430b). A row a handoff or a removal vouches for is never refused, and
+    // still lands restriction only, as does every row the fold with no vouch
+    // holds back or only the vouch admits (`install_fold::NoVouch`).
+    let past_floor = context
         .sequence_floors
         .and_then(|floors| floors.get(&hash))
-        .is_some_and(|floor| entry.seq < *floor)
-    {
+        .is_some_and(|floor| entry.seq < *floor);
+    let vouched = context
+        .floor_vouched
+        .is_some_and(|vouched| vouched.contains(&hash));
+    if past_floor && !vouched && !lands_restriction_only(&entry.op) {
         return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
+    let restriction_only = lands_restriction_only(&entry.op)
+        && (past_floor
+            || context
+                .install_held
+                .is_some_and(|held| held.contains(&hash)));
 
     // Wire validation is posture-blind. Cloud owner roles are only lawful
     // under the explicitly selected managed/peer root arm.
@@ -105,7 +121,13 @@ pub(super) fn fold_entry_state(
             seqs: BTreeMap::new(),
             machines: BTreeMap::new(),
             machine_keys: BTreeMap::new(),
+            root_anchors: BTreeMap::new(),
+            anchor_entries: BTreeSet::new(),
             host_custody_keys: BTreeSet::new(),
+            worlds: BTreeMap::new(),
+            refused_world_edits: BTreeSet::new(),
+            world_keys: BTreeMap::new(),
+            refused_world_keys: BTreeSet::new(),
             key_admitters: BTreeMap::new(),
             hosted: context.hosted,
             actor_rows: BTreeSet::new(),
@@ -141,7 +163,40 @@ pub(super) fn fold_entry_state(
     if entry.vault_id != Some(state.vault_id) {
         return EntryFold::Invalid(AuthorityFoldIssue::WrongVault(hash));
     }
+    // Signed by a machine's install key, never a roster key: the owner's
+    // signed "yours" mark is what makes the machine speak for the owner.
+    if let AuthorityOp::WorldPrivacy(edit) = &entry.op {
+        if let Err(issue) = apply_world_privacy(
+            &mut state,
+            entry,
+            edit,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    if let AuthorityOp::WorldKeyWraps(record) = &entry.op {
+        if let Err(issue) =
+            super::world_key_fold::apply_world_key_wraps(&mut state, entry, record, hash, context)
+        {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
     let signer = entry.signer_key().clone();
+    if let Some(folded) =
+        super::anchor_fold::fold_anchor_entry(&mut state, entry, &signer, hash, restriction_only)
+    {
+        return match folded {
+            Ok(()) => EntryFold::Ready(state),
+            Err(issue) => EntryFold::Invalid(issue),
+        };
+    }
     if state
         .roster
         .get(&signer)
@@ -227,7 +282,14 @@ pub(super) fn fold_entry_state(
         return EntryFold::Ready(state);
     }
     if let AuthorityOp::MachineProfile(profile) = &entry.op {
-        if let Err(issue) = apply_machine_profile(&mut state, &signer, profile, hash, context) {
+        if let Err(issue) = apply_machine_profile(
+            &mut state,
+            &signer,
+            profile,
+            hash,
+            context,
+            restriction_only,
+        ) {
             return EntryFold::Invalid(issue);
         }
         state.seqs.insert(signer, entry.seq);
@@ -273,6 +335,16 @@ pub(super) fn fold_entry_state(
 /// them: it is the host enrolling an engine MACHINE writer (ARCH-0053 seeds
 /// system actors through the authority registry at bootstrap), and an agent
 /// key holds no consent, so it widens no authority.
+/// A row a sequence floor refuses only to restriction (Astra #1430): a world
+/// edit, or a machine revision. The roster rule reads either as a replica
+/// with no floor does; this install never counts what it grants.
+pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
+    matches!(
+        op,
+        AuthorityOp::WorldPrivacy(_) | AuthorityOp::MachineProfile(_)
+    )
+}
+
 pub(super) fn op_is_retired_device_op(op: &AuthorityOp) -> bool {
     match op {
         AuthorityOp::EnrollDevice { device } => device.roles != ROLE_AGENT,
@@ -313,6 +385,15 @@ pub(super) fn active_participant_keys(
                 authority_entry_hash(entry).unwrap_or([0; 32]),
             ));
         }
+        // A cosigner below the floor counts toward neither quorum nor consent
+        // (H71); the primary signer's tier is refused before this.
+        if state
+            .roster
+            .get(key)
+            .is_some_and(|device| !tier_meets_floor(device.tier, state.tier_floor))
+        {
+            continue;
+        }
         participants.insert(key.clone());
     }
     Ok(participants)
@@ -329,6 +410,29 @@ pub(super) fn has_authority_consent(
             .get(key)
             .is_some_and(|device| context.device_can_consent(device))
     })
+}
+
+/// The participant rules of [`fold_entry_state`] (consent, peer quorum and
+/// the revocation quorum) for `entry` over its parents' merged `state`, so a
+/// row can be judged again under a floor a concurrent row raised (H71).
+pub(super) fn participant_rules_hold(
+    state: &FoldState,
+    entry: &AuthorityLogEntry,
+    context: FoldContext<'_>,
+) -> std::result::Result<(), AuthorityFoldIssue> {
+    let hash = authority_entry_hash(entry).unwrap_or([0; 32]);
+    let participants = active_participant_keys(state, entry)?;
+    if !has_authority_consent(state, &participants, context) {
+        return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
+    }
+    if (entry_requires_peer_cosign(entry)
+        && active_roster_count(state) >= 2
+        && participants.len() < 2)
+        || revoke_would_break_quorum(state, entry, &participants)
+    {
+        return Err(AuthorityFoldIssue::MissingQuorum(hash));
+    }
+    Ok(())
 }
 
 fn state_has_authority_consent(state: &FoldState, context: FoldContext<'_>) -> bool {
@@ -361,7 +465,10 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::BindActor { .. }
         | AuthorityOp::RebindActor { .. }
         | AuthorityOp::RevokeActor { .. }
-        | AuthorityOp::MachineProfile(_) => false,
+        | AuthorityOp::MachineProfile(_)
+        | AuthorityOp::OwnerRoot(_)
+        | AuthorityOp::WorldPrivacy(_)
+        | AuthorityOp::WorldKeyWraps(_) => false,
     }
 }
 
@@ -375,6 +482,7 @@ fn entry_requires_peer_cosign(entry: &AuthorityLogEntry) -> bool {
             | AuthorityOp::SlipRevoke { .. }
             | AuthorityOp::SlipConsume { .. }
             | AuthorityOp::MachineProfile(_)
+            | AuthorityOp::OwnerRoot(_)
     )
 }
 

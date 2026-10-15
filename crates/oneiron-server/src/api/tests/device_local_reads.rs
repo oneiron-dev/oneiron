@@ -284,7 +284,11 @@ async fn a_caller_off_this_device_reads_no_device_local_world() {
     );
     server
         .vault
-        .set_world_device_only(kept_world, true)
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            kept_world,
+            true,
+        )
         .unwrap();
 
     for (from, on_device) in [(here, true), (away, false), (proxied, false)] {
@@ -335,13 +339,19 @@ async fn a_caller_off_this_device_reads_no_device_local_world() {
         assert_eq!(status, StatusCode::OK, "{export}");
         let rendered = export["rendered"].as_str().unwrap();
         assert!(rendered.contains(&open.to_hex()));
-        for id in [kept, kept_world] {
-            assert_eq!(
-                rendered.contains(&id.to_hex()),
-                on_device,
-                "export from {from:?}"
-            );
-        }
+        assert_eq!(
+            rendered.contains(&kept.to_hex()),
+            on_device,
+            "export from {from:?}"
+        );
+        // The world's own row stays here. Its settings are signed into the
+        // authority log, which every machine holds, so its id may be named
+        // there.
+        assert_eq!(
+            exported_ids(&serde_json::from_str(rendered).unwrap()).contains(&kept_world.to_hex()),
+            on_device,
+            "export from {from:?}"
+        );
     }
 
     // An erased claim keeps its world: its shell stays home too.
@@ -367,8 +377,32 @@ async fn a_caller_off_this_device_reads_no_device_local_world() {
 }
 
 /// Every count of withheld rows an answer carries.
+/// Every row id an export document carries, in any section.
+fn exported_ids(document: &Value) -> std::collections::BTreeSet<String> {
+    let mut ids = std::collections::BTreeSet::new();
+    let mut pending = vec![document];
+    while let Some(value) = pending.pop() {
+        match value {
+            Value::Object(fields) => {
+                if let Some(Value::String(id)) = fields.get("id") {
+                    ids.insert(id.clone());
+                }
+                pending.extend(fields.values());
+            }
+            Value::Array(items) => pending.extend(items),
+            _ => {}
+        }
+    }
+    ids
+}
+
+/// The read receipt's count. No visible stat counts a withheld claim at all
+/// (F19): it reads zero wherever a pack serves one.
 fn suppression_counts(body: &Value) -> Vec<u64> {
-    ["/stats/claims_suppressed", "/narrowing/suppressed_count"]
+    if let Some(stat) = body.pointer("/stats/claims_suppressed") {
+        assert_eq!(stat, &Value::from(0), "{body}");
+    }
+    ["/narrowing/suppressed_count"]
         .into_iter()
         .filter_map(|pointer| body.pointer(pointer).and_then(Value::as_u64))
         .collect()
@@ -406,7 +440,11 @@ async fn a_caller_off_this_device_counts_no_device_local_claim() {
     index(&server);
     server
         .vault
-        .set_world_device_only(kept_world, true)
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            kept_world,
+            true,
+        )
         .unwrap();
 
     for uri in ["/v1/core/query", "/v1/core/context-pack"] {
@@ -452,7 +490,11 @@ async fn discovery_off_this_device_counts_no_device_local_row() {
     );
     server
         .vault
-        .set_world_device_only(kept_world, true)
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            kept_world,
+            true,
+        )
         .unwrap();
 
     let (here, away) = (caller.discover(HERE).await, caller.discover(AWAY).await);
@@ -480,19 +522,11 @@ async fn discovery_off_this_device_counts_no_device_local_row() {
             body["session"].clone()
         }
     };
+    // A board counts and dates nothing for any key (F16), here or away.
     let (here, away) = (board(HERE).await, board(AWAY).await);
-    for kind in [
-        oneiron::registry::ENTITY_TYPE_CLAIM,
-        oneiron::registry::ENTITY_TYPE_WORLD,
-    ] {
-        assert_eq!(
-            count(&here, kind),
-            count(&away, kind) + 1,
-            "board type {kind}"
-        );
-    }
-    assert_eq!(here["last_activity"], json!(latest));
-    assert!(away["last_activity"].as_u64().unwrap() < latest, "{away}");
+    assert_eq!(here, away);
+    assert_eq!(here["counts"], json!({}), "{here}");
+    assert!(here["last_activity"].is_null(), "{here}");
 }
 
 /// Sol R2 F2 and F7: a pack off this device for a query only a device-local
@@ -515,7 +549,11 @@ async fn a_pack_off_this_device_reads_a_device_local_match_as_no_match() {
     index(&server);
     server
         .vault
-        .set_world_device_only(kept_world, true)
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            kept_world,
+            true,
+        )
         .unwrap();
 
     let empty = |query: &'static str| {
@@ -605,7 +643,14 @@ async fn a_keyed_board_retry_off_this_device_replays_no_device_local_row() {
         json!(format!("{}: retracted", claim.to_hex())),
         "{first}"
     );
-    server.vault.set_world_device_only(world, true).unwrap();
+    server
+        .vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            world,
+            true,
+        )
+        .unwrap();
     let (status, refused) = keyed(AWAY).await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
     assert!(
@@ -650,7 +695,14 @@ async fn a_keyed_write_retried_off_this_device_replays_no_device_local_row() {
     assert_eq!(status, StatusCode::OK, "{first}");
     assert_eq!(first["id"], claim.to_hex(), "{first}");
 
-    server.vault.set_world_device_only(world, true).unwrap();
+    server
+        .vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            world,
+            true,
+        )
+        .unwrap();
     let (status, refused) = keyed(AWAY).await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
     assert!(!refused.to_string().contains(&claim.to_hex()), "{refused}");
@@ -812,7 +864,14 @@ async fn a_task_born_in_a_device_local_world_reaches_no_board_off_this_device() 
         .to_owned();
 
     // Neither its row nor a count or health of a withheld row is left.
-    server.vault.set_world_device_only(world, true).unwrap();
+    server
+        .vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            world,
+            true,
+        )
+        .unwrap();
     let refused = setup(json!({"page": {"limit": 1, "cursor": cursor}})).await;
     assert!(refused.get("result").is_none(), "{refused}");
     assert_mcp_structured_error(&refused, "mcp_page_cursor_invalid");
@@ -822,7 +881,14 @@ async fn a_task_born_in_a_device_local_world_reaches_no_board_off_this_device() 
     }
     assert_eq!((shape(&fresh), shape(&described)), before);
 
-    server.vault.set_world_device_only(world, false).unwrap();
+    server
+        .vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            world,
+            false,
+        )
+        .unwrap();
     let back = setup(json!({})).await;
     assert!(back["result"].to_string().contains(&task), "{back}");
 }
@@ -911,7 +977,14 @@ async fn outcomes_off_this_device_pair_no_device_local_row() {
     let changed = outcomes(json!({})).await;
     assert!(changed.get("result").is_none(), "{changed}");
     assert_mcp_structured_error(&changed, "mcp_result_changed");
-    server.vault.set_world_device_only(world, true).unwrap();
+    server
+        .vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            world,
+            true,
+        )
+        .unwrap();
     let refused = outcomes(json!({"limit": 1, "cursor": cursor})).await;
     assert!(refused.get("result").is_none(), "{refused}");
     assert_mcp_structured_error(&refused, "mcp_page_cursor_invalid");
@@ -1035,7 +1108,14 @@ async fn a_refusal_off_this_device_states_no_scope_a_device_local_world_narrows(
         "{portable}"
     );
 
-    server.vault.set_world_device_only(world, true).unwrap();
+    server
+        .vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            world,
+            true,
+        )
+        .unwrap();
     let kept = subscribe().await;
     assert!(
         kept["error"]["data"].get("effective_scope").is_none(),
@@ -1073,7 +1153,14 @@ async fn an_initialize_off_this_device_states_no_scope_a_device_local_world_narr
         "{portable}"
     );
 
-    server.vault.set_world_device_only(world, true).unwrap();
+    server
+        .vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            world,
+            true,
+        )
+        .unwrap();
     let (_, kept) = initialize().await;
     assert!(kept.get("result").is_none(), "{kept}");
     assert_mcp_structured_error(&kept, "mcp_result_changed");
@@ -1262,7 +1349,14 @@ async fn a_board_off_this_device_opens_no_standing_block_of_a_device_local_world
     assert_eq!(status, StatusCode::OK, "{open}");
     assert_eq!(open["standing"]["world_ref"], world.to_hex(), "{open}");
 
-    server.vault.set_world_device_only(world, true).unwrap();
+    server
+        .vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            world,
+            true,
+        )
+        .unwrap();
     let (status, kept) = board(pinned).await;
     assert!(!kept.to_string().contains(&world.to_hex()), "{kept}");
     let (bare_status, bare_body) = board(bare).await;
@@ -1310,7 +1404,14 @@ async fn a_persona_card_off_this_device_holds_no_device_local_claim() {
     assert_eq!(status, StatusCode::OK, "{preview}");
     assert!(preview.to_string().contains("orchids"), "{preview}");
 
-    server.vault.set_world_device_only(world, true).unwrap();
+    server
+        .vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            world,
+            true,
+        )
+        .unwrap();
     let (status, preview) = call(&server, "GET", &path, owner.clone(), None).await;
     assert_eq!(status, StatusCode::OK, "{preview}");
     assert!(preview.to_string().contains("Lovelace"), "{preview}");
@@ -1359,7 +1460,14 @@ async fn a_run_off_this_device_holding_a_device_local_proposal_reads_as_no_run()
     assert_eq!(status, StatusCode::OK, "{review}");
     let decide = json!({ "run_id": run, "bundle_id": review["bundle_id"] });
 
-    server.vault.set_world_device_only(world, true).unwrap();
+    server
+        .vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            world,
+            true,
+        )
+        .unwrap();
     let (status, pending) = call(&server, "GET", "/v1/owner/runs", owner.clone(), None).await;
     assert_eq!(status, StatusCode::OK, "{pending}");
     assert_eq!(pending, json!([]));

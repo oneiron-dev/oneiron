@@ -1,5 +1,5 @@
-//! Flags for the owner's own commands: doctor, backup, restore, window
-//! recovery, export, the secret scan switch, registering and rotating a
+//! Flags for the owner's own commands: doctor, backup, maintain, restore,
+//! window recovery, export, the secret scan switch, registering and rotating a
 //! secret, importing history, import consent and agent-run consent.
 //!
 //! Every command that opens the vault reads the same config as `serve`
@@ -72,6 +72,39 @@ pub struct BackupArgs {
     /// How many backups to keep, this one included; overrides `[backup] keep`.
     #[arg(long)]
     pub keep: Option<usize>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct MaintainArgs {
+    /// Rebuild the vector graph from the stored vectors.
+    #[arg(long)]
+    pub rebuild_vector_graph: bool,
+
+    /// With `--rebuild-vector-graph`: leave out stored vectors that do not
+    /// validate (they stay stored) instead of failing the rebuild.
+    #[arg(long, requires = "rebuild_vector_graph")]
+    pub heal_invalid_vectors: bool,
+
+    /// Recompute every short id's hash and drop short ids nothing holds.
+    #[arg(long)]
+    pub recompute_short_ids: bool,
+
+    /// Index gate decisions recorded before the claim-keyed index existed.
+    #[arg(long)]
+    pub backfill_gate_claim_index: bool,
+
+    /// Move every legacy conversation onto its DAG chain.
+    #[arg(long)]
+    pub migrate_conversation_dags: bool,
+
+    /// Drop the text index and index every record again from the text it was
+    /// indexed with: the repair for a vault refused after an analyzer or
+    /// dictionary change.
+    #[arg(long)]
+    pub reindex_text: bool,
 
     #[command(flatten)]
     pub serve: ServeArgs,

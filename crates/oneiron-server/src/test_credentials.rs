@@ -5,10 +5,20 @@ use axum::body::Body;
 use axum::http::{Request, header::AUTHORIZATION};
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
-use oneiron::federation::{Scope, ScopeAxis};
+use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const RECIPE_PREFIX: &str = "OneironTestCredential ";
+
+/// The host root the server's vault is rooted under.
+pub(crate) fn host_issuer(server: &SyncServer) -> HostSlipIssuer {
+    let secret = server
+        .config
+        .auth_secret
+        .as_deref()
+        .expect("authenticated fixture needs a configured host root");
+    HostSlipIssuer::from_secret(secret.as_bytes()).unwrap()
+}
 
 pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, SigningKey) {
     let fields: BTreeMap<_, _> = recipe
@@ -16,12 +26,7 @@ pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, 
         .filter(|part| !part.is_empty())
         .map(|part| part.split_once('=').expect("credential recipe key/value"))
         .collect();
-    let secret = server
-        .config
-        .auth_secret
-        .as_deref()
-        .expect("authenticated fixture needs a configured host root");
-    let issuer = HostSlipIssuer::from_secret(secret.as_bytes()).unwrap();
+    let issuer = host_issuer(server);
     let identity = fields.get("jti").copied().unwrap_or(recipe);
     let id = *blake3::hash(format!("oneiron/test-slip/id/{identity}").as_bytes()).as_bytes();
     let key = SigningKey::from_bytes(
@@ -54,7 +59,27 @@ pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, 
                 .collect::<BTreeSet<_>>(),
         );
     }
+    if let Some(bands) = fields.get("bands") {
+        scope.bands = ScopeAxis::Some(
+            bands
+                .split(',')
+                .map(|band| band.trim().parse().expect("credential recipe band"))
+                .collect(),
+        );
+    }
     let cache = format!("test:api:slip:{}", hex(&id));
+    if let Some(facets) = fields.get("facets") {
+        scope.facets = ScopeAxis::Some(
+            facets
+                .split(',')
+                .map(|facet| {
+                    ScopeId(
+                        oneiron::EntityId::from_hex(facet.trim()).expect("credential recipe facet"),
+                    )
+                })
+                .collect(),
+        );
+    }
     if let Some(bytes) = server.vault().sync_state_get(&cache).unwrap() {
         let slip = CapabilitySlip::from_token(std::str::from_utf8(&bytes).unwrap()).unwrap();
         assert_eq!(
@@ -249,6 +274,14 @@ pub(crate) fn bind_actor(
             .expect("authority row decodes");
         let hash = authority_entry_hash(&entry).expect("entry hash");
         if !fold.valid_entries.contains(&hash) {
+            continue;
+        }
+        // A world's side entry is never a main-log head, and retires none.
+        if matches!(
+            entry.op,
+            AuthorityOp::WorldPrivacy(_) | AuthorityOp::WorldKeyWraps(_)
+        ) {
+            heads.remove(&hash);
             continue;
         }
         for parent in &entry.parent_hashes {

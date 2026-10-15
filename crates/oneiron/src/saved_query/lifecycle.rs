@@ -160,7 +160,7 @@ pub fn archive_saved_query(
 
 /// Loads a record the principal owns THROUGH the caller's transaction, or
 /// reports it as absent. Ownership is part of the read, not a post-filter.
-fn owned_record_in_txn(
+pub(super) fn owned_record_in_txn(
     vault: &Vault,
     wtxn: &heed::RwTxn<'_>,
     authenticated_principal: EntityId,

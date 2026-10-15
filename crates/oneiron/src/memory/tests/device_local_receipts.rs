@@ -86,7 +86,9 @@ fn a_caller_off_this_device_reads_no_receipt_or_consent_of_a_device_local_claim(
     // is its own unless it is withheld before the page fills.
     let open = gated_claim(&vault, owner, None, 20);
     let kept = gated_claim(&vault, owner, Some(world), 10);
-    vault.set_world_device_only(world, true).unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
 
     for (locality, first) in [
         (CallerLocality::OnDevice, kept),
@@ -167,7 +169,9 @@ fn a_caller_off_this_device_learns_no_later_state_of_a_device_local_claim() {
     vault
         .put_claim(&id, &body, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();
-    vault.set_world_device_only(world, true).unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
 
     for (locality, state) in [
         (
@@ -190,7 +194,7 @@ fn a_caller_off_this_device_learns_no_later_state_of_a_device_local_claim() {
             .unwrap();
         let mut line = crate::context_board::ChangedLine::default();
         session
-            .fold_own_changes(&vault, Some(owner), locality, &mut line, 16)
+            .fold_own_changes(&read, Some(owner), locality, &mut line, 16)
             .unwrap();
         assert_eq!(
             line.events.len(),
@@ -233,7 +237,9 @@ fn a_recall_off_this_device_counts_no_device_local_claim_toward_its_census_cap()
             .put_claim(&EntityId::now(), &body, TimeRange { start: 1, end: 1 }, 1)
             .unwrap();
     }
-    vault.set_world_device_only(world, true).unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
 
     let capped = |locality| {
         vault

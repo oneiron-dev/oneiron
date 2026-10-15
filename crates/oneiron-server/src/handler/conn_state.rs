@@ -1,6 +1,6 @@
 //! Per-connection budgets, quotas, and sync-mode binding.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap};
 
 use oneiron::sync::{SyncSelector, WindowKey};
 
@@ -10,10 +10,14 @@ use crate::protocol::{self, ProtocolError};
 /// Per-connection mutable state. This is intentionally local to one socket:
 /// Phase-1 auth has only a shared secret, so user-scoped limits are not sound.
 pub(super) struct ConnState {
-    windows_touched: HashSet<WindowKey>,
-    subscribed_windows: HashSet<WindowKey>,
+    subscribed_windows: SubscribedWindows,
+    /// Whether this socket has asked `max_windows_per_connection`'s question.
+    limit_asked: bool,
     /// Only windows rechecked under a live bound grant can exchange full VVs.
     pub(super) promoted_windows: std::collections::HashMap<WindowKey, SyncSelector>,
+    /// Each promoted window's baseline: the home's version when this socket promoted it. A
+    /// vector behind it never receives older history. It only rises.
+    pub(super) promotion_baselines: std::collections::HashMap<WindowKey, loro::VersionVector>,
     pub(super) documents:
         std::collections::HashMap<oneiron::EntityId, oneiron::sync::SelectorVvRequest>,
     /// Owner-lane NOTE subscriptions of an own device, with its last VV.
@@ -38,9 +42,10 @@ pub(super) struct ConnState {
 impl ConnState {
     pub(super) fn new(protocol_version: u8) -> Self {
         Self {
-            windows_touched: HashSet::new(),
-            subscribed_windows: HashSet::new(),
+            subscribed_windows: SubscribedWindows::default(),
+            limit_asked: false,
             promoted_windows: std::collections::HashMap::new(),
+            promotion_baselines: std::collections::HashMap::new(),
             documents: std::collections::HashMap::new(),
             owner_documents: std::collections::HashMap::new(),
             window_sync_mode: WindowSyncMode::Unbound,
@@ -60,49 +65,65 @@ impl ConnState {
     }
 
     /// The machine this socket proved at upgrade, while the vault's fold
-    /// still holds it live. The socket outlives that instant: a machine
-    /// removed, poisoned or gone stale since is an unknown destination, as
-    /// is one the fold cannot be read for. `Unknown` is never this machine or
-    /// the owner's.
+    /// still holds it on the key it proved. The socket outlives that instant:
+    /// a machine removed, poisoned, gone stale or trusted under other keys
+    /// since is an unknown destination, as is one the fold cannot be read
+    /// for. `Unknown` is never this machine or the owner's.
     pub(super) fn peer_machine(&self, vault: &oneiron::Vault) -> oneiron::authority::PeerMachine {
-        match self.proven_machine {
-            oneiron::authority::PeerMachine::Proven(machine)
-                if vault.authority_fold().is_ok_and(|fold| {
-                    fold.machine(machine)
-                        .is_some_and(oneiron::authority::FoldedMachine::is_live)
-                }) =>
-            {
-                oneiron::authority::PeerMachine::Proven(machine)
-            }
-            _ => oneiron::authority::PeerMachine::Unknown,
-        }
+        vault.peer_machine_stands(self.proven_machine)
     }
 
-    pub(super) fn touch_window(
-        &mut self,
-        key: WindowKey,
-        max_windows_per_connection: usize,
-    ) -> Result<WindowKey, ProtocolError> {
-        if self.windows_touched.contains(&key) {
-            return Ok(key);
+    /// Pushes `key`'s changes to this socket from now on, after a valid version exchange. Only an
+    /// owner-lane socket is pushed windows, so no other keeps a subscription. Past `bound` a
+    /// socket whose peer takes `WINDOW_INVALIDATE` forgets its least recently requested window;
+    /// a v11 peer cannot be told, so it keeps every one: each names a window the vault holds,
+    /// since its `VV_REQUEST` creates the window it names. Nothing is refused.
+    ///
+    /// Returns the subscription count the first time this socket crosses `bound`, for the row's
+    /// question.
+    pub(super) fn subscribe_window(&mut self, key: &WindowKey, bound: usize) -> Option<usize> {
+        if !protocol::is_owner_window_version(self.protocol_version) {
+            return None;
         }
-
-        if self.windows_touched.len() >= max_windows_per_connection {
-            return Err(ProtocolError::InvalidPayload(
-                "window creation limit exceeded",
-            ));
+        let windows = &mut self.subscribed_windows;
+        windows.next += 1;
+        if let Some(earlier) = windows.at.insert(key.clone(), windows.next) {
+            windows.order.remove(&earlier);
         }
-
-        self.windows_touched.insert(key.clone());
-        Ok(key)
-    }
-
-    pub(super) fn subscribe_window(&mut self, key: &WindowKey) {
-        self.subscribed_windows.insert(key.clone());
+        windows.order.insert(windows.next, key.clone());
+        let held = windows.at.len();
+        if held <= bound.max(1) {
+            return None;
+        }
+        if protocol::takes_window_invalidations(self.protocol_version)
+            && let Some((_, oldest)) = windows.order.pop_first()
+        {
+            windows.at.remove(&oldest);
+            windows.forgot_any = true;
+        }
+        self.crossed_limit(held)
     }
 
     pub(super) fn receives_window(&self, key: &WindowKey) -> bool {
-        self.subscribed_windows.contains(key)
+        self.subscribed_windows.at.contains_key(key)
+    }
+
+    /// Whether `key`'s next change must reach this socket as `WINDOW_INVALIDATE`: it follows
+    /// `WINDOW_INVALIDATE`, it forgot a subscription, and it is not pushed `key`. A window it
+    /// never requested may be one it forgot, so the notice goes out for it too; a peer that does
+    /// not follow the window reads it as nothing.
+    pub(super) fn invalidates_window(&self, key: &WindowKey) -> bool {
+        self.subscribed_windows.forgot_any && !self.receives_window(key)
+    }
+
+    /// This socket holds `held` windows or documents, past `max_windows_per_connection`. Returns
+    /// `held` the first time, for the row's question; the socket asks it once.
+    pub(super) fn crossed_limit(&mut self, held: usize) -> Option<usize> {
+        if self.limit_asked {
+            return None;
+        }
+        self.limit_asked = true;
+        Some(held)
     }
 
     pub(super) fn bind_window_sync_mode(
@@ -125,15 +146,13 @@ impl ConnState {
             }
             WindowSyncMode::FullWindow
                 if self.protocol_version != protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION
-                    && self.protocol_version != protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION =>
+                    && !protocol::is_owner_window_version(self.protocol_version) =>
             {
                 return Err(ProtocolError::InvalidPayload(
                     "full-window sync requires the current full-window protocol",
                 ));
             }
-            WindowSyncMode::Residence
-                if self.protocol_version != protocol::RESIDENCE_PROTOCOL_VERSION =>
-            {
+            WindowSyncMode::Residence if !protocol::is_residence_version(self.protocol_version) => {
                 return Err(ProtocolError::InvalidPayload(
                     "opened-item sync requires the residence protocol",
                 ));
@@ -163,6 +182,16 @@ impl ConnState {
             )),
         }
     }
+}
+
+/// One socket's window subscriptions in the order they were last requested.
+#[derive(Default)]
+struct SubscribedWindows {
+    order: BTreeMap<u64, WindowKey>,
+    at: HashMap<WindowKey, u64>,
+    next: u64,
+    /// Whether a subscription was forgotten past the row.
+    forgot_any: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -54,7 +54,7 @@ pub use self::types::{
     AGENT_DISPATCH_INPUT_SCHEMA_VERSION, AGENT_DISPATCH_MILESTONE_AGENT_KEY, AgentDispatchInput,
     AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget, AgentSpawnContext,
     AttenuatedDispatchTarget, DEFAULT_BASE_LOGICAL_ID, DispatchAgent, DispatchHealer, HealerSlot,
-    HealerSlotOutcome, KillOutcome, KillProposal, restrict_agent_ceiling,
+    HealerSlotOutcome, KillOutcome, KillProposal, KillerLease, restrict_agent_ceiling,
 };
 
 #[cfg(test)]

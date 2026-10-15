@@ -56,7 +56,10 @@ impl Vault {
     /// Every id is derived from entry content (ONE-1604-D1), exactly as the
     /// single-entry door does. Encoding, validation, and derivation all happen
     /// BEFORE the write transaction opens, so a bad entry anywhere in the
-    /// batch stores nothing at all.
+    /// batch stores nothing at all. The rows stage parents first, each
+    /// signer's by sequence and each after the rows that let a key vouch
+    /// for it, in whatever order the caller gives them; the ids come back
+    /// in the caller's order.
     ///
     /// This is what makes a genesis owner-binding a single ceremony: a host
     /// composes `[genesis, bind]` and either both land or neither does. The
@@ -92,8 +95,11 @@ impl Vault {
         };
         // Rows of this batch, for an ancestry that runs through one.
         let mut batch = BTreeMap::new();
+        let mut staged = Vec::with_capacity(entries.len());
         for (entry, _, _) in entries {
-            batch.insert(authority_entry_hash(entry)?, entry.clone());
+            let hash = authority_entry_hash(entry)?;
+            batch.insert(hash, entry.clone());
+            staged.push((hash, entry));
         }
         for (entry, occurred, learned_at) in entries {
             if matches!(entry.op, AuthorityOp::RetiredCeiling { .. }) {
@@ -134,6 +140,20 @@ impl Vault {
         if ops.is_empty() {
             return Ok(ids);
         }
+        // The door judges each row against the rows staged before it (H72),
+        // so stage them parents first, each signer's by sequence and each
+        // after the rows that let a key vouch for it, whatever order the
+        // caller gave.
+        let order = if staged.len() < 2 {
+            (0..staged.len()).collect()
+        } else {
+            super::import_order::write_stage_order(&self.store, wtxn, &staged)?
+        };
+        let mut ops: Vec<_> = ops.into_iter().map(Some).collect();
+        let ops: Vec<_> = order
+            .into_iter()
+            .filter_map(|index| ops[index].take())
+            .collect();
         apply_ops(
             &self.store,
             &self.config,
@@ -239,7 +259,7 @@ impl Vault {
 
     /// Advance the persisted authority-observation floor in test fixtures.
     /// The generic sync-state write door remains guarded.
-    #[cfg(feature = "test-hooks")]
+    #[cfg(any(test, feature = "test-hooks"))]
     #[doc(hidden)]
     pub fn advance_authority_clock_for_test(&self, observed_secs: u64) -> Result<()> {
         self.with_write_txn_grouped(|wtxn| {

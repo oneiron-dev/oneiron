@@ -1,7 +1,7 @@
 //! Observer B's entity driver: one batch transaction per delta, each entity through the
 //! shared ingest entry, and the `rm:` markers a dead batch leaves behind.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use loro::LoroDoc;
 
@@ -12,8 +12,10 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::sync::ingest::{
-    EntityStep, IngestCtx, Residence, ingest_entity_in_savepoint, waits_for_sibling_row,
+    EntityStep, IngestCtx, Residence, authority_parent_order, ingest_entity_in_savepoint,
+    is_authority_row, note_born, waits_for_sibling_row, watches,
 };
+use crate::sync::loro_support::TombstoneIndex;
 use crate::sync::pack_sync;
 use crate::sync::quarantine;
 use crate::vault::ReadMode;
@@ -55,8 +57,8 @@ pub(super) fn materialize_entities_with_changes(
     window_key: &str,
     lease_vault_id: u64,
 ) -> (bool, Vec<crate::vault::EntityRevisionChange>) {
-    let tombstones_map = doc.get_map("tombstones");
-    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones_map)
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
+    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones)
         .with_residence(Residence::Quarantine(doc));
     // ONE-1147: ids + op bytes applied into the batch txn, retained outside
     // it — on whole-txn failure there is no surviving per-entity failure
@@ -65,17 +67,44 @@ pub(super) fn materialize_entities_with_changes(
     let mut applied_ops: Vec<(EntityId, Vec<u8>)> = Vec::new();
     let mut revision_changes = Vec::new();
     let mut pending_companion_scrubs = Vec::new();
+    // Rows a federated import watches that this batch wrote where none was
+    // stored: their births, noted only once the batch commits.
+    let mut born = Vec::new();
     let result = vault.with_write_txn_grouped(|wtxn| {
-        // One delta has no row order: an ask word, receipt or project home room
-        // must not reach its sibling check before the row it names.
+        // One delta has no row order. AUTHORITY_LOG rows go first, parents
+        // before children, so a signer's enrollment lands before the rows it
+        // signs; an ask word, receipt or project home room must not reach its
+        // sibling check before the row it names.
         let mut updates: Vec<_> = delta.updated.iter().collect();
-        updates.sort_by_cached_key(|(_, value)| {
-            matches!(
-                value,
+        let authority: Vec<(&str, &[u8])> = updates
+            .iter()
+            .filter_map(|&(key, value)| match value {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob)))
-                    if waits_for_sibling_row(blob)
-            )
-        });
+                    if is_authority_row(blob) =>
+                {
+                    Some((key.as_ref(), &blob[..]))
+                }
+                _ => None,
+            })
+            .collect();
+        let authority_rank: BTreeMap<&str, usize> = authority_parent_order(&authority)
+            .into_iter()
+            .enumerate()
+            .map(|(rank, at)| (authority[at].0, rank))
+            .collect();
+        updates.sort_by_cached_key(
+            |(key, value)| match authority_rank.get::<str>(key.as_ref()) {
+                Some(rank) => (0, *rank),
+                None => match value {
+                    Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob)))
+                        if waits_for_sibling_row(blob) =>
+                    {
+                        (2, 0)
+                    }
+                    _ => (1, 0),
+                },
+            },
+        );
         for (key, new_val) in updates {
             let value = match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
@@ -92,12 +121,21 @@ pub(super) fn materialize_entities_with_changes(
                 .map(|id| revision_for_mode_in_txn(&vault.store, wtxn, &id, ReadMode::Live))
                 .transpose()?
                 .flatten();
+            let unborn = match EntityId::from_hex(key.as_ref()) {
+                Ok(id) if watches(vault, &id) => {
+                    vault.store.entities.get(wtxn, id.as_bytes())?.is_none()
+                }
+                _ => false,
+            };
             match ingest_entity_in_savepoint(&ingest, wtxn, key.as_ref(), value)? {
                 EntityStep::LocalOnlyCompanion(id) => {
                     pending_companion_scrubs.push(CompanionCrdtScrub::new(key.as_ref(), id));
                 }
                 step => {
                     if let (Some(id), Some(blob)) = (step.written(), value) {
+                        if unborn {
+                            born.push((id, blob.to_vec()));
+                        }
                         applied_ops.push((id, blob.to_vec()));
                         // The savepoint has no postcommit owner. Carry its
                         // claim change to the outer transaction's watch,
@@ -146,6 +184,11 @@ pub(super) fn materialize_entities_with_changes(
         Ok(())
     });
 
+    if result.is_ok() {
+        for (id, blob) in &born {
+            note_born(vault, *id, blob);
+        }
+    }
     if result.is_ok()
         && let Err(e) = scrub_local_only_companions_from_crdt(doc, &pending_companion_scrubs)
     {

@@ -33,15 +33,20 @@ impl ScopedRead<'_> {
     /// File a wrong-link tap only for an authenticated human viewing that live
     /// link in their own report. A caller-chosen edge reference alone grants no
     /// write authority. The persisted label is not an edge retraction.
+    ///
+    /// Each reader's labels on a link are bounded by the policy, except the
+    /// vault owner's: an owner past the bound files anyway, and the first such
+    /// report on a link leaves the typed own-rate check.
     pub fn report_wrong_link(
         &self,
         auth: &AuthenticatedOwner,
         reader: WeaveReader<'_>,
         link: EdgeRef,
     ) -> Result<WeaveLinkCorrection> {
+        let auth_actor = auth.revalidate(self.vault)?;
         let bound = match &reader {
-            WeaveReader::Person(id) => *id == auth.actor(),
-            WeaveReader::Owner(owner) => owner.actor() == auth.actor() && *owner == auth,
+            WeaveReader::Person(id) => *id == auth_actor,
+            WeaveReader::Owner(owner) => *owner == auth,
             WeaveReader::Agent(_) => false,
         };
         if !bound {
@@ -57,28 +62,45 @@ impl ScopedRead<'_> {
         // Persist the injected authorization clock in the SAME writer before
         // relationship grants are checked against its floor.
         let now = crate::ports::recorded_at_in_txn(&self.vault.store, &mut txn)?;
-        auth.revalidate_in_txn(self.vault, &txn)?;
+        let actor = auth.revalidate_in_txn(self.vault, &txn)?;
         self.require_visible_weave_link_in(&txn, reader, link)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &txn)?;
         let limit = policy
-            .weave_correction_limit(&auth.actor().to_hex())
+            .weave_correction_limit(&actor.to_hex())
             .ok_or(Error::InvalidConfig(
                 "weave correction policy unavailable".into(),
             ))?;
-        // Writers enforce the reader's bound in this SAME serialized txn.
-        // Refuse a tap before it can make all prior labels unreadable.
-        let mut count = 0;
-        for row in LABELS.iter_raw_from(&self.vault.store, &txn, &link.encode())? {
-            row?;
-            count += 1;
-            if count >= limit {
+        // Writers enforce the reader's bound in this SAME serialized txn. The
+        // bound is the reader's own: another reader's labels never spend it.
+        let own = self
+            .vault
+            .weave_link_correction_labels_in_txn(&txn, link)?
+            .iter()
+            .filter(|label| label.actor == actor)
+            .count();
+        if own >= limit {
+            // Capabilities first: the owner's own reports are never refused
+            // on count. Every other reader stays bounded.
+            if !crate::policy_model::is_live_vault_owner_in_txn(self.vault, &txn, &actor)? {
                 return Err(Error::IndexOverflow("weave correction labels"));
             }
+            crate::own_rate::observe_in_txn(
+                &self.vault.store,
+                &mut txn,
+                crate::own_rate::OwnRateKind::WeaveCorrection,
+                actor,
+                0,
+                u64::try_from(own).unwrap_or(u64::MAX).saturating_add(1),
+                crate::own_rate::OwnRate {
+                    threshold: u64::try_from(limit).unwrap_or(u64::MAX),
+                    window_seconds: 0,
+                },
+            )?;
         }
         let correction = WeaveLinkCorrection {
             id: EntityId::now(),
             link,
-            actor: auth.actor(),
+            actor,
             recorded_at: now,
         };
         LABELS.put(
@@ -228,6 +250,174 @@ mod tests {
             vault
                 .weave_link_correction_labels_in_txn(&vault.store.env.read_txn()?, link)?
                 .is_empty()
+        );
+        Ok(())
+    }
+
+    // H420: one reader's labels on a link never spend another reader's
+    // allowance there; each reader's own allowance still bounds it.
+    #[test]
+    fn a_readers_correction_allowance_is_its_own() -> Result<()> {
+        use rmpv::Value;
+        let (_tmp, vault, person, link) = fixture()?;
+        let peer = link.target;
+        crate::test_util::authorize_readers_with(
+            &vault,
+            &[&person.to_hex(), &peer.to_hex()],
+            vec![(
+                Value::from("weave_correction_policy"),
+                Value::Map(vec![
+                    (Value::from("vault_max"), Value::from(1)),
+                    (Value::from("default"), Value::from(1)),
+                    (Value::from("holders"), Value::Map(Vec::new())),
+                    (
+                        Value::from("precedence"),
+                        Value::from("holder_then_default"),
+                    ),
+                ]),
+            )],
+        );
+        let file = |reader: EntityId| {
+            let auth = vault.authenticate_owner(
+                reader,
+                &reader.to_hex(),
+                true,
+                crate::store::GateDecisionId::now(),
+            )?;
+            vault
+                .scoped_read(ScopedReadActorKey::new(reader.to_hex()).unwrap())
+                .report_wrong_link(&auth, WeaveReader::Person(reader), link)
+        };
+        assert_eq!(file(person)?.actor, person);
+        assert!(matches!(file(person), Err(Error::IndexOverflow(_))));
+        let other = file(peer);
+        assert!(
+            matches!(&other, Ok(label) if label.actor == peer),
+            "H420: another reader's label spent this reader's allowance ({other:?})"
+        );
+        Ok(())
+    }
+
+    // H420, capabilities first: the vault owner's own reports are never
+    // refused on count. Past the bound the owner's report lands, and the
+    // first one past it leaves the typed own-rate check instead.
+    #[test]
+    fn the_owners_reports_past_the_bound_land_with_a_typed_check() -> Result<()> {
+        use rmpv::Value;
+        let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+        // The bootstrap already wrote the embedded owner's PERSON.
+        let owner_id = crate::vault::embedded_owner_actor_id()?;
+        let peer = entity(0xb2);
+        vault.put_entity(
+            &peer,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"reader",
+        )?;
+        vault.put_edge(&owner_id, EdgeKind::Mentions, &peer, 0.5)?;
+        let link = EdgeRef::new(owner_id, EdgeKind::Mentions, peer);
+        crate::test_util::authorize_readers_with(
+            &vault,
+            &[&owner_id.to_hex()],
+            vec![(
+                Value::from("weave_correction_policy"),
+                Value::Map(vec![
+                    (Value::from("vault_max"), Value::from(1)),
+                    (Value::from("default"), Value::from(1)),
+                    (Value::from("holders"), Value::Map(Vec::new())),
+                    (
+                        Value::from("precedence"),
+                        Value::from("holder_then_default"),
+                    ),
+                ]),
+            )],
+        );
+        let owner = vault.authenticate_owner(
+            owner_id,
+            &owner_id.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )?;
+        let read = vault.scoped_read(ScopedReadActorKey::new(owner_id.to_hex()).unwrap());
+        for _ in 0..3 {
+            let filed = read.report_wrong_link(&owner, WeaveReader::Owner(&owner), link);
+            assert!(
+                matches!(&filed, Ok(label) if label.actor == owner_id),
+                "FAILBEFORE H420: the owner's own report was refused on count ({filed:?})"
+            );
+        }
+        let check =
+            vault.own_rate_check(owner_id, crate::own_rate::OwnRateKind::WeaveCorrection)?;
+        assert_eq!(
+            check.map(|check| (check.count, check.threshold)),
+            Some((2, 1)),
+            "the first report past the bound leaves the check"
+        );
+        Ok(())
+    }
+
+    /// H420: the owner narrows their own bound below their running count.
+    /// The next report still lands, and as the first past the narrowed bound
+    /// it leaves the typed check. The check used to wait for a count of
+    /// exactly bound + 1, which had already gone by.
+    #[test]
+    fn a_narrowed_bound_still_leaves_the_owners_check() -> Result<()> {
+        use rmpv::Value;
+        let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+        let owner_id = crate::vault::embedded_owner_actor_id()?;
+        let peer = entity(0xb3);
+        vault.put_entity(
+            &peer,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"reader",
+        )?;
+        vault.put_edge(&owner_id, EdgeKind::Mentions, &peer, 0.5)?;
+        let link = EdgeRef::new(owner_id, EdgeKind::Mentions, peer);
+        let bound = |limit: i64| {
+            crate::test_util::authorize_readers_with(
+                &vault,
+                &[&owner_id.to_hex()],
+                vec![(
+                    Value::from("weave_correction_policy"),
+                    Value::Map(vec![
+                        (Value::from("vault_max"), Value::from(limit)),
+                        (Value::from("default"), Value::from(limit)),
+                        (Value::from("holders"), Value::Map(Vec::new())),
+                        (
+                            Value::from("precedence"),
+                            Value::from("holder_then_default"),
+                        ),
+                    ]),
+                )],
+            );
+        };
+        let report = || -> Result<()> {
+            let owner = vault.authenticate_owner(
+                owner_id,
+                &owner_id.to_hex(),
+                true,
+                crate::store::GateDecisionId::now(),
+            )?;
+            let read = vault.scoped_read(ScopedReadActorKey::new(owner_id.to_hex()).unwrap());
+            read.report_wrong_link(&owner, WeaveReader::Owner(&owner), link)?;
+            Ok(())
+        };
+        bound(3);
+        report()?;
+        report()?;
+        let kind = crate::own_rate::OwnRateKind::WeaveCorrection;
+        assert!(vault.own_rate_check(owner_id, kind)?.is_none());
+        bound(1);
+        report()?;
+        assert_eq!(
+            vault
+                .own_rate_check(owner_id, kind)?
+                .map(|check| (check.count, check.threshold)),
+            Some((3, 1)),
+            "FAILBEFORE H420: a narrowed bound left the owner no check"
         );
         Ok(())
     }

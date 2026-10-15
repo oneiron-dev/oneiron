@@ -1,17 +1,16 @@
 //! The entity-ingest ladder: one admission for every replicated entities-map value.
 
-use loro::LoroMap;
-
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, RegistryError, Result, SyncError};
 use crate::ports::EntityStoreRead;
 use crate::registry::{
-    ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
-    ENTITY_TYPE_NOTE, ENTITY_TYPE_RECEIPT_RECORD, ENTITY_TYPE_REDACTION_AUDIT,
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_DIAGNOSTIC,
+    ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, ENTITY_TYPE_NOTE, ENTITY_TYPE_RECEIPT_RECORD,
+    ENTITY_TYPE_REDACTION_AUDIT,
 };
 use crate::sync::bridge::ingest_replicated_identity_topology_event_in_txn;
-use crate::sync::loro_support::{tombstone_map_contains_id, tombstone_values_for_id};
+use crate::sync::loro_support::TombstoneIndex;
 use crate::sync::pack_sync;
 use crate::sync::quarantine::{
     self, QuarantineContainer, quarantine_rejected_op_in_txn, remote_rejection_reason,
@@ -20,12 +19,12 @@ use crate::sync::quota;
 use crate::vault::Vault;
 
 /// What one ingest reads besides the value: the vault, the window the value replays into, the
-/// lease vault its receipts verify against, and that window's tombstones map.
+/// lease vault its receipts verify against, and that window's tombstones, indexed once per pass.
 pub(in crate::sync) struct IngestCtx<'a> {
     vault: &'a Vault,
     window_key: &'a str,
     lease_vault_id: u64,
-    tombstones_map: &'a LoroMap,
+    tombstones: &'a TombstoneIndex,
     residence: Option<Residence<'a>>,
 }
 
@@ -47,13 +46,13 @@ impl<'a> IngestCtx<'a> {
         vault: &'a Vault,
         window_key: &'a str,
         lease_vault_id: u64,
-        tombstones_map: &'a LoroMap,
+        tombstones: &'a TombstoneIndex,
     ) -> Self {
         Self {
             vault,
             window_key,
             lease_vault_id,
-            tombstones_map,
+            tombstones,
             residence: None,
         }
     }
@@ -111,8 +110,9 @@ pub(in crate::sync) struct EntityRefusal {
 pub(in crate::sync) enum RefusalRetry {
     /// No later local change admits these bytes.
     Terminal,
-    /// A later pass may admit them: the quota window rolls over, or the pack kind is installed
-    /// (`pack_sync::pack_rejection_keeps_retry_marker`).
+    /// A later pass may admit them: the quota window rolls over, the pack kind is installed
+    /// (`pack_sync::pack_rejection_keeps_retry_marker`), or the owner raises the authority log's
+    /// signer bound (H72, rule 5).
     Retry,
     /// Admission waits on another replicated row this vault has not seen yet.
     DependencyPending,
@@ -127,13 +127,15 @@ impl RefusalRetry {
                     | ErrorKind::ResidentOwnerDependencyPending
                     | ErrorKind::RemoteMachineHistoryPending
                     | ErrorKind::AskDependencyPending
+                    | ErrorKind::AuthorityLogSignerPending
             )
         {
             Self::DependencyPending
         } else if matches!(
             err,
             Error::Sync(SyncError::MaintenanceIngestQuotaExceeded { .. })
-        ) || pack_sync::pack_rejection_keeps_retry_marker(err)
+        ) || err.kind() == ErrorKind::AuthorityLogFull
+            || pack_sync::pack_rejection_keeps_retry_marker(err)
         {
             Self::Retry
         } else {
@@ -143,18 +145,20 @@ impl RefusalRetry {
 }
 
 /// A row checked against a sibling row of the same entities map: an ask word or
-/// receipt against its group, a project's derived home room against its project.
+/// receipt against its group, a project's derived home room against its project,
+/// an artifact's version bytes against the version claim that holds them.
 /// Forward remat and observer B visit these after every other row of a pass or
 /// delta, so a sibling carried in the same map is visited first. It lands first
 /// only when its own dependencies are already met.
 pub(in crate::sync) fn waits_for_sibling_row(blob: &[u8]) -> bool {
     crate::task_verb::waits_for_ask_group(blob)
         || EntityMetadataHeader::parse(blob).is_some_and(|header| {
-            header.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION
-                && crate::workspace_roster::project_room_dependency(
-                    &blob[ENTITY_METADATA_HEADER_LEN..],
-                )
-                .is_some()
+            header.entity_type == ENTITY_TYPE_ASSET
+                || (header.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION
+                    && crate::workspace_roster::project_room_dependency(
+                        &blob[ENTITY_METADATA_HEADER_LEN..],
+                    )
+                    .is_some())
         })
 }
 
@@ -267,7 +271,14 @@ fn check_residence(
         Residence::Quarantine(doc) => {
             if window.world().is_some()
                 && crate::sync::types::retained_world_shell_belongs_to_window(
-                    ctx.vault, wtxn, doc, &id, blob, &window, false,
+                    ctx.vault,
+                    wtxn,
+                    doc,
+                    ctx.tombstones,
+                    &id,
+                    blob,
+                    &window,
+                    false,
                 )?
             {
                 return Ok(None);
@@ -276,7 +287,14 @@ fn check_residence(
         }
         Residence::Forward { doc, trusted } => {
             if crate::sync::types::retained_world_shell_belongs_to_window(
-                ctx.vault, wtxn, doc, &id, blob, &window, trusted,
+                ctx.vault,
+                wtxn,
+                doc,
+                ctx.tombstones,
+                &id,
+                blob,
+                &window,
+                trusted,
             )? {
                 // The dedicated shell restorer runs after this pass.
                 return Ok(Some(EntityStep::Skip));
@@ -308,7 +326,7 @@ fn admit(
         let wrote = crate::sync::receipt_ingest::ingest_in_txn(
             vault,
             wtxn,
-            ctx.tombstones_map,
+            ctx.tombstones,
             ctx.window_key,
             &id,
             blob,
@@ -317,7 +335,24 @@ fn admit(
     }
     let delete_protected = id == crate::dreamer_runner::authority::dreamer_actor_id()?
         || crate::registry::is_delete_protected_engine_record(header.entity_type);
+    // H125: artifact version bytes fenced here when their last artifact went come back once an
+    // artifact live here holds them again. A tombstone naming them still wins.
+    if header.entity_type == ENTITY_TYPE_ASSET && !ctx.tombstones.contains(&id) {
+        crate::blob_artifact::readmit_held_asset_in_txn(
+            &vault.store,
+            wtxn,
+            &id,
+            &blob[ENTITY_METADATA_HEADER_LEN..],
+        )?;
+    }
     if !delete_protected && deleted_here(ctx, wtxn, &id) {
+        crate::task_authority::note_suppressed_fact_in_txn(
+            &vault.store,
+            wtxn,
+            &id,
+            header.entity_type,
+            &blob[ENTITY_METADATA_HEADER_LEN..],
+        )?;
         return Ok(EntityStep::Skip);
     }
     // NOTE replay may not discharge or outlive an unproven purge retry (the old native NOTE
@@ -463,7 +498,7 @@ fn admit(
 /// re-puts the key must not resurrect a body deleted here, hard or soft. A failed marker read
 /// fails closed.
 fn deleted_here(ctx: &IngestCtx<'_>, txn: &heed::RoTxn<'_>, id: &EntityId) -> bool {
-    if tombstone_map_contains_id(ctx.tombstones_map, id) {
+    if ctx.tombstones.contains(id) {
         tracing::debug!(entity = %id.to_hex(), "sync ingest: entity tombstoned in CRDT (delete wins)");
         return true;
     }
@@ -570,7 +605,7 @@ fn refuse_protected_tombstones(
 ) -> Result<()> {
     let rejection = Error::Registry(RegistryError::MaintenanceKindNotWritable(entity_type));
     let crdt_key = id.to_hex();
-    for tombstone in tombstone_values_for_id(ctx.tombstones_map, id) {
+    for tombstone in ctx.tombstones.values_for(id) {
         quarantine_rejected_op_in_txn(
             ctx.vault,
             wtxn,

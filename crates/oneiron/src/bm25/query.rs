@@ -45,6 +45,16 @@ pub(crate) struct PrefixExpansionPostingDecision {
 
 pub(super) const FINAL_TOKEN_PREFIX_WEIGHT: f64 = 0.5;
 
+/// The most query text the index reads: the facade's query ceiling, so a caller at the engine
+/// door tokenizes no more than a facade caller may send.
+pub(super) const MAX_QUERY_TEXT_BYTES: usize = crate::memory::caps::MAX_QUERY_BYTES;
+
+/// `query` cut to its first [`MAX_QUERY_TEXT_BYTES`] at a char boundary: the tail of a longer
+/// query is never tokenized.
+pub(super) fn bounded_query(query: &str) -> &str {
+    &query[..query.floor_char_boundary(MAX_QUERY_TEXT_BYTES)]
+}
+
 pub(super) const MAX_FINAL_TOKEN_PREFIX_TERMS: usize = 64;
 
 /// Bound term-key reads for any one prefix after the scoped expansion cap.
@@ -162,6 +172,7 @@ pub(crate) fn final_token_exact_posting_matches<F>(
 where
     F: FnMut(&EntityId) -> Result<bool>,
 {
+    let query = bounded_query(query);
     let trimmed_query_end = query.trim_end().len();
     if trimmed_query_end == 0 {
         return Ok(false);
@@ -202,6 +213,7 @@ pub(crate) fn final_token_prefix_expansion_has_scoped_and_rejected_postings<F>(
 where
     F: FnMut(&EntityId) -> Result<PrefixExpansionPostingDecision>,
 {
+    let query = bounded_query(query);
     let trimmed_query_end = query.trim_end().len();
     if trimmed_query_end == 0 {
         return Ok(false);
@@ -447,6 +459,7 @@ where
         return Ok(Vec::new());
     }
 
+    let query = bounded_query(query);
     let mut tokens: Vec<Token> = Vec::new();
     analyzer.analyze(query, &AnalyzerContext::for_query(), &mut tokens);
     if tokens.is_empty() {
@@ -462,11 +475,15 @@ where
         options.exact_posting_matches_scope,
     )?;
 
+    let walks = crate::ports::any_pending_walk(store, rtxn)?;
     let mut ranked =
         scoring::score_query_terms(store, rtxn, config, &query_terms, options.recency, |id| {
             Ok(!crate::vault_cleanup::is_archived_in_txn(store, rtxn, id)?
                 && (options.private_note_ids.is_some_and(|ids| ids.contains(id))
-                    || crate::note::ordinary_entity_visible(store, rtxn, id)?))
+                    || crate::note::ordinary_entity_visible(store, rtxn, id)?)
+                // Withdrawn while a walk is pending: out of the ranking, as
+                // its postings will be.
+                && !(walks && scores_for_withdrawn(store, rtxn, id)?))
         })?;
     ranked.sort_by(|a, b| {
         b.1.total_cmp(&a.1)
@@ -474,6 +491,25 @@ where
     });
     ranked.truncate(limit);
     Ok(scoring::scored_entities(ranked))
+}
+
+/// Whether posting `id` scores for a withdrawn record: itself, or the claim
+/// it is a live lexical query hint for, which the hint's score collapses
+/// onto before the limit.
+pub(super) fn scores_for_withdrawn(
+    store: &impl ManifestDbs,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    if crate::ports::stale_in_txn(store, rtxn, id)? {
+        return Ok(true);
+    }
+    match resolve_lexical_query_hint_record(store, rtxn, id)? {
+        LexicalQueryHintResolution::Live { target } => {
+            crate::ports::stale_in_txn(store, rtxn, &target)
+        }
+        LexicalQueryHintResolution::DeadHint | LexicalQueryHintResolution::NonHint => Ok(false),
+    }
 }
 
 pub(super) fn compute_avgdl(

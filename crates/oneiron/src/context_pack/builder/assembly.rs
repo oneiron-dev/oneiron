@@ -15,15 +15,18 @@ use super::super::empty_pack::{
     serialized_context_pack_empty_reason,
 };
 use super::super::hydration::hydrate_entity;
-use super::super::psych_mirror::{PsychProfilePackSection, psych_profile_pack_section};
+use super::super::psych_mirror::{
+    PsychProfilePackSection, missing_psych_profile_pack_section, psych_profile_pack_section_in,
+};
 use super::super::quarantine::load_pack_quarantine_index;
 use super::super::telemetry::{
     discard_failed_context_pack_telemetry, finalize_context_pack_telemetry,
 };
 use super::super::types::{ContextPack, ContextPackRetrievalBudget, PackStats};
 use super::super::validation::{
-    disclosure_admits_candidate, validate_hydrated_pack_entities, validate_pack_disclosure,
-    validate_pack_edge_references, validate_pack_entity_reference, validate_scored_candidates,
+    disclosure_admits_candidate, disclosure_admits_target, validate_hydrated_pack_entities,
+    validate_pack_disclosure, validate_pack_edge_references, validate_pack_entity_reference,
+    validate_scored_candidates,
 };
 use super::super::world_partition::{
     annotate_stale_federated_worlds, partition_results_by_world, resolve_edge_short_ids,
@@ -46,14 +49,38 @@ pub(crate) struct PackRunStatus {
 
 impl<'a> ContextPackBuilder<'a> {
     /// Runs retrieval and returns the opt-in stored-profile companion section.
+    /// The profile is one more row of the pack: the pack's disclosure clamp
+    /// and reader admit it as they admit any row, and a profile either
+    /// refuses reads as a missing one.
     pub fn run_with_psych_profile(self) -> Result<(ContextPack, Option<PsychProfilePackSection>)> {
-        let key = self.psych_profile_key;
-        let vault = self.vault;
-        let pack = self.run()?;
-        let section = key
-            .map(|key| psych_profile_pack_section(vault, &key))
+        let section = self
+            .psych_profile_key
+            .map(|key| self.psych_profile_section(&key))
             .transpose()?;
+        let pack = self.run()?;
         Ok((pack, section))
+    }
+
+    /// The profile section, admitted and read in one snapshot.
+    fn psych_profile_section(
+        &self,
+        key: &crate::psych_profile::PsychProfileKey,
+    ) -> Result<PsychProfilePackSection> {
+        let id = crate::psych_profile::psych_profile_entity_id(key);
+        if let Some(reader) = self.l2_summary_reader {
+            reader.persist_grant_clock()?;
+        }
+        let rtxn = self.vault.store.env.read_txn()?;
+        if let Some(reader) = self.l2_summary_reader {
+            let policy = reader.live_policy_manifest_in(&rtxn)?;
+            if !reader.is_entity_readable_with_policy_in(&rtxn, &policy, &id)? {
+                return Ok(missing_psych_profile_pack_section(*key));
+            }
+        }
+        if !disclosure_admits_target(&self.read, &rtxn, self.disclosure.as_ref(), &id)? {
+            return Ok(missing_psych_profile_pack_section(*key));
+        }
+        psych_profile_pack_section_in(self.vault, &rtxn, key)
     }
 
     pub fn run(self) -> Result<ContextPack> {
@@ -118,7 +145,7 @@ impl<'a> ContextPackBuilder<'a> {
             telemetry_run_id: run.telemetry_run_id,
             telemetry: run.telemetry,
             total_in_scope: run.total_in_scope,
-            clamped_out: run.clamped_out,
+            clamped: run.clamped,
             replay_config: run.replay_config,
         };
         lane.end_recall_plan()?;
@@ -174,7 +201,7 @@ impl<'a> ContextPackBuilder<'a> {
             telemetry_run_id: run.telemetry_run_id,
             telemetry: run.telemetry,
             total_in_scope: run.total_in_scope,
-            clamped_out: run.clamped_out,
+            clamped: run.clamped,
             replay_config: run.replay_config,
         })
     }
@@ -275,7 +302,7 @@ impl<'a> ContextPackBuilder<'a> {
             // reaches hydration, results, or stats.
             let clamp = self.disclosure.as_ref();
             let mut scored = scored;
-            let mut clamped_out: u64 = 0;
+            let mut clamped = Vec::new();
             if let Some(ctx) = clamp
                 && ctx.mode() != DisclosureMode::OwnerAlone
             {
@@ -290,7 +317,7 @@ impl<'a> ContextPackBuilder<'a> {
                     )? {
                         kept.push(entry);
                     } else {
-                        clamped_out = clamped_out.saturating_add(1);
+                        clamped.push(entry.id);
                     }
                 }
                 scored = kept;
@@ -337,7 +364,9 @@ impl<'a> ContextPackBuilder<'a> {
             for entry in scored.iter().copied() {
                 let mut options = result_options;
                 options.words_pinned = pipeline_output.words_bound.contains(&entry.id);
-                if options.read_mode == crate::vault::ReadMode::Indexed {
+                // A hit a reranker scored at its words is served at them,
+                // whatever mode the builder reads its other hits in.
+                if options.words_pinned || options.read_mode == crate::vault::ReadMode::Indexed {
                     let Some(revision) = pipeline_output.revisions.get(&entry.id) else {
                         continue;
                     };
@@ -411,7 +440,7 @@ impl<'a> ContextPackBuilder<'a> {
             .then_some(&stale_worlds);
             let device_local = if self.off_device {
                 Some(crate::settings::device_local_worlds_at(
-                    &self.vault.store,
+                    self.vault,
                     &rtxn,
                     crate::claim::CallerLocality::OffDevice,
                 )?)
@@ -595,7 +624,7 @@ impl<'a> ContextPackBuilder<'a> {
                 telemetry_run_id,
                 telemetry,
                 total_in_scope,
-                clamped_out,
+                clamped,
                 replay_config,
             })
         })();

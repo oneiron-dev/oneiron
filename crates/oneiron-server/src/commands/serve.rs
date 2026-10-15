@@ -24,6 +24,8 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
         dimensions = config.dimensions,
         "starting oneiron sync server"
     );
+    let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
+    refuse_unauthenticated_public_bind(&config, addr)?;
 
     let dicts = resolve_dict_search_paths(&config.dict_search_paths);
     if let Some(warning) = dicts.warning {
@@ -40,6 +42,7 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
     let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(reembed::with_model_change_remedy)?;
     managed::warn_if_reader_table_short(&vault);
+    config.keystore.install_on(&vault, &config.vault_path);
 
     let server_config = config.sync_server_config();
     match server_config.auth_secret.as_deref() {
@@ -99,7 +102,6 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
                     .map(zeroize::Zeroizing::new),
             }
         }));
-    let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     // Same bind, named through the listener enum managed mode also uses.
     // `Tcp` is the only variant this path can produce, so unmanaged serve
     // still binds host:port and nothing else. Bound before any worker
@@ -128,7 +130,7 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
         .start_healer_oversight(crate::server::HEALER_OVERSIGHT_EVERY, || Some(()))
         .await?;
     let linear_handle = crate::linear_host::spawn(sync_server.clone()).await?;
-    let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
+    let lifecycle = sync_server.spawn_lifecycle_scheduler(crate::server::admit_every_pass());
     let mut workers = sync_server.spawn_slot_workers();
     workers.push(sync_server.spawn_board_publisher());
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
@@ -138,31 +140,28 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
     host.ready()?;
     // Open sockets may never close by themselves, so the drain is bounded.
     let (stopping, mut stopped) = tokio::sync::watch::channel(false);
-    let serving = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(async move {
-        stop_requested().await;
-        let _ = stopping.send(true);
-    });
-    let result = tokio::select! {
-        result = serving => result,
+    // Connections are admitted, and their headers timed, before any route runs.
+    let serving =
+        crate::http_listener::serve(listener, app, config.limits.connections(), async move {
+            stop_requested().await;
+            let _ = stopping.send(true);
+        });
+    tokio::select! {
+        () = serving => {}
         () = async {
             let _ = stopped.wait_for(|stop| *stop).await;
             tokio::time::sleep(DRAIN_GRACE).await;
         } => {
             tracing::warn!("connections still open after the drain grace; stopping anyway");
-            Ok(())
         }
-    };
+    }
     // A pass or step in flight reaches its own boundary before this returns.
     ai.shutdown().await;
     // A receipt write already admitted ends before the process does.
     oversight.stop().await;
     host.on_stop()?;
-    lifecycle_handle.abort();
-    let _ = lifecycle_handle.await;
+    // A housekeeping pass in flight stops at its next sweep or page.
+    lifecycle.stop().await;
     if let Some(handle) = linear_handle {
         handle.abort();
         let _ = handle.await;
@@ -171,8 +170,28 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
         handle.abort();
         let _ = handle.await;
     }
-    result?;
 
+    Ok(())
+}
+
+/// With no `auth_secret`, `--insecure-allow-unauthenticated` lets a request
+/// with no credential act as the owner, so that mode serves only loopback.
+/// An empty secret counts as none: it can mint and verify nothing. The
+/// address judged is the one this path binds, before the vault opens. A dev
+/// server reachable from the LAN sets a secret instead; there is no override.
+/// Managed serve never comes here: the supervisor owns its socket.
+fn refuse_unauthenticated_public_bind(
+    config: &ServeConfig,
+    addr: SocketAddr,
+) -> anyhow::Result<()> {
+    if config.auth_secret.as_deref().is_none_or(str::is_empty)
+        && config.allow_unauthenticated
+        && !addr.ip().to_canonical().is_loopback()
+    {
+        anyhow::bail!(
+            "unauthenticated mode (--insecure-allow-unauthenticated) serves only a loopback host such as 127.0.0.1 or [::1], and {addr} is reachable from the network; bind loopback or set ONEIRON_AUTH_SECRET"
+        );
+    }
     Ok(())
 }
 

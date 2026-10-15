@@ -131,11 +131,6 @@ side_tables! {
     SKILL_OPTIMIZE_MIN_OUTCOMES: VaultMeta b"settings:skill_optimize:v1:min_outcomes" Raw;
     /// Persisted activation-risk threshold dial for skill-scan consent escalation. Key: ().
     SKILL_SCAN_ACTIVATION_RISK_THRESHOLD: VaultMeta b"settings:skill_scan:v1:activation_risk_threshold" Raw;
-    /// Moves (u64) in every transaction that sets or clears a device-only flag. Key: ().
-    DEVICE_ONLY_GENERATION: VaultMeta b"settings:sync:v1:device_only_generation" Raw;
-    /// Flags a WORLD as device-only: its rows, claims and NOTEs never leave this device. Key: hex32
-    /// (world id).
-    DEVICE_ONLY_WORLD: VaultMeta b"settings:sync:v1:device_only_world:" Raw;
     /// Local, engine-written provenance and monotonic revocation latch for one admitted brief share
     /// (issuer, gate decision id, effect-target digest, revocation state), proving the row was
     /// created through the share door and not a generic grant write. Key: id16.
@@ -359,8 +354,13 @@ side_tables! {
     TASK_BY_OWNER_BACKFILLED: VaultMeta b"tasks.by_owner.backfilled.v1" Raw;
     /// Owner's tasks forward index. Key: id16 + id16 + id16.
     TASK_BY_OWNER_FORWARD: VaultMeta b"tasks.by_owner.v1/" Raw;
+    /// Marker that the one-time consult party fact migration has run. Key: ().
+    TASK_CONSULT_PARTY_BACKFILLED: VaultMeta b"tasks.consult_party.backfilled.v1" Raw;
     /// Per-actor task-create rate window. Key: id16 + u64be.
     TASK_CREATE_RATE_WINDOW: VaultMeta b"tasks.create.rate.v1\0" Raw;
+    /// Presence marker: an authority fact of this task was refused at admission because its id
+    /// was deleted here first, so the task's facts read as a refusal. Key: id16 (task).
+    TASK_FACT_SUPPRESSED: VaultMeta b"tasks.fact_suppressed.v1/" Raw;
     /// Follow-up stage idempotency marker. Key: id16 + \x00 + string.
     TASK_FOLLOW_UP_MARKER: VaultMeta b"tasks.followup.v1\0" Raw;
     /// Owner-authority fact to forward index key. Key: id16.

@@ -2,6 +2,7 @@
 
 use super::*;
 pub(super) use axum::body::{Body, to_bytes};
+pub(super) use axum::extract::ConnectInfo;
 pub(super) use axum::http::Request;
 pub(super) use oneiron::EdgeActorClass;
 pub(super) use oneiron::booking::anti_abuse::{
@@ -22,6 +23,7 @@ pub(super) use oneiron::{
     DreamerRunnerStore, TimeRange,
 };
 pub(super) use serde_json::{Value, json};
+pub(super) use std::net::SocketAddr;
 pub(super) use std::num::NonZeroU32;
 pub(super) use tower::ServiceExt;
 
@@ -55,6 +57,20 @@ impl Fixture {
     }
 
     fn unpublished_with(config: EventTypeConfig) -> Self {
+        Self::unpublished_behind(config, Vec::new())
+    }
+
+    /// A published page served behind `trusted_proxies`.
+    pub(super) fn behind(trusted_proxies: Vec<crate::config::TrustedProxy>) -> Self {
+        let fixture = Self::unpublished_behind(fixture_config(), trusted_proxies);
+        fixture.publish_page(fixture.page, true, 1, now_secs().expect("clock") + 86_400);
+        fixture
+    }
+
+    fn unpublished_behind(
+        config: EventTypeConfig,
+        trusted_proxies: Vec<crate::config::TrustedProxy>,
+    ) -> Self {
         let dir = tempfile::tempdir().expect("temp vault");
         let vault =
             Arc::new(Vault::open(dir.path(), oneiron::VaultConfig::device()).expect("vault"));
@@ -65,6 +81,7 @@ impl Fixture {
                     auth_secret: Some("owner-fixture-secret".to_owned()),
                     allow_unauthenticated: false,
                     lease_vault_id: 9,
+                    trusted_proxies,
                     ..Default::default()
                 },
             )

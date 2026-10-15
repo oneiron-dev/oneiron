@@ -679,7 +679,8 @@ fn sync_all_discovers_unopened_world_and_old_base_windows_between_independent_va
                 &doc.doc,
                 &VersionVector::default().encode(),
             )
-            .unwrap();
+            .unwrap()
+            .into_bytes();
             let frame =
                 transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &payload)
                     .into_result()
@@ -733,7 +734,8 @@ fn sync_all_discovers_unopened_world_and_old_base_windows_between_independent_va
                 &doc.doc,
                 &VersionVector::default().encode(),
             )
-            .unwrap();
+            .unwrap()
+            .into_bytes();
             let frame =
                 transport::encode_window_sync(next_key.as_str(), window_sub_tags::UPDATE, &payload)
                     .into_result()
@@ -824,6 +826,47 @@ fn opened_item_residence_rejects_unsolicited_full_window_updates() {
 }
 
 #[test]
+fn a_home_promotion_snapshot_carrying_custody_lands_nowhere() {
+    // C1 review: promotion imported the configured home's snapshot with no
+    // carrier admission, so a custody body inserted and deleted before the
+    // export entered the promoted window's durable history.
+    use crate::sync::loro_support::{map_delete, map_insert_bytes};
+    let at = 1_772_000_000;
+    let custody = entity_blob(
+        crate::registry::ENTITY_TYPE_SECRET_CUSTODY,
+        TimeRange { start: at, end: at },
+        at,
+        b"placeholder custody body",
+    );
+    let carrier = EntityId::now().to_hex();
+    let home = server_window_doc();
+    let entities = home.get_map("entities");
+    map_insert_bytes(&entities, &carrier, &custody).unwrap();
+    home.commit();
+    map_insert_bytes(&entities, "ordinary", b"home row").unwrap();
+    home.commit();
+    let root = home.oplog_frontiers();
+    map_delete(&entities, &carrier).unwrap();
+    home.commit();
+    for snapshot in [
+        home.export(ExportMode::Snapshot).unwrap(),
+        home.export(ExportMode::shallow_snapshot(&root)).unwrap(),
+    ] {
+        let window = LoroDoc::new();
+        assert!(!super::residence::import_promotion_snapshot(
+            &window, &snapshot
+        ));
+        assert!(window.oplog_vv().is_empty());
+    }
+    let clean = home
+        .export(ExportMode::shallow_snapshot(&home.oplog_frontiers()))
+        .unwrap();
+    let window = LoroDoc::new();
+    assert!(super::residence::import_promotion_snapshot(&window, &clean));
+    assert!(window.get_map("entities").get("ordinary").is_some());
+}
+
+#[test]
 fn sync_client_generate_initial_sync() {
     let manager = test_manager();
     let (client, _rx) = SyncClient::new(
@@ -846,7 +889,7 @@ fn sync_client_generate_initial_sync() {
     // It MUST be the first frame.
     assert_eq!(
         messages[0],
-        transport::encode_chunk_full_window_protocol_hello()
+        transport::encode_replacement_full_window_protocol_hello()
     );
 
     // Frame 1: root VV — Loro binary encoding, decodable, NOT JSON.
@@ -1083,6 +1126,148 @@ fn noop_echo_after_snapshot_subsumes_writes_no_uw_row() {
         Some(&[SVF_FRESH][..]),
         "the deduped echo must not flip svf stale"
     );
+}
+
+/// S1 on this device's two version-vector arms, and the rebase that answers them: a window this
+/// device pinned history-free answers a server vector behind what it may ship with a
+/// replacement request, never history. The server's replacement installs with the device's
+/// unsent rows kept, and the next exchange ships those rows, and not the scrubbed carrier, as
+/// history the server merges.
+#[test]
+fn device_vector_arms_rebase_a_pinned_window_on_the_server_and_keep_unsent_rows() {
+    for arm in [window_sub_tags::VV_REQUEST, window_sub_tags::VV_RESPONSE] {
+        let manager = test_manager();
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        let at = WindowKey::new(key).start_timestamp().unwrap() + 60;
+        let range = TimeRange { start: at, end: at };
+        let server_doc = server_window_doc();
+        let shared = EntityId::now().to_hex();
+        server_doc
+            .get_map("entities")
+            .insert(
+                &shared,
+                entity_blob(ENTITY_TYPE_TASK, range, at, b"shared").as_slice(),
+            )
+            .unwrap();
+        server_doc.commit();
+        let base = transport::encode_window_sync(
+            key,
+            window_sub_tags::UPDATE,
+            &server_doc.export(ExportMode::all_updates()).unwrap(),
+        );
+        assert!(client.handle_server_message(&base).unwrap().is_empty());
+
+        // The device writes two rows it never sends, and holds a carrier its export scrubs.
+        let unsent = [EntityId::now().to_hex(), EntityId::now().to_hex()];
+        let carrier = EntityId::now().to_hex();
+        {
+            let window = client.window(key).unwrap();
+            for (n, row) in unsent.iter().enumerate() {
+                window
+                    .doc
+                    .get_map("entities")
+                    .insert(
+                        row,
+                        entity_blob(ENTITY_TYPE_TASK, range, at + 1 + n as u64, b"unsent")
+                            .as_slice(),
+                    )
+                    .unwrap();
+                window.doc.commit();
+            }
+            let diagnostic =
+                entity_blob(crate::registry::ENTITY_TYPE_DIAGNOSTIC, range, at, b"diag");
+            window
+                .doc
+                .get_map("entities")
+                .insert(&carrier, diagnostic.as_slice())
+                .unwrap();
+            window.doc.commit();
+        }
+
+        let server_vv = server_doc.oplog_vv();
+        let frame = transport::encode_window_sync(key, arm, &server_vv.encode());
+        let responses = client.handle_server_message(&frame).unwrap();
+        let replies: Vec<_> = responses
+            .iter()
+            .map(|frame| transport::decode_window_sync(&frame[1..]).unwrap().1)
+            .collect();
+        assert_eq!(
+            replies,
+            vec![window_sub_tags::REPLACEMENT_REQUEST],
+            "arm {arm}"
+        );
+        assert!(
+            crate::sync::window::history_free_window_required(
+                manager.vault(),
+                &WindowKey::new(key)
+            )
+            .unwrap()
+        );
+
+        // The server answers with its window whole.
+        let snapshot = server_doc
+            .export(ExportMode::shallow_snapshot(&server_doc.oplog_frontiers()))
+            .unwrap();
+        let frame = transport::encode_window_sync(key, window_sub_tags::REPLACEMENT, &snapshot);
+        let responses = client.handle_server_message(&frame).unwrap();
+        let (_, tag, vv) = transport::decode_window_sync(&responses[0][1..]).unwrap();
+        assert_eq!(
+            tag,
+            window_sub_tags::VV_REQUEST,
+            "arm {arm}: a fresh exchange follows"
+        );
+        let device_vv = VersionVector::decode(vv).unwrap();
+        assert!(device_vv.includes_vv(&server_vv), "arm {arm}");
+        let window = client.window(key).unwrap();
+        for row in unsent.iter().chain([&shared]) {
+            assert!(
+                window.doc.get_map("entities").get(row).is_some(),
+                "arm {arm}: a row was lost"
+            );
+        }
+        assert!(
+            window.doc.get_map("entities").get(&carrier).is_none(),
+            "arm {arm}"
+        );
+        drop(window);
+
+        // Rebased, the device ships its rows as history the server merges.
+        let frame =
+            transport::encode_window_sync(key, window_sub_tags::VV_RESPONSE, &server_vv.encode());
+        let responses = client.handle_server_message(&frame).unwrap();
+        let (_, tag, delta) = transport::decode_window_sync(&responses[0][1..]).unwrap();
+        assert_eq!(
+            tag,
+            window_sub_tags::UPDATE,
+            "arm {arm}: the rebased device sends history"
+        );
+        let status = server_doc.import(delta).unwrap();
+        assert!(
+            status.pending.is_none(),
+            "arm {arm}: the server cannot apply the device's history"
+        );
+        assert_eq!(
+            server_doc.oplog_vv(),
+            client.window(key).unwrap().doc.oplog_vv(),
+            "arm {arm}"
+        );
+        for row in &unsent {
+            assert!(
+                server_doc.get_map("entities").get(row).is_some(),
+                "arm {arm}: a row never shipped"
+            );
+        }
+        let history =
+            server_doc.export_json_updates(&VersionVector::default(), &server_doc.oplog_vv());
+        assert!(
+            !history.changes.iter().flat_map(|change| &change.ops).any(|op| matches!(
+                &op.content,
+                loro::json::JsonOpContent::Map(loro::json::MapOp::Insert { key, .. }) if *key == carrier
+            )),
+            "arm {arm}: the scrubbed carrier shipped"
+        );
+    }
 }
 
 #[test]
@@ -1348,19 +1533,49 @@ fn federated_selector_guest_response_cannot_auto_approve_above_local_ceiling() {
     );
 }
 
+/// W1b T2 (H60 residue): the federated selector doors refuse a client with
+/// no federation peer bound, whose responses would import as its own
+/// device's, as the federated import door does: the request builder, and a
+/// deferred-selector reply, which would otherwise send the retry (PR review
+/// r1). The bound client's request encodes in the guest test above, and its
+/// retry here. The refusal records nothing: the next full-window update is
+/// untouched.
 #[test]
-fn selector_request_builder_does_not_reclassify_next_update() {
+fn selector_request_builder_refuses_an_unbound_client_and_records_nothing() {
     let manager = test_manager();
     let vault = Arc::clone(manager.vault());
     let (mut client, _rx) = test_client(&manager);
     let key = "2026-03";
-    let _request = client
-        .federated_selector_vv_request(key, &test_selector(), &VersionVector::new().encode())
-        .expect("selector request encodes without recording a marker");
-
     let id = test_entity_id(0x98);
     let remote_body = internal_source_trust_claim(ClaimSource::ToolOutput);
     let update = federated_claim_update(&id, &remote_body);
+    let refused = client
+        .federated_selector_vv_request(key, &test_selector(), &VersionVector::new().encode())
+        .expect_err("an unbound client has no federated door");
+    let import_refused = client
+        .import_federated_window_update(key, &update, FederationAdmissionRole::Member)
+        .expect_err("an unbound client imports nothing federated");
+    assert_eq!(format!("{refused:?}"), format!("{import_refused:?}"));
+
+    let mut deferred = vec![0x5a; 32];
+    deferred.extend(
+        crate::sync::encode_selector_vv_request(&test_selector(), &VersionVector::new().encode())
+            .expect("selector request encodes"),
+    );
+    let deferred =
+        transport::encode_window_sync(key, window_sub_tags::SELECTOR_DEFERRED, &deferred)
+            .into_result()
+            .expect("deferred selector reply encodes");
+    let retry_refused = client
+        .handle_server_message(&deferred)
+        .expect_err("an unbound client sends no selector retry");
+    assert_eq!(format!("{retry_refused:?}"), format!("{refused:?}"));
+    let (mut bound, _bound_rx) = test_federated_client(&manager);
+    let retry = bound
+        .handle_server_message(&deferred)
+        .expect("a bound client retries the deferred selector");
+    assert_eq!(retry.len(), 1);
+
     let response = transport::encode_window_sync(key, window_sub_tags::UPDATE, &update)
         .into_result()
         .expect("full-window update encodes");
@@ -2473,10 +2688,14 @@ fn device_only_claim_text_stays_journaled_until_the_flag_clears() {
         frame,
         ..
     } = journaled_claim_text();
-    vault.set_world_device_only(world, true).unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
 
     assert_eq!(client.handle_server_message(&frame).unwrap().len(), 1);
-    vault.set_world_device_only(world, false).unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, false)
+        .unwrap();
     assert_eq!(client.handle_server_message(&frame).unwrap().len(), 2);
 }
 
@@ -2511,10 +2730,14 @@ fn claim_text_whose_world_cannot_be_read_stays_journaled_while_a_flag_stands() {
                 )
             })
             .unwrap();
-        vault.set_world_device_only(world, true).unwrap();
+        vault
+            .keep_world_on_this_machine_for_test(world, true)
+            .unwrap();
 
         assert_eq!(client.handle_server_message(&frame).unwrap().len(), 1);
-        vault.set_world_device_only(world, false).unwrap();
+        vault
+            .keep_world_on_this_machine_for_test(world, false)
+            .unwrap();
         assert_eq!(client.handle_server_message(&frame).unwrap().len(), 2);
     }
 }
@@ -2553,7 +2776,9 @@ fn a_flag_committed_while_the_raw_guard_inspects_withholds_the_update() {
     .unwrap();
     body.world = Some(world);
     vault.put_claim(&claim, &body, at, learned).unwrap();
-    vault.set_world_device_only(other, true).unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(other, true)
+        .unwrap();
     let key = WindowKey::for_world(learned, world);
     let update = manager
         .open_window(&key)
@@ -2567,6 +2792,104 @@ fn a_flag_committed_while_the_raw_guard_inspects_withholds_the_update() {
     );
 
     crate::sync::window::test_hooks::arm_device_only_flag_race(world);
+    assert_eq!(
+        raw_update_verdict(&manager, key.as_str(), &update),
+        UpdateVerdict::Withheld
+    );
+}
+
+/// Sol P2 round 2, F2: a machine's standing that expires while the raw guard
+/// inspects a window narrows a world with no authority-log write. The bytes
+/// are still withheld.
+#[test]
+fn a_standing_that_expires_while_the_raw_guard_inspects_withholds_the_update() {
+    use crate::authority::{
+        AuthorityAttestation, AuthorityTier, DEFAULT_STALE_ROSTER_WINDOW_SECS, DeviceAuthority,
+        HostSlipIssuer, ROLE_ADMIN, ROLE_OWNER,
+    };
+    use crate::sync::window::{UpdateVerdict, raw_update_verdict};
+    use ed25519_dalek::Signer;
+    let manager = test_manager();
+    let vault = Arc::clone(manager.vault());
+    let learned = 1_772_323_260;
+    let at = TimeRange {
+        start: learned,
+        end: learned,
+    };
+    let [world, other, person, claim] =
+        [0x68, 0x69, 0x6a, 0x6b].map(|byte| EntityId::from_bytes([byte; 16]).unwrap());
+    for (id, entity_type) in [
+        (world, crate::registry::ENTITY_TYPE_WORLD),
+        (other, crate::registry::ENTITY_TYPE_WORLD),
+        (person, crate::registry::ENTITY_TYPE_PERSON),
+    ] {
+        vault
+            .put_entity(&id, entity_type, at, learned, b"row")
+            .unwrap();
+    }
+    let mut body = ClaimBody::new(
+        "test.device_only",
+        ClaimSubject::Entity(person),
+        rmpv::Value::from("fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world);
+    vault.put_claim(&claim, &body, at, learned).unwrap();
+    // This machine keeps `other` to itself, and lets `world` go after
+    // keeping it.
+    vault
+        .keep_world_on_this_machine_for_test(other, true)
+        .unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, false)
+        .unwrap();
+    // The vault moves to a root that never marks this machine again.
+    let root = crate::test_support::test_host_issuer();
+    let next = HostSlipIssuer::from_secret(b"expiring standing successor root").unwrap();
+    let signer = ed25519_dalek::SigningKey::from_bytes(&blake3::derive_key(
+        "oneiron/host-authority-signing/v2",
+        b"oneiron unit test host root",
+    ));
+    vault
+        .re_root_authority(
+            DeviceAuthority {
+                key: next.public_key(),
+                transport_key_binding: next.binding_key(),
+                attestation: AuthorityAttestation {
+                    kind: "HostRoot".into(),
+                    evidence: Vec::new(),
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER | ROLE_ADMIN,
+            },
+            root.public_key(),
+            |bytes| Ok(signer.sign(bytes).to_bytes().to_vec()),
+        )
+        .unwrap();
+    let key = WindowKey::for_world(learned, world);
+    let update = manager
+        .open_window(&key)
+        .unwrap()
+        .doc
+        .export(ExportMode::all_updates())
+        .unwrap();
+    assert_eq!(
+        raw_update_verdict(&manager, key.as_str(), &update),
+        UpdateVerdict::Portable
+    );
+
+    // The window passes mid-inspection: this machine goes stale, and its
+    // widening of `world` now only narrows.
+    let past = crate::unix_seconds_now() + DEFAULT_STALE_ROSTER_WINDOW_SECS + 60;
+    crate::sync::window::test_hooks::arm_device_only_race(move |vault| {
+        vault.advance_authority_clock_for_test(past)
+    });
     assert_eq!(
         raw_update_verdict(&manager, key.as_str(), &update),
         UpdateVerdict::Withheld

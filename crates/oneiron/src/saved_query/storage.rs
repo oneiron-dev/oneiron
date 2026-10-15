@@ -200,7 +200,11 @@ pub(super) fn load_record_in_txn(
     if header.entity_type != kind {
         return Ok(None);
     }
-    decode_record(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    // A body that names another row is no saved query at this id: every write
+    // stores at the body's `query_ref`, so reading it here would let authority
+    // over this row overwrite that one.
+    Ok(Some(decode_record(&raw[ENTITY_METADATA_HEADER_LEN..])?)
+        .filter(|record| record.query_ref == query_ref))
 }
 
 pub(super) fn load_record(vault: &Vault, query_ref: EntityId) -> Result<Option<SavedQueryRecord>> {

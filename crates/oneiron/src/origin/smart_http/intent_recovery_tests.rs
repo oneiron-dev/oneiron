@@ -21,8 +21,8 @@ fn receive_pack_intent_without_backend_effect_never_advances_a_ref() {
     vault
         .reconcile_receive_pack_operations(&root)
         .expect("census");
-    let rows = vault.receive_pack_intents(&root).expect("operation");
-    assert_eq!(rows[0].1.refs[0].status, ReceivePackRefStatus::NotApplied);
+    // NotApplied settles the push, and its intent goes with it.
+    assert_eq!(vault.receive_pack_intent_rows_for_test(&root), 0);
     assert!(vault.origin_publication_ids(None).expect("ids").is_empty());
     assert!(git(&root, &["for-each-ref", "refs/heads/declined"]).is_empty());
 }
@@ -128,13 +128,11 @@ fn receive_pack_measured_partial_outcome_survives_recovery() {
     reopened
         .reconcile_receive_pack_operations(&root)
         .expect("recover");
-    let rows = reopened
-        .receive_pack_intents(&root)
-        .expect("recovered intent");
-    assert_eq!(rows[0].1.transport_bytes, Some((1234, 567)));
-    assert_eq!(rows[0].1.refs[0].status, ReceivePackRefStatus::Published);
-    assert_eq!(rows[0].1.refs[1].status, ReceivePackRefStatus::Published);
-    assert_eq!(rows[0].1.refs[2].status, ReceivePackRefStatus::NotApplied);
+    assert_eq!(
+        reopened.receive_pack_intent_rows_for_test(&root),
+        0,
+        "recovery published the last pending ref and settled the push"
+    );
     assert_eq!(
         reopened.get_raw(&pending_id).expect("same evidence"),
         evidence
@@ -151,7 +149,12 @@ fn receive_pack_measured_partial_outcome_survives_recovery() {
         .apply_receive_pack_update(&repo, outcome)
         .expect("replay after reopen");
     assert!(again.replayed);
-    assert_eq!(again.receipt.record_key, replay.receipt.record_key);
+    match (&again.receipt, &replay.receipt) {
+        (ReceivePackCertificate::Wire(again), ReceivePackCertificate::Wire(first)) => {
+            assert_eq!(again.record_key, first.record_key);
+        }
+        other => panic!("a replayed push lands through its wire record: {other:?}"),
+    }
     assert!(git(&root, &["for-each-ref", "refs/heads/declined"]).is_empty());
 }
 
@@ -186,6 +189,7 @@ fn receive_pack_hook_requires_durable_intent_before_releasing_the_backend() {
         )
         .expect("request");
         fs::write(hooks.blobs_path(), b"").expect("empty added-blob stream");
+        fs::write(hooks.history_path(), b"").expect("empty history stream");
         let report = serve_door_window(
             &vault,
             &repo,
@@ -254,11 +258,10 @@ fn receive_pack_partial_effect_superseded_before_recovery_is_not_reapplied() {
     vault
         .reconcile_receive_pack_operations(&root)
         .expect("do not overwrite later writer");
-    let rows = vault.receive_pack_intents(&root).expect("journal");
-    assert_eq!(rows[0].1.refs[0].status, ReceivePackRefStatus::Superseded);
-    assert!(
-        rows[0].1.refs[0].observed,
-        "do not erase the earlier partial effect"
+    assert_eq!(
+        vault.receive_pack_intent_rows_for_test(&root),
+        0,
+        "Superseded settles the push"
     );
     assert_eq!(
         git(&root, &["rev-parse", "refs/heads/pending"]),
@@ -299,10 +302,11 @@ fn receive_pack_no_hook_advertisement_recovers_a_pre_outcome_crash() {
             .iter()
             .any(|(name, value)| { name == "refs/heads/recovered" && value == oid.as_str() })
     );
-    let rows = reopened
-        .receive_pack_intents(&repo_dir)
-        .expect("recovered journal");
-    assert_eq!(rows[0].1.refs[0].status, ReceivePackRefStatus::Published);
+    assert_eq!(
+        reopened.receive_pack_intent_rows_for_test(&repo_dir),
+        0,
+        "the recovered push settled"
+    );
     assert_eq!(
         reopened
             .origin_publication_ids(None)

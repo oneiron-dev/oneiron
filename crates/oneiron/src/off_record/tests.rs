@@ -224,6 +224,7 @@ fn entity_put_guard_rejects_live_overlay_membership() -> Result<()> {
 #[test]
 fn mode_flip_seals_overlay_writes_but_keeps_composed_reads() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    let owner = crate::test_util::embedded_owner_proof(&vault);
     let id = EntityId::now();
     let session = vault
         .off_record_session_vault()
@@ -238,7 +239,7 @@ fn mode_flip_seals_overlay_writes_but_keeps_composed_reads() -> Result<()> {
     wtxn.commit()?;
     segment.commit()?;
 
-    session.flip_on_record()?;
+    session.flip_on_record_as(&owner)?;
     let sealed = match overlay.install_txn_segment() {
         Err(error) => error,
         Ok(_) => panic!("mode flip must seal overlay writes"),
@@ -261,6 +262,7 @@ fn mode_flip_seals_overlay_writes_but_keeps_composed_reads() -> Result<()> {
 #[test]
 fn off_record_outbound_rejected_in_mode_with_typed_error() {
     let (_tmp, vault) = temp_vault();
+    let owner = crate::test_util::embedded_owner_proof(&vault);
     vault
         .enter_off_record_session("sess-talk", OffRecordBackendClass::RemoteProvider)
         .expect("enter");
@@ -280,7 +282,10 @@ fn off_record_outbound_rejected_in_mode_with_typed_error() {
     // Flipped back on-record the rejection lifts, and the OF-333 floor
     // classifies the egress (gate decision = persistent floor receipt).
     vault
-        .set_off_record_session_mode("sess-talk", OffRecordMode::OnRecord)
+        .off_record_session_vault()
+        .bind("sess-talk")
+        .expect("bind")
+        .flip_on_record_as(&owner)
         .expect("flip");
     let result = OutboundDispatchPipeline
         .dispatch(&vault, talk_only_request("sess-talk"), &mut PanicSink)
@@ -427,6 +432,7 @@ fn off_record_close_deletes_transcript_keeps_floor_and_base_receipts() {
 #[test]
 fn off_record_closing_flag_freezes_record_against_mutators() {
     let (_tmp, vault) = temp_vault();
+    let owner = crate::test_util::embedded_owner_proof(&vault);
     let commissioned = seed_turn(&vault, 1001);
     // Entered through the session handle so the promote mutator — which lives
     // on the handle, not the vault — is reachable at the same seam.
@@ -453,7 +459,7 @@ fn off_record_closing_flag_freezes_record_against_mutators() {
     // seam rather than on the turn not being journaled — which is the point:
     // the flag, not the closure, is what freezes the record.
     let promote = session
-        .promote_turn(&room_member)
+        .promote_turn_as(&owner, &room_member)
         .expect_err("promote during close");
     assert_eq!(promote.kind(), ErrorKind::OffRecordSessionClosing);
     // A promote rejected because the session is closing must NOT have committed
@@ -479,8 +485,8 @@ fn off_record_closing_flag_freezes_record_against_mutators() {
         ))
         .expect_err("emit-receipt record during close");
     assert_eq!(record_emit.kind(), ErrorKind::OffRecordSessionClosing);
-    let flip = vault
-        .set_off_record_session_mode("sess-toctou", OffRecordMode::OnRecord)
+    let flip = session
+        .flip_on_record_as(&owner)
         .expect_err("flip during close");
     assert_eq!(flip.kind(), ErrorKind::OffRecordSessionClosing);
 
@@ -557,6 +563,7 @@ fn off_record_session_ref_bounds_are_enforced_everywhere() {
 #[test]
 fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    let owner = crate::test_util::embedded_owner_proof(&vault);
     let session = vault
         .off_record_session_vault()
         .enter("sess-grant-scope", OffRecordBackendClass::Local)?;
@@ -625,6 +632,7 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
     // Fail on the FIRST replay op: the builder's copied Put bodies are still
     // queued, so iterator teardown must scrub them without consuming them.
     overreaching.ops.rotate_right(1);
+    let initiator = crate::off_record::PromoteInitiator::owner(&vault, &owner).unwrap();
     let early_refusal = crate::session_overlay::hygiene_tests::observe_replay_copy(|| {
         vault.with_write_txn(|wtxn| {
             FloorWrites::new(&vault.store).promote(
@@ -632,6 +640,7 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
                 wtxn,
                 "sess-grant-scope",
                 &overreaching,
+                &initiator,
                 2000,
             )
         })
@@ -646,6 +655,7 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
                 wtxn,
                 "sess-grant-scope",
                 &overreaching,
+                &initiator,
                 2000,
             )
         })
@@ -673,8 +683,9 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
     // The SAME closure is still promotable through the ordinary path — and
     // the other room stays live, because a closure that stops at its own
     // endpoints has nothing to say about anyone else's ids.
-    let outcome =
-        crate::session_overlay::hygiene_tests::observe_replay_copy(|| session.promote_turn(&turn))?;
+    let outcome = crate::session_overlay::hygiene_tests::observe_replay_copy(|| {
+        session.promote_turn_as(&owner, &turn)
+    })?;
     assert_eq!(
         outcome.replayed.len(),
         4,
@@ -698,6 +709,7 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
 #[test]
 fn promote_refuses_a_turn_whose_author_left_base() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    let owner = crate::test_util::embedded_owner_proof(&vault);
     let session = vault
         .off_record_session_vault()
         .enter("sess-author-gone", OffRecordBackendClass::Local)?;
@@ -743,13 +755,198 @@ fn promote_refuses_a_turn_whose_author_left_base() -> Result<()> {
     };
 
     let refusal = session
-        .promote_turn(&turn)
+        .promote_turn_as(&owner, &turn)
         .expect_err("a dangling author edge must not promote");
     assert_eq!(refusal.kind(), ErrorKind::OffRecordPromoteAuthorMissing);
     assert!(vault.off_record_promote_receipt(&turn)?.is_none());
     let rtxn = vault.store.env.read_txn()?;
     assert_eq!(vault.store.entities.len(&rtxn)?, entities_before);
     drop(rtxn);
+    session.close()?;
+    Ok(())
+}
+
+/// A PERSON who speaks in a stretch alone with the owner; nobody's owner.
+fn solo_speaker(vault: &Vault) -> Result<EntityId> {
+    let speaker = EntityId::now();
+    vault.put_entity(
+        &speaker,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"solo speaker",
+    )?;
+    Ok(speaker)
+}
+
+/// Witnesses `content` into `session` as `speaker` at `at`; its turn.
+fn said_alone(
+    vault: &Vault,
+    session: &OffRecordSession<'_>,
+    speaker: EntityId,
+    content: &str,
+    at: u64,
+) -> Result<EntityId> {
+    let receipt = vault
+        .memory(speaker, EdgeActorClass::Human)
+        .witness_into_session(
+            session,
+            &crate::memory::WitnessTurn {
+                conversation_ref: String::new(),
+                turn_ref: None,
+                messages: vec![crate::memory::WitnessMessage {
+                    id: None,
+                    author: crate::memory::WitnessAuthor::User,
+                    message_type: "utterance".to_owned(),
+                    content: content.to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                }],
+                occurred_at: at,
+            },
+            None,
+        )
+        .unwrap_or_else(|error| panic!("session witness failed: {error:?}"));
+    EntityId::from_hex(
+        receipt
+            .receipt_ref
+            .strip_prefix("witness:")
+            .ok_or(Error::InvariantViolation("witness receipt names no turn"))?,
+    )
+}
+
+fn base_entities(vault: &Vault) -> Result<u64> {
+    let rtxn = vault.store.env.read_txn()?;
+    vault.store.entities.len(&rtxn)
+}
+
+/// H203 (security scan, W2-T6): a stretch alone with its owner goes on
+/// record, and a turn of it into this vault, only on the owner's proof. The
+/// vault door that names a stretch by its ref, which any holder of the string
+/// has, refuses the flip, typed; the promoted turn's receipt names who
+/// consented. (A session handle has no door without a proof: see the
+/// `compile_fail` examples on `OffRecordSession::promote_turn_as`.)
+#[test]
+fn a_solo_stretch_goes_on_record_and_promotes_only_on_the_owners_proof() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let owner = crate::test_util::embedded_owner_proof(&vault);
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-solo-consent", OffRecordBackendClass::Local)?;
+    let refused = vault
+        .set_off_record_session_mode("sess-solo-consent", OffRecordMode::OnRecord)
+        .expect_err("a flip by session ref carries no proof");
+    assert_eq!(refused.kind(), ErrorKind::OffRecordPromoteUnauthenticated);
+    assert_eq!(session.mode()?, OffRecordMode::OffRecord);
+
+    let speaker = solo_speaker(&vault)?;
+    let turn = said_alone(
+        &vault,
+        &session,
+        speaker,
+        "said alone, off the record",
+        1000,
+    )?;
+    let outcome = session.promote_turn_as(&owner, &turn)?;
+    let kept = vault
+        .off_record_promote_receipt(&turn)?
+        .expect("a promoted turn keeps its receipt");
+    assert_eq!(kept.initiator_ref, owner.actor().to_hex());
+    assert_eq!(
+        kept.initiator_kind,
+        crate::off_record::PROMOTE_INITIATOR_OWNER
+    );
+    assert_eq!(kept.outcome, outcome);
+
+    // The owner's own flip puts the stretch on record.
+    session.flip_on_record_as(&owner)?;
+    assert_eq!(session.mode()?, OffRecordMode::OnRecord);
+    session.close()?;
+    Ok(())
+}
+
+/// H203 (Sol R1 F1): a live person's proof is not the owner's. Alone with
+/// its owner, a stretch's turns land in this vault, so another person's proof
+/// neither promotes a turn, nor reads the answer a promoted turn keeps, nor
+/// puts the stretch on record, and nothing is written. The owner's own proof
+/// still promotes.
+#[test]
+fn a_solo_stretch_refuses_a_proof_that_is_not_the_owners() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let owner = crate::test_util::embedded_owner_proof(&vault);
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-solo-stranger", OffRecordBackendClass::Local)?;
+    let speaker = solo_speaker(&vault)?;
+    let stranger =
+        vault.authenticate_owner(speaker, &speaker.to_hex(), true, GateDecisionId::now())?;
+    let turn = said_alone(
+        &vault,
+        &session,
+        speaker,
+        "said alone, off the record",
+        1000,
+    )?;
+    let entities_before = base_entities(&vault)?;
+
+    let refused = session
+        .promote_turn_as(&stranger, &turn)
+        .expect_err("a stranger's proof promotes nothing");
+    assert_eq!(refused.kind(), ErrorKind::ConsentOwnerNotAuthenticated);
+    let refused = session
+        .flip_on_record_as(&stranger)
+        .expect_err("a stranger's proof puts nothing on record");
+    assert_eq!(refused.kind(), ErrorKind::ConsentOwnerNotAuthenticated);
+    assert_eq!(session.mode()?, OffRecordMode::OffRecord);
+    assert!(vault.off_record_promote_receipt(&turn)?.is_none());
+    assert_eq!(base_entities(&vault)?, entities_before);
+
+    let outcome = session.promote_turn_as(&owner, &turn)?;
+    let refused = session
+        .promote_turn_as(&stranger, &turn)
+        .expect_err("a promoted turn's answer is the owner's");
+    assert_eq!(refused.kind(), ErrorKind::ConsentOwnerNotAuthenticated);
+    assert_eq!(session.promote_turn_as(&owner, &turn)?, outcome);
+    session.close()?;
+    Ok(())
+}
+
+/// H203 (Sol R1 F2): alone, as in a room, a stretch on record saves into this
+/// vault only while its owner's proof holds. Once the owner is gone, the next
+/// turn stays off record, base takes nothing, and the stretch is off record
+/// again.
+#[test]
+fn a_solo_stretch_on_record_stops_saving_once_its_owners_proof_lapses() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let owner = crate::test_util::embedded_owner_proof(&vault);
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-solo-lapse", OffRecordBackendClass::Local)?;
+    let speaker = solo_speaker(&vault)?;
+    session.flip_on_record_as(&owner)?;
+    let saved = said_alone(&vault, &session, speaker, "said on record", 1000)?;
+    assert!(
+        vault.get_raw(&saved)?.is_some(),
+        "a turn on record lands in base"
+    );
+
+    // A plain delete keeps the PERSON shell; the proof no longer holds.
+    assert!(vault.delete_entity(&owner.actor())?);
+    let entities_before = base_entities(&vault)?;
+    let unsaved = said_alone(
+        &vault,
+        &session,
+        speaker,
+        "said once the owner is gone",
+        2000,
+    )?;
+    assert!(
+        vault.get_raw(&unsaved)?.is_none(),
+        "base took a turn with no saver"
+    );
+    assert_eq!(base_entities(&vault)?, entities_before);
+    assert_eq!(session.mode()?, OffRecordMode::OffRecord);
     session.close()?;
     Ok(())
 }
@@ -958,6 +1155,7 @@ fn off_record_recall_registers_its_run_in_the_room_and_close_consumes_it() -> Re
 #[test]
 fn on_record_and_ordinary_recalls_never_enter_the_rooms_receipt_set() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    let owner = crate::test_util::embedded_owner_proof(&vault);
     let actor = seed_recallable_base_turn(&vault, "armbcontrolneedle");
     let facade = vault.memory(actor, EdgeActorClass::Human);
     let session = vault
@@ -996,7 +1194,7 @@ fn on_record_and_ordinary_recalls_never_enter_the_rooms_receipt_set() -> Result<
     // CONTROL B — the SAME in-room door after a flip back on record. The room
     // is on record, so its retrievals are ordinary ones and their runs belong
     // in the base ledger like any other.
-    session.flip_on_record()?;
+    session.flip_on_record_as(&owner)?;
     let before = vault.retrieval_runs(64)?.len();
     facade
         .recall_in_session(
@@ -1035,12 +1233,13 @@ fn on_record_and_ordinary_recalls_never_enter_the_rooms_receipt_set() -> Result<
 #[test]
 fn a_base_routed_room_retrieval_refuses_a_run_the_room_no_longer_authorizes() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    let owner = crate::test_util::embedded_owner_proof(&vault);
     seed_recallable_base_turn(&vault, "armbstaleneedle");
     let session = vault
         .off_record_session_vault()
         .enter("sess-armb-stale", OffRecordBackendClass::Local)?;
 
-    session.flip_on_record()?;
+    session.flip_on_record_as(&owner)?;
     let route = session.write_route()?;
     let door = session.retrieval_telemetry(&route)?;
 
@@ -1076,6 +1275,7 @@ fn a_base_routed_room_retrieval_refuses_a_run_the_room_no_longer_authorizes() ->
 #[test]
 fn a_rooms_failed_run_registration_sinks_the_retrieval() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    let owner = crate::test_util::embedded_owner_proof(&vault);
     seed_recallable_base_turn(&vault, "armbsealedneedle");
     let session = vault
         .off_record_session_vault()
@@ -1083,7 +1283,7 @@ fn a_rooms_failed_run_registration_sinks_the_retrieval() -> Result<()> {
 
     let route = session.write_route()?;
     let door = session.retrieval_telemetry(&route)?;
-    session.flip_on_record()?;
+    session.flip_on_record_as(&owner)?;
 
     let base_runs_before = vault.retrieval_runs(64)?.len();
     let error = vault
@@ -1675,6 +1875,7 @@ fn recall_in_session_refuses_a_room_from_another_vault() -> Result<()> {
 #[test]
 fn post_flip_emit_receipt_routes_on_record_and_survives_close() {
     let (_tmp, vault) = temp_vault();
+    let owner = crate::test_util::embedded_owner_proof(&vault);
     let session = vault
         .off_record_session_vault()
         .enter("sess-post-flip", OffRecordBackendClass::Local)
@@ -1700,7 +1901,7 @@ fn post_flip_emit_receipt_routes_on_record_and_survives_close() {
         "delivered_to_channel",
     );
     session.record_emit_receipt(r1).expect("record r1");
-    session.flip_on_record().expect("flip on record");
+    session.flip_on_record_as(&owner).expect("flip on record");
     session.record_emit_receipt(r2.clone()).expect("record r2");
     let outcome = session.close().expect("close");
     assert_eq!(outcome.emit_receipts_deleted, 1);
@@ -1736,6 +1937,7 @@ fn off_record_emit_receipts_still_evaporate_at_close() {
 #[test]
 fn flip_back_to_off_record_makes_new_emits_deletable_again() {
     let (_tmp, vault) = temp_vault();
+    let owner = crate::test_util::embedded_owner_proof(&vault);
     let session = vault
         .off_record_session_vault()
         .enter("sess-flip-back", OffRecordBackendClass::Local)
@@ -1752,7 +1954,7 @@ fn flip_back_to_off_record_makes_new_emits_deletable_again() {
             "delivered_to_channel",
         )
     };
-    session.flip_on_record().expect("flip on record");
+    session.flip_on_record_as(&owner).expect("flip on record");
     let r1 = receipt("r1");
     session.record_emit_receipt(r1.clone()).expect("record r1");
     session.flip_off_record().expect("flip off record");
@@ -1819,6 +2021,7 @@ fn anonymous_base_rows(vault: &Vault) -> Result<Vec<AnonymousRows>> {
 #[test]
 fn anonymous_witness_read_and_close_retain_no_rows_or_receipts() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    let owner = crate::test_util::embedded_owner_proof(&vault);
     let actor = seed_recallable_base_turn(&vault, "anonymousbaseneedle");
     let before = anonymous_base_rows(&vault)?;
     let session = vault
@@ -1894,7 +2097,7 @@ fn anonymous_witness_read_and_close_retain_no_rows_or_receipts() -> Result<()> {
     }
     assert_eq!(
         session
-            .promote_turn(&turn)
+            .promote_turn_as(&owner, &turn)
             .expect_err("cannot promote")
             .kind(),
         ErrorKind::OffRecordTalkOnly
@@ -2122,7 +2325,7 @@ fn assert_session_search_capture(capture: bool, on_record: bool) -> Result<()> {
         .off_record_session_vault()
         .enter("capture-room", OffRecordBackendClass::Local)?;
     if on_record {
-        session.flip_on_record()?;
+        session.flip_on_record_as(&crate::test_util::embedded_owner_proof(&vault))?;
     }
     let dispatcher = HostSelfDispatcher::for_off_record_session(
         &session,
