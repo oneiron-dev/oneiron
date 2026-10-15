@@ -120,6 +120,10 @@ impl DocumentRegistry {
         selector: &super::selector::SyncSelector,
         remote_vv: &[u8],
     ) -> Result<Vec<u8>> {
+        // The document's turn comes first: a wait past the row must not
+        // outlast the grant and selection that admit the export, so both are
+        // read after it.
+        let document = self.open_for(id, selector.member_ref.as_bytes())?;
         let selected =
             super::selector::filtered_window_doc(&self.vault, ledger, window, scope, selector)?;
         if !super::loro_support::map_contains_binary(&selected.get_map("entities"), &id.to_hex()) {
@@ -127,7 +131,7 @@ impl DocumentRegistry {
                 SyncProtocolValidation::DocumentAdmissionDenied,
             ));
         }
-        self.open_for(id, selector.member_ref.as_bytes())?.export(
+        document.export(
             &super::selector::encode_sync_selector(selector)?,
             remote_vv,
             scope,

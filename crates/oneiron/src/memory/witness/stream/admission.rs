@@ -97,7 +97,10 @@ impl Memory<'_> {
             seed,
             base: String::new(),
             pending: message.content.clone(),
-            last_op_at_ms: at,
+            // The idle clock starts once the stream holds its turn: time
+            // spent waiting for it is not the stream's idleness.
+            last_op_at_ms: at
+                .saturating_add(u64::try_from(turn.waited().as_millis()).unwrap_or(u64::MAX)),
             sequence: 0,
             emitted_chars: 0,
             dirty: true,

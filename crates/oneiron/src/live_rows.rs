@@ -182,6 +182,7 @@ struct Waiter {
 #[must_use = "live work holds its turn only as long as this is"]
 pub(crate) struct LivePermit {
     queue: Arc<Mutex<Queue>>,
+    waited: Duration,
 }
 
 impl LiveLine {
@@ -212,7 +213,7 @@ impl LiveLine {
             // means nobody is ahead.
             if queue.held < bound && queue.turns.is_empty() {
                 queue.held += 1;
-                return Ok(self.permit());
+                return Ok(self.permit(Duration::ZERO));
             }
             let waiter = Arc::new(Waiter::default());
             let line = queue.waiting.entry(key.to_vec()).or_default();
@@ -230,7 +231,8 @@ impl LiveLine {
             }
             waiter
         };
-        let deadline = Instant::now() + rows.wait;
+        let started = Instant::now();
+        let deadline = started + rows.wait;
         let mut granted = lock(&waiter.granted);
         while !*granted {
             let left = deadline.saturating_duration_since(Instant::now());
@@ -245,7 +247,7 @@ impl LiveLine {
         }
         drop(granted);
         self.settle(&waiter, key)
-            .then(|| self.permit())
+            .then(|| self.permit(started.elapsed()))
             .ok_or(LiveWaitedOut { row: self.row })
     }
 
@@ -268,9 +270,10 @@ impl LiveLine {
         false
     }
 
-    fn permit(&self) -> LivePermit {
+    fn permit(&self, waited: Duration) -> LivePermit {
         LivePermit {
             queue: Arc::clone(&self.queue),
+            waited,
         }
     }
 
@@ -312,6 +315,13 @@ impl Queue {
         if self.turns.is_empty() {
             self.asked = false;
         }
+    }
+}
+
+impl LivePermit {
+    /// How long the work waited for this turn; zero when one was free.
+    pub(crate) fn waited(&self) -> Duration {
+        self.waited
     }
 }
 
