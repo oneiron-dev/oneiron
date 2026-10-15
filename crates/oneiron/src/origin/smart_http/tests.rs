@@ -549,7 +549,12 @@ fn serve_publication_test_connection(
                 .apply_receive_pack_update(&repo, outcome)
                 .expect("the actual served outcome is journal-backed");
             assert!(replay.replayed);
-            assert_eq!(replay.receipt.record_key, first.receipt.record_key);
+            match (&replay.receipt, &first.receipt) {
+                (ReceivePackCertificate::Wire(replay), ReceivePackCertificate::Wire(first)) => {
+                    assert_eq!(replay.record_key, first.record_key);
+                }
+                other => panic!("a served advance lands through its wire record: {other:?}"),
+            }
             for field in 0..3 {
                 let mut tampered = outcome.clone();
                 match field {

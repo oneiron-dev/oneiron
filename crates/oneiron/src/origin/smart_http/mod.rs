@@ -97,7 +97,9 @@ pub use self::evidence::{ObservedRef, PackStats, ReceivePackOutcome, RefUpdate};
 pub(super) use self::evidence::{RECEIVE_PACK_ADMISSION_PREDICATE, RECEIVE_PACK_OUTCOME_PREDICATE};
 pub use self::hooks::DoorHooksDir;
 pub use self::intent::{ReceivePackRefResult, ReceivePackRefStatus};
-pub use self::landing::{ReceivePackAttribution, ReceivePackLanding, refs_already_applied};
+pub use self::landing::{
+    ReceivePackAttribution, ReceivePackCertificate, ReceivePackLanding, refs_already_applied,
+};
 pub use self::paths::{
     DOOR_PRE_RECEIVE_HOOK_NAME, DOOR_WINDOW_TIMEOUT, ORIGIN_DOOR_ROOT_NAME, ORIGIN_MAX_REF_UPDATES,
     ORIGIN_MAX_REPO_NAME_BYTES, ORIGIN_REFUSED_REF_PREFIX, ORIGIN_REPO_DIR_SUFFIX,
