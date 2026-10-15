@@ -1,7 +1,6 @@
 //! Existing TASK intent and follow-up facts projected onto a room thread.
 use super::{TaskAssignee, wire_decode::task_verb_body_in};
 use crate::memory::{Memory, MemoryResult};
-use crate::ports::EntityStoreRead;
 use crate::workspace_roster::RoomThreadTask;
 use crate::{EntityId, Error};
 use std::collections::BTreeSet;
@@ -39,16 +38,24 @@ pub(super) fn thread_tasks_capped(
     let scoped = memory
         .read_lane(crate::claim::ClaimReadStatus::Surfaceable)?
         .for_audience(&audience);
+    vault.backfill_tasks_by_owner()?;
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     // Off this device a TASK a device-local world keeps is no match, nor
     // counts toward the census guard (DEC-0005).
     let kept = crate::settings::device_local_worlds_at(vault, &txn, memory.locality())?;
+    // Only a TASK a room member owns can match, so the read walks the
+    // members' tasks through the owner index, never every TASK in the vault
+    // (F13); each one's live authority is rechecked below.
+    let mut owned = BTreeSet::new();
+    for member in &audience {
+        owned.extend(super::owner_index::indexed_tasks_of_in(
+            &vault.store,
+            &txn,
+            member,
+        )?);
+    }
     let mut candidates = Vec::new();
-    for row in vault
-        .store
-        .port_entity_ids_by_type(&txn, crate::registry::ENTITY_TYPE_TASK, None)?
-    {
-        let id = row?;
+    for id in owned {
         if crate::settings::device_local_keeps_among(&vault.store, &txn, &kept, &id)? {
             continue;
         }
@@ -80,8 +87,8 @@ pub(super) fn thread_tasks_capped(
         if !members.contains(&authority.owner_ref.to_hex()) {
             continue;
         }
-        // Exhaust the shared TASK index for an exact room-local census.
-        // No persisted thread→TASK index is added: this issue forbids new
+        // Exhaust the members' tasks for an exact room-local census. No
+        // persisted thread→TASK index is added: this issue forbids new
         // stored state. The guard applies to relevant rows, not unrelated
         // TASKs belonging to other rooms in the vault.
         if candidates.len() == cap {

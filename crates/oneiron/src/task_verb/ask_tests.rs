@@ -3551,3 +3551,50 @@ fn task_scans_off_this_device_count_no_device_local_task() -> Result<()> {
     assert!(census(CallerLocality::OnDevice).is_err());
     Ok(())
 }
+
+/// F13 H431: a room thread read walks the room members' tasks, never every
+/// TASK in the vault. An unrelated TASK no member owns, whose body no longer
+/// reads, costs the read nothing.
+#[test]
+fn a_room_thread_read_walks_only_its_members_tasks() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let root = EntityId::now();
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_create(&TaskCreateSpec::new(
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("thread_ref"),
+                rmpv::Value::from(root.to_hex()),
+            )]),
+            None,
+            None,
+            None,
+        ))?;
+    let unrelated = EntityId::from_bytes([0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])?;
+    vault.with_write_txn(|wtxn| {
+        let payload = crate::test_util::entity_record(
+            crate::registry::ENTITY_TYPE_TASK,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            &[0xC1],
+        );
+        vault
+            .store
+            .entities
+            .put(wtxn, unrelated.as_bytes(), &payload)?;
+        let type_key =
+            crate::store::Store::encode_type_key(crate::registry::ENTITY_TYPE_TASK, &unrelated);
+        vault.store.type_index.put(wtxn, &type_key, &[])?;
+        Ok(())
+    })?;
+
+    let roots = std::collections::BTreeMap::from([(root, root)]);
+    let members = std::collections::BTreeSet::from([owner.to_hex()]);
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let tasks = super::room_thread::thread_tasks(&memory, &roots, &members, 1)
+        .expect("the members' tasks read");
+    assert_eq!(tasks.len(), 1);
+    Ok(())
+}
