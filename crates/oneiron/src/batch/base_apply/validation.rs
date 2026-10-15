@@ -1,6 +1,5 @@
 use super::*;
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_SKILL};
-use crate::secret_custody::validate_replicated_custody_put;
 
 type PreflightDecisionIds = HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>;
 
@@ -85,13 +84,13 @@ pub(super) fn validate_put_type(
             entity_type,
         )));
     }
-    // Same-vault custody replication is opt-out per credential. A
-    // remote portable body cannot widen a locally narrowed record.
+    // A replayed custody body carries no owner proof, so no replica stores
+    // one: a peer could otherwise rewrite a value or revive a revoked record.
     if allow_maintenance
         && allow_reserved_predicate
         && entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
     {
-        validate_replicated_custody_put(store, wtxn, id, data)?;
+        return Err(crate::secret_custody::reject_secret_custody_byte());
     }
     if crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle {
         store.validate_pack_handle_in_txn(wtxn, entity_type)?;
@@ -106,6 +105,8 @@ pub(super) fn validate_put_type(
     if !(allow_maintenance && allow_reserved_predicate) {
         crate::sync::residence::require_promoted_for_cached_id(store, wtxn, id)?;
     }
+    #[cfg(not(feature = "sync"))]
+    let _ = id;
     Ok(entity_type)
 }
 
