@@ -186,7 +186,7 @@ fn project(
                 store,
                 txn,
                 id,
-                crate::gate::ConsolidationReader::ArrivalProjection,
+                crate::gate::ConsolidationReader::ArrivalFact,
             )?
         {
             continue;

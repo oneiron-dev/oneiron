@@ -515,20 +515,24 @@ pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
 /// owner clears it. The attachment is the claim's pending-consent row with a
 /// critical-confirm reason, and only settlement removes it. A timed-out row
 /// keeps the claim ineligible, so expiry follows the sweep: a row past its
-/// deadline that the sweep has not reached yet still counts. Retrieval
-/// ([`crate::claim::claim_surfaceable`]) never asks this.
+/// deadline that the sweep has not reached yet still counts. A ceremony a
+/// replicated overwrite invalidated was never settled either, so its durable
+/// invalidation keeps the claim ineligible until a new local ceremony
+/// replaces it. Retrieval ([`crate::claim::claim_surfaceable`]) never asks
+/// this.
 pub(crate) fn claim_critical_confirm_settled_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     claim_id: &EntityId,
 ) -> Result<bool> {
-    Ok(!store
+    let attached = store
         .pending_gate_consent_in_txn(txn, claim_id)?
         .is_some_and(|row| {
             row.reason_codes
                 .iter()
                 .any(|reason| reason.contains("critical_confirm"))
-        }))
+        });
+    Ok(!attached && !store.critical_confirm_invalidation_exists_in_txn(txn, claim_id)?)
 }
 
 pub(crate) fn critical_write_confirm_binding(

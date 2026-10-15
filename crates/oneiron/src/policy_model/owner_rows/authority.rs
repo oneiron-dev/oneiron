@@ -158,6 +158,29 @@ impl Vault {
         is_live_vault_owner_in_txn(self, &txn, &owner.actor())
     }
 
+    /// Authenticates `actor` only if this vault records it as an owner: its
+    /// embedded owner, or one of its live owners. `None` for anyone else,
+    /// whose request is an ordinary one. A recorded owner that no longer
+    /// authenticates (a deleted, merged or split PERSON) is an error, so a
+    /// door binding an owner proof refuses it instead of treating its request
+    /// as an ordinary one.
+    pub fn authenticate_recorded_owner(
+        &self,
+        actor: EntityId,
+        principal_ref: &str,
+        decision_id: crate::store::GateDecisionId,
+    ) -> Result<Option<crate::consent::AuthenticatedOwner>> {
+        let recorded = actor == crate::vault::embedded_owner_actor_id()? || {
+            let txn = self.store.env.read_txn()?;
+            is_live_vault_owner_in_txn(self, &txn, &actor)?
+        };
+        if !recorded {
+            return Ok(None);
+        }
+        self.authenticate_owner(actor, principal_ref, true, decision_id)
+            .map(Some)
+    }
+
     /// Everyone whose membership confers authority now: the embedded owner of
     /// a personal vault, or every live member of a shared one, whatever role.
     pub(crate) fn live_member_ids(&self) -> Result<BTreeSet<EntityId>> {

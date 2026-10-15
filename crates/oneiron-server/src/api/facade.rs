@@ -152,9 +152,10 @@ fn facade_room_turn(headers: &HeaderMap) -> Result<Option<EntityId>, FacadeApiEr
 
 /// The proof a write carries when the vault's owner makes it in person, on the
 /// owner's own undelegated full slip: owner-authored writes carry their own
-/// confirmation. `None` for any other credential, which writes as itself. A
-/// credential that is the owner's own but no longer holds is refused, never
-/// downgraded to an ordinary write.
+/// confirmation. `None` for any other credential, which writes as itself. The
+/// owner's own credential that no longer holds (revoked, or its PERSON
+/// deleted, merged or split) is refused, never downgraded to an ordinary
+/// write.
 pub(super) fn owner_authorship(
     auth: &CoreAuth,
     server: &SyncServer,
@@ -177,15 +178,14 @@ pub(super) fn owner_authorship(
     if server.managed_issuer.is_some() || !auth.is_owner_grade() {
         return Ok(None);
     }
-    let Ok(owner) = server.vault().authenticate_owner(
-        actor,
-        principal,
-        true,
-        oneiron::store::GateDecisionId::now(),
-    ) else {
+    let refused = || ApiError::forbidden_scope("owner");
+    let Some(owner) = server
+        .vault()
+        .authenticate_recorded_owner(actor, principal, oneiron::store::GateDecisionId::now())
+        .map_err(|_| refused())?
+    else {
         return Ok(None);
     };
-    let refused = || ApiError::forbidden_scope("owner");
     if !server
         .vault()
         .is_live_vault_owner(&owner)

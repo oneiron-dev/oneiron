@@ -1,6 +1,6 @@
 //! Claim-scoped critical-confirm invalidation closures.
 
-use heed::RwTxn;
+use heed::{RoTxn, RwTxn};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -31,7 +31,7 @@ impl RawValue for CriticalConfirmInvalidationRecord {
 impl Store {
     pub(crate) fn critical_confirm_invalidation_exists_in_txn(
         &self,
-        txn: &RwTxn<'_>,
+        txn: &RoTxn<'_>,
         claim_id: &EntityId,
     ) -> Result<bool> {
         let Some(record) = INVALIDATION.get(self, txn, claim_id)? else {

@@ -15,6 +15,11 @@ use super::resolution::{GateRetentionContext, resolve_policy_manifest};
 
 /// Called only for a new or changed replicated body, after put validation.
 /// Replication still lands the peer's bytes; its Auto stamp is not a local Clear.
+///
+/// An ordinary pending row this device holds reviewed an earlier body, so it
+/// cannot hold the arriving Auto revision: this device's own confirm replaces
+/// it. A critical-confirm row already holds the claim, and an invalidated
+/// ceremony stays held by its durable invalidation.
 pub(crate) fn attach_replicated_critical_confirm_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -24,7 +29,13 @@ pub(crate) fn attach_replicated_critical_confirm_in_txn(
     if body.lifecycle != ClaimLifecycleStatus::Active
         || body.approval != ClaimApprovalStatus::Auto
         || body.predicate.starts_with("comm.")
-        || store.pending_gate_consent_in_txn(wtxn, claim_id)?.is_some()
+        || store
+            .pending_gate_consent_in_txn(wtxn, claim_id)?
+            .is_some_and(|row| {
+                row.reason_codes
+                    .iter()
+                    .any(|reason| reason.contains("critical_confirm"))
+            })
         || store.critical_confirm_invalidation_exists_in_txn(wtxn, claim_id)?
     {
         return Ok(());
