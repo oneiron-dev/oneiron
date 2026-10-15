@@ -138,6 +138,10 @@ fn a_forged_signature_in_an_untrusted_pack_grants_the_dreamer_nothing() -> Resul
             dummy_envelope.provenance().clone(),
             dummy_envelope.approval(),
         );
+        // The Dreamer is a machine writer: it signs as the engine's own
+        // writer does, so only the gate decides.
+        let envelope =
+            crate::test_util::sign_machine_candidate(&vault, &claim_id, &candidate, &envelope);
         vault
             .batch()
             .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
