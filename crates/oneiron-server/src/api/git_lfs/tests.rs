@@ -1447,3 +1447,37 @@ async fn a_small_upload_claims_what_any_object_takes_on_the_disk() {
         "4 KiB past the reserve is no room for an object's own pages and rows"
     );
 }
+
+/// Review r6 (Astra, P1): a stored copy claimed a quarter more than its
+/// bytes, which covers whole-page rounding only on 4 KiB pages. LMDB writes
+/// in the creating host's page (16 KiB on Apple silicon, up to 32 KiB), and a
+/// chunk of the 32 KiB minimum then takes two such pages, so uploads could
+/// write the reserve away within their claims. A stored copy now claims a
+/// page more for each chunk it may have, in the store's own page size.
+#[tokio::test]
+async fn a_store_writing_larger_pages_claims_a_page_more_for_each_chunk() {
+    let (_dir, server) = test_server(secret_config());
+    let reserve = server.config.limits.disk_reserve_bytes;
+    // A 1 MiB object: its spool, then a stored copy of up to 33 chunks.
+    let object: Vec<u8> = (0..1024 * 1024_u32)
+        .map(|at| (at.wrapping_mul(2_654_435_761) >> 24) as u8)
+        .collect();
+    // Room for the spool and a quarter more than the object, past the reserve.
+    server
+        .transfers
+        .disk
+        .show_free(reserve + 2 * 1024 * 1024 + 512 * 1024);
+
+    server.transfers.show_page(32 * 1024);
+    assert_eq!(
+        put(&server, &writer_token(), &object).await,
+        StatusCode::INSUFFICIENT_STORAGE,
+        "on 32 KiB pages its 33 chunks may take a page more each"
+    );
+    server.transfers.show_page(4 * 1024);
+    assert_eq!(
+        put(&server, &writer_token(), &object).await,
+        StatusCode::OK,
+        "on 4 KiB pages the same room holds it"
+    );
+}
