@@ -222,10 +222,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         apply_context_pack_response_retrieval_budget(&mut pack.value, response_budget);
         pack.value.results.truncate(request.limit);
         pack.value.neighbors.truncate(max_neighbors);
-        scrub_context_pack_visible_stats(
-            &mut pack.value,
-            self.scoped_read.actor_key().reads_as_vault_owner(),
-        );
+        scrub_context_pack_visible_stats(&mut pack.value, self.scoped_read.reads_whole_vault());
         // Publish LAST, off the post-filter, post-truncate pack: the durable
         // run row then carries exactly the ids this actor received, so a
         // denied entity is as absent from telemetry as it is from the

@@ -1374,10 +1374,65 @@ async fn a_narrowed_readers_empty_pack_reads_alike_beside_a_hidden_match() {
     assert_eq!(before.0["reason"], "filter_matched_none", "{before:?}");
 }
 
+/// F19 review round 2 (Sol F1, Astra F1): an owner-grade pack whose
+/// interlocutors narrow its read does not read the whole vault. Its empty
+/// pack reads alike whether or not a row its audience cannot read matches.
+#[tokio::test]
+async fn an_audience_narrowed_owner_pack_reads_alike_beside_a_hidden_match() {
+    let (_dir, server) = interlocutor_test_server();
+    let subject = seed_text_turn(&server, "meadow walk");
+    let request = json!({
+        "query": "larkspur20",
+        "limit": 10,
+        "interlocutors": {
+            "third_parties": [{ "label": "unknown speaker", "claimed_owner": false }]
+        }
+    });
+    let empty = || async {
+        let (status, body) = owner_json(
+            server.clone(),
+            "POST",
+            "/v1/core/context-pack",
+            Some(&request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["results"], json!([]), "{body}");
+        (body["state"].clone(), body["empty"].clone())
+    };
+    let before = empty().await;
+    // A public base-world claim the clamp admits. The audience the
+    // interlocutors name resolves to no person, so it reads no row.
+    let mut claim = oneiron::ClaimBody::new(
+        "event.note",
+        oneiron::ClaimSubject::Entity(subject),
+        rmpv::Value::from("larkspur20 public note"),
+        1.0,
+        oneiron::ClaimApprovalStatus::Auto,
+        oneiron::ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    claim.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("sensitivity"),
+        rmpv::Value::from("public"),
+    )]));
+    server
+        .vault
+        .put_claim(
+            &oneiron::EntityId::now(),
+            &claim,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .unwrap();
+    assert_eq!(empty().await, before, "a hidden match reads as no match");
+}
+
 /// F19 review round 1 (Astra F2): the clamp's count names a withheld TURN
 /// only when the reader may retrieve it. A TURN whose message the reader
 /// cannot read is not, so a query only that message's words match reads as
-/// one nothing matches.
+/// one nothing matches. (On round 1's point-read count the same TURN counts
+/// once.)
 #[tokio::test]
 async fn a_clamped_turn_whose_message_the_reader_cannot_read_moves_no_count() {
     let (_dir, server) = interlocutor_test_server();
@@ -1409,7 +1464,9 @@ async fn a_clamped_turn_whose_message_the_reader_cannot_read_moves_no_count() {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["disclosure"]["mode"], "absence_clamp", "{body}");
         assert_eq!(body["results"], json!([]), "{body}");
-        body["disclosure"]["clamped_out"].clone()
+        body["disclosure"]["clamped_out"]
+            .as_u64()
+            .expect("clamp count")
     };
     let before = clamped().await;
     // A turn whose one message the owner marked Tier A: the clamp withholds
@@ -1417,6 +1474,14 @@ async fn a_clamped_turn_whose_message_the_reader_cannot_read_moves_no_count() {
     let turn = oneiron::EntityId::now();
     let message = oneiron::EntityId::now();
     witness_vad_message_fixture(&server, &turn, &message, "sorrel19 private words", 100);
+    // The turn's own text holds its message's words, so the turn itself is a
+    // candidate the query retrieves.
+    server
+        .vault
+        .batch()
+        .text(&turn, &[("body", "sorrel19 private words")])
+        .commit()
+        .expect("index the turn's text");
     server
         .vault
         .set_disclosure_tier_a(&message, 101)
@@ -1426,5 +1491,5 @@ async fn a_clamped_turn_whose_message_the_reader_cannot_read_moves_no_count() {
         before,
         "an unreadable message moves no count"
     );
-    assert_eq!(before, json!(0));
+    assert_eq!(before, 0);
 }

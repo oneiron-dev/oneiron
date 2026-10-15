@@ -229,8 +229,7 @@ pub(crate) async fn run_context_pack(
             results: req.limit,
             neighbors: max_neighbors,
             retrieval: retrieval_budget,
-            whole_vault: req.conversation_id.is_none()
-                && super::super::core_auth_reads_whole_vault(auth, &scoped_read),
+            whole_vault: req.conversation_id.is_none() && scoped_read.reads_whole_vault(),
         },
         memories,
         disclosure,
@@ -520,8 +519,8 @@ pub(crate) struct ContextPackResponseLimits {
     pub(crate) results: usize,
     pub(crate) neighbors: usize,
     pub(crate) retrieval: oneiron::ContextPackRetrievalBudget,
-    /// The caller reads the whole vault (`core_auth_reads_whole_vault`) and
-    /// no room narrows it: only then does an empty pack keep its reason.
+    /// The pack's read reads the whole vault (`ScopedRead::reads_whole_vault`)
+    /// and no room narrows it: only then does an empty pack keep its reason.
     pub(crate) whole_vault: bool,
 }
 
