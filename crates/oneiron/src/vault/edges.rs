@@ -299,7 +299,7 @@ impl Vault {
     /// This is the bounded counterpart to [`Self::sources`]. Results follow
     /// the LMDB inbound edge key order `[target | kind | source]`, so
     /// `after_source` is an exclusive lower bound on the source entity id.
-    /// The page reads at most [`EDGE_PAGE_SCAN_ROWS`] edges (or `limit`, if
+    /// The page reads at most `EDGE_PAGE_SCAN_ROWS` edges (or `limit`, if
     /// more), so sources of another type cost a bounded page, not the whole
     /// edge run; a short page goes on from its `resume_after`.
     pub fn sources_page(

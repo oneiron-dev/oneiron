@@ -308,18 +308,13 @@ pub(super) fn standing_composition_in_txn(
     first: &EntityId,
     memo: &[u8; 32],
 ) -> Result<Option<EntityId>> {
-    let candidates = match vault.filtered_edge_peers(
+    let candidates = vault.filtered_edge_peers(
         txn,
         crate::ports::EdgeDirection::In,
         first,
         EdgeKind::DerivedFrom,
         Some(ENTITY_TYPE_SUMMARY),
-    ) {
-        Ok(candidates) => candidates,
-        // Too many to scan: compose afresh rather than guess.
-        Err(Error::IndexOverflow(_)) => return Ok(None),
-        Err(error) => return Err(error),
-    };
+    )?;
     for candidate in candidates {
         if crate::ports::stale_in_txn(&vault.store, txn, &candidate)? {
             continue;

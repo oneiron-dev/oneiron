@@ -27,6 +27,9 @@ use std::{
 const DOMAIN: &str = "oneiron/mesh-machine/v1";
 const AUTH_DOMAIN: &[u8] = b"oneiron/mesh-authority/v1\0";
 const BIND_DOMAIN: &[u8] = b"oneiron/mesh-machine-binding/v1\0";
+/// MACHINE rows a lookup any endpoint key can make reads before it refuses:
+/// a stranger's work stays bounded until an endpoint index serves it.
+const MAX_LOOKUP_MACHINES: usize = 1024;
 const MAX_ALPNS: usize = 32;
 
 /// Address hints. This structure has no authority by itself.
@@ -141,8 +144,9 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.mesh_machine_by_endpoint_in_txn(&txn, key, None)
     }
-    /// Every MACHINE is read, however many the owner keeps (rule 5); `count`
-    /// is the owner's, when the owner's own work asks.
+    /// The owner's bind reads every MACHINE, however many the owner keeps
+    /// (rule 5), and counts them in `count`. A lookup any endpoint key can
+    /// make (`count` is `None`) is a stranger's work and stays bounded.
     fn mesh_machine_by_endpoint_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -150,11 +154,14 @@ impl Vault {
         mut count: Option<&mut ScanCount>,
     ) -> Result<Option<(EntityId, MeshMachineAddress)>> {
         let mut found = None;
-        for id in
+        for (seen, id) in
             EntityStoreRead::port_entity_ids_by_type(&self.store, txn, ENTITY_TYPE_MACHINE, None)?
+                .enumerate()
         {
-            if let Some(count) = count.as_deref_mut() {
-                count.row();
+            match count.as_deref_mut() {
+                Some(count) => count.row(),
+                None if seen >= MAX_LOOKUP_MACHINES => return Err(invalid_authority()),
+                None => {}
             }
             let id = id?;
             if let Some(row) = self.mesh_machine_in_txn(txn, id)?

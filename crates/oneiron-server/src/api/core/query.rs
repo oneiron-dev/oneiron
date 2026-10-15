@@ -257,9 +257,6 @@ pub(crate) struct CoreListQuery {
     pub(crate) count_mode: CountMode,
 }
 
-/// Rows one core list page reads at most before it hands back a cursor.
-const CORE_LIST_SCAN_ROWS: usize = 4_096;
-
 pub(crate) fn core_list_limit(limit: usize) -> usize {
     limit.min(CORE_MAX_LIST_LIMIT)
 }
@@ -277,47 +274,21 @@ where
         return Ok((Vec::new(), None));
     }
 
-    let mut cursor = after;
+    // One bounded run of edges per page: deleted shells are read too, and a
+    // page they leave short resumes where the run stopped (F13).
+    let fetched = fetch(after.as_ref(), limit.saturating_add(1))?;
     let mut ids = Vec::with_capacity(limit);
-    let mut next_cursor = None;
-    // Deleted shells are read too: the list stops at a bounded number of
-    // rows read and resumes from the last, never at a count of rows kept
-    // (F13).
-    let mut read = 0_usize;
-
-    while next_cursor.is_none() {
-        let remaining = limit.saturating_sub(ids.len());
-        let fetch_limit = if remaining == 0 {
-            1
-        } else {
-            remaining.saturating_add(1)
-        };
-        let fetched = fetch(cursor.as_ref(), fetch_limit)?;
-        let stopped_short = fetched.ids.len() < fetch_limit;
-        read = read.saturating_add(fetched.ids.len());
-        for id in fetched.ids {
-            if is_deleted_shell_for_core_list(vault, &id)? {
-                continue;
-            }
-            if ids.len() < limit {
-                ids.push(id);
-            } else {
-                next_cursor = ids.last().map(oneiron::EntityId::to_hex);
-                break;
-            }
+    for id in fetched.ids {
+        if is_deleted_shell_for_core_list(vault, &id)? {
+            continue;
         }
-        if next_cursor.is_some() {
-            break;
+        if ids.len() == limit {
+            let next_cursor = ids.last().map(oneiron::EntityId::to_hex);
+            return Ok((ids, next_cursor));
         }
-        let Some(resume_after) = fetched.resume_after else {
-            break;
-        };
-        cursor = Some(resume_after);
-        if stopped_short || read >= CORE_LIST_SCAN_ROWS {
-            next_cursor = Some(resume_after.to_hex());
-        }
+        ids.push(id);
     }
-
+    let next_cursor = fetched.resume_after.as_ref().map(oneiron::EntityId::to_hex);
     Ok((ids, next_cursor))
 }
 

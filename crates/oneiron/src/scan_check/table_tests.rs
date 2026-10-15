@@ -511,8 +511,10 @@ fn a_canonical_receipt_window_reads_past_the_old_cap() {
     const PAST_THE_OLD_CAP: usize = 100_001;
     const CHUNK: usize = 10_000;
     let dir = tempfile::tempdir().expect("vault dir");
-    let mut config = crate::VaultConfig::default();
-    config.map_size = 1024 * 1024 * 1024;
+    let config = crate::VaultConfig {
+        map_size: 1024 * 1024 * 1024,
+        ..crate::VaultConfig::default()
+    };
     let vault = Vault::open(dir.path(), config).expect("open");
     for start in (0..PAST_THE_OLD_CAP).step_by(CHUNK) {
         vault
@@ -543,8 +545,10 @@ fn a_canonical_receipt_window_reads_past_the_old_cap() {
 fn a_memory_timeline_reads_past_the_old_cap() {
     const PAST_THE_OLD_CAP: usize = 10_001;
     let dir = tempfile::tempdir().expect("vault dir");
-    let mut config = crate::VaultConfig::default();
-    config.map_size = 256 * 1024 * 1024;
+    let config = crate::VaultConfig {
+        map_size: 256 * 1024 * 1024,
+        ..crate::VaultConfig::default()
+    };
     let vault = Vault::open(dir.path(), config).expect("open");
     vault
         .with_write_txn(|wtxn| supersession_chain(&vault, wtxn, 0x56, PAST_THE_OLD_CAP))
