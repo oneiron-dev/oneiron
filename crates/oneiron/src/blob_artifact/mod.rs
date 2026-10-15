@@ -46,9 +46,7 @@ pub(crate) use self::erase::{
     release_erased_bytes_in_txn, take_erase_scope_in_txn, unerased_holdings_in_txn,
 };
 #[cfg(any(feature = "sync", test))]
-pub(crate) use self::erase::{
-    LateReach, LateReference, body_holding_in_txn, late_reference_in_txn,
-};
+pub(crate) use self::erase::{LateReach, body_holding_in_txn, late_reference_in_txn};
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 pub use self::provenance::BlobVersionProvenance;
 pub(crate) use self::references::{

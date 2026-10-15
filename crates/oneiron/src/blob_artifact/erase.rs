@@ -306,6 +306,9 @@ pub(crate) fn late_reference_in_txn(
     }))
 }
 
+/// An erase's tombstone wire value, and whether a walk here already took the bytes it erased.
+pub(crate) type BytesErase = (Vec<u8>, bool);
+
 /// The erase that took the bytes `hash` names here, with whether a walk here already took them:
 /// an erase whose tombstone named their ASSET took them too, though no body here named the bytes
 /// before.
@@ -313,7 +316,7 @@ pub(crate) fn bytes_erase_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     hash: &ContentHash,
-) -> Result<Option<(Vec<u8>, bool)>> {
+) -> Result<Option<BytesErase>> {
     if let Some(erase) = ERASED_CONTENT.get(store, txn, hash)? {
         return Ok(Some((erase, true)));
     }
@@ -334,7 +337,7 @@ pub(crate) fn body_holding_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     body: &[u8],
-) -> Result<(Holding, Option<(Vec<u8>, bool)>)> {
+) -> Result<(Holding, Option<BytesErase>)> {
     let hash = *blake3::hash(body).as_bytes();
     let asset = blob_artifact_asset_entity_id(&hash)?;
     let erase = bytes_erase_in_txn(store, txn, &hash)?;

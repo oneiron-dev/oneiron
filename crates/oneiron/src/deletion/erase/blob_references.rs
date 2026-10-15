@@ -363,7 +363,7 @@ impl Vault {
     }
 
     /// ARCH-0005a at replicated ingest, BEFORE the delete-wins shortcut: an ASSET carrying bytes a
-    /// hard erase took here, and a late `blob.version` claim ([`crate::blob_artifact::LateReference`]),
+    /// hard erase took here, and a late `blob.version` claim (a `LateReference`),
     /// never materialize. A body at an id a tombstone already took still teaches which bytes the
     /// erase took. A refused id is fenced, so the export door drops its carrier, with a sweep row
     /// for it.
