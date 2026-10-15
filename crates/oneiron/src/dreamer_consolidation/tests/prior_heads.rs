@@ -686,6 +686,38 @@ fn exact_persisted_head_attaches_evidence_without_judge_or_duplicate_and_survive
     Ok(())
 }
 
+/// F26 H327: an evidence attachment is an Auto write by the Dreamer actor, so
+/// it counts on that actor's own-rate window like a promoted claim; past the
+/// threshold it leaves the typed check and still lands. It used to write no
+/// count at all.
+#[test]
+fn an_evidence_attachment_counts_on_the_agents_auto_write_rate() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = fixture(&vault)?;
+    let actor = fx.run.agent_actor.entity_ref();
+    let kind = crate::own_rate::OwnRateKind::AutoWrite;
+    assert!(vault.own_rate_check(actor, kind)?.is_none());
+    crate::own_rate::set_auto_write_threshold_for_test(Some(0));
+    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Oleksii"))]);
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    let executed = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone());
+    crate::own_rate::set_auto_write_threshold_for_test(None);
+    assert!(matches!(
+        executed?,
+        DreamerAttemptExecution::Completed { .. }
+    ));
+    assert_eq!(
+        vault.sources(&fx.head, EdgeKind::Supports, None)?,
+        vec![fx.turn],
+        "the attachment landed"
+    );
+    assert!(
+        vault.own_rate_check(actor, kind)?.is_some(),
+        "FAILBEFORE H327: an evidence attachment left no Auto-write count"
+    );
+    Ok(())
+}
+
 /// Sol review #1364 round 2: a branch bound to another project never moves
 /// default-project evidence into that project (ONE-1592 P3). The turn and
 /// the head sit in the default project, so nothing lands and nothing
@@ -1233,6 +1265,53 @@ fn a_correction_on_an_unregistered_predicate_lands_with_its_grant() -> Result<()
     assert_eq!(
         vault.get_claim(&fx.head)?.expect("closed").lifecycle,
         crate::ClaimLifecycleStatus::Superseded
+    );
+    Ok(())
+}
+
+/// F26 H327: a replacement the Dreamer lands through its deferred grant is an
+/// Auto write like any other, so it counts on the agent's own-rate window.
+/// Staged Proposed, it used to land Auto with nothing counted. Past the
+/// threshold it still lands Auto and leaves the typed check.
+#[test]
+fn a_granted_correction_counts_on_the_agents_auto_write_rate() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = provisional_fixture(&vault)?;
+    criticality(&vault, "critical", &[])?;
+    let pin = PreparedWake::capture_with_grants(
+        &vault,
+        DreamerConsolidationScope::Micro,
+        Some(&fx.scope),
+    )?;
+    let backend = ScriptedBackend::new(vec![Ok(correct(&fx, "Alex"))]);
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    crate::own_rate::set_auto_write_threshold_for_test(Some(0));
+    let pass = execute_at_pin(
+        &vault,
+        &fx,
+        &backend,
+        &mut sink,
+        fx.scope.clone(),
+        Some(&pin),
+    );
+    crate::own_rate::set_auto_write_threshold_for_test(None);
+    pass.unwrap_or_else(|error| panic!("the pass refused: {error}; {:?}", sink.outcome));
+    let [new] = sink.outcome.landed.as_slice() else {
+        panic!("one granted replacement: {:?}", sink.outcome);
+    };
+    assert_eq!(
+        vault.get_claim(new)?.expect("replacement").approval,
+        ClaimApprovalStatus::Auto,
+        "the count never holds the write"
+    );
+    let check = vault.own_rate_check(
+        fx.run.agent_actor.entity_ref(),
+        crate::own_rate::OwnRateKind::AutoWrite,
+    )?;
+    assert_eq!(
+        check.map(|check| (check.count, check.threshold)),
+        Some((1, 0)),
+        "FAILBEFORE H327: a granted replacement was not counted"
     );
     Ok(())
 }
@@ -3430,5 +3509,115 @@ fn a_stored_reply_decode_cannot_wholly_take_never_wedges_a_resume() -> Result<()
         !verdict.contains("\"Sam\"") && !verdict.contains("\"Kit\""),
         "{verdict}"
     );
+    Ok(())
+}
+
+/// F26 H327, the auto-write invariant: every claim the Dreamer's
+/// consolidation writer lands as Auto counts once on the Dreamer actor's own
+/// window, in the transaction that lands it, whichever door lands it, and the
+/// count never holds the write. Each door in `AutoWriteDoor::ALL` lands one
+/// Auto write with the threshold at zero: the write lands, the window counted
+/// exactly one, and the door that landed it is the one that counted it.
+#[test]
+fn every_consolidation_door_counts_its_auto_write_once() -> Result<()> {
+    use crate::own_rate::{AutoWriteDoor, OwnRateKind};
+    for &door in AutoWriteDoor::ALL {
+        let (_dir, vault) = open_vault();
+        let _ = crate::own_rate::take_counted_auto_writes();
+        let (fx, landed) = match door {
+            AutoWriteDoor::Promotion => {
+                let fx = fixture(&vault)?;
+                let backend = ScriptedBackend::new(vec![Ok(text_response(
+                    serde_json::json!({"candidates": [{
+                        "subject": fx.subject.to_hex(), "predicate": "profile.nickname",
+                        "value": "Olek", "confidence": 0.9,
+                        "evidence_refs": [{"source_id": fx.turn.to_hex(), "byte_range": [0, 1]}],
+                    }]})
+                    .to_string(),
+                ))]);
+                let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+                crate::own_rate::set_auto_write_threshold_for_test(Some(0));
+                let pass = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone());
+                crate::own_rate::set_auto_write_threshold_for_test(None);
+                pass.unwrap_or_else(|error| {
+                    panic!("the pass refused: {error}; {:?}", sink.outcome)
+                });
+                let [new] = sink.outcome.landed.as_slice() else {
+                    panic!("one promoted claim: {:?}", sink.outcome);
+                };
+                let new = *new;
+                drop(sink);
+                (fx, new)
+            }
+            AutoWriteDoor::Attachment => {
+                let fx = fixture(&vault)?;
+                let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Oleksii"))]);
+                let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+                crate::own_rate::set_auto_write_threshold_for_test(Some(0));
+                let pass = execute(&vault, &fx, &backend, &mut sink, fx.scope.clone());
+                crate::own_rate::set_auto_write_threshold_for_test(None);
+                pass.unwrap_or_else(|error| {
+                    panic!("the pass refused: {error}; {:?}", sink.outcome)
+                });
+                drop(sink);
+                assert_eq!(
+                    vault.sources(&fx.head, EdgeKind::Supports, None)?,
+                    vec![fx.turn],
+                    "the attachment landed"
+                );
+                let head = fx.head;
+                (fx, head)
+            }
+            AutoWriteDoor::DeferredGrant => {
+                let fx = provisional_fixture(&vault)?;
+                criticality(&vault, "critical", &[])?;
+                let pin = PreparedWake::capture_with_grants(
+                    &vault,
+                    DreamerConsolidationScope::Micro,
+                    Some(&fx.scope),
+                )?;
+                let backend = ScriptedBackend::new(vec![Ok(correct(&fx, "Alex"))]);
+                let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+                crate::own_rate::set_auto_write_threshold_for_test(Some(0));
+                let pass = execute_at_pin(
+                    &vault,
+                    &fx,
+                    &backend,
+                    &mut sink,
+                    fx.scope.clone(),
+                    Some(&pin),
+                );
+                crate::own_rate::set_auto_write_threshold_for_test(None);
+                pass.unwrap_or_else(|error| {
+                    panic!("the pass refused: {error}; {:?}", sink.outcome)
+                });
+                let [new] = sink.outcome.landed.as_slice() else {
+                    panic!("one granted replacement: {:?}", sink.outcome);
+                };
+                let new = *new;
+                drop(sink);
+                (fx, new)
+            }
+        };
+        if door != AutoWriteDoor::Attachment {
+            assert_eq!(
+                vault.get_claim(&landed)?.expect("landed").approval,
+                ClaimApprovalStatus::Auto,
+                "{door:?}: the count never holds the write"
+            );
+        }
+        let check =
+            vault.own_rate_check(fx.run.agent_actor.entity_ref(), OwnRateKind::AutoWrite)?;
+        assert_eq!(
+            check.map(|check| check.count),
+            Some(1),
+            "{door:?}: the window counted the door's one Auto write once"
+        );
+        assert_eq!(
+            crate::own_rate::take_counted_auto_writes(),
+            vec![door],
+            "{door:?} counted its own write"
+        );
+    }
     Ok(())
 }
