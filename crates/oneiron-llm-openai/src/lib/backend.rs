@@ -183,6 +183,41 @@ pub(crate) fn validate_capabilities(
     Ok(())
 }
 
+/// Raw params and provider options reach the wire beside the typed fields,
+/// so the merged body needs the capability its typed twin would: a tool or
+/// structured-output control is refused on a model without it.
+pub(crate) fn validate_wire_body(
+    catalog: &LlmCatalogEntry,
+    body: &serde_json::Map<String, serde_json::Value>,
+) -> LlmResult<()> {
+    if [
+        "tools",
+        "tool_choice",
+        "functions",
+        "function_call",
+        "parallel_tool_calls",
+    ]
+    .iter()
+    .any(|key| body.contains_key(*key))
+    {
+        require(
+            catalog,
+            LlmCapability::ToolCalling,
+            "request body carries tool controls",
+        )?;
+    }
+    if body.get("response_format").is_some_and(|format| {
+        format.get("type").and_then(serde_json::Value::as_str) != Some("text")
+    }) {
+        require(
+            catalog,
+            LlmCapability::JsonResponse,
+            "request body asks for a structured response",
+        )?;
+    }
+    Ok(())
+}
+
 fn require(
     catalog: &LlmCatalogEntry,
     capability: LlmCapability,

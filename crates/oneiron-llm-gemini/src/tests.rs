@@ -89,3 +89,119 @@ fn a_function_call_beside_text_never_decodes_as_a_finished_answer() {
         .push(json!({ "candidates": [{ "finishReason": "STOP" }] }))
         .expect("a final chunk with no content finishes the answer");
 }
+
+/// F12 (H90): a structured-output or tool control that arrives through raw
+/// params (which land in `generationConfig`) or provider options needs the
+/// capability its typed field would. The typed admission read only the typed
+/// fields, so a model without JSON output got a response schema on the wire.
+#[test]
+fn a_raw_tool_or_format_control_needs_the_capability_its_typed_field_would() {
+    use oneiron::llm::{CallClass, CallEnvelope, CallPurpose, ModelTierRef, TierPrecedence};
+    use oneiron::{
+        ContentPart, FatalLlmError, LlmCapability, LlmCatalogEntry, LlmError, LlmMessage,
+        LlmMessageRole, LlmRequest, ModelId, ModelLocality, ResponseFormat,
+    };
+    use std::collections::BTreeMap;
+
+    const MODEL: &str = "fake/teacher@v1";
+    let entry = |capabilities: Vec<LlmCapability>| LlmCatalogEntry {
+        model: ModelId::new(MODEL).expect("model"),
+        display_name: "teacher".to_owned(),
+        locality: ModelLocality::ThirdParty,
+        context_window_tokens: 8_192,
+        max_output_tokens: None,
+        cost: None,
+        capabilities,
+        metadata: BTreeMap::from([("wire_model".to_owned(), json!("teacher-1"))]),
+    };
+    let request = || {
+        let purpose = CallPurpose::Other {
+            name: "teacher".to_owned(),
+        };
+        LlmRequest {
+            model: ModelId::new(MODEL).expect("model"),
+            envelope: CallEnvelope {
+                seat_effort: None,
+                scope: Default::default(),
+                tier: TierPrecedence::for_purpose(&purpose, ModelTierRef("teacher".to_owned())),
+                purpose,
+                class: CallClass::BestEffort,
+                response_format: ResponseFormat::Text,
+                locality: ModelLocality::ThirdParty,
+            },
+            messages: vec![LlmMessage {
+                role: LlmMessageRole::User,
+                content: vec![ContentPart::Text {
+                    text: "label this pair".to_owned(),
+                }],
+            }],
+            tools: Vec::new(),
+            params: BTreeMap::new(),
+            provider_options: BTreeMap::new(),
+        }
+    };
+    let bare = entry(vec![LlmCapability::Streaming]);
+    for (via_options, key, value, capability) in [
+        (
+            false,
+            "responseMimeType",
+            json!("application/json"),
+            LlmCapability::JsonResponse,
+        ),
+        (
+            false,
+            "responseSchema",
+            json!({ "type": "OBJECT" }),
+            LlmCapability::JsonResponse,
+        ),
+        (
+            false,
+            "response_json_schema",
+            json!({ "type": "object" }),
+            LlmCapability::JsonResponse,
+        ),
+        (
+            true,
+            "toolConfig",
+            json!({ "functionCallingConfig": { "mode": "ANY" } }),
+            LlmCapability::ToolCalling,
+        ),
+    ] {
+        let mut call = request();
+        if via_options {
+            let mut options = serde_json::Map::new();
+            options.insert(key.to_owned(), value.clone());
+            call.provider_options
+                .insert("gemini".to_owned(), serde_json::Value::Object(options));
+        } else {
+            call.params.insert(key.to_owned(), value.clone());
+        }
+        for stream in [false, true] {
+            match super::wire::build_request(&bare, &call, stream) {
+                Err(LlmError::Fatal(FatalLlmError::Unsupported(refused))) => {
+                    assert_eq!(refused.capability, capability, "{key}");
+                }
+                other => panic!("raw {key} (stream: {stream}) must be refused: {other:?}"),
+            }
+        }
+        let able = entry(vec![LlmCapability::Streaming, capability.clone()]);
+        let body = super::wire::build_request(&able, &call, false)
+            .expect("a capable model takes the raw control")
+            .body;
+        let sent = if via_options {
+            &body[key]
+        } else {
+            &body["generationConfig"][key]
+        };
+        assert_eq!(sent, &value, "{body}");
+    }
+
+    let mut call = request();
+    call.params.insert("max_tokens".to_owned(), json!(64));
+    call.params
+        .insert("responseMimeType".to_owned(), json!("text/plain"));
+    let body = super::wire::build_request(&bare, &call, false)
+        .expect("a sampling field and a plain-text MIME need no capability")
+        .body;
+    assert_eq!(body["generationConfig"]["maxOutputTokens"], 64, "{body}");
+}

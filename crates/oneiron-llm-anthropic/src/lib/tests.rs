@@ -78,3 +78,112 @@ fn an_opening_message_with_blocks_never_finishes_as_a_tool_free_answer() {
             "role": "assistant", "content": [], "usage": { "input_tokens": 3 } } }))
         .expect("the ordinary opening streams");
 }
+
+/// F12 (H90): a tool or structured-output control that arrives through raw
+/// params or provider options needs the capability its typed field would.
+/// The typed checks read only the typed fields, so a model without tool
+/// calling or JSON output used to get `tools`, `tool_choice` or
+/// `output_config.format` on the wire.
+#[test]
+fn a_raw_tool_or_format_control_needs_the_capability_its_typed_field_would() {
+    use oneiron::llm::{CallClass, CallEnvelope, CallPurpose, ModelTierRef, TierPrecedence};
+    use oneiron::{
+        ContentPart, FatalLlmError, LlmCapability, LlmCatalogEntry, LlmError, LlmMessage,
+        LlmMessageRole, LlmRequest, ModelId, ModelLocality, ResponseFormat,
+    };
+    use std::collections::BTreeMap;
+
+    const MODEL: &str = "fake/teacher@v1";
+    let config = |capabilities: Vec<LlmCapability>| {
+        super::AnthropicMessagesConfig::from_catalog([LlmCatalogEntry {
+            model: ModelId::new(MODEL).expect("model"),
+            display_name: "teacher".to_owned(),
+            locality: ModelLocality::ThirdParty,
+            context_window_tokens: 8_192,
+            max_output_tokens: None,
+            cost: None,
+            capabilities,
+            metadata: BTreeMap::new(),
+        }])
+    };
+    let request = || {
+        let purpose = CallPurpose::Other {
+            name: "teacher".to_owned(),
+        };
+        LlmRequest {
+            model: ModelId::new(MODEL).expect("model"),
+            envelope: CallEnvelope {
+                seat_effort: None,
+                scope: Default::default(),
+                tier: TierPrecedence::for_purpose(&purpose, ModelTierRef("teacher".to_owned())),
+                purpose,
+                class: CallClass::BestEffort,
+                response_format: ResponseFormat::Text,
+                locality: ModelLocality::ThirdParty,
+            },
+            messages: vec![LlmMessage {
+                role: LlmMessageRole::User,
+                content: vec![ContentPart::Text {
+                    text: "label this pair".to_owned(),
+                }],
+            }],
+            tools: Vec::new(),
+            params: BTreeMap::new(),
+            provider_options: BTreeMap::new(),
+        }
+    };
+    let bare = config(vec![LlmCapability::Streaming]);
+    for (key, value, capability) in [
+        (
+            "tools",
+            json!([{ "name": "run", "input_schema": { "type": "object" } }]),
+            LlmCapability::ToolCalling,
+        ),
+        (
+            "tool_choice",
+            json!({ "type": "any" }),
+            LlmCapability::ToolCalling,
+        ),
+        (
+            "output_config",
+            json!({ "format": { "type": "json_schema", "schema": { "type": "object" } } }),
+            LlmCapability::JsonResponse,
+        ),
+    ] {
+        for via_options in [false, true] {
+            let mut call = request();
+            if via_options {
+                let mut options = serde_json::Map::new();
+                options.insert(key.to_owned(), value.clone());
+                call.provider_options
+                    .insert("anthropic".to_owned(), serde_json::Value::Object(options));
+            } else {
+                call.params.insert(key.to_owned(), value.clone());
+            }
+            for stream in [false, true] {
+                match super::build_anthropic_messages_request(&bare, &call, stream) {
+                    Err(LlmError::Fatal(FatalLlmError::Unsupported(refused))) => {
+                        assert_eq!(refused.capability, capability, "{key}");
+                    }
+                    other => panic!(
+                        "raw {key} (options: {via_options}, stream: {stream}) must be refused: {other:?}"
+                    ),
+                }
+            }
+            let able = config(vec![LlmCapability::Streaming, capability.clone()]);
+            let body = super::build_anthropic_messages_request(&able, &call, false)
+                .expect("a capable model takes the raw control")
+                .body;
+            assert_eq!(body[key], value, "{body}");
+        }
+    }
+
+    let mut call = request();
+    call.params.insert("temperature".to_owned(), json!(0.2));
+    call.params
+        .insert("output_config".to_owned(), json!({ "effort": "low" }));
+    let body = super::build_anthropic_messages_request(&bare, &call, false)
+        .expect("a sampling field and an effort-only output_config need no capability")
+        .body;
+    assert_eq!(body["temperature"], 0.2, "{body}");
+}

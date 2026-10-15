@@ -2,8 +2,9 @@
 use super::{GeminiAccumulator, GeminiHttpRequest};
 use oneiron::llm::{BudgetDenied, ReasoningEffort};
 use oneiron::{
-    ContentPart, FatalLlmError, ImageContent, LlmCatalogEntry, LlmError, LlmMessageRole,
-    LlmRequest, LlmResponse, LlmResult, LlmStreamEvent, ResponseFormat, RetryableLlmError,
+    ContentPart, FatalLlmError, ImageContent, LlmCapability, LlmCatalogEntry, LlmError,
+    LlmMessageRole, LlmRequest, LlmResponse, LlmResult, LlmStreamEvent, ResponseFormat,
+    RetryableLlmError,
 };
 use serde_json::{Value, json};
 pub(super) fn build_request(
@@ -113,6 +114,31 @@ pub(super) fn build_request(
             }
             body[name] = value.clone();
         }
+    }
+    // Raw params land in generationConfig and options at the top level, beside
+    // the typed fields, so the merged body needs the capability its typed twin
+    // would. The API reads both spellings of a field name.
+    if ["tools", "toolConfig"]
+        .iter()
+        .any(|key| body.get(*key).is_some())
+    {
+        entry.require(LlmCapability::ToolCalling)?;
+    }
+    if body["generationConfig"].as_object().is_some_and(|fields| {
+        [
+            "responseSchema",
+            "response_schema",
+            "responseJsonSchema",
+            "response_json_schema",
+        ]
+        .iter()
+        .any(|key| fields.contains_key(*key))
+            || ["responseMimeType", "response_mime_type"]
+                .iter()
+                .filter_map(|key| fields.get(*key))
+                .any(|mime| mime.as_str() != Some("text/plain"))
+    }) {
+        entry.require(LlmCapability::JsonResponse)?;
     }
     let model = entry
         .metadata

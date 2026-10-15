@@ -2,7 +2,7 @@
 
 use super::{
     OpenAiCompatConfig, OpenAiCompatHttpRequest, OpenAiProviderOptions,
-    backend::validate_capabilities,
+    backend::{validate_capabilities, validate_wire_body},
 };
 use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort};
 use oneiron::{
@@ -123,6 +123,7 @@ pub fn build_openai_chat_request(
             }),
         );
     }
+    validate_wire_body(catalog, &body)?;
 
     Ok(OpenAiCompatHttpRequest {
         method: "POST",
