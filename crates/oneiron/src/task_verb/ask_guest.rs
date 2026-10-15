@@ -12,6 +12,24 @@ fn invalid() -> crate::Error {
     super::ask_record::invalid()
 }
 
+/// A guest's consent counts only as the vault's owner recorded it: a grant a
+/// live owner of this vault stamped, read in the ask's own transaction. A
+/// native host's proof shows a live person, not their consent, so a grant the
+/// guest stamped is none (F18 tier flip).
+fn owner_recorded(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &crate::consent::ConsentGrantRow,
+) -> Result<bool> {
+    crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &row.owner_stamp.actor)
+}
+
+fn not_recorded() -> crate::Error {
+    crate::Error::Gate(crate::error::GateError::ConsentGuestNotRecorded(
+        "the owner has not recorded this guest's consent",
+    ))
+}
+
 /// A guest is never allowed to expand the person's standing disclosure. The
 /// bound and its owner stamp are checked at admission AND at answer intake.
 pub(super) fn check_disclosure(
@@ -43,17 +61,21 @@ pub(super) fn check_disclosure(
     }
     let row = vault
         .consent_grant_in_txn(txn, &guest.disclosure_grant_ref)?
-        .ok_or_else(invalid)?;
+        .ok_or_else(not_recorded)?;
+    if !owner_recorded(vault, txn, &row)? {
+        return Err(not_recorded());
+    }
     let StandingConsentGrant::Disclosure(parent) = &row.grant else {
         return Err(invalid());
     };
+    // The owner records the guest's consent: its audience names the guest
+    // beside the asker.
     let required = GrantBound::disclosure(
-        AudienceBound::singleton(asker.to_hex())?,
+        AudienceBound::new([asker.to_hex(), person.to_hex()])?,
         DisclosureClass::new(class)?,
         DisclosureEnvelope::new(refs.iter().map(EntityId::to_hex))?,
     )?;
     if !row.is_active()
-        || row.owner_stamp.actor != person
         || row.grant_ref() != guest.disclosure_grant_ref
         || !parent.bound().contains(&required)
     {
@@ -71,9 +93,10 @@ pub(super) fn check_disclosure(
     Ok(refs)
 }
 
-/// The answer-class delegation is a separate owner-stamped ACTION grant. A
-/// disclosure grant, guest grant or caller-supplied boolean cannot make a hint
-/// final. The target is the exact person; the class identifies the ask class.
+/// The answer-class delegation is a separate ACTION grant a live owner
+/// stamped. A disclosure grant, guest grant or caller-supplied boolean cannot
+/// make a hint final. The target is the exact person; the class identifies
+/// the ask class.
 pub(super) fn delegated_class(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -103,7 +126,7 @@ pub(super) fn delegated_class(
         let Some(row) = vault.consent_grant_in_txn(txn, &reference)? else {
             continue;
         };
-        if row.owner_stamp.actor == person && row.is_active() {
+        if row.is_active() && owner_recorded(vault, txn, &row)? {
             return Ok(Some(reference));
         }
     }
@@ -134,9 +157,10 @@ pub(super) fn check_delegation_record(
         ActionClass::new(format!("ask.answer.{class}"))?,
         ActionEnvelope::new(["answer".to_owned()])?.with_target(person.to_hex())?,
     )?;
-    Ok(row.owner_stamp.actor == person
-        && row.grant_ref() == reference
-        && action.bound().contains(&required))
+    // Admission took this grant only as a live owner recorded it
+    // (`delegated_class`). Like a later revocation, a later change of owners
+    // does not reach back into an answer already admitted.
+    Ok(row.grant_ref() == reference && action.bound().contains(&required))
 }
 
 /// Admit only the exact question facts inside a live owner-stamped bound, then
