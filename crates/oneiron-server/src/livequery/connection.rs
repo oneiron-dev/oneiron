@@ -194,7 +194,7 @@ impl Hub {
             }
             session.attached.store(conn_id, Ordering::Release);
             session.queries.reconnect(conn_id)?;
-            return Ok(session.clone());
+            return Ok(session);
         }
         let server = self.server.upgrade().ok_or_else(AppError::unauthorized)?;
         let limits = server
