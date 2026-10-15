@@ -641,11 +641,13 @@ pub(in crate::batch) fn apply_put(
         }
     }
 
-    if replicated
-        && body_changed
-        && let Some(body) = decoded_claim_body.as_ref()
-    {
-        crate::gate::attach_replicated_critical_confirm_in_txn(store, wtxn, &id, body)?;
+    if body_changed && let Some(body) = decoded_claim_body.as_ref() {
+        if replicated {
+            crate::gate::attach_replicated_critical_confirm_in_txn(store, wtxn, &id, body)?;
+        }
+        // A claim whose owner has not answered stays held through any new
+        // revision, and its owner is shown an item for this one.
+        crate::gate::show_owner_answer_item_in_txn(store, wtxn, &id, Some(body))?;
     }
 
     // Past every check that can reject this row remotely: a replicated row

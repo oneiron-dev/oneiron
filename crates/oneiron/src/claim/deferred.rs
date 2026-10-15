@@ -33,6 +33,16 @@ pub(super) fn body_hash(body: &ClaimBody) -> Result<[u8; 32]> {
     body.approval = ClaimApprovalStatus::Proposed;
     Ok(*blake3::hash(&encode_claim_body(&body)?).as_bytes())
 }
+/// Whether a destructive action is parked on `id`, behind the confirm its tray
+/// row shows.
+pub(crate) fn claim_has_deferred_action_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(DEFERRED.get(store, txn, id)?.is_some())
+}
+
 pub(super) fn load(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

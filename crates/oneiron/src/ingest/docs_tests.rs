@@ -831,13 +831,19 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
 
     let (_dir, vault, owner, first_doc, ceiling, first_import) = deep_fixture()?;
     let first_project = first_doc.project_id;
-    // Both corpora exist before the fixture policy is stored.
-    let mut second_doc = first_doc;
-    second_doc.corpus_id = "second-corpus".into();
-    second_doc.project_id = EntityId::from_bytes([0xD7; 16])?;
-    ensure_docs_corpus(&vault, owner.actor(), &second_doc)?;
-    let second_import = approved_docs_import(&vault, &owner, &second_doc, ceiling, 3)?;
-    trust_imported_claims(&vault)?;
+    // No imported claim lands `Auto` under the shipped policy: the owner
+    // approves each derived claim, so it reads as a live fact.
+    let approve = |ids: &BTreeSet<EntityId>| -> Result<()> {
+        for id in ids {
+            let body = vault.get_claim(id)?.ok_or(crate::Error::EntityNotFound)?;
+            vault.approve_inbox_member_with_edit_at(
+                id,
+                &crate::claim::encode_claim_body(&body)?,
+                crate::unix_seconds_now(),
+            )?;
+        }
+        Ok(())
+    };
     let first_asset = EntityId::from_hex(&first_import.asset_refs[0])?;
     let first = vault.deep_ingest_docs_asset(
         &owner,
@@ -851,7 +857,13 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
         .iter()
         .map(|id| EntityId::from_hex(id))
         .collect::<Result<_>>()?;
+    approve(&first_ids)?;
 
+    let mut second_doc = first_doc;
+    second_doc.corpus_id = "second-corpus".into();
+    second_doc.project_id = EntityId::from_bytes([0xD7; 16])?;
+    ensure_docs_corpus(&vault, owner.actor(), &second_doc)?;
+    let second_import = approved_docs_import(&vault, &owner, &second_doc, ceiling, 3)?;
     let second_asset = EntityId::from_hex(&second_import.asset_refs[0])?;
     let second = vault.deep_ingest_docs_asset(
         &owner,
@@ -865,6 +877,7 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
         .iter()
         .map(|id| EntityId::from_hex(id))
         .collect::<Result<_>>()?;
+    approve(&second_ids)?;
     assert_eq!(first_ids.len(), 2);
     assert_eq!(second_ids.len(), 2);
 

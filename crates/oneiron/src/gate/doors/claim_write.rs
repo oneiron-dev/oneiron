@@ -333,13 +333,13 @@ fn check_claim_policy_for_write_with_record_inner(
         // so it lands Auto with nothing to confirm. The proof rides the
         // write's options from the door that authenticated the owner; the
         // envelope only has to name the same actor.
-        let owner_authored = critical_floor_only
-            && owner_authored.is_some_and(|write| {
-                envelope.is_some_and(|envelope| {
-                    envelope.actor().entity_ref() == write.actor()
-                        && envelope.actor().actor_class() == crate::edge::EdgeActorClass::Human
-                })
-            });
+        let owner_write = owner_authored.filter(|write| {
+            envelope.is_some_and(|envelope| {
+                envelope.actor().entity_ref() == write.actor()
+                    && envelope.actor().actor_class() == crate::edge::EdgeActorClass::Human
+            })
+        });
+        let owner_authored = critical_floor_only && owner_write.is_some();
         let attach_critical_confirm = critical_floor_only && !owner_authored;
         if owner_authored {
             decision = GateDecision::allow()
@@ -587,13 +587,25 @@ fn check_claim_policy_for_write_with_record_inner(
                 dreamer_run_id: pending_consent_dreamer_run_id(envelope, body),
             };
             store.put_pending_gate_consent_in_txn(wtxn, &pending)?;
-            // This is the sole reopening transition: a successful local
-            // critical-confirm attachment replaces the invalidated ceremony in
-            // this transaction. Pending ordinary work and replicated input do
-            // not clear the claim-scoped marker.
+            // A fresh local confirm on this revision is the item the claim's
+            // owner answers now, and the only one that ends the demotion of
+            // peer revisions. Ordinary pending work and replicated input
+            // never end it.
             if attach_critical_confirm {
-                store.delete_critical_confirm_invalidation_in_txn(wtxn, id)?;
+                crate::gate::owner_answer::rebind_owner_answer_obligation_in_txn(
+                    store, wtxn, id, &pending,
+                )?;
             }
+        }
+        // A revision its owner wrote in person answers whatever the claim's
+        // owner had not.
+        if owner_authored
+            && mode.persist_pending_consent
+            && let Some(write) = owner_write
+        {
+            crate::gate::owner_answer::close_owner_answer_obligation_by_owner_revision_in_txn(
+                store, wtxn, id, write,
+            )?;
         }
 
         enforce_claim_gate_decision_with_consent(
@@ -607,6 +619,7 @@ fn check_claim_policy_for_write_with_record_inner(
                 resolve_pending: mode.resolve_pending && !attach_critical_confirm,
                 ..mode
             },
+            owner_write,
         )?;
     } else if let Some(reason_code) = precommit_denial {
         // No manifest is loaded, so there is no policy verdict for the denial

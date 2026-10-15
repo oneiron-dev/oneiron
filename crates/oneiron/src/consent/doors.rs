@@ -144,6 +144,23 @@ impl AuthenticatedOwner {
         Ok(OwnerAuthoredWrite { actor: self.actor })
     }
 
+    /// This proof as an owner-tier answer to a claim's owner-answer
+    /// obligation, revalidated in the answering transaction: the vault
+    /// owner's own unattenuated, undelegated credential. A narrowed or
+    /// delegated credential, or a person who no longer owns the vault,
+    /// answers nothing (`None`), and the door acts as it did before.
+    pub(crate) fn owner_answer_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<OwnerAuthoredWrite>> {
+        match self.owner_authored_write_in_txn(vault, txn) {
+            Ok(write) => Ok(Some(write)),
+            Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_))) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     pub(super) fn stamp(&self) -> ConsentOwnerStamp {
         ConsentOwnerStamp {
             actor: self.actor,

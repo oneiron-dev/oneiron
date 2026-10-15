@@ -17,48 +17,99 @@ fn clear(vault: &crate::Vault, pending: &PendingGateConsentRecord, seed: u8) -> 
     Ok(())
 }
 
-/// A later revision's ordinary review is not the owner's answer to the
-/// critical confirm it replaces: the claim stays held until that review
-/// settles, and the Dreamer wake count skips it meanwhile.
-#[test]
-fn a_proposed_rewrite_carries_the_critical_confirm_it_replaces() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let claim = test_id(0x95);
-    put_critical_auto_claim(&vault, claim)?;
-    let mut body = stored_claim_body(&vault, &claim)?;
-    body.approval = ClaimApprovalStatus::Proposed;
-    let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
-    vault
-        .batch()
-        .claim_candidate(&claim, candidate, &envelope, test_time(4), 4)
-        .commit()?;
-    assert_eq!(
-        stored_claim_body(&vault, &claim)?.approval,
-        ClaimApprovalStatus::Proposed
-    );
-    let review = vault
-        .with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?
-        .expect("the rewrite's review");
-    assert!(
-        review
-            .reason_codes
-            .iter()
-            .any(|reason| reason == crate::gate::GATE_REASON_PENDING_CRITICAL_CONFIRM_CARRIED)
-    );
-    assert!(
-        !vault
-            .wake_pending_records_for_test()?
-            .contains(&claim.to_hex()),
-        "FAILBEFORE H244 narrowed: a Proposed rewrite read as the owner's Clear"
-    );
+/// The doors that remove or outdate a held claim's item without its owner's
+/// answer (F14 H244-narrowed, review round 5). Each leaves the owner-answer
+/// obligation open, so the Dreamer wake count still skips the claim, and the
+/// owner is shown an item for its current revision; the owner's Clear of that
+/// item lets the claim go.
+#[derive(Clone, Copy, Debug)]
+enum UnansweredDoor {
+    /// A later revision's ordinary review replaces the confirm.
+    ProposedRewrite,
+    /// The asker lets its pending ask go.
+    LetGo,
+}
 
-    // The review settling is what lets the claim go.
-    vault.with_write_txn(|wtxn| vault.store.delete_pending_gate_consent_in_txn(wtxn, &claim))?;
-    assert!(
-        vault
-            .wake_pending_records_for_test()?
-            .contains(&claim.to_hex())
-    );
+#[test]
+fn a_door_without_the_owners_answer_leaves_the_claim_held() -> Result<()> {
+    for (n, door) in [UnansweredDoor::ProposedRewrite, UnansweredDoor::LetGo]
+        .into_iter()
+        .enumerate()
+    {
+        let (_tmp, vault) = temp_vault();
+        let claim = test_id(0x95);
+        put_critical_auto_claim(&vault, claim)?;
+        match door {
+            UnansweredDoor::ProposedRewrite => {
+                let mut body = stored_claim_body(&vault, &claim)?;
+                body.approval = ClaimApprovalStatus::Proposed;
+                let (candidate, envelope) = claim_candidate_write_parts(&vault, &body)?;
+                vault
+                    .batch()
+                    .claim_candidate(&claim, candidate, &envelope, test_time(4), 4)
+                    .commit()?;
+                assert_eq!(
+                    stored_claim_body(&vault, &claim)?.approval,
+                    ClaimApprovalStatus::Proposed
+                );
+            }
+            UnansweredDoor::LetGo => {
+                assert!(vault.let_go_pending_ask(&claim)?.is_some(), "{door:?}");
+            }
+        }
+        assert!(
+            vault
+                .with_write_txn(|wtxn| vault.store.owner_answer_obligation_in_txn(wtxn, &claim))?
+                .is_some(),
+            "FAILBEFORE H244 narrowed: {door:?} closed the obligation with no owner answer"
+        );
+        assert!(
+            !vault
+                .wake_pending_records_for_test()?
+                .contains(&claim.to_hex()),
+            "FAILBEFORE H244 narrowed: {door:?} let a held claim reach the wake count"
+        );
+        // The owner is shown an item for the claim's current revision.
+        let item = vault
+            .with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?
+            .unwrap_or_else(|| panic!("FAILBEFORE H244 narrowed: {door:?} left the owner no item"));
+        let current = stored_claim_body(&vault, &claim)?;
+        let (diff_handle, _) = vault.with_write_txn(|wtxn| {
+            crate::gate::claim_consent_binding_parts(&vault.store, wtxn, &current)
+        })?;
+        assert_eq!(
+            item.diff_handle, diff_handle,
+            "{door:?}: the item binds an earlier revision"
+        );
+        if critical_write_confirm_binding(&item).is_err() {
+            // An ordinary review of this revision is the item: the owner's
+            // Clear needs a confirm, so the review is let go first.
+            vault.let_go_pending_ask(&claim)?;
+        }
+        let item = vault
+            .with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?
+            .expect("the owner's confirm item");
+        assert!(
+            vault
+                .pending_critical_write_confirms(10)?
+                .iter()
+                .any(|binding| binding.claim_id == claim),
+            "{door:?}: the owner's listing shows no confirm"
+        );
+        clear(&vault, &item, 0x90 + u8::try_from(n).expect("row"))?;
+        assert!(
+            vault
+                .with_write_txn(|wtxn| vault.store.owner_answer_obligation_in_txn(wtxn, &claim))?
+                .is_none(),
+            "{door:?}: the owner's Clear left the obligation open"
+        );
+        assert!(
+            vault
+                .wake_pending_records_for_test()?
+                .contains(&claim.to_hex()),
+            "{door:?}: the owner's Clear did not let the claim go"
+        );
+    }
     Ok(())
 }
 

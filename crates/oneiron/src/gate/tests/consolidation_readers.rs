@@ -28,8 +28,18 @@ fn check_transition(
         before,
         "{reader:?}: held claim changed"
     );
+    // The owner's Clear answers the item and lets the claim go.
     vault.with_write_txn(|txn| {
-        vault.store.delete_pending_gate_consent_in_txn(txn, &id)?;
+        let removal = crate::gate::owner_answer::close_owner_answer_obligation_in_txn(
+            &vault.store,
+            txn,
+            &id,
+            &pending.diff_handle,
+            crate::gate::owner_answer::OwnerAnswer::authority_log(),
+        )?;
+        vault
+            .store
+            .remove_pending_gate_consent_in_txn(txn, &id, removal)?;
         Ok(())
     })?;
     let consumed = consumes(vault, &id)
@@ -82,6 +92,17 @@ fn seed_question_answer(
         AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial,
         DecisionQuestion, DecisionRung, ProviderPin,
     };
+    // A question reads its unit through its principal's scoped read: both
+    // rows land through the entity door, as a host writes them.
+    for id in [principal, subject] {
+        vault.put_entity(
+            &id,
+            ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"source",
+        )?;
+    }
     crate::test_util::authorize_readers(vault, &[&principal.to_hex()]);
     let record = create_question(
         vault,

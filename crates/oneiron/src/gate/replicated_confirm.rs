@@ -22,12 +22,12 @@ use super::resolution::{GateRetentionContext, resolve_policy_manifest};
 ///
 /// An ordinary pending row this device holds reviewed an earlier body, so it
 /// cannot hold the arriving Auto revision: this device's own confirm replaces
-/// it. A critical-confirm row already holds the claim, and an invalidated
-/// ceremony stays held by its durable invalidation. A reserved predicate never
-/// takes the confirm road on this device: only its owning door writes it, past
-/// the criticality ladder. A restrictive `comm.*` claim only adds suppression,
-/// and a restriction always lands usable: a Decline here would retract it
-/// outside the opt-out's own clear.
+/// it, and opens the claim's owner-answer obligation. A claim whose obligation
+/// is open already stays held, and the put shows its owner an item for this
+/// revision. A reserved predicate never takes the confirm road on this device:
+/// only its owning door writes it, past the criticality ladder. A restrictive
+/// `comm.*` claim only adds suppression, and a restriction always lands
+/// usable: a Decline here would retract it outside the opt-out's own clear.
 pub(crate) fn attach_replicated_critical_confirm_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -39,18 +39,50 @@ pub(crate) fn attach_replicated_critical_confirm_in_txn(
         || crate::comm::is_restrictive_comm_predicate(&body.predicate)
         || crate::claim::is_reserved_predicate(&body.predicate)
         || store
-            .pending_gate_consent_in_txn(wtxn, claim_id)?
-            .is_some_and(|row| pending_row_holds_critical_confirm(&row))
-        || store.critical_confirm_invalidation_exists_in_txn(wtxn, claim_id)?
+            .owner_answer_obligation_in_txn(wtxn, claim_id)?
+            .is_some()
     {
         return Ok(());
+    }
+    if let Some(row) = store
+        .pending_gate_consent_in_txn(wtxn, claim_id)?
+        .filter(pending_row_holds_critical_confirm)
+    {
+        // A confirm parked before obligations were recorded is one.
+        return store.open_owner_answer_obligation_in_txn(
+            wtxn,
+            claim_id,
+            row.decision_id,
+            &row.diff_handle,
+        );
     }
     let policy = resolve_policy_manifest(store, &*wtxn)?;
     if policy.criticality_for_predicate(&body.predicate) != PolicyCriticality::Critical {
         return Ok(());
     }
-
     let binding = GateConsentBinding::for_claim(body, &policy)?;
+    put_critical_confirm_item_in_txn(
+        store,
+        wtxn,
+        claim_id,
+        body,
+        binding,
+        GATE_REASON_PENDING_REPLICATED_CRITICAL_CONFIRM,
+    )?;
+    Ok(())
+}
+
+/// Parks a critical confirm on `body` under `reason`: a fresh pending
+/// decision and its tray row, which opens the claim's obligation if none is
+/// open. The confirm carries no actor and no Dreamer run.
+pub(super) fn put_critical_confirm_item_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    claim_id: &EntityId,
+    body: &ClaimBody,
+    binding: GateConsentBinding,
+    reason: &str,
+) -> Result<PendingGateConsentRecord> {
     let mut decision = GateDecisionRecord {
         version: 0,
         decision_id: GateDecisionId::from_bytes(store.clock.ulid()?),
@@ -89,11 +121,12 @@ pub(crate) fn attach_replicated_critical_confirm_in_txn(
         created_at: decision.created_at,
         diff_handle: decision.diff_handle,
         read_frontier_hash: decision.read_frontier_hash,
-        reason_codes: vec![GATE_REASON_PENDING_REPLICATED_CRITICAL_CONFIRM.to_owned()],
-        // A peer body supplies no authenticated local Dreamer envelope.
+        reason_codes: vec![reason.to_owned()],
+        // Neither a peer body nor an owner's item carries an authenticated
+        // local Dreamer envelope.
         dreamer_run_id: None,
     };
     // This also writes the exact-confirm index and the ordinary tray indexes.
-    // Only a fresh local ceremony may clear a prior invalidation; this never does.
-    store.put_pending_gate_consent_in_txn(wtxn, &pending)
+    store.put_pending_gate_consent_in_txn(wtxn, &pending)?;
+    Ok(pending)
 }

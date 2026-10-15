@@ -347,8 +347,9 @@ impl Store {
         }
         // The tray carries the original content binding and can mint a fresh
         // live v0 resolution from a v1 skeleton. Remove it and every index
-        // inside this same destructive transaction, before verification.
-        self.delete_pending_gate_consent_in_txn(wtxn, &id)?;
+        // inside this same destructive transaction, before verification. An
+        // erasure shows no fresh item.
+        self.remove_pending_gate_consent_in_txn(wtxn, &id, crate::store::TrayRemoval::Silent)?;
         for decision_id in self.verify_claim_erasure_by_scan_in_txn(&*wtxn, claim_id)? {
             if !self.is_unapplied_preflight_decision_in_txn(&*wtxn, decision_id)? {
                 return Err(Error::CorruptedIndex("gate decision claim erasure"));
@@ -451,7 +452,11 @@ impl Store {
                 .pending_gate_consent_in_txn(&*wtxn, &id)?
                 .is_some_and(|pending| ids.contains(&pending.decision_id))
             {
-                self.delete_pending_gate_consent_in_txn(wtxn, &id)?;
+                self.remove_pending_gate_consent_in_txn(
+                    wtxn,
+                    &id,
+                    crate::store::TrayRemoval::Silent,
+                )?;
             }
         }
         Ok(())
