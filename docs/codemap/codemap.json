@@ -154,7 +154,7 @@
      "purpose": "Vault doors for AccessGrant put, create, revoke, read, and calendar registry",
      "surface": {
       "crate-vis": 1,
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -12460,7 +12460,7 @@
      "purpose": "What a pack run produces and how its telemetry row is finalized or discarded",
      "surface": {
       "crate-vis": 6,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -51622,7 +51622,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/context_pack_disclosure.rs",
