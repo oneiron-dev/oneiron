@@ -325,6 +325,39 @@ fn an_ordinary_fence_on_a_derived_text_is_raised_to_the_erase_fence() -> Result<
     Ok(())
 }
 
+/// Bug repro (#1465 R6, Astra P2): the generic sync-state door neither lowers nor drops a hard
+/// erase's fence or its hard-delete marker: a host write of either key is refused.
+#[cfg(feature = "sync")]
+#[test]
+fn the_generic_sync_state_door_leaves_an_erase_fence() -> Result<()> {
+    let fixture = Shared::open()?;
+    let vault = &fixture.vault;
+    vault.delete_entity_with_reason(&fixture.erased, DeleteReason::GdprDelete)?;
+    let carrier = fixture.shared.claim_id;
+    let erase_fenced = || -> Result<bool> {
+        let txn = vault.store.env.read_txn()?;
+        crate::blob_artifact::erase_fenced(&vault.store, &txn, &carrier)
+    };
+    assert!(erase_fenced()?);
+    let fence = format!("df:{}", carrier.to_hex());
+    assert!(
+        vault.sync_state_put(&fence, b"").is_err(),
+        "a host lowered the erase fence"
+    );
+    assert!(
+        vault.sync_state_delete(&fence).is_err(),
+        "a host dropped the erase fence"
+    );
+    assert!(
+        vault
+            .sync_state_delete(&format!("dt:{}", fixture.erased.to_hex()))
+            .is_err(),
+        "a host dropped the hard-delete marker"
+    );
+    assert!(erase_fenced()?);
+    Ok(())
+}
+
 fn fenced(vault: &Vault, id: &EntityId) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
     crate::deletion::ROW_DELETION_FENCE.contains(&vault.store, &txn, &HexId(*id))
