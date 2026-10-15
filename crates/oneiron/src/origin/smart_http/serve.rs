@@ -21,8 +21,9 @@ use super::hooks::DoorHooksDir;
 use super::intent::ReceivePackRefResult;
 use super::landing::ReceivePackLanding;
 use super::paths::{
-    DOOR_WINDOW_TIMEOUT, SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES, origin_door_root,
-    origin_repo_dir, origin_serving_root, repository_busy, serve_failed, serve_idle,
+    DOOR_WINDOW_TIMEOUT, ORIGIN_MAX_COMMAND_SECTION_BYTES, SERVE_MAX_STDERR_BYTES,
+    SERVE_STREAM_CHUNK_BYTES, origin_door_root, origin_repo_dir, origin_serving_root, push_refused,
+    repository_busy, serve_failed, serve_idle,
 };
 use super::serve_cmd::{IncomingQuarantines, ServeChild, ServeCommand, ServeRequest};
 use crate::Vault;
@@ -251,15 +252,6 @@ fn serve_request(
         // a push and neither delays one.
         None
     };
-    // Between the coordinator and the child, so on every way out the child
-    // is reaped first, then what a killed backend left in quarantine is
-    // swept, and only then is the coordinator let go.
-    let mut quarantines = match coordinator {
-        Some(_) => Some(IncomingQuarantines::note(
-            repo_common_dir(&repo_dir)?.join("objects"),
-        )),
-        None => None,
-    };
     // The same coordinator guards epoch cutover. Stamp and persist only after
     // acquiring it, so an old accepted request cannot cross an epoch change.
     let mut admission = stamp_admission(vault, request, &repo_dir, seam)?;
@@ -278,6 +270,41 @@ fn serve_request(
     } else if let Some(_free) = try_lock_repository(&repo_common_dir(&repo_dir)?)? {
         vault.reconcile_receive_pack_operations(&repo_dir)?;
     }
+    // No byte of the body is read before the admission above is checked and
+    // recorded. A push body the backend would inflate is inflated here
+    // instead, once: the command section read below is then the one
+    // receive-pack reads, and the backend gets the whole body plain.
+    let plain;
+    let mut inflated;
+    let (request, body): (&ServeRequest, &mut (dyn Read + Send)) =
+        if request.is_receive_pack() && backend_inflates(request) {
+            plain = ServeRequest {
+                content_length: None,
+                content_encoding: None,
+                ..request.clone()
+            };
+            inflated = flate2::read::GzDecoder::new(body);
+            (&plain, &mut inflated)
+        } else {
+            (request, body)
+        };
+    // A body that stalls here ends at the idle limit, as it would mid-exchange.
+    let commands = if request.is_receive_pack() {
+        read_command_section(body).map_err(stall_as_idle)?
+    } else {
+        Vec::new()
+    };
+    let body = &mut io::Cursor::new(commands).chain(body);
+    // Between the coordinator and the child, so on every way out the child
+    // is reaped first, then what a killed backend left in quarantine is
+    // swept, and only then is the coordinator let go. Noted only now: a push
+    // refused before its backend runs made no quarantine, so it sweeps none.
+    let mut quarantines = match coordinator {
+        Some(_) => Some(IncomingQuarantines::note(
+            repo_common_dir(&repo_dir)?.join("objects"),
+        )),
+        None => None,
+    };
     let mut child = command.spawn(request)?;
     let exchange = run_exchange(
         &ExchangeSetup {
@@ -566,6 +593,77 @@ fn join_thread<T>(joined: std::thread::Result<Result<T>>) -> Result<T> {
         Ok(result) => result,
         Err(_) => Err(serve_failed("a serve worker panicked")),
     }
+}
+
+/// Reads a receive-pack's command section, up to its first flush, before the
+/// backend reads any of the body, and refuses one carrying a push certificate.
+///
+/// `git receive-pack` writes a push certificate into the repository's object
+/// store as a blob before any hook runs, so its bytes would stay there with no
+/// door having read them, even on a delete-only push. This origin offers no
+/// signed push (the advertisement drops the capability), and a request that
+/// sends a certificate anyway is refused here. A section this cannot read is
+/// refused too: a malformed pkt-line, or one past
+/// [`ORIGIN_MAX_COMMAND_SECTION_BYTES`]. `body` is what receive-pack would
+/// read, already inflated where the backend would inflate it. Returns the
+/// bytes read, which go to the backend ahead of the rest.
+fn read_command_section(body: &mut (dyn Read + Send)) -> Result<Vec<u8>> {
+    let mut section = Vec::new();
+    loop {
+        let start = section.len();
+        // The bound counts every byte read, each header and the flush too.
+        if start + 4 > ORIGIN_MAX_COMMAND_SECTION_BYTES {
+            return Err(push_refused("the push's command section is too large"));
+        }
+        // A body that ends before its flush goes on as it is: receive-pack's
+        // reader dies at that end before any command runs or any certificate
+        // is written, and no certificate line here was whole.
+        if !read_exactly(body, &mut section, 4)? {
+            return Ok(section);
+        }
+        let hex = &section[start..];
+        let length = std::str::from_utf8(hex)
+            .ok()
+            .filter(|_| hex.iter().all(u8::is_ascii_hexdigit))
+            .and_then(|hex| usize::from_str_radix(hex, 16).ok())
+            .ok_or_else(|| push_refused("the push's command section is malformed"))?;
+        match length {
+            0 => return Ok(section),
+            1..=3 => return Err(push_refused("the push's command section is malformed")),
+            _ if start + length > ORIGIN_MAX_COMMAND_SECTION_BYTES => {
+                return Err(push_refused("the push's command section is too large"));
+            }
+            _ => {}
+        }
+        if !read_exactly(body, &mut section, length - 4)? {
+            return Ok(section);
+        }
+        // receive-pack's own reading: one trailing newline chomped, and the
+        // line's name ends at the NUL before any capabilities.
+        let line = &section[start + 4..];
+        let line = line.strip_suffix(b"\n").unwrap_or(line);
+        if line.split(|byte| *byte == 0).next() == Some(b"push-cert".as_slice()) {
+            return Err(push_refused("the origin accepts no push certificate"));
+        }
+    }
+}
+
+/// Whether `git http-backend` would inflate this request's body before
+/// receive-pack reads it: for exactly these two encodings, spelled exactly so
+/// (http-backend.c, `run_service`). Any other body reaches receive-pack as it
+/// came, and is read here as it came.
+fn backend_inflates(request: &ServeRequest) -> bool {
+    matches!(request.content_encoding.as_deref(), Some("gzip" | "x-gzip"))
+}
+
+/// Appends up to `count` bytes of `body` to `into`; whether all of them came.
+fn read_exactly(body: &mut (dyn Read + Send), into: &mut Vec<u8>, count: usize) -> Result<bool> {
+    let want = into.len() + count;
+    (&mut *body)
+        .take(count as u64)
+        .read_to_end(into)
+        .map_err(Error::Io)?;
+    Ok(into.len() == want)
 }
 
 /// Streams the request body into the backend. Nothing is buffered whole: the
