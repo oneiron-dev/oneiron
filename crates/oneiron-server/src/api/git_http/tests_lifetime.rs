@@ -2,10 +2,11 @@
 //! rate law of ARCH-0044 C5), end to end over the real routes and a real
 //! `git http-backend`: a stalled push is ended at the idle limit while the
 //! next push waits its turn behind it and lands once it ends, reads go on
-//! past a push that holds the repository, exchanges past the bound wait for
-//! a stalled one to free its permit, a burst of callers on one credential all
-//! complete, many pushes to one repository all land, and a slow transfer that
-//! keeps moving is never cut.
+//! past a push that holds the repository, exchanges past the bound (or past
+//! the descriptors the sockets leave) wait for a stalled one to free its
+//! permit, a burst of callers on one credential all complete, many pushes to
+//! one repository all land, and a slow transfer that keeps moving is never
+//! cut.
 
 use super::routes::git_http_routes;
 use crate::config::{LimitsConfig, SyncServerConfig};
@@ -373,8 +374,36 @@ async fn reads_never_queue_behind_a_push_that_holds_the_repository() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn past_the_bound_an_exchange_waits_for_a_stalled_one_to_free_its_permit() {
-    let origin = origin(limits(1, 1_000)).await;
+    a_stalled_exchange_holds_the_next_one_back(origin(limits(1, 1_000)).await).await;
+}
 
+/// Review r8 (Astra R8-1, P1): a git exchange holds three pipes to its child
+/// besides its socket, and nothing counted them: at a common open-file limit
+/// of 1,024, exchanges well inside the 2,048 row could run the process out
+/// of descriptors. The git and LFS bounds are now held to the descriptors
+/// the sockets leave; past them an exchange waits its turn, as past the row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn past_the_descriptors_the_sockets_leave_an_exchange_waits_for_a_stalled_one() {
+    use crate::api::transfer::{GIT_DESCRIPTORS, OWN_DESCRIPTORS};
+    // The sockets take all but the room of one exchange, half of what is
+    // left being git's.
+    let open_files = crate::machine::open_file_limit().expect("an open-file limit");
+    let sockets = open_files
+        .checked_sub(OWN_DESCRIPTORS + 2 * GIT_DESCRIPTORS)
+        .expect("room for the process's own descriptors");
+    let limits = LimitsConfig {
+        max_connections: usize::try_from(sockets).expect("a socket count"),
+        transfer_idle_timeout_ms: 1_000,
+        ..LimitsConfig::default()
+    };
+    assert!(limits.git_exchanges > 1, "the row alone would admit both");
+    a_stalled_exchange_holds_the_next_one_back(origin(limits).await).await;
+}
+
+/// A fetch that stalls holds the only exchange its bound allows: the next
+/// exchange waits, the row asks, and it is served once the stalled one ends
+/// at the idle limit.
+async fn a_stalled_exchange_holds_the_next_one_back(origin: Origin) {
     let want = pkt(&format!("want {}\n", origin.oid));
     let mut stalled = rpc(&origin, "git-upload-pack", 4_096, want.as_bytes()).await;
     tokio::time::sleep(Duration::from_millis(300)).await;

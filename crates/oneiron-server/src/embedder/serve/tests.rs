@@ -220,12 +220,15 @@ fn holds(served: &Served, bytes: usize) -> bool {
 /// 32 MiB while it waited for the rest.
 #[test]
 fn a_request_without_the_key_is_refused_before_its_body_is_read() {
-    let served = Arc::new(Served::new(
-        synthetic(),
-        Vec::new(),
-        Some(Zeroizing::new(KEY.to_owned())),
-        &crate::config::LimitsConfig::default(),
-    ));
+    let served = Arc::new(
+        Served::new(
+            synthetic(),
+            Vec::new(),
+            Some(Zeroizing::new(KEY.to_owned())),
+            &crate::config::LimitsConfig::default(),
+        )
+        .expect("served"),
+    );
     let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
     for key in [None, Some("another key")] {
         let mut stream = post_head(addr, key, MAX_BODY_BYTES);
@@ -249,12 +252,15 @@ fn bodies_wait_for_their_budget_before_they_are_read() {
     use std::io::Write;
     /// More than the 32 that once could wait.
     const WAITERS: usize = 40;
-    let served = Arc::new(Served::new(
-        synthetic(),
-        Vec::new(),
-        Some(Zeroizing::new(KEY.to_owned())),
-        &crate::config::LimitsConfig::default(),
-    ));
+    let served = Arc::new(
+        Served::new(
+            synthetic(),
+            Vec::new(),
+            Some(Zeroizing::new(KEY.to_owned())),
+            &crate::config::LimitsConfig::default(),
+        )
+        .expect("served"),
+    );
     let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
     let mut uploads: Vec<_> = (0..2 + WAITERS)
         .map(|_| post_head(addr, Some(KEY), MAX_BODY_BYTES))
@@ -303,12 +309,6 @@ fn bodies_wait_for_their_budget_before_they_are_read() {
     assert!(holds(&served, 0), "every request's bytes returned");
 }
 
-/// Review P1 (Astra, #1361): a vault may name the model by an alias, and the
-/// model behind an alias can change while the alias stays. Every listing row,
-/// an alias's too, and every answer names the model loaded, which the vault
-/// holds to its own, and the profile it runs with, which decides the vault's
-/// evidence floors (review P3). Every answer also names the device and runtime
-/// that computed it, which the vault marks its vectors with (ARCH-0036).
 /// Review r5 (Sol R5-2, Astra R5-2): freed bytes went to the one waiting
 /// body before its task ran again, but the budget still counted it as
 /// waiting, so the next request to wait, after the line had run empty,
@@ -358,6 +358,12 @@ async fn a_wait_after_the_line_ran_empty_crosses_the_body_row_again() {
     assert!(waiter.await.expect("waiter"), "the waiter has its bytes");
 }
 
+/// Review P1 (Astra, #1361): a vault may name the model by an alias, and the
+/// model behind an alias can change while the alias stays. Every listing row,
+/// an alias's too, and every answer names the model loaded, which the vault
+/// holds to its own, and the profile it runs with, which decides the vault's
+/// evidence floors (review P3). Every answer also names the device and runtime
+/// that computed it, which the vault marks its vectors with (ARCH-0036).
 #[test]
 fn every_row_and_answer_names_the_model_loaded() {
     let (addr, _runtime) = on_loopback(router(synthetic(), vec!["shared".to_owned()], None));
@@ -460,12 +466,15 @@ pub(crate) fn cross_the_requests(callers: usize) -> crate::admission::Crossing {
         embedder_requests: 1,
         ..Default::default()
     };
-    let served = Arc::new(Served::new(
-        Arc::new(Slow(synthetic())),
-        Vec::new(),
-        Some(Zeroizing::new(KEY.to_owned())),
-        &limits,
-    ));
+    let served = Arc::new(
+        Served::new(
+            Arc::new(Slow(synthetic())),
+            Vec::new(),
+            Some(Zeroizing::new(KEY.to_owned())),
+            &limits,
+        )
+        .expect("served"),
+    );
     let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
     let calls: Vec<_> = (0..callers)
         .map(|n| {
@@ -491,12 +500,15 @@ pub(crate) fn cross_the_requests(callers: usize) -> crate::admission::Crossing {
 /// bodies fill, `callers` large requests wait, then all answer once the two
 /// let go, and the row asks.
 pub(crate) fn cross_the_bodies(callers: usize) -> crate::admission::Crossing {
-    let served = Arc::new(Served::new(
-        synthetic(),
-        Vec::new(),
-        Some(Zeroizing::new(KEY.to_owned())),
-        &crate::config::LimitsConfig::default(),
-    ));
+    let served = Arc::new(
+        Served::new(
+            synthetic(),
+            Vec::new(),
+            Some(Zeroizing::new(KEY.to_owned())),
+            &crate::config::LimitsConfig::default(),
+        )
+        .expect("served"),
+    );
     let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
     let holders: Vec<_> = (0..2)
         .map(|_| post_head(addr, Some(KEY), MAX_BODY_BYTES))
@@ -531,19 +543,29 @@ pub(crate) fn cross_the_bodies(callers: usize) -> crate::admission::Crossing {
 /// time, `callers` requests each wait for the answer before theirs to be
 /// delivered, then all answer, and the row asks.
 pub(crate) fn cross_the_answers(callers: usize) -> crate::admission::Crossing {
+    // Room for one answer of the most inputs a request carries, which each
+    // caller sends.
     let limits = crate::config::LimitsConfig {
-        embedder_answer_bytes: 1,
+        embedder_answer_bytes: answer_bytes(MAX_INPUTS, SYNTHETIC_DIMS) as u64,
         ..Default::default()
     };
-    let served = Arc::new(Served::new(
-        Arc::new(Slow(synthetic())),
-        Vec::new(),
-        Some(Zeroizing::new(KEY.to_owned())),
-        &limits,
-    ));
+    let served = Arc::new(
+        Served::new(
+            Arc::new(Slow(synthetic())),
+            Vec::new(),
+            Some(Zeroizing::new(KEY.to_owned())),
+            &limits,
+        )
+        .expect("served"),
+    );
     let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
     let calls: Vec<_> = (0..callers)
-        .map(|n| std::thread::spawn(move || embed(addr, &serde_json::json!([format!("text {n}")]))))
+        .map(|n| {
+            std::thread::spawn(move || {
+                let inputs: Vec<String> = (0..MAX_INPUTS).map(|m| format!("{n}:{m}")).collect();
+                embed(addr, &serde_json::json!(inputs))
+            })
+        })
         .collect();
     let refused = unanswered(calls);
     crate::admission::Crossing {
@@ -618,18 +640,21 @@ impl ServedModel for Wide {
 #[test]
 fn an_unread_answer_keeps_its_room_and_the_next_request_waits_for_it() {
     use std::io::Write;
-    // Room for one answer at a time: each takes the whole row.
+    // Room for one answer of the most inputs a request carries at a time.
     let limits = crate::config::LimitsConfig {
-        embedder_answer_bytes: 1,
+        embedder_answer_bytes: answer_bytes(MAX_INPUTS, WIDE_DIMS) as u64,
         ..Default::default()
     };
     let wide = Arc::new(Wide::default());
-    let served = Arc::new(Served::new(
-        Arc::clone(&wide) as Arc<dyn ServedModel>,
-        Vec::new(),
-        Some(Zeroizing::new(KEY.to_owned())),
-        &limits,
-    ));
+    let served = Arc::new(
+        Served::new(
+            Arc::clone(&wide) as Arc<dyn ServedModel>,
+            Vec::new(),
+            Some(Zeroizing::new(KEY.to_owned())),
+            &limits,
+        )
+        .expect("served"),
+    );
     let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
     let inputs: Vec<String> = (0..MAX_INPUTS).map(|n| format!("input {n}")).collect();
     let body = serde_json::json!({ "model": SYNTHETIC_MODEL, "input": inputs }).to_string();
@@ -667,4 +692,39 @@ fn an_unread_answer_keeps_its_room_and_the_next_request_waits_for_it() {
     drop(unread);
     assert_eq!(status(&mut next).expect("an answer"), 200);
     assert_eq!(wide.calls(), 2);
+}
+
+/// Review r8 (Sol R8-2, P2): the answer row clipped a larger answer's claim
+/// to the whole row, so with the row set below one answer an answer was
+/// made at once into an empty row, holding more than the row bounds. Such a
+/// row is now a config error, and no claim is held for less than it asks.
+#[tokio::test]
+async fn an_answer_row_smaller_than_the_models_largest_answer_is_never_served_under() {
+    let largest = answer_bytes(MAX_INPUTS, WIDE_DIMS);
+    let served = |row: usize| {
+        Served::new(
+            Arc::new(Wide::default()),
+            Vec::new(),
+            Some(Zeroizing::new(KEY.to_owned())),
+            &crate::config::LimitsConfig {
+                embedder_answer_bytes: row as u64,
+                ..Default::default()
+            },
+        )
+    };
+    let refused = served(largest - 1).err().expect("a row under one answer");
+    assert!(
+        refused.to_string().contains("limits.embedder_answer_bytes"),
+        "{refused}"
+    );
+    assert!(served(largest).is_ok(), "a row of one answer serves");
+
+    // The first claim into an empty row of fewer bytes is not granted.
+    let questions = LimitQuestions::default();
+    let row = BodyBudget::answers(largest - 1);
+    let claim = row
+        .reserve(largest, Duration::from_secs(1), &questions)
+        .await;
+    assert!(claim.is_none(), "no answer is held under a smaller claim");
+    assert_eq!(row.held_bytes(), 0);
 }

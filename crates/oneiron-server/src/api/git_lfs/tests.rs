@@ -1269,6 +1269,139 @@ async fn a_request_waiting_for_a_transfer_permit_has_read_none_of_its_body() {
     }
 }
 
+/// Room for one chunk exchange's frames, and the rows' defaults otherwise.
+fn one_frame_config() -> SyncServerConfig {
+    SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            lfs_frame_bytes: crate::api::transfer::LFS_FRAME_ROOM,
+            ..Default::default()
+        },
+        ..secret_config()
+    }
+}
+
+/// A chunk exchange of `want`, answered, whose reply nobody reads.
+async fn unread_exchange(
+    server: &Arc<SyncServer>,
+    token: &str,
+    want: Vec<u8>,
+) -> axum::response::Response {
+    let request = crate::test_credentials::bind_request(
+        server,
+        request(
+            "POST",
+            &format!("/git/{REPO}/info/lfs/chunks"),
+            Some(token),
+            Body::from(want),
+        ),
+    );
+    let response = lfs_routes()
+        .with_state(Arc::clone(server))
+        .oneshot(request)
+        .await
+        .expect("route response");
+    assert_eq!(response.status(), StatusCode::OK);
+    response
+}
+
+/// Waits until `row` has asked whether everything is okay; `why` when it
+/// never does.
+async fn until_asked(server: &Arc<SyncServer>, row: crate::wire_telemetry::LimitRow, why: &str) {
+    let deadline = std::time::Instant::now() + PATIENCE;
+    while !asked(server, row) {
+        assert!(std::time::Instant::now() < deadline, "{why}");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+/// Review r8 (Sol R8-1, Astra R8-2, P1): a chunk exchange reads its request
+/// and builds its reply whole, and only the 2,048-transfer row bounded how
+/// many did, so callers who sent their frames or read their replies slowly
+/// could hold gigabytes of them. An exchange now takes room for its frames
+/// in `lfs_frame_bytes` before it reads a byte and keeps it until its reply
+/// is delivered; past the row the next exchange waits, its body unread, and
+/// the row asks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unread_chunk_reply_keeps_its_frame_room_and_the_next_exchange_waits_unread() {
+    let (_dir, server) = test_server(one_frame_config());
+    // Many times the pieces a reply has in flight.
+    let bytes = varied_bytes(1_000_000);
+    let (want, token, _) = chunk_want(&server, &bytes);
+    let unread = unread_exchange(&server, &token, want).await;
+
+    // The body is sent only when this test says so.
+    let (send, sent) = tokio::sync::oneshot::channel::<Vec<u8>>();
+    let body = Body::from_stream(futures_util::stream::once(async move {
+        Ok::<_, std::io::Error>(axum::body::Bytes::from(sent.await.unwrap_or_default()))
+    }));
+    let waiting = {
+        let server = Arc::clone(&server);
+        let request = request(
+            "POST",
+            &format!("/git/{REPO}/info/lfs/chunks"),
+            Some(&token),
+            body,
+        );
+        tokio::spawn(async move { route(&server, request).await.0 })
+    };
+    until_asked(
+        &server,
+        crate::wire_telemetry::LimitRow::LfsFrameBytes,
+        "the next exchange waits for the frame room before its body arrives",
+    )
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !waiting.is_finished(),
+        "it waits while the unread reply holds the room"
+    );
+
+    // Once the unread reply's reader goes, the next exchange reads its body
+    // and answers.
+    drop(unread);
+    send.send(b"not a chunk request".to_vec())
+        .expect("the exchange is still in line");
+    let status = tokio::time::timeout(PATIENCE, waiting)
+        .await
+        .expect("the exchange has its turn")
+        .expect("exchange task");
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+/// Rule five at the LFS frame row: past room for one exchange, which an
+/// unread reply holds, `callers` exchanges on one credential wait, then all
+/// answer once it is let go, and the row asks.
+pub(crate) async fn cross_the_frames(callers: usize) -> crate::admission::Crossing {
+    use crate::wire_telemetry::LimitRow;
+    let (_dir, server) = test_server(one_frame_config());
+    let (want, token, _) = chunk_want(&server, &varied_bytes(1_000_000));
+    let unread = unread_exchange(&server, &token, want.clone()).await;
+    let calls: Vec<_> = (0..callers)
+        .map(|_| {
+            let server = Arc::clone(&server);
+            let request = request(
+                "POST",
+                &format!("/git/{REPO}/info/lfs/chunks"),
+                Some(&token),
+                Body::from(want.clone()),
+            );
+            tokio::spawn(async move { route(&server, request).await.0 })
+        })
+        .collect();
+    until_asked(&server, LimitRow::LfsFrameBytes, "the exchanges wait").await;
+    drop(unread);
+    let mut refused = 0;
+    for call in calls {
+        if call.await.unwrap() != StatusCode::OK {
+            refused += 1;
+        }
+    }
+    crate::admission::Crossing {
+        refused,
+        asked: asked(&server, LimitRow::LfsFrameBytes),
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_upload_past_the_quota_lands_and_the_quota_row_asks() {
     let config = SyncServerConfig {
