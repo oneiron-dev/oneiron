@@ -448,10 +448,13 @@ fn pre_move_fixture_coverage_is_explicit() {
         "GATE_MANIFEST_SEEDED_CONFIDENCE",
         "GENUI_VOICE_GRANT_OFFER",
         "GMAIL_MAILBOX_CURSOR",
+        "HOUSEKEEPING_SCHEDULE",
+        "HOUSEKEEPING_WAKE",
         "IDENTITY_DEVICE_PK",
         "IDENTITY_DEVICE_SK",
         "IDENTITY_MACHINE_ID",
         "IDENTITY_MACHINE_SK",
+        "IDENTITY_PINNED_ROOT",
         "IDENTITY_TOPOLOGY_AUTHORED_HERE",
         "IDENTITY_TOPOLOGY_MINE_SIGNERS",
         "IDENTITY_TOPOLOGY_SEALED_HERE",
@@ -632,6 +635,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "WEAVE_DIGEST_SCHEDULE",
         "WEAVE_DIGEST_SOURCE",
         "WEAVE_WRONG_LINK_LABEL",
+        "WIRE_LIMIT_QUESTION",
     ]
     .into_iter()
     .collect();

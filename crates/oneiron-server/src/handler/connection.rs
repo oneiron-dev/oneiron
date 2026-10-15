@@ -305,7 +305,7 @@ async fn handle_connection(
                             }
                             continue;
                         }
-                        if protocol_version == protocol::RESIDENCE_PROTOCOL_VERSION
+                        if protocol::is_residence_version(protocol_version)
                             && data.first() == Some(&protocol::TAG_WINDOW_SYNC)
                         {
                             let Ok((raw_key, sub_tag, _)) =
@@ -358,14 +358,14 @@ async fn handle_connection(
                         // New owner peers receive only subscribed keys. Legacy
                         // v6 peers cannot decode world-month keys, so they keep
                         // base-month broadcasts but never receive world frames.
-                        let subscribed_window = if data.first() == Some(&protocol::TAG_WINDOW_SYNC)
-                        {
-                            window_broadcast_allowed(protocol_version, &conn_state, &data)
-                                && !window_update_withheld(&server, &data)
+                        let frame = if data.first() == Some(&protocol::TAG_WINDOW_SYNC) {
+                            window_delivery(&server, protocol_version, &conn_state, data)
                         } else {
-                            should_forward_broadcast(protocol_version, &data)
+                            should_forward_broadcast(protocol_version, &data).then_some(data)
                         };
-                        if subscribed_window && !transport.send_binary(data).await {
+                        if let Some(frame) = frame
+                            && !transport.send_binary(frame).await
+                        {
                             break;
                         }
                     }
@@ -523,7 +523,11 @@ async fn handle_connection(
                     break;
                 }
                 if let Err(error) = server.vault().resume_from_slim_on_inbound() {
-                    tracing::warn!(conn_id, %error, "failed to resume vault for inbound frame");
+                    tracing::warn!(
+                        conn_id,
+                        kind = ?error.kind(),
+                        "failed to resume vault for inbound frame"
+                    );
                     break;
                 }
                 if !matches!(&msg, SyncMessage::Rpc(_) | SyncMessage::Sub(_)) {
@@ -571,6 +575,17 @@ async fn handle_connection(
                                 .await;
                             break;
                         }
+                        ProtocolError::ReplacementUnsupported => {
+                            transport
+                                .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
+                                    code: close_codes::VERSION_MISMATCH,
+                                    reason: Utf8Bytes::from_static(
+                                        "window behind its history-free floor: upgrade this device to hello v13+ (v14 for residence)",
+                                    ),
+                                })))
+                                .await;
+                            break;
+                        }
                         ProtocolError::InvalidPayload(msg) => {
                             tracing::warn!(conn_id, error = %msg, "invalid payload — closing");
                             break;
@@ -579,10 +594,14 @@ async fn handle_connection(
                             tracing::warn!(conn_id, tag, "unknown tag — closing");
                             break;
                         }
-                        ProtocolError::VvDecode(msg) => {
+                        ProtocolError::VvDecode(_) => {
                             // Fail-closed: a malformed VV is a protocol
                             // violation, never answered with a full export.
-                            tracing::warn!(conn_id, error = %msg, "version vector decode failure — closing");
+                            tracing::warn!(
+                                conn_id,
+                                reason = "version_vector_decode_failed",
+                                "version vector decode failure — closing"
+                            );
                             break;
                         }
                         ProtocolError::FrameTooLarge { size, max } => {
@@ -617,7 +636,7 @@ async fn handle_connection(
                 break;
             }
             Err(e) => {
-                tracing::warn!(conn_id, error = %e, "protocol parse error");
+                tracing::warn!(conn_id, kind = e.kind(), "protocol parse error");
                 break;
             }
         }
@@ -675,16 +694,44 @@ fn window_broadcast_allowed(
         .and_then(|payload| oneiron::sync::transport::decode_window_sync(payload).ok())
         .and_then(|(key, _, _)| oneiron::sync::WindowKey::try_new(key));
     match protocol_version {
-        version if version == protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION => {
+        version if protocol::is_owner_window_version(version) => {
             key.is_some_and(|key| state.receives_window(&key))
         }
         _ => false,
     }
 }
 
-/// Whether `frame` is a window UPDATE this server now withholds as
-/// device-only. Read at the socket, since the flag may turn after the frame
-/// was queued for this connection.
+/// What a broadcast window frame becomes on this socket: itself where the
+/// socket is pushed the window, a `WINDOW_INVALIDATE` where it forgot the
+/// window's subscription past `max_windows_per_connection`, or nothing. A
+/// frame this server withholds as device-only is neither.
+fn window_delivery(
+    server: &SyncServer,
+    protocol_version: u8,
+    state: &super::conn_state::ConnState,
+    frame: Vec<u8>,
+) -> Option<Vec<u8>> {
+    if window_broadcast_allowed(protocol_version, state, &frame) {
+        return (!window_update_withheld(server, &frame)).then_some(frame);
+    }
+    if !protocol::takes_window_invalidations(protocol_version) {
+        return None;
+    }
+    let (key, _, _) = frame
+        .get(1..)
+        .and_then(|payload| protocol::decode_window_sync(payload).ok())?;
+    let window = oneiron::sync::WindowKey::try_new(key)?;
+    if !state.invalidates_window(&window) || window_update_withheld(server, &frame) {
+        return None;
+    }
+    protocol::encode_window_sync(key, protocol::window_sub_tags::WINDOW_INVALIDATE, &[])
+        .into_result()
+        .ok()
+}
+
+/// Whether `frame` is a window UPDATE or REPLACEMENT this server now
+/// withholds as device-only. Read at the socket, since the flag may turn
+/// after the frame was queued for this connection.
 fn window_update_withheld(server: &SyncServer, frame: &[u8]) -> bool {
     if frame.first() != Some(&protocol::TAG_WINDOW_SYNC) {
         return false;
@@ -693,8 +740,10 @@ fn window_update_withheld(server: &SyncServer, frame: &[u8]) -> bool {
         .get(1..)
         .and_then(|payload| protocol::decode_window_sync(payload).ok())
         .is_some_and(|(key, sub_tag, update)| {
-            sub_tag == protocol::window_sub_tags::UPDATE
-                && crate::server::withheld_from_peers(&server.reassert_manager, key, update)
+            matches!(
+                sub_tag,
+                protocol::window_sub_tags::UPDATE | protocol::window_sub_tags::REPLACEMENT
+            ) && crate::server::withheld_from_peers(&server.reassert_manager, key, update)
         })
 }
 
@@ -706,6 +755,6 @@ pub(super) fn should_forward_broadcast(protocol_version: u8, data: &[u8]) -> boo
         return false; // Only document_delivery may construct a recipient's export.
     }
     (protocol_version == protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION
-        || protocol_version == protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION)
+        || protocol::is_owner_window_version(protocol_version))
         || data.first().copied() != Some(protocol::TAG_WINDOW_SYNC)
 }

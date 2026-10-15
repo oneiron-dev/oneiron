@@ -1380,6 +1380,48 @@ fn teardown_keeps_the_row_while_the_registered_file_has_another_name() {
     );
 }
 
+/// One housekeeping pass, every engine sweep forced.
+fn housekeeping_pass(vault: &Vault) {
+    vault
+        .housekeeping_all(crate::housekeeping::HousekeepingBudget::unbounded())
+        .expect("housekeeping pass");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_kept_file_goes_on_a_later_pass_once_it_can_and_a_substituted_one_never() {
+    // #1456 F6: an expiry that could not remove its file kept the row, and
+    // nothing ever tried again, so the plaintext stayed on disk for good.
+    let (tmp, vault, path, lease_id) = registered_t2();
+    let expires_at = read_lease_row(&vault, &lease_id).expect("row").expires_at;
+    let second_name = tmp.path().join("second-name");
+    std::fs::hard_link(&path, &second_name).expect("second name");
+    assert_eq!(vault.expire_secret_leases(expires_at).expect("expiry"), 1);
+    housekeeping_pass(&vault);
+    assert!(path.exists(), "a file with another name is kept");
+    std::fs::remove_file(&second_name).expect("drop the second name");
+    housekeeping_pass(&vault);
+    assert!(
+        !path.exists(),
+        "a later pass removed the file once it could"
+    );
+    assert_eq!(count_rows(&vault, SECRET_LOCAL_REGISTRATION_PREFIX), 0);
+
+    let (tmp, vault, path, lease_id) = registered_t2();
+    std::fs::rename(&path, tmp.path().join("aside")).expect("move the registered file");
+    std::fs::write(&path, b"unrelated bytes").expect("plant an unrelated file");
+    let expires_at = read_lease_row(&vault, &lease_id).expect("row").expires_at;
+    assert_eq!(vault.expire_secret_leases(expires_at).expect("expiry"), 1);
+    housekeeping_pass(&vault);
+    housekeeping_pass(&vault);
+    assert_eq!(std::fs::read(&path).expect("read"), b"unrelated bytes");
+    assert_eq!(
+        count_rows(&vault, SECRET_LOCAL_REGISTRATION_PREFIX),
+        1,
+        "the row stays while the vault's file is unaccounted for"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // S6 lease-scoped staleness
 // ---------------------------------------------------------------------------

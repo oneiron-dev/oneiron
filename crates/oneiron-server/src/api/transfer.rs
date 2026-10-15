@@ -51,6 +51,12 @@ impl Transfers {
         self.git.try_admit(principal.unwrap_or_default().to_owned())
     }
 
+    /// A git exchange permit for the host's own repository maintenance,
+    /// outside any principal's share.
+    pub(crate) fn admit_git_maintenance(&self) -> Result<Permit<String>, Saturated> {
+        self.git.try_admit_unkeyed()
+    }
+
     /// An LFS transfer's permit, keyed as [`Self::admit_git`] is.
     pub(super) fn admit_lfs(&self, principal: Option<&str>) -> Result<Permit<String>, Saturated> {
         self.lfs.try_admit(principal.unwrap_or_default().to_owned())

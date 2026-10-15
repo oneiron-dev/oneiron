@@ -96,11 +96,45 @@ pub const CHUNK_FULL_WINDOW_PROTOCOL_VERSION: u8 = 11;
 /// Own-device opened-item residence: root, scoped index, point fetch and local writes;
 /// no unsolicited month-window updates or full-window vector exchange.
 pub const RESIDENCE_PROTOCOL_VERSION: u8 = 12;
+/// v11's owner lane plus window replacement: a peer behind a window's history-free floor
+/// receives `REPLACEMENT` and installs it, and may send `REPLACEMENT_REQUEST`.
+pub const REPLACEMENT_FULL_WINDOW_PROTOCOL_VERSION: u8 = 13;
+/// v12's residence lane plus window replacement, as v13 adds it to the owner lane.
+pub const REPLACEMENT_RESIDENCE_PROTOCOL_VERSION: u8 = 14;
+
+/// Whether `version` is an owner full-window lane with world-month keys (v11 or v13).
+pub const fn is_owner_window_version(version: u8) -> bool {
+    version == CHUNK_FULL_WINDOW_PROTOCOL_VERSION
+        || version == REPLACEMENT_FULL_WINDOW_PROTOCOL_VERSION
+}
+
+/// Whether `version` is an own-device opened-item residence lane (v12 or v14).
+pub const fn is_residence_version(version: u8) -> bool {
+    version == RESIDENCE_PROTOCOL_VERSION || version == REPLACEMENT_RESIDENCE_PROTOCOL_VERSION
+}
+
+/// Whether a peer speaking `version` answers `WINDOW_INVALIDATE` with a `VV_REQUEST`, so a
+/// server may forget its subscription to a window (v13).
+pub const fn takes_window_invalidations(version: u8) -> bool {
+    version == REPLACEMENT_FULL_WINDOW_PROTOCOL_VERSION
+}
+
+/// Whether a peer speaking `version` installs a `REPLACEMENT` snapshot. An older peer reads an
+/// unknown sub-tag as nothing, so it is never sent one.
+pub const fn installs_window_replacements(version: u8) -> bool {
+    version == REPLACEMENT_FULL_WINDOW_PROTOCOL_VERSION
+        || version == REPLACEMENT_RESIDENCE_PROTOCOL_VERSION
+}
 // The owner, residence and selector lanes are told apart by the hello byte alone.
 const _: () = assert!(
     CHUNK_FULL_WINDOW_PROTOCOL_VERSION != RESIDENCE_PROTOCOL_VERSION
         && CHUNK_FULL_WINDOW_PROTOCOL_VERSION != PROTOCOL_VERSION
         && RESIDENCE_PROTOCOL_VERSION != PROTOCOL_VERSION
+        && REPLACEMENT_FULL_WINDOW_PROTOCOL_VERSION != REPLACEMENT_RESIDENCE_PROTOCOL_VERSION
+        && !is_owner_window_version(PROTOCOL_VERSION)
+        && !is_residence_version(PROTOCOL_VERSION)
+        && !is_owner_window_version(REPLACEMENT_RESIDENCE_PROTOCOL_VERSION)
+        && !is_residence_version(REPLACEMENT_FULL_WINDOW_PROTOCOL_VERSION)
 );
 /// Sync version that introduces app-tier tags and their close codes.
 pub const APP_TIER_PROTOCOL_VERSION_VERSION: u8 = 8;
@@ -164,6 +198,16 @@ pub mod window_sub_tags {
     pub const PROMOTION_GRANTED: u8 = 10;
     /// A promoted window changed; request a scrubbed VV delta, not raw fan-out.
     pub const PROMOTED_INVALIDATE: u8 = 11;
+    /// The sender's history-free window snapshot, sent where its history past the receiver's
+    /// version cannot ship. The receiver installs it in place of its window and never merges
+    /// it. Only to a v13/v14 peer.
+    pub const REPLACEMENT: u8 = 12;
+    /// Asks the server for its `REPLACEMENT` of this window. Empty payload. v13/v14 only.
+    pub const REPLACEMENT_REQUEST: u8 = 13;
+    /// A window changed that the server no longer pushes to this socket: it forgot the
+    /// subscription past `max_windows_per_connection`. A peer that follows the window sends
+    /// `VV_REQUEST`, which subscribes it again. Empty payload. Server to a v13 peer only.
+    pub const WINDOW_INVALIDATE: u8 = 14;
 }
 
 /// Maximum key length (YYYY-MM@<32 lowercase world hex> = 40 bytes).
@@ -267,6 +311,16 @@ pub fn encode_chunk_full_window_protocol_hello() -> Vec<u8> {
 /// Encodes the own-device opened-item residence hello.
 pub fn encode_residence_protocol_hello() -> Vec<u8> {
     vec![TAG_PROTOCOL_HELLO, RESIDENCE_PROTOCOL_VERSION]
+}
+
+/// Encodes the owner hello of a client that installs window replacements (v13).
+pub fn encode_replacement_full_window_protocol_hello() -> Vec<u8> {
+    vec![TAG_PROTOCOL_HELLO, REPLACEMENT_FULL_WINDOW_PROTOCOL_VERSION]
+}
+
+/// Encodes the residence hello of a client that installs window replacements (v14).
+pub fn encode_replacement_residence_protocol_hello() -> Vec<u8> {
+    vec![TAG_PROTOCOL_HELLO, REPLACEMENT_RESIDENCE_PROTOCOL_VERSION]
 }
 
 /// Decodes a protocol-version hello frame (the FULL frame, tag included).
