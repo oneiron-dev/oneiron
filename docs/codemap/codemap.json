@@ -124,7 +124,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AccessRequest",
@@ -7578,7 +7578,7 @@
      "purpose": "Rule and rule-set types for channel-identity selection law",
      "surface": {
       "crate-vis": 8,
-      "fn": 4,
+      "fn": 3,
       "struct": 3
      }
     },
@@ -10950,7 +10950,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/connector_key/events/tests.rs",
@@ -11343,8 +11343,8 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 18,
-      "fn": 18,
+      "crate-vis": 19,
+      "fn": 22,
       "struct": 2
      }
     },
@@ -37532,7 +37532,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/tests/consult_fanout.rs",
@@ -37753,7 +37753,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 30
      }
     },
     {
