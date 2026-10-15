@@ -291,6 +291,16 @@ pub(super) fn is_engine_owned_reserved_predicate(predicate: &str) -> bool {
         || matches!(predicate, "repo.proposed_diff" | "repo.session")
 }
 
+/// Whether `prefix` is a well-formed predicate prefix: one or more grammar
+/// segments, each followed by a dot (`host.persona.`), within the predicate
+/// byte bound. A host's protected namespace is declared in this shape.
+pub(crate) fn is_predicate_prefix(prefix: &str) -> bool {
+    prefix.len() <= MAX_PREDICATE_BYTES
+        && prefix
+            .strip_suffix('.')
+            .is_some_and(|stem| stem.split('.').all(valid_predicate_segment))
+}
+
 fn valid_predicate_segment(segment: &str) -> bool {
     let bytes = segment.as_bytes();
     let Some(first) = bytes.first() else {

@@ -235,6 +235,50 @@ pub(super) fn register_foreign_world_for_pact(
     })
 }
 
+thread_local! {
+    /// Set on the writing thread when a write stages a terminal federation
+    /// lifecycle row (H213). Write closures run on their caller's thread, so
+    /// the transaction's owner reads it back and sweeps once it commits.
+    static SWEEP_DUE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Notes that the current thread's transaction staged a terminal federation
+/// lifecycle row. Every AUTHORITY_LOG put reaches this, local or replicated.
+pub(crate) fn note_terminal_federation_row() {
+    SWEEP_DUE.with(|due| due.set(true));
+}
+
+/// One transaction owner's watch for a terminal federation row (H213): begun
+/// before the transaction, finished after its commit. Dropping it unfinished
+/// (a discarded transaction) forgets the note. Watches nest: an inner owner on
+/// the same thread (another vault's writer) hands the outer note back intact.
+pub(crate) struct StaleSweepWatch {
+    outer: bool,
+}
+
+impl StaleSweepWatch {
+    pub(crate) fn begin() -> Self {
+        Self {
+            outer: SWEEP_DUE.with(|due| due.replace(false)),
+        }
+    }
+
+    /// Runs the stale-stamp sweep when the committed transaction staged a
+    /// terminal federation row, whichever door stored it.
+    pub(crate) fn finish(self, vault: &Vault) -> Result<()> {
+        if SWEEP_DUE.with(|due| due.replace(self.outer)) {
+            apply_federation_stale_stamps(vault)?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for StaleSweepWatch {
+    fn drop(&mut self) {
+        SWEEP_DUE.with(|due| due.set(self.outer));
+    }
+}
+
 /// Stamps every world registered to a pact that the fold reports terminal.
 ///
 /// ONE authority fold per sweep: the fold is the authority on which pacts went

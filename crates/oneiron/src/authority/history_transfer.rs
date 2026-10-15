@@ -87,6 +87,7 @@ impl Vault {
             let entry = decode_authority_log_entry_body(bytes)?;
             decoded.push((authority_entry_hash(&entry)?, bytes.clone(), entry));
         }
+        let watch = crate::federation::StaleSweepWatch::begin();
         let mut txn = self.store.env.write_txn()?;
         let mut merged = history_in_txn(self, &txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
@@ -158,6 +159,7 @@ impl Vault {
             return Err(invalid_authority());
         }
         txn.commit()?;
+        watch.finish(self)?;
         Ok(ids)
     }
 

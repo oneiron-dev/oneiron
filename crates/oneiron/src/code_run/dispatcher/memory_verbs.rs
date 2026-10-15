@@ -237,10 +237,11 @@ impl HostSelfDispatcher<'_> {
                     "Dreamer rules require an admitted resident claim".into(),
                 ));
             }
-            let record = crate::dreamer_consolidation::resident_record(self.actor, &json)?;
+            let record =
+                crate::dreamer_consolidation::resident_record(self.actor, &json, Some(&call.id))?;
             match &self.storage {
                 ExecutorStorage::Canonical(vault) => {
-                    vault.set_dreamer_failure_rules(self.actor, &json)?;
+                    vault.set_claimed_dreamer_failure_rules(self.actor, &json, &call.id)?;
                 }
                 ExecutorStorage::Session(binding) => {
                     binding.session.side_table_put_routed(

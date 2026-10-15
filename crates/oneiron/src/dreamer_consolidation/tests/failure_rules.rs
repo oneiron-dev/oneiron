@@ -538,3 +538,101 @@ fn pending_resident_rule_claim_does_not_activate_policy() -> Result<()> {
     assert!(super::super::failure_rules::load(&vault)?.is_none());
     Ok(())
 }
+
+/// H398: rules copied from a resident's admitted claim stay in force only while
+/// that claim does. Retracting the authoring claim takes them out of every
+/// load, including the write-time eligibility door; host-set rules, which no
+/// claim carries, keep loading.
+#[test]
+fn retracting_the_authoring_claim_takes_its_rules_out_of_force() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    super::prior_heads::policy(&vault, vault.dreamer_authority()?.entity_ref(), true)?;
+    set_manifest_failure_policy(&vault, true, true, "holder_override_capped_at_vault")?;
+    let subject = EntityId::from_bytes([0x65; 16])?;
+    let turn = EntityId::from_bytes([0x66; 16])?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    let resident = EntityId::from_bytes([0x69; 16])?;
+    let definition = crate::agent_def::AgentDefinition::new(
+        "oneiron.agent.resident",
+        "Resident rule author",
+        "1",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        None,
+        crate::agent_def::AgentScope::All,
+        crate::agent_def::AgentCeiling::Auto,
+        None,
+        ClaimApprovalStatus::Approved,
+        crate::ClaimLifecycleStatus::Active,
+        ClaimSource::UserStated,
+        1.0,
+        false,
+        true,
+        Value::Map(vec![("definedVia".into(), "test".into())]),
+        None,
+        true,
+        None,
+    );
+    vault.put_agent_definition(&resident, &definition, occurred(1), 1)?;
+    let author = WriteActor::new(resident, EdgeActorClass::Agent);
+    let authored: serde_json::Value =
+        serde_json::from_slice(&rows(subject, turn, true)).expect("valid authored rows");
+    let value = super::super::value_projection::json_to_rmpv(&authored);
+    let claim_id = EntityId::from_bytes([0x6a; 16])?;
+    let call = SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+        claim_id,
+        ClaimCandidate::new(
+            crate::dreamer_consolidation::DREAMER_FAILURE_RULES_PREDICATE,
+            ClaimSubject::Entity(resident),
+            value,
+            1.0,
+        ),
+        occurred(21),
+        21,
+    ));
+    HostSelfDispatcher::new(&vault, author, "resident-chat-rule")?.dispatch(call)?;
+    assert!(crate::dreamer_consolidation::admitted_authored_claim(
+        &vault, &claim_id, author
+    )?);
+    assert!(super::super::failure_rules::load(&vault)?.is_some());
+
+    let fallback = crate::LlmResponse {
+        message: crate::LlmMessage {
+            role: crate::LlmMessageRole::Assistant,
+            content: vec![crate::ContentPart::Text {
+                text: "fallback".into(),
+            }],
+        },
+        usage: crate::LlmUsage::zero(),
+        finish_reason: crate::FinishReason::Other {
+            name: "fallback:json_rules_v1".into(),
+        },
+    };
+    let eligible = |vault: &Vault| -> Result<Option<bool>> {
+        let txn = vault.store.env.read_txn()?;
+        super::super::step_consolidation_eligible_in_txn(vault, &txn, "extraction", &fallback)
+    };
+    assert_eq!(
+        eligible(&vault)?,
+        Some(true),
+        "control: the admitted rule binds"
+    );
+
+    vault.retract_claim(&claim_id, 30)?;
+    assert!(
+        super::super::failure_rules::load(&vault)?.is_none(),
+        "a retracted claim's rules must not load"
+    );
+    assert_eq!(
+        eligible(&vault)?,
+        None,
+        "the manifest's own default decides"
+    );
+
+    // Host configuration carries no claim and is not revoked by one.
+    vault.set_dreamer_failure_rules(author, &rows(subject, turn, true))?;
+    assert!(super::super::failure_rules::load(&vault)?.is_some());
+    Ok(())
+}

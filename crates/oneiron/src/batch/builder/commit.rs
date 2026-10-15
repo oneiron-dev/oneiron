@@ -108,6 +108,7 @@ impl BatchBuilder<'_> {
         let (origin, birth_mask) = (self.origin, self.birth_mask);
         #[cfg(feature = "sync")]
         let federated_puts = std::mem::take(&mut self.federated_puts);
+        let stale_sweep = crate::federation::StaleSweepWatch::begin();
         let committed = vault.store.group_write(Some(announced), |wtxn| {
             if let Err(err) = target_guard(wtxn) {
                 return Rows::Discard(Err(err.into()));
@@ -182,6 +183,7 @@ impl BatchBuilder<'_> {
             vault.store.notify_proactivity_changes();
         }
         vault.store.notify_task_updates(tasks);
+        stale_sweep.finish(vault)?;
         while vault.collect_lfs_garbage(32)? != 0 {}
         // A delete in this batch staged its claim-key retirement.
         vault.finish_gate_decision_retirements_after_commit();
