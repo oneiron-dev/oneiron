@@ -39,11 +39,12 @@ pub use self::body::{
     encode_blob_artifact_body,
 };
 pub(crate) use self::erase::{
-    Holding, LateReference, asset_holding_in_txn, bytes_erased, claim_holding_in_txn,
-    erase_holds_in_txn, holdings_in_txn, late_reference_in_txn, other_versions_in_txn,
-    record_erase_scope_in_txn, references_in_txn, release_erased_bytes_in_txn,
-    take_erase_scope_in_txn,
+    Holding, asset_holding_in_txn, bytes_erased, claim_holding_in_txn, erase_holds_in_txn,
+    holdings_in_txn, other_versions_in_txn, record_erase_scope_in_txn, references_in_txn,
+    release_erased_bytes_in_txn, take_erase_scope_in_txn,
 };
+#[cfg(any(feature = "sync", test))]
+pub(crate) use self::erase::{LateReference, late_reference_in_txn};
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 pub use self::provenance::BlobVersionProvenance;
 pub(crate) use self::references::{
