@@ -390,3 +390,75 @@ fn an_owners_erasure_run_cut_short_is_retried_as_the_owners() {
         "{report:#?}"
     );
 }
+
+/// Engine edge on Sol R4 F2 (#1456): a window a caller holds when the
+/// owner's erasure run comes is left out of it, and the run stays the
+/// owner's. Once the window is free, the retry compacts it, with no
+/// obligation due.
+#[cfg(feature = "sync")]
+#[test]
+fn a_window_held_through_the_owners_erasure_run_is_compacted_on_its_retry() {
+    use crate::sync::bridge::Materializer;
+    use crate::sync::manager::WindowManager;
+    use crate::sync::types::WindowKey;
+
+    let erase_work =
+        |report: &HousekeepingReport| match outcome(report, HousekeepingSweep::HardEraseSweep) {
+            SweepOutcome::Ran {
+                work: super::SweepWork::HardErase(work),
+                ..
+            } => *work,
+            other => panic!("the erasure sweep did not run: {other:?}"),
+        };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let clock = ManualClock::new(T0);
+    let vault = Arc::new(
+        Vault::open(
+            dir.path(),
+            VaultConfig {
+                store_clock: clock.bundle(),
+                ..crate::test_util::embedding_test_config()
+            },
+        )
+        .expect("open vault"),
+    );
+    // A persisted window, and no obligation left.
+    let erased = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &erased,
+            1,
+            TimeRange { start: T0, end: T0 },
+            T0,
+            b"window-history",
+        )
+        .commit()
+        .expect("put");
+    vault
+        .delete_entity_with_reason(&erased, crate::deletion::DeleteReason::GdprDelete)
+        .expect("delete");
+    let discharged = crate::sweep::run_hard_erase_sweep(&vault).expect("erase");
+    assert_eq!(discharged.jobs_processed, 1);
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "held-window-test",
+    ));
+    let held = manager
+        .open_window(&WindowKey::from_timestamp(T0))
+        .expect("open window");
+
+    let owners = vault
+        .housekeeping_all(HousekeepingBudget::unbounded())
+        .expect("the schedule reads");
+    let work = erase_work(&owners);
+    assert_eq!(work.windows_compacted, 0);
+    assert!(work.windows_deferred_live >= 1, "{work:?}");
+
+    drop(held);
+    clock.set(T0 + 3_600);
+    let work = erase_work(&pass(&vault));
+    assert!(work.windows_unloaded >= 1, "{work:?}");
+    assert!(work.windows_compacted >= 1, "the retry was the owner's");
+}

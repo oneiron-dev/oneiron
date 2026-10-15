@@ -676,7 +676,13 @@ impl Vault {
         let end = self.now_recorded_at();
         let (outcome, finished) = match result {
             Ok(Ok(run)) => {
-                let items_failed = run.work.items_failed() > 0;
+                // An owner's erasure run that left a window uncompacted (a
+                // caller held it, or a write raced it) has not answered the
+                // owner: it is retried as the owner's, after the backoff.
+                let owner_left = running.owners()
+                    && matches!(run.work, SweepWork::HardErase(work)
+                        if work.windows_deferred_live > 0 || work.windows_deferred_raced > 0);
+                let items_failed = run.work.items_failed() > 0 || owner_left;
                 if run.complete && !items_failed {
                     // A walk that began before this run covers the rows due
                     // by when it began. A row the clear leaves behind costs
