@@ -408,7 +408,7 @@ impl SyncClient {
     /// for one window during initial sync: live doc when loaded; persisted
     /// `sv:w:` when `svf:w:` is fresh (no doc load — the fast-reconnect
     /// path); full manager open otherwise.
-    fn window_vv_for_initial_sync(&self, key: &WindowKey) -> Result<Vec<u8>> {
+    pub(super) fn window_vv_for_initial_sync(&self, key: &WindowKey) -> Result<Vec<u8>> {
         if let Some(window) = self.manager.window(key) {
             return Ok(doc_version_vector(&window.doc));
         }

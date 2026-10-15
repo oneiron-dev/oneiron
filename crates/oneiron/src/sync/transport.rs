@@ -113,6 +113,12 @@ pub const fn is_residence_version(version: u8) -> bool {
     version == RESIDENCE_PROTOCOL_VERSION || version == REPLACEMENT_RESIDENCE_PROTOCOL_VERSION
 }
 
+/// Whether a peer speaking `version` answers `WINDOW_INVALIDATE` with a `VV_REQUEST`, so a
+/// server may forget its subscription to a window (v13).
+pub const fn takes_window_invalidations(version: u8) -> bool {
+    version == REPLACEMENT_FULL_WINDOW_PROTOCOL_VERSION
+}
+
 /// Whether a peer speaking `version` installs a `REPLACEMENT` snapshot. An older peer reads an
 /// unknown sub-tag as nothing, so it is never sent one.
 pub const fn installs_window_replacements(version: u8) -> bool {
@@ -198,6 +204,10 @@ pub mod window_sub_tags {
     pub const REPLACEMENT: u8 = 12;
     /// Asks the server for its `REPLACEMENT` of this window. Empty payload. v13/v14 only.
     pub const REPLACEMENT_REQUEST: u8 = 13;
+    /// A window changed that the server no longer pushes to this socket: it forgot the
+    /// subscription past `max_windows_per_connection`. A peer that follows the window sends
+    /// `VV_REQUEST`, which subscribes it again. Empty payload. Server to a v13 peer only.
+    pub const WINDOW_INVALIDATE: u8 = 14;
 }
 
 /// Maximum key length (YYYY-MM@<32 lowercase world hex> = 40 bytes).

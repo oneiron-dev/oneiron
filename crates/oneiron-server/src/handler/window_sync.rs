@@ -75,7 +75,6 @@ pub(super) async fn handle_window_sync(
             &selector,
             &doc,
         )?;
-        conn_state.touch_window(key.clone(), server.config.max_windows_per_connection)?;
         // The baseline is the root of the snapshot the home would serve this promotion, never a
         // version the device states. A second promotion can only raise it.
         let floor =
@@ -130,6 +129,7 @@ pub(super) async fn handle_window_sync(
         window_sub_tags::RESIDENCE_ACK
             | window_sub_tags::PROMOTION_GRANTED
             | window_sub_tags::PROMOTED_INVALIDATE
+            | window_sub_tags::WINDOW_INVALIDATE
     ) {
         return Err(ProtocolError::InvalidPayload(
             "client cannot send server-only residence control",
@@ -147,10 +147,24 @@ pub(super) async fn handle_window_sync(
         ));
     }
 
-    // Count distinct, valid window keys per connection before any load/create.
-    // The default cap is generous so legitimate historical-window tombstone
-    // sync can touch all real windows; it only stops fabricated-key floods.
-    let key = conn_state.touch_window(key, server.config.max_windows_per_connection)?;
+    // A frame that names no exchange, and a residence update for a window this socket never
+    // promoted, are answered before the window is loaded: neither creates one.
+    if !matches!(
+        sub_tag,
+        window_sub_tags::VV_REQUEST
+            | window_sub_tags::VV_RESPONSE
+            | window_sub_tags::UPDATE
+            | window_sub_tags::RESIDENCE_UPDATE
+            | window_sub_tags::REPLACEMENT_REQUEST
+    ) {
+        tracing::warn!(window_key, sub_tag, "unknown WindowSync sub-tag");
+        return Ok(());
+    }
+    if sub_tag == window_sub_tags::RESIDENCE_UPDATE
+        && !conn_state.promoted_windows.contains_key(&key)
+    {
+        return Err(ProtocolError::InvalidPayload("window not promoted"));
+    }
 
     // Loads persisted window state (d:w: + pending u:w:) on first touch.
     // Corrupt persisted state closes the connection rather than serving a
@@ -213,7 +227,10 @@ pub(super) async fn handle_window_sync(
             .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
             let _ = direct_tx.send(vv_response);
             // Subscribe only after a valid VV and a complete direct catch-up.
-            conn_state.subscribe_window(&key);
+            let bound = server.config.max_windows_per_connection;
+            if let Some(held) = conn_state.subscribe_window(&key, bound) {
+                ask_window_row(server, bound, held);
+            }
         }
         window_sub_tags::UPDATE | window_sub_tags::RESIDENCE_UPDATE => {
             let (residence_seq, update) = if sub_tag == window_sub_tags::RESIDENCE_UPDATE {
@@ -348,12 +365,20 @@ pub(super) async fn handle_window_sync(
                 let _ = direct_tx.send(frame);
             }
         }
-        _ => {
-            tracing::warn!(window_key, sub_tag, "unknown WindowSync sub-tag");
-        }
+        _ => {}
     }
 
     Ok(())
+}
+
+/// Asks `max_windows_per_connection`'s question (OF-520): one socket holds `held` windows or
+/// documents past `bound`. Nothing waits on the answer, and nothing is refused.
+pub(super) fn ask_window_row(server: &SyncServer, bound: usize, held: usize) {
+    server.wire_telemetry.limit_questions().ask(
+        crate::wire_telemetry::LimitRow::WindowsPerConnection,
+        u64::try_from(bound).unwrap_or(u64::MAX),
+        u64::try_from(held).unwrap_or(u64::MAX),
+    );
 }
 
 /// Frames this window's answer to the version vector `remote_vv` for this socket. A promoted

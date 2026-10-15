@@ -201,6 +201,29 @@ impl SyncClient {
         payload: &[u8],
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
         let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
+        // A window the server stopped pushing to this socket changed. An owner-lane device that
+        // follows it asks for it again, and the request subscribes it again; anything else reads
+        // the notice as nothing, since the server may not know what this device follows.
+        if sub_tag == window_sub_tags::WINDOW_INVALIDATE {
+            if !payload.is_empty() {
+                return Err(TransportError::InvalidPayload(
+                    "invalid window invalidation",
+                ));
+            }
+            if self.config.federation_peer.is_some()
+                || self.config.residence_mode == SyncResidenceMode::Opened
+                || !Self::follows_window(&key, &self.effective_worlds()?)
+            {
+                return Ok(Vec::new());
+            }
+            let vv = self
+                .window_vv_for_initial_sync(&key)
+                .map_err(|e| TransportError::Storage(e.to_string()))?;
+            return Ok(vec![
+                transport::encode_window_sync(window_key, window_sub_tags::VV_REQUEST, &vv)
+                    .into_result()?,
+            ]);
+        }
         // A device syncs what it opened (ARCH-0023b): a window this device
         // promoted is resident whether or not its world is followed.
         if self.config.federation_peer.is_none()

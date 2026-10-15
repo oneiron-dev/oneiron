@@ -181,7 +181,8 @@ pub struct ServeArgs {
     #[arg(long)]
     pub max_update_payload: Option<usize>,
 
-    /// Maximum distinct valid windows one connection may touch.
+    /// Window subscriptions one connection keeps before it forgets the least
+    /// recently requested; past it the row asks its question, never refuses.
     #[arg(long)]
     pub max_windows_per_connection: Option<usize>,
 

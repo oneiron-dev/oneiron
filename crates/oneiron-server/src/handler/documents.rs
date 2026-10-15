@@ -57,13 +57,6 @@ pub(super) fn handle_document(
                     "owner connection cannot become selector-scoped",
                 ));
             }
-            if !state.documents.contains_key(&entity)
-                && state.documents.len() >= server.config.max_windows_per_connection
-            {
-                return Err(ProtocolError::InvalidPayload(
-                    "document subscription limit exceeded",
-                ));
-            }
             let request = decode_selector_vv_request(payload).map_err(storage_error)?;
             if request.selector.member_ref != principal {
                 return Err(ProtocolError::InvalidPayload("selector principal mismatch"));
@@ -81,6 +74,8 @@ pub(super) fn handle_document(
                 )
                 .map_err(storage_error)?;
             state.documents.insert(entity, request);
+            let held = state.documents.len();
+            ask_past_row(server, state, held);
             let _ = direct.send(frame);
             Ok(())
         }
@@ -196,15 +191,10 @@ fn owner_request(
 ) -> Result<(), ProtocolError> {
     owner_auth(server, state, false)?;
     loro::VersionVector::decode(remote_vv).map_err(|e| ProtocolError::VvDecode(e.to_string()))?;
-    if !state.owner_documents.contains_key(&entity)
-        && state.owner_documents.len() >= server.config.max_windows_per_connection
-    {
-        return Err(ProtocolError::InvalidPayload(
-            "document subscription limit exceeded",
-        ));
-    }
     state.lfs_owner_mode = true;
     state.owner_documents.insert(entity, remote_vv.to_vec());
+    let held = state.owner_documents.len();
+    ask_past_row(server, state, held);
     if server
         .vault
         .get_raw(&entity)
@@ -218,6 +208,17 @@ fn owner_request(
         let _ = direct.send(frame);
     }
     Ok(())
+}
+
+/// A socket's document subscriptions past `max_windows_per_connection` ask the row's question
+/// once, and the socket keeps every one: the row is never a refusal.
+fn ask_past_row(server: &SyncServer, state: &mut ConnState, held: usize) {
+    let bound = server.config.max_windows_per_connection;
+    if held > bound
+        && let Some(held) = state.crossed_limit(held)
+    {
+        super::window_sync::ask_window_row(server, bound, held);
+    }
 }
 
 /// ACK and NOTE_OPS on an owner subscription.

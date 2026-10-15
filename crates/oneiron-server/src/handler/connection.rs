@@ -358,14 +358,14 @@ async fn handle_connection(
                         // New owner peers receive only subscribed keys. Legacy
                         // v6 peers cannot decode world-month keys, so they keep
                         // base-month broadcasts but never receive world frames.
-                        let subscribed_window = if data.first() == Some(&protocol::TAG_WINDOW_SYNC)
-                        {
-                            window_broadcast_allowed(protocol_version, &conn_state, &data)
-                                && !window_update_withheld(&server, &data)
+                        let frame = if data.first() == Some(&protocol::TAG_WINDOW_SYNC) {
+                            window_delivery(&server, protocol_version, &conn_state, data)
                         } else {
-                            should_forward_broadcast(protocol_version, &data)
+                            should_forward_broadcast(protocol_version, &data).then_some(data)
                         };
-                        if subscribed_window && !transport.send_binary(data).await {
+                        if let Some(frame) = frame
+                            && !transport.send_binary(frame).await
+                        {
                             break;
                         }
                     }
@@ -699,6 +699,34 @@ fn window_broadcast_allowed(
         }
         _ => false,
     }
+}
+
+/// What a broadcast window frame becomes on this socket: itself where the
+/// socket is pushed the window, a `WINDOW_INVALIDATE` where it forgot the
+/// window's subscription past `max_windows_per_connection`, or nothing. A
+/// frame this server withholds as device-only is neither.
+fn window_delivery(
+    server: &SyncServer,
+    protocol_version: u8,
+    state: &super::conn_state::ConnState,
+    frame: Vec<u8>,
+) -> Option<Vec<u8>> {
+    if window_broadcast_allowed(protocol_version, state, &frame) {
+        return (!window_update_withheld(server, &frame)).then_some(frame);
+    }
+    if !protocol::takes_window_invalidations(protocol_version) {
+        return None;
+    }
+    let (key, _, _) = frame
+        .get(1..)
+        .and_then(|payload| protocol::decode_window_sync(payload).ok())?;
+    let window = oneiron::sync::WindowKey::try_new(key)?;
+    if !state.invalidates_window(&window) || window_update_withheld(server, &frame) {
+        return None;
+    }
+    protocol::encode_window_sync(key, protocol::window_sub_tags::WINDOW_INVALIDATE, &[])
+        .into_result()
+        .ok()
 }
 
 /// Whether `frame` is a window UPDATE or REPLACEMENT this server now

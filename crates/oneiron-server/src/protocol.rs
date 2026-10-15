@@ -16,7 +16,7 @@ pub(crate) use oneiron::sync::transport::{
     TAG_EPHEMERAL, TAG_LEASE_REQUEST, TAG_LFS_CHUNK_SYNC, TAG_RPC, TAG_SUB, TAG_SYNC_UPDATE,
     TAG_VERSION_VECTOR, decode_lease_request, decode_protocol_hello, encode_ephemeral,
     encode_lease_granted, installs_window_replacements, is_owner_window_version,
-    is_residence_version,
+    is_residence_version, takes_window_invalidations,
 };
 #[cfg(test)]
 pub(crate) use oneiron::sync::transport::{
