@@ -24,9 +24,8 @@ pub(super) struct TaskEntityPageScan {
 ///
 /// Production passes `Vault::entities_by_type_page`; tests pass a synthetic
 /// pager and small explicit limits. Unpaged `entities_by_type` is never an
-/// option here: it materializes the whole TASK index and returns
-/// `IndexOverflow` past `MAX_TYPE_QUERY_RESULTS`, so a `.take(cap)` after it
-/// would hard-fail before the iterator ever exists.
+/// option here: it materializes the whole TASK index before a `.take(cap)`
+/// after it could run.
 pub(super) fn scan_task_entity_pages<F>(
     page_size: usize,
     scan_cap: usize,

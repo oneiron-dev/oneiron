@@ -314,7 +314,6 @@ pub(super) fn standing_composition_in_txn(
         first,
         EdgeKind::DerivedFrom,
         Some(ENTITY_TYPE_SUMMARY),
-        "summary composition scan",
     ) {
         Ok(candidates) => candidates,
         // Too many to scan: compose afresh rather than guess.

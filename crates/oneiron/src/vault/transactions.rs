@@ -1,7 +1,6 @@
 //! Vault maintenance, learned-at range scans, transaction helpers and sync state.
 
 use super::Vault;
-use super::entities::MAX_LEARNED_RANGE_RESULTS;
 use crate::TimeRange;
 use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
@@ -171,12 +170,20 @@ impl Vault {
     /// Returns entity IDs whose `learned_at` falls within `[start, end)`.
     ///
     /// Range-seeks the `temporal_learned` index by timestamp prefix.
-    /// Returns an empty result when `start >= end`.
+    /// Returns an empty result when `start >= end`. Every row is read: past
+    /// the window's threshold row the scan raises one check and reads on.
     pub fn entities_in_learned_range(&self, start: u64, end: u64) -> Result<Vec<EntityId>> {
         if start >= end {
             return Ok(Vec::new());
         }
         let txn = self.store.env.read_txn()?;
+        let window = [start.to_be_bytes(), end.to_be_bytes()].concat();
+        let mut count = crate::scan_check::ScanCount::start(
+            &self.store,
+            &txn,
+            crate::scan_check::EngineScan::LearnedRangeRows,
+            &window,
+        )?;
         let query = crate::ports::TimelineQuery {
             start: std::ops::Bound::Included(start),
             end: std::ops::Bound::Excluded(end),
@@ -184,11 +191,11 @@ impl Vault {
         };
         let mut ids = Vec::new();
         for row in self.store.port_entity_timeline(&txn, query)? {
-            if ids.len() >= MAX_LEARNED_RANGE_RESULTS {
-                return Err(Error::IndexOverflow("entities_in_learned_range"));
-            }
+            count.row();
             ids.push(row?.id);
         }
+        drop(txn);
+        count.finish(self);
         Ok(ids)
     }
 

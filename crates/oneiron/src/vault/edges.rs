@@ -14,6 +14,7 @@ use crate::limits::{
 use crate::ports::EdgeDirection;
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
 
 /// Length of the edge-kind prefix: `entity_id (16) | kind (1)`.
@@ -270,7 +271,6 @@ impl Vault {
             src,
             kind,
             target_type,
-            "targets",
         )
     }
 
@@ -291,7 +291,6 @@ impl Vault {
             tgt,
             kind,
             source_type,
-            "sources",
         )
     }
 
@@ -324,8 +323,8 @@ impl Vault {
     /// Scans an edge database (edges_out or edges_in) for entries matching `kind`,
     /// returning the peer entity IDs. Optionally filters by the peer's entity type.
     ///
-    /// Capped at `MAX_EDGE_QUERY_RESULTS` scanned peer rows to prevent
-    /// unbounded allocation and worst-case filtered scans.
+    /// Every edge is read: past the threshold row of this record's edges of
+    /// `kind` the scan raises one check and reads on (rule 5).
     pub(crate) fn filtered_edge_peers(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -333,17 +332,8 @@ impl Vault {
         prefix_id: &EntityId,
         kind: EdgeKind,
         peer_type: Option<u8>,
-        overflow_context: &'static str,
     ) -> Result<Vec<EntityId>> {
-        filtered_edge_peers_in(
-            &self.store,
-            rtxn,
-            direction,
-            prefix_id,
-            kind,
-            peer_type,
-            overflow_context,
-        )
+        filtered_edge_peers_in(&self.store, rtxn, direction, prefix_id, kind, peer_type)
     }
 
     fn filtered_edge_peers_page(
@@ -587,6 +577,7 @@ impl Vault {
 
 /// [`Vault::filtered_edge_peers`] read through `store`, a room's view
 /// included. A peer that is missing or unreadable counts as another type.
+/// `rtxn` is the caller's and may be a write, so a crossing is deferred.
 pub(crate) fn filtered_edge_peers_in(
     store: &impl crate::store::ManifestDbs,
     rtxn: &heed::RoTxn<'_>,
@@ -594,16 +585,17 @@ pub(crate) fn filtered_edge_peers_in(
     prefix_id: &EntityId,
     kind: EdgeKind,
     peer_type: Option<u8>,
-    overflow_context: &'static str,
 ) -> Result<Vec<EntityId>> {
+    let scope = [
+        &[direction as u8][..],
+        prefix_id.as_bytes(),
+        &[kind as u8][..],
+    ]
+    .concat();
+    let mut count = ScanCount::start(store, rtxn, EngineScan::EdgePeerRows, &scope)?;
     let mut ids = Vec::new();
-    for (scanned, entry) in store
-        .port_edges(rtxn, prefix_id, direction, Some(kind), None)?
-        .enumerate()
-    {
-        if scanned >= MAX_EDGE_QUERY_RESULTS {
-            return Err(Error::IndexOverflow(overflow_context));
-        }
+    for entry in store.port_edges(rtxn, prefix_id, direction, Some(kind), None)? {
+        count.row();
         let peer = entry?.target;
 
         if let Some(req_type) = peer_type
@@ -616,5 +608,6 @@ pub(crate) fn filtered_edge_peers_in(
 
         ids.push(peer);
     }
+    count.defer(store);
     Ok(ids)
 }

@@ -234,7 +234,6 @@ impl PreparedWake {
                     &partition.conversation_ref,
                     EdgeKind::ChildOf,
                     Some(ENTITY_TYPE_TURN),
-                    "selection retry wake source scan",
                 ) {
                     Ok(peers) => peers,
                     Err(crate::Error::IndexOverflow(_)) => {

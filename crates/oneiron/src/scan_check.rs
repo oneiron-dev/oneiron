@@ -52,15 +52,42 @@ pub enum EngineScan {
     VisibleRefRows,
     /// One repository's keep-ref owners, every kind.
     KeepOwnerRows,
+    /// One entity type's rows in the type index.
+    TypeIndexRows,
+    /// One learned-at window's rows in the temporal index.
+    LearnedRangeRows,
+    /// One record's edges of one kind, one way.
+    EdgePeerRows,
+    /// The local receipt-record index a canonical window capture walks.
+    ReceiptRecordRows,
+    /// The records of one anchor's supersession chain.
+    TimelineRecords,
+    /// The gate-decision ledger a gate receipt query walks.
+    GateDecisionRows,
+    /// One record's edges a scoped reader's admission walks, one way.
+    ScopedEdgeRows,
+    /// The owner's MACHINE rows a mesh address bind walks for its endpoint.
+    MachineRows,
+    /// The access grants a companion persona list walks.
+    AccessGrantRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 13] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
         Self::KeepOwnerRows,
+        Self::TypeIndexRows,
+        Self::LearnedRangeRows,
+        Self::EdgePeerRows,
+        Self::ReceiptRecordRows,
+        Self::TimelineRecords,
+        Self::GateDecisionRows,
+        Self::ScopedEdgeRows,
+        Self::MachineRows,
+        Self::AccessGrantRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -79,6 +106,15 @@ impl EngineScan {
             Self::PublicationRows => "publication_rows",
             Self::VisibleRefRows => "visible_ref_rows",
             Self::KeepOwnerRows => "keep_owner_rows",
+            Self::TypeIndexRows => "type_index_rows",
+            Self::LearnedRangeRows => "learned_range_rows",
+            Self::EdgePeerRows => "edge_peer_rows",
+            Self::ReceiptRecordRows => "receipt_record_rows",
+            Self::TimelineRecords => "memory_timeline_records",
+            Self::GateDecisionRows => "gate_decision_rows",
+            Self::ScopedEdgeRows => "scoped_edge_rows",
+            Self::MachineRows => "machine_rows",
+            Self::AccessGrantRows => "access_grant_rows",
         }
     }
 
@@ -88,6 +124,15 @@ impl EngineScan {
             Self::PublicationRows => 2,
             Self::VisibleRefRows => 3,
             Self::KeepOwnerRows => 4,
+            Self::TypeIndexRows => 16,
+            Self::LearnedRangeRows => 17,
+            Self::EdgePeerRows => 18,
+            Self::ReceiptRecordRows => 19,
+            Self::TimelineRecords => 20,
+            Self::GateDecisionRows => 21,
+            Self::ScopedEdgeRows => 22,
+            Self::MachineRows => 23,
+            Self::AccessGrantRows => 24,
         }]
     }
 }
@@ -315,6 +360,9 @@ impl Vault {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod table_tests;
 
 #[cfg(test)]
 mod tests {

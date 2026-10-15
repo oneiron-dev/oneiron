@@ -625,14 +625,7 @@ fn peers(
     peer_type: Option<u8>,
 ) -> Result<Vec<EntityId>> {
     vault
-        .filtered_edge_peers(
-            txn,
-            direction,
-            id,
-            kind,
-            peer_type,
-            "witnessed turn message scan",
-        )
+        .filtered_edge_peers(txn, direction, id, kind, peer_type)
         .map_err(|error| match error {
             Error::IndexOverflow(_) => {
                 invalid_consolidation("witnessed turn message graph limit exceeded")
