@@ -25,7 +25,7 @@ use crate::conversation::MembershipWindow;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
-use crate::off_record::promote::PromoteOutcome;
+use crate::off_record::promote::{PromoteInitiator, PromoteOutcome};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE};
 use crate::session_overlay::{JournalEntry, JournalRole};
 
@@ -35,6 +35,29 @@ use super::types::{
     OffRecordBackendClass, OffRecordNotice, OffRecordNoticeAct, OffRecordSessionRecord,
     OffRecordTalk, OffRecordTalkMessage, OffRecordTalkTurn,
 };
+
+/// Whether this vault's authority log minted `credential` as it shows
+/// itself, holder key and bounds alike. A slip narrowed or handed on to
+/// another key since shows other claims than its mint; and a proof verified
+/// against a snapshot other than this vault's may name a live slip id, but
+/// not the claims this vault minted under it.
+fn minted_as_shown(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    credential: &VerifiedSlip,
+) -> Result<bool> {
+    let shown = credential.claims();
+    let fold = vault.authority_view_readonly_in_txn(txn)?;
+    Ok(fold.slips.mints.get(&shown.slip_id).is_some_and(|mint| {
+        // Verification trims the lifetime left to the moment it ran.
+        let minted = &mint.action.claims;
+        *minted
+            == crate::authority::SlipClaims {
+                ttl_secs: minted.ttl_secs,
+                ..shown.clone()
+            }
+    }))
+}
 
 /// The most notices a room's timeline holds; past it the oldest drop, so a
 /// member repeating an act cannot grow the room without bound.
@@ -262,26 +285,35 @@ impl OffRecordSession<'_> {
     }
 
     /// Saves the whole talk so far into this vault for `person`, who is in the
-    /// room and a live owner of this vault, so the vault is theirs. Every
-    /// turn they could see that nobody saved yet lands in ONE transaction,
-    /// which checks again that they own the vault, that `credential` is live,
-    /// that they are in the room and that their membership shows each turn.
-    /// The room hears a `saved_talk` notice. A person this vault does not
-    /// belong to is refused and nothing is written; they keep their copy with
+    /// room and a live owner of this vault, so the vault is theirs, on
+    /// `credential`: their own person's slip, as this vault minted it (not
+    /// narrowed or handed on), able to write with no record bound. Every turn
+    /// they could see that nobody saved yet lands in ONE transaction, which
+    /// checks again that they own the vault, that `credential` is live and
+    /// the slip this vault's authority log minted, that they are in the room
+    /// and that their membership shows each turn. The room hears a
+    /// `saved_talk` notice. A person this vault does not belong to is refused
+    /// and nothing is written; they keep their copy with
     /// [`Self::export_talk_by`].
+    ///
+    /// A handle names whom it saves for only with that person's slip
+    /// (H203); a caller holding the owner's proof uses [`Self::save_talk_as`]:
+    ///
+    /// ```compile_fail
+    /// fn save(session: &oneiron::off_record::OffRecordSession<'_>, owner: oneiron::EntityId) {
+    ///     let _ = session.save_talk_by(owner, None);
+    /// }
+    /// ```
     ///
     /// # Errors
     ///
-    /// [`OffRecordError::OffRecordPromoteUnauthenticated`] when `person` owns
-    /// no part of this vault or `credential` was revoked,
+    /// [`OffRecordError::OffRecordPromoteUnauthenticated`] when `credential`
+    /// is not such a slip of `person`'s, when `person` owns no part of this
+    /// vault or when `credential` was revoked or expired,
     /// [`OffRecordError::OffRecordNotInRoom`] when they are not in the room or
     /// their membership stopped showing a turn; otherwise as
-    /// [`Self::promote_turn`].
-    pub fn save_talk_by(
-        &self,
-        person: EntityId,
-        credential: Option<&VerifiedSlip>,
-    ) -> Result<SavedTurns> {
+    /// [`Self::promote_turn_as`].
+    pub fn save_talk_by(&self, person: EntityId, credential: &VerifiedSlip) -> Result<SavedTurns> {
         let room = self.require_in_room(person)?;
         let refused = || {
             Error::OffRecord(OffRecordError::OffRecordPromoteUnauthenticated {
@@ -289,12 +321,29 @@ impl OffRecordSession<'_> {
                 actor_ref: person.to_hex(),
             })
         };
+        // The save names `person` in its receipts, so it runs only on their
+        // own slip: someone else's, or an agent's, saves nothing. It keeps
+        // the whole talk, so a slip bounded to some records, or narrowed by
+        // any caveat since its mint, keeps none of it. A save consumes no
+        // slip, so a one-shot slip would save again.
+        let claims = credential.claims();
+        let mut whole = crate::federation::Scope::top();
+        whole.verbs = credential.scope().verbs.clone();
+        if EntityId::from_hex(&claims.holder_ref).ok() != Some(person)
+            || claims.actor_class.as_deref() != Some("human")
+            || !(credential.allows_verb("write") || credential.allows_verb("core:write"))
+            || claims.single_use
+            || !credential.is_unattenuated()
+            || !claims.records.is_empty()
+            || !claims.channels.is_empty()
+            || !whole.is_narrowing_of(credential.scope())
+        {
+            return Err(refused());
+        }
         let authority = |vault: &Vault, txn: &heed::RoTxn<'_>| {
-            if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &person)? {
-                return Err(refused());
-            }
-            if let Some(credential) = credential
-                && !vault.capability_slip_is_live_in_txn(txn, credential)?
+            if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &person)?
+                || !vault.capability_slip_is_live_in_txn(txn, credential)?
+                || !minted_as_shown(vault, txn, credential)?
             {
                 return Err(refused());
             }
@@ -302,7 +351,7 @@ impl OffRecordSession<'_> {
         };
         // Refused the same way whether or not there is anything to save yet.
         authority(self.vault, &self.vault.store.env.read_txn()?)?;
-        self.save_talk(person, Some(room), authority)
+        self.save_talk(PromoteInitiator::room_owner(person), Some(room), authority)
     }
 
     /// The owner's save of the whole talk so far; `owner`'s proof, and that
@@ -324,9 +373,8 @@ impl OffRecordSession<'_> {
             owner.revalidate_as_vault_owner_in_txn(vault, txn).map(drop)
         };
         // Refused the same way whether or not there is anything to save yet.
-        let actor = owner
-            .revalidate_as_vault_owner_in_txn(self.vault, &self.vault.store.env.read_txn()?)?;
-        self.save_talk(actor, room, authority)
+        authority(self.vault, &self.vault.store.env.read_txn()?)?;
+        self.save_talk(PromoteInitiator::owner(self.vault, owner)?, room, authority)
     }
 
     /// The talk so far, gathered: the messages of this stretch already in
@@ -551,15 +599,6 @@ fn heard_by_another_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId)
 fn heard_unread(error: Error) -> bool {
     tracing::warn!(error = %error, "a room's roster did not read; its notice posts");
     true
-}
-
-/// The refusal of an unbound save or flip on a stretch in a room: there it
-/// takes a proof of who acts.
-pub(super) fn unbound_in_room(session_ref: &str) -> Error {
-    Error::OffRecord(OffRecordError::OffRecordPromoteUnauthenticated {
-        session_ref: session_ref.to_owned(),
-        actor_ref: String::new(),
-    })
 }
 
 /// Refuses unless, in `txn`, `actor` is on `room`'s roster and their

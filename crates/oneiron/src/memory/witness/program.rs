@@ -273,7 +273,7 @@ impl Memory<'_> {
         }
         let session_route;
         let mut on_record_session = None;
-        // A room on record's saver, checked again where the turn lands.
+        // An on-record stretch's saver, checked again where the turn lands.
         let mut saver = None;
         let mut admit = None;
         let mut room_speech = None;
@@ -329,7 +329,7 @@ impl Memory<'_> {
                 // receipt creation.
                 session_route.require_recording(session.session_ref())?;
                 if session_route.target() == RouteTarget::Base {
-                    // Post-flip: the room is on record, so the witness lands in
+                    // Post-flip: the stretch is on record, so the witness lands in
                     // base under the continuation shell. It never reuses the
                     // overlay conversation id, so K4 sees no overlay refs and
                     // K7 does not fire (the shell is not an overlay member).
@@ -472,8 +472,8 @@ impl Memory<'_> {
             if let WitnessSink::Base(base) = &sink
                 && let Some(route) = base.route
             {
-                // A room on record saves into its saver's vault only while
-                // they hold it in the room, whoever speaks (ARCH-0052 D5).
+                // A stretch on record saves into its saver's vault only while
+                // they hold it (in a room, whoever speaks; ARCH-0052 D5).
                 if let Some(saver) = &saver {
                     saver.in_txn(wtxn)?;
                 }
@@ -485,7 +485,7 @@ impl Memory<'_> {
         match landed {
             Landed::HardDeleted(id) => Err(hard_deleted_refusal(&id)),
             Landed::Base(receipt) => {
-                // A room on record took this turn into base; a copy of the
+                // A stretch on record took this turn into base; a copy of the
                 // talk reads its messages there.
                 if let Some(session) = on_record_session {
                     let messages: Vec<(EntityId, u64, &[u8])> = plan
