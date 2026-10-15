@@ -48,7 +48,20 @@ impl AnthropicMessagesStreamAccumulator {
         let mut events = Vec::new();
         match event.get("type").and_then(JsonValue::as_str) {
             Some("message_start") => {
-                if let Some(usage) = event.get("message").and_then(|m| m.get("usage")) {
+                let message = match event.get("message") {
+                    None | Some(JsonValue::Null) => None,
+                    Some(message @ JsonValue::Object(_)) => Some(message),
+                    Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+                };
+                // Blocks arrive as their own events, so the opening message
+                // carries none. Any it does carry would not be read, so it
+                // fails the stream rather than vanish.
+                match message.and_then(|message| message.get("content")) {
+                    None | Some(JsonValue::Null) => {}
+                    Some(JsonValue::Array(blocks)) if blocks.is_empty() => {}
+                    Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+                }
+                if let Some(usage) = message.and_then(|m| m.get("usage")) {
                     self.usage = parse_anthropic_usage(usage);
                 }
             }

@@ -7,11 +7,13 @@ use serde::Serialize;
 use crate::error::Result;
 use crate::llm::{BudgetLease, LlmBackend};
 
-use super::super::binding::PolicyContentBinding;
+use super::super::binding::{PolicyContentBinding, relay_verify_content_hash};
 use super::super::pattern::{PatternEvaluation, PolicyPatternRole};
-use super::super::planes::PolicyPlane;
-use super::super::request::{HostedOutagePolicy, PolicyModelConfig};
-use super::super::verdict::{PolicyClassifyDecision, PolicyClassifyVerdict, PolicyPassAudit};
+use super::super::planes::{HostedLegalPolicy, PolicyPlane};
+use super::super::request::{HostedOutagePolicy, PolicyClassifyRequest, PolicyModelConfig};
+use super::super::verdict::{
+    PolicyClassifyDecision, PolicyClassifyVerdict, PolicyPassAudit, PolicySkipReason,
+};
 
 /// Why a hosted relay pass could not put a usable safeguard-model answer
 /// against the policy it ran under. A degraded pass fell back to whatever the
@@ -59,6 +61,18 @@ pub enum RelayBoundaryDegrade {
 }
 
 impl RelayBoundaryDegrade {
+    /// The typed skip a degraded pass's verdict carries.
+    const fn skip_reason(self) -> PolicySkipReason {
+        match self {
+            Self::SafeguardModelUnavailable => PolicySkipReason::BackendUnavailable,
+            Self::SafeguardModelResponseUnusable | Self::OutputContractUndeclared => {
+                PolicySkipReason::ResponseUnusable
+            }
+            Self::SafeguardModelTierAbsent => PolicySkipReason::NoBackend,
+            Self::PolicyBindingMovedMidPass => PolicySkipReason::PolicyMoving,
+        }
+    }
+
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -131,6 +145,20 @@ pub enum RelayResolution {
 }
 
 impl RelayResolution {
+    /// Every resolution, for the checks that must cover each one. A variant
+    /// added above belongs here too; the attestation table's exhaustive match
+    /// stops compiling until it is placed.
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 7] = [
+        Self::PatternDecided,
+        Self::ModelDecided,
+        Self::PatternGatedAllow,
+        Self::LogOnly,
+        Self::NoPolicyInPlay,
+        Self::VaultSideDecided,
+        Self::Unresolved,
+    ];
+
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -191,6 +219,23 @@ pub struct RelayClassifiedPass {
     /// the fact travels with the pass rather than being re-derived.
     pub hosted_policy_in_play: bool,
     pub resolution: RelayResolution,
+    /// What this pass examined, stamped by the hosted seam that ran it: the
+    /// hosted legal policy it was handed and the content it was asked about.
+    /// `None` for every pass that seam did not run. An attestation names this
+    /// policy and this content and no other, so a pass is never evidence for
+    /// the policy registered after it or for another message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hosted_evidence: Option<HostedPassEvidence>,
+}
+
+/// What a hosted pass examined: the policy's version AND hash, the pair an
+/// attestation is matched on, and the request's identity-free verification
+/// content hash, the one a CloudVault carrier is bound to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HostedPassEvidence {
+    pub version: String,
+    pub policy_hash: String,
+    pub verify_content_hash: [u8; 32],
 }
 
 impl RelayBoundaryPass {
@@ -210,7 +255,27 @@ impl RelayBoundaryPass {
             degraded,
             hosted_policy_in_play,
             resolution,
+            hosted_evidence: None,
         }))
+    }
+
+    /// Stamps what a pass that ran here examined. Called by the hosted seam
+    /// with the policy and the request it handed the pass, and by nothing
+    /// else.
+    #[must_use]
+    pub(in super::super) fn read_under(
+        mut self,
+        hosted: Option<&HostedLegalPolicy>,
+        request: &PolicyClassifyRequest,
+    ) -> Self {
+        if let Self::Classified(pass) = &mut self {
+            pass.hosted_evidence = hosted.map(|policy| HostedPassEvidence {
+                version: policy.version.clone(),
+                policy_hash: policy.policy_hash.clone(),
+                verify_content_hash: relay_verify_content_hash(request),
+            });
+        }
+        self
     }
 
     /// The verdict, present only when OUR infra ran a relay pass.
@@ -307,14 +372,16 @@ impl RelayBoundaryPass {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DualPlanePass {
     /// The vault owner's own verdict. A clean `Allow` when the owner's plane
-    /// is off, has no document, or its model did not answer — that plane is
-    /// sovereign and fails open.
+    /// is off; [`PolicyClassifyDecision::Skipped`] when it has no document or
+    /// its model did not answer — that plane is sovereign and fails open, but
+    /// never as an `Allow`.
     pub owner: PolicyClassifyVerdict,
     /// The hosted relay boundary's pass, which is what decides whether the
     /// relay may proceed.
     pub relay: RelayBoundaryPass,
     /// The owner plane wanted a model verdict and did not get one. Never halts
-    /// anything; the caller is simply owed the fact.
+    /// anything; the caller is simply owed the fact. Mirrors
+    /// [`PolicyClassifyDecision::skip_reason`] on [`Self::owner`].
     pub owner_model_skipped: bool,
 }
 
@@ -414,10 +481,10 @@ pub(in crate::policy_model) enum RelayReceiptRow {
     OnlyIfBindingMoved,
 }
 
-/// A pass that needed a model verdict and did not get one. The verdict falls
-/// back to a clean allow — never below whatever a `Decide` rule already
-/// concluded, because a `Decide` hit returns before this is reachable — and the
-/// degrade marker is what makes the relay halt.
+/// A pass that needed a model verdict and did not get one. The verdict is
+/// skipped for the degrade's reason, never an allow no model confirmed — a
+/// `Decide` hit returns before this is reachable — and the degrade marker is
+/// what makes the relay halt.
 ///
 /// This is the ONLY place in the crate that raises a degrade, which is why it
 /// is also where the halt is resolved: it holds both the degrade and the
@@ -438,12 +505,18 @@ pub(super) fn degraded_hosted_pass(
         HostedOutagePolicy::ProceedReceipted => !degrade.is_model_availability(),
     };
     RelayBoundaryPass::Classified(Box::new(RelayClassifiedPass {
-        verdict: PolicyClassifyVerdict::clean_allow(binding, config, PolicyPlane::HostedLegal)
-            .with_audit(audit),
+        verdict: PolicyClassifyVerdict::skipped(
+            degrade.skip_reason(),
+            binding,
+            config,
+            PolicyPlane::HostedLegal,
+        )
+        .with_audit(audit),
         degraded: Some(degrade),
         degrade_halts,
         hosted_policy_in_play,
         resolution: RelayResolution::Unresolved,
+        hosted_evidence: None,
     }))
 }
 

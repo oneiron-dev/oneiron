@@ -1,5 +1,7 @@
 //! Gemini wire adapter. Vendors and prices are registry data; retries and budget stay above LlmBackend.
 mod stream;
+#[cfg(test)]
+mod tests;
 mod transport;
 mod wire;
 use oneiron::{

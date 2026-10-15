@@ -10,7 +10,9 @@
 //! The owner's plane is sovereign, so it fails OPEN: a model that is down, an
 //! answer the engine cannot read, or a document that was never written all
 //! leave the content flowing. There is nothing underneath the owner's own
-//! policy to fall back to.
+//! policy to fall back to. What flows is never called clean, though: a plane
+//! that wanted a model answer and has none returns
+//! [`PolicyClassifyDecision::Skipped`], never an `Allow`.
 
 use crate::Vault;
 use crate::error::{Error, Result};
@@ -34,7 +36,7 @@ use super::receipt::policy_model_reason_codes;
 use super::request::{PolicyClassifyRequest, PolicyModelConfig, RelayClassifierMode};
 use super::verdict::{
     PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence, PolicyPassAudit,
-    PolicyVerdictCategory,
+    PolicySkipReason, PolicyVerdictCategory,
 };
 use crate::error::RelayError;
 
@@ -68,6 +70,11 @@ impl PolicyModelContext {
         ))
     }
 
+    /// Whether the owner wrote a document a model could classify against.
+    fn has_document(&self) -> bool {
+        self.document.is_some()
+    }
+
     /// Which of the owner's rules may act: only those naming a row that is
     /// active for this request.
     fn acts(&self) -> impl Fn(&CompiledPatternRule) -> bool + '_ {
@@ -88,8 +95,9 @@ impl Vault {
     ///
     /// Only the owner's `Decide` pattern rules can conclude anything here —
     /// they are the coverage the owner declared hard enough to stand without a
-    /// model. Everything else allows, because an unexamined guess is not a
-    /// verdict.
+    /// model. Content the owner's dial wants a model to read comes back
+    /// [`PolicyClassifyDecision::Skipped`]: an unexamined guess is not a
+    /// verdict, and neither is an unexamined `Allow`.
     pub fn classify_policy_model(
         &self,
         request: PolicyClassifyRequest,
@@ -103,10 +111,7 @@ impl Vault {
         config: &PolicyModelConfig,
     ) -> Result<PolicyClassifyVerdict> {
         let verdict = self.owner_pattern_only_pass(&request, config)?;
-        // No model was ever in reach on this door, so nothing was skipped:
-        // `Decide` rules are the whole coverage here and they answered.
-        self.record_bare_classify_receipt(&request, &verdict, config, false)?;
-        Ok(verdict)
+        self.record_bare_classify_receipt(&request, &verdict, config)
     }
 
     /// The model-less owner pass, WITHOUT a ledger row.
@@ -143,8 +148,12 @@ impl Vault {
     /// Classify with a safeguard model available.
     ///
     /// Never returns a model failure as an error: an unavailable model, an
-    /// unreadable answer and an unwritten document all resolve to `Allow` with
-    /// the pass audited, because the owner's plane is sovereign and fails open.
+    /// unreadable answer and an unwritten document all resolve to
+    /// [`PolicyClassifyDecision::Skipped`] with the pass audited, because the
+    /// owner's plane is sovereign and fails open — but never to an `Allow`.
+    /// Nor does a manifest that moved while the model answered: a stale
+    /// verdict is derived again, once, and a manifest still moving after that
+    /// is [`PolicySkipReason::PolicyMoving`].
     pub async fn classify_policy_model_with_backend(
         &self,
         request: PolicyClassifyRequest,
@@ -153,15 +162,9 @@ impl Vault {
         lease: &BudgetLease,
     ) -> Result<PolicyClassifyVerdict> {
         let pass = self
-            .owner_plane_pass(&request, config, Some((backend, lease)))
+            .owner_plane_pass_pinned(&request, config, Some((backend, lease)))
             .await?;
-        // The skip flag travels WITH the verdict, not beside it. A pass whose
-        // model did not answer resolves to a clean allow that learned nothing,
-        // so the silence rule below would drop it — and the fail-open would
-        // reach the caller with no row anywhere, which is the hole this door
-        // was given a receipt to close in the first place.
-        self.record_bare_classify_receipt(&request, &pass.verdict, config, pass.model_skipped)?;
-        Ok(pass.verdict)
+        self.record_bare_classify_receipt(&request, &pass.verdict, config)
     }
 
     /// The ledger row a BARE classify door owes for the verdict it just
@@ -192,27 +195,35 @@ impl Vault {
     /// a warn, a block, a route, or an allow with an audit a pattern or the
     /// model contributed to — is a row.
     ///
-    /// With ONE addition the enforcement path does not need. A pass whose
-    /// model did not answer produces exactly the verdict the silence rule
-    /// drops — a clean allow that learned nothing — and that verdict is a
-    /// SOVEREIGN PLANE FALLING OPEN, which is the fact the owner is most owed.
-    /// `model_skipped` is therefore part of the signal test, not just part of
-    /// the row: the dual-plane door already records it this way, and a bare
-    /// classify that stayed silent about it would leave a fail-open with no
-    /// row anywhere.
+    /// A pass whose model did not answer is a SOVEREIGN PLANE FALLING OPEN,
+    /// which is the fact the owner is most owed. Its verdict is
+    /// [`PolicyClassifyDecision::Skipped`], so the silence rule never drops it.
+    ///
+    /// Returns the verdict the row records, which is the one the door hands
+    /// back: see the frontier check below for when that differs.
     fn record_bare_classify_receipt(
         &self,
         request: &PolicyClassifyRequest,
         verdict: &PolicyClassifyVerdict,
         config: &PolicyModelConfig,
-        model_skipped: bool,
-    ) -> Result<()> {
+    ) -> Result<PolicyClassifyVerdict> {
+        #[cfg(test)]
+        super::in_force::before_settling(super::in_force::SettlingDoor::BareClassify);
+        // F107's window, on the doors F94 and F99 built: the verdict was bound
+        // to a policy frontier, and the door hands it out after a LATER
+        // transaction. The silence rule only drops an Allow that still
+        // answers the policy in force; anything else is settled in the row's
+        // own transaction (see `owner_verdict_in_force_in_txn`).
         if verdict.decision == PolicyClassifyDecision::Allow
             && verdict.audit.is_none()
-            && !model_skipped
+            && !self.policy_model_verdict_is_stale_with_config(verdict, request, config)?
         {
-            return Ok(());
+            return Ok(verdict.clone());
         }
+        let mut wtxn = self.store.env.write_txn()?;
+        let (recorded, moved) =
+            self.owner_verdict_in_force_in_txn(&wtxn, verdict, request, config)?;
+        let verdict = &recorded;
         // The vault-egress path is the owner plane by construction, so there
         // is no hosted policy to attribute against.
         let mut system_notices: Vec<_> =
@@ -237,45 +248,53 @@ impl Vault {
             "gate.policy_model.owner_plane.classifier_mode.{}",
             config.owner_classifier_mode.as_str()
         ));
-        if model_skipped {
+        if verdict.decision.skip_reason().is_some() {
             reason_codes.push(super::enforce::OWNER_PLANE_MODEL_SKIPPED_REASON.to_owned());
             reason_codes.push(super::enforce::OWNER_PLANE_FAIL_OPEN_REASON.to_owned());
         }
-        // F107's window, on the doors F94 and F99 built: the verdict was bound
-        // to a policy frontier, and this row is written in a LATER
-        // transaction. A manifest moving in that gap would leave the ledger
-        // asserting an owner-plane verdict against state nobody can
-        // reproduce.
-        //
-        // The owner plane's answer to that is not the hosted plane's answer.
-        // The hosted plane is fail-CLOSED, so it degrades and halts. This
-        // plane is SOVEREIGN and fails OPEN: the caller already has its
-        // verdict, the decision has already been acted on, and refusing or
-        // degrading here would let a concurrent manifest edit retroactively
-        // overturn an answer the owner's own policy gave. So the row is
-        // written either way — it just tells the truth about which frontier it
-        // could reproduce, and says the frontier moved.
-        let mut wtxn = self.store.env.write_txn()?;
-        let policy = gate::resolve_policy_manifest(&self.store, &wtxn)?;
-        let fresh = content_binding(request, &policy, config)?;
-        let recorded = if fresh == verdict.binding {
-            verdict.clone()
-        } else {
+        if moved {
             reason_codes.push(super::enforce::OWNER_PLANE_FRONTIER_MOVED_REASON.to_owned());
-            let mut moved = verdict.clone();
-            moved.binding = fresh;
-            moved
-        };
+        }
         self.append_policy_model_gate_receipt_in_txn(
             &mut wtxn,
             request,
-            &recorded,
+            verdict,
             &format!("owner_plane_{}", verdict.decision.ledger_str()),
             reason_codes,
             system_notices,
         )?;
         wtxn.commit()?;
-        Ok(())
+        Ok(recorded)
+    }
+
+    /// [`Self::owner_plane_pass`] for a door that hands its verdict out.
+    ///
+    /// The pass snapshots the manifest, then awaits the model. A verdict for
+    /// a manifest that moved in that window answers a policy no longer in
+    /// force, so it is derived again, ONCE; a manifest still moving after
+    /// that yields [`PolicySkipReason::PolicyMoving`] bound to the frontier in
+    /// force now, never the old policy's answer.
+    pub(super) async fn owner_plane_pass_pinned(
+        &self,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+        safeguard: Option<(&dyn LlmBackend, &BudgetLease)>,
+    ) -> Result<OwnerPlanePass> {
+        for _ in 0..2 {
+            let pass = self.owner_plane_pass(request, config, safeguard).await?;
+            if !self.policy_model_verdict_is_stale_with_config(&pass.verdict, request, config)? {
+                return Ok(pass);
+            }
+        }
+        let binding = self.policy_model_context(request, config)?.binding;
+        Ok(OwnerPlanePass {
+            verdict: PolicyClassifyVerdict::skipped(
+                PolicySkipReason::PolicyMoving,
+                binding,
+                config,
+                PolicyPlane::OwnerPolicy,
+            ),
+        })
     }
 
     /// The owner plane's full pass, model included. Shared by the classify
@@ -327,7 +346,6 @@ impl Vault {
                     config,
                     PolicyPlane::OwnerPolicy,
                 ),
-                model_skipped: false,
             });
         };
         let evaluation = context.evaluate(&request.content);
@@ -336,7 +354,6 @@ impl Vault {
         if evaluation.acting_role() == Some(PolicyPatternRole::Decide) {
             return Ok(OwnerPlanePass {
                 verdict: owner_pattern_only_verdict(&context, &evaluation, config, binding),
-                model_skipped: false,
             });
         }
         if !wants_model(config.owner_classifier_mode, evaluation.acting_role()) {
@@ -347,27 +364,31 @@ impl Vault {
                     PolicyPlane::OwnerPolicy,
                 )
                 .with_audit(audit),
-                model_skipped: false,
             });
         }
-        let (Some(safeguard), Some(prompt)) = (safeguard, context.prompt(request)) else {
-            // No model to reach, or no document to send it: the plane is
-            // inactive for model classification. Sovereign, so it fails open.
-            return Ok(OwnerPlanePass {
-                verdict: PolicyClassifyVerdict::clean_allow(
-                    binding,
-                    config,
-                    PolicyPlane::OwnerPolicy,
-                )
-                .with_audit(audit),
-                model_skipped: true,
-            });
+        let skipped = |reason: PolicySkipReason, audit: PolicyPassAudit| OwnerPlanePass {
+            verdict: PolicyClassifyVerdict::skipped(
+                reason,
+                binding,
+                config,
+                PolicyPlane::OwnerPolicy,
+            )
+            .with_audit(audit),
+        };
+        // No document to send, or no model to reach: the plane is inactive for
+        // model classification. Sovereign, so it fails open — as a skip.
+        let Some(prompt) = context.prompt(request) else {
+            return Ok(skipped(PolicySkipReason::NoDocument, audit));
+        };
+        let Some(safeguard) = safeguard else {
+            return Ok(skipped(PolicySkipReason::NoBackend, audit));
         };
         let llm_request = prompt.llm_request(config);
         let response = match safeguard {
-            OwnerSafeguard::Leased { backend, lease } => {
-                backend.generate(llm_request, lease).await.ok()
-            }
+            OwnerSafeguard::Leased { backend, lease } => backend
+                .generate(llm_request, lease)
+                .await
+                .map_err(|_| PolicySkipReason::BackendUnavailable),
             OwnerSafeguard::Budgeted { backend, budget } => {
                 // A completed call gets its own admission, even on a stale-
                 // policy retry. A denied admission is a skipped sovereign
@@ -385,34 +406,19 @@ impl Vault {
                             Error::InvariantViolation("classifier budget settlement")
                         })?,
                     };
-                    response.ok()
+                    response.map_err(|_| PolicySkipReason::BackendUnavailable)
                 } else {
-                    None
+                    Err(PolicySkipReason::BudgetExhausted)
                 }
             }
         };
-        let Some(response) = response else {
-            return Ok(OwnerPlanePass {
-                verdict: PolicyClassifyVerdict::clean_allow(
-                    binding,
-                    config,
-                    PolicyPlane::OwnerPolicy,
-                )
-                .with_audit(audit),
-                model_skipped: true,
-            });
+        let response = match response {
+            Ok(response) => response,
+            Err(reason) => return Ok(skipped(reason, audit)),
         };
         let Ok(resolved) = resolve_policy_model_response(&response, &prompt, &AnswerPlane::Owner)
         else {
-            return Ok(OwnerPlanePass {
-                verdict: PolicyClassifyVerdict::clean_allow(
-                    binding,
-                    config,
-                    PolicyPlane::OwnerPolicy,
-                )
-                .with_audit(audit),
-                model_skipped: true,
-            });
+            return Ok(skipped(PolicySkipReason::ResponseUnusable, audit));
         };
         audit.model_rule_ids = resolved.answer.rule_ids;
         audit.model_rule_ids_dropped = resolved.dropped_rule_ids;
@@ -428,7 +434,6 @@ impl Vault {
                 PolicyPlane::OwnerPolicy,
             )
             .with_audit(audit),
-            model_skipped: false,
         })
     }
 
@@ -462,82 +467,6 @@ impl Vault {
         Ok(self
             .policy_model_prompt_with_config(request, config)?
             .map(|prompt| prompt.llm_request(config)))
-    }
-
-    pub fn policy_model_verdict_is_stale(
-        &self,
-        verdict: &PolicyClassifyVerdict,
-        request: &PolicyClassifyRequest,
-    ) -> Result<bool> {
-        self.policy_model_verdict_is_stale_with_config(
-            verdict,
-            request,
-            &PolicyModelConfig::default(),
-        )
-    }
-
-    /// Whether the manifest has moved out from under a verdict, so a caller
-    /// about to act on it should derive a fresh one first.
-    ///
-    /// Two things can go stale, and they are asked about separately.
-    ///
-    /// The CONTENT half of the binding — subject, content, world, safeguard
-    /// selector — is about the question. A verdict for other content, another
-    /// world or another classifier is not this verdict, whatever the plane is
-    /// doing.
-    ///
-    /// The FRONTIER half is about the manifest the plane decided against, and
-    /// it is only asked of a plane that is ON. A disabled plane decides
-    /// nothing, so an edit elsewhere in the manifest cannot invalidate its
-    /// clean allow — and reporting it stale only sends the caller to re-derive
-    /// its way back to the identical clean allow. Mirrors the same
-    /// short-circuit the live-context resolver already applies.
-    ///
-    /// That short-circuit is about the CLEAN ALLOW, not about the plane. A
-    /// plane that is off returns the inert clean allow and can return nothing
-    /// else, so any other verdict in a caller's hand was minted while the
-    /// plane was ON and the owner has since opted out. Reporting that one
-    /// fresh would let a `Block` the owner switched off keep blocking, which
-    /// is the owner-sovereignty violation this whole predicate exists to
-    /// prevent — so the ON to OFF transition reads STALE.
-    ///
-    /// The DIAL is asked beside the frontier, and only of a live plane for the
-    /// same reason. It is the owner dial and never the hosted one: a hosted
-    /// flip has nothing to say about a verdict the owner plane decided. Both
-    /// directions matter. A clean allow minted under `PatternGated` must not
-    /// survive a flip to `ClassifyAll` — that releases content the config now
-    /// says a model has to look at. And a `Block` the model decided under
-    /// `ClassifyAll` must not survive a flip to `PatternGated` where nothing
-    /// escalates, which is the same switched-off rule still enforcing, arrived
-    /// at by a different route. A verdict recording NO dial at all predates
-    /// the field and reads stale, because a compat gap that guesses is a
-    /// compat gap that releases content.
-    pub fn policy_model_verdict_is_stale_with_config(
-        &self,
-        verdict: &PolicyClassifyVerdict,
-        request: &PolicyClassifyRequest,
-        config: &PolicyModelConfig,
-    ) -> Result<bool> {
-        let rtxn = self.store.env.read_txn()?;
-        let policy = gate::resolve_policy_manifest(&self.store, &rtxn)?;
-        if policy.diagnostics().loaded_manifest_forces_fail_closed()
-            || policy.owner_policy_rows_dropped()
-        {
-            return Ok(true);
-        }
-        let fresh = content_binding(request, &policy, config)?;
-        if verdict.binding.content_hash != fresh.content_hash
-            || verdict.safeguard_binding != config.safeguard_binding.selector()
-        {
-            return Ok(true);
-        }
-        if policy.owner_policy_enabled() {
-            return Ok(
-                verdict.binding.read_frontier_hash != fresh.read_frontier_hash
-                    || verdict.classifier_mode != Some(config.owner_classifier_mode),
-            );
-        }
-        Ok(!verdict.is_inert_clean_allow())
     }
 
     /// `None` when the owner plane is off; `Err` when it is on but its
@@ -597,6 +526,8 @@ pub(crate) async fn stateless_owner_classification(
         let pass = vault
             .owner_plane_pass_with_budget(&request, config, backend, budget)
             .await?;
+        #[cfg(test)]
+        super::in_force::before_settling(super::in_force::SettlingDoor::AnonymousChat);
         if !vault.policy_model_verdict_is_stale_with_config(&pass.verdict, &request, config)? {
             let verdict = pass.verdict;
             // A human hold needs a durable queue. This route cannot create
@@ -617,12 +548,19 @@ pub(crate) async fn stateless_owner_classification(
     ))
 }
 
-/// What the owner plane concluded, plus whether its model got to speak.
+/// What the owner plane concluded. A pass whose model did not get to speak
+/// says so in the verdict itself ([`PolicyClassifyDecision::Skipped`]), so no
+/// caller can drop the fact on the way out.
 pub(super) struct OwnerPlanePass {
     pub(crate) verdict: PolicyClassifyVerdict,
+}
+
+impl OwnerPlanePass {
     /// The plane wanted a model verdict and did not get one. Not a failure —
     /// the owner's plane is sovereign — but the caller is owed the fact.
-    pub(crate) model_skipped: bool,
+    pub(crate) fn model_skipped(&self) -> bool {
+        self.verdict.decision.skip_reason().is_some()
+    }
 }
 
 fn policy_model_context_for_policy(
@@ -728,8 +666,9 @@ fn owner_policy_document(policy: &PolicyManifestResolution) -> Result<Option<Own
     }
 }
 
-/// The verdict a pass reaches with no model answer: a `Decide` rule's row, or
-/// a clean allow. Every matched id is audited either way.
+/// The verdict a pass reaches with no model answer: a `Decide` rule's row; a
+/// skip where the owner's dial wanted a model to read the content; otherwise a
+/// clean allow. Every matched id is audited either way.
 fn owner_pattern_only_verdict(
     context: &PolicyModelContext,
     evaluation: &PatternEvaluation<'_>,
@@ -758,6 +697,18 @@ fn owner_pattern_only_verdict(
             PolicyPlane::OwnerPolicy,
         )
         .with_audit(audit),
+        // A request no owner row applies to has nothing a model could judge.
+        None if !context.rubric_rows.is_empty()
+            && wants_model(config.owner_classifier_mode, evaluation.acting_role()) =>
+        {
+            let reason = if context.has_document() {
+                PolicySkipReason::NoBackend
+            } else {
+                PolicySkipReason::NoDocument
+            };
+            PolicyClassifyVerdict::skipped(reason, binding, config, PolicyPlane::OwnerPolicy)
+                .with_audit(audit)
+        }
         None => PolicyClassifyVerdict::clean_allow(binding, config, PolicyPlane::OwnerPolicy)
             .with_audit(audit),
     }

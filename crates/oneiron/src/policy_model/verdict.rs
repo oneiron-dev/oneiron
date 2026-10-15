@@ -7,8 +7,8 @@ use super::pattern::PolicyPatternRole;
 use super::planes::PolicyPlane;
 use super::request::{PolicyModelConfig, RelayClassifierMode};
 
-/// The four things a policy verdict can ask for. `Warn` is the only non-`Allow`
-/// arm that still delivers the content, and it delivers it BYTE-IDENTICALLY —
+/// What a policy verdict can ask for. `Warn` and `Skipped` are the non-`Allow`
+/// arms that still deliver the content, and they deliver it BYTE-IDENTICALLY —
 /// there is deliberately no arm that returns rewritten content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -18,6 +18,45 @@ pub enum PolicyClassifyDecision {
     Block,
     RouteToHelp,
     Hold,
+    /// The plane wanted a model answer and got none, so nothing examined the
+    /// content. Not an `Allow`: an `Allow` is an answer. The owner's plane is
+    /// sovereign, so its content still goes out, but the caller is told it
+    /// went out unread.
+    Skipped(PolicySkipReason),
+}
+
+/// Why a plane that wanted a model answer has none. A closed set, so a ledger
+/// row or a host can name the cause without carrying an error's text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PolicySkipReason {
+    /// The door had no safeguard model in reach.
+    NoBackend,
+    /// The plane wants model coverage but the owner wrote no policy document
+    /// for a model to read.
+    NoDocument,
+    /// The model call failed.
+    BackendUnavailable,
+    /// The model answered, but not in a form the plane can resolve.
+    ResponseUnusable,
+    /// The classifier budget refused the call.
+    BudgetExhausted,
+    /// The policy moved under every pass, so no verdict could be pinned to it.
+    PolicyMoving,
+}
+
+impl PolicySkipReason {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NoBackend => "no_backend",
+            Self::NoDocument => "no_document",
+            Self::BackendUnavailable => "backend_unavailable",
+            Self::ResponseUnusable => "response_unusable",
+            Self::BudgetExhausted => "budget_exhausted",
+            Self::PolicyMoving => "policy_moving",
+        }
+    }
 }
 
 impl PolicyClassifyDecision {
@@ -29,6 +68,7 @@ impl PolicyClassifyDecision {
             Self::Block => "block",
             Self::Hold => "hold",
             Self::RouteToHelp => "route-to-help",
+            Self::Skipped(_) => "skipped",
         }
     }
 
@@ -42,6 +82,16 @@ impl PolicyClassifyDecision {
             Self::Block => "block",
             Self::Hold => "hold",
             Self::RouteToHelp => "route_to_help",
+            Self::Skipped(_) => "skipped",
+        }
+    }
+
+    /// Why nothing examined the content, or `None` for an answered verdict.
+    #[must_use]
+    pub const fn skip_reason(self) -> Option<PolicySkipReason> {
+        match self {
+            Self::Skipped(reason) => Some(reason),
+            _ => None,
         }
     }
 }
@@ -100,6 +150,12 @@ impl PolicyConfidence {
     pub(super) const MEDIUM: Self = Self {
         calibrated: 0.75,
         hedge_bucket: PolicyHedgeBucket::Medium,
+    };
+
+    /// No confidence: nothing examined the content.
+    pub(super) const UNEXAMINED: Self = Self {
+        calibrated: 0.0,
+        hedge_bucket: PolicyHedgeBucket::Low,
     };
 }
 
@@ -330,7 +386,9 @@ impl PolicyClassifyVerdict {
 
     /// Marks this verdict as having been decided with `policy`'s hosted legal
     /// plane in play. The vault-side runner calls this so a relay can verify
-    /// the hosted question was asked; nothing else may.
+    /// the hosted question was asked; nothing else may. A `pass` that did not
+    /// ask it, that asked it of another policy, or that halted leaves the
+    /// verdict unattested.
     #[must_use]
     pub fn attesting_hosted_plane(
         mut self,
@@ -338,12 +396,70 @@ impl PolicyClassifyVerdict {
         config: &PolicyModelConfig,
         pass: &super::relay::RelayBoundaryPass,
     ) -> Self {
+        // Evidence comes only from a pass that ran the hosted plane over a
+        // hosted policy HERE. A BYO path, a trusted replay (either shape: a
+        // replayed Allow or a replayed carrier the relay returns as
+        // `VaultSideDecided`) and a pass with no hosted policy in play ran
+        // nothing a relay could skip on their word. A replay re-minted as
+        // evidence would also drop the degrade the receipt it replayed held.
+        let super::relay::RelayBoundaryPass::Classified(ran) = pass else {
+            self.hosted_attestation = None;
+            return self;
+        };
+        let ran_here = match ran.resolution {
+            super::relay::RelayResolution::PatternDecided
+            | super::relay::RelayResolution::ModelDecided
+            | super::relay::RelayResolution::PatternGatedAllow
+            | super::relay::RelayResolution::LogOnly
+            | super::relay::RelayResolution::Unresolved => true,
+            super::relay::RelayResolution::NoPolicyInPlay
+            | super::relay::RelayResolution::VaultSideDecided => false,
+        };
+        // A pass that HALTED left nothing anyone may reuse: a hosted Block,
+        // RouteToHelp or Hold, or a degrade that stopped the relay (the
+        // manifest moved, no output contract, an outage under `Halt`). The
+        // attestation carries no hosted decision, so minting one onto this
+        // verdict would let the carrier's own decision stand in for the
+        // hosted one the pass reached. The halt is read from the pass, never
+        // from the posture the caller hands in now. Unattested, a reuse runs
+        // its own pass, which halts again.
+        //
+        // And the evidence is what the pass EXAMINED, stamped where it ran:
+        // the policy it read, and the content, frontier and safeguard selector
+        // this carrier is bound to. A `policy` argument naming another policy
+        // (one registered after the pass, say), or a carrier for another
+        // message, another frontier or another classifier, attests nothing,
+        // because the pass is no evidence about it.
+        let read_policy = ran.hosted_evidence.as_ref().filter(|read| {
+            read.version == policy.version
+                && read.policy_hash == policy.policy_hash
+                && read.verify_content_hash == self.binding.content_hash
+                && ran.verdict.binding.read_frontier_hash == self.binding.read_frontier_hash
+                && ran.verdict.safeguard_binding == self.safeguard_binding
+        });
+        let Some(read_policy) = read_policy else {
+            self.hosted_attestation = None;
+            return self;
+        };
+        if !ran_here || !ran.hosted_policy_in_play || pass.must_halt_relay() {
+            self.hosted_attestation = None;
+            return self;
+        }
         self.hosted_attestation = Some(Box::new(HostedPlaneAttestation {
             plane: PolicyPlane::HostedLegal,
-            policy_version: policy.version.clone(),
-            policy_hash: policy.policy_hash.clone(),
-            classifier_mode: Some(config.classifier_mode(PolicyPlane::HostedLegal)),
-            outage_policy: Some(config.hosted_outage_policy),
+            policy_version: read_policy.version.clone(),
+            policy_hash: read_policy.policy_hash.clone(),
+            // The dial the pass RAN under, never the caller's current one: a
+            // pattern-gated pass is no evidence of a classify-all one.
+            classifier_mode: ran.verdict.classifier_mode,
+            // A degraded pass that did not halt proceeded through an outage,
+            // which only `ProceedReceipted` tolerates; the posture it records
+            // is the one the pass ran under.
+            outage_policy: Some(if ran.degraded.is_some() {
+                super::request::HostedOutagePolicy::ProceedReceipted
+            } else {
+                config.hosted_outage_policy
+            }),
             // DERIVED from the pass, never asserted by the caller. The first
             // version of this took a `bool`, which let a runner mark a
             // degraded pass as model-answered — by mistake or by losing the
@@ -440,6 +556,24 @@ impl PolicyClassifyVerdict {
             PolicyClassifyDecision::Allow,
             PolicyVerdictCategory::None,
             PolicyConfidence::HIGH,
+            binding,
+            config,
+            plane,
+        )
+    }
+
+    /// The plane wanted a model answer and got none. The verdict carries no
+    /// category and no confidence, and it is never an `Allow`.
+    pub(super) fn skipped(
+        reason: PolicySkipReason,
+        binding: PolicyContentBinding,
+        config: &PolicyModelConfig,
+        plane: PolicyPlane,
+    ) -> Self {
+        Self::new(
+            PolicyClassifyDecision::Skipped(reason),
+            PolicyVerdictCategory::None,
+            PolicyConfidence::UNEXAMINED,
             binding,
             config,
             plane,

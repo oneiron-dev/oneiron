@@ -60,14 +60,20 @@ pub(super) fn relay_verify_content_binding(
     request: &PolicyClassifyRequest,
     policy: &PolicyManifestResolution,
 ) -> Result<PolicyContentBinding> {
+    Ok(PolicyContentBinding {
+        content_hash: relay_verify_content_hash(request),
+        read_frontier_hash: policy.read_frontier_hash()?,
+    })
+}
+
+/// The content half of [`relay_verify_content_binding`], which reads no
+/// policy state.
+pub(super) fn relay_verify_content_hash(request: &PolicyClassifyRequest) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"oneiron.policy_model.relay.verify.content.v1");
     hash_binding_str(&mut hasher, "subject", request.subject.as_str());
     hash_binding_str(&mut hasher, "content", &request.content);
-    Ok(PolicyContentBinding {
-        content_hash: hasher.finalize().into(),
-        read_frontier_hash: policy.read_frontier_hash()?,
-    })
+    hasher.finalize().into()
 }
 
 /// Binding for a trust-domain SKIP. A skip never classified against policy

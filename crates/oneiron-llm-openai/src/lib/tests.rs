@@ -213,3 +213,154 @@ fn an_own_server_gets_the_level_in_its_template_with_the_budget_and_a_hosted_api
         }
     }
 }
+
+/// A reply that names no finish is not a finished one. The decoder used to
+/// fill in `Stop`, which every caller that demands a finished answer (the
+/// policy classifier among them) then read as one.
+#[test]
+fn a_reply_that_names_no_finish_is_not_a_stop() {
+    let answer = json!({ "role": "assistant", "content": "{\"violation\":0}" });
+    for choice in [
+        json!({ "message": answer }),
+        json!({ "message": answer, "finish_reason": null }),
+        json!({ "message": answer, "finish_reason": 7 }),
+    ] {
+        let response = super::parse_openai_chat_response(&json!({ "choices": [choice] }))
+            .expect("the reply decodes");
+        assert_ne!(
+            response.finish_reason,
+            oneiron::FinishReason::Stop,
+            "{choice}"
+        );
+    }
+    let stopped = super::parse_openai_chat_response(&json!({
+        "choices": [{ "message": answer, "finish_reason": "stop" }]
+    }))
+    .expect("the reply decodes");
+    assert_eq!(stopped.finish_reason, oneiron::FinishReason::Stop);
+}
+
+/// F14 H122 (Sol, round 7): a tool call this decoder could not read was
+/// dropped, and the reply decoded as a `Stop` with only its text, which the
+/// policy classifier took for a finished, tool-free answer: an Allow. A reply
+/// that asked for a tool is pending, never a verdict, so a malformed
+/// `tool_calls` field or entry fails the decode, buffered and streamed. A
+/// tool-free answer and a well-formed tool call still decode. The legacy
+/// `function_call` field (Astra, round 7) asks for a tool as well, and this
+/// adapter offers no legacy functions, so one fails the decode too.
+#[test]
+fn a_malformed_tool_call_never_decodes_as_a_finished_answer() {
+    let allow = "{\"violation\":0,\"policy_category\":null}";
+    let buffered = |tool_calls: serde_json::Value| {
+        super::parse_openai_chat_response(&json!({ "choices": [{
+            "finish_reason": "stop",
+            "message": { "role": "assistant", "content": allow, "tool_calls": tool_calls },
+        }] }))
+    };
+    for tool_calls in [
+        json!([{ "type": "function", "function": { "name": "check_policy", "arguments": "{}" } }]),
+        json!([{ "id": "call-1", "type": "function", "function": { "arguments": "{}" } }]),
+        json!([{ "id": "call-1", "type": "function" }]),
+        json!(["call-1"]),
+        json!({ "id": "call-1", "function": { "name": "check_policy" } }),
+        json!("call-1"),
+    ] {
+        assert!(
+            buffered(tool_calls.clone()).is_err(),
+            "H122: {tool_calls} decoded as a finished, tool-free answer"
+        );
+    }
+    let streamed = |tool_calls: serde_json::Value| {
+        let mut stream = super::stream::OpenAiCompatStreamAccumulator::new();
+        stream.push_chunk(json!({
+            "choices": [{
+                "index": 0,
+                "delta": { "content": allow, "tool_calls": tool_calls },
+                "finish_reason": "stop",
+            }],
+            "usage": { "prompt_tokens": 3, "completion_tokens": 1 },
+        }))
+    };
+    for tool_calls in [
+        json!([{ "index": 0, "type": "function", "function": { "name": "check_policy", "arguments": "{}" } }]),
+        json!([{ "index": 0, "id": "call-1", "type": "function", "function": { "arguments": "{}" } }]),
+        json!({ "index": 0, "id": "call-1" }),
+        json!("call-1"),
+    ] {
+        assert!(
+            streamed(tool_calls.clone()).is_err(),
+            "H122: a streamed {tool_calls} finished as a tool-free answer"
+        );
+    }
+
+    for function_call in [
+        json!({ "name": "check_policy", "arguments": "{}" }),
+        json!({ "arguments": "{}" }),
+    ] {
+        let reply = json!({ "choices": [{
+            "finish_reason": "stop",
+            "message": { "role": "assistant", "content": allow, "function_call": function_call },
+        }] });
+        assert!(
+            super::parse_openai_chat_response(&reply).is_err(),
+            "H122: a legacy {function_call} decoded as a finished, tool-free answer"
+        );
+        let mut stream = super::stream::OpenAiCompatStreamAccumulator::new();
+        let chunk = json!({
+            "choices": [{
+                "index": 0,
+                "delta": { "content": allow, "function_call": function_call },
+                "finish_reason": "stop",
+            }],
+            "usage": { "prompt_tokens": 3, "completion_tokens": 1 },
+        });
+        assert!(
+            stream.push_chunk(chunk).is_err(),
+            "H122: a streamed legacy {function_call} finished as a tool-free answer"
+        );
+    }
+
+    // Choices, a choice or a delta of a shape the stream cannot walk, after
+    // text already streamed, are no Stop either (Astra, rounds 8 and 9).
+    let call = json!([{ "index": 0, "id": "call-1", "type": "function",
+        "function": { "name": "check_policy", "arguments": "{}" } }]);
+    for chunk in [
+        json!({ "choices": [{ "index": 0, "delta": [{ "tool_calls": call }], "finish_reason": "stop" }] }),
+        json!({ "choices": { "0": { "delta": { "tool_calls": call } } } }),
+        json!({ "choices": [[{ "index": 0, "delta": { "tool_calls": call } }]] }),
+    ] {
+        let mut stream = super::stream::OpenAiCompatStreamAccumulator::new();
+        stream
+            .push_chunk(json!({ "choices": [{ "index": 0, "delta": { "content": allow } }] }))
+            .expect("the answer's text streams");
+        assert!(
+            stream.push_chunk(chunk.clone()).is_err(),
+            "H122: a streamed {chunk} left the text a tool-free answer"
+        );
+    }
+
+    // The controls.
+    let answer = buffered(serde_json::Value::Null).expect("a tool-free answer decodes");
+    assert_eq!(answer.finish_reason, oneiron::FinishReason::Stop);
+    let answer = super::parse_openai_chat_response(&json!({ "choices": [{
+        "finish_reason": "stop",
+        "message": { "role": "assistant", "content": allow, "function_call": null },
+    }] }))
+    .expect("a null legacy call is no call");
+    assert_eq!(answer.finish_reason, oneiron::FinishReason::Stop);
+    let called = buffered(json!([{ "id": "call-1", "type": "function",
+        "function": { "name": "check_policy", "arguments": "{}" } }]))
+    .expect("a well-formed tool call decodes");
+    assert!(
+        called
+            .message
+            .content
+            .iter()
+            .any(|part| matches!(part, ContentPart::ToolCall { .. }))
+    );
+    assert!(
+        streamed(json!([{ "index": 0, "id": "call-1", "type": "function",
+            "function": { "name": "check_policy", "arguments": "{}" } }]))
+        .is_ok()
+    );
+}

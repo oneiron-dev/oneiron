@@ -28,7 +28,8 @@ use serde_json::{Value as JsonValue, json};
 use crate::error::{Error, Result};
 use crate::llm::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DEFAULT_SAFEGUARD_MODEL_BINDING,
-    DeterministicFallback, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef,
+    DeterministicFallback, FinishReason, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse,
+    ModelTierRef,
 };
 
 use super::contract::{
@@ -275,6 +276,21 @@ pub(super) fn resolve_policy_model_response(
     prompt: &PolicyClassifyPrompt,
     plane: &AnswerPlane<'_>,
 ) -> Result<ResolvedAnswer> {
+    // Only a finished answer is a verdict, however well its text parses. A
+    // cut, filtered, cancelled, paused or tool-pending answer is partial, and
+    // a fallback runner's reply is no model's read at all. This request
+    // declares no tools, so a tool call is no answer either.
+    if response.finish_reason != FinishReason::Stop
+        || response
+            .message
+            .content
+            .iter()
+            .any(|part| matches!(part, ContentPart::ToolCall { .. }))
+    {
+        return Err(Error::InvalidConfig(
+            "policy model response did not finish".to_owned(),
+        ));
+    }
     let text = response_text(response).ok_or_else(|| {
         Error::InvalidConfig("policy model response contained no text part".to_owned())
     })?;
@@ -403,7 +419,7 @@ fn resolve_hosted_violation(
 /// Ordering only — never stored, never emitted.
 const fn decision_severity(decision: PolicyClassifyDecision) -> u8 {
     match decision {
-        PolicyClassifyDecision::Allow => 0,
+        PolicyClassifyDecision::Allow | PolicyClassifyDecision::Skipped(_) => 0,
         PolicyClassifyDecision::Warn => 1,
         PolicyClassifyDecision::RouteToHelp => 2,
         PolicyClassifyDecision::Hold => 4,

@@ -47,7 +47,24 @@ impl Vault {
     /// With no hosted policy bound to the attested identity there is nothing to
     /// pin and no model call to pin it across, so the re-check is skipped
     /// whole.
+    ///
+    /// Every pass it returns names the hosted policy it was handed, so an
+    /// attestation minted from it can name that policy and no later one.
     pub(super) async fn hosted_relay_pass(
+        &self,
+        request: &PolicyClassifyRequest,
+        hosted: Option<&HostedLegalPolicy>,
+        patterns: Option<&CompiledPatternRules>,
+        config: &PolicyModelConfig,
+        safeguard: Option<RelaySafeguardTier<'_>>,
+    ) -> Result<RelayBoundaryPass> {
+        Ok(self
+            .hosted_relay_pass_pinned(request, hosted, patterns, config, safeguard)
+            .await?
+            .read_under(hosted, request))
+    }
+
+    async fn hosted_relay_pass_pinned(
         &self,
         request: &PolicyClassifyRequest,
         hosted: Option<&HostedLegalPolicy>,
@@ -227,6 +244,18 @@ impl Vault {
 }
 
 impl Vault {
+    /// The trust check at the binding in force now.
+    #[cfg(test)]
+    pub(in super::super) fn cloud_vault_verified_trust(
+        &self,
+        request: &PolicyClassifyRequest,
+        hosted: Option<&HostedLegalPolicy>,
+        config: &PolicyModelConfig,
+        verdicts: &dyn VaultSideVerdictSource,
+    ) -> Result<RelayBoundaryPass> {
+        self.cloud_vault_verified_trust_at(request, hosted, config, verdicts, None)
+    }
+
     /// Verifies a CloudVault receipt produced by our vault-side runner. The
     /// receipt lookup and every comparison are over locally derived values.
     ///
@@ -249,14 +278,21 @@ impl Vault {
     /// verdict is returned verbatim, and `Warn` does not halt — so trusting an
     /// unattested `Warn` would relay the content with the hosted plane never
     /// consulted, which is the same hole in a milder coat.
-    pub(in super::super) fn cloud_vault_verified_trust(
+    ///
+    /// It verifies at `verify_at`, the binding a caller pinned, or at the
+    /// binding in force when it pinned none.
+    fn cloud_vault_verified_trust_at(
         &self,
         request: &PolicyClassifyRequest,
         hosted: Option<&HostedLegalPolicy>,
         config: &PolicyModelConfig,
         verdicts: &dyn VaultSideVerdictSource,
+        verify_at: Option<PolicyContentBinding>,
     ) -> Result<RelayBoundaryPass> {
-        let binding = self.relay_verify_binding(request, config)?;
+        let binding = match verify_at {
+            Some(binding) => binding,
+            None => self.relay_verify_binding(request, config)?,
+        };
         let Some(receipt) = verdicts.latest_boundary_verdict(&binding.content_hash)? else {
             return Err(Error::Relay(RelayError::RelayVaultReceiptUntrusted {
                 reason: "missing",
@@ -318,8 +354,9 @@ impl Vault {
         hosted: Option<&HostedLegalPolicy>,
         config: &PolicyModelConfig,
         verdicts: &dyn VaultSideVerdictSource,
+        verify_at: Option<PolicyContentBinding>,
     ) -> Result<CloudVaultPassOrFallback> {
-        match self.cloud_vault_verified_trust(request, hosted, config, verdicts) {
+        match self.cloud_vault_verified_trust_at(request, hosted, config, verdicts, verify_at) {
             Ok(pass) => Ok(CloudVaultPassOrFallback::Pass(pass)),
             Err(Error::Relay(RelayError::RelayVaultReceiptUntrusted { reason })) => {
                 Ok(CloudVaultPassOrFallback::HostedFallback {

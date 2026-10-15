@@ -75,7 +75,10 @@ fn the_owner_plane_fails_open_where_the_hosted_plane_fails_closed() -> Result<()
         &backend,
         &lease("owner-fails-open"),
     ))?;
-    assert_eq!(owner.decision, PolicyClassifyDecision::Allow);
+    assert_eq!(
+        owner.decision,
+        PolicyClassifyDecision::Skipped(PolicySkipReason::ResponseUnusable)
+    );
 
     let budget = lease("hosted-fails-closed");
     let hosted = relay_pass(
@@ -115,6 +118,11 @@ fn an_availability_degrade_halts_under_the_default_outage_policy() -> Result<()>
     assert_eq!(
         pass.degraded(),
         Some(RelayBoundaryDegrade::SafeguardModelUnavailable)
+    );
+    // No model answered, so the hosted verdict is a typed skip, not an allow.
+    assert_eq!(
+        pass.boundary_verdict().expect("verdict").decision,
+        PolicyClassifyDecision::Skipped(PolicySkipReason::BackendUnavailable)
     );
     assert!(pass.must_halt_relay());
     let receipts = gate_receipts(&vault)?;

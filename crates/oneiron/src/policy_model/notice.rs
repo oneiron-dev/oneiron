@@ -257,7 +257,9 @@ const fn notice_type_for(decision: PolicyClassifyDecision) -> &'static str {
         PolicyClassifyDecision::RouteToHelp => SYSTEM_NOTICE_TYPE_HELP_CARD,
         PolicyClassifyDecision::Hold => "policy_hold",
         PolicyClassifyDecision::Block => SYSTEM_NOTICE_TYPE_BLOCK,
-        PolicyClassifyDecision::Allow | PolicyClassifyDecision::Warn => SYSTEM_NOTICE_TYPE_WARN,
+        PolicyClassifyDecision::Allow
+        | PolicyClassifyDecision::Warn
+        | PolicyClassifyDecision::Skipped(_) => SYSTEM_NOTICE_TYPE_WARN,
     }
 }
 

@@ -142,10 +142,12 @@ pub fn parse_openai_chat_response(body: &JsonValue) -> LlmResult<LlmResponse> {
         .get("message")
         .and_then(JsonValue::as_object)
         .ok_or(FatalLlmError::EmptyResponse)?;
+    // `Stop` is a claim the provider makes about the reply. A body that names
+    // no finish made none, so it must not read as a finished answer.
     let finish_reason = choice
         .get("finish_reason")
         .and_then(JsonValue::as_str)
-        .map_or(FinishReason::Stop, openai_finish_reason);
+        .map_or_else(unreported_finish_reason, openai_finish_reason);
 
     let mut content = Vec::new();
     if let Some(text) = message.get("content").and_then(JsonValue::as_str)
@@ -166,12 +168,25 @@ pub fn parse_openai_chat_response(body: &JsonValue) -> LlmResult<LlmResponse> {
             signature: None,
         });
     }
-    if let Some(tool_calls) = message.get("tool_calls").and_then(JsonValue::as_array) {
-        for call in tool_calls {
-            if let Some(part) = parse_openai_tool_call(call) {
-                content.push(part);
+    // A reply that asked for a tool is no finished answer, however its text
+    // reads. A tool call this decoder cannot read fails the decode rather than
+    // leaving the reply looking tool-free.
+    match message.get("tool_calls") {
+        None | Some(JsonValue::Null) => {}
+        Some(JsonValue::Array(tool_calls)) => {
+            for call in tool_calls {
+                content.push(parse_openai_tool_call(call).ok_or(FatalLlmError::InvalidRequest)?);
             }
         }
+        Some(_) => return Err(FatalLlmError::InvalidRequest.into()),
+    }
+    // The legacy single-call field asks for a tool too. This adapter never
+    // offers legacy functions, so it cannot read one: the decode fails.
+    if message
+        .get("function_call")
+        .is_some_and(|call| !call.is_null())
+    {
+        return Err(FatalLlmError::InvalidRequest.into());
     }
 
     if content.is_empty() {
@@ -327,6 +342,13 @@ pub(crate) fn parse_openai_usage(usage: &JsonValue) -> LlmUsage {
             reasoning: reasoning_tokens,
         },
         raw_provider: usage.clone(),
+    }
+}
+
+/// The finish of a reply whose provider reported none.
+fn unreported_finish_reason() -> FinishReason {
+    FinishReason::Other {
+        name: "unreported".to_owned(),
     }
 }
 

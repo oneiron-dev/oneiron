@@ -110,8 +110,9 @@ impl Vault {
         HOLD_QUEUE.put(&self.store, txn, &hold_key(&queue_ref), &item)?;
         Ok(queue_ref)
     }
-    pub(super) fn policy_hold_for_verdict(
+    pub(super) fn policy_hold_for_verdict_in_txn(
         &self,
+        txn: &heed::RoTxn<'_>,
         request: &PolicyClassifyRequest,
         verdict: &PolicyClassifyVerdict,
     ) -> Result<Option<HeldPolicyItem>> {
@@ -121,8 +122,7 @@ impl Vault {
         let Some(key) = queue_ref(request, verdict) else {
             return Ok(None);
         };
-        let txn = self.store.env.read_txn()?;
-        HOLD_QUEUE.get(&self.store, &txn, &hold_key(&key))
+        HOLD_QUEUE.get(&self.store, txn, &hold_key(&key))
     }
     pub fn policy_holds(&self, limit: usize) -> Result<Vec<HeldPolicyItem>> {
         let txn = self.store.env.read_txn()?;

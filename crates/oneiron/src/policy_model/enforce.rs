@@ -13,7 +13,6 @@ use crate::error::{Error, Result};
 use crate::llm::{BudgetLease, LlmBackend};
 use crate::store::GateSystemNoticeRecord;
 
-use super::classify::OwnerPlanePass;
 use super::notice::{
     POLICY_MODEL_HELP_MESSAGE, default_system_notice, policy_model_rationale_notice, policy_notice,
 };
@@ -38,12 +37,12 @@ pub(super) const OWNER_PLANE_MODEL_SKIPPED_REASON: &str = "gate.policy_model.mod
 /// The policy frontier moved between the verdict being reached and its row
 /// being written.
 ///
-/// The owner plane is sovereign and fails OPEN, so this never degrades the
-/// verdict and never refuses the caller — the decision was already given and
-/// already acted on. What it does is stop the row asserting a frontier nobody
-/// can reproduce: the row carries the FRESH frontier and this code says why
-/// the two differ. A reader auditing the decision then knows to expect a
-/// mismatch instead of reading one as corruption.
+/// The owner plane is sovereign and fails OPEN, so this never refuses the
+/// caller. What it does is stop the row, and the verdict handed out, asserting
+/// a decision for a policy no longer in force: both carry the plane's answer
+/// at the FRESH frontier (its typed fail-open, or the inert allow of a plane
+/// the owner switched off), and this code says why it is not the decision the
+/// pass reached.
 pub(super) const OWNER_PLANE_FRONTIER_MOVED_REASON: &str =
     "gate.policy_model.owner_plane_frontier_moved";
 
@@ -70,6 +69,10 @@ pub enum PolicyEnforcementAction {
     Block,
     RouteToHelp,
     Hold,
+    /// The owner plane's model did not answer. The content is delivered
+    /// unread, because that plane is sovereign, and it is never reported as
+    /// an `Allow`.
+    Skipped,
 }
 
 impl PolicyEnforcementAction {
@@ -81,6 +84,7 @@ impl PolicyEnforcementAction {
             Self::Block => "block",
             Self::Hold => "hold",
             Self::RouteToHelp => "route_to_help",
+            Self::Skipped => "skipped",
         }
     }
 
@@ -91,10 +95,12 @@ impl PolicyEnforcementAction {
             PolicyClassifyDecision::Block => Self::Block,
             PolicyClassifyDecision::Hold => Self::Hold,
             PolicyClassifyDecision::RouteToHelp => Self::RouteToHelp,
+            PolicyClassifyDecision::Skipped(_) => Self::Skipped,
         }
     }
 
-    /// Whether the caller must not deliver the content. `Warn` delivers.
+    /// Whether the caller must not deliver the content. `Warn` and `Skipped`
+    /// deliver.
     #[must_use]
     pub const fn halts(self) -> bool {
         matches!(self, Self::Block | Self::RouteToHelp | Self::Hold)
@@ -151,7 +157,8 @@ pub struct PolicyModelEnforcement {
     pub classify_trace: Vec<PolicyClassifyVerdict>,
     pub pre_display_block: bool,
     pub barge_in_kill: Option<PolicyBargeInKill>,
-    /// The owner plane did not get to run: its safeguard model was down.
+    /// The owner plane did not get to run: its safeguard model was down. Always
+    /// true when [`Self::action`] is [`PolicyEnforcementAction::Skipped`].
     pub custom_tier_skipped: bool,
 }
 
@@ -181,7 +188,8 @@ impl Vault {
     /// A downed model, an unreadable answer and an unwritten policy document
     /// all read as "the owner plane did not run" rather than as a failure —
     /// nothing below the owner plane exists to fall back to, so the content
-    /// passes through and `custom_tier_skipped` records the fact.
+    /// passes through as [`PolicyEnforcementAction::Skipped`] and
+    /// `custom_tier_skipped` records the fact.
     ///
     /// # The manifest can move while the model is answering
     ///
@@ -211,41 +219,41 @@ impl Vault {
                 return self.stale_owner_plane_fail_open(request, config);
             }
         }
-        let OwnerPlanePass {
-            verdict,
-            model_skipped,
-        } = pass;
-        self.enforcement_from_verdict(
-            request,
-            config,
-            verdict,
-            model_skipped,
-            DecisionLedger::Record,
-        )
+        self.enforcement_from_verdict(request, config, pass.verdict, false, DecisionLedger::Record)
     }
 
     /// The owner plane could not pin a verdict to the policy in force, so it
     /// enforces nothing and says so. Sovereign planes fail open; what they do
     /// not do is enforce a rule they cannot name.
+    ///
+    /// The verdict is minted in the row's own transaction, so the frontier it
+    /// names is the one in force when the row is written.
     fn stale_owner_plane_fail_open(
         &self,
         request: PolicyClassifyRequest,
         config: &PolicyModelConfig,
     ) -> Result<PolicyModelEnforcement> {
-        let binding = self.policy_model_context(&request, config)?.binding;
-        let verdict = PolicyClassifyVerdict::clean_allow(binding, config, PolicyPlane::OwnerPolicy);
-        let receipt_ref = self.append_policy_model_gate_receipt(
+        #[cfg(test)]
+        super::in_force::before_settling(super::in_force::SettlingDoor::StaleFailOpen);
+        let mut wtxn = self.store.env.write_txn()?;
+        let verdict = self.owner_plane_fail_open_in_txn(&wtxn, &request, config)?;
+        let action = PolicyEnforcementAction::for_decision(verdict.decision);
+        let mut reason_codes = policy_model_reason_codes(&verdict);
+        reason_codes.push(OWNER_PLANE_STALE_MANIFEST_REASON.to_owned());
+        if action == PolicyEnforcementAction::Skipped {
+            reason_codes.push(OWNER_PLANE_FAIL_OPEN_REASON.to_owned());
+        }
+        let receipt_ref = self.append_policy_model_gate_receipt_in_txn(
+            &mut wtxn,
             &request,
             &verdict,
             "owner_plane_stale_fail_open",
-            vec![
-                OWNER_PLANE_STALE_MANIFEST_REASON.to_owned(),
-                OWNER_PLANE_FAIL_OPEN_REASON.to_owned(),
-            ],
+            reason_codes,
             Vec::new(),
         )?;
+        wtxn.commit()?;
         Ok(PolicyModelEnforcement {
-            action: PolicyEnforcementAction::Allow,
+            action,
             classify_trace: vec![verdict.clone()],
             verdict,
             final_content: Some(request.content),
@@ -260,8 +268,9 @@ impl Vault {
             barge_in_kill: None,
             // The plane did not get to decide, which is the fact this flag
             // carries — the model answered, but against a manifest that had
-            // already moved on.
-            custom_tier_skipped: true,
+            // already moved on. A plane the owner switched off skipped
+            // nothing.
+            custom_tier_skipped: action == PolicyEnforcementAction::Skipped,
         })
     }
 
@@ -271,7 +280,9 @@ impl Vault {
     ///
     /// `custom_tier_skipped` is the caller's to supply: it is
     /// [`DualPlanePass::owner_model_skipped`] for that pass, and `false` for a
-    /// verdict a model answered.
+    /// verdict a model answered. It can only add the fact, never erase it: a
+    /// [`PolicyClassifyDecision::Skipped`] verdict is enforced as skipped
+    /// whatever the flag says.
     ///
     /// # The producing door owns the ledger row
     ///
@@ -318,6 +329,13 @@ impl Vault {
         verdict: PolicyClassifyVerdict,
         custom_tier_skipped: bool,
     ) -> Result<PolicyModelEnforcement> {
+        // A reported skip contradicts an Allow: the check the Allow stands
+        // for never ran, so the pair is refused rather than enforced.
+        if custom_tier_skipped && verdict.decision == PolicyClassifyDecision::Allow {
+            return Err(Error::InvalidConfig(
+                "an Allow verdict cannot carry a skipped owner model".to_owned(),
+            ));
+        }
         // A verdict from the HOSTED plane is not this door's to enforce, and
         // the staleness check cannot tell: both halves of a `DualPlanePass`
         // answer the SAME request, so a hosted verdict carries the same
@@ -378,13 +396,39 @@ impl Vault {
         custom_tier_skipped: bool,
         ledger: DecisionLedger,
     ) -> Result<PolicyModelEnforcement> {
-        let action = PolicyEnforcementAction::for_decision(verdict.decision);
-        let classify_trace = vec![verdict.clone()];
+        #[cfg(test)]
+        super::in_force::before_settling(match ledger {
+            DecisionLedger::Record => super::in_force::SettlingDoor::RecordAndEnforce,
+            DecisionLedger::AlreadyRecorded => super::in_force::SettlingDoor::EnforceRecorded,
+        });
         // An allow that learned nothing carries no signal and is not
         // receipted. An allow that DID learn something — a pattern fired and
         // the model overruled it, say — is exactly the row the substrate owner
-        // needs, so it is.
-        if action == PolicyEnforcementAction::Allow && verdict.audit.is_none() {
+        // needs, so it is. The door that writes the row drops only an allow
+        // still in force; anything else it settles against the policy in
+        // force in the row's own transaction, as the bare doors do, so a
+        // manifest that moved after the pass is never answered with the
+        // decision it replaced.
+        let silent = verdict.decision == PolicyClassifyDecision::Allow
+            && verdict.audit.is_none()
+            && match ledger {
+                DecisionLedger::Record => {
+                    !self.policy_model_verdict_is_stale_with_config(&verdict, &request, config)?
+                }
+                DecisionLedger::AlreadyRecorded => true,
+            };
+        let mut wtxn = match ledger {
+            DecisionLedger::Record if !silent => Some(self.store.env.write_txn()?),
+            DecisionLedger::Record | DecisionLedger::AlreadyRecorded => None,
+        };
+        let (verdict, moved) = match wtxn.as_ref() {
+            Some(txn) => self.owner_verdict_in_force_in_txn(txn, &verdict, &request, config)?,
+            None => (verdict, false),
+        };
+        let action = PolicyEnforcementAction::for_decision(verdict.decision);
+        let custom_tier_skipped = custom_tier_skipped || action == PolicyEnforcementAction::Skipped;
+        let classify_trace = vec![verdict.clone()];
+        if silent {
             return Ok(PolicyModelEnforcement {
                 action,
                 verdict,
@@ -416,23 +460,38 @@ impl Vault {
             PolicyPlane::OwnerPolicy,
             None,
         ));
-        let receipt_ref = match ledger {
-            DecisionLedger::Record => Some(self.append_policy_model_gate_receipt(
-                &request,
-                &verdict,
-                action.as_str(),
-                policy_model_reason_codes(&verdict),
-                system_notices.clone(),
-            )?),
-            DecisionLedger::AlreadyRecorded => None,
-        };
-        let held = if action == PolicyEnforcementAction::Hold {
-            Some(
-                self.policy_hold_for_verdict(&request, &verdict)?
-                    .ok_or_else(|| Error::Relay(RelayError::PolicyVerdictNotInForce))?,
-            )
-        } else {
-            None
+        // The hold's ruling is read in the same transaction that settled the
+        // verdict (and queued its hold), or, for a verdict another door
+        // recorded, in the same snapshot that finds it still in force: a
+        // ruling read later could answer a policy already replaced.
+        let (receipt_ref, held) = match wtxn.take() {
+            Some(mut wtxn) => {
+                let mut reason_codes = policy_model_reason_codes(&verdict);
+                if moved {
+                    reason_codes.push(OWNER_PLANE_FRONTIER_MOVED_REASON.to_owned());
+                }
+                let receipt_ref = self.append_policy_model_gate_receipt_in_txn(
+                    &mut wtxn,
+                    &request,
+                    &verdict,
+                    action.as_str(),
+                    reason_codes,
+                    system_notices.clone(),
+                )?;
+                let held = self.hold_for_action_in_txn(&wtxn, action, &request, &verdict)?;
+                wtxn.commit()?;
+                (Some(receipt_ref), held)
+            }
+            None => {
+                let rtxn = self.store.env.read_txn()?;
+                if self.policy_model_verdict_is_stale_in_txn(&rtxn, &verdict, &request, config)? {
+                    return Err(Error::Relay(RelayError::PolicyVerdictNotInForce));
+                }
+                (
+                    None,
+                    self.hold_for_action_in_txn(&rtxn, action, &request, &verdict)?,
+                )
+            }
         };
         let action = match held.as_ref().and_then(|item| item.resolution) {
             Some(super::PolicyHoldResolution::Cleared) => PolicyEnforcementAction::Allow,
@@ -473,5 +532,22 @@ impl Vault {
             barge_in_kill: halts.then(PolicyBargeInKill::full_flush),
             custom_tier_skipped,
         })
+    }
+
+    /// The hold item a `Hold` action is enforced on, read in `txn`. A hold
+    /// the row never queued is not in force.
+    fn hold_for_action_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        action: PolicyEnforcementAction,
+        request: &PolicyClassifyRequest,
+        verdict: &PolicyClassifyVerdict,
+    ) -> Result<Option<super::HeldPolicyItem>> {
+        if action != PolicyEnforcementAction::Hold {
+            return Ok(None);
+        }
+        self.policy_hold_for_verdict_in_txn(txn, request, verdict)?
+            .ok_or_else(|| Error::Relay(RelayError::PolicyVerdictNotInForce))
+            .map(Some)
     }
 }

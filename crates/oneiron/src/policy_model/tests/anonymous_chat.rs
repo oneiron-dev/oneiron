@@ -117,7 +117,7 @@ fn open_chat_close_has_no_vault_diff_and_no_memory_in_model_input() -> Result<()
             &PolicyModelConfig::default(),
         ))?;
         assert!(
-            matches!(result, AnonymousChatTurn::Reply { content, notices } if content == "model answer" && notices.is_empty())
+            matches!(result, AnonymousChatTurn::Reply { content, notices, skipped_checks } if content == "model answer" && notices.is_empty() && skipped_checks.is_empty())
         );
     }
     assert_eq!(

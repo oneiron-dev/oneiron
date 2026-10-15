@@ -11,7 +11,7 @@ use std::pin::Pin;
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::llm::{BudgetGuard, LlmBackend};
-use crate::policy_model::{PolicyClassifyDecision, PolicyModelConfig};
+use crate::policy_model::{PolicyClassifyDecision, PolicyModelConfig, PolicySkipReason};
 use crate::store::GateSystemNoticeRecord;
 
 use super::{OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode, OffRecordSession};
@@ -44,12 +44,24 @@ pub enum AnonymousChatBlockReason {
     HumanReviewUnavailable,
 }
 
+/// A policy check this turn's owner policy asked for and could not run, so
+/// the text passed it unread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnonymousChatSkippedCheck {
+    /// `true` for the person's turn, `false` for the model's reply.
+    pub input: bool,
+    pub reason: PolicySkipReason,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AnonymousChatTurn {
     Reply {
         content: String,
         /// Warnings on input or output, in evaluation order.
         notices: Vec<GateSystemNoticeRecord>,
+        /// Checks that did not run, in evaluation order. A reply with any is
+        /// not a checked reply.
+        skipped_checks: Vec<AnonymousChatSkippedCheck>,
     },
     Blocked {
         /// `true` when the incoming turn was withheld before the model ran.
@@ -108,6 +120,7 @@ impl AnonymousChatSession<'_> {
         )
         .await?;
         route.revalidate()?;
+        let mut skipped_checks: Vec<_> = skipped_check(decision, true).into_iter().collect();
         if halts(decision) {
             let notice = notices.into_iter().next().ok_or(Error::InvariantViolation(
                 "anonymous chat block must have a policy notice",
@@ -146,7 +159,12 @@ impl AnonymousChatSession<'_> {
             });
         }
         notices.append(&mut output_notices);
-        Ok(AnonymousChatTurn::Reply { content, notices })
+        skipped_checks.extend(skipped_check(decision, false));
+        Ok(AnonymousChatTurn::Reply {
+            content,
+            notices,
+            skipped_checks,
+        })
     }
 
     /// The session closes without a transcript, telemetry, or gate receipt.
@@ -162,6 +180,15 @@ const fn halts(decision: PolicyClassifyDecision) -> bool {
             | PolicyClassifyDecision::RouteToHelp
             | PolicyClassifyDecision::Hold
     )
+}
+
+fn skipped_check(
+    decision: PolicyClassifyDecision,
+    input: bool,
+) -> Option<AnonymousChatSkippedCheck> {
+    decision
+        .skip_reason()
+        .map(|reason| AnonymousChatSkippedCheck { input, reason })
 }
 
 const fn block_reason(decision: PolicyClassifyDecision) -> AnonymousChatBlockReason {
