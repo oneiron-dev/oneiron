@@ -51,11 +51,60 @@ slow-timeout = { period = "60s", terminate-after = 60 }
 [[profile.default.overrides]]
 filter = 'package(oneiron) & test(=conversation_dag::tests::replay::ready_parent_budget_continues_after_reopen_without_other_traffic)'
 slow-timeout = { period = "60s", terminate-after = 60 }
+priority = 100
 
 # The other conversation_dag replay tests finish in seconds.
 [[profile.default.overrides]]
 filter = 'package(oneiron) & test(/^conversation_dag::tests::replay::/)'
 slow-timeout = { period = "60s", terminate-after = 12 }
+
+# Long tests start first, so none of them starts late and stretches the end of
+# a run. Tests run lexicographically otherwise. Priority (higher runs sooner)
+# and threads-required only order and weight the queue: every profile still
+# runs the same tests with the same timeouts and retries. threads-required is
+# the test's own worker count; the default is 1. Times are gate medians from
+# 2026-10-10 to 10-16 (kel, bel, sel and gce logs).
+#
+# 200-500 s each.
+[[profile.default.overrides]]
+filter = """
+  (package(oneiron) & test(=receipt::tests::gate_receipt_query_paginates_past_legacy_scan_window))
+  | (package(oneiron) & test(=origin::lfs::chunk_tests::streamed_2_3_gb_generated_fixture_has_bounded_chunks))
+  | (package(oneiron-server) & test(=livequery::production_tests::view_filters_before_top_k_past_one_thousand_unrelated_records))
+  | (package(oneiron-bench) & test(=beam::tests_ppr_vad::tests::ppr_vad_sweep_public_run_command_loads_relative_fixture))
+"""
+priority = 100
+
+# trybuild compiles each case with a child cargo, which runs several rustc jobs.
+[[profile.default.overrides]]
+filter = 'package(oneiron) & binary(=type_boundaries_compilefail)'
+priority = 100
+threads-required = 2
+
+# A two-worker multi-thread Tokio runtime.
+[[profile.default.overrides]]
+filter = 'package(oneiron-server) & binary(=it) & test(=slip_clock::two_hundred_agents_minted_one_process_each_all_prove_on_the_next_serve)'
+priority = 100
+threads-required = 2
+
+# 80-220 s each.
+[[profile.default.overrides]]
+filter = """
+  (package(oneiron) & test(=skill_hub::refinement_custody::tests::over_100k_real_unrelated_carriers_cannot_strand_one_receipt_delete))
+  | (package(oneiron-server) & test(=api::tests::mcp_code_check::shadow_mode_changes_no_programs_behaviour_or_result))
+  | (package(oneiron-server) & test(=livequery::production_tests::settled_out_of_view_births_do_not_exhaust_lag_origin_retention))
+"""
+priority = 50
+
+# The slow tier (see default-filter above), which runs under full and
+# featureless.
+[[profile.default.overrides]]
+filter = """
+  test(~vault_open_drop_cycles_survive_pthread_key_limit)
+  | test(~hnsw_recall_at_10_vs_bruteforce)
+  | (binary(=it_sync) & test(/^sync_convergence_props::/))
+"""
+priority = 20
 
 [profile.full]
 # Full tier: every test (slow set included). Used by CI and the pre-push
