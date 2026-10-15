@@ -7,11 +7,12 @@
 //!   in-process session record and the room's RAM `SessionOverlay`.
 //!   Session-bound reads compose overlay ∪ base; off-record writes stage in
 //!   the overlay only.
-//! * **mode flip** ([`crate::Vault::set_off_record_session_mode`]) — changes
-//!   where NEW writes go. It moves no rows: turns already staged in the
-//!   overlay stay there, so flipping to on-record exposes nothing the room
-//!   accumulated while off record.
-//! * **promote** ([`OffRecordSession::promote_turn`]) — replays exactly ONE
+//! * **mode flip** ([`OffRecordSession::flip_on_record_as`], on the owner's
+//!   proof, and [`crate::Vault::set_off_record_session_mode`] back off
+//!   record) — changes where NEW writes go. It moves no rows: turns already
+//!   staged in the overlay stay there, so flipping to on-record exposes
+//!   nothing the room accumulated while off record.
+//! * **promote** ([`OffRecordSession::promote_turn_as`]) — replays exactly ONE
 //!   witnessed turn's typed-journal closure into base, in one transaction,
 //!   through the ordinary base write gates, minting a durable
 //!   [`OffRecordPromoteReceipt`].
@@ -36,7 +37,9 @@ pub use lifecycle::{
     OffRecordSessionVault, OffRecordTalk, OffRecordTalkMessage, OffRecordTalkTurn, SavedTurns,
     room_session_key,
 };
-pub use promote::{OffRecordPromoteReceipt, PromoteOutcome};
+pub use promote::{
+    OffRecordPromoteReceipt, PROMOTE_INITIATOR_OWNER, PROMOTE_INITIATOR_ROOM_OWNER, PromoteOutcome,
+};
 
 pub(crate) use lifecycle::OffRecordSessionRegistry;
 /// The room's one shell-staging claim, held by the witness program's overlay
@@ -50,6 +53,9 @@ pub(crate) use lifecycle::SessionRetrievalTelemetry;
 /// the `crate::off_record::FloorWrites` path stable, so the `gate.rs` and
 /// `deletion.rs` call sites are diff-quiet across the move.
 pub(crate) use promote::FloorWrites;
+/// Tests that drive `FloorWrites::promote` directly name who consented.
+#[cfg(test)]
+pub(crate) use promote::PromoteInitiator;
 /// The promote-replay capability `batch.rs` matches on. Only `promote.rs` can
 /// MINT one (private field, private constructor); this path just lets the two
 /// membership doors ask a grant they were handed what it exempts.
