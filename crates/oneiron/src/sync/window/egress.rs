@@ -179,6 +179,35 @@ pub(super) fn scrub_local_claim_carriers(
     let edges = doc.get_map("edges");
     let rtxn = vault.store.env.read_txn()?;
     let (mut keys, mut ids) = withheld_claim_carriers(vault, &rtxn, &entities, &edges)?;
+    // The stored row decides here, not the carrier: a peer's carrier of
+    // another type at the id of a CLAIM deleted here goes with the CLAIM's
+    // shell (or under it, for a retained shell). Each such carrier at an id
+    // deleted here marks first, as every local removal does.
+    let mut deleted_carriers = Vec::new();
+    let mut failure = None;
+    map_for_each_value_bytes(&entities, |raw_key, blob| {
+        let (Ok(id), Some(carrier)) = (EntityId::from_hex(raw_key), blob) else {
+            return;
+        };
+        if failure.is_some() || !ids.contains(&id) {
+            return;
+        }
+        let deleted = vault
+            .store
+            .entities
+            .get(&rtxn, id.as_bytes())
+            .and_then(|raw| {
+                crate::deletion::row_deletion_marked(&vault.store, &rtxn, &id, raw.as_deref())
+            });
+        match deleted {
+            Ok(true) => deleted_carriers.push((id, carrier.to_vec())),
+            Ok(false) => {}
+            Err(error) => failure = Some(error),
+        }
+    });
+    if let Some(error) = failure {
+        return Err(error);
+    }
     // An exact UserDelete shell with a matching local deletion address is a
     // portable active carrier, not a malformed claim. Its world witness is
     // emitted beside it so a fresh replica can prove residence without an
@@ -204,6 +233,11 @@ pub(super) fn scrub_local_claim_carriers(
         }
     }
     drop(rtxn);
+    super::tombstones::mark_removed_carriers_first(
+        vault,
+        super::tombstones::CarrierRemoval::LocalClaimScrub,
+        &deleted_carriers,
+    )?;
     for id in &retained {
         ids.remove(id);
         keys.retain(|raw_key| EntityId::from_hex(raw_key).ok().as_ref() != Some(id));

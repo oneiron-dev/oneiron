@@ -569,7 +569,6 @@ const SUPPRESSED: SideTable<EntityId, [u8; 1], side_table::Raw> =
 /// task's facts read as a refusal. A tombstone that reached this vault before
 /// a fact would otherwise make a cancellation or a consent requirement read
 /// as never made.
-#[cfg(feature = "sync")]
 pub(crate) fn note_suppressed_fact_in_txn(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -590,7 +589,6 @@ pub(crate) fn note_suppressed_fact_in_txn(
 /// header and body, that a local path removes because its id was deleted
 /// here: a fact the carrier holds that this vault never admitted marks its
 /// task, as admission would have.
-#[cfg(feature = "sync")]
 pub(crate) fn note_removed_carrier_in_txn(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -607,6 +605,27 @@ pub(crate) fn note_removed_carrier_in_txn(
         header.entity_type,
         &carrier[ENTITY_METADATA_HEADER_LEN..],
     )
+}
+
+/// Marks the task of each carrier among `carriers`, ids deleted here, that
+/// holds an authority fact this vault never admitted
+/// ([`note_removed_carrier_in_txn`]), in a write transaction of its own that
+/// has committed when this returns. Every local removal of such a carrier
+/// calls it before it touches the carrier, with or without sync: a canonical
+/// capture leaves the carrier out either way.
+pub(crate) fn mark_removed_carriers(
+    vault: &crate::Vault,
+    carriers: &[(EntityId, Vec<u8>)],
+) -> Result<()> {
+    if carriers.is_empty() {
+        return Ok(());
+    }
+    vault.with_write_txn_grouped(|wtxn| {
+        for (id, carrier) in carriers {
+            note_removed_carrier_in_txn(&vault.store, wtxn, id, carrier)?;
+        }
+        Ok(())
+    })
 }
 
 /// [`note_suppressed_fact_in_txn`] for a door with no tombstone map: the

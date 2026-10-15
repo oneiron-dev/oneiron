@@ -373,8 +373,8 @@ fn a_fact_that_arrives_after_a_delete_precheck_is_never_erased() {
     );
 }
 
-/// The five local paths that remove a window carrier because its id was
-/// deleted here (Engine ruling, round 7) mark the task of an authority fact
+/// The local paths that remove a window carrier because its id was deleted
+/// here (Engine ruling, round 7) mark the task of an authority fact
 /// the carrier holds that this vault never admitted.
 mod removed_carriers {
     use super::*;
@@ -525,6 +525,31 @@ mod removed_carriers {
         assert_marked_and_control(&vault, owner, &tasks);
     }
 
+    /// F24 round 9 (Astra r8 R8-2): the local-claim scrub reads the stored
+    /// row at each id, so a peer's carrier of an unadmitted fact at the id of
+    /// a CLAIM soft-deleted here goes with the CLAIM's shell. The scrub marks
+    /// the fact's task first, and the refusal outlives the scrubbed persist.
+    #[test]
+    fn the_local_claim_scrub_marks_an_unadmitted_fact_at_a_deleted_claim_id() {
+        let vault = test_vault();
+        let (owner, tasks) = owned_tasks_for_fact_replay(&vault, LEARNED_AT, 2);
+        let fact = EntityId::now();
+        deleted_claim_shell(&vault, fact, owner);
+        let doc = window_carrying("2026-03", fact, tasks[0].0, owner);
+
+        let snapshot = crate::sync::window::export_scrubbed_window_snapshot(
+            &vault,
+            &WindowKey::new("2026-03"),
+            &doc,
+        )
+        .unwrap();
+        assert!(!carries(&doc, fact), "the scrub removed the carrier");
+        let exported = LoroDoc::new();
+        exported.import(&snapshot).unwrap();
+        assert!(!carries(&exported, fact), "the export ships no carrier");
+        assert_marked_and_control(&vault, owner, &tasks);
+    }
+
     #[test]
     fn a_local_delete_publication_marks_an_unadmitted_fact() {
         let vault = test_vault();
@@ -541,6 +566,33 @@ mod removed_carriers {
 
         vault.delete_entity(&fact).unwrap();
         assert_marked_and_control(&vault, owner, &tasks);
+    }
+
+    /// A CLAIM at `fact` about `subject`, soft-deleted here: its 25-byte
+    /// shell and deletion fence are the stored row at that id.
+    fn deleted_claim_shell(vault: &Vault, fact: EntityId, subject: EntityId) {
+        let mut body = crate::claim::ClaimBody::new(
+            "sync.egress_control",
+            crate::claim::ClaimSubject::Entity(subject),
+            rmpv::Value::from("ordinary claim"),
+            1.0,
+            ClaimApprovalStatus::Proposed,
+            crate::claim::ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        body.source = Some(ClaimSource::Observed);
+        vault.put_claim(&fact, &body, at(), LEARNED_AT).unwrap();
+        vault.delete_entity(&fact).unwrap();
+        let txn = vault.store.env.read_txn().unwrap();
+        let shell = vault.store.entities.get(&txn, fact.as_bytes()).unwrap();
+        assert_eq!(
+            shell.as_deref().map(|raw| (raw.len(), raw[0])),
+            Some((
+                ENTITY_METADATA_HEADER_LEN,
+                crate::registry::ENTITY_TYPE_CLAIM
+            )),
+            "precondition: the stored row is the CLAIM's shell"
+        );
     }
 
     /// Index residue of a row whose header is gone is local delete scope, so
@@ -750,6 +802,15 @@ mod removed_carriers {
                 .is_err();
                 (failed, persisted_carries(vault, &key, fact))
             }
+            CarrierRemoval::LocalClaimScrub => {
+                deleted_claim_shell(vault, fact, owner);
+                let doc = window_carrying("2026-03", fact, task, owner);
+                arm_fail_after_carrier_mark(path);
+                let failed =
+                    crate::sync::window::export_scrubbed_window_snapshot(vault, &key, &doc)
+                        .is_err();
+                (failed, carries(&doc, fact))
+            }
             CarrierRemoval::CanonicalCapture => {
                 let doc = LoroDoc::new();
                 map_insert_bytes(
@@ -789,6 +850,7 @@ mod removed_carriers {
                 CarrierRemoval::ReassertDrain | CarrierRemoval::LocalPublication => &[false, true],
                 CarrierRemoval::PendingTombstoneReplay
                 | CarrierRemoval::WithdrawnDeleteScrub
+                | CarrierRemoval::LocalClaimScrub
                 | CarrierRemoval::HardEraseSweep
                 | CarrierRemoval::CanonicalCapture => &[false],
             };
