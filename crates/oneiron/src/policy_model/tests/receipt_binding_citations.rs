@@ -193,6 +193,7 @@ fn the_receipt_write_refuses_a_binding_that_moved_after_the_pass() -> Result<()>
             receipt_breach: None,
             hosted: Some(&hosted),
             config: &config,
+            verify_at: None,
         },
         &verdict,
         "relay_boundary_allow",
@@ -209,6 +210,10 @@ fn the_receipt_write_refuses_a_binding_that_moved_after_the_pass() -> Result<()>
             "gate.relay.degraded.policy_binding_moved_mid_pass"
         ),
         "the row records the degrade rather than the dead binding"
+    );
+    assert_eq!(
+        receipts[0].outcome, "relay_boundary_skipped",
+        "H122: the row of a halted, unexamined pass recorded an Allow outcome"
     );
 
     // The row is only half of it. A receipt that says the relay stopped, on a
@@ -268,6 +273,7 @@ fn a_pass_with_no_hosted_policy_skips_the_receipt_time_recheck() -> Result<()> {
             receipt_breach: Some("missing"),
             hosted: None,
             config: &config,
+            verify_at: None,
         },
         &verdict,
         "relay_boundary_allow",
@@ -345,6 +351,7 @@ fn a_replacement_row_keeps_the_breach_that_caused_the_fallback() -> Result<()> {
                 receipt_breach: Some("missing"),
                 hosted: Some(&hosted),
                 config: &config,
+                verify_at: None,
             },
             &verdict,
             "relay_boundary_allow",
@@ -586,13 +593,21 @@ fn a_manifest_that_will_not_settle_fails_the_owner_plane_open_with_a_receipt() -
         &lease("unsettled-manifest"),
     ))?;
 
-    assert_eq!(outcome.action, PolicyEnforcementAction::Allow);
+    assert_eq!(outcome.action, PolicyEnforcementAction::Skipped);
+    assert_eq!(
+        outcome.verdict.decision,
+        PolicyClassifyDecision::Skipped(PolicySkipReason::PolicyMoving)
+    );
     assert_eq!(outcome.final_content.as_deref(), Some(original));
     assert!(outcome.custom_tier_skipped);
     assert!(outcome.receipt_ref.is_some());
     let receipts = gate_receipts(&vault)?;
     assert_eq!(receipts[0].outcome, "owner_plane_stale_fail_open");
     assert!(has_trace(&receipts[0], "gate.policy_model.stale_manifest"));
+    assert!(has_trace(
+        &receipts[0],
+        "gate.policy_model.skip_reason.policy_moving"
+    ));
     assert!(has_trace(
         &receipts[0],
         "gate.policy_model.owner_plane_fail_open"

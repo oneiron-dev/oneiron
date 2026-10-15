@@ -3,7 +3,7 @@ use super::*;
 
 #[test]
 fn child_consult_answers_abstains_and_refuses_dangling_actor() {
-    let (_dir, vault) = open_vault();
+    let (_dir, vault) = open_consult_vault();
     let owner = own_agent(&vault);
     let child = consult_peer(&vault, 0xE2);
     let question = consult_turn(&vault, 0x7A);

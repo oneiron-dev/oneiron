@@ -23165,7 +23165,7 @@
      "path": "src/llm/step/step_claim.rs",
      "purpose": "Terminal dreamer.step claim write, step-claim codec, and memo-index maintenance",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -23241,7 +23241,7 @@
      "purpose": "Shared durable-step type layer: schema consts, error, progression/trap enums, step context, and outcome",
      "surface": {
       "const": 8,
-      "crate-vis": 40,
+      "crate-vis": 42,
       "enum": 5,
       "fn": 3,
       "struct": 2,
@@ -25202,6 +25202,7 @@
       "AnonymousChatBlockReason",
       "AnonymousChatResponder",
       "AnonymousChatSession",
+      "AnonymousChatSkippedCheck",
       "AnonymousChatTarget",
       "AnonymousChatTurn"
      ],
@@ -25210,7 +25211,7 @@
      "surface": {
       "enum": 3,
       "fn": 3,
-      "struct": 1,
+      "struct": 2,
       "trait": 1
      }
     },
@@ -25950,9 +25951,17 @@
      "purpose": "Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and…",
      "surface": {
       "const": 11,
-      "crate-vis": 17,
+      "crate-vis": 19,
       "fn": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/origin/smart_http/push_cert_tests.rs",
+     "purpose": "Ticket 7: `git receive-pack` writes a push certificate into the object store as a blob before any hook runs…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -27593,7 +27602,7 @@
      "path": "src/policy_model/binding.rs",
      "purpose": "Hashes that tie a verdict to the exact content and policy state it was decided against, so a stale verdict…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2,
       "struct": 1
      }
@@ -27615,8 +27624,8 @@
      "path": "src/policy_model/classify.rs",
      "purpose": "Vault-egress classification, which is the owner plane and nothing else",
      "surface": {
-      "crate-vis": 11,
-      "fn": 8
+      "crate-vis": 13,
+      "fn": 6
      }
     },
     {
@@ -27678,6 +27687,17 @@
       "enum": 1,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/policy_model/in_force.rs",
+     "purpose": "Whether an owner-plane verdict still answers the policy in force, and what the plane answers when it does not",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 2
      }
     },
     {
@@ -27865,7 +27885,7 @@
      "path": "src/policy_model/receipt.rs",
      "purpose": "Gate-ledger rows for policy verdicts",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -27875,7 +27895,7 @@
      "path": "src/policy_model/relay/boundary.rs",
      "purpose": "Relay entry points and ledger writes: trust-domain dispatch, dual-plane fan-out, binding-checked receipts",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 2
      }
     },
@@ -27905,6 +27925,7 @@
      "kind": "src",
      "notable": [
       "DualPlanePass",
+      "HostedPassEvidence",
       "InMemoryVaultSideVerdicts",
       "RelayBoundaryDegrade",
       "RelayBoundaryPass",
@@ -27916,10 +27937,10 @@
      "path": "src/policy_model/relay/outcome.rs",
      "purpose": "Pass outcome vocabulary and the single degrade mint: boundary pass types, resolutions, verdict source…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 3,
       "fn": 11,
-      "struct": 4,
+      "struct": 5,
       "trait": 1
      }
     },
@@ -28001,6 +28022,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/policy_model/tests/door_invariants.rs",
+     "purpose": "The two invariants of the F14 policy fix, each checked over every door in its class (H121, H122)",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -28039,7 +28068,7 @@
      "path": "src/policy_model/tests/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -28078,10 +28107,18 @@
      "bucket": "L",
      "kind": "test",
      "notable": [],
+     "path": "src/policy_model/tests/skipped_verdicts.rs",
+     "purpose": "A policy the owner's model never read is SKIPPED, never a clean allow",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
      "path": "src/policy_model/tests/support.rs",
      "purpose": "Shared fixtures, mock backends, and pass drivers for policy-model tests",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 79
      }
     },
     {
@@ -28094,14 +28131,15 @@
       "PolicyConfidence",
       "PolicyHedgeBucket",
       "PolicyPassAudit",
+      "PolicySkipReason",
       "PolicyVerdictCategory"
      ],
      "path": "src/policy_model/verdict.rs",
      "purpose": "What a classify pass concluded",
      "surface": {
-      "crate-vis": 7,
-      "enum": 3,
-      "fn": 7,
+      "crate-vis": 9,
+      "enum": 4,
+      "fn": 9,
       "struct": 4
      }
     },
@@ -29781,7 +29819,7 @@
      "purpose": "Tier-C physical-row checkpoints and one restore/wake/migrate path",
      "surface": {
       "enum": 1,
-      "fn": 11,
+      "fn": 12,
       "re-export": 1,
       "struct": 3
      }
@@ -29865,7 +29903,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/recovery/checkpoint/tests.rs",
@@ -30193,13 +30231,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/repo_mutation/git.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -30237,7 +30275,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 3
      }
     },
@@ -33982,7 +34020,7 @@
      "path": "src/store/gate_decision/checkpoint_custody.rs",
      "purpose": "What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 25
      }
     },
     {
@@ -34172,7 +34210,7 @@
      "surface": {
       "crate-vis": 9,
       "mod": 1,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -34213,7 +34251,7 @@
      "path": "src/store/open_gates/mod.rs",
      "purpose": "`Store::open` / `Store::open_existing` and the fail-closed open-time gate sequence: vault-root preflight…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 2
      }
     },
@@ -34262,7 +34300,7 @@
      "path": "src/store/open_gates/read_only_door.rs",
      "purpose": "Read-only door: rows of an existing vault's `vault_meta`, read without opening it as a vault, beside another…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -34518,13 +34556,17 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SharedPath"
+     ],
      "path": "src/store/root_directory.rs",
      "purpose": "Descriptor-bound directory identity shared by store opens and writer leases",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8,
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -37313,7 +37355,7 @@
      "path": "src/task_verb/tests/support.rs",
      "purpose": "Shared fixtures and helpers for the task_verb tests",
      "surface": {
-      "crate-vis": 57
+      "crate-vis": 58
      }
     },
     {
@@ -37404,7 +37446,7 @@
      "purpose": "Doors for tests that drive the engine from another crate, such as the seal organ's end-to-end check, which…",
      "surface": {
       "crate-vis": 1,
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -37444,7 +37486,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -39449,7 +39491,7 @@
      "path": "tests/common/mod.rs",
      "purpose": "Shared fixture helpers for `oneiron` integration tests",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -39645,7 +39687,7 @@
      "path": "tests/it/cb_oracle_agents.rs",
      "purpose": "Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01)",
      "surface": {
-      "crate-vis": 39
+      "crate-vis": 40
      }
     },
     {
@@ -41017,7 +41059,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "origin": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41087,7 +41129,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 42,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41558,8 +41600,8 @@
    },
    "over_bar": 39,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2518,
-   "test_files": 815
+   "source_files": 2519,
+   "test_files": 818
   },
   "oneiron-android": {
    "files": [
@@ -46311,6 +46353,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/lib/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "AnthropicMessagesHttpRequest",
@@ -46342,7 +46392,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -46352,7 +46402,7 @@
    "over_bar": 0,
    "purpose": "Anthropic Messages wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
    "source_files": 6,
-   "test_files": 0
+   "test_files": 1
   },
   "oneiron-llm-gemini": {
    "files": [
@@ -46379,6 +46429,14 @@
      "surface": {
       "crate-vis": 5
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/tests.rs",
+     "purpose": "Decoder checks over provider-shaped replies",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -46417,6 +46475,13 @@
      "layout": "file",
      "purpose": "Gemini typed stream decoding"
     },
+    "tests": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "—",
+     "layout": "file",
+     "purpose": "Decoder checks over provider-shaped replies"
+    },
     "transport": {
      "files": 1,
      "impl_vault": false,
@@ -46435,7 +46500,7 @@
    "over_bar": 0,
    "purpose": "Gemini wire adapter",
    "source_files": 4,
-   "test_files": 0
+   "test_files": 1
   },
   "oneiron-llm-local": {
    "files": [
@@ -46618,7 +46683,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/lib/tests.rs",
@@ -53899,7 +53964,7 @@
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -54041,7 +54106,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/schedule.rs",
