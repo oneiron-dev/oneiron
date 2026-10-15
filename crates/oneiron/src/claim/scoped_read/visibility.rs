@@ -21,6 +21,19 @@ impl<'v> ScopedRead<'v> {
         self.is_ref_readable_with_policy_in(&rtxn, &policy, id)
     }
 
+    /// Whether every one of `ids` resolves for this lane, judged in one
+    /// snapshot as [`Self::is_ref_readable`] judges each.
+    pub fn all_refs_readable(&self, ids: &[EntityId]) -> Result<bool> {
+        let rtxn = self.grant_read_txn()?;
+        let policy = self.live_policy_manifest_in(&rtxn)?;
+        for id in ids {
+            if !self.is_ref_readable_with_policy_in(&rtxn, &policy, id)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// [`Self::is_ref_readable`] in the caller's snapshot, under `policy`
     /// (`Self::live_policy_manifest_in`).
     pub(crate) fn is_ref_readable_with_policy_in(

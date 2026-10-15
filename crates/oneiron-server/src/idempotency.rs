@@ -188,15 +188,71 @@ struct CachedHttpResponse {
     body: Vec<u8>,
     /// The rows the handler derived `body` from ([`ServedRows`]).
     rows: Vec<oneiron::EntityId>,
+    /// The rows a replay re-admits ([`ServedRows::admit`]); `None` for an
+    /// entry written before they were kept.
+    admit: Option<Vec<oneiron::EntityId>>,
+    /// Whether the response was derived on this device; `None` for an entry
+    /// written before it was kept.
+    derived_on_device: Option<bool>,
 }
 
 /// The rows a response was derived from, as its handler listed them while it
 /// derived the response. A keyed response keeps them beside its cached
 /// bytes, and a replay's release judges them (DEC-0005).
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ServedRows(pub(crate) Vec<oneiron::EntityId>);
+pub(crate) struct ServedRows {
+    pub(crate) rows: Vec<oneiron::EntityId>,
+    /// The rows the response named beyond its documents: an identity it
+    /// addressed, a notification it delivered, a rider outcome or a pack
+    /// source. A replay goes out only while the caller's read, as it stands
+    /// then, still reads each of them.
+    pub(crate) admit: Vec<oneiron::EntityId>,
+}
+
+/// A cached success as its release judges it.
+pub(crate) struct Replay<'a> {
+    pub(crate) body: &'a [u8],
+    pub(crate) rows: &'a [oneiron::EntityId],
+    /// [`ServedRows::admit`]; `None` for an entry written before it was kept.
+    pub(crate) admit: Option<&'a [oneiron::EntityId]>,
+    /// Whether the response was derived on this device; `None` for an entry
+    /// written before it was kept.
+    pub(crate) derived_on_device: Option<bool>,
+}
+
+/// Whether the caller's read, as it stands now, still reads every row a
+/// replay re-admits: one snapshot, every claim status, so a settled outcome
+/// the caller was shown still counts. Denied and missing rows alike refuse.
+pub(crate) fn replay_admits(
+    server: &SyncServer,
+    auth: Option<&CoreAuth>,
+    admit: &[oneiron::EntityId],
+) -> Result<bool, ApiError> {
+    if admit.is_empty() {
+        return Ok(true);
+    }
+    let Some(auth) = auth else {
+        return Ok(false);
+    };
+    let read = crate::api::scoped_read_for_core_auth(&server.vault, auth)?;
+    read.recorded_lane()
+        .and_then(|read| read.all_refs_readable(admit))
+        .map_err(|error| {
+            tracing::error!(kind = ?error.kind(), "idempotent replay admission failed");
+            ApiError::internal_server_error("idempotent replay admission failed")
+        })
+}
 
 impl CachedHttpResponse {
+    fn replay(&self) -> Replay<'_> {
+        Replay {
+            body: &self.body,
+            rows: &self.rows,
+            admit: self.admit.as_deref(),
+            derived_on_device: self.derived_on_device,
+        }
+    }
+
     fn into_response(self) -> Response {
         let mut response = Response::new(Body::from(self.body));
         *response.status_mut() = self.status;
@@ -221,6 +277,14 @@ struct StoredIdempotencyEntry {
     /// before they were kept list none.
     #[serde(default)]
     served_rows: Vec<String>,
+    /// The rows a replay re-admits, as hex ids. Entries written before they
+    /// were kept carry none.
+    #[serde(default)]
+    replay_admits: Option<Vec<String>>,
+    /// Whether the response was derived on this device. Entries written
+    /// before it was kept carry none.
+    #[serde(default)]
+    derived_on_device: Option<bool>,
 }
 
 impl StoredIdempotencyEntry {
@@ -243,6 +307,10 @@ impl StoredIdempotencyEntry {
             response_body: cached.body,
             request_target: Some(request_target),
             served_rows: cached.rows.iter().map(oneiron::EntityId::to_hex).collect(),
+            replay_admits: cached
+                .admit
+                .map(|admit| admit.iter().map(oneiron::EntityId::to_hex).collect()),
+            derived_on_device: cached.derived_on_device,
         }
     }
 }
@@ -269,6 +337,17 @@ impl TryFrom<StoredIdempotencyEntry> for CachedHttpResponse {
                 .map(|id| oneiron::EntityId::from_hex(id))
                 .collect::<Result<_, _>>()
                 .map_err(IdempotencyStoreError::rows)?,
+            admit: stored
+                .replay_admits
+                .map(|admit| {
+                    admit
+                        .iter()
+                        .map(|id| oneiron::EntityId::from_hex(id))
+                        .collect::<Result<_, _>>()
+                })
+                .transpose()
+                .map_err(IdempotencyStoreError::rows)?,
+            derived_on_device: stored.derived_on_device,
         })
     }
 }
@@ -341,7 +420,18 @@ pub(crate) async fn idempotency_middleware(
     request: Request,
     next: Next,
 ) -> Response {
-    idempotent(state, request, next, |_, _, _, _| None).await
+    idempotent(state, request, next, |server, auth, replay| {
+        let admitted = replay_admits(server, auth, replay.admit.unwrap_or_default());
+        match admitted {
+            Ok(true) => None,
+            Ok(false) => Some(api_error_response(
+                ApiError::invalid_state(Some("idempotent_replay_unreadable")),
+                true,
+            )),
+            Err(error) => Some(api_error_response(error, true)),
+        }
+    })
+    .await
 }
 
 /// The idempotency layer. `release` sees a cached success before it is
@@ -351,12 +441,7 @@ async fn idempotent(
     state: IdempotencyLayerState,
     request: Request,
     next: Next,
-    release: impl FnOnce(
-        &SyncServer,
-        Option<&CoreAuth>,
-        &[u8],
-        &[oneiron::EntityId],
-    ) -> Option<Response>,
+    release: impl FnOnce(&SyncServer, Option<&CoreAuth>, &Replay<'_>) -> Option<Response>,
 ) -> Response {
     let has_idempotency_header = request.headers().contains_key(IDEMPOTENCY_KEY_HEADER);
     let is_core_auth_route = is_core_auth_route(request_path(&request));
@@ -411,7 +496,7 @@ async fn idempotent(
     match state.store.lookup(&store_key, &target, &request_body) {
         Ok(IdempotencyLookup::Replay(response)) => {
             let auth = core_auth.as_ref().and_then(|auth| auth.as_ref().ok());
-            if let Some(refused) = release(&state.server, auth, &response.body, &response.rows) {
+            if let Some(refused) = release(&state.server, auth, &response.replay()) {
                 return refused;
             }
             // Whatever the route, a replay off this device names no row a
@@ -470,15 +555,18 @@ async fn idempotent(
     // escape is inventing a new key, which defeats the header. Replaying is a
     // promise not to run the effect twice, not a promise to freeze a refusal.
     if parts.status < StatusCode::BAD_REQUEST {
+        let served = parts
+            .extensions
+            .get::<ServedRows>()
+            .cloned()
+            .unwrap_or_default();
         let cached = CachedHttpResponse {
             status: parts.status,
             headers: parts.headers.clone(),
             body: response_body.clone(),
-            rows: parts
-                .extensions
-                .get::<ServedRows>()
-                .map(|rows| rows.0.clone())
-                .unwrap_or_default(),
+            rows: served.rows,
+            admit: Some(served.admit),
+            derived_on_device: Some(locality == oneiron::claim::CallerLocality::OnDevice),
         };
 
         if let Err(_error) = state.store.insert(&store_key, target, request_body, cached) {
@@ -507,12 +595,7 @@ pub(crate) async fn idempotency_for_mutating_form(
     request: Request,
     next: Next,
     mutates: impl FnOnce(&[u8]) -> bool,
-    release: impl FnOnce(
-        &SyncServer,
-        Option<&CoreAuth>,
-        &[u8],
-        &[oneiron::EntityId],
-    ) -> Option<Response>,
+    release: impl FnOnce(&SyncServer, Option<&CoreAuth>, &Replay<'_>) -> Option<Response>,
 ) -> Response {
     const ROUTE_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
     if !request.headers().contains_key(IDEMPOTENCY_KEY_HEADER) {

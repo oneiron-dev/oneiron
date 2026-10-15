@@ -1499,3 +1499,52 @@ async fn a_run_off_this_device_holding_a_device_local_proposal_reads_as_no_run()
         ClaimApprovalStatus::Proposed
     );
 }
+
+/// F16 round 2 (Astra F6): a keyed board derived on this device carries the
+/// session counts and activity counted here. Its replay never leaves this
+/// device: off it, the retry is refused, though it names no device-local
+/// row; on it, the retry replays.
+#[tokio::test]
+async fn a_keyed_board_counted_on_this_device_never_replays_off_it() {
+    let (_dir, server, caller, _grower) = serve();
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
+    let turn = EntityId::now();
+    let author = rmp_serde::to_vec_named(&json!({ "actor": owner.to_hex() })).unwrap();
+    server
+        .vault
+        .put_entity(
+            &turn,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::TimeRange { start: 2, end: 2 },
+            2,
+            &author,
+        )
+        .unwrap();
+    let board = json!({"session": {"session_id": "counted"}, "turn": {"id": turn.to_hex()}});
+    let keyed = |from| {
+        let (caller, board) = (&caller, board.clone());
+        async move {
+            caller
+                .call_keyed(
+                    from,
+                    "POST",
+                    "/v1/core/context-board",
+                    Some(board),
+                    Some("counted-board"),
+                )
+                .await
+        }
+    };
+    let (status, first) = keyed(HERE).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_ne!(first["session"]["counts"], json!({}), "{first}");
+    let (status, refused) = keyed(AWAY).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert!(
+        refused.to_string().contains("board_document_unreadable"),
+        "{refused}"
+    );
+    let (status, replayed) = keyed(HERE).await;
+    assert_eq!(status, StatusCode::OK, "{replayed}");
+    assert_eq!(replayed, first);
+}

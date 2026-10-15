@@ -142,6 +142,10 @@ pub struct SurfaceEventAck {
     /// `created_at`, never the replay's own clock.
     pub accepted_at: u64,
     pub status_path: String,
+    /// The identity the event addresses. The ack itself never names it; a
+    /// host that keeps the ack for a replay re-admits it.
+    #[serde(skip)]
+    pub receiving_identity_ref: String,
 }
 
 /// Durable snapshot of an admitted event's handoff.
@@ -302,7 +306,9 @@ impl Vault {
 
     /// [`Self::surface_event_handoff_status`] as `read` reads it, in one
     /// snapshot: a handoff whose receiving identity the reader cannot read
-    /// is no handoff.
+    /// is no handoff. Hidden handoffs are set aside before the run's
+    /// cardinality is judged, so one never turns an answer into an
+    /// ambiguity.
     pub fn surface_event_handoff_status_as(
         &self,
         read: &crate::claim::ScopedRead<'_>,
@@ -316,17 +322,23 @@ impl Vault {
         read.persist_grant_clock()?;
         let rtxn = self.store.env.read_txn()?;
         let policy = read.live_policy_manifest_in(&rtxn)?;
-        let records = AttemptQueue::new(self).list_run_in_txn(&rtxn, &run_id)?;
-        let Some(attempt) = sole_surface_event_attempt(records, correlation_id)? else {
-            return Ok(None);
-        };
-        let payload = decode_surface_event_attempt_payload(&attempt.payload)?;
-        let Ok(identity) = crate::EntityId::from_hex(&payload.event.receiving_identity_ref) else {
-            return Ok(None);
-        };
-        if !read.is_ref_readable_with_policy_in(&rtxn, &policy, &identity)? {
-            return Ok(None);
+        let mut admitted = Vec::new();
+        for record in AttemptQueue::new(self).list_run_in_txn(&rtxn, &run_id)? {
+            if record.kind == SURFACE_EVENT_ATTEMPT_KIND {
+                let payload = decode_surface_event_attempt_payload(&record.payload)?;
+                let Ok(identity) = crate::EntityId::from_hex(&payload.event.receiving_identity_ref)
+                else {
+                    continue;
+                };
+                if !read.is_ref_readable_with_policy_in(&rtxn, &policy, &identity)? {
+                    continue;
+                }
+            }
+            admitted.push(record);
         }
+        let Some(attempt) = sole_surface_event_attempt(admitted, correlation_id)? else {
+            return Ok(None);
+        };
         Ok(Some(handoff_status(correlation_id, &attempt)))
     }
 
@@ -620,6 +632,7 @@ fn sole_surface_event_attempt(
 fn surface_event_ack(event: SurfaceEvent, record: &AdmittedSurfaceEvent) -> SurfaceEventAck {
     SurfaceEventAck {
         status_path: surface_event_status_path(&event.correlation_id),
+        receiving_identity_ref: event.receiving_identity_ref,
         correlation_id: event.correlation_id,
         attempt_ref: SurfaceEventAttemptRef::from_attempt_id(record.attempt.id),
         state: SurfaceEventHandoffState::from_attempt_state(record.attempt.state),

@@ -616,10 +616,16 @@ impl PackFitPolicy for Fit {
 /// Installs a one-section board pack named `name` from a verified hub, as
 /// the owner, and returns its receipt's content hash.
 fn install_board_pack(server: &SyncServer, name: &str) -> String {
+    install_board_pack_version(server, name, 1)
+}
+
+/// [`install_board_pack`] at `version`: a later version replaces the earlier
+/// one's install and leaves its source stored.
+fn install_board_pack_version(server: &SyncServer, name: &str, version: u32) -> String {
     let section = json!({"section_id": format!("{name}.panel"), "state_family":{"family":"claim","version":1},
         "verbs":["board.expand"], "authority_lane":"read", "budget_policy":"board.plugin_sections.v1"});
     let manifest = format!(
-        "---\nname: {name}\ndescription: board pack\nversion: 1\nkind: capability\n\
+        "---\nname: {name}\ndescription: board pack\nversion: {version}\nkind: capability\n\
          predicates: [\"{name}.topic\"]\n---\nBoard pack\n"
     );
     let source = PackSource::from_files(vec![
@@ -646,7 +652,7 @@ fn install_board_pack(server: &SyncServer, name: &str) -> String {
         .vault
         .authenticate_owner(
             owner_id,
-            &format!("principal:{name}"),
+            &format!("principal:{name}:{version}"),
             true,
             oneiron::store::GateDecisionId::now(),
         )
@@ -670,7 +676,7 @@ fn install_board_pack(server: &SyncServer, name: &str) -> String {
         .unwrap();
     let publisher = server
         .vault
-        .admit_skill_publisher(&owner, &format!("publisher:{name}"), hub)
+        .admit_skill_publisher(&owner, &format!("publisher:{name}:{version}"), hub)
         .unwrap();
     let reference = HubRef::new(
         hub,
@@ -1293,4 +1299,154 @@ async fn the_rider_carries_no_outcome_or_connector_its_reader_cannot_read() {
         "the withheld outcome was still owed: {shown:?}"
     );
     assert!(names(&shown, &key.to_hex()), "{shown:?}");
+}
+
+/// A keyed board hydration by `principal` naming its own `turn`, in
+/// `session`, under `key`.
+fn keyed_board(
+    principal: oneiron::EntityId,
+    turn: oneiron::EntityId,
+    session: &str,
+    key: &'static str,
+) -> axum::http::Request<axum::body::Body> {
+    let mut request = core_request_with_authz(
+        "POST",
+        "/v1/core/context-board",
+        test_bearer(&format!(
+            "scope=core:read,core:write;principal_ref={};actor_class=agent",
+            principal.to_hex()
+        )),
+        Some(&json!({"session": {"session_id": session}, "turn": {"id": turn.to_hex()}})),
+    );
+    request
+        .headers_mut()
+        .insert("Idempotency-Key", axum::http::HeaderValue::from_static(key));
+    request
+}
+
+/// A TURN `author` wrote.
+fn put_authored_turn(server: &SyncServer, author: oneiron::EntityId) -> oneiron::EntityId {
+    let turn = oneiron::EntityId::now();
+    server
+        .vault
+        .put_entity(
+            &turn,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::TimeRange { start: 2, end: 2 },
+            2,
+            &rmp_serde::to_vec_named(&json!({ "actor": author.to_hex() })).unwrap(),
+        )
+        .unwrap();
+    turn
+}
+
+/// F16 round 2 (Sol F2, Astra F2): a keyed board's replay re-admits its
+/// rider, the own outcome and the connector key it carried, under its
+/// reader's read as it stands then. Once that read reads neither, the replay
+/// is refused rather than repeating them.
+#[tokio::test]
+async fn a_keyed_board_replays_no_rider_its_reader_no_longer_reads() {
+    use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONNECTOR_KEY, ENTITY_TYPE_TURN};
+    let (_dir, server) = auth_test_server();
+    let agent = seeded_test_entity_id(0x2516_0411);
+    let own = server
+        .vault
+        .park_run_proposal_for_test("rider-keyed", agent, oneiron::EntityId::now(), "one")
+        .unwrap();
+    assert!(agent_board(&server, agent, "keyed").await.is_empty());
+    settle_run(&server, "rider-keyed", "decline").await;
+    let key = oneiron::EntityId::now();
+    server
+        .vault
+        .register_connector_key(
+            &key,
+            oneiron::connector_key::ConnectorKeyRecord::active("rider_keyed", None, Vec::new(), 1),
+        )
+        .unwrap();
+    let turn = put_authored_turn(&server, agent);
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        agent,
+        &[
+            ENTITY_TYPE_TURN,
+            ENTITY_TYPE_CLAIM,
+            ENTITY_TYPE_CONNECTOR_KEY,
+        ],
+    );
+    let keyed = || {
+        route_json(
+            server.clone(),
+            keyed_board(agent, turn, "keyed", "rider-keyed"),
+        )
+    };
+    let (status, first) = keyed().await;
+    assert_eq!(status, StatusCode::OK, "{first:#}");
+    let changed = first["changed"].to_string();
+    assert!(
+        changed.contains(&format!("claim:{}: rejected", own.to_hex())),
+        "{first:#}"
+    );
+    assert!(changed.contains(&key.to_hex()), "{first:#}");
+    let (status, again) = keyed().await;
+    assert_eq!(status, StatusCode::OK, "{again:#}");
+    assert_eq!(again, first);
+
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        agent,
+        &[ENTITY_TYPE_TURN],
+    );
+    let (status, refused) = keyed().await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused:#}");
+    let refused = refused.to_string();
+    assert!(refused.contains("board_document_unreadable"), "{refused}");
+    assert!(!refused.contains(&own.to_hex()) && !refused.contains(&key.to_hex()));
+}
+
+/// F16 round 2 (Sol F4, Astra F4): a keyed board's replay re-admits the exact
+/// source of each pack it named, whatever the catalog installs now. A later
+/// version's install leaves the first source stored; once the reader's grant
+/// reads no source, the replay is refused rather than naming the first.
+#[tokio::test]
+async fn a_keyed_board_replays_no_pack_whose_source_its_reader_no_longer_reads() {
+    use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x2516_0421);
+    let restrict = |types: &[u8]| {
+        super::context_board_history::restrict_principal_read_types(&server, principal, types);
+    };
+    restrict(&[ENTITY_TYPE_TURN, ENTITY_TYPE_PERSON, ENTITY_TYPE_ASSET]);
+    assert_eq!(
+        core_board(&server, &principal.to_hex(), "pack-keyed").await["changed"],
+        json!([])
+    );
+    let first_hash = install_board_pack_version(&server, "alice.keyed", 1);
+    let turn = put_authored_turn(&server, principal);
+    let keyed = || {
+        route_json(
+            server.clone(),
+            keyed_board(principal, turn, "pack-keyed", "pack-keyed"),
+        )
+    };
+    let (status, first) = keyed().await;
+    assert_eq!(status, StatusCode::OK, "{first:#}");
+    assert!(
+        first["changed"].to_string().contains(&first_hash),
+        "{first:#}"
+    );
+    let (status, again) = keyed().await;
+    assert_eq!(status, StatusCode::OK, "{again:#}");
+    assert_eq!(again, first);
+
+    let second_hash = install_board_pack_version(&server, "alice.keyed", 2);
+    assert_ne!(second_hash, first_hash);
+    restrict(&[ENTITY_TYPE_TURN, ENTITY_TYPE_PERSON]);
+    let (status, refused) = keyed().await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused:#}");
+    let refused = refused.to_string();
+    assert!(refused.contains("board_document_unreadable"), "{refused}");
+    assert!(!refused.contains(&first_hash), "{refused}");
 }

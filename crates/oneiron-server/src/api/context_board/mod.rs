@@ -457,15 +457,17 @@ pub(crate) async fn context_board_hydrate(
         }
     }
     // The rows this board was derived from, kept beside a keyed replay of it.
-    // A replay re-admits the notifications and pack sources among them.
+    // A replay re-admits each row it named beyond its documents: every
+    // notification, rider row and pack source.
+    let mut admit: Vec<_> = response
+        .notifications
+        .iter()
+        .filter_map(|notification| oneiron::EntityId::from_hex(&notification.id).ok())
+        .collect();
+    admit.extend(rider_admits(&changed_line));
+    admit.extend(pack_sources);
     let mut served: Vec<_> = crate::device_local::changed_line_rows(&changed_line).collect();
-    served.extend(pack_sources);
-    served.extend(
-        response
-            .notifications
-            .iter()
-            .filter_map(|notification| oneiron::EntityId::from_hex(&notification.id).ok()),
-    );
+    served.extend(admit.iter().copied());
     if let Some(pack) = &response.pack {
         served.extend(
             pack.served_rows()
@@ -481,9 +483,45 @@ pub(crate) async fn context_board_hydrate(
             .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
     );
     Ok((
-        axum::Extension(crate::idempotency::ServedRows(served)),
+        axum::Extension(crate::idempotency::ServedRows {
+            rows: served,
+            admit,
+        }),
         Json(response),
     ))
+}
+
+/// The rows a board's rider named, each of which a replay of the board
+/// re-admits: every lifecycle row and its successor, every installed skill,
+/// every own proposal whose outcome it carried, and the key of every
+/// connector it mounted. An erased proposal has no row left to admit, and a
+/// removed connector's key is one the reader was already shown.
+fn rider_admits(
+    line: &oneiron::context_board::ChangedLine,
+) -> impl Iterator<Item = oneiron::EntityId> + '_ {
+    use oneiron::context_board::{ChangedEvent, ConnectorChange, ServedLifecycle};
+    let lifecycle = line.rows.iter().flat_map(|(id, state)| {
+        let successor = match state {
+            ServedLifecycle::Superseded(next) => Some(next.as_str()),
+            _ => None,
+        };
+        std::iter::once(id.as_str()).chain(successor)
+    });
+    let installs = line
+        .install_rows
+        .iter()
+        .map(|receipt| receipt.entity.as_str());
+    let events = line.events.iter().filter_map(|event| match event {
+        ChangedEvent::Proposal { id, change } if change.to != "erased" => Some(id.as_str()),
+        ChangedEvent::Connector { change, mount, .. } if *change != ConnectorChange::Removed => {
+            Some(mount.key.as_str())
+        }
+        ChangedEvent::Proposal { .. } | ChangedEvent::Connector { .. } => None,
+    });
+    lifecycle.chain(installs).chain(events).filter_map(|id| {
+        let hex = id.rsplit_once(':').map_or(id, |(_, hex)| hex);
+        oneiron::EntityId::from_hex(hex).ok()
+    })
 }
 
 /// A standing session's response must fit its whole token budget.

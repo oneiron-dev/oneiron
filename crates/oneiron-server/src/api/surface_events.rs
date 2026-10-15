@@ -575,7 +575,13 @@ pub(crate) async fn submit_core_surface_event(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<SurfaceEventSubmitRequest>, JsonRejection>,
-) -> Result<SurfaceEventSubmitOutcome, EnvelopedApiError> {
+) -> Result<
+    (
+        axum::Extension<crate::idempotency::ServedRows>,
+        SurfaceEventSubmitOutcome,
+    ),
+    EnvelopedApiError,
+> {
     // The receiving identity resolves under the submitter's own read, and
     // the ack points at a status read: a submitter reads what it addresses.
     auth.require(CoreScope::Read)?;
@@ -593,11 +599,24 @@ pub(crate) async fn submit_core_surface_event(
 
     Ok(match admission {
         oneiron::SurfaceEventAdmission::Accepted(ack) => {
-            SurfaceEventSubmitOutcome::Accepted(ack.into())
+            // A keyed retry replays this ack only while the submitter still
+            // reads the identity it addressed.
+            let identity: Vec<_> = oneiron::EntityId::from_hex(&ack.receiving_identity_ref)
+                .into_iter()
+                .collect();
+            let served = crate::idempotency::ServedRows {
+                rows: identity.clone(),
+                admit: identity,
+            };
+            (
+                axum::Extension(served),
+                SurfaceEventSubmitOutcome::Accepted(ack.into()),
+            )
         }
-        oneiron::SurfaceEventAdmission::Rejected(receipt) => {
-            SurfaceEventSubmitOutcome::Rejected(receipt.into())
-        }
+        oneiron::SurfaceEventAdmission::Rejected(receipt) => (
+            axum::Extension(crate::idempotency::ServedRows::default()),
+            SurfaceEventSubmitOutcome::Rejected(receipt.into()),
+        ),
     })
 }
 
