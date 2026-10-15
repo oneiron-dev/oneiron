@@ -19,6 +19,12 @@ use heed::{Env, RoTxn, RwTxn};
 
 use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, Raw, SideKey, SideTable};
+use crate::store::not_an_existing_root;
+#[cfg(unix)]
+use crate::store::root_directory::{
+    FileIdentity, file_identity, make_directory, named_directory_identity, parent_or_here,
+    refuse_shared_path, refuse_shared_vault_root, remove_held_directory,
+};
 use crate::store::{Store, read_existing_vault_meta};
 
 use super::keys::GATE_DECISION_KEY_PREFIX;
@@ -125,11 +131,43 @@ impl LiveCustody {
     }
 }
 
+/// Refuses a missing vault at `vault_dir` here, not by a later lookup, which
+/// could find a vault someone else put under the name: a sticky parent stops
+/// no one from making a new entry in it. Links are followed, so a link to a
+/// missing directory is missing too (C8 review r9).
+fn refuse_missing_vault_root(vault_dir: &Path) -> Result<()> {
+    match std::fs::metadata(vault_dir) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(not_an_existing_root(vault_dir, false))
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Admits the existing vault at `vault_dir` before anything opens it by name,
+/// as a restore admits its destination: refused when missing, and where
+/// another user could move a directory on its path.
+pub(crate) fn admit_existing_vault_root(vault_dir: &Path) -> Result<()> {
+    refuse_missing_vault_root(vault_dir)?;
+    #[cfg(unix)]
+    refuse_shared_vault_root(vault_dir)?;
+    Ok(())
+}
+
 /// The live custody state of the vault at `vault_dir`, read without opening
 /// it as a vault, through the read-only door (`read_existing_vault_meta`): a
 /// vault another process serves reads beside it, and one this process holds,
 /// under any name, is refused. A missing or unreadable vault refuses.
 pub(crate) fn read_live_custody(vault_dir: &Path) -> Result<LiveCustody> {
+    // A shared directory on the source's path is no reason to refuse: the
+    // vault opens, reads and writes there as it is, so whoever could move it
+    // could change it already. The source reports it instead.
+    refuse_missing_vault_root(vault_dir)?;
+    #[cfg(test)]
+    if let Some(callback) = BEFORE_LIVE_CUSTODY_READ.with(|slot| slot.borrow_mut().take()) {
+        callback();
+    }
     let read = read_existing_vault_meta(vault_dir, &live_custody_prefixes())?;
     LiveCustody::from_rows(&read.root, read.rows)
 }
@@ -149,18 +187,117 @@ fn vault_meta_rows(env: &Env, txn: &RoTxn<'_>, prefixes: &[&[u8]]) -> Result<Row
     Ok(rows)
 }
 
-/// The device and inode of the directory at `path`.
+/// The directory `store`'s environment was opened on, by its bound root
+/// descriptor: the same directory wherever any name of it now points.
 #[cfg(unix)]
-fn directory_identity(path: &Path) -> std::io::Result<(u64, u64)> {
-    use std::os::unix::fs::MetadataExt;
-    let metadata = std::fs::metadata(path)?;
-    Ok((metadata.dev(), metadata.ino()))
+fn opened_directory(store: &Store) -> Result<FileIdentity> {
+    let root = store
+        .owner
+        .env
+        ._bound_root_dir
+        .as_ref()
+        .ok_or(Error::InvariantViolation("vault root descriptor missing"))?;
+    Ok(file_identity(&root.metadata()?))
 }
 
 /// No directory identity here; nothing is archived to check it for.
 #[cfg(not(unix))]
-fn directory_identity(_: &Path) -> std::io::Result<()> {
+fn opened_directory(_: &Store) -> Result<()> {
     Ok(())
+}
+
+/// Whether `path` itself, not a link at it, names the directory `opened`.
+#[cfg(unix)]
+fn names(path: &Path, opened: &FileIdentity) -> Result<bool> {
+    Ok(named_directory_identity(path)?.as_ref() == Some(opened))
+}
+
+#[cfg(not(unix))]
+fn names(_: &Path, (): &()) -> Result<bool> {
+    Ok(true)
+}
+
+/// The directory a restore made for its copy. Each open of the copy goes by
+/// name, and is checked against the directory made: rows are written into,
+/// and a mark lifted from, only that one, never a directory moved in under
+/// its name since.
+pub(crate) struct MadeDestination {
+    #[cfg(unix)]
+    made: FileIdentity,
+}
+
+impl MadeDestination {
+    /// Makes `destination`, which must not exist yet, owner-only. It is
+    /// refused unless no other user can move an entry on the way to it, or,
+    /// for a copy that will replace the live vault at `home`, on the way to
+    /// that vault or inside it: on such a path no name this restore makes,
+    /// opens or exchanges can be changed under it.
+    pub(crate) fn make(destination: &Path, home: Option<&Path>) -> Result<Self> {
+        #[cfg(unix)]
+        let made = {
+            refuse_shared_path(parent_or_here(destination.parent().unwrap_or(destination)))?;
+            if let Some(home) = home {
+                refuse_shared_vault_root(home)?;
+            }
+            make_directory(destination)?
+        };
+        #[cfg(not(unix))]
+        {
+            let _ = home;
+            std::fs::create_dir(destination)?;
+        }
+        #[cfg(test)]
+        if let Some(callback) = AFTER_RESTORE_DESTINATION_MADE.with(|slot| slot.borrow_mut().take())
+        {
+            callback();
+        }
+        Ok(Self {
+            #[cfg(unix)]
+            made,
+        })
+    }
+
+    /// Refuses unless `store` is open on the directory made.
+    pub(crate) fn holds(&self, store: &Store) -> Result<()> {
+        #[cfg(unix)]
+        if opened_directory(store)? != self.made {
+            return Err(Error::InvalidConfig(
+                "a restore's copy no longer sits where it was made".into(),
+            ));
+        }
+        #[cfg(not(unix))]
+        let _ = store;
+        Ok(())
+    }
+}
+
+/// Drops `vault`, the copy a refused restore made at `destination`, and
+/// removes the directory it made there: the one the copy had open, never a
+/// directory moved in under that name since, which is left as it is.
+pub(crate) fn discard_restored_copy(vault: crate::Vault, destination: &Path) {
+    #[cfg(unix)]
+    {
+        let held = vault
+            .store
+            .owner
+            .env
+            ._bound_root_dir
+            .as_ref()
+            .map(std::fs::File::try_clone);
+        drop(vault);
+        let removed = match held {
+            Some(Ok(held)) => remove_held_directory(destination, &held).is_ok(),
+            _ => false,
+        };
+        if !removed {
+            tracing::warn!("a refused restore left the copy it made in place");
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        drop(vault);
+        let _ = std::fs::remove_dir_all(destination);
+    }
 }
 
 /// Syncs the directory holding `path`, so a rename of `path` is on disk.
@@ -347,13 +484,14 @@ impl Store {
     /// this vault's path when it was made, takes that place through `swap`,
     /// which exchanges the two directories, and this vault is archived.
     ///
+    /// The two paths must name the two directories the handles opened, by
+    /// their bound root descriptors, or nothing is marked and nothing moves.
     /// Before the swap this vault gets the same mark, committed under the
     /// writer, and this handle is sealed before any other writer begins. So
     /// whichever of the two sits at the path is the one live vault on the
     /// custody they share, at every instant and after a crash anywhere. A
-    /// swap that fails lifts the mark again and changes nothing; one that
-    /// returns without the replacement's own directory found at this vault's
-    /// path is refused and leaves both marks as they are. Once the
+    /// swap that fails, or returns without each directory found at the
+    /// other's path, is refused and leaves both marks as they are. Once the
     /// swap is on disk, this vault is archived wherever it goes and the
     /// replacement's mark is lifted; a failure there is only logged, both
     /// marks already saying the same, and the replacement keeps its mark,
@@ -380,21 +518,31 @@ impl Store {
                 "the replacement was not restored for this vault's place".into(),
             ));
         }
-        let replacement_dir = directory_identity(replacement.env.path())?;
+        // Each path must name the directory its handle opened, before any
+        // mark: a directory moved under either name refuses, nothing changed.
+        let live_dir = opened_directory(self)?;
+        let replacement_dir = opened_directory(replacement)?;
+        let in_place =
+            names(self.env.path(), &live_dir)? && names(replacement.env.path(), &replacement_dir)?;
+        if !in_place {
+            return Err(Error::InvalidConfig(
+                "a vault directory no longer sits at its path".into(),
+            ));
+        }
         let mut wtxn = self.env.write_txn()?;
         fence(&wtxn)?;
         ARCHIVED.put(self, &mut wtxn, &(), &mark)?;
         self.env.seal();
         wtxn.commit()?;
-        if let Err(err) = swap() {
-            if let Err(lift) = self.put_archive_mark(None) {
-                tracing::warn!(error = %lift, "a failed swap left its vault marked live only where it is");
-            }
-            return Err(err.into());
-        }
-        if directory_identity(self.env.path())? != replacement_dir {
+        // A failed swap is no proof that nothing moved, and a name checked
+        // now could move before a lift commits: the mark stays, and whichever
+        // of the two sits at the path is still the one live vault.
+        swap()?;
+        let exchanged =
+            names(self.env.path(), &replacement_dir)? && names(replacement.env.path(), &live_dir)?;
+        if !exchanged {
             return Err(Error::InvalidConfig(
-                "the swap did not put the replacement in this vault's place".into(),
+                "the swap did not exchange the two vault directories".into(),
             ));
         }
         // Neither mark stops depending on where its vault sits before the
@@ -523,6 +671,10 @@ impl Store {
 thread_local! {
     static BEFORE_ACTIVATION_FORK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         std::cell::RefCell::new(None);
+    static AFTER_RESTORE_DESTINATION_MADE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+    static BEFORE_LIVE_CUSTODY_READ: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
 }
 
 /// Runs `callback` once, the next time this thread activates an archived
@@ -530,4 +682,18 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn arm_before_activation_fork(callback: impl FnOnce() + 'static) {
     BEFORE_ACTIVATION_FORK.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
+/// Runs `callback` once, the next time this thread makes a restore's
+/// destination, between making it and opening the copy in it.
+#[cfg(test)]
+pub(crate) fn arm_after_restore_destination_made(callback: impl FnOnce() + 'static) {
+    AFTER_RESTORE_DESTINATION_MADE.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
+/// Runs `callback` once, the next time this thread reads a vault's live
+/// custody off its directory, between the path's admission and the read.
+#[cfg(test)]
+pub(crate) fn arm_before_live_custody_read(callback: impl FnOnce() + 'static) {
+    BEFORE_LIVE_CUSTODY_READ.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
 }

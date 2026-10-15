@@ -91,7 +91,7 @@ fn delivered(vault: &Vault, notification: &EntityId, caller: &str) -> Result<boo
 fn a_restore_does_not_deliver_a_notification_to_a_recipient_taken_off_it() -> Result<()> {
     let (_dir, vault, notification) = for_a_and_b()?;
     assert!(delivered(&vault, &notification, "B")?);
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
     notify(

@@ -2461,7 +2461,7 @@ fn a_restore_never_undoes_a_voice_consent_withdrawal() -> Result<()> {
         200,
     );
     vault.enroll_voice_print(&enrolled)?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 300)?;
     vault.withdraw_voice_consent(&VoiceWithdrawalRequest {
