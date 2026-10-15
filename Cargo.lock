@@ -8044,6 +8044,7 @@ dependencies = [
 name = "oneiron-docedit"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "crc32fast",
  "expat-sys",
  "flate2",

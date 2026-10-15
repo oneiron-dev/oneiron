@@ -1,11 +1,13 @@
-//! Native document editing organ crate: the retained OPC substrate and
-//! native Word revisions over a pinned, Apache-2.0-selected stemma fork.
+//! Native document editing organ crate: the retained OPC substrate, typed
+//! read-only deck views over it, and native Word revisions over a pinned,
+//! Apache-2.0-selected stemma fork.
 //!
 //! The wrapper owns no global session or handle store. Its document value
 //! facade addresses stable block IDs and staleness guards; the writer applies
 //! a typed transaction and refuses bytes that fail the Word package linker.
 //! `PROVENANCE.md` records the fork, licenses and local changes.
 
+pub mod deck;
 pub mod ooxml;
 pub mod retained_opc;
 pub mod xlfn;
