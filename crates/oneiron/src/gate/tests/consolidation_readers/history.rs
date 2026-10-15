@@ -55,14 +55,17 @@ pub(super) fn machine_history(reader: ConsolidationReader) -> Result<()> {
             }
         })?;
     }
-    // A retract lands while the present handoff waits, and reads back only
-    // after the owner's answer, as an ancestor of the retract's own handoff.
+    // The owner's retract through the memory door lands while the present
+    // handoff waits, and reads back only after the owner's answer, as an
+    // ancestor of the retract's own handoff.
     let pin = vault.resolved_machine_claim(target)?.handoff_digest;
     let carrier = EntityId::from_bytes(pin[..16].try_into().expect("content id"))?;
     let mut retracted = false;
     check_transition(&vault, carrier, reader, |v, _| {
         if !retracted {
-            v.retract_claim(&target, 20)?;
+            v.memory(owner, EdgeActorClass::Human)
+                .claim_retract(&target.to_hex())
+                .unwrap_or_else(|error| panic!("{reader:?}: the retract did not land: {error:?}"));
             retracted = true;
         }
         match v.resolved_machine_claim(target) {

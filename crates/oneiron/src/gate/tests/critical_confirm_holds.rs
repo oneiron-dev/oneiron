@@ -193,6 +193,48 @@ fn a_door_without_the_owners_answer_leaves_the_claim_held() -> Result<()> {
     Ok(())
 }
 
+/// A retraction closes a held claim even after the owner relaxed its
+/// predicate's policy: the obligation stays open, and the owner is shown no
+/// item for the closed claim.
+#[test]
+fn a_retraction_closes_a_held_claim_under_a_relaxed_policy() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let claim = test_id(0x95);
+    put_critical_auto_claim(&vault, claim)?;
+    let mut data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::UserStated, 0)]);
+    trust_human_candidate_actor(&mut data);
+    rewrite_policy_manifest_entries(&mut data, |entries| {
+        for (key, value) in entries {
+            if key.as_str() == Some(POLICY_RULES_KEY) {
+                *value = Value::Array(Vec::new());
+            }
+        }
+    });
+    put_policy_manifest_bytes(&vault, test_id(0xee), &data)?;
+    vault
+        .retract_claim(&claim, crate::unix_seconds_now())
+        .unwrap_or_else(|error| {
+            panic!("FAILBEFORE H244 narrowed: the retraction rolled back: {error:?}")
+        });
+    assert_eq!(
+        stored_claim_body(&vault, &claim)?.lifecycle,
+        ClaimLifecycleStatus::Retracted
+    );
+    assert!(
+        vault
+            .with_write_txn(|wtxn| vault.store.owner_answer_obligation_in_txn(wtxn, &claim))?
+            .is_some(),
+        "the retraction closed the obligation with no owner answer"
+    );
+    assert!(
+        vault
+            .with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?
+            .is_none(),
+        "the owner is shown an item for a closed claim"
+    );
+    Ok(())
+}
+
 /// A wake pass that met a held claim moved its cursor past it. The owner's
 /// Clear rewrites no bytes, yet the claim rejoins the wake count.
 #[test]

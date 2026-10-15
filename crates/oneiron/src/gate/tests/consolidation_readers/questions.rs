@@ -147,7 +147,9 @@ pub(super) fn standing_answer_source(
     })
 }
 
-/// A refresh answers no held claim unit, and never shows it to the answerer.
+/// An arrival refresh answers no held claim unit and never shows it to the
+/// answerer; the unit keeps its arrival marker, so the refresh answers it
+/// once its owner has answered.
 pub(super) fn question_refresh_source(
     vault: &Vault,
     [principal, subject, claim]: [EntityId; 3],
@@ -155,6 +157,8 @@ pub(super) fn question_refresh_source(
 ) -> Result<()> {
     let actor = question_readers(vault, principal, subject)?;
     let question = fixture_question(vault, principal, vec![claim], None)?;
+    // The unit arrives after its question, as a write does.
+    project_one(vault, claim)?;
     check_transition(vault, claim, reader, |v, id| {
         let mut asked = 0;
         let answers = refresh_question(
@@ -162,7 +166,7 @@ pub(super) fn question_refresh_source(
             actor,
             principal,
             question,
-            RefreshTrigger::Manual,
+            RefreshTrigger::Arrival(*id),
             1,
             |_, _, _| {
                 asked += 1;
