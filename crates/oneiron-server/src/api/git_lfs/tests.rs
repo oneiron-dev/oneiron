@@ -1837,7 +1837,9 @@ async fn downloads_and_verifies_wait_for_their_manifests_room_holding_no_permit(
         .await
         .expect("route response");
     assert_eq!(unread.status(), StatusCode::OK);
-    let room = crate::api::Transfers::read_room(&server.vault, oid).expect("room");
+    let room = crate::api::Transfers::read_room(&server.vault, oid)
+        .expect("room")
+        .expect("a stored object");
     assert_eq!(reads.held_bytes() as u64, room);
     let read = to_bytes(unread.into_body(), usize::MAX)
         .await
