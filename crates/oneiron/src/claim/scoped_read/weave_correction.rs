@@ -76,19 +76,19 @@ impl ScopedRead<'_> {
             .vault
             .weave_link_correction_labels_in_txn(&txn, link)?
             .iter()
-            .filter(|label| label.actor == auth.actor())
+            .filter(|label| label.actor == actor)
             .count();
         if own >= limit {
             // Capabilities first: the owner's own reports are never refused
             // on count. Every other reader stays bounded.
-            if !crate::policy_model::is_live_vault_owner_in_txn(self.vault, &txn, &auth.actor())? {
+            if !crate::policy_model::is_live_vault_owner_in_txn(self.vault, &txn, &actor)? {
                 return Err(Error::IndexOverflow("weave correction labels"));
             }
             crate::own_rate::observe_in_txn(
                 &self.vault.store,
                 &mut txn,
                 crate::own_rate::OwnRateKind::WeaveCorrection,
-                auth.actor(),
+                actor,
                 0,
                 u64::try_from(own).unwrap_or(u64::MAX).saturating_add(1),
                 crate::own_rate::OwnRate {
