@@ -445,6 +445,8 @@ fn a_bearer_word_on_an_ask_past_the_link_bound_is_refused_unread() -> TestResult
     let ask = memory.tasks_ask(&spec)?.handle;
     let link = memory.tasks_ask_option_link(ask, friend)?;
     // One row past the bound under the ask's About index.
+    let value =
+        crate::edge::encode_edge_value(crate::EdgeKind::About, 0.9, 1, crate::Vad::NEUTRAL, None)?;
     vault.with_write_txn(|wtxn| {
         for index in 0..=4_096_u32 {
             let mut bytes = [0x48; 16];
@@ -452,7 +454,7 @@ fn a_bearer_word_on_an_ask_past_the_link_bound_is_refused_unread() -> TestResult
             let word = EntityId::from_bytes(bytes)?;
             let key =
                 crate::store::Store::encode_edge_key(&ask.group_ref, crate::EdgeKind::About, &word);
-            vault.store.edges_in.put(wtxn, &key, &[0_u8; 12])?;
+            vault.store.edges_in.put(wtxn, &key, &value)?;
         }
         Ok(())
     })?;
