@@ -87,6 +87,7 @@ mod hooks;
 mod intent;
 mod landing;
 mod landing_lfs;
+mod maintain;
 mod paths;
 mod serve;
 mod serve_cmd;
@@ -99,6 +100,9 @@ pub use self::hooks::DoorHooksDir;
 pub use self::intent::{ReceivePackRefResult, ReceivePackRefStatus};
 pub use self::landing::{
     ReceivePackAttribution, ReceivePackCertificate, ReceivePackLanding, refs_already_applied,
+};
+pub use self::maintain::{
+    SERVED_REPOSITORY_GC_TIMEOUT, ServedRepositoryMaintenance, maintain_served_repositories,
 };
 pub use self::paths::{
     DOOR_PRE_RECEIVE_HOOK_NAME, DOOR_WINDOW_TIMEOUT, ORIGIN_DOOR_ROOT_NAME, ORIGIN_MAX_REF_UPDATES,
@@ -127,6 +131,8 @@ mod history_scan_tests;
 mod intent_recovery_tests;
 #[cfg(test)]
 mod landing_tests;
+#[cfg(test)]
+mod maintain_tests;
 #[cfg(test)]
 mod push_cert_tests;
 #[cfg(test)]

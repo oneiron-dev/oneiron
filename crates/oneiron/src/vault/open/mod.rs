@@ -9,8 +9,7 @@ use crate::analyzer::MultilingualAnalyzer;
 #[cfg(feature = "test-support")]
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::config::{HostingPrivacyPosture, VaultConfig};
-use crate::entity_id::EntityId;
-use crate::entity_id::derived_domains::EMBEDDED_OWNER_ACTOR;
+use crate::entity_id::{EntityId, derived_domains::EMBEDDED_OWNER_ACTOR};
 use crate::error::{Error, Result};
 use crate::store::{DefaultPolicySeedMode, Store, VaultWriterLease};
 #[cfg(feature = "test-support")]
@@ -18,6 +17,7 @@ use crate::temporal::TimeRange;
 use std::path::Path;
 
 mod config_validation;
+mod lease_door;
 use self::config_validation::validate_open_config;
 
 /// `name` of the embedded owner PERSON — the one field the PERSON projection
@@ -539,13 +539,13 @@ impl Vault {
             writer_lease: None,
             privacy,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
-            // Every vault opens FULL; only an explicit ctl-driven shed parks
-            // it, and only an inbound resume unparks it.
+            // Opens FULL; only a ctl-driven shed parks it, an inbound resume unparks it.
             slim: crate::slim::SlimController::default(),
             wake_policy_timer_owned: std::sync::atomic::AtomicBool::new(false),
             conversation_presence: Default::default(),
             message_streams: Default::default(),
             voice_ref_guard: Default::default(),
+            housekeeping: Default::default(),
             #[cfg(feature = "sync")]
             entity_docs: std::sync::Mutex::new(crate::entity_doc::EntityDocRegistry::default()),
             #[cfg(feature = "sync")]
@@ -611,8 +611,7 @@ impl Vault {
         let lfs_recovery_cutoff = crate::unix_seconds_now().saturating_sub(24 * 60 * 60);
         while vault.recover_lfs_uploads_before(lfs_recovery_cutoff)? != 0 {}
         while vault.collect_lfs_garbage(32)? != 0 {}
-        // An erase or sweep interrupted after its commit resumes here.
-        vault.finish_gate_decision_retirements_after_commit();
+        vault.resume_erases_after_commit();
         vault.recover_message_streams().map_err(|error| {
             crate::error::Error::Record(crate::error::RecordError::MessageStreamRecoveryFailed(
                 error.to_string(),
@@ -778,24 +777,23 @@ impl Vault {
         }
     }
 
-    /// Whether `key` is currently unsafe for sweep compaction: registered in
-    /// an attached manager OR still retained by an outstanding orphaned
-    /// `Arc<LoadedWindow>` after deregistration. A live doc holds the full op
-    /// history in memory, and its next full-snapshot persist would rewrite
-    /// that history over a shallow-compacted `d:w:` row, so the sweep must
-    /// never compact while such a handle may persist.
+    /// Runs sweep compaction `f` with `key` closed and kept closed, or `None`
+    /// while `key` is live: registered, retained by an orphaned handle, or
+    /// owned by a manager that is gone. A live doc's next full-snapshot
+    /// persist would rewrite its history over a shallow-compacted `d:w:` row.
     #[cfg(feature = "sync")]
-    pub(crate) fn live_window_for_sweep(&self, key: &crate::sync::WindowKey) -> bool {
+    pub(crate) fn while_window_closed<T>(
+        &self,
+        key: &crate::sync::WindowKey,
+        f: impl FnOnce() -> T,
+    ) -> Option<T> {
         let attached = self
             .live_window_manager_attached
             .load(std::sync::atomic::Ordering::Acquire);
-        let manager = match self.live_window_manager.lock() {
-            Ok(manager) => manager,
-            Err(_) => return true,
-        };
-        match manager.upgrade() {
-            Some(manager) => manager.window_live_for_sweep(key),
-            None => attached,
+        let manager = self.live_window_manager.lock().ok()?.upgrade();
+        match manager {
+            Some(manager) => manager.while_window_closed(key, f),
+            None => (!attached).then(f),
         }
     }
 }

@@ -348,10 +348,10 @@ impl Vault {
         bound: GrantBound,
         scope: BypassScope,
     ) -> Result<BypassGrantWarning> {
-        owner.revalidate_in_txn(self, txn)?;
+        let actor = owner.revalidate_in_txn(self, txn)?;
         // A person's yes is not enough here: only an owner of this vault
         // creates a bypass, so no agent and no member can self-grant one.
-        if !crate::policy_model::is_live_vault_owner_in_txn(self, txn, &owner.actor())? {
+        if !crate::policy_model::is_live_vault_owner_in_txn(self, txn, &actor)? {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "only the vault's owner creates a bypass grant",
             )));
@@ -379,7 +379,7 @@ impl Vault {
             ));
         }
         Ok(BypassGrantWarning {
-            owner: owner.actor(),
+            owner: actor,
             bound,
             scope,
             allows,
