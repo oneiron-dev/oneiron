@@ -72,6 +72,9 @@ side_tables! {
     /// `BLOB_ARTIFACT_VERSION_CLAIM` keyed by artifact, so an artifact's delete reads its own
     /// bytes without a scan. Key: id16 (artifact) + bytes32.
     BLOB_ARTIFACT_CLAIMED_HASH: VaultMeta b"blob_artifact:claimed_hash:v1:" Raw;
+    /// Version bytes a hard erase took, each valued with that erase's tombstone wire value: a
+    /// later reference to them arrives erased, and they are never stored again. Key: bytes32.
+    BLOB_ARTIFACT_ERASED_CONTENT: VaultMeta b"blob_artifact:erased_content:v1:" Raw;
     /// `blob.version` claims a hard erase took with the bytes they name, each valued with that
     /// erase's tombstone wire value. Key: id16 (claim).
     BLOB_ARTIFACT_ERASED_REFERENCE: VaultMeta b"blob_artifact:erased_reference:v1:" Raw;

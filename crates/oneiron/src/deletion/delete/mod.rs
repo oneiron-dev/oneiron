@@ -5,4 +5,4 @@ mod outcome;
 mod preview;
 
 pub use self::outcome::{DeleteEntityOptions, DeleteEntityOutcome};
-pub use self::preview::{DeleteEntityPreview, DeleteHeldBytes};
+pub use self::preview::{DeleteEntityPreview, DeleteHeldBytes, DeleteOtherVersion};

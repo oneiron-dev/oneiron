@@ -19,7 +19,10 @@ use crate::store::Store;
 
 use super::lifecycle::held_hashes;
 use super::provenance::BLOB_VERSION_CLAIM_PREDICATE;
-use super::references::{forget_hold, holders, live_holders, version_claim_reference};
+use super::references::{
+    artifact_is_live, forget_hold, holders, live_holders, version_claim_reference,
+    version_claim_version,
+};
 use super::store_keys::{ASSET_REF, BLOB_ARTIFACT_CONTENT_HASH_LEN};
 use super::versions::{VERSIONS, blob_artifact_asset_entity_id};
 
@@ -29,6 +32,11 @@ type ContentHash = [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN];
 /// value. Key: id16 (claim).
 const ERASED_REFERENCE: SideTable<EntityId, Vec<u8>, Raw> =
     SideTable::new(&side_table::BLOB_ARTIFACT_ERASED_REFERENCE);
+
+/// The bytes a hard erase took, each valued with that erase's tombstone wire value. A reference to
+/// them that arrives later arrives erased, and they are never stored here again. Key: bytes32.
+const ERASED_CONTENT: SideTable<ContentHash, Vec<u8>, Raw> =
+    SideTable::new(&side_table::BLOB_ARTIFACT_ERASED_CONTENT);
 
 /// One version-byte object an artifact holds, and the other artifacts holding it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,6 +147,9 @@ pub(crate) fn erase_holds_in_txn(
     }
     let mut reached = Vec::new();
     for holding in holdings {
+        if !ERASED_CONTENT.contains(store, wtxn, &holding.hash)? {
+            ERASED_CONTENT.put(store, wtxn, &holding.hash, &tombstone.to_vec())?;
+        }
         for holder in holders(store, wtxn, &holding.hash, &[*artifact, holding.asset])? {
             ASSET_REF.delete(store, wtxn, &(holding.hash, holder))?;
             forget_hold(store, wtxn, &holding.hash, &holder)?;
@@ -172,6 +183,91 @@ pub(crate) fn asset_holding_in_txn(
         asset: *asset,
         others: live_holders(store, txn, &hash, &[*asset])?,
     }))
+}
+
+/// Pierces the bytes under `hash` for a version claim of `artifact` that arrives after the hard
+/// erase that took them, or after `artifact`'s own hard erase: a replica learns which bytes an
+/// erased artifact held only from its claims, and one can arrive after the tombstone. The bytes
+/// are marked erased for good, every hold on them goes, `claim` and every reference here to them
+/// become erased references valued with `erase`, and the bytes are released.
+pub(crate) fn pierce_content_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    hash: &ContentHash,
+    artifact: &EntityId,
+    claim: &EntityId,
+    erase: &[u8],
+) -> Result<()> {
+    let holding = [Holding {
+        hash: *hash,
+        asset: blob_artifact_asset_entity_id(hash)?,
+        others: Vec::new(),
+    }];
+    let mut references = references_in_txn(store, wtxn, artifact, &holding)?;
+    references.push(*claim);
+    erase_holds_in_txn(store, wtxn, artifact, &holding, &references, erase)?;
+    ASSET_REF.delete(store, wtxn, &(*hash, *artifact))?;
+    forget_hold(store, wtxn, hash, artifact)?;
+    super::lifecycle::release_bytes_of_deleted_artifact(store, wtxn, artifact, hash)
+}
+
+/// The erase stamp of bytes a hard erase took here.
+pub(crate) fn content_erased(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    hash: &ContentHash,
+) -> Result<Option<Vec<u8>>> {
+    ERASED_CONTENT.get(store, txn, hash)
+}
+
+/// Each version of another live artifact that names one of `holdings`' bytes, as (ASSET,
+/// artifact, version): what a hard erase of `id` takes beside it, for the delete preview.
+pub(crate) fn other_versions_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    holdings: &[Holding],
+) -> Result<Vec<(EntityId, EntityId, u64)>> {
+    let mut found = std::collections::BTreeSet::new();
+    for claim in crate::claim::claim_ids_for_predicate_bounded_in_txn(
+        store,
+        txn,
+        BLOB_VERSION_CLAIM_PREDICATE,
+        usize::MAX,
+    )? {
+        let Some(raw) = store.entities.get(txn, claim.as_bytes())? else {
+            continue;
+        };
+        if raw.len() <= ENTITY_METADATA_HEADER_LEN || raw[0] != ENTITY_TYPE_CLAIM {
+            continue;
+        }
+        let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+        else {
+            continue;
+        };
+        let (Some((artifact, hash)), Some(version)) =
+            (version_claim_reference(&body), version_claim_version(&body))
+        else {
+            continue;
+        };
+        if artifact != *id
+            && let Some(holding) = holdings.iter().find(|holding| holding.hash == hash)
+            && artifact_is_live(store, txn, &artifact)?
+        {
+            found.insert((holding.asset, artifact, version));
+        }
+    }
+    for holding in holdings {
+        for other in &holding.others {
+            for row in VERSIONS.iter_from(store, txn, other.as_bytes())? {
+                let (_, record) = row?;
+                if record.content_hash == holding.hash {
+                    found.insert((holding.asset, *other, record.version));
+                }
+            }
+        }
+    }
+    Ok(found.into_iter().collect())
 }
 
 /// Whether a hard erase took the reference `claim` is.

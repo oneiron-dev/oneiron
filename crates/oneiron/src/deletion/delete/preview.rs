@@ -16,14 +16,39 @@ pub struct DeleteEntityPreview {
     held_bytes: Vec<DeleteHeldBytes>,
 }
 
-/// One version-byte object the previewed record holds (ARCH-0005a). A delete
-/// of the last reference takes the bytes. A plain delete of one reference of
-/// several leaves them to the others, while a hard erase takes the bytes and
-/// every other reference to them.
+/// One version-byte object the previewed record holds or is (ARCH-0005a). A
+/// delete of the last reference takes the bytes. A plain delete of one
+/// reference of several leaves them to the others, while a hard erase takes the
+/// bytes and every other reference to them: each version [`Self::others`] names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteHeldBytes {
     asset: EntityId,
-    others: Vec<EntityId>,
+    last_reference: bool,
+    others: Vec<DeleteOtherVersion>,
+}
+
+/// A version of another artifact that names the same bytes: a hard erase takes
+/// it, and it then reads as erased.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteOtherVersion {
+    artifact: EntityId,
+    name: Option<String>,
+    version: u64,
+}
+
+impl DeleteOtherVersion {
+    pub fn artifact(&self) -> EntityId {
+        self.artifact
+    }
+
+    /// The artifact's name, when its row is readable here.
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    pub fn version(&self) -> u64 {
+        self.version
+    }
 }
 
 impl DeleteHeldBytes {
@@ -32,14 +57,14 @@ impl DeleteHeldBytes {
         self.asset
     }
 
-    /// The other records whose reference keeps the bytes past a plain delete.
-    pub fn others(&self) -> &[EntityId] {
+    /// The versions of other artifacts that name the same bytes.
+    pub fn others(&self) -> &[DeleteOtherVersion] {
         &self.others
     }
 
     /// Whether the previewed record is the last reference to the bytes.
     pub fn is_last_reference(&self) -> bool {
-        self.others.is_empty()
+        self.last_reference
     }
 }
 
@@ -143,12 +168,28 @@ fn held_bytes_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Vec<DeleteHeldBytes>> {
-    Ok(vault
-        .erased_holdings_in_txn(txn, id)?
-        .into_iter()
-        .map(|holding| DeleteHeldBytes {
+    let holdings = vault.erased_holdings_in_txn(txn, id)?;
+    let versions = crate::blob_artifact::other_versions_in_txn(&vault.store, txn, id, &holdings)?;
+    let mut held = Vec::with_capacity(holdings.len());
+    for holding in holdings {
+        let mut others = Vec::new();
+        for (_, artifact, version) in versions
+            .iter()
+            .filter(|(asset, ..)| *asset == holding.asset)
+        {
+            others.push(DeleteOtherVersion {
+                artifact: *artifact,
+                name: vault
+                    .get_blob_artifact_in_txn(txn, artifact)?
+                    .map(|body| body.name),
+                version: *version,
+            });
+        }
+        held.push(DeleteHeldBytes {
             asset: holding.asset,
-            others: holding.others,
-        })
-        .collect())
+            last_reference: holding.others.is_empty(),
+            others,
+        });
+    }
+    Ok(held)
 }

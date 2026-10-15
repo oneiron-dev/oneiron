@@ -353,6 +353,10 @@ impl Vault {
             )));
         }
         let content_hash = *blake3::hash(bytes).as_bytes();
+        // Bytes a hard erase took are never stored here again (ARCH-0005a).
+        if super::erase::content_erased(&self.store, wtxn, &content_hash)?.is_some() {
+            return Err(Error::Artifact(ArtifactError::BlobVersionErased));
+        }
         let claim_id = EntityId::from_bytes(self.store.clock.ulid()?)?;
 
         require_entity_type(

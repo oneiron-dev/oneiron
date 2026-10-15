@@ -26,7 +26,8 @@ pub enum ArtifactError {
     /// A hard erase took this blob artifact version's bytes and every reference
     /// to them (ARCH-0005a: HardErase pierces refcounting). The version stays in
     /// its artifact's chain as an erased reference; its bytes and record never
-    /// come back, so a retry reads the same answer.
+    /// come back, so a retry reads the same answer. An append of bytes a hard
+    /// erase took is refused the same way: they are never stored again.
     #[error("blob artifact version was erased")]
     BlobVersionErased,
     /// A Git-LFS object did not match what the client declared about it: a

@@ -24,7 +24,7 @@ use crate::store::Store;
 
 use super::provenance::BLOB_VERSION_CLAIM_PREDICATE;
 use super::store_keys::BLOB_ARTIFACT_CONTENT_HASH_LEN;
-use super::versions::KEY_CONTENT_HASH;
+use super::versions::{KEY_CONTENT_HASH, KEY_VERSION};
 
 type ContentHash = [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN];
 
@@ -75,7 +75,9 @@ pub(super) fn version_claim_reference(body: &ClaimBody) -> Option<(EntityId, Con
 /// its hash, so the bytes are released now unless something live holds them. A claim naming a
 /// live artifact lifts a fence an earlier release left on its bytes, so the export door keeps
 /// their carrier and the next rematerialization takes them back. A claim a hard erase took
-/// records nothing and lifts nothing, whoever puts it again.
+/// records nothing and lifts nothing, whoever puts it again. A claim naming bytes a hard erase
+/// took here, or naming an artifact hard-erased here before the claim arrived, arrives erased:
+/// it pierces the bytes it names (`super::erase::pierce_content_in_txn`).
 pub(crate) fn record_version_claim(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -88,11 +90,21 @@ pub(crate) fn record_version_claim(
     if super::erase::reference_erased(store, txn, claim)? {
         return Ok(());
     }
+    if let Some(erase) = super::erase::content_erased(store, txn, &hash)? {
+        return super::erase::pierce_content_in_txn(store, txn, &hash, &artifact, claim, &erase);
+    }
     let deleted_here = {
         let raw = store.entities.get(txn, artifact.as_bytes())?;
         crate::deletion::row_deletion_marked(store, txn, &artifact, raw.as_deref())?
     };
     if deleted_here {
+        if let Some(erase) =
+            crate::deletion::HARD_DELETE_MARKER.get(store, txn, &HexId(artifact))?
+        {
+            return super::erase::pierce_content_in_txn(
+                store, txn, &hash, &artifact, claim, &erase,
+            );
+        }
         return super::lifecycle::release_bytes_of_deleted_artifact(store, txn, &artifact, &hash);
     }
     VERSION_CLAIM.put(store, txn, &(hash, artifact), &())?;
@@ -105,6 +117,19 @@ pub(crate) fn record_version_claim(
         )?;
     }
     Ok(())
+}
+
+/// The version number a `blob.version` claim body names.
+pub(super) fn version_claim_version(body: &ClaimBody) -> Option<u64> {
+    let Value::Map(entries) = &body.value else {
+        return None;
+    };
+    entries
+        .iter()
+        .find_map(|(key, value)| match (key.as_str(), value) {
+            (Some(KEY_VERSION), Value::Integer(version)) => version.as_u64(),
+            _ => None,
+        })
 }
 
 /// The content hashes the `blob.version` claims here named for `artifact`.
@@ -225,7 +250,7 @@ pub(super) fn held_by_live_artifact(
 }
 
 /// A stored artifact row with its body, under no delete this vault holds.
-fn artifact_is_live(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+pub(super) fn artifact_is_live(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
     let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
         return Ok(false);
     };
@@ -270,6 +295,7 @@ pub(crate) fn readmit_held_asset_in_txn(
     }
     let hash: ContentHash = *blake3::hash(body).as_bytes();
     if super::versions::blob_artifact_asset_entity_id(&hash)? != *asset
+        || super::erase::content_erased(store, txn, &hash)?.is_some()
         || !held_by_live_artifact(store, txn, &hash, None)?
     {
         return Ok(());

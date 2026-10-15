@@ -225,7 +225,8 @@ fn a_plain_delete_leaves_shared_bytes_to_the_other_artifact() -> Result<()> {
 }
 
 /// Done-means (ARCH-0005a): the delete impact preview tells one reference of several from the
-/// last one, so the confirm can say which act it is.
+/// last one, and names each other artifact version a hard erase takes, so the confirm can say
+/// which act it is. The erase's receipt then lists that version's reference.
 #[test]
 fn the_delete_preview_tells_one_of_several_from_the_last_reference() -> Result<()> {
     let fixture = Shared::open()?;
@@ -239,15 +240,21 @@ fn the_delete_preview_tells_one_of_several_from_the_last_reference() -> Result<(
         panic!("the erased artifact holds one blob");
     };
     assert_eq!(held.asset(), fixture.asset()?);
-    assert_eq!(held.others(), [fixture.other]);
     assert!(
         !held.is_last_reference(),
         "one of several read as the last reference"
     );
+    let [other] = held.others() else {
+        panic!("the preview names one other version");
+    };
+    assert_eq!(
+        (other.artifact(), other.name(), other.version()),
+        (fixture.other, Some("shared.bin"), fixture.shared.version),
+        "the preview did not name the other artifact's version the erase takes"
+    );
 
-    let other = preview(&fixture.other)?;
     let only = blob_artifact_asset_entity_id(blake3::hash(OTHER_ONLY).as_bytes())?;
-    let last: Vec<_> = other
+    let last: Vec<_> = preview(&fixture.other)?
         .held_bytes()
         .iter()
         .filter(|held| held.is_last_reference())
@@ -255,7 +262,26 @@ fn the_delete_preview_tells_one_of_several_from_the_last_reference() -> Result<(
         .collect();
     assert_eq!(last, [only], "the last reference read as one of several");
 
+    let outcome = vault.delete_entity_with_reason(&fixture.erased, DeleteReason::GdprDelete)?;
+    let receipt = vault
+        .get_raw(&outcome.receipt_id.expect("a hard erase writes a receipt"))?
+        .expect("the receipt row");
+    let body: serde_json::Value =
+        rmp_serde::from_slice(&receipt[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+            .expect("decode receipt body");
+    assert!(
+        body["scope"]["entity_ids"]
+            .to_string()
+            .contains(&fixture.shared.claim_id.to_hex()),
+        "the receipt has no line for the other artifact's erased version"
+    );
+
     // A preview taken before another artifact let go of the bytes is stale at confirm.
+    let fixture = Shared::open()?;
+    let vault = &fixture.vault;
+    let txn = vault.store.env.read_txn()?;
+    let erased = vault.preview_entity_delete_in_txn(&txn, &fixture.erased)?;
+    drop(txn);
     vault.delete_entity_with_options(&fixture.other, DeleteEntityOptions { purge: false })?;
     let txn = vault.store.env.read_txn()?;
     assert!(matches!(
@@ -303,5 +329,127 @@ fn an_erased_reference_put_again_brings_no_bytes_back() -> Result<()> {
     );
     assert!(holds(vault, &fixture.shared.content_hash)?.is_empty());
     assert!(erased(vault.read_blob_artifact_version(&fixture.other, 2)));
+    Ok(())
+}
+
+/// Copies each id's stored row to `target` through the replicated put door, one batch per row.
+/// Returns whether each put was taken.
+fn replicate(source: &Vault, target: &Vault, ids: &[EntityId]) -> Result<Vec<bool>> {
+    let mut taken = Vec::new();
+    for id in ids {
+        let raw = source.get_raw(id)?.expect("stored at the origin");
+        let header = EntityMetadataHeader::parse(&raw).expect("stored header");
+        let put = target
+            .batch()
+            .put_replicated(
+                id,
+                header.entity_type,
+                TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                header.learned_at,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+            .commit();
+        taken.push(put.is_ok());
+    }
+    Ok(taken)
+}
+
+/// Bug repro (Engine ruling on #1465, 10-15) and done-means: a replica learns which bytes an
+/// erased artifact held only from its version claims, and those can arrive after the erase's
+/// tombstone. In every arrival order the replica ends with no bytes, the other artifact's
+/// reference erased and no hold on the bytes, and a stale carrier of the bytes sent afterwards is
+/// never stored.
+#[test]
+fn a_replica_pierces_the_bytes_in_every_arrival_order() -> Result<()> {
+    let origin = Shared::open()?;
+    let source = &origin.vault;
+    let asset = origin.asset()?;
+    let hash = origin.shared.content_hash;
+    let (erased_claim, other_claim) = (origin.erased_version.claim_id, origin.shared.claim_id);
+    let rows = |ids: &[EntityId]| ids.to_vec();
+    let person = {
+        let txn = source.store.env.read_txn()?;
+        let mut people = Vec::new();
+        for id in source.entities_by_type(ENTITY_TYPE_PERSON)? {
+            if crate::ports::EntityStoreRead::port_entity_raw(&source.store, &txn, &id)?.is_some() {
+                people.push(id);
+            }
+        }
+        people
+    };
+    let mut tombstone = vec![crate::deletion::TombstoneReason::GdprDelete.wire_byte()];
+    tombstone.extend_from_slice(&60_u64.to_le_bytes());
+    tombstone.extend_from_slice(&[0xE5; 16]);
+    let erase_on = |replica: &Vault| -> Result<()> {
+        replica.with_write_txn_grouped(|txn| {
+            replica
+                .apply_replayed_tombstone_in_txn(txn, &origin.erased, &tombstone)
+                .map(|_| ())
+        })
+    };
+    let before = rows(&[
+        origin.erased,
+        origin.other,
+        erased_claim,
+        other_claim,
+        asset,
+    ]);
+    // Claims first, tombstone after; tombstone first, the erased artifact's claim before the other
+    // artifact's reference and the bytes; tombstone first, its claim last.
+    let orders: [&[&[EntityId]]; 3] = [
+        &[&before],
+        &[
+            &[origin.erased, erased_claim],
+            &[origin.other, other_claim, asset],
+        ],
+        &[
+            &[origin.other, other_claim, asset],
+            &[origin.erased, erased_claim],
+        ],
+    ];
+    for (n, order) in orders.iter().enumerate() {
+        let (_dir, replica) = open_test_vault_with(embedding_test_config());
+        replicate(source, &replica, &person)?;
+        if n > 0 {
+            erase_on(&replica)?;
+        }
+        for ids in *order {
+            replicate(source, &replica, ids)?;
+        }
+        if n == 0 {
+            assert!(
+                replica.get_raw(&asset)?.is_some(),
+                "order {n}: the bytes reached the replica"
+            );
+            erase_on(&replica)?;
+        }
+        assert!(
+            replica.get_raw(&asset)?.is_none(),
+            "order {n}: the erased bytes stayed on the replica"
+        );
+        assert!(
+            holds(&replica, &hash)?.is_empty(),
+            "order {n}: a hold survived"
+        );
+        let txn = replica.store.env.read_txn()?;
+        assert!(
+            reference_erased(&replica.store, &txn, &other_claim)?,
+            "order {n}: the other artifact's reference was not erased"
+        );
+        drop(txn);
+        // A stale carrier of the bytes, and the other reference again, store nothing.
+        replicate(source, &replica, &[other_claim, asset])?;
+        assert!(
+            replica.get_raw(&asset)?.is_none(),
+            "order {n}: a stale carrier stored the erased bytes again"
+        );
+        assert!(
+            holds(&replica, &hash)?.is_empty(),
+            "order {n}: a re-sent reference took a hold"
+        );
+    }
     Ok(())
 }
