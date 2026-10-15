@@ -394,9 +394,10 @@ fn smart_http_advertisement_moves_capabilities_to_the_first_surviving_ref() {
         .apply_receive_pack_fixture(&repo, &outcome)
         .expect("publish main");
     let mut captured = CapturingSink::default();
+    let clock = super::exchange_idle::Progress::new();
     let head = second.as_str().to_owned();
     {
-        let mut gate = AdvertisedRefGate::new(&vault, &repo_dir, true, &mut captured);
+        let mut gate = AdvertisedRefGate::new(&vault, &repo_dir, true, &clock, &mut captured);
         gate.begin(200, &advertisement_headers()).expect("begin");
         let body = [
             pkt("# service=git-upload-pack\n"),
@@ -437,9 +438,11 @@ fn smart_http_advertisement_with_no_surviving_ref_still_carries_capabilities() {
     let (_vault_dir, vault) = temp_vault();
     let elsewhere = tempfile::tempdir().expect("tempdir");
     let mut captured = CapturingSink::default();
+    let clock = super::exchange_idle::Progress::new();
     let head = "2".repeat(40);
     {
-        let mut gate = AdvertisedRefGate::new(&vault, elsewhere.path(), true, &mut captured);
+        let mut gate =
+            AdvertisedRefGate::new(&vault, elsewhere.path(), true, &clock, &mut captured);
         gate.begin(200, &advertisement_headers()).expect("begin");
         let body = [
             pkt("# service=git-upload-pack\n"),
