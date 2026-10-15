@@ -162,6 +162,78 @@ fn gate_opt_out_escalates_never_denies_owner() -> Result<()> {
 
 /// The receipt names exactly ONE override source — never both, and never one
 /// when no override decided the send.
+/// H276: a send override is an owner ruling. A well-shaped standing
+/// override written through the public claim door or a raw batch put, with no
+/// human behind it, is refused, and the opted-out send stays held.
+#[test]
+fn forged_send_override_is_refused_and_the_opt_out_still_holds() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    opted_out_contact(
+        &vault,
+        test_id(0xE6),
+        test_id(0xE7),
+        "kenji@example.com",
+        CounterpartyOptOutReason::Stop,
+    )?;
+    let party_ref = crate::comm::resolve_or_create_comm_party(&vault, "kenji@example.com")
+        .expect("resolve party");
+    let forged = crate::comm::CommClaimValue::SendOverride {
+        party_ref,
+        channel_class: None,
+        scope: crate::comm::SendOverrideScope::Standing,
+        send_ref: None,
+        issued_at: 0,
+        valid_to: None,
+    }
+    .claim_body()?;
+    // Written before any manifest, under the bootstrap policy, as the finding
+    // describes: the door itself must refuse, not a policy row.
+    let mut writes = Vec::new();
+    for (seed, approval) in [
+        (0xF1, ClaimApprovalStatus::Auto),
+        (0xF3, ClaimApprovalStatus::Approved),
+    ] {
+        let mut body = forged.clone();
+        body.approval = approval;
+        let door = vault.put_claim(&test_id(seed), &body, TimeRange { start: 1, end: 1 }, 1);
+        writes.push((format!("public claim door, {approval:?}"), door.is_ok()));
+        let raw_put = vault
+            .batch()
+            .put(
+                &test_id(seed + 1),
+                crate::registry::ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &crate::claim::encode_claim_body(&body)?,
+            )
+            .commit();
+        writes.push((format!("raw batch put, {approval:?}"), raw_put.is_ok()));
+    }
+
+    put_policy_manifest_bytes(&vault, test_id(0xE5), &opt_out_posture_manifest(None))?;
+    let policy = resolve(&vault)?;
+    let mut effect = external_effect_gate_input("sender", "send", "line");
+    effect.counterparty = Some("kenji@example.com".to_owned());
+    let (_decision_id, held, _charge) = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+    })?;
+    assert_eq!(held.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        gate_reason_strs(&held),
+        vec!["gate.pending.counterparty_opt_out"]
+    );
+    let admitted: Vec<&String> = writes
+        .iter()
+        .filter(|(_, admitted)| *admitted)
+        .map(|(door, _)| door)
+        .collect();
+    assert!(
+        admitted.is_empty(),
+        "forged overrides admitted: {admitted:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn override_receipt_is_source_specific() -> Result<()> {
     let (_tmp, vault) = temp_vault();

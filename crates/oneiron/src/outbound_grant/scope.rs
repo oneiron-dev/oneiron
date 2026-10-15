@@ -206,8 +206,12 @@ impl StandingOutboundGrantScope {
         }
         match self {
             Self::ArtifactPublish { .. } => false,
+            // A send to this contact, never another verb aimed at them: an
+            // invite is a send, a share or a provision is not.
             Self::Contact { contact_ref } => {
-                counterparty.is_some_and(|counterparty| refs_match(contact_ref, counterparty))
+                (is_send_class_verb(verb) || verb.trim() == crate::calendar::CALENDAR_INVITE_VERB)
+                    && counterparty
+                        .is_some_and(|counterparty| refs_match(contact_ref, counterparty))
             }
             Self::VerbClass { verb_class } => verb_class.trim() == verb.trim(),
             Self::Channel {

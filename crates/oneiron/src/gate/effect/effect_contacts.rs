@@ -2,10 +2,10 @@
 
 use crate::comm::SendOverrideMatch;
 use crate::counterparty_contact::{
-    CounterpartyContactRecord, CounterpartyFirstTouch, counterparty_contact_by_index_in_txn,
-    counterparty_contact_matches_channel_class, counterparty_contacts_by_party_channel,
-    counterparty_contacts_by_party_full_scan, normalize_channel_class,
-    read_counterparty_contact_in_txn,
+    CounterpartyContactRecord, CounterpartyContactStatus, CounterpartyFirstTouch,
+    counterparty_contact_by_index_in_txn, counterparty_contact_matches_channel_class,
+    counterparty_contacts_by_party_channel, counterparty_contacts_by_party_full_scan,
+    normalize_channel_class, read_counterparty_contact_in_txn,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -17,6 +17,10 @@ use crate::store::Store;
 /// receipt-reason family.
 const COUNTERPARTY_OPT_OUT_DO_NOT_CONTACT_RECEIPT_REASON: &str =
     "counterparty_opt_out_do_not_contact";
+
+/// Receipt reason for a hold whose restrictive source is an owner-revoked
+/// `COUNTERPARTY_CONTACT` row. Same closed `counterparty_*` family.
+const COUNTERPARTY_CONTACT_REVOKED_RECEIPT_REASON: &str = "counterparty_contact_revoked";
 
 /// Hydrates the counterparty consent facts the external-effect door decides on.
 ///
@@ -63,11 +67,16 @@ pub(crate) fn hydrate_external_effect_contact(
         {
             hydrated.policy_risk = ExternalEffectPolicyRisk::HoldToProposal;
         }
-        hydrated.counterparty_opted_out |= record.is_opted_out();
-        if record.is_opted_out() && hydrated.counterparty_opt_out_receipt_reason.is_none() {
+        // An owner-revoked contact is unreachable: it suppresses the send like
+        // an opt-out, under its own reason, and an active sibling row never
+        // clears it.
+        let revoked = record.status == CounterpartyContactStatus::Revoked;
+        hydrated.counterparty_opted_out |= record.is_opted_out() || revoked;
+        if hydrated.counterparty_opt_out_receipt_reason.is_none() {
             hydrated.counterparty_opt_out_receipt_reason = record
                 .opt_out
-                .map(crate::counterparty_contact::CounterpartyOptOut::receipt_reason);
+                .map(crate::counterparty_contact::CounterpartyOptOut::receipt_reason)
+                .or_else(|| revoked.then_some(COUNTERPARTY_CONTACT_REVOKED_RECEIPT_REASON));
         }
     }
 

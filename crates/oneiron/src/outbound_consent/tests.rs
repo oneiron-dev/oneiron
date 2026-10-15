@@ -1298,6 +1298,66 @@ fn recovery_keeps_charter_never_list_and_drift_recoverable_pending() {
     );
 }
 
+/// H163: revoking the standing grant is an immediate consent boundary. A
+/// paid Pending call frozen under it never reaches the wire on recovery,
+/// though its binding still authenticates; a live connector does not save it.
+#[test]
+fn revoked_grant_abandons_paid_pending_without_transport() {
+    let (_tmp, vault) = temp_vault();
+    let grant_id = entity(0x9D);
+    let grant = vault
+        .mint_scoped_mcp_outbound_grant(&grant_id, &scoped_intent(), 10)
+        .expect("mint scoped grant");
+    register_active_scoped_connector_key_with_budget(&vault, &grant_id, "files", 1);
+    let authority = OutboundBindingAuthority::for_vault(&vault).expect("binding authority");
+    let mut ambiguous = AmbiguousResultSender;
+    execute_scoped_mcp_outbound_call(
+        &vault,
+        &authority,
+        grant_id,
+        &grant,
+        &grant.principal_ref,
+        AttemptId::from_bytes(&[0x78; 16]).expect("attempt id"),
+        1,
+        prepared_fixture(
+            &vault,
+            &grant_id,
+            scoped_call(),
+            OutboundToolDescriptor {
+                read_only_hint: Some(false),
+                idempotency_supported_hint: Some(true),
+            },
+            b"grant revoked pending".to_vec(),
+        ),
+        11,
+        &mut ambiguous,
+    )
+    .expect("initial paid Pending");
+    vault
+        .revoke_standing_outbound_grant(&grant_id, 12)
+        .expect("revoke grant");
+
+    let mut transport = RecordingResultSender::default();
+    let recovered =
+        recover_authorized_outbound_intents(&vault, &authority, &mut transport, 13, 30_000)
+            .expect("revoked-grant recovery");
+    assert_eq!(recovered.effectful_sends, 0);
+    assert_eq!(recovered.ledger.resent, 0);
+    assert!(transport.sent_payloads.is_empty());
+    let row = intent_ledger_records(&vault)
+        .expect("read abandoned row")
+        .into_iter()
+        .next()
+        .expect("row");
+    assert_eq!(row.state, IntentState::Abandoned);
+    assert_eq!(
+        row.recorded_outcome,
+        Some(RecordedOutboundOutcome::Abandoned(
+            IntentEscalationReason::BindingInvalid
+        ))
+    );
+}
+
 #[test]
 fn revoked_connector_abandons_paid_pending_without_transport() {
     let (_tmp, vault) = temp_vault();

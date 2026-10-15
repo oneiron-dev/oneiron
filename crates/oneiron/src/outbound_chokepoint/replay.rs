@@ -120,7 +120,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
         record.capability_provenance().is_some() || record.resolved_endpoint.is_some();
     if requires_frozen_call_validation
         && !matches!(
-            authority.validate_frozen_call_grant_for_recovery(vault, &call)?,
+            authority.validate_frozen_call_grant(vault, &call)?,
             FrozenCallValidation::Valid
         )
     {
@@ -216,7 +216,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
     // F2 is checked again at the last in-process boundary before transport.
     if requires_frozen_call_validation
         && !matches!(
-            authority.validate_frozen_call_grant_for_recovery(vault, &call)?,
+            authority.validate_frozen_call_grant(vault, &call)?,
             FrozenCallValidation::Valid
         )
     {

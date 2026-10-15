@@ -6939,3 +6939,38 @@ fn a_peer_edit_reaches_a_world_born_task_only_through_its_own_world() {
         }
     }
 }
+
+/// H212 — a grant bound to two Active pacts exports a `same_as` link only
+/// with consent for BOTH, since either pact's peer may hold the grant. One
+/// pact's consent says nothing about the other, and no consent claim crosses
+/// at all: it names one pact to a peer that may belong to the other.
+#[test]
+fn multi_pact_grant_needs_every_pacts_consent_and_ships_no_consent_claim() {
+    let fixture = coreference_export(false);
+    seed_scoped_pacts_for_grant(
+        &fixture.vault,
+        fixture.grant_id,
+        &[all_direction_scope(), all_direction_scope()],
+    );
+    // The two pacts `seed_scoped_pacts_for_grant` binds, lowest first.
+    let (pact_p, pact_q) = ([0x81; 32], [0x82; 32]);
+    let consent_p = fixture.consent(&pact_p);
+
+    let (ids, linked) = fixture.filtered(&[fixture.status_claim, consent_p]);
+    assert!(
+        ids.contains(&fixture.control_claim),
+        "the control claim must cross, else this proves nothing"
+    );
+    assert!(!linked, "consent for one bound pact exported the link");
+    assert!(!ids.contains(&fixture.status_claim));
+    assert!(!ids.contains(&consent_p));
+
+    let consent_q = fixture.consent(&pact_q);
+    let (ids, linked) = fixture.filtered(&[fixture.status_claim, consent_p, consent_q]);
+    assert!(linked, "consent for every bound pact exports the link");
+    assert!(ids.contains(&fixture.status_claim));
+    assert!(
+        !ids.contains(&consent_p) && !ids.contains(&consent_q),
+        "a pact's consent claim crossed under a shared grant"
+    );
+}

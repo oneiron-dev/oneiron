@@ -30,18 +30,23 @@ use super::codec::{SyncSelector, SyncSelectorWorld};
 /// built once, read on every row — so the edge pass and the claim pass cannot
 /// reach different conclusions about the same link.
 ///
-/// `pact_id` absent means the grant is UNPACTED, and an unpacted grant carries
+/// No `pact_ids` means the grant is UNPACTED, and an unpacted grant carries
 /// no coreference material at all: with no pact there is nothing a consent
 /// claim could name, so a consent-SHAPED claim in the window is not consent to
 /// anything. That case is not special-cased anywhere — it falls out of
 /// `allowed_links` being empty.
+///
+/// A grant bound to several Active pacts exports under all of them at once,
+/// since any of their peers may hold it: a link needs consent for EVERY one,
+/// and no consent claim travels, because each names one pact to a peer that
+/// may belong to another.
 #[derive(Debug, Default)]
 pub(super) struct CoreferenceExportContext {
-    /// The pact this export runs under, when the grant is pact-bound.
-    pact_id: Option<[u8; COREFERENCE_PACT_ID_LEN]>,
-    /// Links the owner consented to share into exactly `pact_id`, with
-    /// endpoint order normalized — consent is a property of the LINK, not of
-    /// which endpoint happens to be stored as the source.
+    /// Every pact this export runs under, when the grant is pact-bound.
+    pact_ids: BTreeSet<[u8; COREFERENCE_PACT_ID_LEN]>,
+    /// Links the owner consented to share into every pact in `pact_ids`,
+    /// with endpoint order normalized — consent is a property of the LINK,
+    /// not of which endpoint happens to be stored as the source.
     allowed_links: BTreeSet<(EntityId, EntityId)>,
 }
 
@@ -86,13 +91,15 @@ impl CoreferenceExportContext {
         if body.predicate != crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT {
             return true;
         }
-        matches!(
-            (
-                self.pact_id,
-                crate::claim::coreference_share_consent_pact_id(body),
-            ),
-            (Some(pact), Ok(claimed)) if claimed == pact
-        )
+        let mut pacts = self.pact_ids.iter();
+        match (
+            pacts.next(),
+            pacts.next(),
+            crate::claim::coreference_share_consent_pact_id(body),
+        ) {
+            (Some(pact), None, Ok(claimed)) => claimed == *pact,
+            _ => false,
+        }
     }
 }
 
@@ -149,18 +156,22 @@ pub(super) fn coreference_export_context(
     // The readonly fold is pact-equivalent for this check: first-seen timing
     // only gates stale-roster approval expiry, never pact binding or status.
     let fold = vault.authority_fold_readonly_in_txn(rtxn)?;
-    let Some(pact_id) = active_export_pact(&fold, &selector.grant_id) else {
+    let pact_ids = active_export_pacts(&fold, &selector.grant_id);
+    if pact_ids.is_empty() {
         return Ok(CoreferenceExportContext::default());
-    };
+    }
 
     let mut allowed_links = BTreeSet::new();
-    for (a, b) in pairs {
-        if coreference_shared_for_pact_in_txn(vault, rtxn, a, b, &pact_id)? {
-            allowed_links.insert((a, b));
+    'links: for (a, b) in pairs {
+        for pact_id in &pact_ids {
+            if !coreference_shared_for_pact_in_txn(vault, rtxn, a, b, pact_id)? {
+                continue 'links;
+            }
         }
+        allowed_links.insert((a, b));
     }
     Ok(CoreferenceExportContext {
-        pact_id: Some(pact_id),
+        pact_ids,
         allowed_links,
     })
 }
@@ -250,38 +261,52 @@ pub(super) fn document_coreference_context_in_txn(
     source: EntityId,
     target: EntityId,
 ) -> Result<CoreferenceExportContext> {
-    let Some(pact_id) = active_export_pact(fold, &selector.grant_id) else {
+    let pact_ids = active_export_pacts(fold, &selector.grant_id);
+    if pact_ids.is_empty() {
         return Ok(CoreferenceExportContext::default());
-    };
+    }
     let mut allowed_links = BTreeSet::new();
-    if crate::federation::coreference_shared_for_pact_in_txn(vault, txn, source, target, &pact_id)?
-    {
+    let mut consented = true;
+    for pact_id in &pact_ids {
+        if !crate::federation::coreference_shared_for_pact_in_txn(
+            vault, txn, source, target, pact_id,
+        )? {
+            consented = false;
+            break;
+        }
+    }
+    if consented {
         allowed_links.insert(normalized_coreference_pair(source, target));
     }
     Ok(CoreferenceExportContext {
-        pact_id: Some(pact_id),
+        pact_ids,
         allowed_links,
     })
 }
 
-/// The id of the ACTIVE pact governing `grant_id`, or `None` when the grant is
+/// The id of every pact bound to `grant_id`, or none when the grant is
 /// unpacted or its governing pact is not Active.
 ///
-/// Which pact governs is [`AuthorityFold::pact_for_grant`]'s decision and stays
-/// there; this only recovers the id, which the fold keys the map by rather than
-/// storing in the state. The identity comparison is by reference into that same
-/// map, so it can never match a different pact that merely compares equal.
-fn active_export_pact(
+/// Whether the grant may export at all is [`AuthorityFold::pact_for_grant`]'s
+/// decision and stays there: it folds every bound pact to the most
+/// restrictive status, so an Active answer means each bound pact is Active.
+/// Every one of them is then a context the export runs under, never only the
+/// one the fold happened to return.
+fn active_export_pacts(
     fold: &AuthorityFold,
     grant_id: &EntityId,
-) -> Option<[u8; COREFERENCE_PACT_ID_LEN]> {
-    let pact = fold.pact_for_grant(grant_id)?;
-    if pact.status != FederationPactStatus::Active {
-        return None;
+) -> BTreeSet<[u8; COREFERENCE_PACT_ID_LEN]> {
+    if fold
+        .pact_for_grant(grant_id)
+        .is_none_or(|pact| pact.status != FederationPactStatus::Active)
+    {
+        return BTreeSet::new();
     }
     fold.federation_pacts
         .iter()
-        .find_map(|(id, candidate)| std::ptr::eq(candidate, pact).then_some(*id))
+        .filter(|(_, pact)| pact.grant_ref == *grant_id)
+        .map(|(id, _)| *id)
+        .collect()
 }
 
 /// One source entity's `FacetOf` scope, as read by [`facet_scope_by_source`].

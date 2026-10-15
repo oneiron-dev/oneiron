@@ -158,7 +158,7 @@ pub(super) fn hydrate_calendar_invite_hygiene(
     payload: &CalendarInvitePayload,
 ) -> Result<CalendarInviteHygieneContext, CalendarError> {
     let recipient = payload.recipient.trim();
-    let consent_basis = resolve_consent_basis(vault, recipient)?;
+    let consent_basis = resolve_consent_basis(vault, actor, event_ref, recipient)?;
     let recipient_bound_to_invite = recipient_is_bound_attendee(vault, &event_ref, recipient)?;
     let sender = sending_identity(vault, actor)?;
     let primary_domain = primary_calendar_domain(vault, actor)?;
@@ -178,9 +178,13 @@ pub(super) fn hydrate_calendar_invite_hygiene(
     })
 }
 
-/// Prior thread first, then a verified standing grant. Never minted here.
+/// Prior thread first, then a verified standing grant that covers THIS
+/// invite: one `actor` holds, and a booking page grant only for the exact
+/// confirmed booking `event_ref` is. Never minted here.
 pub(crate) fn resolve_consent_basis(
     vault: &Vault,
+    actor: EntityId,
+    event_ref: EntityId,
     recipient: &str,
 ) -> Result<Option<CalendarInviteConsentBasis>, CalendarError> {
     consent_basis(
@@ -193,7 +197,7 @@ pub(crate) fn resolve_consent_basis(
             )
             .map_err(|err| ingest_reason(err.to_string()))
         },
-        || StandingGrants::read(vault)?.covering(recipient),
+        || StandingGrants::read(vault)?.covering_invite(vault, actor, event_ref, recipient),
     )
 }
 
@@ -354,7 +358,48 @@ impl StandingGrants {
     }
 
     /// Verifies — never mints — an ACTIVE standing outbound grant that covers
-    /// invites to this recipient.
+    /// one invite: held by the sending `actor`, and for a booking page, bound
+    /// to the invite's own EVENT — never a different booking of the same
+    /// recipient on that page, and never another principal's grant.
+    fn covering_invite(
+        &self,
+        vault: &Vault,
+        actor: EntityId,
+        event_ref: EntityId,
+        recipient: &str,
+    ) -> Result<Option<EntityId>, CalendarError> {
+        let principal = actor.to_hex();
+        let mut matched: Option<EntityId> = None;
+        for (grant_ref, grant) in &self.grants {
+            if !live(grant) || grant.principal_ref != principal {
+                continue;
+            }
+            let covers = match &grant.scope {
+                StandingOutboundGrantScope::BookingPageInvites { .. } => {
+                    crate::booking::booking_page_invites_authorizes(
+                        vault,
+                        &grant.scope,
+                        &crate::booking::BookingPageInviteContext {
+                            booking_ref: event_ref,
+                            verb_kind: super::payload::CALENDAR_INVITE_VERB,
+                            requested_recipient: recipient,
+                        },
+                    )
+                    .map_err(|err| ingest_reason(err.to_string()))?
+                }
+                scope => recipient_scope_covers(scope, recipient),
+            };
+            // Converge on one deterministic grant when several cover the same send.
+            if covers && matched.is_none_or(|current| grant_ref.as_bytes() < current.as_bytes()) {
+                matched = Some(*grant_ref);
+            }
+        }
+        Ok(matched)
+    }
+
+    /// Verifies — never mints — an ACTIVE standing outbound grant that covers
+    /// invites to this recipient. A recipient-only view for the decision
+    /// checkpoint; an invite's own consent is `covering_invite`.
     ///
     /// BK-03 (ONE-1814) owns the booking-page grant and the
     /// `BookingPageInvites`-shaped scope; this door reads whatever the existing
@@ -369,13 +414,6 @@ impl StandingGrants {
                 continue;
             }
             let covers = match &grant.scope {
-                StandingOutboundGrantScope::Contact { contact_ref } => {
-                    contact_ref.trim().eq_ignore_ascii_case(recipient)
-                }
-                StandingOutboundGrantScope::Channel { channel } => {
-                    crate::counterparty_contact::normalize_channel_class(channel)
-                        == CALENDAR_INVITE_CHANNEL
-                }
                 // BK-03's booking-page grant. The scope names a PAGE, never a
                 // recipient, so a bare `true` here would turn one page grant into
                 // a licence to invite anyone. The booking layer owns the binding
@@ -386,7 +424,7 @@ impl StandingGrants {
                     .bookings
                     .covers(page_ref, recipient)
                     .map_err(|err| ingest_reason(err.to_string()))?,
-                _ => false,
+                scope => recipient_scope_covers(scope, recipient),
             };
             // Converge on one deterministic grant when several cover the same send.
             if covers && matched.is_none_or(|current| grant_ref.as_bytes() < current.as_bytes()) {
@@ -394,6 +432,21 @@ impl StandingGrants {
             }
         }
         Ok(matched)
+    }
+}
+
+/// Whether a recipient-scoped grant (a contact-scoped grant for this exact
+/// recipient, or a channel-scoped grant on the calendar connector) covers an
+/// invite to `recipient`. Every other scope answers `false`.
+fn recipient_scope_covers(scope: &StandingOutboundGrantScope, recipient: &str) -> bool {
+    match scope {
+        StandingOutboundGrantScope::Contact { contact_ref } => {
+            contact_ref.trim().eq_ignore_ascii_case(recipient)
+        }
+        StandingOutboundGrantScope::Channel { channel } => {
+            crate::counterparty_contact::normalize_channel_class(channel) == CALENDAR_INVITE_CHANNEL
+        }
+        _ => false,
     }
 }
 

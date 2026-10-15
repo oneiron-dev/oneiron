@@ -1029,3 +1029,76 @@ fn gate_denial_prevents_invite_even_with_live_page_grant() {
             .is_empty()
     );
 }
+
+/// H279: a page grant covers the invite for the confirmed booking it was
+/// checked against, never an unrelated EVENT sent to the same booker, and
+/// never another principal's send.
+#[test]
+fn page_grant_never_covers_an_unrelated_event_or_another_sender() {
+    let fixture = fixture();
+    let grant_ref = fixture.grant();
+
+    // E2: an EVENT with its own indexed UID and no booking on the page. The
+    // booker's confirmed booking E1 on the page must not lend it consent.
+    let unrelated = event(&fixture.vault, 0x6A);
+    let unrelated_uid = format!("{}@{BOOKING_PASSPORT_SYSTEM}", unrelated.to_hex());
+    index_passport_uid(&fixture.vault, &unrelated_uid, &unrelated).expect("index uid");
+    let unrelated_blob = ics_blob(&fixture.vault, 0x6B, fixture.actor, &unrelated_uid, 0);
+    let mut unrelated_payload = payload_for(&fixture, &unrelated_blob, RECIPIENT);
+    unrelated_payload.uid.clone_from(&unrelated_uid);
+    assert!(
+        admit_calendar_invite(&fixture.vault, fixture.actor, &unrelated_payload, NOW).is_err(),
+        "the booking's consent admitted an unrelated EVENT"
+    );
+    let mut sink = SpySink::default();
+    assert!(
+        enqueue_confirm_invite(
+            &fixture.vault,
+            fixture.actor,
+            grant_ref,
+            &ConfirmedBookingInvite {
+                booking_ref: fixture.booking,
+                uid: &unrelated_uid,
+                sequence: 0,
+                ics_blob_ref: &unrelated_blob,
+            },
+            &mut sink,
+            NOW,
+        )
+        .is_err(),
+        "the booking's grant dispatched an invite for another EVENT"
+    );
+    assert_eq!(sink.calls, 0);
+
+    // Another sender, with its own primary-domain identity, borrows nothing
+    // from this actor's page grant.
+    let other_actor = person(&fixture.vault, 0x6C, b"another sender");
+    identity(
+        &fixture.vault,
+        0x6D,
+        other_actor,
+        "email",
+        "other@primary.test",
+    );
+    let theirs = ics_blob(&fixture.vault, 0x6E, other_actor, &fixture.uid, 0);
+    assert!(
+        admit_calendar_invite(
+            &fixture.vault,
+            other_actor,
+            &payload_for(&fixture, &theirs, RECIPIENT),
+            NOW,
+        )
+        .is_err(),
+        "another principal's page grant supplied this sender's consent"
+    );
+
+    // The booking's own invite, from the grant's own principal, is admitted.
+    let own = ics_blob(&fixture.vault, 0x7C, fixture.actor, &fixture.uid, 0);
+    admit_calendar_invite(
+        &fixture.vault,
+        fixture.actor,
+        &payload_for(&fixture, &own, RECIPIENT),
+        NOW,
+    )
+    .expect("the confirmed booking's own invite is admitted");
+}
