@@ -187,7 +187,7 @@ fn ready(dir: &std::path::Path) -> TestResult<Ready> {
         start: now,
         end: now,
     };
-    let owner = vault.ensure_embedded_owner_actor()?;
+    let owner = vault.ensure_embedded_owner_actor().expect("vault owner");
     vault.put_entity(
         &owner,
         oneiron::registry::ENTITY_TYPE_PERSON,
