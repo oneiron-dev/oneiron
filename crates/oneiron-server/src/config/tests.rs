@@ -114,3 +114,23 @@ fn an_unreadable_trusted_proxy_stops_startup() {
     assert!(host.contains(ip("::1")) && !host.contains(ip("::2")));
     assert!(mapped.contains(ip("192.0.2.200")) && !mapped.contains(ip("192.0.3.1")));
 }
+
+/// Review r9 (Sol R9-1, Astra R9-1): an LFS memory row smaller than one
+/// transfer's room was held to one transfer anyway, past what it said. A
+/// row without room for one transfer in each half now stops startup.
+#[test]
+fn an_lfs_memory_row_without_room_for_a_transfer_stops_startup() {
+    let dir = tempfile::tempdir().expect("config dir");
+    let path = dir.path().join("config.toml");
+    let room = crate::api::transfer::LFS_MEMORY_ROOM;
+    for (bytes, starts) in [(1, false), (2 * room - 1, false), (2 * room, true)] {
+        std::fs::write(&path, format!("[limits]\nlfs_memory_bytes = {bytes}\n")).expect("config");
+        let args = ServeArgs {
+            config: Some(path.clone()),
+            ..ServeArgs::default()
+        };
+        let env = EnvConfig::from_pairs(std::iter::empty::<(&str, &str)>()).expect("env");
+        let resolved = resolve_serve_config_with_sources(&args, env, None);
+        assert_eq!(resolved.is_ok(), starts, "{bytes}: {:?}", resolved.err());
+    }
+}

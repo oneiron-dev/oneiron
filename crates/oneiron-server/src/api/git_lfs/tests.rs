@@ -1269,11 +1269,12 @@ async fn a_request_waiting_for_a_transfer_permit_has_read_none_of_its_body() {
     }
 }
 
-/// Room for one chunk exchange's frames, and the rows' defaults otherwise.
-fn one_frame_config() -> SyncServerConfig {
+/// Room in memory for one chunk exchange and one upload's install, and the
+/// rows' defaults otherwise.
+fn one_room_config() -> SyncServerConfig {
     SyncServerConfig {
         limits: crate::config::LimitsConfig {
-            lfs_frame_bytes: crate::api::transfer::LFS_FRAME_ROOM,
+            lfs_memory_bytes: 2 * crate::api::transfer::LFS_MEMORY_ROOM,
             ..Default::default()
         },
         ..secret_config()
@@ -1317,13 +1318,13 @@ async fn until_asked(server: &Arc<SyncServer>, row: crate::wire_telemetry::Limit
 /// Review r8 (Sol R8-1, Astra R8-2, P1): a chunk exchange reads its request
 /// and builds its reply whole, and only the 2,048-transfer row bounded how
 /// many did, so callers who sent their frames or read their replies slowly
-/// could hold gigabytes of them. An exchange now takes room for its frames
-/// in `lfs_frame_bytes` before it reads a byte and keeps it until its reply
-/// is delivered; past the row the next exchange waits, its body unread, and
-/// the row asks.
+/// could hold gigabytes of them. An exchange now takes room in
+/// `lfs_memory_bytes` before it reads a byte and keeps it until its reply is
+/// delivered; past the row the next exchange waits, its body unread, and the
+/// row asks.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_unread_chunk_reply_keeps_its_frame_room_and_the_next_exchange_waits_unread() {
-    let (_dir, server) = test_server(one_frame_config());
+    let (_dir, server) = test_server(one_room_config());
     // Many times the pieces a reply has in flight.
     let bytes = varied_bytes(1_000_000);
     let (want, token, _) = chunk_want(&server, &bytes);
@@ -1346,8 +1347,8 @@ async fn an_unread_chunk_reply_keeps_its_frame_room_and_the_next_exchange_waits_
     };
     until_asked(
         &server,
-        crate::wire_telemetry::LimitRow::LfsFrameBytes,
-        "the next exchange waits for the frame room before its body arrives",
+        crate::wire_telemetry::LimitRow::LfsMemoryBytes,
+        "the next exchange waits for room in memory before its body arrives",
     )
     .await;
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
@@ -1368,12 +1369,12 @@ async fn an_unread_chunk_reply_keeps_its_frame_room_and_the_next_exchange_waits_
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
-/// Rule five at the LFS frame row: past room for one exchange, which an
+/// Rule five at the LFS memory row: past room for one exchange, which an
 /// unread reply holds, `callers` exchanges on one credential wait, then all
 /// answer once it is let go, and the row asks.
 pub(crate) async fn cross_the_frames(callers: usize) -> crate::admission::Crossing {
     use crate::wire_telemetry::LimitRow;
-    let (_dir, server) = test_server(one_frame_config());
+    let (_dir, server) = test_server(one_room_config());
     let (want, token, _) = chunk_want(&server, &varied_bytes(1_000_000));
     let unread = unread_exchange(&server, &token, want.clone()).await;
     let calls: Vec<_> = (0..callers)
@@ -1388,7 +1389,7 @@ pub(crate) async fn cross_the_frames(callers: usize) -> crate::admission::Crossi
             tokio::spawn(async move { route(&server, request).await.0 })
         })
         .collect();
-    until_asked(&server, LimitRow::LfsFrameBytes, "the exchanges wait").await;
+    until_asked(&server, LimitRow::LfsMemoryBytes, "the exchanges wait").await;
     drop(unread);
     let mut refused = 0;
     for call in calls {
@@ -1398,8 +1399,41 @@ pub(crate) async fn cross_the_frames(callers: usize) -> crate::admission::Crossi
     }
     crate::admission::Crossing {
         refused,
-        asked: asked(&server, LimitRow::LfsFrameBytes),
+        asked: asked(&server, LimitRow::LfsMemoryBytes),
     }
+}
+
+/// Review r9 (Sol R9-2, P1): an upload's install reads an object of up to
+/// 8 MiB whole (and, past it, an edge-split segment) for the credential
+/// scan, and only the 2,048-transfer row bounded how many did at once. Once
+/// its body is spooled an upload now takes room in `lfs_memory_bytes` and
+/// keeps it until it is stored; past the row it waits, and the row asks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_spooled_upload_waits_for_room_in_memory_to_install() {
+    use crate::wire_telemetry::LimitRow;
+    let (_dir, server) = test_server(one_room_config());
+    // The only install room, held as an install in progress would hold it.
+    let held = server.transfers.hold_install_room();
+    let bytes = b"a small object its install reads whole".to_vec();
+    let waiting = {
+        let server = Arc::clone(&server);
+        tokio::spawn(async move { put(&server, &writer_token(), &bytes).await })
+    };
+    until_asked(
+        &server,
+        LimitRow::LfsMemoryBytes,
+        "the spooled upload waits for room to install",
+    )
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(!waiting.is_finished(), "nothing is stored while it waits");
+
+    drop(held);
+    let status = tokio::time::timeout(PATIENCE, waiting)
+        .await
+        .expect("the upload has its turn")
+        .expect("upload task");
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

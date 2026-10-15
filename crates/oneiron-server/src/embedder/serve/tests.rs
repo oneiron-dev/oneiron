@@ -728,3 +728,87 @@ async fn an_answer_row_smaller_than_the_models_largest_answer_is_never_served_un
     assert!(claim.is_none(), "no answer is held under a smaller claim");
     assert_eq!(row.held_bytes(), 0);
 }
+
+/// A model whose every float is its one value, in rows of `CONSTANT_DIMS`.
+struct Constant(f32);
+
+/// Floats in each row the constant model answers.
+const CONSTANT_DIMS: usize = 64;
+
+impl ServedModel for Constant {
+    fn model_id(&self) -> &str {
+        SYNTHETIC_MODEL
+    }
+
+    fn dimensions(&self) -> usize {
+        CONSTANT_DIMS
+    }
+
+    fn transform(&self) -> &str {
+        SYNTHETIC_TRANSFORM
+    }
+
+    fn profile(&self) -> &RunProfile {
+        static PROFILE: std::sync::OnceLock<RunProfile> = std::sync::OnceLock::new();
+        PROFILE.get_or_init(|| RunProfile::of(&EmbedderConfig::default()))
+    }
+
+    fn provenance(&self) -> EmbeddingProvenance {
+        EmbeddingProvenance::new(oneiron::embed::EmbeddingDevice::Cuda, "candle 0.11.0 q8_0")
+    }
+
+    fn embed_raw(
+        &self,
+        texts: &[String],
+        _side: Side,
+        _instruction: Option<&str>,
+        _priority: Priority,
+    ) -> oneiron::Result<Embedded> {
+        Ok(Embedded {
+            rows: texts.iter().map(|_| vec![self.0; CONSTANT_DIMS]).collect(),
+            tokens: texts.len(),
+        })
+    }
+}
+
+/// Review r9 (Astra R9-2, P2): an answer was encoded into a buffer that grew
+/// by doubling, so it could hold up to twice the room it took. It is now
+/// encoded into a buffer of exactly its room's encoding share, never grown,
+/// which holds an answer of the most inputs, every float in one of the
+/// longest forms JSON writes.
+#[test]
+fn an_answer_of_the_longest_floats_fits_the_room_it_took() {
+    // Written `-0.0000010000008`: a sign, `0.`, five zeros and eight digits.
+    let longest = f32::from_bits(0xb586_37c4);
+    let written = serde_json::to_string(&longest).expect("float");
+    assert_eq!(written.len(), 16, "{written}");
+    let served = Arc::new(
+        Served::new(
+            Arc::new(Constant(longest)),
+            Vec::new(),
+            Some(Zeroizing::new(KEY.to_owned())),
+            &crate::config::LimitsConfig::default(),
+        )
+        .expect("served"),
+    );
+    let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
+    let inputs: Vec<String> = (0..MAX_INPUTS).map(|n| format!("input {n}")).collect();
+    let answer = reqwest::blocking::Client::new()
+        .post(format!("http://{addr}/v1/embeddings"))
+        .header(header::AUTHORIZATION, format!("Bearer {KEY}"))
+        .json(&serde_json::json!({ "model": SYNTHETIC_MODEL, "input": inputs }))
+        .send()
+        .expect("answer");
+    assert_eq!(answer.status(), 200);
+    let body = answer.bytes().expect("body");
+    assert!(body.len() <= encoding_bytes(MAX_INPUTS, CONSTANT_DIMS));
+    let floats = body
+        .windows(written.len())
+        .filter(|window| *window == written.as_bytes())
+        .count();
+    assert_eq!(
+        floats,
+        MAX_INPUTS * CONSTANT_DIMS,
+        "every float in its longest form"
+    );
+}
