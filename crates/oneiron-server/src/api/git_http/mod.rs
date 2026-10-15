@@ -48,6 +48,7 @@
 //! rate cap is added here, and a large pack rides through without ever being
 
 mod gate;
+mod held;
 mod routes;
 mod serve;
 mod status_codec;
@@ -59,4 +60,3 @@ mod tests_lifetime;
 mod tests_push;
 
 pub(crate) use self::routes::git_http_routes;
-pub(crate) use self::serve::GIT_HTTP_MAX_HELD_BYTES;

@@ -5,7 +5,8 @@
 // ---------------------------------------------------------------------------
 
 use super::gate::text_response;
-use super::status_codec::{concat_chunks, rewrite_receive_pack_status};
+use super::held::HeldBytes;
+use super::status_codec::{StatusFault, rewrite_receive_pack_status};
 use crate::api::transfer::{self, BodyPiece, BodyReader};
 use crate::server::SyncServer;
 use axum::body::Body;
@@ -16,7 +17,7 @@ use axum::http::StatusCode;
 use axum::http::header::CONTENT_LENGTH;
 use axum::response::Response;
 use oneiron::origin::smart_http;
-use std::io;
+use std::io::{self, Write};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Handle;
@@ -29,11 +30,6 @@ const GIT_HTTP_STREAM_CHUNKS: usize = 4;
 
 /// The largest request-body piece handed to the backend at once.
 const GIT_HTTP_BODY_PIECE: usize = 64 * 1024;
-
-// Status reports only; fetch packs continue to stream without this bound.
-pub(crate) const GIT_HTTP_MAX_HELD_BYTES: usize = 8 * 1024 * 1024;
-
-pub(super) const GIT_HTTP_MAX_HELD_CHUNKS: usize = 4096;
 
 /// Runs one serve invocation on a blocking worker and streams both directions
 /// through bounded channels.
@@ -53,9 +49,13 @@ pub(super) async fn run_serve(
         return saturated();
     };
     // A push is held until its landing is journaled; everything else streams.
-    let held = request.is_receive_pack();
+    let held = request.is_receive_pack().then(|| {
+        (
+            Arc::clone(server.vault()),
+            server.transfers.git_status_memory,
+        )
+    });
     let idle = server.transfers.idle;
-    let status_memory = server.transfers.git_status_memory;
     let (request_tx, request_rx) = mpsc::channel::<BodyPiece>(GIT_HTTP_STREAM_CHUNKS);
     let (head_tx, head_rx) = oneshot::channel::<ResponseHead>();
     let (response_tx, response_rx) = mpsc::channel::<Bytes>(GIT_HTTP_STREAM_CHUNKS);
@@ -91,8 +91,8 @@ pub(super) async fn run_serve(
         )
     });
 
-    if held {
-        return held_response(head_rx, response_rx, worker, status_memory).await;
+    if let Some((vault, status_memory)) = held {
+        return held_response(head_rx, response_rx, worker, vault, status_memory).await;
     }
     match head_rx.await {
         // The backend answered, and a fetch's answer is the pack itself: it
@@ -105,10 +105,12 @@ pub(super) async fn run_serve(
 /// Holds a push's response until its landing is journaled.
 ///
 /// A fetch's response is a pack and must never be buffered. A push's response
-/// is git's own status report — a handful of pkt-lines, bounded by the number
-/// of refs the push named — while the pack it answers has already streamed IN.
-/// Holding it costs nothing and buys the one thing a push needs: the client is
-/// told the push succeeded only after the publication protocol says it did.
+/// is git's own status report — a pkt-line per ref the push named — while the
+/// pack it answers has already streamed IN. Holding it buys the one thing a
+/// push needs: the client is told the push succeeded only after the
+/// publication protocol says it did. A push may name any number of refs, so
+/// the report is held in memory up to `status_memory` bytes and on disk past
+/// them ([`HeldBytes`]), never refused for its size.
 ///
 /// Streaming the report first and journaling afterwards is what made a refused
 /// publication indistinguishable from a landed one. The client saw `ok`, the
@@ -118,33 +120,51 @@ pub(super) async fn held_response(
     head: oneshot::Receiver<ResponseHead>,
     mut chunks: mpsc::Receiver<Bytes>,
     worker: tokio::task::JoinHandle<oneiron::Result<smart_http::ServeReport>>,
-    limit: usize,
+    vault: Arc<oneiron::Vault>,
+    status_memory: usize,
 ) -> Response {
     let head = head.await.ok();
-    let mut body = Vec::new();
-    let mut bytes = 0usize;
-    let mut exceeded = false;
-    // Keep draining after overflow: dropping the receiver or waiting first can
-    // strand the blocking producer before it journals the effects already made.
-    while let Some(chunk) = chunks.recv().await {
-        if !exceeded {
-            if chunk.len() > limit.saturating_sub(bytes) || body.len() >= GIT_HTTP_MAX_HELD_CHUNKS {
-                exceeded = true;
-                body.clear();
-            } else {
-                bytes += chunk.len();
-                body.push(chunk);
+    // Held on the blocking pool, since a report past memory is written to
+    // disk. Keep draining after a failed write: dropping the receiver or
+    // waiting first can strand the blocking producer before it journals the
+    // effects already made.
+    let holding = tokio::task::spawn_blocking(move || {
+        let mut held = HeldBytes::new(status_memory, smart_http::origin_door_root(&vault).ok());
+        let mut failed = None;
+        while let Some(chunk) = chunks.blocking_recv() {
+            if failed.is_none() {
+                failed = held.write_all(&chunk).err();
             }
         }
-    }
+        (held, failed)
+    });
     let joined = worker.await;
-    if exceeded {
-        return text_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "git status response exceeded its limit; ref effects may be partial; retry to recover",
-        );
+    let held = match holding.await {
+        Ok((held, None)) => held,
+        Ok((_, Some(error))) => return held_failure(&error),
+        Err(_) => return serve_failure(joined),
+    };
+    match tokio::task::spawn_blocking(move || landed_response(head, held, joined)).await {
+        Ok(response) => response,
+        Err(_) => text_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "git status could not be answered; ref effects may be partial; retry to recover",
+        ),
     }
-    landed_response(head, body, joined)
+}
+
+/// A held report that could not be written or read back.
+fn held_failure(error: &io::Error) -> Response {
+    tracing::warn!(kind = ?error.kind(), "git status report could not be held");
+    let status = if error.kind() == io::ErrorKind::StorageFull {
+        StatusCode::INSUFFICIENT_STORAGE
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    };
+    text_response(
+        status,
+        "git status report could not be held; ref effects may be partial; retry to recover",
+    )
 }
 
 /// The response a held push produces, decided by the landing rather than by the
@@ -156,9 +176,12 @@ pub(super) async fn held_response(
 /// compare-and-swap another writer won), the push did not land, and the only
 /// honest answer is a failure the client surfaces rather than the backend's
 /// `ok`.
+///
+/// It reads and writes the held report, so it blocks: call it from the
+/// blocking pool.
 pub(super) fn landed_response(
     head: Option<ResponseHead>,
-    body: Vec<Bytes>,
+    mut body: HeldBytes,
     joined: Result<oneiron::Result<smart_http::ServeReport>, tokio::task::JoinError>,
 ) -> Response {
     let report = match joined {
@@ -171,21 +194,31 @@ pub(super) fn landed_response(
             "git smart-http produced no response",
         );
     };
-    let body = concat_chunks(body);
     let body = if report.ref_results.is_empty() {
         body
     } else {
-        let Some(rewritten) = rewrite_receive_pack_status(&body, &report.ref_results) else {
-            return text_response(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "git per-ref status is unavailable; ref effects may be partial; retry to recover",
-            );
-        };
+        let mut rewritten = body.sibling();
+        match rewrite_receive_pack_status(&mut body, &report.ref_results, &mut rewritten)
+            .and_then(|()| rewritten.flush().map_err(StatusFault::Held))
+        {
+            Ok(()) => {}
+            Err(StatusFault::Unreadable) => {
+                return text_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "git per-ref status is unavailable; ref effects may be partial; retry to recover",
+                );
+            }
+            Err(StatusFault::Held(error)) => return held_failure(&error),
+        }
         // The pkt-line lengths changed. A backend Content-Length is no longer valid.
         headers.retain(|(name, _)| !name.eq_ignore_ascii_case(CONTENT_LENGTH.as_str()));
-        Bytes::from(rewritten)
+        rewritten
     };
-    let mut response = Response::new(Body::from(body));
+    let body = match body.into_body() {
+        Ok(body) => body,
+        Err(error) => return held_failure(&error),
+    };
+    let mut response = Response::new(body);
     apply_response_head(&mut response, status, headers);
     response
 }

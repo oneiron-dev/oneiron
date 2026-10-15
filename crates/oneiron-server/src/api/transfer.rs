@@ -32,8 +32,41 @@ pub(crate) struct Transfers {
     /// Bytes uploads in flight have reserved against `lfs_quota`.
     lfs_reserved: Arc<Mutex<u64>>,
     pub(crate) idle: Duration,
-    /// Bytes of one push's status report held while its landing is journaled.
+    /// Bytes of one push's status report held in memory while its landing is
+    /// journaled; the rest is held on disk.
     pub(crate) git_status_memory: usize,
+}
+
+/// Bytes of one push's status report held in memory: a 512th of the
+/// machine's memory, 8 MiB when that cannot be read. A push holds two such
+/// copies at most, the report and its rewrite, so even every git exchange
+/// holding both at once keeps to a small share of memory.
+fn git_status_memory() -> usize {
+    physical_memory_bytes().map_or(8 * 1024 * 1024, |bytes| {
+        usize::try_from(bytes / 512).unwrap_or(usize::MAX)
+    })
+}
+
+/// Physical memory, when the platform says.
+fn physical_memory_bytes() -> Option<u64> {
+    #[cfg(unix)]
+    {
+        // SAFETY: `sysconf` reads a configuration value and touches no memory
+        // of ours.
+        let (pages, page) = unsafe {
+            (
+                libc::sysconf(libc::_SC_PHYS_PAGES),
+                libc::sysconf(libc::_SC_PAGESIZE),
+            )
+        };
+        let pages = u64::try_from(pages).ok().filter(|pages| *pages > 0)?;
+        let page = u64::try_from(page).ok().filter(|page| *page > 0)?;
+        Some(pages.saturating_mul(page))
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
 }
 
 impl Transfers {
@@ -44,7 +77,7 @@ impl Transfers {
             lfs_quota: limits.lfs_quota_bytes,
             lfs_reserved: Arc::default(),
             idle: Duration::from_millis(limits.transfer_idle_timeout_ms),
-            git_status_memory: crate::api::git_http::GIT_HTTP_MAX_HELD_BYTES,
+            git_status_memory: git_status_memory(),
         }
     }
 
