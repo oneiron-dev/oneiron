@@ -166,7 +166,12 @@ pub(crate) fn invalidate_docs_source_before_put(
         previous != next && docs_source_put_changes(store, txn, id, kind, previous, next)?
     };
     if changed {
-        crate::ports::invalidate_source_in_txn(store, txn, id)?;
+        crate::ports::invalidate_source_in_txn(
+            store,
+            txn,
+            id,
+            crate::ports::DependentWalkDoor::ChangedDocsSource,
+        )?;
     }
     Ok(())
 }

@@ -81,9 +81,37 @@ pub(crate) struct TestHooks {
     /// cut and the snapshot dropped, still holding the session state, before
     /// it asks for the writer.
     pub(crate) after_save_plan: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// The batches a dependent walk may still run after the transaction that
+    /// marked it, as if the device stopped there; `None` runs them all.
+    dependent_walk_batches: Mutex<Option<usize>>,
 }
 
 impl TestHooks {
+    /// Lets this vault's dependent walks run `batches` more batches, then
+    /// stop as a device that went down would.
+    pub(crate) fn stop_dependent_walks_after(&self, batches: usize) {
+        *self
+            .dependent_walk_batches
+            .lock()
+            .expect("dependent walk hook lock") = Some(batches);
+    }
+
+    /// Whether a dependent walk may run one more batch, which this counts.
+    pub(crate) fn run_dependent_walk_batch(&self) -> bool {
+        let mut left = self
+            .dependent_walk_batches
+            .lock()
+            .expect("dependent walk hook lock");
+        match left.as_mut() {
+            None => true,
+            Some(0) => false,
+            Some(left) => {
+                *left -= 1;
+                true
+            }
+        }
+    }
+
     pub(crate) fn install_before_weave_correction_writer(
         &self,
         hook: impl FnOnce() + Send + 'static,

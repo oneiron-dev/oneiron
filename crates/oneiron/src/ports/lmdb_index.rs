@@ -391,7 +391,12 @@ impl TombstoneStore for Vault {
         self.store
             .vault_meta
             .put(txn, &super::integrity::tombstone_key(id), &value.encode())?;
-        super::integrity::invalidate_source_in_txn(&self.store, txn, id)?;
+        super::integrity::invalidate_source_in_txn(
+            &self.store,
+            txn,
+            id,
+            super::DependentWalkDoor::Tombstone,
+        )?;
         super::integrity::mark_stale_in_txn(&self.store, txn, id)
     }
     fn port_tombstone_is_deleted(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
