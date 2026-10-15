@@ -462,8 +462,20 @@ fn reduce(
                 && decision_seats.contains(&entry.person_ref)
         })
         .collect();
+    // A collection completes on the words that count. Replies that lack a
+    // required source stay as evidence but never complete it on their own.
+    let counted: BTreeSet<_> = evidence
+        .iter()
+        .filter(|entry| entry.reason == TaskAskEvidenceReason::Counted)
+        .map(|entry| entry.person_ref)
+        .collect();
     let decision = match &spec.decide {
-        None => TaskAskDecision::Collected,
+        None if need.intersection(&counted).count() >= usize::from(spec.need.count)
+            && required.is_subset(&counted) =>
+        {
+            TaskAskDecision::Collected
+        }
+        None => TaskAskDecision::Unknown,
         Some(TaskAskDecide::First) => words.first().map_or(TaskAskDecision::Unknown, |entry| {
             if entry.word.confirmation.as_ref().is_some_and(|response| {
                 response.decision == super::TaskAskConfirmationDecision::Reject

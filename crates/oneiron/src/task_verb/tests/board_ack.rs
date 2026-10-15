@@ -1198,7 +1198,7 @@ fn a_restore_goes_ahead_past_a_failure_acknowledged_since() {
             now: 121,
         })
         .expect("fail task");
-    let backups = tempfile::tempdir().expect("backups");
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 130).expect("backup");
 
