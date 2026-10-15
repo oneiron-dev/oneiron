@@ -708,3 +708,62 @@ fn a_second_change_mid_walk_withdraws_what_the_first_passed_by() -> Result<()> {
     assert!(vault.pending_dependent_walks()?.is_empty());
     Ok(())
 }
+
+/// A source erased, recreated in no world, and erased again while its first
+/// walk is pending: what only the second mark covers is withdrawn for the
+/// worlds that mark read, none of the first's (Astra R3 on #1471).
+#[test]
+fn a_second_mark_lends_its_rows_none_of_the_first_marks_worlds() -> Result<()> {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    let claim_in = |world: Option<EntityId>| -> Result<Vec<u8>> {
+        let mut claim = ClaimBody::new(
+            "test.walk_world",
+            ClaimSubject::Entity(entity(0x74)),
+            rmpv::Value::from("worded"),
+            0.8,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )?;
+        claim.world = world;
+        crate::claim::encode_claim_body(&claim)
+    };
+    let (_tmp, vault) = open();
+    let (source, world) = (entity(0x5B), entity(0x5E));
+    let claim_type = crate::registry::ENTITY_TYPE_CLAIM;
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        at(1),
+        1,
+        b"world",
+    )?;
+    vault.put_entity(&source, claim_type, at(1), 1, &claim_in(Some(world))?)?;
+    derive_five(&vault, &source)?;
+    vault.store.test_hooks.stop_dependent_walks_after(0);
+    assert!(vault.delete_entity(&source)?);
+
+    vault.put_entity(&source, claim_type, at(1), 10, &claim_in(None)?)?;
+    let summary = entity(0xEE);
+    vault
+        .batch()
+        .put(
+            &summary,
+            ENTITY_TYPE_SUMMARY,
+            at(11),
+            11,
+            &epoch_body(2, "steps 6-8")?,
+        )
+        .edge(&summary, EdgeKind::DerivedFrom, &source, 1.0)
+        .commit()?;
+    assert!(vault.delete_entity(&source)?);
+    assert!(withdrawn(&vault, &summary)?);
+    assert_eq!(withdrawn_worlds(&vault, &summary)?, None, "mid-walk");
+    vault
+        .store
+        .test_hooks
+        .stop_dependent_walks_after(usize::MAX);
+    vault.finish_dependent_walks()?;
+    assert!(withdrawn(&vault, &summary)?);
+    assert_eq!(withdrawn_worlds(&vault, &summary)?, None, "after the walk");
+    Ok(())
+}

@@ -19,7 +19,7 @@ use crate::store::{ManifestDbs, Store};
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 
 /// Dependents one write transaction withdraws: the count the walk refused
@@ -193,17 +193,13 @@ impl DependentWalkDoor {
     }
 }
 
-/// What is left of one source's walk. It covers the dependency rows the
-/// source held when it was marked, `(after, end]` in key order. A row written
-/// later is a newer version's (a deleted source takes none), and the walk
-/// leaves it alone.
+/// What one mark of a source covers: the dependency rows `(after, end]` it
+/// held when it was marked, in key order. A row written later is a newer
+/// version's (a deleted source takes none), and the mark leaves it alone.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct WalkRow {
-    door: DependentWalkDoor,
-    /// Dependents withdrawn so far.
-    walked: u64,
-    /// Which mark of the source this walk is: only rows settled under it
-    /// are passed by.
+struct Mark {
+    /// Which mark of the source this is: a row settled at it or a later one
+    /// is passed by.
     generation: u64,
     /// The last row walked; `None` before the first batch.
     after: Option<RowKey>,
@@ -214,48 +210,120 @@ struct WalkRow {
     worlds: CarriedWorlds,
 }
 
-impl WalkRow {
+impl Mark {
     fn covers(&self, row: &RowKey) -> bool {
         self.after.is_none_or(|after| *row > after) && *row <= self.end
     }
-}
 
-/// A walk row's fixed part: door, count, generation, end, cursor.
-const HEAD: usize = 2 + 16 + 2 * ROW;
+    fn covers_none(&self) -> bool {
+        self.after.is_some_and(|after| after >= self.end)
+    }
 
-impl RawValue for WalkRow {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        let mut raw = Vec::with_capacity(HEAD);
-        raw.push(self.door.tag());
-        raw.extend_from_slice(&self.walked.to_be_bytes());
+    fn encode_into(&self, raw: &mut Vec<u8>) -> Result<()> {
         raw.extend_from_slice(&self.generation.to_be_bytes());
         raw.extend_from_slice(&self.end);
         raw.push(u8::from(self.after.is_some()));
         raw.extend_from_slice(&self.after.unwrap_or([0; ROW]));
-        raw.extend_from_slice(&self.worlds.encode());
-        Ok(raw)
+        let worlds = self.worlds.encode();
+        let len = u32::try_from(worlds.len()).map_err(|_| corrupt_walk())?;
+        raw.extend_from_slice(&len.to_be_bytes());
+        raw.extend_from_slice(&worlds);
+        Ok(())
     }
 
-    fn from_raw(raw: &[u8]) -> std::result::Result<Self, CodecError> {
-        let corrupt = || Error::CorruptedIndex("dependent walk");
-        let (head, worlds) = raw.split_at_checked(HEAD).ok_or_else(corrupt)?;
-        let door = DependentWalkDoor::from_tag(head[0]).ok_or_else(corrupt)?;
-        let walked = u64::from_be_bytes(head[1..9].try_into().map_err(|_| corrupt())?);
-        let generation = u64::from_be_bytes(head[9..17].try_into().map_err(|_| corrupt())?);
-        let end: RowKey = head[17..17 + ROW].try_into().map_err(|_| corrupt())?;
-        let after: RowKey = head[18 + ROW..].try_into().map_err(|_| corrupt())?;
-        let after = match head[17 + ROW] {
+    fn decode_from(raw: &mut &[u8]) -> Result<Self> {
+        let generation = u64::from_be_bytes(take(raw, 8)?.try_into().map_err(|_| corrupt_walk())?);
+        let end: RowKey = take(raw, ROW)?.try_into().map_err(|_| corrupt_walk())?;
+        let flag = take(raw, 1)?[0];
+        let after: RowKey = take(raw, ROW)?.try_into().map_err(|_| corrupt_walk())?;
+        let after = match flag {
             0 => None,
             1 => Some(after),
-            _ => return Err(corrupt().into()),
+            _ => return Err(corrupt_walk()),
         };
+        let len = u32::from_be_bytes(take(raw, 4)?.try_into().map_err(|_| corrupt_walk())?);
+        let worlds = take(raw, usize::try_from(len).map_err(|_| corrupt_walk())?)?;
         Ok(Self {
-            door,
-            walked,
             generation,
             after,
             end,
             worlds: CarriedWorlds::decode(worlds)?,
+        })
+    }
+}
+
+/// What is left of one source's walk: its latest mark, whose cursor the
+/// batches advance, and the earlier marks it had not finished when that one
+/// came. Each earlier one still withdraws the rows it covered ahead of the
+/// cursor, for its own worlds; the latest mark's range holds them all.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WalkRow {
+    door: DependentWalkDoor,
+    /// Dependents withdrawn so far.
+    walked: u64,
+    mark: Mark,
+    earlier: Vec<Mark>,
+}
+
+impl WalkRow {
+    /// The worlds the walk withdraws `row` for, given the mark it was
+    /// settled at; `None` where every mark that covers it passes it by.
+    fn worlds_for(&self, row: &RowKey, settled: Option<u64>) -> Option<CarriedWorlds> {
+        if !self.mark.covers(row) {
+            return None;
+        }
+        let mut worlds: Option<CarriedWorlds> = None;
+        for mark in std::iter::once(&self.mark).chain(&self.earlier) {
+            if mark.covers(row) && settled.is_none_or(|at| at < mark.generation) {
+                worlds
+                    .get_or_insert_with(CarriedWorlds::default)
+                    .absorb(&mark.worlds);
+            }
+        }
+        worlds
+    }
+}
+
+fn corrupt_walk() -> Error {
+    Error::CorruptedIndex("dependent walk")
+}
+
+/// The next `n` bytes of `raw`, which moves past them.
+fn take<'a>(raw: &mut &'a [u8], n: usize) -> Result<&'a [u8]> {
+    let (head, rest) = raw.split_at_checked(n).ok_or_else(corrupt_walk)?;
+    *raw = rest;
+    Ok(head)
+}
+
+impl RawValue for WalkRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut raw = vec![self.door.tag()];
+        raw.extend_from_slice(&self.walked.to_be_bytes());
+        let earlier = u32::try_from(self.earlier.len()).map_err(|_| corrupt_walk())?;
+        raw.extend_from_slice(&earlier.to_be_bytes());
+        for mark in std::iter::once(&self.mark).chain(&self.earlier) {
+            mark.encode_into(&mut raw)?;
+        }
+        Ok(raw)
+    }
+
+    fn from_raw(mut raw: &[u8]) -> std::result::Result<Self, CodecError> {
+        let raw = &mut raw;
+        let door = DependentWalkDoor::from_tag(take(raw, 1)?[0]).ok_or_else(corrupt_walk)?;
+        let walked = u64::from_be_bytes(take(raw, 8)?.try_into().map_err(|_| corrupt_walk())?);
+        let earlier = u32::from_be_bytes(take(raw, 4)?.try_into().map_err(|_| corrupt_walk())?);
+        let mark = Mark::decode_from(raw)?;
+        let earlier = (0..earlier)
+            .map(|_| Mark::decode_from(raw))
+            .collect::<Result<Vec<_>>>()?;
+        if !raw.is_empty() {
+            return Err(corrupt_walk().into());
+        }
+        Ok(Self {
+            door,
+            walked,
+            mark,
+            earlier,
         })
     }
 }
@@ -286,17 +354,6 @@ fn policy_in(store: &Store, txn: &RoTxn<'_>) -> Result<DependentWalkPolicy> {
     Ok(POLICY.get(store, txn, &())?.unwrap_or_default())
 }
 
-/// Whether `walk` passes `document`'s `row` by: settled under this mark.
-fn settled_in(
-    dbs: &impl ManifestDbs,
-    txn: &RoTxn<'_>,
-    document: &EntityId,
-    row: &RowKey,
-    walk: &WalkRow,
-) -> Result<bool> {
-    Ok(SETTLED.get(dbs, txn, &(*document, *row))? == Some(walk.generation))
-}
-
 fn entity_type_in(dbs: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
     Ok(dbs
         .entities()
@@ -308,8 +365,9 @@ fn entity_type_in(dbs: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId) -> Res
 /// Withdraws `document`'s dependents for `door` in the caller's transaction:
 /// the first batch here, and past it a walk row that this transaction leaves
 /// and later ones finish. A walk already pending for `document` starts again
-/// from its first row with the worlds of both, so a dependent it already
-/// withdrew takes the new ones too, as a second walk would give it.
+/// from its first row under the new mark, keeping what the pending one had
+/// not reached as an earlier mark, so each row is withdrawn for the worlds
+/// of the marks that covered it, as two walks would give it.
 pub(super) fn begin_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -331,31 +389,43 @@ pub(super) fn begin_in_txn(
         .transpose()?
         .map(|(key, _)| row_of(&key, &prefix))
         .transpose()?;
-    let Some(mut end) = last else {
+    let Some(end) = last else {
         return Ok(());
     };
     // Where the words sat, read while the row, its stamp and its edges still
     // stand: an epoch summary it withdraws keeps them as its own. A source no
     // one can place withdraws it for an unknown world, and the walk goes on.
-    let mut worlds = integrity::carried_now(store, txn, document)?;
-    let mut walked = 0;
-    let mut generation = 0;
-    if let Some(pending) = WALK.get(store, txn, document)? {
-        worlds.absorb(&pending.worlds);
-        walked = pending.walked;
-        end = end.max(pending.end);
-        // The new mark covers every row the source holds now, those the
-        // pending walk settled too; its batches take their settled rows.
-        generation = pending.generation.wrapping_add(1);
-    }
-    let walk = WalkRow {
+    let worlds = integrity::carried_now(store, txn, document)?;
+    let mut walk = WalkRow {
         door,
-        walked,
-        generation,
-        after: None,
-        end,
-        worlds,
+        walked: 0,
+        mark: Mark {
+            generation: 0,
+            after: None,
+            end,
+            worlds,
+        },
+        earlier: Vec::new(),
     };
+    if let Some(pending) = WALK.get(store, txn, document)? {
+        // A new generation: the rows the pending walk settled are covered
+        // again, and its batches take their settled rows.
+        walk.mark.generation = pending.mark.generation.wrapping_add(1);
+        walk.mark.end = end.max(pending.mark.end);
+        walk.walked = pending.walked;
+        // What the pending walk had not reached it still withdraws, for its
+        // own worlds. One left with only its sweep withdrew all it covered,
+        // and lends the new mark none of its worlds.
+        let cursor = pending.mark.after;
+        walk.earlier = std::iter::once(pending.mark)
+            .chain(pending.earlier)
+            .map(|mut mark| {
+                mark.after = mark.after.max(cursor);
+                mark
+            })
+            .filter(|mark| !mark.covers_none())
+            .collect();
+    }
     batch_in_txn(store, txn, document, walk)
 }
 
@@ -369,11 +439,11 @@ fn batch_in_txn(
 ) -> Result<()> {
     let policy = policy_in(store, txn)?;
     let prefix = [DEP, document.as_bytes()].concat();
-    let lower = walk.after.map_or_else(
+    let lower = walk.mark.after.map_or_else(
         || Bound::Included(prefix.clone()),
         |after| Bound::Excluded([prefix.as_slice(), &after].concat()),
     );
-    let upper = Bound::Included([prefix.as_slice(), &walk.end].concat());
+    let upper = Bound::Included([prefix.as_slice(), &walk.mark.end].concat());
     let range = (
         lower.as_ref().map(Vec::as_slice),
         upper.as_ref().map(Vec::as_slice),
@@ -385,7 +455,7 @@ fn batch_in_txn(
         }
         rows.push(row_of(&row?.0, &prefix)?);
     }
-    let mut dependents = BTreeSet::new();
+    let mut dependents = BTreeMap::<EntityId, CarriedWorlds>::new();
     for row in &rows {
         // A batch takes each settled row it passes, so none outlives the walk.
         let key = (*document, *row);
@@ -393,20 +463,24 @@ fn batch_in_txn(
         if settled.is_some() {
             SETTLED.delete(store, txn, &key)?;
         }
-        if settled != Some(walk.generation) {
-            dependents.insert(dependent_of(row)?);
+        if let Some(worlds) = walk.worlds_for(row, settled) {
+            dependents
+                .entry(dependent_of(row)?)
+                .or_default()
+                .absorb(&worlds);
         }
     }
-    for dependent in &dependents {
-        integrity::withdraw_dependent_in_txn(store, txn, document, dependent, &walk.worlds)?;
+    for (dependent, worlds) in &dependents {
+        integrity::withdraw_dependent_in_txn(store, txn, document, dependent, worlds)?;
     }
     walk.walked = walk.walked.saturating_add(dependents.len() as u64);
     if walk.walked > policy.check_threshold && !CHECK.contains(store, txn, document)? {
         ask_in_txn(store, txn, document, &walk, policy)?;
     }
     match rows.last() {
-        Some(last) if rows.len() as u64 == policy.batch && *last != walk.end => {
-            walk.after = Some(*last);
+        Some(last) if rows.len() as u64 == policy.batch && *last != walk.mark.end => {
+            walk.mark.after = Some(*last);
+            walk.earlier.retain(|mark| mark.end > *last);
             WALK.put(store, txn, document, &walk)
         }
         _ => retire_in_txn(store, txn, document, walk, policy.batch),
@@ -438,7 +512,8 @@ fn retire_in_txn(
         .is_some()
     {
         // Covers no row now; only its sweep is left.
-        walk.after = Some(walk.end);
+        walk.mark.after = Some(walk.mark.end);
+        walk.earlier.clear();
         return WALK.put(store, txn, document, &walk);
     }
     WALK.delete(store, txn, document)?;
@@ -522,15 +597,20 @@ fn direct_withdrawal_in(
     let mut withdrawn: Option<CarriedWorlds> = None;
     for SourceSpan { document, frontier } in sources {
         let row = row_key(*frontier, node);
-        if let Some(walk) = WALK.get(dbs, txn, document)?
-            && walk.covers(&row)
-            && !settled_in(dbs, txn, document, &row, &walk)?
+        let Some(walk) = WALK.get(dbs, txn, document)? else {
+            continue;
+        };
+        if !walk.mark.covers(&row) {
+            continue;
+        }
+        let settled = SETTLED.get(dbs, txn, &(*document, row))?;
+        if let Some(worlds) = walk.worlds_for(&row, settled)
             && !(entity_type == Some(crate::registry::ENTITY_TYPE_EVENT)
                 && crate::calendar::origin::survives_source_deletion(dbs, txn, *node)?)
         {
             withdrawn
                 .get_or_insert_with(CarriedWorlds::default)
-                .absorb(&walk.worlds);
+                .absorb(&worlds);
         }
     }
     Ok(withdrawn)
@@ -568,9 +648,9 @@ pub(super) fn settle_admitted_in_txn(
 ) -> Result<()> {
     let row = row_key(source.frontier, dependent);
     if let Some(walk) = WALK.get(dbs, txn, &source.document)?
-        && walk.covers(&row)
+        && walk.mark.covers(&row)
     {
-        SETTLED.put(dbs, txn, &(source.document, row), &walk.generation)?;
+        SETTLED.put(dbs, txn, &(source.document, row), &walk.mark.generation)?;
     }
     Ok(())
 }
@@ -594,9 +674,10 @@ pub(crate) fn withdraw_before_rewrite_in_txn(
         let Some(walk) = WALK.get(store, txn, &document)? else {
             continue;
         };
-        if walk.covers(&row) && !settled_in(store, txn, &document, &row, &walk)? {
-            integrity::withdraw_dependent_in_txn(store, txn, &document, id, &walk.worlds)?;
-            SETTLED.put(store, txn, &(document, row), &walk.generation)?;
+        let settled = SETTLED.get(store, txn, &(document, row))?;
+        if let Some(worlds) = walk.worlds_for(&row, settled) {
+            integrity::withdraw_dependent_in_txn(store, txn, &document, id, &worlds)?;
+            SETTLED.put(store, txn, &(document, row), &walk.mark.generation)?;
             direct = true;
         }
     }
