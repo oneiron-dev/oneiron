@@ -2221,7 +2221,7 @@ fn a_restore_never_reopens_a_ceremony_rejected_since() -> Result<()> {
         vault.execute_signing_action(first, &SigningAction::Load, None, None)?,
         SigningOutcome::Page(_)
     ));
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, crate::unix_seconds_now())?;
     assert_eq!(

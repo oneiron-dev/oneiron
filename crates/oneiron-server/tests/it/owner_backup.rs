@@ -8,11 +8,15 @@ use oneiron::registry::{ENTITY_TYPE_PERSON, entity_type_registry_entry};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::Value;
 
+/// Runs the binary with its temp directory in the test's own directory, which
+/// a restore accepts on any host (`restore_tempdir`): a rehearsal's scratch
+/// copy is made there.
 fn oneiron(config: &Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_oneiron"))
         .args(args)
         .arg("--config")
         .arg(config)
+        .env("TMPDIR", config.parent().expect("the test directory"))
         .env_remove("ONEIRON_VAULT_PATH")
         .env_remove("ONEIRON_BACKUP_DIR")
         .output()
@@ -49,7 +53,7 @@ fn add_person(path: &Path, body: &[u8]) -> EntityId {
 
 #[test]
 fn backup_rehearse_restore_and_doctor_through_the_cli() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = oneiron::test_support::restore_tempdir();
     let vault_path = dir.path().join("vault");
     let config = dir.path().join("oneiron.toml");
     let init = Command::new(env!("CARGO_BIN_EXE_oneiron"))

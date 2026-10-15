@@ -183,6 +183,11 @@ impl Room {
     /// What `recipe` reads of each message on `uri`: the spaced one, then the
     /// unscoped one.
     async fn reads(&self, recipe: &str, uri: &str) -> (bool, bool) {
+        self.reads_as(test_bearer(recipe), uri).await
+    }
+
+    /// What the request authorized as `authorization` reads, as [`Self::reads`].
+    async fn reads_as(&self, authorization: String, uri: &str) -> (bool, bool) {
         let request = match uri {
             "/v1/core/query" => json!({ "query": "credkey" }),
             _ => json!({
@@ -193,7 +198,7 @@ impl Room {
         };
         let (status, body) = route_json(
             self.server.clone(),
-            core_request_with_authz("POST", uri, test_bearer(recipe), Some(&request)),
+            core_request_with_authz("POST", uri, authorization, Some(&request)),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{uri}: {body}");
@@ -395,6 +400,41 @@ async fn an_agent_class_credential_on_the_owners_person_is_not_the_owners() {
             room.reads(&recipe, "/v1/core/query").await,
             (spaced, true),
             "{class} on /v1/core/query"
+        );
+    }
+}
+
+/// Astra on #1432 F1: a copy of the owner's credential handed to another key
+/// (`attenuate_to`) still names the owner's PERSON, but its holder is a
+/// delegate. It reads a relationship's words only on a grant, as any other
+/// holder does; the copy the owner narrowed for itself still reads them.
+#[tokio::test]
+async fn an_owner_credential_handed_to_another_key_reads_no_relationship_words() {
+    let room = room();
+    pair_mcp_credential(
+        &room.server,
+        "cr-owner",
+        room.owner,
+        oneiron::EdgeActorClass::Human,
+        &crate::mcp::McpConnectorScope::vault_wide(),
+    );
+    transfer_mcp_credential(
+        &room.server,
+        "cr-owner",
+        "cr-delegate",
+        oneiron::authority::SlipCaveat::default(),
+    );
+    attenuate_mcp_credential(
+        &room.server,
+        "cr-owner",
+        oneiron::authority::SlipCaveat::default(),
+    );
+    for (label, spaced) in [("cr-delegate", false), ("cr-owner", true)] {
+        assert_eq!(
+            room.reads_as(format!("Bearer {label}"), "/v1/core/query")
+                .await,
+            (spaced, true),
+            "{label}"
         );
     }
 }
