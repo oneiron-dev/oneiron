@@ -40,8 +40,9 @@ const POLICY: SideTable<(), DependentWalkPolicy, Raw> =
     SideTable::new(&side_table::PORTS_DEPENDENT_WALK_POLICY);
 /// A row the walk of its source passes by: one admitted after the mark, or a
 /// dependent withdrawn early because a put rewrote it. Key: the source and
-/// the row.
-const SETTLED: SideTable<(EntityId, RowKey), (), Raw> =
+/// the row. Value: the generation of the walk that settled it; a later mark
+/// of the source covers the row again.
+const SETTLED: SideTable<(EntityId, RowKey), u64, Raw> =
     SideTable::new(&side_table::PORTS_DEPENDENT_WALK_SETTLED);
 
 /// The frontier and dependent of a dependency row: its key after the source.
@@ -201,6 +202,9 @@ struct WalkRow {
     door: DependentWalkDoor,
     /// Dependents withdrawn so far.
     walked: u64,
+    /// Which mark of the source this walk is: only rows settled under it
+    /// are passed by.
+    generation: u64,
     /// The last row walked; `None` before the first batch.
     after: Option<RowKey>,
     /// The last row the source held at the mark.
@@ -216,11 +220,15 @@ impl WalkRow {
     }
 }
 
+/// A walk row's fixed part: door, count, generation, end, cursor.
+const HEAD: usize = 2 + 16 + 2 * ROW;
+
 impl RawValue for WalkRow {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        let mut raw = Vec::with_capacity(2 + 8 + 2 * ROW);
+        let mut raw = Vec::with_capacity(HEAD);
         raw.push(self.door.tag());
         raw.extend_from_slice(&self.walked.to_be_bytes());
+        raw.extend_from_slice(&self.generation.to_be_bytes());
         raw.extend_from_slice(&self.end);
         raw.push(u8::from(self.after.is_some()));
         raw.extend_from_slice(&self.after.unwrap_or([0; ROW]));
@@ -230,12 +238,13 @@ impl RawValue for WalkRow {
 
     fn from_raw(raw: &[u8]) -> std::result::Result<Self, CodecError> {
         let corrupt = || Error::CorruptedIndex("dependent walk");
-        let (head, worlds) = raw.split_at_checked(2 + 8 + 2 * ROW).ok_or_else(corrupt)?;
+        let (head, worlds) = raw.split_at_checked(HEAD).ok_or_else(corrupt)?;
         let door = DependentWalkDoor::from_tag(head[0]).ok_or_else(corrupt)?;
         let walked = u64::from_be_bytes(head[1..9].try_into().map_err(|_| corrupt())?);
-        let end: RowKey = head[9..9 + ROW].try_into().map_err(|_| corrupt())?;
-        let after: RowKey = head[10 + ROW..].try_into().map_err(|_| corrupt())?;
-        let after = match head[9 + ROW] {
+        let generation = u64::from_be_bytes(head[9..17].try_into().map_err(|_| corrupt())?);
+        let end: RowKey = head[17..17 + ROW].try_into().map_err(|_| corrupt())?;
+        let after: RowKey = head[18 + ROW..].try_into().map_err(|_| corrupt())?;
+        let after = match head[17 + ROW] {
             0 => None,
             1 => Some(after),
             _ => return Err(corrupt().into()),
@@ -243,6 +252,7 @@ impl RawValue for WalkRow {
         Ok(Self {
             door,
             walked,
+            generation,
             after,
             end,
             worlds: CarriedWorlds::decode(worlds)?,
@@ -274,6 +284,25 @@ fn dependent_of(row: &RowKey) -> Result<EntityId> {
 
 fn policy_in(store: &Store, txn: &RoTxn<'_>) -> Result<DependentWalkPolicy> {
     Ok(POLICY.get(store, txn, &())?.unwrap_or_default())
+}
+
+/// Whether `walk` passes `document`'s `row` by: settled under this mark.
+fn settled_in(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    document: &EntityId,
+    row: &RowKey,
+    walk: &WalkRow,
+) -> Result<bool> {
+    Ok(SETTLED.get(dbs, txn, &(*document, *row))? == Some(walk.generation))
+}
+
+fn entity_type_in(dbs: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
+    Ok(dbs
+        .entities()
+        .get(txn, id.as_bytes())?
+        .and_then(|raw| EntityMetadataHeader::parse(&raw))
+        .map(|header| header.entity_type))
 }
 
 /// Withdraws `document`'s dependents for `door` in the caller's transaction:
@@ -310,16 +339,19 @@ pub(super) fn begin_in_txn(
     // one can place withdraws it for an unknown world, and the walk goes on.
     let mut worlds = integrity::carried_now(store, txn, document)?;
     let mut walked = 0;
+    let mut generation = 0;
     if let Some(pending) = WALK.get(store, txn, document)? {
         worlds.absorb(&pending.worlds);
         walked = pending.walked;
         end = end.max(pending.end);
-        // The new mark covers every row the source holds now.
-        SETTLED.delete_from(store, txn, document.as_bytes())?;
+        // The new mark covers every row the source holds now, those the
+        // pending walk settled too; its batches take their settled rows.
+        generation = pending.generation.wrapping_add(1);
     }
     let walk = WalkRow {
         door,
         walked,
+        generation,
         after: None,
         end,
         worlds,
@@ -355,7 +387,13 @@ fn batch_in_txn(
     }
     let mut dependents = BTreeSet::new();
     for row in &rows {
-        if !SETTLED.contains(store, txn, &(*document, *row))? {
+        // A batch takes each settled row it passes, so none outlives the walk.
+        let key = (*document, *row);
+        let settled = SETTLED.get(store, txn, &key)?;
+        if settled.is_some() {
+            SETTLED.delete(store, txn, &key)?;
+        }
+        if settled != Some(walk.generation) {
             dependents.insert(dependent_of(row)?);
         }
     }
@@ -371,12 +409,40 @@ fn batch_in_txn(
             walk.after = Some(*last);
             WALK.put(store, txn, document, &walk)
         }
-        _ => {
-            WALK.delete(store, txn, document)?;
-            SETTLED.delete_from(store, txn, document.as_bytes())?;
-            Ok(())
-        }
+        _ => retire_in_txn(store, txn, document, walk, policy.batch),
     }
+}
+
+/// Retires `walk` once no settled row of `document` is left. A row the
+/// batches never passed (a regeneration moved its dependency) leaves its
+/// settled row behind; those go `budget` a transaction too, so a later walk
+/// of the source starts with none.
+fn retire_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    document: &EntityId,
+    mut walk: WalkRow,
+    budget: u64,
+) -> Result<()> {
+    let left = SETTLED
+        .iter_from(store, txn, document.as_bytes())?
+        .take(usize::try_from(budget).unwrap_or(usize::MAX))
+        .map(|row| row.map(|(key, _)| key))
+        .collect::<Result<Vec<_>>>()?;
+    for key in &left {
+        SETTLED.delete(store, txn, key)?;
+    }
+    if SETTLED
+        .iter_from(store, txn, document.as_bytes())?
+        .next()
+        .is_some()
+    {
+        // Covers no row now; only its sweep is left.
+        walk.after = Some(walk.end);
+        return WALK.put(store, txn, document, &walk);
+    }
+    WALK.delete(store, txn, document)?;
+    Ok(())
 }
 
 /// Records the walk's one check and asks the host whether everything is
@@ -429,23 +495,11 @@ pub(super) fn pending_withdrawal_in(
         if sources.is_empty() {
             continue;
         }
-        let entity_type = dbs
-            .entities()
-            .get(txn, node.as_bytes())?
-            .and_then(|raw| EntityMetadataHeader::parse(&raw))
-            .map(|header| header.entity_type);
-        for SourceSpan { document, frontier } in &sources {
-            let row = row_key(*frontier, &node);
-            if let Some(walk) = WALK.get(dbs, txn, document)?
-                && walk.covers(&row)
-                && !SETTLED.contains(dbs, txn, &(*document, row))?
-                && !(entity_type == Some(crate::registry::ENTITY_TYPE_EVENT)
-                    && crate::calendar::origin::survives_source_deletion(dbs, txn, node)?)
-            {
-                withdrawn
-                    .get_or_insert_with(CarriedWorlds::default)
-                    .absorb(&walk.worlds);
-            }
+        let entity_type = entity_type_in(dbs, txn, &node)?;
+        if let Some(worlds) = direct_withdrawal_in(dbs, txn, &node, &sources, entity_type)? {
+            withdrawn
+                .get_or_insert_with(CarriedWorlds::default)
+                .absorb(&worlds);
         }
         if entity_type == Some(crate::registry::ENTITY_TYPE_SUMMARY)
             && integrity::epoch_summary_in(dbs, txn, &node)?
@@ -456,18 +510,52 @@ pub(super) fn pending_withdrawal_in(
     Ok(withdrawn)
 }
 
-/// Whether any walk is pending: one seek, so a hot read asks once.
-pub(crate) fn any_pending_walk(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<bool> {
-    Ok(WALK.iter_raw_from(dbs, txn, &[])?.next().is_some())
+/// The worlds the pending walks withdraw `node` for through its own
+/// dependency rows, from `sources`; `Some` where one does.
+fn direct_withdrawal_in(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    node: &EntityId,
+    sources: &[SourceSpan],
+    entity_type: Option<u8>,
+) -> Result<Option<CarriedWorlds>> {
+    let mut withdrawn: Option<CarriedWorlds> = None;
+    for SourceSpan { document, frontier } in sources {
+        let row = row_key(*frontier, node);
+        if let Some(walk) = WALK.get(dbs, txn, document)?
+            && walk.covers(&row)
+            && !settled_in(dbs, txn, document, &row, &walk)?
+            && !(entity_type == Some(crate::registry::ENTITY_TYPE_EVENT)
+                && crate::calendar::origin::survives_source_deletion(dbs, txn, *node)?)
+        {
+            withdrawn
+                .get_or_insert_with(CarriedWorlds::default)
+                .absorb(&walk.worlds);
+        }
+    }
+    Ok(withdrawn)
 }
 
-/// Whether a pending walk withdraws `id` before its batch reaches it.
-pub(crate) fn pending_withdrawn_in(
+/// Whether a pending walk withdraws `id` through its own dependency rows: it
+/// still holds the body the mark covered, which the walk's batch marks again.
+/// No regeneration of that body completes, as none would after a
+/// single-transaction walk.
+pub(super) fn withdrawn_directly_in(
     dbs: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    Ok(pending_withdrawal_in(dbs, txn, id)?.is_some())
+    if !any_pending_walk(dbs, txn)? {
+        return Ok(false);
+    }
+    let sources = super::regeneration::sources_of(dbs, txn, id)?;
+    let entity_type = entity_type_in(dbs, txn, id)?;
+    Ok(direct_withdrawal_in(dbs, txn, id, &sources, entity_type)?.is_some())
+}
+
+/// Whether any walk is pending: one seek, so a hot read asks once.
+pub(crate) fn any_pending_walk(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<bool> {
+    Ok(WALK.iter_raw_from(dbs, txn, &[])?.next().is_some())
 }
 
 /// A dependency row written while its source's walk is pending is the new
@@ -479,11 +567,10 @@ pub(super) fn settle_admitted_in_txn(
     dependent: &EntityId,
 ) -> Result<()> {
     let row = row_key(source.frontier, dependent);
-    if WALK
-        .get(dbs, txn, &source.document)?
-        .is_some_and(|walk| walk.covers(&row))
+    if let Some(walk) = WALK.get(dbs, txn, &source.document)?
+        && walk.covers(&row)
     {
-        SETTLED.put(dbs, txn, &(source.document, row), &())?;
+        SETTLED.put(dbs, txn, &(source.document, row), &walk.generation)?;
     }
     Ok(())
 }
@@ -507,16 +594,17 @@ pub(crate) fn withdraw_before_rewrite_in_txn(
         let Some(walk) = WALK.get(store, txn, &document)? else {
             continue;
         };
-        if walk.covers(&row) && !SETTLED.contains(store, txn, &(document, row))? {
+        if walk.covers(&row) && !settled_in(store, txn, &document, &row, &walk)? {
             integrity::withdraw_dependent_in_txn(store, txn, &document, id, &walk.worlds)?;
-            SETTLED.put(store, txn, &(document, row), &())?;
+            SETTLED.put(store, txn, &(document, row), &walk.generation)?;
             direct = true;
         }
     }
-    // Withdrawn only through an epoch summary it was written from: marked
-    // now, so the batch that reaches that summary finds it done.
+    // An epoch summary withdrawn only through one it was written from: marked
+    // once, as the batch that reaches that one marks it, and never again for
+    // a put that repeats (its regeneration's own revision would fence it).
     if !direct {
-        integrity::withdraw_in_txn(store, txn, id, &worlds)?;
+        integrity::withdraw_epochs_in_txn(store, txn, vec![*id], &worlds)?;
     }
     Ok(())
 }

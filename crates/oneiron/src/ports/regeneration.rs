@@ -32,6 +32,12 @@ pub(super) fn complete(
     if regenerated_at <= stale_revision || store.port_deletion_state(txn, dependent)?.deleted {
         return Ok(false);
     }
+    // A dependent a pending walk still withdraws holds the body its mark
+    // covered: no regeneration of it completes, as none would after a
+    // single-transaction walk had marked it again.
+    if super::dependent_walk::withdrawn_directly_in(store, txn, dependent)? {
+        return Ok(false);
+    }
     let Some(row) = store.port_entity_record(txn, dependent)? else {
         return Ok(false);
     };

@@ -28,7 +28,7 @@ pub use dependent_walk::{
     DependentWalkPolicy, DependentWalkProgress,
 };
 pub(crate) use dependent_walk::{
-    DependentWalkDoor, any_pending_walk, pending_withdrawn_in, withdraw_before_rewrite_in_txn,
+    DependentWalkDoor, any_pending_walk, withdraw_before_rewrite_in_txn,
 };
 mod integrity;
 mod lmdb_aux;

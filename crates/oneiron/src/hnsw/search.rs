@@ -410,13 +410,13 @@ fn beam_search_graph(
 }
 
 /// Whether a node the walk scored can be a match: not archived, not a row
-/// the reading room hides, and, while `walks` are pending, not one a
-/// dependent walk withdraws before its batch removes the vector (the walk
-/// passes through each, see [`load_vector_into`]).
+/// the reading room hides, and, while `walks` are pending, not one marked
+/// stale or a dependent walk withdraws before its batch removes the vector
+/// (the walk passes through each, see [`load_vector_into`]).
 fn is_match(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId, walks: bool) -> Result<bool> {
     let hidden = store.vectors().hides(id.as_bytes())
         || crate::vault_cleanup::is_archived_in_txn(store, txn, id)?
-        || (walks && crate::ports::pending_withdrawn_in(store, txn, id)?);
+        || (walks && crate::ports::stale_in_txn(store, txn, id)?);
     Ok(!hidden)
 }
 

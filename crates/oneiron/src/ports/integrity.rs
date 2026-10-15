@@ -277,7 +277,7 @@ pub(super) fn mark_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityI
 }
 /// Marks `id` stale, withdrawn for `worlds`: where the words of the source
 /// whose deletion withdrew it sat.
-pub(super) fn withdraw_in_txn(
+fn withdraw_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
@@ -287,10 +287,21 @@ pub(super) fn withdraw_in_txn(
     record_withdrawn_in_txn(store, txn, id, worlds)?;
     // An epoch summary copies the words of what it was written from, so it
     // is withdrawn with any of them, through nested epochs (agent-runtime-v1
-    // §d7), for the same worlds. A worklist, not recursion: no chain's depth
-    // reaches the stack. A stale one is walked again only when this adds a
-    // world to it.
-    let mut pending = epoch_dependents_in_txn(store, txn, id)?;
+    // §d7), for the same worlds.
+    let pending = epoch_dependents_in_txn(store, txn, id)?;
+    withdraw_epochs_in_txn(store, txn, pending, worlds)
+}
+
+/// Withdraws the epoch summaries in `pending` for `worlds`, and those written
+/// from them. A worklist, not recursion: no chain's depth reaches the stack.
+/// A stale one is not marked again, and is walked again only when this adds
+/// a world to it.
+pub(super) fn withdraw_epochs_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    mut pending: Vec<EntityId>,
+    worlds: &CarriedWorlds,
+) -> Result<()> {
     while let Some(next) = pending.pop() {
         let grew = record_withdrawn_in_txn(store, txn, &next, worlds)?;
         let stale = marked_stale_in(store, txn, &next)?;

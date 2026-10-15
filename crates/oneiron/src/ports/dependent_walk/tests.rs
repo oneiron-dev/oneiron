@@ -51,7 +51,11 @@ fn epoch_body(epoch: u64, text: &str) -> Result<Vec<u8>> {
 }
 
 fn open() -> (tempfile::TempDir, Vault) {
-    let (tmp, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    open_with(VaultConfig::default())
+}
+
+fn open_with(config: VaultConfig) -> (tempfile::TempDir, Vault) {
+    let (tmp, vault) = crate::test_util::open_test_vault_with(config);
     vault.set_dependent_walk_policy(SMALL).expect("policy");
     (tmp, vault)
 }
@@ -137,6 +141,79 @@ fn walk_through(vault: &Vault, door: DependentWalkDoor, source: &EntityId) -> Re
             &body(&serde_json::json!({ "text": "no epoch any more" })),
         ),
     }
+}
+
+/// A docs source rewritten at the same stamp: the walk it marks stays
+/// pending past the first batch.
+fn change_docs_source(vault: &Vault, source: &EntityId, text: &str) -> Result<()> {
+    vault.put_entity(
+        source,
+        ENTITY_TYPE_ASSET_TEXT,
+        at(1),
+        1,
+        &body(&serde_json::json!({ "source": "imported", "text": text })),
+    )
+}
+
+fn span_of(vault: &Vault, id: &EntityId) -> Result<crate::ports::SourceSpan> {
+    Ok(crate::ports::SourceSpan {
+        document: *id,
+        frontier: vault.read_entity_header(id)?.expect("header").learned_at,
+    })
+}
+
+fn complete(
+    vault: &Vault,
+    id: &EntityId,
+    regenerated_at: u64,
+    sources: &[crate::ports::SourceSpan],
+) -> Result<bool> {
+    use crate::ports::DependencyIndex;
+    vault.with_write_txn(|txn| {
+        vault
+            .store
+            .port_dependency_complete_regeneration(txn, id, regenerated_at, sources)
+    })
+}
+
+/// A claim derived from `source`, last in key order so the first batch
+/// leaves it pending, with a lexical query hint for `hint`.
+fn derive_claim(vault: &Vault, source: &EntityId, hint: &str) -> Result<EntityId> {
+    use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+    use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
+    let (actor, subject, claim) = (entity(0x73), entity(0x74), entity(0x75));
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at(1),
+        1,
+        b"actor",
+    )?;
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at(1),
+        1,
+        b"subject",
+    )?;
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(actor, crate::EdgeActorClass::Human),
+        ClaimSource::UserStated,
+        WriteProvenance::new(rmpv::Value::from("fixture"))?,
+        ClaimApprovalStatus::Approved,
+    );
+    let candidate = ClaimCandidate::new(
+        "profile.preference",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("sencha"),
+        0.9,
+    );
+    vault
+        .batch()
+        .claim_candidate_with_lexical_hints(&claim, candidate, &envelope, at(10), 11, &[hint])
+        .edge(&claim, EdgeKind::DerivedFrom, source, 1.0)
+        .commit()?;
+    Ok(claim)
 }
 
 fn withdrawn(vault: &Vault, id: &EntityId) -> Result<bool> {
@@ -415,5 +492,213 @@ fn search_mid_walk_fills_its_limit_with_live_records() -> Result<()> {
         .map(|hit| hit.id)
         .collect();
     assert_eq!(hits, vec![live]);
+    Ok(())
+}
+
+/// A body regenerated before a second change of its source, completed while
+/// the walk of that change has not reached it: the walk's mark fences it, as
+/// a single-transaction walk's would (Sol and Astra R2 on #1471).
+#[test]
+fn a_body_written_before_the_mark_never_completes_mid_walk() -> Result<()> {
+    let (_tmp, vault) = open();
+    let source = entity(0x5B);
+    put_source(&vault, DependentWalkDoor::ChangedDocsSource, &source)?;
+    let dependents = derive_five(&vault, &source)?;
+    change_docs_source(&vault, &source, "second page")?;
+    vault.finish_dependent_walks()?;
+    let late = dependents[4];
+    vault.put_entity(
+        &late,
+        ENTITY_TYPE_TURN,
+        at(2),
+        20,
+        &body(&serde_json::json!({ "txt": "regenerated from the second page" })),
+    )?;
+    change_docs_source(&vault, &source, "third page")?;
+    assert_eq!(vault.pending_dependent_walks()?.len(), 1);
+    assert!(
+        !complete(&vault, &late, 20, &[span_of(&vault, &source)?])?,
+        "the body predates the third page"
+    );
+    assert!(withdrawn(&vault, &late)?);
+    vault.finish_dependent_walks()?;
+    assert!(withdrawn(&vault, &late)?, "the walk withdrew it");
+    Ok(())
+}
+
+/// An epoch summary withdrawn only through a dependent the walk has not
+/// reached, regenerated from a live source and put twice: its completion
+/// holds (Sol R2 on #1471).
+#[test]
+fn an_epoch_summary_put_twice_mid_walk_completes() -> Result<()> {
+    let (_tmp, vault) = open();
+    let source = entity(0x5B);
+    put_source(&vault, DependentWalkDoor::SoftErase, &source)?;
+    let dependents = derive_five(&vault, &source)?;
+    let (summary, live) = (entity(0xEE), entity(0x6B));
+    vault
+        .batch()
+        .put(
+            &summary,
+            ENTITY_TYPE_SUMMARY,
+            at(4),
+            5,
+            &epoch_body(2, "steps 6-8")?,
+        )
+        .edge(&summary, EdgeKind::DerivedFrom, &dependents[4], 1.0)
+        .put(
+            &live,
+            ENTITY_TYPE_TURN,
+            at(3),
+            3,
+            &body(&serde_json::json!({ "txt": "a live source" })),
+        )
+        .commit()?;
+    vault.store.test_hooks.stop_dependent_walks_after(0);
+    assert!(vault.delete_entity(&source)?);
+    assert!(withdrawn(&vault, &summary)?, "pending through its source");
+
+    vault
+        .batch()
+        .delete_edge(&summary, EdgeKind::DerivedFrom, &dependents[4])
+        .edge(&summary, EdgeKind::DerivedFrom, &live, 1.0)
+        .commit()?;
+    for _ in 0..2 {
+        vault.put_entity(
+            &summary,
+            ENTITY_TYPE_SUMMARY,
+            at(4),
+            20,
+            &epoch_body(2, "steps 6-8, regenerated")?,
+        )?;
+    }
+    assert!(
+        complete(&vault, &summary, 20, &[span_of(&vault, &live)?])?,
+        "the regeneration completes"
+    );
+    assert!(!withdrawn(&vault, &summary)?);
+    vault
+        .store
+        .test_hooks
+        .stop_dependent_walks_after(usize::MAX);
+    vault.finish_dependent_walks()?;
+    assert!(!withdrawn(&vault, &summary)?, "the walk leaves it live");
+    Ok(())
+}
+
+/// A claim the walk has not reached keeps no lexical query hint in the
+/// ranking: search mid-walk fills its limit with live records (Sol and
+/// Astra R2 on #1471).
+#[test]
+fn a_hinted_claim_mid_walk_leaves_the_limit_to_live_records() -> Result<()> {
+    let (_tmp, vault) = open_with(crate::test_util::embedding_test_config());
+    let source = entity(0x5B);
+    put_source(&vault, DependentWalkDoor::SoftErase, &source)?;
+    derive_five(&vault, &source)?;
+    let claim = derive_claim(&vault, &source, "matcha order history")?;
+    let live = entity(0x6A);
+    let words = "matcha order and a good many other words that dilute it";
+    vault
+        .batch()
+        .put(
+            &live,
+            ENTITY_TYPE_TURN,
+            at(2),
+            2,
+            &body(&serde_json::json!({ "txt": words })),
+        )
+        .text(&live, &[("body", words)])
+        .commit()?;
+    let first = |vault: &Vault| -> Result<Vec<EntityId>> {
+        Ok(vault
+            .search_text("matcha order", 1)?
+            .into_iter()
+            .map(|hit| hit.id)
+            .collect())
+    };
+    assert_eq!(first(&vault)?, vec![claim], "its hint ranks it first");
+
+    vault.store.test_hooks.stop_dependent_walks_after(0);
+    assert!(vault.delete_entity(&source)?);
+    assert!(withdrawn(&vault, &claim)?);
+    assert_eq!(first(&vault)?, vec![live]);
+    Ok(())
+}
+
+/// A leased fill for a claim the walk has not reached, after a put of the
+/// same body marked it again with the same token, writes no vector (Astra R2
+/// on #1471).
+#[test]
+fn a_fill_leased_before_a_same_body_put_mid_walk_writes_nothing() -> Result<()> {
+    let (_tmp, vault) = open_with(crate::test_util::embedding_test_config());
+    let source = entity(0x5B);
+    put_source(&vault, DependentWalkDoor::SoftErase, &source)?;
+    derive_five(&vault, &source)?;
+    let claim = derive_claim(&vault, &source, "matcha order history")?;
+    let (token, row) = {
+        let txn = vault.store.env.read_txn()?;
+        let token = vault.store.pending_embedding_token(&txn, &claim)?;
+        let row = crate::ports::EntityStoreRead::port_entity_record(&vault.store, &txn, &claim)?;
+        (
+            token.expect("a claim is marked for embedding"),
+            row.expect("claim row"),
+        )
+    };
+
+    vault.store.test_hooks.stop_dependent_walks_after(0);
+    assert!(vault.delete_entity(&source)?);
+    vault
+        .batch()
+        .put(
+            &claim,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            at(10),
+            row.learned_at,
+            &row.body,
+        )
+        .commit()?;
+    vault
+        .batch()
+        .vector_for_pending_embedding(&claim, &[1.0, 0.0, 0.0, 0.0], &token)
+        .commit()?;
+    assert_eq!(
+        vault.get_vector(&claim)?,
+        None,
+        "a withdrawn claim takes no fill"
+    );
+    Ok(())
+}
+
+/// A second change of the source while its walk is pending covers what the
+/// first walk passed by: a derivation of the first change's text goes too.
+#[test]
+fn a_second_change_mid_walk_withdraws_what_the_first_passed_by() -> Result<()> {
+    let (_tmp, vault) = open();
+    let source = entity(0x5B);
+    put_source(&vault, DependentWalkDoor::ChangedDocsSource, &source)?;
+    derive_five(&vault, &source)?;
+    change_docs_source(&vault, &source, "second page")?;
+    // Inside the rows the first walk still covers: it settles there.
+    let mut bytes = [0; 16];
+    bytes[0] = 0x63;
+    bytes[15] = 2;
+    let fresh = EntityId::from_bytes(bytes)?;
+    vault
+        .batch()
+        .put(
+            &fresh,
+            ENTITY_TYPE_TURN,
+            at(4),
+            4,
+            &body(&serde_json::json!({ "txt": "from the second page" })),
+        )
+        .edge(&fresh, EdgeKind::DerivedFrom, &source, 1.0)
+        .commit()?;
+    assert!(!withdrawn(&vault, &fresh)?);
+    change_docs_source(&vault, &source, "third page")?;
+    assert!(withdrawn(&vault, &fresh)?, "the second mark covers it");
+    vault.finish_dependent_walks()?;
+    assert!(withdrawn(&vault, &fresh)?);
+    assert!(vault.pending_dependent_walks()?.is_empty());
     Ok(())
 }

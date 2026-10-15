@@ -112,7 +112,7 @@ where
                     Some(category) => category(&target)?,
                     None => (options.scope.exact_posting_matches_scope)(&target)?,
                 },
-            } && !(walks && crate::ports::pending_withdrawn_in(store, rtxn, id)?);
+            } && !(walks && scores_for_withdrawn(store, rtxn, id)?);
             admitted.insert(*id, admit);
             Ok(admit)
         })?;
