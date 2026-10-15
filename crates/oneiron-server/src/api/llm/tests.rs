@@ -759,7 +759,9 @@ enabled = false
     };
     world(true);
     let handle = host.handle();
-    let seat = handle.seat(manifest::ModelRole::Checker).expect("seat");
+    let seat = handle
+        .seat(oneiron::llm::manifest::ModelRole::Checker)
+        .expect("seat");
     let mut wire = request();
     wire.model = seat.model.clone();
     wire.envelope.locality = seat.locality;
