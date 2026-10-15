@@ -305,6 +305,9 @@ pub(crate) struct Connection {
     /// and a new subscription's.
     session_turn: Option<Permit>,
     subscription_turn: Option<Permit>,
+    /// The turn an open subscription holds, taken while its reopen runs so a
+    /// close elsewhere cannot free it, and given back after.
+    held_turn: Option<(Arc<Session>, u64, Permit)>,
     /// The kept session a resume names, pinned while the resume waits.
     resumed: Option<(String, Arc<Session>)>,
     /// The next request waited for a turn past its deadline.
@@ -324,6 +327,7 @@ impl Connection {
             refused: BTreeSet::new(),
             session_turn: None,
             subscription_turn: None,
+            held_turn: None,
             resumed: None,
             waited_out: false,
         }
@@ -335,6 +339,7 @@ impl Connection {
     /// `limits.live_subscriptions`, each in its principal's place in line. A
     /// request that needs neither, or does not decode, waits for nothing.
     pub(crate) async fn admit(&mut self, auth: Option<&CoreAuth>, payload: &[u8]) {
+        self.give_back();
         self.session_turn = None;
         self.subscription_turn = None;
         self.resumed = None;
@@ -372,11 +377,23 @@ impl Connection {
             }
         }
         // A subscription the session already holds keeps its own turn.
-        if !session.is_some_and(|session| session.queries.holds(subscription_id)) {
-            match self.hub.subscription_line.admit(key).await {
-                Ok(turn) => self.subscription_turn = Some(turn),
-                Err(_) => self.waited_out = true,
-            }
+        if let Some(session) = session
+            && let Some(turn) = session.queries.take_turn(subscription_id)
+        {
+            self.held_turn = Some((session, subscription_id, turn));
+            return;
+        }
+        match self.hub.subscription_line.admit(key).await {
+            Ok(turn) => self.subscription_turn = Some(turn),
+            Err(_) => self.waited_out = true,
+        }
+    }
+
+    /// Gives the turn [`Self::admit`] took from an open subscription back
+    /// to it.
+    fn give_back(&mut self) {
+        if let Some((session, id, turn)) = self.held_turn.take() {
+            session.queries.give_turn(id, turn);
         }
     }
 
@@ -408,6 +425,7 @@ impl Connection {
             .map_err(AppError::from)
             .and_then(|()| self.apply(auth, request));
         // A turn the request did not use goes back to its line.
+        self.give_back();
         self.session_turn = None;
         self.subscription_turn = None;
         self.resumed = None;
@@ -666,6 +684,7 @@ impl Connection {
 
 impl Drop for Connection {
     fn drop(&mut self) {
+        self.give_back();
         if let Some(session) = &self.session
             && session
                 .attached

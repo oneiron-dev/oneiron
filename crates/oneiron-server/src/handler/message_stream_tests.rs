@@ -51,7 +51,7 @@ async fn message_stream_presence_canonical_fanout_and_late_join_never_persist_te
     let receiver = EphemeralStore::new(30_000);
     receiver.apply(&frame[1..]).unwrap();
     assert_eq!(receiver.get(&key), producer.get(&key));
-    let late = encode_late_join_ephemeral_snapshots(&server, 18).remove(0);
+    let late = late_join_presence(&server, 18).next().unwrap();
     let late_receiver = EphemeralStore::new(30_000);
     late_receiver.apply(&late[1..]).unwrap();
     assert_eq!(late_receiver.get(&key), producer.get(&key));
@@ -220,7 +220,7 @@ async fn presence_past_the_old_hub_share_is_kept() {
         assert!(server.ephemeral_store.get(key).is_some(), "{key} dropped");
     }
     // A socket that joins now hears all of it, in parts.
-    let late = encode_late_join_ephemeral_snapshots(&server, 18);
+    let late: Vec<_> = late_join_presence(&server, 18).collect();
     assert!(late.len() > 1, "a hub past one frame is sent in parts");
     let heard: Vec<_> = late
         .iter()

@@ -14,7 +14,7 @@ use super::app_tier::{
     handle_app_message_with_connection, handle_sync_message, require_bound_app_auth,
 };
 use super::conn_state::ConnState;
-use super::ephemeral::encode_late_join_ephemeral_snapshots;
+use super::ephemeral::late_join_presence;
 use super::hello::{HelloOutcome, await_protocol_hello};
 use super::transport::{GuardedTransport, WS_MAX_WRITE_BUFFER_SIZE, WS_WRITE_BUFFER_SIZE};
 
@@ -187,7 +187,7 @@ async fn handle_connection(
     }
 
     // Late-join/reconnect snapshot for the Loro-native ephemeral lane.
-    for msg in encode_late_join_ephemeral_snapshots(&server, conn_id) {
+    for msg in late_join_presence(&server, conn_id) {
         if !transport.send_binary(msg).await {
             tracing::warn!(conn_id, "failed to send ephemeral snapshot");
             return;
@@ -304,11 +304,10 @@ async fn handle_connection(
                             ) else {
                                 break;
                             };
-                            // A notice whose export waited out its turn is
-                            // queued again, never consumed (rule 5).
-                            for frame in frames.into_iter().chain(retry) {
+                            for frame in frames {
                                 let _ = direct_tx.send(frame);
                             }
+                            super::documents::retry_later(&direct_tx, retry);
                             continue;
                         }
                         if protocol::is_residence_version(protocol_version)
@@ -455,11 +454,7 @@ async fn handle_connection(
                         &data,
                         &mut retry,
                     );
-                    // A notice whose export waited out its turn is queued
-                    // again, never consumed (rule 5).
-                    for notice in retry {
-                        let _ = direct_tx.send(notice);
-                    }
+                    super::documents::retry_later(&direct_tx, retry);
                     match delivered {
                         Ok(mut frames) if frames.len() == 1 => data = frames.remove(0),
                         Ok(frames) if frames.is_empty() => continue,

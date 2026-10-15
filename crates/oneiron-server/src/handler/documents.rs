@@ -430,6 +430,24 @@ fn waited_out(error: &oneiron::Error) -> bool {
     error.kind() == oneiron::ErrorKind::LiveDocumentWaitedOut
 }
 
+/// Queues the notices whose export waited out its turn again after a pause,
+/// so a retried export never starves the socket's own input (rule 5).
+pub(super) fn retry_later(
+    direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    notices: Vec<Vec<u8>>,
+) {
+    if notices.is_empty() {
+        return;
+    }
+    let direct = direct.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        for notice in notices {
+            let _ = direct.send(notice);
+        }
+    });
+}
+
 /// The notice of one document, to queue again.
 fn notice(doc: &transport::DocumentFrame<'_>) -> Option<Vec<u8>> {
     transport::encode_document(doc.entity, doc.kind, doc.payload)

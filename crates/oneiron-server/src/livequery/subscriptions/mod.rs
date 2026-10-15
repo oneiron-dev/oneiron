@@ -654,11 +654,20 @@ impl LiveQueries {
         Ok(())
     }
 
-    /// Whether subscription `id` is open and holds its turn.
-    pub(crate) fn holds(&self, id: u64) -> bool {
-        self.state
-            .lock()
-            .is_ok_and(|state| state.subs.get(&id).is_some_and(|sub| sub.turn.is_some()))
+    /// Takes the turn subscription `id` holds, if it is open with one.
+    pub(crate) fn take_turn(&self, id: u64) -> Option<Permit> {
+        self.state.lock().ok()?.subs.get_mut(&id)?.turn.take()
+    }
+
+    /// Gives `turn` back to subscription `id` if it is open without one;
+    /// otherwise the turn goes back to its line.
+    pub(crate) fn give_turn(&self, id: u64, turn: Permit) {
+        if let Ok(mut state) = self.state.lock()
+            && let Some(sub) = state.subs.get_mut(&id)
+            && sub.turn.is_none()
+        {
+            sub.turn = Some(turn);
+        }
     }
 
     pub(crate) fn close(&self, id: u64) -> Result<(), AppError> {

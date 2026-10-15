@@ -16,45 +16,56 @@ const MAX_EPHEMERAL_FUTURE_SKEW_MS: i64 = 60_000;
 /// Flat ephemeral keys are control-plane identifiers, not arbitrary blobs.
 const MAX_EPHEMERAL_KEY_BYTES: usize = 256;
 
-/// The hub's live presence for a socket that just joined, in frames of at
-/// most `max_ephemeral_snapshot_bytes` each: a hub larger than that is sent
-/// in parts, never skipped (rule 5, row 19).
-pub(super) fn encode_late_join_ephemeral_snapshots(
+/// The hub's live presence for a socket that just joined, one frame of at
+/// most `max_ephemeral_snapshot_bytes` per `next()`: a hub larger than that
+/// is sent in parts, never skipped, and no part is built before the last one
+/// is sent (rule 5, row 19).
+pub(super) fn late_join_presence(
     server: &SyncServer,
     conn_id: u32,
-) -> Vec<Vec<u8>> {
-    let snapshot = {
+) -> impl Iterator<Item = Vec<u8>> + '_ {
+    let mut keys = {
         let mut presence = server.presence.lock();
         presence.expire(&server.ephemeral_store);
-        server.ephemeral_store.encode_all()
-    };
-    let states = match decode_ephemeral_states(&snapshot) {
-        Ok(states) => states,
-        Err(e) => {
-            tracing::warn!(
-                conn_id,
-                error = protocol::transport_err_msg(e),
-                "failed to decode ephemeral snapshot"
-            );
-            return Vec::new();
-        }
-    };
-    let mut frames = Vec::new();
-    let mut part: Vec<EphemeralWireState> = Vec::new();
-    let mut part_bytes = 0;
-    for state in states {
-        let bytes = encode_ephemeral_states(std::slice::from_ref(&state)).map_or(0, |b| b.len());
-        if !part.is_empty() && part_bytes + bytes > server.config.max_ephemeral_snapshot_bytes {
-            frames.extend(late_join_frame(conn_id, &std::mem::take(&mut part)));
-            part_bytes = 0;
-        }
-        part_bytes += bytes;
-        part.push(state);
+        server.ephemeral_store.keys()
     }
-    if !part.is_empty() {
-        frames.extend(late_join_frame(conn_id, &part));
-    }
-    frames
+    .into_iter();
+    let max = server.config.max_ephemeral_snapshot_bytes;
+    let mut carry: Vec<EphemeralWireState> = Vec::new();
+    let mut carry_bytes = 0;
+    std::iter::from_fn(move || {
+        loop {
+            let mut part = std::mem::take(&mut carry);
+            let mut part_bytes = std::mem::take(&mut carry_bytes);
+            for key in keys.by_ref() {
+                let canonical = server.ephemeral_store.encode(&key);
+                let states = match decode_ephemeral_states(&canonical) {
+                    Ok(states) => states,
+                    Err(e) => {
+                        tracing::warn!(
+                            conn_id,
+                            error = protocol::transport_err_msg(e),
+                            "failed to decode ephemeral snapshot"
+                        );
+                        continue;
+                    }
+                };
+                if !part.is_empty() && part_bytes + canonical.len() > max {
+                    carry = states;
+                    carry_bytes = canonical.len();
+                    break;
+                }
+                part_bytes += canonical.len();
+                part.extend(states);
+            }
+            if part.is_empty() {
+                return None;
+            }
+            if let Some(frame) = late_join_frame(conn_id, &part) {
+                return Some(frame);
+            }
+        }
+    })
 }
 
 fn late_join_frame(conn_id: u32, states: &[EphemeralWireState]) -> Option<Vec<u8>> {

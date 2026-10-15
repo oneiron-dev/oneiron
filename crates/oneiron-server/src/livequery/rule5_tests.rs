@@ -285,6 +285,60 @@ async fn a_resume_keeps_its_session_and_its_turns() {
     assert_eq!(hub.waiting(), (0, 0));
 }
 
+/// Bug repro (rule 5 review R2: Astra F2): a resume left the turn with its
+/// kept subscription, so the old socket closing that subscription while the
+/// resume ran freed the turn, and the reopened subscription held none.
+/// Done-means: the reopened subscription holds the turn; the next one waits.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_resume_keeps_its_turn_when_the_old_socket_closes() {
+    let (_dir, server) = production_tests::server_with_limits(LimitsConfig {
+        live_sessions: 1,
+        live_subscriptions: 1,
+        queue_wait_timeout_ms: 2_000,
+        ..LimitsConfig::default()
+    });
+    let hub = connection::Hub::for_server(&server);
+    let auth = auth(&server);
+    let mut first = connection::Connection::new(Arc::clone(&hub), 1);
+    assert_eq!(subscribe(&mut first, &auth, 1).await, None);
+    let document = first.session_document().unwrap();
+    let version_vector = loro::VersionVector::new().encode();
+    let payload = test_wire::request(
+        TAG_SUB,
+        json!({"method":"sub.open","subscriptionId":1,"scopedView":{},"channel":"receipts",
+            "cursor":{"document":document,"versionVector":version_vector,"batch":0}}),
+    );
+    let mut resumed = connection::Connection::new(Arc::clone(&hub), 2);
+    resumed.admit(Some(&auth), &payload[1..]).await;
+    first
+        .control(&auth, SubRequest::Close { subscription_id: 1 })
+        .unwrap();
+    assert!(!first.opened(1), "the old socket's close is served");
+    let request = SubRequest::Open {
+        subscription_id: 1,
+        scoped_view: ScopedView::default(),
+        channel: Channel::Receipts,
+        cursor: Some(Cursor {
+            document,
+            version_vector,
+            batch: 0,
+        }),
+        origin: None,
+    };
+    resumed.control(&auth, request).unwrap();
+    assert!(resumed.opened(1), "the resume is served");
+    let next = test_wire::request(
+        TAG_SUB,
+        json!({"method":"sub.open","subscriptionId":2,"scopedView":{},"channel":"receipts"}),
+    );
+    let waited = tokio::time::timeout(
+        Duration::from_millis(300),
+        resumed.admit(Some(&auth), &next[1..]),
+    )
+    .await;
+    assert!(waited.is_err(), "the reopened subscription holds the turn");
+}
+
 struct Source(Value);
 impl LiveQuerySource for Source {
     fn derive(&self, _: &ScopedView, _: Channel) -> Result<DerivedView, AppError> {
