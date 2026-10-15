@@ -676,52 +676,56 @@ mod tests {
         );
     }
 
-    /// A deletion retires its name's visible slot; a Published re-drive that
-    /// makes the ref live again under the same publication advertises it
-    /// again, and its slot is back before its ref, so no crash between the
-    /// two leaves the ref live and hidden.
+    /// A deletion retires its name's visible slot. A Published re-drive that
+    /// may recreate the ref claims the name before its CAS, so no crash leaves
+    /// the ref live and hidden, and a slot an interrupted re-drive of another
+    /// publication left on the absent name does not hide it either.
     #[test]
-    fn publication_redrive_after_a_deletion_restores_its_slot() {
+    fn publication_redrive_after_a_deletion_claims_its_name() {
         let (_vault_dir, vault) = test_vault();
         let (_repo_dir, root, base) = seeded_repo();
-        git(&root, &["update-ref", "-d", "refs/heads/main"]);
+        let next = commit(&root, "next", "next\n");
         let wire = GitWire::new(&vault).expect("wire");
         let repo = open_repo(&wire, &root, &base);
         let repo_id = repo_id_of(&vault, &repo);
-        let create = request(&vault, &repo, repo_id, None, base.clone());
-        vault
-            .publish_origin_ref(&wire, create.clone())
-            .expect("publish the branch");
-        git(&root, &["update-ref", "-d", "refs/heads/main"]);
-        vault
-            .retire_origin_visible_ref(&wire, &repo, repo_id, &main_ref())
-            .expect("the deletion retires the slot");
-        assert!(
+        let advertised = || {
             vault
                 .published_origin_refs(&wire, repo_id, &repo)
                 .expect("projection")
-                .is_empty()
-        );
+        };
+        let mut creations = Vec::new();
+        for oid in [&base, &next] {
+            git(&root, &["update-ref", "-d", "refs/heads/main"]);
+            let create = request(&vault, &repo, repo_id, None, oid.clone());
+            let receipt = vault
+                .publish_origin_ref(&wire, create.clone())
+                .expect("publish the branch");
+            git(&root, &["update-ref", "-d", "refs/heads/main"]);
+            vault
+                .retire_origin_visible_ref(&wire, &repo, repo_id, &main_ref())
+                .expect("the deletion retires the slot");
+            creations.push((create, receipt.record));
+        }
+        assert!(advertised().is_empty());
         // A ref recreated outside the protocol is no publication: the census
         // gives it no slot back.
         git(&root, &["update-ref", "refs/heads/main", base.as_str()]);
         vault
             .reconcile_origin_publications(&wire, repo_id, &repo, LEARNED_AT + 1)
             .expect("census");
-        assert!(
-            vault
-                .published_origin_refs(&wire, repo_id, &repo)
-                .expect("projection")
-                .is_empty()
-        );
+        assert!(advertised().is_empty());
         git(&root, &["update-ref", "-d", "refs/heads/main"]);
+        // What a re-drive of the second creation leaves when it stops between
+        // its claim and its CAS.
         vault
-            .publish_origin_ref(&wire, create)
-            .expect("the same publication re-drives");
+            .claim_origin_visible_ref(&creations[1].1)
+            .expect("an interrupted claim");
+        assert!(advertised().is_empty());
+        vault
+            .publish_origin_ref(&wire, creations[0].0.clone())
+            .expect("the first creation re-drives");
         assert_eq!(
-            vault
-                .published_origin_refs(&wire, repo_id, &repo)
-                .expect("projection"),
+            advertised(),
             vec![(main_ref(), base)],
             "the live re-driven ref is advertised again"
         );

@@ -187,18 +187,13 @@ impl Vault {
         })
     }
 
-    /// Gives a ref name its visible slot back for a Published re-drive, when
-    /// a deletion retired it. A slot another publication holds stays as it
-    /// is. Callers hold the coordinator.
-    pub(super) fn restore_origin_visible_ref(
-        &self,
-        record: &OriginPublicationRecord,
-    ) -> Result<()> {
+    /// Gives a ref name with no live ref to a Published re-drive that may
+    /// recreate it, whichever publication its slot named before. Callers
+    /// hold the coordinator and have read the ref absent.
+    pub(super) fn claim_origin_visible_ref(&self, record: &OriginPublicationRecord) -> Result<()> {
         let key = visible_ref_key(&record.repo_id, &record.ref_name);
         self.with_write_txn_grouped(|wtxn| {
-            if !VISIBLE_REF.contains(&self.store, wtxn, &key)? {
-                VISIBLE_REF.put(&self.store, wtxn, &key, &record.publication_id)?;
-            }
+            VISIBLE_REF.put(&self.store, wtxn, &key, &record.publication_id)?;
             Ok(())
         })
     }
