@@ -104,13 +104,11 @@ impl Memory<'_> {
                 .map_err(crate::Error::from)?;
             verify_deletion_authority_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
             preview.check_before_unshare(self.vault, &txn)?;
-            let target = self
+            if let Some(raw) = self
                 .vault
                 .store
                 .entities
-                .get(&txn, preview.entity().as_bytes())
-                .map_err(crate::Error::from)?;
-            if let Some(raw) = target
+                .get(&txn, preview.entity().as_bytes())?
                 && crate::blob_artifact::carrier_content_hash(&preview.entity(), &raw)?.is_some()
             {
                 return Err(carrier_erase_refused());
