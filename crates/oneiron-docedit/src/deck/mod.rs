@@ -3,15 +3,18 @@
 //! names the part, element and attribute it was read from, and its state is
 //! absent, explicit, schema default or unresolved. Identity evidence, the
 //! animation index and dependency fingerprints are reported, never repaired.
+//! The template view reads masters and layouts the same way, for creation.
 mod animation;
 mod colour;
 mod fingerprint;
 mod graph;
 mod resolve;
 mod shapes;
+mod template;
 
 pub use animation::{AnimationIndex, AnimationTarget, Connection, TargetRole, TextRange};
 pub use colour::{Colour, ColourSpec, ColourTransform, Rgba};
+pub use template::{LayoutView, MasterView, TemplateView, TextStyle};
 
 use crate::ooxml::{DOCUMENT_RELATIONSHIPS, XmlError};
 use crate::retained_opc::{self, Package};
@@ -481,5 +484,7 @@ fn boolean(value: &str) -> Option<bool> {
     }
 }
 
+#[cfg(test)]
+pub(crate) mod fixture;
 #[cfg(test)]
 mod tests;
