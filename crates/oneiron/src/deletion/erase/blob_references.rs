@@ -449,14 +449,16 @@ impl Vault {
                 )?;
             }
             LateReach::Bytes => {
+                // The arriving body is the walk's own record: every holder's hold goes, and the
+                // release that follows tears the bytes' ASSET, which is never the walk's own.
                 let asset = holding.asset;
                 let holdings = vec![holding];
                 let mut references =
-                    crate::blob_artifact::references_in_txn(&self.store, wtxn, &asset, &holdings)?;
+                    crate::blob_artifact::references_in_txn(&self.store, wtxn, id, &holdings)?;
                 if entity_type == ENTITY_TYPE_CLAIM {
                     references.push(*id);
                 }
-                let walk = self.walk_holdings_in_txn(wtxn, &asset, holdings, references)?;
+                let walk = self.walk_holdings_in_txn(wtxn, id, holdings, references)?;
                 for carrier in walk.scrubbed.iter().chain(&walk.assets).chain([id]) {
                     if self
                         .store
@@ -465,11 +467,20 @@ impl Vault {
                         return Ok(true);
                     }
                 }
-                let tombstoned = self.pierced_carriers_in_txn(wtxn, id, &walk)?;
-                carriers.extend(
-                    self.pierce_walk_in_txn(wtxn, &asset, walk, &erase)?
-                        .carriers,
-                );
+                let mut tombstoned = self.pierced_carriers_in_txn(wtxn, id, &walk)?;
+                // The bytes' ASSET is tombstoned even when no body of it was ever stored here,
+                // unless a tombstone already took it: a vault holding it learns the erase.
+                if !tombstoned.iter().any(|carrier| carrier.id == asset)
+                    && !HARD_DELETE_MARKER.contains(&self.store, wtxn, &HexId(asset))?
+                {
+                    let learned_at = tombstone::decode_tombstone_value(&erase).deleted_at;
+                    tombstoned.push(PiercedCarrier {
+                        id: asset,
+                        learned_at,
+                        window_label: tombstone::window_label_from_timestamp(learned_at),
+                    });
+                }
+                carriers.extend(self.pierce_walk_in_txn(wtxn, id, walk, &erase)?.carriers);
                 self.stage_late_walk_tombstones_in_txn(wtxn, tombstoned, &erase)?;
             }
         }
