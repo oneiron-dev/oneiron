@@ -734,6 +734,29 @@ fn deleting_a_self_held_identity_lands_and_keeps_its_address_bound() -> Result<(
             .kind(),
         ErrorKind::InvalidChannelIdentityBody,
     );
+    // Nor as a delegated row on the same address, which the next delete
+    // would free.
+    let grant = DelegatedGrant::new(
+        "oauth/gmail/batch-delete",
+        vec![DelegatedGrantScope::MailRead],
+    );
+    register_delegated_custody(&vault, &grant, "batch-delete@example.test")?;
+    assert_eq!(
+        vault
+            .provision_delegated_identity(
+                &entity(0xD8),
+                DelegatedProvisionRequest {
+                    channel: EMAIL_CHANNEL.to_owned(),
+                    address_or_handle: "batch-delete@example.test".to_owned(),
+                    binding: ChannelIdentityBinding::agent(entity(0x51)),
+                    grant,
+                },
+                1_800_000_100,
+            )
+            .expect_err("a deleted self-held id stays self-held")
+            .kind(),
+        ErrorKind::InvalidChannelIdentityBody,
+    );
     vault.rebuild_channel_identity_assignment_index()?;
     assert_eq!(
         vault
