@@ -497,8 +497,9 @@ fn supplemental_claim_evidence_taint_scope_and_revisions_are_preserved() -> Test
     };
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let owner = EntityId::now();
-    person(&vault, owner)?;
+    // The private evidence reads only for the vault's owner, the embedded
+    // owner of an unrooted vault (H149).
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
     grant(&vault, owner)?;
     let actor = WriteActor::new(owner, EdgeActorClass::Human);
     let unit = EntityId::now();
