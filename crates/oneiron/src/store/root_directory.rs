@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, openat, statat, unlinkat};
 
+use super::writer_lease::VAULT_WRITER_LOCK_FILE;
 use crate::{Error, Result};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -265,6 +266,10 @@ pub(super) fn parent_or_here(parent: &Path) -> &Path {
 /// directory holding it, so no name moved meanwhile leads the removal out of
 /// the tree. Only the emptied directory itself goes by name, checked again
 /// first.
+///
+/// A vault's writer lock goes last: while it is linked, an owner that opens
+/// the vault meets the lock whoever removes it holds, never a fresh one
+/// beside data still being removed (C8 residual, review r2).
 pub fn remove_held_directory(path: &Path, held: &File) -> Result<()> {
     let identity = file_identity(&held.metadata()?);
     let still_named = || -> Result<()> {
@@ -307,6 +312,10 @@ fn empty_directory(dir: BorrowedFd<'_>, root: bool) -> std::io::Result<()> {
             entries.push((name.to_owned(), entry.file_type()));
         }
     }
+    if root {
+        // The writer lock last, after everything it guards.
+        entries.sort_by_key(|(name, _)| name.as_bytes() == VAULT_WRITER_LOCK_FILE.as_bytes());
+    }
     for (name, kind) in entries {
         let kind = match kind {
             FileType::Unknown => FileType::from_raw_mode(
@@ -339,8 +348,6 @@ fn empty_directory(dir: BorrowedFd<'_>, root: bool) -> std::io::Result<()> {
     if root {
         AFTER_ROOT_ENTRY_REMOVED.with(|slot| slot.borrow_mut().take());
     }
-    #[cfg(not(test))]
-    let _ = root;
     Ok(())
 }
 
