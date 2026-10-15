@@ -76,7 +76,8 @@ pub(crate) fn turn_chunks_in_txn(
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<TurnChunks>> {
-    let Some(members) = crate::tagging::turn_members_in_txn(vault, &vault.store, txn, turn)? else {
+    let Some(members) = crate::tagging::turn_members_in_txn(vault, &vault.store, txn, turn, false)?
+    else {
         return Ok(None);
     };
     let LiveEntityRow::Live { entity_type, .. } = live_entity_row_in_txn(&vault.store, txn, turn)?
@@ -101,11 +102,11 @@ pub(crate) fn turn_chunks_in_txn(
             withheld: false,
         }));
     }
-    let ids: Vec<EntityId> = members.iter().map(|(message, _)| *message).collect();
+    let ids: Vec<EntityId> = members.iter().map(|(message, _, _)| *message).collect();
     let readable = readable_in(vault, txn, &ids)?;
     let mut withheld = false;
     let mut chunks = Vec::with_capacity(members.len());
-    for ((message, text), readable) in members.into_iter().zip(readable) {
+    for ((message, text, _), readable) in members.into_iter().zip(readable) {
         let Some(text) = text else {
             continue;
         };
