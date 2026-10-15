@@ -228,9 +228,10 @@ fn names(_: &Path, (): &()) -> Result<bool> {
 /// copy's vault has closed, this removes the directory it made with
 /// everything in it, through the descriptor it holds and still under the
 /// lease. A directory moved in under the name since is left as it is, and so
-/// is one another owner leased first (review r1, both F1).
+/// is one another owner leased first (review r1, both F1). Off unix, with no
+/// identity or lease to check, it removes the destination by name, as main's
+/// discard did.
 pub(crate) struct MadeDestination {
-    #[cfg(unix)]
     destination: PathBuf,
     #[cfg(unix)]
     made: std::fs::File,
@@ -261,7 +262,6 @@ impl MadeDestination {
             std::fs::create_dir(destination)?;
         }
         let mut guard = Self {
-            #[cfg(unix)]
             destination: destination.to_owned(),
             #[cfg(unix)]
             identity: file_identity(&made.metadata()?),
@@ -335,10 +335,11 @@ impl Drop for MadeDestination {
             drop(lease);
             removed
         });
-        // With no directory identity to remove by, the copy is left, as a
-        // refused restore always left it here (review r1, Sol F2).
+        // With no directory identity or lease to check, the destination goes
+        // by name after the copy's vault has closed, as main's discard took
+        // it (Engine ruling on review r1's F2).
         #[cfg(not(unix))]
-        let removed = false;
+        let removed = std::fs::remove_dir_all(&self.destination).is_ok();
         if !removed {
             tracing::warn!("a refused restore left the copy it made in place");
         }
