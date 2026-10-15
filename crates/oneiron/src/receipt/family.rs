@@ -153,7 +153,8 @@ impl Vault {
         &self,
         query: ReceiptQuery,
     ) -> Result<Vec<CounterpartyReceiptProjection>> {
-        if query.limit == 0 {
+        let limit = query.limit;
+        if limit == 0 {
             return Ok(Vec::new());
         }
         let receipts = self.receipts(projection_scan_query(query))?;
@@ -161,6 +162,7 @@ impl Vault {
         Ok(project_receipts_by_counterparty_with_contacts(
             receipts,
             &contact_records,
+            limit,
         ))
     }
 
