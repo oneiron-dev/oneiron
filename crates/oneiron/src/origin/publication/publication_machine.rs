@@ -346,6 +346,11 @@ impl Vault {
                 "published origin ref no longer has its required objects",
             ));
         }
+        // A deletion may have retired the name's slot. It goes back before
+        // the ref can, so no crash leaves the ref live without it: a slot
+        // alone advertises nothing until the projection proves the live ref,
+        // and the census retires it again while the ref is absent.
+        self.restore_origin_visible_ref(&record)?;
         let outcome = git.update_ref_cas(
             repo,
             &record.ref_name,
@@ -361,7 +366,6 @@ impl Vault {
             ));
         }
         if outcome.is_applied() {
-            self.restore_origin_visible_ref(&record)?;
             // Both a fresh advance and a replay can finish leaked cleanup.
             // Failure here keeps a safe root for census; it does not undo the
             // already-durable publication or reject a successful landing.

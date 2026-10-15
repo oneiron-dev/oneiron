@@ -678,7 +678,8 @@ mod tests {
 
     /// A deletion retires its name's visible slot; a Published re-drive that
     /// makes the ref live again under the same publication advertises it
-    /// again.
+    /// again, and its slot is back before its ref, so no crash between the
+    /// two leaves the ref live and hidden.
     #[test]
     fn publication_redrive_after_a_deletion_restores_its_slot() {
         let (_vault_dir, vault) = test_vault();
@@ -701,6 +702,19 @@ mod tests {
                 .expect("projection")
                 .is_empty()
         );
+        // A ref recreated outside the protocol is no publication: the census
+        // gives it no slot back.
+        git(&root, &["update-ref", "refs/heads/main", base.as_str()]);
+        vault
+            .reconcile_origin_publications(&wire, repo_id, &repo, LEARNED_AT + 1)
+            .expect("census");
+        assert!(
+            vault
+                .published_origin_refs(&wire, repo_id, &repo)
+                .expect("projection")
+                .is_empty()
+        );
+        git(&root, &["update-ref", "-d", "refs/heads/main"]);
         vault
             .publish_origin_ref(&wire, create)
             .expect("the same publication re-drives");

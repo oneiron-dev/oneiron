@@ -187,9 +187,9 @@ impl Vault {
         })
     }
 
-    /// Gives a ref name its visible slot back when a Published re-drive made
-    /// its ref live again after a deletion retired the slot. A slot another
-    /// publication holds stays as it is. Callers hold the coordinator.
+    /// Gives a ref name its visible slot back for a Published re-drive, when
+    /// a deletion retired it. A slot another publication holds stays as it
+    /// is. Callers hold the coordinator.
     pub(super) fn restore_origin_visible_ref(
         &self,
         record: &OriginPublicationRecord,
