@@ -114,6 +114,50 @@ fn cached_fold(store: &Store, key: AuthorityCacheKey) -> Option<AuthorityView> {
     })
 }
 
+/// `build`'s value for `txn`'s authority generation, from `cache` when it
+/// holds that generation. A value is cached only when its generation is the
+/// committed one, so a write that aborts never publishes it, and a
+/// transaction that staged an authority row reads past the cache.
+pub(super) fn per_authority_generation<T>(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    cache: &std::sync::Mutex<Option<(u64, Arc<T>)>>,
+    build: impl FnOnce() -> Result<T>,
+) -> Result<Arc<T>> {
+    let generation = authority_cache_generation(store, txn)?;
+    let cached = cache.lock().ok().and_then(|cache| {
+        cache
+            .as_ref()
+            .filter(|(cached, _)| *cached == generation)
+            .map(|(_, value)| Arc::clone(value))
+    });
+    if let Some(value) = cached {
+        return Ok(value);
+    }
+    let value = Arc::new(build()?);
+    // A second read txn on this thread fails with MDB_BAD_RSLOT; see
+    // `cache_fold_if_committed`.
+    let committed = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                store
+                    .env
+                    .read_txn()
+                    .ok()
+                    .and_then(|committed| authority_cache_generation(store, &committed).ok())
+            })
+            .join()
+            .ok()
+            .flatten()
+    });
+    if committed == Some(generation)
+        && let Ok(mut cache) = cache.lock()
+    {
+        *cache = Some((generation, Arc::clone(&value)));
+    }
+    Ok(value)
+}
+
 fn cache_fold_if_committed(
     store: &Store,
     key: AuthorityCacheKey,

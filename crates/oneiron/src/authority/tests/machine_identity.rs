@@ -364,15 +364,24 @@ fn a_forged_mark_never_makes_a_machine_mine() {
     );
     assert!(!is_mine(&host.vault, machine));
 
-    // The replay door admits well-shaped entries; the fold still refuses a
+    // The local door holds well-shaped entries no admitter signed (H72): a
     // signer outside the roster, the machine's own key (a self-asserted
-    // mark), and an engine writer's agent key.
-    host.vault
-        .put_authority_log_entries(&[(forge(&ed_key(53)), at, 1)])
+    // mark), and an engine writer's agent key. The fold refuses each one
+    // too, wherever it is stored.
+    let held = |entry: AuthorityLogEntry| {
+        let rows = [(entry, at, 1)];
+        let err = host.vault.put_authority_log_entries(&rows).unwrap_err();
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::AuthorityLogSignerPending
+        );
+        crate::authority::with_authority_doors_open_for_test(|| {
+            host.vault.put_authority_log_entries(&rows)
+        })
         .unwrap();
-    host.vault
-        .put_authority_log_entries(&[(forge(&machine_key), at, 1)])
-        .unwrap();
+    };
+    held(forge(&ed_key(53)));
+    held(forge(&machine_key));
     let writer = EntityId::now();
     host.vault
         .put_entity(&writer, ENTITY_TYPE_MACHINE, at, 1, b"writer")
@@ -387,9 +396,7 @@ fn a_forged_mark_never_makes_a_machine_mine() {
             |transcript| Ok(writer_key.sign(transcript).to_bytes()),
         )
         .unwrap();
-    host.vault
-        .put_authority_log_entries(&[(forge(&writer_key), at, 1)])
-        .unwrap();
+    held(forge(&writer_key));
     assert!(!is_mine(&host.vault, machine));
     assert!(
         host.vault

@@ -31,14 +31,16 @@ pub(super) fn record_tier_floor(
 }
 
 /// The rows `present` keeps whose signer falls below a floor a concurrent
-/// row among them set, with why. An owner anchor's rows rest on no roster
-/// key, so a roster that also lists the anchor's public key at a low tier
-/// prunes none of them (Sol code-R2 S2-F3).
+/// row among them set, or whose consent or quorum rested on a cosigner below
+/// it (H71), with why. An owner anchor's rows rest on no roster key, so a
+/// roster that also lists the anchor's public key at a low tier prunes none
+/// of them (Sol code-R2 S2-F3).
 pub(super) fn below_concurrent_tier_floors(
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     present: &dyn Fn(&AuthorityEntryHash) -> bool,
+    context: FoldContext<'_>,
 ) -> BTreeMap<AuthorityEntryHash, AuthorityFoldIssue> {
     let floors: Vec<_> = states
         .iter()
@@ -56,18 +58,55 @@ pub(super) fn below_concurrent_tier_floors(
         .iter()
         .filter(|(hash, state)| present(hash) && !state.anchor_entries.contains(*hash))
         .filter_map(|(hash, state)| {
-            let signer = state.roster.get(entries[hash].signer_key())?;
-            floors
-                .iter()
-                .any(|(floor_hash, vault, floor)| {
-                    state.vault_id == *vault && hash != floor_hash
+            let entry = &entries[hash];
+            let signer = state.roster.get(entry.signer_key())?;
+            let mut concurrent = floors.iter().filter(|(floor_hash, vault, _)| {
+                state.vault_id == *vault && hash != floor_hash
                 // A tightening is not retroactive over its causal past.
                 && !ancestors.get(floor_hash).is_some_and(|past| past.contains(hash))
                 // A softening clears only floors in its causal past.
                 && !state.tier_floor_events.values().any(|(_, seen)| seen.contains(floor_hash))
-                && !tier_meets_floor(signer.tier, *floor)
+            });
+            if concurrent
+                .clone()
+                .any(|(_, _, floor)| !tier_meets_floor(signer.tier, *floor))
+            {
+                return Some((*hash, AuthorityFoldIssue::SignerBelowTierFloor(*hash)));
+            }
+            if entry.cosigns.is_empty() {
+                return None;
+            }
+            concurrent
+                .find_map(|(_, _, floor)| {
+                    participants_under_floor(entry, states, *floor, context).err()
                 })
-                .then_some((*hash, AuthorityFoldIssue::SignerBelowTierFloor(*hash)))
+                .map(|issue| (*hash, issue))
         })
         .collect()
+}
+
+/// Judges `entry`'s participants again over its parents' merged state, with
+/// `floor` in force, so a cosigner below it counts toward neither consent nor
+/// quorum. A row whose parents did not all fold stands as it folded.
+fn participants_under_floor(
+    entry: &AuthorityLogEntry,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    floor: AuthorityTier,
+    context: FoldContext<'_>,
+) -> std::result::Result<(), AuthorityFoldIssue> {
+    let mut merged: Option<FoldState> = None;
+    for parent in &entry.parent_hashes {
+        let Some(state) = states.get(parent) else {
+            return Ok(());
+        };
+        merged = Some(match merged {
+            Some(current) => merge_states(&current, state),
+            None => state.clone(),
+        });
+    }
+    let Some(mut state) = merged else {
+        return Ok(());
+    };
+    state.tier_floor = most_restrictive_tier_floor(state.tier_floor, floor);
+    participant_rules_hold(&state, entry, context)
 }

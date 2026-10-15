@@ -18,7 +18,10 @@
 //! | `fold_state` | folded-state data model and the two-state merge |
 //! | `first_seen_clock` | first-seen sidecar keys and the per-vault clock |
 //! | `fold_engine` | top-level fold orchestration |
+//! | `fold_schedule` | the per-entry scheduler: the next entry that does not wait |
 //! | `ancestor_index` / `ancestry_bypass` | fold ancestry and revocation bypass |
+//! | `log_budget` | pinned fold-work bounds, the slip issuer, and the store doors' per-signer bound |
+//! | `import_order` | the order an import or a sync pass hands the store doors several rows in |
 //! | `entry_transition` | per-entry transition and consent/quorum predicates |
 //! | `anchor_fold` | owner roots and an anchor's machine marks, before the roster |
 //! | `machine_profile` | per-admitter machine chains and the trusted projection |
@@ -40,12 +43,15 @@ mod engine_machine;
 mod entry_transition;
 mod first_seen_clock;
 mod fold_engine;
+mod fold_schedule;
 mod fold_state;
 mod handoff_equivocation;
 mod history_transfer;
 mod host_re_root;
+mod import_order;
 mod ingest_observation;
 mod install_fold;
+mod log_budget;
 mod machine_claims;
 mod machine_enroll;
 mod machine_identity;
@@ -127,6 +133,10 @@ pub use handoff_equivocation::AuthorityHandoffEquivocation;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
+pub use log_budget::{
+    AuthorityLogCheck, MAX_AUTHORITY_FOLD_ENTRIES, MAX_AUTHORITY_FOLD_HANDOFFS,
+    MAX_AUTHORITY_ROWS_PER_SIGNER,
+};
 pub use machine_identity::{
     LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine, RequestCode,
     machine_connection_transcript, machine_proof_header_value,
@@ -156,6 +166,12 @@ pub(crate) use claim_write::{
 };
 pub(crate) use first_seen_clock::*;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
+pub(crate) use import_order::authority_stage_order;
+#[cfg(test)]
+pub(crate) use log_budget::with_authority_doors_open_for_test;
+pub(crate) use log_budget::{
+    AuthorityDoor, AuthorityDoorView, authority_door, authority_signer_label, signer_has_standing,
+};
 pub(crate) use pinned_root::{drop_pinned_root_in_txn, is_pinned_root_row};
 pub(crate) use pinned_root::{read_pin_and_earlier_in_txn, write_pinned_root_in_txn};
 pub(crate) use readonly_fold::AuthorityView;
