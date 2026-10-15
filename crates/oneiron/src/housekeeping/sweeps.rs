@@ -8,14 +8,21 @@
 //! document at a time, so one document that fails cannot hold the others. The
 //! rest scan their own table in one call: the lease and print sweeps when a
 //! deadline a door noted comes due and hourly besides, symbol holds every five
-//! minutes, and the erasure sweep daily, hourly while an obligation waits; it
-//! rewrites windows only for a due obligation, since dropping history is an
-//! erase. The lease sweep also retries a bounded number of files a revoke or
-//! an expiry could not remove then.
+//! minutes, and the erasure sweep daily, hourly while an obligation waits; a
+//! scheduled run rewrites windows only for a due obligation, since dropping
+//! history is an erase, and the owner's run rewrites every window. The lease
+//! sweep also retries a bounded number of files a revoke or an expiry could
+//! not remove then.
 
 use super::{Deadline, HardEraseWork, HousekeepingSweep, SweepWork};
+use crate::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
+use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
 use crate::{EntityId, Vault};
+
+/// What a lapse the host records carries as its provenance.
+const COMMITMENT_LAPSE_PROVENANCE: &str = "oneiron.housekeeping.commitment_lapse.v1";
 
 /// The cache's hard age bound: the longest serve window (ARCH-0019, Dormant
 /// 168 h), so eviction never takes a row the read gate could still serve.
@@ -111,11 +118,11 @@ pub(super) fn run(
             }));
         }
         HousekeepingSweep::CommitmentLapse => {
-            // The projector's pinned MACHINE envelope: a lapse records that a
-            // due time passed, as the projector records an occurrence.
-            let envelope = crate::commitment_schedule::commitment_projection_envelope()?;
-            let report =
-                crate::commitment_lifecycle::lapse_overdue_commitments(vault, now, &envelope)?;
+            let report = crate::commitment_lifecycle::lapse_overdue_commitments(
+                vault,
+                now,
+                &lapse_envelope()?,
+            )?;
             SweepWork::Commitments {
                 lapsed: count(report.lapsed.len()),
                 close_hooks_repaired: count(report.repaired_close_hooks.len()),
@@ -261,6 +268,23 @@ fn ppr_cache(vault: &Vault, now: u64, deadline: &Deadline, cursor: Option<&[u8]>
             });
         }
     }
+}
+
+/// The envelope the host lapses an overdue instance under: the vault owner's,
+/// as the owner-typed lifecycle doors act, observing that a due time passed.
+/// The instance is the projector's signed birth, which only an ordinary
+/// successor may replace; the projector's own envelope would have to rewrite
+/// that birth.
+fn lapse_envelope() -> Result<WriteEnvelope> {
+    Ok(WriteEnvelope::new(
+        WriteActor::new(
+            crate::vault::embedded_owner_actor_id()?,
+            EdgeActorClass::Human,
+        ),
+        ClaimSource::Observed,
+        WriteProvenance::new(rmpv::Value::from(COMMITMENT_LAPSE_PROVENANCE))?,
+        ClaimApprovalStatus::Auto,
+    ))
 }
 
 /// The erasure sweep. A scheduled run compacts history only for a due

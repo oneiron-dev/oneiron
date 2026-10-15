@@ -534,8 +534,8 @@ fn overdue_instance_lapses_with_let_go_receipt_and_successor() -> Result<()> {
     Ok(())
 }
 
-/// A running host lapses an overdue instance with no caller: its housekeeping
-/// pass runs the sweep under the projector's own MACHINE envelope.
+/// A running host lapses an overdue instance the projector minted, with no
+/// caller: its housekeeping pass runs the sweep in the vault owner's name.
 #[test]
 fn the_housekeeping_pass_lapses_an_overdue_instance() -> Result<()> {
     use crate::housekeeping::{HousekeepingBudget, HousekeepingSweep, SweepOutcome, SweepWork};
