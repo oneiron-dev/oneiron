@@ -61,8 +61,9 @@ slow-timeout = { period = "60s", terminate-after = 12 }
 # Long tests start first, so none of them starts late and stretches the end of
 # a run. Tests run lexicographically otherwise. Priority (higher runs sooner)
 # and threads-required only order and weight the queue: every profile still
-# runs the same tests with the same timeouts and retries. threads-required is
-# the test's own worker count; the default is 1. Times are gate medians from
+# runs the same tests with the same timeouts and retries. threads-required
+# reserves that many of the run's test slots, set to the threads the test keeps
+# busy; the default is 1. Times are gate medians from
 # 2026-10-10 to 10-16 (kel, bel, sel and gce logs).
 #
 # 200-500 s each.
