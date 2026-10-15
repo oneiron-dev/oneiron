@@ -3012,6 +3012,67 @@ fn a_grant_the_guest_stamped_is_no_consent_and_the_owners_record_is() -> Result<
     Ok(())
 }
 
+/// Tier r3 (Astra P2-1): an answer delegation counts only when its target is
+/// the guest. The owner's delegation with no target names no guest, so the
+/// companion's answer stays a hint.
+#[test]
+fn an_owner_delegation_that_names_no_guest_counts_for_none() -> Result<()> {
+    use crate::consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
+    let fixture = RuledAskFixture::new(1)?;
+    let person = fixture.people[0];
+    let companion = EntityId::now();
+    fixture.vault.put_entity(
+        &companion,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange {
+            start: 1_000,
+            end: 1_000,
+        },
+        1_000,
+        b"companion",
+    )?;
+    let guest = guest_fixture(&fixture, person, companion, false)?;
+    let owner = fixture.vault.authenticate_owner(
+        fixture.owner,
+        &fixture.owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    fixture.vault.create_standing_grant(
+        &owner,
+        GrantBound::action(
+            ActorBound::new(companion.to_hex())?.with_actor_class("agent")?,
+            ActionClass::new("ask.answer.meeting")?,
+            ActionEnvelope::new(["answer".to_owned()])?,
+        )?,
+    )?;
+    let mut spec = fixture.spec();
+    spec.who = Some(TaskAskTarget::Guests([(person, guest)].into()));
+    spec.what.class_key = Some("meeting".into());
+    let handle = fixture.ask(&spec)?;
+    fixture
+        .vault
+        .memory(companion, EdgeActorClass::Agent)
+        .tasks_answer(
+            &handle,
+            &TaskAskWord {
+                result_ref: fixture.question.entity_ref(),
+                option: Some(TaskAskOptionId::new("yes")?),
+                inform_for: None,
+                companion_for: Some(person),
+                confirmation: None,
+                provenance_refs: Default::default(),
+            },
+        )?;
+    let evidence = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .tasks_ask_evidence(handle)?;
+    assert_eq!(evidence[0].reason, TaskAskEvidenceReason::CompanionHint);
+    assert!(evidence[0].delegation_grant_ref.is_none());
+    Ok(())
+}
+
 #[test]
 fn slot_commitment_human_can_approve_or_reject_typed_notice() -> Result<()> {
     for decision in [

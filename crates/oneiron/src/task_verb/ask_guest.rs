@@ -1,8 +1,8 @@
 //! Ask-scoped guest authority: reuse a person's owner-stamped bounds.
 use super::{TaskAskGuest, TaskAskTarget};
 use crate::consent::{
-    ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundSubject, DisclosureClass,
-    DisclosureEnvelope, GrantBound, StandingConsentGrant,
+    ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundEnvelope, BoundSubject,
+    DisclosureClass, DisclosureEnvelope, GrantBound, StandingConsentGrant,
 };
 use crate::error::Result;
 use crate::{EntityId, Vault};
@@ -22,6 +22,15 @@ fn owner_recorded(
     row: &crate::consent::ConsentGrantRow,
 ) -> Result<bool> {
     crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &row.owner_stamp.actor)
+}
+
+/// An answer delegation names its guest: the grant's target is the guest,
+/// never unset (an unset target would cover every guest of the companion).
+fn names_guest(bound: &GrantBound, person: EntityId) -> bool {
+    matches!(
+        bound.envelope(),
+        BoundEnvelope::Action(envelope) if envelope.target() == Some(person.to_hex().as_str())
+    )
 }
 
 fn not_recorded() -> crate::Error {
@@ -65,8 +74,10 @@ pub(super) fn check_disclosure(
     if !owner_recorded(vault, txn, &row)? {
         return Err(not_recorded());
     }
+    // A row that is no usable disclosure for this ask refuses the same way,
+    // so the refusal tells nothing about rows the caller was not given.
     let StandingConsentGrant::Disclosure(parent) = &row.grant else {
-        return Err(invalid());
+        return Err(not_recorded());
     };
     // The owner records the guest's consent: its audience names the guest
     // beside the asker.
@@ -79,7 +90,7 @@ pub(super) fn check_disclosure(
         || row.grant_ref() != guest.disclosure_grant_ref
         || !parent.bound().contains(&required)
     {
-        return Err(invalid());
+        return Err(not_recorded());
     }
     for reference in &refs {
         crate::llm::decision::questions::validate_task_answer_unit(
@@ -116,7 +127,7 @@ pub(super) fn delegated_class(
         let StandingConsentGrant::Action(action) = &grant else {
             continue;
         };
-        if !action.bound().contains(&required) {
+        if !action.bound().contains(&required) || !names_guest(action.bound(), person) {
             continue;
         }
         if !matches!(action.bound().subject(), BoundSubject::Actor(_)) {
@@ -160,7 +171,9 @@ pub(super) fn check_delegation_record(
     // Admission took this grant only as a live owner recorded it
     // (`delegated_class`). Like a later revocation, a later change of owners
     // does not reach back into an answer already admitted.
-    Ok(row.grant_ref() == reference && action.bound().contains(&required))
+    Ok(row.grant_ref() == reference
+        && action.bound().contains(&required)
+        && names_guest(action.bound(), person))
 }
 
 /// Admit only the exact question facts inside a live owner-stamped bound, then
