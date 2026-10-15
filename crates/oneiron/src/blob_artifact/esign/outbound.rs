@@ -274,7 +274,13 @@ impl Vault {
         {
             return Err(invalid("dispatch binding mismatch").into());
         }
-        let state = self.esign_document(document)?;
+        // A void narrows the document, so it is admitted on the whole chain.
+        let state = if command.verb == EsignOutboundVerb::Void {
+            let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+            super::ledger::restrictive_state_in(self, &txn, document)?
+        } else {
+            self.esign_document(document)?
+        };
         if state.document.recipients.len() != command.recipient_count {
             return Err(invalid("recipient count changed").into());
         }

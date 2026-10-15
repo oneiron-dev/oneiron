@@ -46,6 +46,11 @@ pub(super) fn enqueue_seal(
     document: EntityId,
     now: u64,
 ) -> Result<()> {
+    // A held chain seals nothing; a decline or void on it still lands, and a
+    // reseal after the owner's answer seals it.
+    if super::ledger::held_in(vault, txn, document)? {
+        return Ok(());
+    }
     let state = state_in(vault, txn, document)?;
     if !state.ready_to_seal() {
         return Ok(());
