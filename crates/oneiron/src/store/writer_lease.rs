@@ -176,7 +176,7 @@ impl VaultWriterLease {
     /// still names `directory`.
     #[cfg(unix)]
     pub(crate) fn acquire_held(directory: std::fs::File, vault_dir: &Path) -> Result<Self> {
-        use rustix::fs::{Mode, OFlags, openat};
+        use rustix::fs::{AtFlags, FileType, Mode, OFlags, openat, statat};
         let pid = std::process::id();
         let file = std::fs::File::from(
             openat(
@@ -187,9 +187,15 @@ impl VaultWriterLease {
             )
             .map_err(|errno| {
                 let error = std::io::Error::from(errno);
-                // The name has one component, so a loop is the name itself:
-                // a link, never followed. Say so, so its owner knows to remove it.
-                if errno == rustix::io::Errno::LOOP {
+                // A loop at this one-component name is a link, never followed,
+                // or a mount walk too deep (review r6, Astra F1). Name the link
+                // only when the entry is one, so its owner knows to remove it.
+                let link = errno == rustix::io::Errno::LOOP
+                    && statat(&directory, VAULT_WRITER_LOCK_FILE, AtFlags::SYMLINK_NOFOLLOW)
+                        .is_ok_and(|named| {
+                            FileType::from_raw_mode(named.st_mode) == FileType::Symlink
+                        });
+                if link {
                     let cause = format!(
                         "the vault's writer lock {VAULT_WRITER_LOCK_FILE} is a symbolic link; remove it"
                     );
