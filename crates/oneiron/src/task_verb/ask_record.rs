@@ -390,21 +390,23 @@ pub(super) fn evidence_in(
     id: EntityId,
     group: &AskGroup,
 ) -> Result<Vec<TaskAskEvidence>> {
+    // Every word is read, however many (rule 5); `txn` is the caller's and
+    // may be a write, so a crossing is deferred.
+    let mut count = crate::scan_check::ScanCount::start(
+        &vault.store,
+        txn,
+        crate::scan_check::EngineScan::AskWordRows,
+        id.as_bytes(),
+    )?;
     let mut evidence = Vec::new();
-    for (count, row) in vault
-        .store
-        .port_edges(
-            txn,
-            &id,
-            crate::ports::EdgeDirection::In,
-            Some(crate::EdgeKind::About),
-            None,
-        )?
-        .enumerate()
-    {
-        if count >= 4096 {
-            return Err(Error::IndexOverflow("ask words"));
-        }
+    for row in vault.store.port_edges(
+        txn,
+        &id,
+        crate::ports::EdgeDirection::In,
+        Some(crate::EdgeKind::About),
+        None,
+    )? {
+        count.row();
         let word_ref = row?.target;
         let Some(fact) = read_answer(vault, txn, word_ref)? else {
             continue;
@@ -480,6 +482,7 @@ pub(super) fn evidence_in(
         });
     }
     evidence.sort_by_key(|entry| (entry.order, entry.answer.word_ref));
+    count.defer(&vault.store);
     Ok(evidence)
 }
 

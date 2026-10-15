@@ -51,15 +51,34 @@ pub enum EngineScan {
     VisibleRefRows,
     /// One repository's keep-ref owners, every kind.
     KeepOwnerRows,
+    /// The tasks an omitted ask target or task context is resolved from, for
+    /// one asking actor.
+    TaskCensusRows,
+    /// One ask's words.
+    AskWordRows,
+    /// The room members' tasks a thread census reads, for one reader.
+    RoomThreadTasks,
+    /// The rows one session's read set holds.
+    ReadSetRows,
+    /// One room's history rows a message page passes over.
+    RoomPageRows,
+    /// One room's history rows a liveness snapshot reads.
+    RoomHistoryRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 10] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
         Self::KeepOwnerRows,
+        Self::TaskCensusRows,
+        Self::AskWordRows,
+        Self::RoomThreadTasks,
+        Self::ReadSetRows,
+        Self::RoomPageRows,
+        Self::RoomHistoryRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -78,6 +97,12 @@ impl EngineScan {
             Self::PublicationRows => "publication_rows",
             Self::VisibleRefRows => "visible_ref_rows",
             Self::KeepOwnerRows => "keep_owner_rows",
+            Self::TaskCensusRows => "task_census_rows",
+            Self::AskWordRows => "ask_word_rows",
+            Self::RoomThreadTasks => "room_thread_tasks",
+            Self::ReadSetRows => "read_set_rows",
+            Self::RoomPageRows => "room_page_rows",
+            Self::RoomHistoryRows => "room_history_rows",
         }
     }
 
@@ -87,6 +112,12 @@ impl EngineScan {
             Self::PublicationRows => 2,
             Self::VisibleRefRows => 3,
             Self::KeepOwnerRows => 4,
+            Self::TaskCensusRows => 32,
+            Self::AskWordRows => 33,
+            Self::RoomThreadTasks => 34,
+            Self::ReadSetRows => 35,
+            Self::RoomPageRows => 36,
+            Self::RoomHistoryRows => 37,
         }]
     }
 }
