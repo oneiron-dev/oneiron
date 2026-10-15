@@ -41,10 +41,10 @@ struct Formulas {
     vba_project: bool,
     /// The worksheets' names, as the workbook spells them.
     sheet_names: Vec<String>,
-    /// Each formula cell that may be a CELL("filename") call and caches text:
-    /// its formula (a shared formula's anchor text) and that text, `None`
-    /// when the reader does not decode it.
-    filename_caches: Vec<(String, Option<String>)>,
+    /// Each formula that may be a CELL("filename") call (a shared formula's
+    /// anchor text once) and the text cached by every cell it computes,
+    /// `None` when the reader does not decode it.
+    filename_caches: Vec<(String, Vec<Option<String>>)>,
 }
 
 struct DefinedName {
@@ -359,20 +359,22 @@ impl Formulas {
     /// every formula.
     fn saved_location(&self) -> Result<Option<DocumentLocation>> {
         let mut found = None;
-        for (formula, text) in &self.filename_caches {
+        for (formula, texts) in &self.filename_caches {
             if !crate::context::cell_filename(&crate::context::parse_bounded(formula)?) {
                 continue;
             }
-            let Some(location) = text
-                .as_deref()
-                .and_then(|text| saved_filename(text, &self.sheet_names))
-            else {
-                return Ok(None);
-            };
-            if found.as_ref().is_some_and(|found| *found != location) {
-                return Ok(None);
+            for text in texts {
+                let Some(location) = text
+                    .as_deref()
+                    .and_then(|text| saved_filename(text, &self.sheet_names))
+                else {
+                    return Ok(None);
+                };
+                if found.as_ref().is_some_and(|found| *found != location) {
+                    return Ok(None);
+                }
+                found = Some(location);
             }
-            found = Some(location);
         }
         Ok(found)
     }
@@ -777,12 +779,13 @@ fn check_cells(xml: &Xml, strings: usize, refusal: &mut Option<Cow<'static, str>
     Ok(())
 }
 
-/// The formula and cached text of each formula cell of `xml` whose formula
-/// (a shared formula's anchor text for the cells sharing it, wherever the
-/// anchor sits) holds `call`, without case: Excel caches a formula's text
+/// Each formula of `xml` that holds `call`, without case, with the text cached
+/// by every cell it computes (a shared formula's anchor computes the cells
+/// sharing it, wherever the anchor sits): Excel caches a formula's text
 /// result as `t="str"`. `None` for a cached text with an escape the reader
-/// does not decode.
-fn text_caches(xml: &Xml, call: &str) -> Result<Vec<(String, Option<String>)>> {
+/// does not decode. A formula's text is read and held once, however many
+/// cells share it, since it is bounded only after this scan.
+fn text_caches(xml: &Xml, call: &str) -> Result<Vec<(String, Vec<Option<String>>)>> {
     fn group(formula: &Node) -> Option<u32> {
         formula
             .attr("si")
@@ -804,28 +807,38 @@ fn text_caches(xml: &Xml, call: &str) -> Result<Vec<(String, Option<String>)>> {
     // Grouped as the writer groups them: by the index's number (`si="00"` is
     // group 0), a formula of blank text a member.
     let member = |formula: &Node| formula.text.trim().is_empty();
-    let shared: BTreeMap<_, _> = cells
-        .iter()
-        .filter(|(_, _, formula)| !member(formula))
-        .filter_map(|(_, _, formula)| Some((group(formula)?, formula.text.as_str())))
-        .collect();
-    for (index, cell, formula) in &cells {
-        let text = if member(formula) {
-            match group(formula).and_then(|group| shared.get(&group)) {
-                Some(anchor) => anchor,
-                None => continue,
-            }
-        } else {
-            formula.text.as_str()
-        };
-        if !text.to_ascii_uppercase().contains(call) || cell.attr("t") != Some("str") {
+    // Each formula that holds `call`, by its place in `caches`.
+    let mut own = Vec::with_capacity(cells.len());
+    let mut shared = BTreeMap::new();
+    for (_, _, formula) in &cells {
+        if member(formula) {
+            own.push(None);
             continue;
         }
+        let entry = formula.text.to_ascii_uppercase().contains(call).then(|| {
+            caches.push((formula.text.clone(), Vec::new()));
+            caches.len() - 1
+        });
+        if let Some(group) = group(formula) {
+            shared.insert(group, entry);
+        }
+        own.push(entry);
+    }
+    for ((index, cell, formula), entry) in cells.iter().zip(own) {
+        let entry = if member(formula) {
+            group(formula).and_then(|group| shared.get(&group).copied().flatten())
+        } else {
+            entry
+        };
+        let Some(entry) = entry.filter(|_| cell.attr("t") == Some("str")) else {
+            continue;
+        };
         if let Some((_, value)) = xml.child(*index, MAIN, "v")? {
             let value = (!escaped(&value.text)).then(|| value.text.clone());
-            caches.push((text.to_owned(), value));
+            caches[entry].1.push(value);
         }
     }
+    caches.retain(|(_, texts)| !texts.is_empty());
     Ok(caches)
 }
 
