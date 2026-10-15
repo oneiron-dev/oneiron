@@ -265,8 +265,14 @@ impl Vault {
                     .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
                 return Ok(Ok(CriticalWriteConfirmResolution::AlreadySettled));
             }
-            let mut body = self
-                .get_claim_in_txn(&*wtxn, &binding.claim_id)?
+            // An answer to a parked decay or stale mark settles a restriction,
+            // so it reads a held machine history; every other answer waits.
+            let mut body =
+                if self.deferred_claim_is_in_place_demotion_in_txn(&*wtxn, &binding.claim_id)? {
+                    self.claim_for_restriction_in_txn(&*wtxn, &binding.claim_id)?
+                } else {
+                    self.get_claim_in_txn(&*wtxn, &binding.claim_id)?
+                }
                 .ok_or(Error::EntityNotFound)?;
             let raw = self
                 .store
