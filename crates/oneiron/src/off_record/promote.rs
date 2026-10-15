@@ -141,6 +141,9 @@ pub struct PromoteOutcome {
 /// Durable, user-initiated receipt minted by promote. It carries opaque ids
 /// only and survives the in-process session record.
 ///
+/// The initiator fields record WHO consented, from the proof the saving
+/// transaction rechecked, never a literal a caller passes in.
+///
 /// The receipt is also the RETRY ANSWER: it stores the first call's complete
 /// [`PromoteOutcome`], so a second promote of the same turn reads it back and
 /// returns it unchanged rather than allocating a second short id, restamping
@@ -151,20 +154,65 @@ pub struct OffRecordPromoteReceipt {
     pub session_ref: String,
     pub turn: [u8; 16],
     pub promoted_at: u64,
+    /// The consenting actor's entity id, as lower-case hex.
+    pub initiator_ref: String,
+    /// How they proved it: [`PROMOTE_INITIATOR_OWNER`] or
+    /// [`PROMOTE_INITIATOR_ROOM_OWNER`].
+    pub initiator_kind: String,
     pub outcome: PromoteOutcome,
+}
+
+/// `initiator_kind` of a promotion on an [`AuthenticatedOwner`] proof.
+///
+/// [`AuthenticatedOwner`]: crate::consent::AuthenticatedOwner
+pub const PROMOTE_INITIATOR_OWNER: &str = "owner";
+
+/// `initiator_kind` of a room's talk saved by a person in the room who owns
+/// this vault, named by the transport with the credential it checked
+/// ([`OffRecordSession::save_talk_by`](crate::off_record::OffRecordSession::save_talk_by)).
+pub const PROMOTE_INITIATOR_ROOM_OWNER: &str = "room_owner";
+
+/// Who consented to a promotion, as its receipt names them. Built only from
+/// the proof the saving door checks.
+pub(crate) struct PromoteInitiator {
+    actor: EntityId,
+    kind: &'static str,
+}
+
+impl PromoteInitiator {
+    pub(crate) fn owner(owner: &crate::consent::AuthenticatedOwner) -> Self {
+        Self {
+            actor: owner.actor(),
+            kind: PROMOTE_INITIATOR_OWNER,
+        }
+    }
+
+    pub(crate) const fn room_owner(person: EntityId) -> Self {
+        Self {
+            actor: person,
+            kind: PROMOTE_INITIATOR_ROOM_OWNER,
+        }
+    }
+
+    pub(crate) const fn actor(&self) -> EntityId {
+        self.actor
+    }
 }
 
 /// Durable receipt that ONE message of a stretch was copied into base, into a
 /// turn the stretch had already saved, by a later save of its talk. The
 /// turn's [`OffRecordPromoteReceipt`] stays the answer to a retry of its
 /// promotion; this one answers a save that runs again, so the message is
-/// never copied twice. It carries opaque ids only.
+/// never copied twice. It carries opaque ids only, and names who consented
+/// to the save that copied it, as [`OffRecordPromoteReceipt`] does.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct OffRecordCopyReceipt {
     pub(crate) version: u8,
     pub(crate) session_ref: String,
     pub(crate) turn: [u8; 16],
     pub(crate) copied_at: u64,
+    pub(crate) initiator_ref: String,
+    pub(crate) initiator_kind: String,
 }
 
 /// What one copy into a saved turn did: the outcome of the messages it
@@ -260,6 +308,7 @@ impl FloorWrites<'_> {
         wtxn: &mut RwTxn<'_>,
         session_ref: &str,
         plan: &PromotePlan,
+        initiator: &PromoteInitiator,
         promoted_at: u64,
     ) -> Result<PromoteOutcome> {
         // Defense at the only overlay-to-base replay door, before even a
@@ -330,6 +379,8 @@ impl FloorWrites<'_> {
             session_ref: session_ref.to_owned(),
             turn: *turn.as_bytes(),
             promoted_at,
+            initiator_ref: initiator.actor.to_hex(),
+            initiator_kind: initiator.kind.to_owned(),
             outcome: outcome.clone(),
         };
         PROMOTE_RECEIPTS.put(self.store, wtxn, &turn, &receipt)?;
@@ -373,6 +424,7 @@ impl FloorWrites<'_> {
         wtxn: &mut RwTxn<'_>,
         session_ref: &str,
         plan: &PromotePlan,
+        initiator: &PromoteInitiator,
         copied_at: u64,
     ) -> Result<Appended> {
         if let Some(record) = self.store.off_record_sessions.record(session_ref) {
@@ -565,6 +617,8 @@ impl FloorWrites<'_> {
                     session_ref: session_ref.to_owned(),
                     turn: *turn.as_bytes(),
                     copied_at,
+                    initiator_ref: initiator.actor.to_hex(),
+                    initiator_kind: initiator.kind.to_owned(),
                 },
             )?;
             held.insert(*id);
@@ -647,6 +701,16 @@ impl Vault {
     ) -> Result<Option<OffRecordPromoteReceipt>> {
         let rtxn = self.store.env.read_txn()?;
         PROMOTE_RECEIPTS.get(&self.store, &rtxn, turn_id)
+    }
+
+    /// The receipt of `message`, copied into a saved turn by a later save.
+    #[cfg(test)]
+    pub(crate) fn off_record_copy_receipt(
+        &self,
+        message: &EntityId,
+    ) -> Result<Option<OffRecordCopyReceipt>> {
+        let rtxn = self.store.env.read_txn()?;
+        COPY_RECEIPTS.get(&self.store, &rtxn, message)
     }
 
     /// How many sync pickup markers name `turn_id`. The marker table is

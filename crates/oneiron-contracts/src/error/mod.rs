@@ -177,6 +177,7 @@ pub enum ErrorKind {
     InvalidRankProfile,
     AnalyzerAssetMissing,
     AnalyzerError,
+    IndexedTextTooLarge,
     UpstreamToolFailure,
     RetrievalStageCut,
     #[cfg(feature = "sync")]
@@ -276,6 +277,8 @@ pub enum ErrorKind {
     GitHttpInvalidRepoName,
     GitHttpRepoNotFound,
     GitHttpServeFailed,
+    GitHttpExchangeIdle,
+    GitHttpRepositoryBusy,
     ReceivePackDoorRejected,
     ReceivePackLandingRefused,
     VaultCleanupRestoreNotArchived,

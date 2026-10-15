@@ -38,8 +38,8 @@ impl Memory<'_> {
                 // Every message the turn reads its text from, a hidden or
                 // empty one too, which may show text after its next change.
                 let mut members = Vec::new();
-                for (message, _) in
-                    crate::tagging::turn_members_in_txn(self.vault, &content, txn, id)?
+                for (message, ..) in
+                    crate::tagging::turn_members_in_txn(self.vault, &content, txn, id, false)?
                         .unwrap_or_default()
                 {
                     if readable(&message)? {
@@ -47,11 +47,11 @@ impl Memory<'_> {
                     }
                 }
                 match crate::vault::entity_revision::served_turn_text_in_txn(
-                    self.vault, &content, txn, id, mode,
+                    self.vault, &content, txn, id, mode, true,
                 )? {
                     Some(text) => {
                         let revision = text.revision;
-                        let messages = text.readable(readable)?;
+                        let messages = text.released(readable)?;
                         Some((messages, Some(revision), members))
                     }
                     None => Some((Vec::new(), None, members)),
