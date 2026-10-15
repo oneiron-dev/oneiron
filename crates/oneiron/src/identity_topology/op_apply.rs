@@ -159,6 +159,17 @@ impl Vault {
         if write.approval == ClaimApprovalStatus::Rejected {
             return Ok(IdentityOpOutcome::Noop);
         }
+        // A merge source stops being a live PERSON, and a personal vault's
+        // owner is its embedded owner's PERSON: merging it away would lock the
+        // owner out of every owner door. The owner survives a merge instead.
+        if let IdentityTopologyOp::Merge(merge) = op {
+            let owner = crate::vault::embedded_owner_actor_id()?;
+            if merge.sources.contains(&owner) {
+                return Err(Error::Sync(SyncError::IdentityTopologyRejected(
+                    IdentityTopologyRejection::OwnerMergedAway { owner },
+                )));
+            }
+        }
         // ARCH-0055 §6 re-proposal suppression (ONE-1746). Propose and apply
         // are ONE door, separated only by `write.approval`, so the gate sits
         // here behind `!is_effective()`: a PROPOSED merge over a pair an

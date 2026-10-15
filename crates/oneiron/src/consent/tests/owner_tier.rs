@@ -184,3 +184,59 @@ fn a_non_owner_persons_proof_witnesses_nothing_into_a_roomless_stretch() {
     assert_eq!(refusal.code, MEMORY_CODE_FORBIDDEN, "{refusal:?}");
     speak(&owner).expect("the owner speaks in their own stretch");
 }
+
+/// A merge source stops being a live PERSON, so merging the vault owner away
+/// would leave a personal vault with no owner: the merge door refuses it and
+/// changes nothing. The other way the owner survives the merge and still
+/// opens owner doors (Engine ruling Q2).
+#[test]
+fn a_merge_never_retires_the_vault_owner_and_the_owner_survives_one() {
+    use crate::error::SyncError;
+    use crate::identity_topology::{
+        IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, IdentityTopologyRejection,
+        MergeOp, SurvivorshipPlan,
+    };
+    let (_dir, vault, owner, person) = owner_and_person();
+    let duplicate = person.actor_for_read(&vault).unwrap();
+    let merge = |sources: Vec<crate::EntityId>, survivor: crate::EntityId| {
+        vault.apply_identity_topology_op(
+            &IdentityTopologyOp::Merge(MergeOp {
+                sources,
+                survivor,
+                evidence: IdentityOpEvidence {
+                    refs: Vec::new(),
+                    rationale: "a duplicate of the owner".into(),
+                },
+                survivorship_plan: SurvivorshipPlan::ReadThrough,
+            }),
+            &IdentityOpWrite::auto(crate::claim::ClaimSource::Inferred).with_actor(
+                crate::WriteActor::new(owner.actor(), crate::edge::EdgeActorClass::Human),
+            ),
+            200,
+        )
+    };
+    let decisions = vault.store.gate_decisions(1_000).unwrap().len();
+    let refused = merge(vec![owner.actor()], duplicate);
+    assert!(
+        matches!(
+            refused,
+            Err(Error::Sync(SyncError::IdentityTopologyRejected(
+                IdentityTopologyRejection::OwnerMergedAway { owner: named }
+            ))) if named == owner.actor()
+        ),
+        "{refused:?}"
+    );
+    // Nothing changed: the owner still owns the vault and the duplicate is
+    // still a live person who owns nothing.
+    assert!(vault.is_live_vault_owner(&owner).unwrap());
+    assert!(!vault.is_live_vault_owner(&person).unwrap());
+    assert_eq!(vault.store.gate_decisions(1_000).unwrap().len(), decisions);
+    merge(vec![duplicate], owner.actor()).expect("the owner survives the merge");
+    assert!(
+        vault.is_live_vault_owner(&person).is_err(),
+        "the duplicate was merged away"
+    );
+    vault
+        .create_standing_grant(&owner, action_bound("agent-a", "send", &["channel:email"]))
+        .expect("the owner still opens owner doors");
+}

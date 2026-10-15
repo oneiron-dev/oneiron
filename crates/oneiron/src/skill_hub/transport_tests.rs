@@ -1013,7 +1013,9 @@ fn code_policy_revalidates_owner_and_can_toggle_across_reopen() -> Result<()> {
         confidence: 1.0,
         actor: None,
     };
-    vault.apply_identity_topology_op(
+    // A merge never retires the owner: merging them away is refused, and
+    // the owner still owns the vault.
+    let merged_away = vault.apply_identity_topology_op(
         &crate::identity_topology::IdentityTopologyOp::Merge(crate::identity_topology::MergeOp {
             sources: vec![owner_id],
             survivor,
@@ -1025,16 +1027,20 @@ fn code_policy_revalidates_owner_and_can_toggle_across_reopen() -> Result<()> {
         }),
         &write,
         100,
-    )?;
-    assert_eq!(
-        vault
-            .set_marketplace_code_auto_install(&owner, false)
-            .expect_err("inactive owner")
-            .kind(),
-        ErrorKind::ConsentOwnerNotAuthenticated
     );
-    // Ownership does not follow a merge: the survivor owns nothing here, so
-    // its proof toggles nothing either.
+    assert!(
+        matches!(
+            merged_away,
+            Err(crate::error::Error::Sync(
+                crate::error::SyncError::IdentityTopologyRejected(
+                    crate::identity_topology::IdentityTopologyRejection::OwnerMergedAway { .. }
+                )
+            ))
+        ),
+        "{merged_away:?}"
+    );
+    assert!(vault.is_live_vault_owner(&owner)?);
+    // A survivor-to-be who owns nothing here toggles nothing.
     let survivor_proof = vault.authenticate_owner(
         survivor,
         "principal:survivor",
@@ -1044,7 +1050,7 @@ fn code_policy_revalidates_owner_and_can_toggle_across_reopen() -> Result<()> {
     assert_eq!(
         vault
             .set_marketplace_code_auto_install(&survivor_proof, false)
-            .expect_err("a survivor who owns nothing")
+            .expect_err("a person who owns nothing")
             .kind(),
         ErrorKind::ConsentOwnerNotAuthenticated
     );

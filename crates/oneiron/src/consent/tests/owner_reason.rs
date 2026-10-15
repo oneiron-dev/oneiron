@@ -1,8 +1,6 @@
 use super::super::*;
-use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::GateDecisionId;
-use crate::temporal::TimeRange;
-use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
+use crate::test_util::{embedding_test_config, open_test_vault_with};
 
 fn setup() -> (tempfile::TempDir, Vault, AuthenticatedOwner) {
     let (dir, vault) = open_test_vault_with(embedding_test_config());
@@ -194,38 +192,9 @@ fn reason_does_not_override_catastrophe_or_authentication() {
 #[test]
 fn stale_authenticated_owner_cannot_confirm_with_or_without_reason() {
     let (_dir, vault, owner) = setup();
-    let survivor = entity(0x53);
-    vault
-        .put_entity(
-            &survivor,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"survivor",
-        )
-        .unwrap();
-    vault
-        .apply_identity_topology_op(
-            &crate::identity_topology::IdentityTopologyOp::Merge(
-                crate::identity_topology::MergeOp {
-                    sources: vec![owner.actor()],
-                    survivor,
-                    evidence: crate::identity_topology::IdentityOpEvidence {
-                        refs: Vec::new(),
-                        rationale: "fixture merge".into(),
-                    },
-                    survivorship_plan: crate::identity_topology::SurvivorshipPlan::ReadThrough,
-                },
-            ),
-            &crate::identity_topology::IdentityOpWrite {
-                source: crate::claim::ClaimSource::Inferred,
-                approval: crate::claim::ClaimApprovalStatus::Auto,
-                confidence: 1.0,
-                actor: None,
-            },
-            200,
-        )
-        .unwrap();
+    // A merge never retires the owner, so delete the owner's PERSON: the
+    // proof no longer holds.
+    assert!(vault.delete_entity(&owner.actor()).unwrap());
     let before = vault.store.gate_decisions(100).unwrap().len();
     let requirement = bound("send", "channel:team");
     let operation = effect(requirement.clone());
