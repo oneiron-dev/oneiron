@@ -128,7 +128,7 @@ pub(crate) fn invite_identity(input: &[u8]) -> Result<InviteIcsIdentity, Calenda
             "invite must carry exactly one VEVENT and nothing else",
         ));
     };
-    if event.name.as_str() != "VEVENT" {
+    if event.name.as_str() != "VEVENT" || nests_a_vevent(event) {
         return Err(ics_parse(
             "invite must carry exactly one VEVENT and nothing else",
         ));
@@ -159,6 +159,14 @@ pub(crate) fn invite_identity(input: &[u8]) -> Result<InviteIcsIdentity, Calenda
         sequence: vevent_sequence(event)?,
         organizer: organizer.to_owned(),
     })
+}
+
+/// Whether a VEVENT sits anywhere below `component`.
+fn nests_a_vevent(component: &icalendar::parser::Component<'_>) -> bool {
+    component
+        .components
+        .iter()
+        .any(|child| child.name.as_str() == "VEVENT" || nests_a_vevent(child))
 }
 
 /// The one property named `name`, or none; a repeat is refused.

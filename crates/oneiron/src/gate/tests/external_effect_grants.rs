@@ -655,7 +655,8 @@ fn contact_grant_authorizes_sends_to_the_contact_and_no_other_verb() -> Result<(
 }
 
 /// H109: an owner-revoked contact is unreachable even under a grant that
-/// still matches the send; it holds like an opt-out, under its own reason.
+/// still matches the send; it holds like an opt-out, under its own reason,
+/// and a send override, which answers an opt-out, does not lift it.
 #[test]
 fn revoked_counterparty_contact_holds_a_granted_send() -> Result<()> {
     let (_tmp, vault, contact_id) = granted_contact_fixture(GrantMintIntentScope::VerbClass {
@@ -674,6 +675,32 @@ fn revoked_counterparty_contact_holds_a_granted_send() -> Result<()> {
         gate_reason_strs(&decision),
         vec!["gate.pending.counterparty_opt_out"]
     );
+    assert_eq!(
+        decision.receipt_reasons().first(),
+        Some(&"counterparty_contact_revoked")
+    );
+
+    let owner = test_id(0xDA);
+    vault.put_entity(
+        &owner,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    crate::comm::mint_send_override(
+        &vault,
+        "kenji@example.com",
+        Some("line"),
+        crate::comm::SendOverrideScope::Standing,
+        None,
+        WriteActor::new(owner, EdgeActorClass::Human),
+        30,
+        None,
+    )
+    .expect("the owner may rule on a send override");
+    let decision = decide_contact_effect(&vault, "send")?;
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
     assert_eq!(
         decision.receipt_reasons().first(),
         Some(&"counterparty_contact_revoked")

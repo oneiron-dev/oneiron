@@ -1159,7 +1159,8 @@ fn invite_ics_must_carry_the_payloads_own_uid_and_sequence() {
     );
 
     // The booking's own event, with another EVENT's invite riding beside it
-    // in a lower-case component or in a second calendar.
+    // in a lower-case component, nested inside the admitted VEVENT, or in a
+    // second calendar.
     let own_ics = emit_imip_ics(&ImipEmitRequest {
         method: CalendarInviteMethod::Request,
         uid: fixture.uid.clone(),
@@ -1175,10 +1176,15 @@ fn invite_ics_must_carry_the_payloads_own_uid_and_sequence() {
     .expect("emit invite document");
     let own_text = String::from_utf8(own_ics).expect("utf-8 invite");
     let smuggled = format!("BEGIN:vevent\r\nUID:{other_uid}\r\nSEQUENCE:0\r\nEND:vevent\r\n");
+    let nested = format!("BEGIN:VEVENT\r\nUID:{other_uid}\r\nSEQUENCE:0\r\nEND:VEVENT\r\n");
     for (seed, document) in [
         (
             0x5E,
             own_text.replace("END:VCALENDAR", &format!("{smuggled}END:VCALENDAR")),
+        ),
+        (
+            0x60,
+            own_text.replace("END:VEVENT", &format!("{nested}END:VEVENT")),
         ),
         (
             0x5F,
