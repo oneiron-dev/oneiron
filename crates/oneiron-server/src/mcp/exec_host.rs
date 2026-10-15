@@ -56,6 +56,17 @@ pub fn mcp_scoped_identity_id(namespace: &str, key: &str, actor: &McpResolvedAct
     } else {
         hasher.update(b"f0");
     }
+    // A several-facet ceiling also binds every facet it reads; a one-facet
+    // one hashes as before.
+    if let oneiron::federation::ScopeAxis::Some(facets) = &actor.scope.facets
+        && facets.len() > 1
+    {
+        hasher.update(b"fs");
+        hasher.update(&(facets.len() as u64).to_be_bytes());
+        for facet in facets {
+            hasher.update(facet.0.as_bytes());
+        }
+    }
     hasher.update(&(key.len() as u64).to_be_bytes());
     hasher.update(key.as_bytes());
     let mut bytes = [0_u8; 16];

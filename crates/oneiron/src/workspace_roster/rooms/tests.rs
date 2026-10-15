@@ -967,7 +967,14 @@ fn consult_question_turn_projects_an_open_wait_without_a_room_state_row() -> Res
         TaskCreateSpec, TaskKind, TaskTtl,
     };
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    // The engine's clock sits inside the consult's window, where its answer lands.
+    let vault = Vault::open(
+        dir.path(),
+        crate::VaultConfig {
+            store_clock: crate::test_util::pinned_store_clock(1_000_001),
+            ..crate::VaultConfig::default()
+        },
+    )?;
     let owner = EntityId::now();
     let asker = EntityId::from_bytes([0xE1; 16])?;
     let peer = EntityId::from_bytes([0xE2; 16])?;

@@ -226,6 +226,11 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     had_graph_mutation = true;
 
     let (entity_type, occurred, learned_at) = parse_entity_metadata(&entity_record)?;
+    // A definition that reached the store without a put leaves no pin behind
+    // it; its delete pins it first, so the id comes back no wider (H215).
+    if entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF {
+        crate::agent_def::pin_stored_row_in_txn(store, wtxn, id)?;
+    }
     if entity_type == ENTITY_TYPE_SKILL {
         let body = &entity_record[ENTITY_METADATA_HEADER_LEN..];
         match crate::skill::decode_skill_record(body) {

@@ -954,7 +954,10 @@ mod cb_a {
             task_verb::ConsultResultKind, task_verb::TaskAssignee,
         };
 
-        let fixture = super::consult_fixture::ConsultFixture::open_with(VaultConfig::default());
+        // The engine's clock sits inside the consult window the answers name.
+        let fixture = super::consult_fixture::ConsultFixture::open_with(
+            crate::common::on_pinned_clock(VaultConfig::default(), super::CONSULT_NOW + 10),
+        );
         let peers = [
             fixture.peer("cc-first", 0xE2),
             fixture.peer("cc-second", 0xE4),

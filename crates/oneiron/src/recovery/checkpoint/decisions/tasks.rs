@@ -311,6 +311,48 @@ impl Decision for AgentCeilings {
     }
 }
 
+/// Whether the row at each agent id answers to the id's pin (H215): absent,
+/// or a definition no wider than the pin, on its lineage. The pins are live
+/// authority (`restore_class`), so the restored vault holds the live vault's,
+/// but a restore writes rows without a put: a row it brings back from before
+/// a narrowing, to an id the live vault deleted it from, would bound the
+/// agent there by a ceiling it no longer holds. Asked of every agent id. A
+/// restored row off its pin refuses the restore whatever the live vault
+/// holds, and a pin that does not read refuses it too: the gate would still
+/// read a readable definition's ceiling past it. So does a restored pin
+/// looser than the live one: the live vault narrowed or took it after the
+/// restore carried the pins (Sol R7 F1).
+pub(super) struct AgentIdPins;
+
+impl Decision for AgentIdPins {
+    type Subject = EntityId;
+    type Answer = crate::agent_def::AgentIdAnswer;
+
+    fn subjects(vaults: [&Vault; 2]) -> Result<BTreeSet<Self::Subject>> {
+        let mut ids = BTreeSet::new();
+        for vault in vaults {
+            let txn = vault.store.env.read_txn()?;
+            ids.extend(crate::agent_def::agent_ids_in_txn(&vault.store, &txn)?);
+        }
+        Ok(ids)
+    }
+
+    fn answers(
+        vault: &Vault,
+        subjects: &BTreeSet<Self::Subject>,
+    ) -> Result<Vec<Option<Self::Answer>>> {
+        let txn = vault.store.env.read_txn()?;
+        subjects
+            .iter()
+            .map(|id| crate::agent_def::agent_id_answer_in_txn(&vault.store, &txn, id).map(Some))
+            .collect()
+    }
+
+    fn loosens(live: &Self::Answer, restored: &Self::Answer) -> bool {
+        crate::agent_def::AgentIdAnswer::loosened(live, restored)
+    }
+}
+
 /// How far a bound lets a write go without asking.
 fn reach(ceiling: Option<PolicyApprovalCeiling>) -> u8 {
     match ceiling {
