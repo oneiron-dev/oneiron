@@ -153,8 +153,9 @@ impl<F: Fn(&DocsSegment) -> Result<()>> DocsDeepExtractor for CallbackNer<F> {
 }
 
 /// Installs the shipped policy with an explicit, receipted `Auto` permit for
-/// imported claims, so a deep pass's derived claims land `Auto` and read as
-/// live facts.
+/// imported claims and a rule declaring `docs.*` normal, so a deep pass's
+/// derived claims land `Auto` and read as live facts. Without the rule, an
+/// undeclared `docs.topic` takes the criticality floor and waits in the tray.
 fn trust_imported_claims(vault: &crate::Vault) -> Result<()> {
     use rmpv::Value;
     let bytes = crate::gate::default_policy_manifest_with_scoped_grants(Vec::new())?;
@@ -180,6 +181,23 @@ fn trust_imported_claims(vault: &crate::Vault) -> Result<()> {
             rows.push(permit);
         }
         _ => entries.push((Value::from("source_trust"), Value::Map(vec![permit]))),
+    }
+    let docs_normal = Value::Map(vec![
+        (Value::from("prefix"), Value::from("docs.")),
+        (
+            Value::from("axes"),
+            Value::Map(vec![
+                (Value::from("criticality"), Value::from("normal")),
+                (Value::from("sensitivity"), Value::from("normal")),
+            ]),
+        ),
+    ]);
+    match entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("rules"))
+    {
+        Some((_, Value::Array(rules))) => rules.push(docs_normal),
+        _ => entries.push((Value::from("rules"), Value::Array(vec![docs_normal]))),
     }
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &Value::Map(entries))

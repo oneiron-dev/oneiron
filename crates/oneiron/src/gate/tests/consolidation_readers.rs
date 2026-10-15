@@ -146,7 +146,7 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
         let subject = test_id(0x21);
         let claim = test_id(0x40);
         let control = test_id(0x41);
-        let head = test_id(0x42);
+        let head = test_id(0x48);
         let principal = test_id(0x43);
         put_raw_entity_row(&vault, &subject, ENTITY_TYPE_PERSON, b"subject")?;
         put_raw_entity_row(&vault, &principal, ENTITY_TYPE_PERSON, b"reader")?;
@@ -297,7 +297,7 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                 })?;
             }
             ConsolidationReader::GraphSignal => {
-                let conversation = test_id(0x47);
+                let conversation = test_id(0x49);
                 put_raw_entity_row(
                     &vault,
                     &conversation,
@@ -312,7 +312,7 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                 })?;
             }
             ConsolidationReader::ExplicitPrior => {
-                let conversation = test_id(0x47);
+                let conversation = test_id(0x49);
                 put_raw_entity_row(
                     &vault,
                     &conversation,
