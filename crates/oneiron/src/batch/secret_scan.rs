@@ -633,12 +633,23 @@ fn detect_bytes(bytes: &[u8], door: Door) -> bool {
 fn classify_token(token: &str) -> Option<&'static str> {
     // A credential still counts after leading token bytes (`Xghp_…`), so every
     // later offset is a candidate start too (F23, H49/H66). There a key body
-    // is read over its fixed length only, keeping the scan linear, and a
-    // provider whose real keys are alphanumeric must match as such, so snake
-    // or kebab prose (`highs_and_lows_…`, `risk_live_…`) is not read as a key.
+    // is read over its fixed length only, keeping the scan linear, a provider
+    // whose real keys are alphanumeric must match as such, and the body must
+    // hold a digit or capital, as a real key's random body does, so snake or
+    // kebab prose (`highs_and_lows_…`, `risk_live_…`, `task-proj-…`) is not
+    // read as a key.
     // The token is ASCII by construction, so every offset is a char boundary.
     classify_at(token, Body::Token)
         .or_else(|| (1..token.len()).find_map(|start| classify_at(&token[start..], Body::Embedded)))
+}
+
+/// The provider rules for a key that starts inside a longer token, read at
+/// `candidate`'s start: what [`classify_token`] reads at each later offset,
+/// for a stream reader that keeps a window of a token, not all of it.
+pub(crate) fn embedded_credential(candidate: &[u8]) -> Option<&'static str> {
+    std::str::from_utf8(candidate)
+        .ok()
+        .and_then(|candidate| classify_at(candidate, Body::Embedded))
 }
 
 /// How a key body is read: from the token's start, by each provider's own
@@ -706,7 +717,8 @@ fn is_stripe_key(token: &str, body: Body) -> bool {
 
 /// One provider rule: `prefix`, then `suffix_len` body bytes (`exact_len`:
 /// only those are read). Inside a token the body is always read over exactly
-/// `suffix_len` bytes, alphanumeric ones when the provider's keys are.
+/// `suffix_len` bytes, alphanumeric ones when the provider's keys are, and
+/// holds a digit or capital.
 fn key_matches(
     token: &str,
     prefix: &str,
@@ -717,10 +729,17 @@ fn key_matches(
 ) -> bool {
     match body {
         Body::Token => suffix_matches(token, prefix, suffix_len, exact_len, is_ascii_token_body),
-        Body::Embedded if alphanumeric => suffix_matches(token, prefix, suffix_len, true, |byte| {
-            byte.is_ascii_alphanumeric()
-        }),
-        Body::Embedded => suffix_matches(token, prefix, suffix_len, true, is_ascii_token_body),
+        Body::Embedded => {
+            let allowed: fn(u8) -> bool = if alphanumeric {
+                |byte: u8| byte.is_ascii_alphanumeric()
+            } else {
+                is_ascii_token_body
+            };
+            suffix_matches(token, prefix, suffix_len, true, allowed)
+                && token.as_bytes()[prefix.len()..prefix.len() + suffix_len]
+                    .iter()
+                    .any(|byte| byte.is_ascii_digit() || byte.is_ascii_uppercase())
+        }
     }
 }
 

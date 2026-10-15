@@ -154,6 +154,19 @@ pub(super) fn held_by_live_artifact(
     Ok(false)
 }
 
+/// The artifacts a `blob.version` claim here names as holding the bytes under `hash`, local and
+/// replicated claims alike: the taint lookup reads a version payload's taint off them.
+pub(crate) fn artifacts_claiming(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    hash: &ContentHash,
+) -> Result<Vec<EntityId>> {
+    VERSION_CLAIM
+        .iter_from(store, txn, hash)?
+        .map(|row| row.map(|((_, artifact), ())| artifact))
+        .collect()
+}
+
 /// A stored artifact row with its body, under no delete this vault holds.
 fn artifact_is_live(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
     let Some(raw) = store.entities.get(txn, id.as_bytes())? else {

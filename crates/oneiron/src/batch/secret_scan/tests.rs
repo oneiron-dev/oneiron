@@ -336,7 +336,7 @@ fn every_provider_token_shape_still_rejects() {
 
 /// F23 (H49, H66): a credential keeps its reason after leading token bytes
 /// (one letter, `_`, `-`), while snake and kebab prose holding a provider
-/// prefix inside a word is not read as a key.
+/// prefix inside a word (Sol R1: or a whole word) is not read as a key.
 #[test]
 fn a_credential_after_leading_token_bytes_still_rejects() {
     let body36 = "0123456789abcdefghijklmnopqrstuvwxyz";
@@ -373,6 +373,7 @@ fn a_credential_after_leading_token_bytes_still_rejects() {
         "highs_and_lows_of_the_quarterly_market_report_for_this_year",
         "risk_live_monitoring_dashboard_configuration_v2",
         "task-assessment-for-the-quarterly-planning-meeting-notes-and-more-words",
+        "task-proj-quarterly-planning-meeting-notes-and-more-words",
     ] {
         assert_eq!(write_reason(prose), None, "{prose}");
     }

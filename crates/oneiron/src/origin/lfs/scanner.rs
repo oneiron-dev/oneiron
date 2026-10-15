@@ -2,12 +2,17 @@
 
 use crate::error::{Error, GateError, Result};
 
-/// Retains token prefixes, not arbitrarily long binary/text tokens. All standing
-/// token detectors decide within the first 128 bytes. PEM armor is a separate
+/// Retains token prefixes and a window of each token, not arbitrarily long
+/// binary/text tokens. All standing token detectors decide within
+/// [`KEY_MAX`] bytes of where a key starts. PEM armor is a separate
 /// streaming automaton because its header can contain arbitrary padding.
 #[derive(Default)]
 pub(super) struct CredentialStream {
     token: Vec<u8>,
+    /// The open token past its first byte, for a key that starts inside it
+    /// (F23): each offset is read once [`KEY_MAX`] bytes follow it, the rest
+    /// when the token ends, so this holds at most twice that.
+    inner: Vec<u8>,
     begin: usize,
     inside: bool,
     private: usize,
@@ -26,6 +31,9 @@ pub(super) struct CredentialStream {
 /// as much as an object the upload reads whole, so a segment up to that size
 /// is read whole however a peer cuts it.
 const SEAM_MAX: usize = super::upload::LFS_WHOLE_SCAN_MAX as usize;
+
+/// The longest key a provider rule reads from where it starts.
+const KEY_MAX: usize = 128;
 
 /// How much of a run of one repeated character a seam keeps: as much as the
 /// longest token any text rule measures (a stream keeps 128 bytes of one too),
@@ -276,12 +284,20 @@ impl CredentialStream {
         }
         for &byte in bytes {
             if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-') {
+                if !self.token.is_empty() {
+                    self.inner.push(byte);
+                    if self.inner.len() == 2 * KEY_MAX {
+                        self.check_inner(KEY_MAX)?;
+                        self.inner.drain(..KEY_MAX);
+                    }
+                }
                 if self.token.len() < 128 {
                     self.token.push(byte);
                 }
             } else {
                 self.check_token()?;
                 self.token.clear();
+                self.inner.clear();
             }
             if byte == b'\n' {
                 self.begin = 0;
@@ -318,11 +334,26 @@ impl CredentialStream {
     }
 
     fn check_token(&self) -> Result<()> {
-        if self.token.len() < 20 || !matches!(self.token[0], b'A' | b'g' | b's' | b'x' | b'r') {
-            return Ok(());
-        }
-        if let Some(reason) = crate::batch::secret_scan::scan_file_content("", &self.token) {
+        if self.token.len() >= 20
+            && matches!(self.token[0], b'A' | b'g' | b's' | b'x' | b'r')
+            && let Some(reason) = crate::batch::secret_scan::scan_file_content("", &self.token)
+        {
             return Err(denied(reason));
+        }
+        self.check_inner(self.inner.len())
+    }
+
+    /// Reads a key that starts at each of the first `starts` offsets of
+    /// [`Self::inner`], as the write door reads one after leading token bytes.
+    fn check_inner(&self, starts: usize) -> Result<()> {
+        for start in 0..starts {
+            if !matches!(self.inner[start], b'A' | b'g' | b's' | b'x' | b'r') {
+                continue;
+            }
+            let candidate = &self.inner[start..self.inner.len().min(start + KEY_MAX)];
+            if let Some(reason) = crate::batch::secret_scan::embedded_credential(candidate) {
+                return Err(denied(reason));
+            }
         }
         Ok(())
     }

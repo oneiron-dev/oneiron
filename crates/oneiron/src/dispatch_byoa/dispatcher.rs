@@ -9,8 +9,8 @@ use crate::attempt_queue::{
     FinishAttemptLanding, FinishLandingOutcome, SetAttemptResult,
 };
 use crate::blob_artifact::{
-    BlobArtifactBody, BlobVersionProvenance, blob_artifact_asset_entity_id,
-    encode_blob_artifact_body, read_blob_artifact_head_in_txn,
+    BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body,
+    read_blob_artifact_head_in_txn,
 };
 use crate::checkout::{
     CheckoutFactSink, CheckoutLeaseAct, CheckoutLeaseService, CheckoutLeaseState, CheckoutLiveness,
@@ -613,20 +613,6 @@ where
         )?;
         if version.version != 1 {
             return Err(invalid(ERR_ARTIFACT_COLLISION));
-        }
-        if !envelope.exhaust.secret_taint_refs.is_empty() {
-            // The payload bytes are their own exportable ASSET row; taint it
-            // in this transaction too, never weakening taint it already had.
-            let asset = blob_artifact_asset_entity_id(&version.content_hash)?;
-            let mut refs =
-                crate::secret_rotation::exhaust_taint_refs_in_txn(&self.vault.store, wtxn, &asset)?;
-            union_taint_refs(&mut refs, &envelope.exhaust.secret_taint_refs);
-            crate::secret_rotation::mark_exhaust_tainted_in_txn(
-                &self.vault.store,
-                wtxn,
-                &asset,
-                &refs,
-            )?;
         }
         Ok(ByoaTerminalReceipt {
             attempt,

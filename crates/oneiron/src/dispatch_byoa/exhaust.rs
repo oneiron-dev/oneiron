@@ -408,17 +408,6 @@ pub(super) fn validate_canonical_capture(
     let stored_body = vault
         .get_blob_artifact_in_txn(wtxn, artifact_id)?
         .ok_or_else(|| invalid(ERR_ARTIFACT_COLLISION))?;
-    // An abandoned retry answers with the first capture, so the first
-    // capture's taint stands whatever the retry's exhaust carries.
-    let expected = if requested.disposition == ByoaTerminalDisposition::Abandoned {
-        body.clone()
-            .with_secret_taint_refs(stored_body.secret_taint_refs.clone())
-    } else {
-        body.clone()
-    };
-    if stored_body != expected {
-        return Err(invalid(ERR_ARTIFACT_COLLISION));
-    }
     let head = read_blob_artifact_head_in_txn(&vault.store, wtxn, artifact_id)?
         .ok_or_else(|| invalid(ERR_ARTIFACT_COLLISION))?;
     if head.version != 1 || &head.provenance != provenance {
@@ -431,6 +420,18 @@ pub(super) fn validate_canonical_capture(
         return Err(invalid(ERR_ARTIFACT_COLLISION));
     }
     let stored = decode_exhaust_envelope(&bytes)?;
+    // An abandoned retry answers with the first capture, so the metadata
+    // must still carry the first capture's taint, read from its immutable
+    // envelope, whatever the retry's exhaust carries.
+    let expected = if requested.disposition == ByoaTerminalDisposition::Abandoned {
+        body.clone()
+            .with_secret_taint_refs(stored.exhaust.secret_taint_refs.clone())
+    } else {
+        body.clone()
+    };
+    if stored_body != expected {
+        return Err(invalid(ERR_ARTIFACT_COLLISION));
+    }
     if stored.attempt_id != requested.attempt_id
         || stored.lease_owner != requested.lease_owner
         || stored.attempt_count != requested.attempt_count

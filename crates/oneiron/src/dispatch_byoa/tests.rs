@@ -1233,27 +1233,24 @@ fn cli_execution_requires_live_checkout_foreign_boundary_and_scoped_egress() {
     assert_eq!(receipt.attempt.result_ref, Some(receipt.result_ref));
 }
 
-/// Runs one CLI guest through an egress lease that injected `injected`,
-/// captures its output, and exports the exhaust artifact with its payload
+/// Runs one CLI guest through an egress lease that injected `injected` and
+/// captures its output, returning the exhaust artifact and its payload
 /// ASSET. The guest's stdout stands for an echoed injected credential: it
 /// matches no pattern the secret scan knows, so only taint can redact it.
-fn export_captured_cli_run(
+fn capture_cli_run(
+    vault: &Vault,
     injected: &[crate::secret_lease::SecretTaintRef],
-) -> (
-    serde_json::Value,
-    [crate::secret_rotation::ArtifactTaintState; 2],
-) {
-    let (_dir, vault) = open_vault();
+) -> [EntityId; 2] {
     let mut egress = GrantingEgress::new(500);
     egress.secret_taint_refs = injected.to_vec();
-    let mut granted = ByoaDispatcher::new(&vault, StubFactory, egress);
+    let mut granted = ByoaDispatcher::new(vault, StubFactory, egress);
     let attempt = dispatch_and_claim(
-        &vault,
+        vault,
         &mut granted,
         ByoaConnectorSpec::CliSandbox(cli_spec()),
         "worker",
     );
-    let mut checkouts = CheckoutLeaseService::new(&vault, CheckoutFacts, CheckoutPulse::default());
+    let mut checkouts = CheckoutLeaseService::new(vault, CheckoutFacts, CheckoutPulse::default());
     checkouts
         .claim(crate::checkout::CheckoutClaimRequest {
             checkout_id: cli_spec().checkout_id,
@@ -1291,10 +1288,21 @@ fn export_captured_cli_run(
                 .expect("captured head");
         crate::blob_artifact::blob_artifact_asset_entity_id(&head.content_hash).expect("asset id")
     };
+    [artifact, asset]
+}
+
+/// Exports `ids` as one bundle, with each row's taint state.
+fn export_with_taint(
+    vault: &Vault,
+    ids: [EntityId; 2],
+) -> (
+    serde_json::Value,
+    [crate::secret_rotation::ArtifactTaintState; 2],
+) {
     let export = vault
-        .export_entity_bundle_json(&[artifact, asset])
+        .export_entity_bundle_json(&ids)
         .expect("bundle export");
-    let states = [artifact, asset].map(|id| vault.artifact_taint_state(&id).expect("taint"));
+    let states = ids.map(|id| vault.artifact_taint_state(&id).expect("taint"));
     (
         serde_json::from_slice(&export).expect("export JSON"),
         states,
@@ -1310,34 +1318,152 @@ fn cli_output_under_an_injecting_lease_exports_redacted() {
             .expect("manifest")
             .redacted()
     };
-    let (clean, states) = export_captured_cli_run(&[]);
+    let (_dir, vault) = open_vault();
+    let (clean, states) = export_with_taint(&vault, capture_cli_run(&vault, &[]));
     assert_eq!(states, [ArtifactTaintState::Clean; 2]);
-    assert!(!redacted(&clean), "{clean}");
+    assert!(!redacted(&clean), "an uninjected run exports unredacted");
     let rows = clean["entities"].as_array().expect("rows");
     assert_eq!(rows.len(), 2);
     assert!(
         rows.iter().all(|row| !row["body"].is_null()),
-        "an uninjected run exports its output in the clear: {clean}"
+        "an uninjected run exports its output in the clear"
     );
 
     let injected = [crate::secret_lease::SecretTaintRef {
         secret_ref: "build-registry-login".to_owned(),
         generation: 3,
     }];
-    let (tainted, states) = export_captured_cli_run(&injected);
+    let (_dir, vault) = open_vault();
+    let (tainted, states) = export_with_taint(&vault, capture_cli_run(&vault, &injected));
     assert!(
         states
             .iter()
             .all(|state| *state != ArtifactTaintState::Clean),
         "the exhaust artifact and its payload ASSET both carry the lease's taint: {states:?}"
     );
-    assert!(redacted(&tainted), "{tainted}");
+    assert!(redacted(&tainted), "an injected run exports redacted");
     let rows = tainted["entities"].as_array().expect("rows");
     assert_eq!(rows.len(), 2);
     assert!(
         rows.iter().all(|row| row["body"].is_null()),
-        "output produced under an injected secret must not export: {tainted}"
+        "output produced under an injected secret must not export"
     );
+}
+
+/// Sol R1 (F23): the payload ASSET exports redacted on a device the capture
+/// replicated to, where no local taint row was ever written: the artifact's
+/// body and its `blob.version` claim replicate, and the taint rides them.
+#[test]
+fn a_replicated_capture_exports_its_payload_redacted() {
+    use crate::ports::EntityStoreRead;
+    use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
+    let (_dir, origin) = open_vault();
+    let injected = [crate::secret_lease::SecretTaintRef {
+        secret_ref: "build-registry-login".to_owned(),
+        generation: 3,
+    }];
+    let [artifact, asset] = capture_cli_run(&origin, &injected);
+    let rtxn = origin.store.env.read_txn().expect("read txn");
+    let mut rows = origin
+        .store
+        .port_entity_records(&rtxn)
+        .expect("rows")
+        .map(|row| row.expect("row"))
+        .filter(|(id, row)| match row.entity_type {
+            ENTITY_TYPE_CLAIM => {
+                let claim = crate::claim::decode_claim_body(&row.body, true).expect("claim");
+                claim.predicate == "blob.version"
+                    && claim.subject == crate::claim::ClaimSubject::Entity(artifact)
+            }
+            ENTITY_TYPE_BLOB_ARTIFACT => *id == artifact,
+            ENTITY_TYPE_ASSET => *id == asset,
+            _ => false,
+        })
+        .collect::<Vec<_>>();
+    drop(rtxn);
+    assert_eq!(
+        rows.len(),
+        3,
+        "the artifact, its version claim and its payload"
+    );
+    // In the order the capture wrote them: the artifact, its claim, its bytes.
+    rows.sort_by_key(|(_, row)| match row.entity_type {
+        ENTITY_TYPE_BLOB_ARTIFACT => 0,
+        ENTITY_TYPE_CLAIM => 1,
+        _ => 2,
+    });
+
+    let (_replica_dir, replica) = open_vault();
+    for (id, row) in &rows {
+        replica
+            .batch_in()
+            .put_replicated(id, row.entity_type, row.occurred, row.learned_at, &row.body)
+            .commit()
+            .expect("replicated put");
+    }
+    let (export, states) = export_with_taint(&replica, [artifact, asset]);
+    assert!(
+        states
+            .iter()
+            .all(|state| *state != crate::secret_rotation::ArtifactTaintState::Clean),
+        "both replicated rows carry the lease's taint: {states:?}"
+    );
+    let rows = export["entities"].as_array().expect("rows");
+    assert_eq!(rows.len(), 2);
+    assert!(
+        rows.iter().all(|row| row["body"].is_null()),
+        "a replicated payload produced under an injected secret must not export"
+    );
+}
+
+/// Sol R1 (F23): an abandoned retry checks the metadata against the first
+/// capture's immutable envelope, so a metadata replacement that drops the
+/// taint is a collision, not a clean canonical result.
+#[test]
+fn an_abandoned_retry_refuses_metadata_that_dropped_the_first_capture_taint() {
+    let (_dir, vault) = open_vault();
+    let mut initial = dispatcher(&vault);
+    let attempt = dispatch_and_claim(
+        &vault,
+        &mut initial,
+        ByoaConnectorSpec::CliSandbox(cli_spec()),
+        "worker",
+    );
+    let mut request = capture_request(&attempt, ByoaTerminalDisposition::Abandoned);
+    request.exhaust.secret_taint_refs = vec![crate::secret_lease::SecretTaintRef {
+        secret_ref: "build-registry-login".to_owned(),
+        generation: 3,
+    }];
+    let first = initial
+        .capture_terminal_exhaust(request)
+        .expect("first capture");
+    let retry = || {
+        dispatcher(&vault).capture_terminal_exhaust(capture_request(
+            &attempt,
+            ByoaTerminalDisposition::Abandoned,
+        ))
+    };
+    assert_eq!(retry().expect("first abandonment wins"), first);
+
+    vault
+        .put_blob_artifact(
+            &first.artifact_id,
+            &BlobArtifactBody::new(
+                byoa_exhaust_artifact_name(attempt.id),
+                BYOA_EXHAUST_MEDIA_TYPE,
+            ),
+            TimeRange { start: 31, end: 31 },
+            31,
+        )
+        .expect("metadata replacement");
+    let before = custody_snapshot(&vault);
+    assert!(matches!(
+        retry().expect_err("the replacement dropped the first capture's taint"),
+        ByoaError::Store(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            ERR_ARTIFACT_COLLISION
+        )))
+    ));
+    assert_eq!(custody_snapshot(&vault), before);
 }
 
 mod successor;
