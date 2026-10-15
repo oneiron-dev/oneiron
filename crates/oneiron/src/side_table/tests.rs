@@ -448,6 +448,8 @@ fn pre_move_fixture_coverage_is_explicit() {
         "GATE_MANIFEST_SEEDED_CONFIDENCE",
         "GENUI_VOICE_GRANT_OFFER",
         "GMAIL_MAILBOX_CURSOR",
+        "HOUSEKEEPING_SCHEDULE",
+        "HOUSEKEEPING_WAKE",
         "IDENTITY_DEVICE_PK",
         "IDENTITY_DEVICE_SK",
         "IDENTITY_MACHINE_ID",
@@ -508,6 +510,10 @@ fn pre_move_fixture_coverage_is_explicit() {
         "OWNER_POLICY_WORLD_PRIVACY_RECEIPT",
         "OWN_RATE_CHECK",
         "OWN_RATE_WINDOW",
+        "PORTS_DEPENDENT_WALK",
+        "PORTS_DEPENDENT_WALK_CHECK",
+        "PORTS_DEPENDENT_WALK_POLICY",
+        "PORTS_DEPENDENT_WALK_SETTLED",
         "PORTS_WITHDRAWN",
         "PROJECT_DEPTH_LOCAL_BIRTH",
         "PROJECT_GOAL_INTAKE_ADMISSION",
@@ -628,6 +634,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "WEAVE_DIGEST_SCHEDULE",
         "WEAVE_DIGEST_SOURCE",
         "WEAVE_WRONG_LINK_LABEL",
+        "WIRE_LIMIT_QUESTION",
     ]
     .into_iter()
     .collect();
