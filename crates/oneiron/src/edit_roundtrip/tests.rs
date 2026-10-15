@@ -316,6 +316,69 @@ fn corruption_gate_blocks_broken_output_from_proposal() {
     );
 }
 
+/// F11 / H134: the session's applied-op report chose the recalc and became the
+/// durable manifest unchecked. A session could report an op the plan never
+/// admitted (a structural op moves anchors at settlement) or leave the plan's
+/// edit out of its report to skip the recalc. The report must be an ordered
+/// part of the admitted plan, and the recalc follows the plan.
+#[test]
+fn a_session_reports_only_admitted_ops_and_cannot_skip_the_recalc() {
+    struct Reporting {
+        report: Vec<EditOp>,
+        recalcs: std::cell::Cell<usize>,
+    }
+    impl EditSession for Reporting {
+        fn recalc_policy(&self) -> RecalcPolicy {
+            RecalcPolicy::SessionOnly
+        }
+        fn apply_edits(&self, doc: &OfficeDoc, _plan: &EditPlan) -> Result<AppliedEdit> {
+            Ok(AppliedEdit {
+                bytes: doc.bytes.clone(),
+                applied_ops: self.report.clone(),
+                warnings: vec![],
+            })
+        }
+        fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>> {
+            self.recalcs.set(self.recalcs.get() + 1);
+            Ok(doc.bytes.clone())
+        }
+        fn recalc_engine(&self) -> Option<crate::blob_artifact::CalcEngineStamp> {
+            Some(crate::blob_artifact::CalcEngineStamp::new("test-calc", "1.2").unwrap())
+        }
+    }
+    let session = |report| Reporting {
+        report,
+        recalcs: std::cell::Cell::new(0),
+    };
+    let input = xlsx_bytes(&base_parts());
+    let plan = EditPlan::new(vec![set_a1(10.0)]);
+
+    let phantom = session(vec![EditOp::InsertRows {
+        sheet: "Sheet1".to_owned(),
+        at: 1,
+        count: 1,
+    }]);
+    run_edit_roundtrip(&phantom, &input, OfficeFormat::Xlsx, &plan, "run:phantom")
+        .expect_err("an op the plan did not admit is refused");
+
+    let silent = session(Vec::new());
+    let outcome =
+        run_edit_roundtrip(&silent, &input, OfficeFormat::Xlsx, &plan, "run:silent").unwrap();
+    let EditOutcome::Proposed(proposal) = outcome else {
+        panic!("an empty report still proposes");
+    };
+    assert_eq!(proposal.recalc, RecalcStatus::Performed);
+    assert_eq!(silent.recalcs.get(), 1, "the plan's edit still recalcs");
+
+    let honest = session(plan.ops.clone());
+    let outcome =
+        run_edit_roundtrip(&honest, &input, OfficeFormat::Xlsx, &plan, "run:honest").unwrap();
+    let EditOutcome::Proposed(proposal) = outcome else {
+        panic!("an honest report proposes");
+    };
+    assert_eq!(proposal.manifest.ops, plan.ops);
+}
+
 #[test]
 fn xlookup_write_is_prefixed_before_the_session_serializes_it() {
     struct FormulaWriteSession;

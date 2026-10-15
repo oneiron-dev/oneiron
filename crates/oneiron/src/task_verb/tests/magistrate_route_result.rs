@@ -599,7 +599,7 @@ fn land_task_result_requires_a_resolved_result_ref() {
 /// evidence at all — weakening exactly the contract ONE-1700 must preserve.
 #[test]
 fn the_general_result_door_cannot_settle_a_consult() {
-    let (_dir, vault) = open_vault();
+    let (_dir, vault) = open_consult_vault();
     let (task_ref, peer, question) = open_consult(&vault);
     let peer_facade = vault.memory(peer, EdgeActorClass::Agent);
     let result_ref = route_turn(&vault, 0xDC).entity_ref();

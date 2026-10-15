@@ -11,8 +11,8 @@ use super::types::{
     DREAMER_STEP_VALUE_SCHEMA_VERSION, DurableStepContext, DurableStepError, DurableStepResult,
     ENVELOPE_PROVENANCE_ATTEMPT_KEY, ENVELOPE_PROVENANCE_RUN_KEY, ENVELOPE_PROVENANCE_SURFACE_KEY,
     KEY_AT, KEY_ATTEMPT_ID, KEY_MODEL_ID, KEY_PARAMS_HASH, KEY_PROGRESSION, KEY_PURPOSE,
-    KEY_RESPONSE, KEY_RESPONSE_REF, KEY_SCHEMA_VERSION, KEY_STEP_HASH, KEY_USAGE_IN, KEY_USAGE_OUT,
-    STEP_HEX_DIGEST_LEN, StepProgression,
+    KEY_RESPONSE, KEY_RESPONSE_HASH, KEY_RESPONSE_REF, KEY_RESPONSE_VERSION, KEY_SCHEMA_VERSION,
+    KEY_STEP_HASH, KEY_USAGE_IN, KEY_USAGE_OUT, STEP_HEX_DIGEST_LEN, StepProgression,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -134,7 +134,7 @@ pub(super) fn log_terminal_step(
                     "dreamer-step:{}",
                     bytes_to_hex_lower(ctx.attempt_id.as_bytes())
                 );
-                ctx.vault.append_blob_artifact_version_in_txn(
+                let appended = ctx.vault.append_blob_artifact_version_in_txn(
                     wtxn,
                     &artifact_id,
                     payload,
@@ -143,7 +143,11 @@ pub(super) fn log_terminal_step(
                     occurred,
                     ctx.now_ms,
                 )?;
-                Some(artifact_id)
+                Some(StepResponseRef {
+                    artifact_id,
+                    version: appended.version,
+                    content_hash: appended.content_hash,
+                })
             };
 
             let value = encode_step_claim_value(&EncodedStepClaim {
@@ -211,20 +215,24 @@ pub(super) fn load_step_response_in_txn(
 ) -> DurableStepResult<LlmResponse> {
     match (&decoded.response, &decoded.response_ref) {
         (Some(inline), None) => Ok(serde_json::from_slice(inline.as_bytes())?),
-        (None, Some(artifact_id)) => {
-            let head = crate::blob_artifact::read_blob_artifact_head_in_txn(
-                &vault.store,
-                txn,
-                artifact_id,
-            )?
-            .ok_or(Error::InvalidClaimBody(
-                "dreamer step response_ref artifact missing",
-            ))?;
+        (None, Some(response_ref)) => {
+            // The version the step appended, never the artifact's head: a
+            // later append to the same artifact is not this step's response.
             let bytes = vault
-                .read_blob_artifact_version_in_txn(txn, artifact_id, head.version)?
+                .read_blob_artifact_version_in_txn(
+                    txn,
+                    &response_ref.artifact_id,
+                    response_ref.version,
+                )?
                 .ok_or(Error::InvalidClaimBody(
                     "dreamer step response_ref version missing",
                 ))?;
+            if *blake3::hash(&bytes).as_bytes() != response_ref.content_hash {
+                return Err(Error::InvalidClaimBody(
+                    "dreamer step response_ref content does not match its pin",
+                )
+                .into());
+            }
             Ok(serde_json::from_slice(&bytes)?)
         }
         // decode_step_claim_value already fail-closes; defensive here.
@@ -289,6 +297,16 @@ pub(super) fn dreamer_runtime_envelope(ctx: &DurableStepContext<'_>) -> Result<W
     ))
 }
 
+/// Where an oversize step response lives: its artifact, and the one version
+/// the step appended there, by number and content hash. Replay reads exactly
+/// that version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StepResponseRef {
+    pub(crate) artifact_id: EntityId,
+    pub(crate) version: u64,
+    pub(crate) content_hash: [u8; 32],
+}
+
 pub(super) struct EncodedStepClaim {
     pub(super) attempt_id: AttemptId,
     pub(super) step_hash: [u8; 32],
@@ -299,7 +317,7 @@ pub(super) struct EncodedStepClaim {
     pub(super) usage_in: u64,
     pub(super) usage_out: u64,
     pub(super) response: Option<String>,
-    pub(super) response_ref: Option<EntityId>,
+    pub(super) response_ref: Option<StepResponseRef>,
     pub(super) at: u64,
 }
 
@@ -342,7 +360,15 @@ pub(super) fn encode_step_claim_value(claim: &EncodedStepClaim) -> Value {
     if let Some(response_ref) = &claim.response_ref {
         entries.push((
             Value::from(KEY_RESPONSE_REF),
-            Value::Binary(response_ref.as_bytes().to_vec()),
+            Value::Binary(response_ref.artifact_id.as_bytes().to_vec()),
+        ));
+        entries.push((
+            Value::from(KEY_RESPONSE_VERSION),
+            Value::from(response_ref.version),
+        ));
+        entries.push((
+            Value::from(KEY_RESPONSE_HASH),
+            Value::Binary(response_ref.content_hash.to_vec()),
         ));
     }
     entries.push((Value::from(KEY_AT), Value::from(claim.at)));
@@ -367,7 +393,7 @@ pub(super) struct DecodedStepClaim {
     #[allow(dead_code)]
     pub(crate) usage_out: u64,
     pub(crate) response: Option<String>,
-    pub(crate) response_ref: Option<EntityId>,
+    pub(crate) response_ref: Option<StepResponseRef>,
 }
 
 /// Fail-closed `dreamer.step` claim value decode: pinned keys only, no
@@ -386,6 +412,8 @@ pub(super) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim>
     let mut usage_out = None;
     let mut response = None;
     let mut response_ref = None;
+    let mut response_version = None;
+    let mut response_hash = None;
     let mut at = None;
     let mut seen = [false; DREAMER_STEP_VALUE_KEYS.len()];
 
@@ -452,6 +480,21 @@ pub(super) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim>
                 )?);
             }
             KEY_RESPONSE_REF => response_ref = Some(decode_entity_id_value(value)?),
+            KEY_RESPONSE_VERSION => {
+                response_version = Some(expect_u64(
+                    value,
+                    "dreamer step value response_version must be an integer",
+                )?);
+            }
+            KEY_RESPONSE_HASH => {
+                let Value::Binary(bytes) = value else {
+                    return Err(invalid_step("dreamer step response_hash must be binary"));
+                };
+                response_hash =
+                    Some(<[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
+                        invalid_step("dreamer step response_hash must be 32 bytes")
+                    })?);
+            }
             KEY_AT => {
                 at = Some(expect_u64(
                     value,
@@ -469,6 +512,19 @@ pub(super) fn decode_step_claim_value(value: &Value) -> Result<DecodedStepClaim>
             "unsupported dreamer step value schema_version",
         ));
     }
+    let response_ref = match (response_ref, response_version, response_hash) {
+        (Some(artifact_id), Some(version), Some(content_hash)) => Some(StepResponseRef {
+            artifact_id,
+            version,
+            content_hash,
+        }),
+        (None, None, None) => None,
+        _ => {
+            return Err(invalid_step(
+                "dreamer step response_ref must carry its version and content hash",
+            ));
+        }
+    };
     if response.is_some() == response_ref.is_some() {
         return Err(invalid_step(
             "dreamer step value must carry exactly one of response/response_ref",

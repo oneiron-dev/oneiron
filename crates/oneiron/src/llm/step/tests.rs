@@ -1111,6 +1111,64 @@ fn step_and_trap_values_encode_decode_fail_closed() -> Result<()> {
     Ok(())
 }
 
+/// F11 / H151: the step claim named only the response artifact, and replay
+/// read its HEAD. Any writer that appended a version to that artifact had its
+/// bytes replayed as the original response, with no backend call and no
+/// budget admission. The claim pins the version the step appended, by
+/// number and content hash, and replay reads exactly that.
+#[test]
+fn replay_returns_the_response_the_step_recorded_not_a_later_append() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let big_text = "x".repeat(DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES + 1);
+    let backend = ScriptedBackend::new(vec![Ok(response_fixture(&big_text))]);
+    let guard = guard_with_limit(10_000);
+    let request = request_fixture();
+    let step_hash = request.canonical_hash().expect("hash");
+    let StepOutcome::Finished { response, .. } =
+        block_on(call_as_step(&ctx, &backend, &guard, request)).expect("oversize execution")
+    else {
+        panic!("expected finished step");
+    };
+
+    let claim_id =
+        step_index_lookup(&vault, fixture.attempt_id, &step_hash)?.expect("memo index row");
+    let body = vault.get_claim(&claim_id)?.expect("terminal claim");
+    let artifact_id = decode_step_claim_value(&body.value)?
+        .response_ref
+        .expect("oversize response lives in an artifact")
+        .artifact_id;
+    // Another version appended to the same artifact by an authorized writer.
+    let forged = response_fixture(&"y".repeat(DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES + 1));
+    vault.append_blob_artifact_version(
+        &artifact_id,
+        &serde_json::to_vec(&forged).expect("forged payload"),
+        &crate::blob_artifact::BlobVersionProvenance::AgentRun {
+            run_ref: "forged-run".to_owned(),
+        },
+        fixture.actor,
+        TimeRange {
+            start: 11_000,
+            end: 11_000,
+        },
+        11_000,
+    )?;
+
+    let backend = ScriptedBackend::new(Vec::new());
+    let StepOutcome::Finished {
+        response: replayed,
+        memoized,
+        ..
+    } = block_on(call_as_step(&ctx, &backend, &guard, request_fixture())).expect("replay")
+    else {
+        panic!("expected finished step");
+    };
+    assert!(memoized);
+    assert_eq!(replayed, response, "replay returns the recorded response");
+    Ok(())
+}
+
 #[test]
 fn oversize_response_lands_in_blob_artifact() -> Result<()> {
     let (_dir, vault) = open_vault();
@@ -1136,7 +1194,8 @@ fn oversize_response_lands_in_blob_artifact() -> Result<()> {
         decoded.response.is_none(),
         "oversize response never inlines"
     );
-    let artifact_id = decoded.response_ref.expect("response_ref artifact id");
+    let response_ref = decoded.response_ref.expect("response_ref artifact id");
+    let artifact_id = response_ref.artifact_id;
     assert!(vault.get_blob_artifact(&artifact_id)?.is_some());
     let head = vault
         .blob_artifact_head(&artifact_id)?

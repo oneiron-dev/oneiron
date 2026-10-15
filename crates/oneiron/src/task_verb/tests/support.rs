@@ -110,6 +110,22 @@ pub(super) const CONSULT_NOW: u64 = 1_772_400_000;
 
 pub(super) const CONSULT_DEADLINE: u64 = CONSULT_NOW + 60;
 
+/// A vault whose engine clock sits inside the consult window
+/// (`CONSULT_NOW` .. `CONSULT_DEADLINE`), so an answer timed at
+/// `CONSULT_NOW + 10` lands before the deadline on the engine's clock.
+pub(in crate::task_verb) fn open_consult_vault() -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(
+        dir.path(),
+        VaultConfig {
+            store_clock: crate::test_util::pinned_store_clock(CONSULT_NOW + 30),
+            ..VaultConfig::default()
+        },
+    )
+    .expect("open vault");
+    (dir, vault)
+}
+
 pub(in crate::task_verb) fn consult_turn(vault: &Vault, seed: u8) -> ConsultPayloadRef {
     let turn_ref = EntityId::from_bytes([seed; 16]).expect("turn id");
     let mut body = Vec::new();

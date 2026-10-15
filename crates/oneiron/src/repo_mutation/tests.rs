@@ -484,31 +484,51 @@ fn repo_mutation_queue_serializes_concurrent_commits() {
     let vault = Arc::new(vault);
     let barrier = Arc::new(Barrier::new(3));
 
+    // Both writers name the same base. The queue lands one; the other's pin is
+    // stale under the lock, so it is refused and retries at the new HEAD.
     let mut handles = Vec::new();
     for name in ["a", "b"] {
         let vault = Arc::clone(&vault);
         let barrier = Arc::clone(&barrier);
-        let repo_ref = repo_ref(&repo);
+        let pinned = repo_ref(&repo);
+        let root = repo.path().to_path_buf();
         handles.push(thread::spawn(move || {
+            let request = |repo_ref| {
+                RepoMutationRequest::new(
+                    repo_ref,
+                    RepoMutationOperation::CommitFile {
+                        path: format!("{name}.txt"),
+                        content: format!("{name}\n").into_bytes(),
+                        message: format!("commit {name}"),
+                    },
+                )
+            };
             barrier.wait();
-            vault.apply_repo_mutation(RepoMutationRequest::new(
-                repo_ref,
-                RepoMutationOperation::CommitFile {
-                    path: format!("{name}.txt"),
-                    content: format!("{name}\n").into_bytes(),
-                    message: format!("commit {name}"),
-                },
-            ))
+            match vault.apply_repo_mutation(request(pinned)) {
+                Err(error) if error.kind() == ErrorKind::ConcurrentWrite => {
+                    let fresh = RepoRef::LocalFolder {
+                        path: root.to_string_lossy().into_owned(),
+                        commit: current_head_commit(&root).expect("fresh head"),
+                    };
+                    vault
+                        .apply_repo_mutation(request(fresh))
+                        .map(|outcome| (outcome, true))
+                }
+                other => other.map(|outcome| (outcome, false)),
+            }
         }));
     }
 
     barrier.wait();
     let mut seqs = Vec::new();
+    let mut retried = 0;
     for handle in handles {
-        let outcome = handle.join().expect("thread join").expect("commit");
+        let (outcome, stale) = handle.join().expect("thread join").expect("commit");
         assert_eq!(outcome.entry.status, RepoMutationStatus::Applied);
         seqs.push(outcome.entry.seq);
+        retried += usize::from(stale);
     }
+    assert_eq!(retried, 1, "exactly one writer held a stale pin");
     seqs.sort_unstable();
     assert_eq!(seqs, vec![1, 2]);
 
@@ -532,6 +552,68 @@ fn repo_mutation_queue_serializes_concurrent_commits() {
     let commits = String::from_utf8(commits).expect("utf8 log");
     assert!(commits.contains("commit a"));
     assert!(commits.contains("commit b"));
+}
+
+#[test]
+fn a_file_write_names_the_head_it_lands_on() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let write = |repo_ref, path: &str| {
+        vault.apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref,
+            RepoMutationOperation::CommitFile {
+                path: path.to_owned(),
+                content: b"written\n".to_vec(),
+                message: format!("write {path}"),
+            },
+        ))
+    };
+    let old_ref = repo_ref(&repo);
+    write(old_ref.clone(), "first.txt").expect("a fresh pin lands");
+    let head = current_head_commit(repo.path()).expect("head after first");
+
+    let error = write(old_ref, "second.txt").expect_err("a stale pin is refused");
+    assert_eq!(error.kind(), ErrorKind::ConcurrentWrite);
+    assert_eq!(current_head_commit(repo.path()).expect("head after"), head);
+    assert!(!repo.path().join("second.txt").exists());
+    let log = vault.repo_mutation_oplog(&repo_ref(&repo)).expect("oplog");
+    assert_eq!(log.len(), 1, "the refused write leaves no oplog row");
+
+    let landed = write(repo_ref(&repo), "second.txt").expect("the current pin lands");
+    assert_eq!(landed.entry.status, RepoMutationStatus::Applied);
+}
+
+#[test]
+fn a_malformed_pin_writes_no_row_and_leaves_the_oplog_readable() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    let outcome = vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref(&repo),
+            RepoMutationOperation::CommitFile {
+                path: "README.md".to_owned(),
+                content: b"mutated\n".to_vec(),
+                message: "mutate readme".to_owned(),
+            },
+        ))
+        .expect("mutate");
+    let before = vault.repo_mutation_oplog(&repo_ref(&repo)).expect("oplog");
+
+    let malformed = RepoRef::LocalFolder {
+        path: repo.path().to_string_lossy().into_owned(),
+        commit: "not-a-commit".to_owned(),
+    };
+    vault
+        .recover_repo_snapshot(&malformed, outcome.entry.pre_action_fork_hash)
+        .expect_err("a malformed pin is refused");
+
+    let after = vault
+        .repo_mutation_oplog(&repo_ref(&repo))
+        .expect("the oplog still reads under a valid ref");
+    assert_eq!(after, before);
+    vault
+        .recover_repo_snapshot(&repo_ref(&repo), outcome.entry.pre_action_fork_hash)
+        .expect("a valid ref still recovers");
 }
 
 #[test]
@@ -1251,6 +1333,63 @@ fn repo_conflict_record_keeps_branches_mountable_and_queryable() {
     );
 }
 
+/// A file write names the HEAD it lands on; an open conflict names its
+/// repository and branch. An unrelated write that moves HEAD leaves the
+/// conflict resolvable by a write naming the new HEAD.
+#[test]
+fn a_conflict_stays_resolvable_after_an_unrelated_write_moves_head() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    create_conflicting_branches(&repo);
+    let branch_subject = put_branch_subject(&vault);
+    let open = vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref(&repo),
+            RepoMutationOperation::RecordConflict {
+                branch_subject,
+                branch_name: "left".to_owned(),
+                ours_ref: "left".to_owned(),
+                theirs_ref: "right".to_owned(),
+            },
+        ))
+        .expect("record conflict")
+        .repo_conflict_claim_id
+        .expect("open claim id");
+    run_git_at_path(repo.path(), &["checkout".to_owned(), "left".to_owned()])
+        .expect("checkout left");
+    vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref(&repo),
+            RepoMutationOperation::CommitFile {
+                path: "unrelated.txt".to_owned(),
+                content: b"unrelated\n".to_vec(),
+                message: "unrelated write".to_owned(),
+            },
+        ))
+        .expect("an unrelated write moves HEAD");
+
+    let resolved = vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref(&repo),
+            RepoMutationOperation::ResolveConflictFile {
+                branch_subject,
+                open_conflict_claim_id: open,
+                branch_name: "left".to_owned(),
+                path: "README.md".to_owned(),
+                content: b"resolved branch\n".to_vec(),
+                message: "resolve readme conflict".to_owned(),
+            },
+        ))
+        .expect("the open conflict resolves at the new HEAD");
+    assert!(resolved.repo_conflict_claim_id.is_some());
+    assert!(
+        vault
+            .repo_conflict_claims(&branch_subject)
+            .expect("active open conflicts")
+            .is_empty()
+    );
+}
+
 #[test]
 fn repo_conflict_resolution_supersedes_open_claim_and_writes_clean_tree() {
     let (_vault_dir, vault) = open_test_vault();
@@ -1323,6 +1462,78 @@ fn repo_conflict_resolution_supersedes_open_claim_and_writes_clean_tree() {
     );
 }
 
+/// A resolution interrupted after its commit and claims, once an unrelated
+/// write had moved HEAD: the next write names the HEAD the resolution moved
+/// to, and its recovery pass finishes the resolution on its own pin.
+#[test]
+fn an_interrupted_resolution_rolls_forward_under_the_next_writes_head() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    create_conflicting_branches(&repo);
+    let branch_subject = put_branch_subject(&vault);
+    let open = vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref(&repo),
+            RepoMutationOperation::RecordConflict {
+                branch_subject,
+                branch_name: "left".to_owned(),
+                ours_ref: "left".to_owned(),
+                theirs_ref: "right".to_owned(),
+            },
+        ))
+        .expect("record conflict")
+        .repo_conflict_claim_id
+        .expect("open claim id");
+    run_git_at_path(repo.path(), &["checkout".to_owned(), "left".to_owned()])
+        .expect("checkout left");
+    let write = |path: &str| {
+        vault.apply_repo_mutation(RepoMutationRequest::new(
+            repo_ref(&repo),
+            RepoMutationOperation::CommitFile {
+                path: path.to_owned(),
+                content: b"written\n".to_vec(),
+                message: format!("write {path}"),
+            },
+        ))
+    };
+    write("unrelated.txt").expect("an unrelated write moves HEAD");
+    let pinned = repo_ref(&repo);
+    INJECT_REPO_MUTATION_CRASH
+        .with(|cell| cell.set(RepoMutationCrashPoint::AfterActionBeforeApplied));
+    vault
+        .apply_repo_mutation(RepoMutationRequest::new(
+            pinned.clone(),
+            RepoMutationOperation::ResolveConflictFile {
+                branch_subject,
+                open_conflict_claim_id: open,
+                branch_name: "left".to_owned(),
+                path: "README.md".to_owned(),
+                content: b"resolved branch\n".to_vec(),
+                message: "resolve readme conflict".to_owned(),
+            },
+        ))
+        .expect_err("injected crash after the resolution commit");
+
+    let next = write("next.txt").expect("the next write lands after recovery");
+    assert_eq!(next.entry.status, RepoMutationStatus::Applied);
+    let log = vault.repo_mutation_oplog(&repo_ref(&repo)).expect("oplog");
+    assert!(
+        log.iter()
+            .all(|entry| entry.status != RepoMutationStatus::Prepared)
+    );
+    let resolutions = vault
+        .repo_conflict_resolution_claims(&branch_subject)
+        .expect("resolution claims");
+    assert_eq!(resolutions.len(), 1);
+    assert_eq!(resolutions[0].repo_ref, pinned);
+    assert!(
+        vault
+            .repo_conflict_claims(&branch_subject)
+            .expect("active open conflicts")
+            .is_empty()
+    );
+}
+
 #[test]
 fn repo_conflict_resolution_roll_forward_completes_claims_after_commit_crash() {
     let (_vault_dir, vault) = open_test_vault();
@@ -1391,8 +1602,10 @@ fn repo_conflict_resolution_roll_forward_completes_claims_after_commit_crash() {
             .is_empty()
     );
 
+    // Recovery runs under the HEAD the resolution moved to; the resolution
+    // still finishes on the pin it was admitted with.
     let recovered = vault
-        .recover_prepared_repo_mutations(&canonical)
+        .recover_prepared_repo_mutations(&repo_ref(&repo))
         .expect("roll forward conflict resolution");
     assert_eq!(recovered.len(), 1);
     assert_eq!(
@@ -1411,6 +1624,7 @@ fn repo_conflict_resolution_roll_forward_completes_claims_after_commit_crash() {
     assert_eq!(resolutions.len(), 1);
     assert_eq!(resolutions[0].claim_id, resolution_claim_id);
     assert_eq!(resolutions[0].open_conflict_claim_id, open);
+    assert_eq!(resolutions[0].repo_ref, canonical);
     let open_body = vault
         .get_claim(&open)
         .expect("get open claim")

@@ -179,6 +179,11 @@ fn run_pipeline<S: EditSession>(
     // them; the applied ops and manifest record the actual prefixed formulas.
     let serialized_plan = serialize_plan(plan);
     let applied = session.apply_edits(&doc_before, &serialized_plan)?;
+    // The session's report is its word, not evidence. Every op it reports must
+    // be one the plan admitted, in the plan's order and no more often, so the
+    // manifest never carries an op (a structural one moves anchors) that was
+    // never admitted.
+    require_admitted_ops(&serialized_plan.ops, &applied.applied_ops)?;
     let mut current = applied.bytes;
     warnings.extend(applied.warnings);
 
@@ -186,7 +191,9 @@ fn run_pipeline<S: EditSession>(
     // formula values but this session image cannot recalc: retaining stale
     // cached formula values in the output is silent data corruption, so refuse
     // and let the caller route to a recalc-capable session rather than propose.
-    let recalc = if serialized_plan.needs_recalc(&applied.applied_ops) {
+    // The admitted plan decides, so an op left out of the report never skips
+    // the recalc its edit needs.
+    let recalc = if serialized_plan.needs_recalc(&serialized_plan.ops) {
         if !session.supports_recalc() {
             return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
                 "edit may change formula values but the session cannot recalc; route to a recalc-capable session",
@@ -298,4 +305,19 @@ impl crate::Vault {
         }
         Ok(outcome)
     }
+}
+
+/// Refuses a reported op the admitted plan does not hold at that point:
+/// reported ops are an ordered sub-sequence of the plan.
+fn require_admitted_ops(admitted: &[EditOp], reported: &[EditOp]) -> Result<()> {
+    let mut plan = admitted.iter();
+    if reported
+        .iter()
+        .all(|op| plan.any(|admitted_op| admitted_op == op))
+    {
+        return Ok(());
+    }
+    Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+        "the session reported an op the plan did not admit",
+    )))
 }

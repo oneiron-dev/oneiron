@@ -1169,7 +1169,7 @@ fn caldav_remote_applied_resume_commits_without_second_upsert() {
 }
 
 #[test]
-fn caldav_remote_applied_divergent_receipt_hash_commits_receipt_hash() {
+fn caldav_remote_applied_divergent_receipt_settles_on_the_staged_hash() {
     let (_dir, vault) = temp_vault();
     let event = mint_local_event(&vault, 0x53, "resume canonicalized remote success");
     let receipt_hash = [9_u8; 32];
@@ -1203,8 +1203,10 @@ fn caldav_remote_applied_divergent_receipt_hash_commits_receipt_hash() {
     assert_eq!(persisted_receipt.etag.as_deref(), Some("resume-etag"));
     assert_eq!(persisted_receipt.content_hash, receipt_hash);
 
-    // Recovery resumes from the receipt without a second PUT and commits the
-    // provider's stored-representation hash as local ground truth.
+    // Recovery resumes from the receipt without a second PUT and settles the
+    // write, but the echo state keeps the hash of what was staged: the
+    // provider's claimed hash is not evidence of what it stored (F11 / H230),
+    // so a copy that differs is a remote change for the next pull to import.
     assert_eq!(
         mint_local_event(&vault, 0x53, "resume canonicalized remote success"),
         event
@@ -1218,12 +1220,12 @@ fn caldav_remote_applied_divergent_receipt_hash_commits_receipt_hash() {
         .expect("remote object row read")
         .expect("remote object row committed");
     assert_eq!(object.etag, resumed.etag);
-    assert_eq!(object.content_hash, receipt_hash);
+    assert_eq!(object.content_hash, staged.content_hash);
 
     let passports = live_passports_for_event(&vault, &event).expect("passports");
     assert_eq!(passports.len(), 1);
     assert_eq!(passports[0].1.last_sequence, resumed.sequence);
-    assert_eq!(passports[0].1.content_hash, receipt_hash);
+    assert_eq!(passports[0].1.content_hash, staged.content_hash);
 
     let outbox = calendar_write_outbox_rows(&vault).expect("outbox rows");
     assert_eq!(outbox.len(), 1);

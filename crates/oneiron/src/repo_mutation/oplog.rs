@@ -210,9 +210,11 @@ impl Vault {
                     expected != stale.pre_action_fork_hash && actual_matches(expected)
                 })
             {
+                // The interrupted operation finishes on its own admitted ref,
+                // not the ref of whichever call triggered this recovery.
                 let repo_conflict_claim_id = finish_repo_mutation_roll_forward(
                     self,
-                    repo_ref,
+                    &stale.repo_ref,
                     repo_root,
                     &stale,
                     recovery_intent.as_ref(),
@@ -268,7 +270,7 @@ impl Vault {
 
             if let Some(outcome) = super::document::resume_reviewed_document(
                 self,
-                repo_ref,
+                &stale.repo_ref,
                 repo_root,
                 &stale,
                 prepared_commit.as_ref(),
@@ -433,6 +435,13 @@ fn repo_key_hash(repo_key: &str) -> String {
 
 pub(super) fn repo_mutation_repo_key_hash(repo_ref: &RepoRef) -> String {
     repo_key_hash(&repo_mutation_repo_key(repo_ref))
+}
+
+/// Whether two refs name the same repository, whatever commit each pins. An
+/// open conflict names its repository and branch; the write that resolves it
+/// pins the HEAD it lands on, which unrelated writes may have moved.
+pub(super) fn same_repository(left: &RepoRef, right: &RepoRef) -> bool {
+    repo_mutation_repo_key(left) == repo_mutation_repo_key(right)
 }
 
 pub(super) fn repo_mutation_repo_key(repo_ref: &RepoRef) -> String {

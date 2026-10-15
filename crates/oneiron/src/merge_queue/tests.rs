@@ -132,8 +132,17 @@ impl MergeLanding for Host<'_> {
         }
         for proposal in &tested.batch().proposals {
             for file in &proposal.files {
+                // Each write names the HEAD it lands on, which the last one moved.
+                let RepoRef::LocalFolder { path, .. } = &self.repo else {
+                    unreachable!("the fixture repo is local");
+                };
+                let head = String::from_utf8(git(self.root, &["rev-parse", "HEAD"])?).unwrap();
+                let pinned = RepoRef::LocalFolder {
+                    path: path.clone(),
+                    commit: head.trim().to_owned(),
+                };
                 outcomes.push(self.vault.apply_repo_mutation(RepoMutationRequest::new(
-                    self.repo.clone(),
+                    pinned,
                     RepoMutationOperation::CommitFile {
                         path: file.path.clone(),
                         content: file.content.clone().unwrap(),

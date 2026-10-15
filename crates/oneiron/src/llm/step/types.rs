@@ -35,7 +35,7 @@ pub const DREAMER_TRAP_PREDICATE: &str = "dreamer.trap";
 pub const DREAMER_STEP_VALUE_SCHEMA_VERSION: u64 = 1;
 
 /// Pinned MessagePack key set for `dreamer.step` claim values.
-pub const DREAMER_STEP_VALUE_KEYS: [&str; 12] = [
+pub const DREAMER_STEP_VALUE_KEYS: [&str; 14] = [
     "schema_version",
     "job_id",
     "step_hash",
@@ -47,6 +47,8 @@ pub const DREAMER_STEP_VALUE_KEYS: [&str; 12] = [
     "usage_out",
     "response",
     "response_ref",
+    "response_version",
+    "response_hash",
     "at",
 ];
 
@@ -116,6 +118,10 @@ pub(super) const KEY_USAGE_OUT: &str = "usage_out";
 pub(super) const KEY_RESPONSE: &str = "response";
 
 pub(super) const KEY_RESPONSE_REF: &str = "response_ref";
+
+pub(super) const KEY_RESPONSE_VERSION: &str = "response_version";
+
+pub(super) const KEY_RESPONSE_HASH: &str = "response_hash";
 
 pub(super) const KEY_AT: &str = "at";
 

@@ -146,6 +146,15 @@ impl Memory<'_> {
         for carried_ref in input.kind.carried_refs() {
             require_resolved_payload_ref(self.vault(), carried_ref)?;
         }
+        // The reported completion time is the caller's word. One later than
+        // the engine's clock is refused, so it can never outrank an expiry
+        // when terminal records converge; whether the consult was still open
+        // is judged on the engine's clock inside the settling transaction.
+        if input.completed_at > self.vault().store.clock.now_recorded_at() {
+            return Err(MemoryError::bad_request(
+                "completed_at is later than the engine clock",
+            ));
+        }
         let landed = TaskTerminalRecord {
             disposition: TaskTerminalDisposition::Completed,
             result_ref: Some(input.kind.result_ref()),
@@ -223,6 +232,20 @@ impl Memory<'_> {
                     MEMORY_CODE_INVALID_STATE,
                     "this task's ladder already settled and handed the case to a follow-on",
                     "Read the settled ladder record; a settled ladder is immutable, and the follow-on task carries the case.",
+                ));
+            }
+            // A consult past its deadline is the expiry sweep's to settle, even
+            // before the sweep has run: the engine's clock decides, never the
+            // reported completion time. An identical replay was answered above.
+            if consult_kind.is_some()
+                && body.ttl.is_some_and(|ttl| {
+                    ttl.deadline_at < self.vault().store.clock.now_recorded_at()
+                })
+            {
+                return Err(consult_refusal(
+                    MEMORY_CODE_INVALID_STATE,
+                    "the consult's deadline has passed",
+                    "A late answer does not land; the expiry sweep settles the consult.",
                 ));
             }
             let option = match consult_kind {
@@ -347,7 +370,10 @@ pub(super) fn complete_ask_member_in_txn(
     now: u64,
 ) -> MemoryResult<()> {
     let mut body = consult_body_in_txn(vault, txn, answer.task_ref)?;
-    if body.terminal().is_none() && body.settled_ladder_disposition().is_none() {
+    // A member consult past its deadline on the engine clock is the expiry
+    // sweep's to settle. The word still counts under the ask's own cutoff.
+    let overdue = body.ttl.is_some_and(|ttl| ttl.deadline_at < now);
+    if !overdue && body.terminal().is_none() && body.settled_ladder_disposition().is_none() {
         body.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
             disposition: TaskTerminalDisposition::Completed,
             result_ref: Some(word.result_ref),
