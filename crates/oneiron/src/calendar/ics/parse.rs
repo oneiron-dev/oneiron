@@ -106,35 +106,42 @@ pub(crate) struct InviteIcsIdentity {
 }
 
 /// Extracts one invitation's actual identity using the existing ICS parser.
+///
+/// An invite is read strictly, in the shape the emitter writes: exactly one
+/// VCALENDAR carrying exactly one VEVENT and nothing else, upper-case names
+/// throughout, and one METHOD, UID, ORGANIZER and at most one SEQUENCE. The
+/// transport sends these bytes whole, so a second calendar, a second event
+/// under any spelling, or a repeated identity property is refused rather
+/// than shipped beside the event that was checked.
 pub(crate) fn invite_identity(input: &[u8]) -> Result<InviteIcsIdentity, CalendarError> {
     let text = std::str::from_utf8(input).map_err(|_| ics_parse("invite is not UTF-8"))?;
-    let calendar = icalendar::parser::read_calendar(text).map_err(|message| ics_parse(&message))?;
-    let mut methods = calendar
-        .properties
-        .iter()
-        .filter(|prop| prop.name.as_str() == "METHOD");
-    let method = methods
-        .next()
+    let roots = icalendar::parser::read_calendar_simple(text)
+        .map_err(|_| ics_parse("invite did not parse"))?;
+    let [calendar] = roots.as_slice() else {
+        return Err(ics_parse("invite must be exactly one VCALENDAR"));
+    };
+    if calendar.name.as_str() != "VCALENDAR" || !names_are_upper_case(calendar) {
+        return Err(ics_parse("invite names must be upper-case iCalendar names"));
+    }
+    let [event] = calendar.components.as_slice() else {
+        return Err(ics_parse(
+            "invite must carry exactly one VEVENT and nothing else",
+        ));
+    };
+    if event.name.as_str() != "VEVENT" {
+        return Err(ics_parse(
+            "invite must carry exactly one VEVENT and nothing else",
+        ));
+    }
+    let method = single_prop(&calendar.properties, "METHOD")?
         .ok_or_else(|| ics_parse("invite has no METHOD"))?
         .val
         .as_str()
         .trim()
         .to_owned();
-    if methods.next().is_some() {
-        return Err(ics_parse("invite has competing METHODs"));
-    }
-    let mut events = calendar
-        .components
-        .iter()
-        .filter(|component| component.name.as_str() == "VEVENT");
-    let event = events
-        .next()
-        .ok_or_else(|| ics_parse("invite has no VEVENT"))?;
-    if events.next().is_some() {
-        return Err(ics_parse("invite has competing VEVENTs"));
-    }
-    let organizer = event
-        .find_prop("ORGANIZER")
+    single_prop(&event.properties, "UID")?;
+    single_prop(&event.properties, "SEQUENCE")?;
+    let organizer = single_prop(&event.properties, "ORGANIZER")?
         .ok_or_else(|| ics_parse("invite has no organizer"))?
         .val
         .as_str()
@@ -152,6 +159,31 @@ pub(crate) fn invite_identity(input: &[u8]) -> Result<InviteIcsIdentity, Calenda
         sequence: vevent_sequence(event)?,
         organizer: organizer.to_owned(),
     })
+}
+
+/// The one property named `name`, or none; a repeat is refused.
+fn single_prop<'c, 'a>(
+    properties: &'c [icalendar::parser::Property<'a>],
+    name: &str,
+) -> Result<Option<&'c icalendar::parser::Property<'a>>, CalendarError> {
+    let mut matching = properties.iter().filter(|prop| prop.name.as_str() == name);
+    let first = matching.next();
+    if matching.next().is_some() {
+        return Err(ics_parse("invite repeats an identity property"));
+    }
+    Ok(first)
+}
+
+/// Whether every component and property name below `component` is written
+/// upper-case, as the emitter writes them, so exact-name reads see them all.
+fn names_are_upper_case(component: &icalendar::parser::Component<'_>) -> bool {
+    let upper = |name: &str| !name.bytes().any(|byte| byte.is_ascii_lowercase());
+    upper(component.name.as_str())
+        && component
+            .properties
+            .iter()
+            .all(|prop| upper(prop.name.as_str()))
+        && component.components.iter().all(names_are_upper_case)
 }
 
 /// Parses one VEVENT parser component into the calendar-owned row.

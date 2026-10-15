@@ -1158,6 +1158,73 @@ fn invite_ics_must_carry_the_payloads_own_uid_and_sequence() {
         "a SEQUENCE 3 document was admitted as SEQUENCE 0"
     );
 
+    // The booking's own event, with another EVENT's invite riding beside it
+    // in a lower-case component or in a second calendar.
+    let own_ics = emit_imip_ics(&ImipEmitRequest {
+        method: CalendarInviteMethod::Request,
+        uid: fixture.uid.clone(),
+        sequence: 0,
+        organizer: SENDER.to_owned(),
+        attendees: vec![RECIPIENT.to_owned()],
+        summary: EVENT_TYPE.to_owned(),
+        starts_at_utc: SLOT_START,
+        ends_at_utc: SLOT_END,
+        tz_label: "UTC".to_owned(),
+        dtstamp_utc: NOW,
+    })
+    .expect("emit invite document");
+    let own_text = String::from_utf8(own_ics).expect("utf-8 invite");
+    let smuggled = format!("BEGIN:vevent\r\nUID:{other_uid}\r\nSEQUENCE:0\r\nEND:vevent\r\n");
+    for (seed, document) in [
+        (
+            0x5E,
+            own_text.replace("END:VCALENDAR", &format!("{smuggled}END:VCALENDAR")),
+        ),
+        (
+            0x5F,
+            format!(
+                "{own_text}{}",
+                String::from_utf8(
+                    emit_imip_ics(&ImipEmitRequest {
+                        method: CalendarInviteMethod::Request,
+                        uid: other_uid.clone(),
+                        sequence: 0,
+                        organizer: SENDER.to_owned(),
+                        attendees: vec![RECIPIENT.to_owned()],
+                        summary: EVENT_TYPE.to_owned(),
+                        starts_at_utc: SLOT_START,
+                        ends_at_utc: SLOT_END,
+                        tz_label: "UTC".to_owned(),
+                        dtstamp_utc: NOW,
+                    })
+                    .expect("emit second calendar"),
+                )
+                .expect("utf-8 invite"),
+            ),
+        ),
+    ] {
+        let blob_ref = persist_imip_blob(
+            &fixture.vault,
+            &entity(seed),
+            "one-1814 invite",
+            document.as_bytes(),
+            &BlobVersionProvenance::UserUpload,
+            WriteActor::new(fixture.actor, EdgeActorClass::Human),
+            NOW,
+        )
+        .expect("persist invite blob");
+        assert!(
+            admit_calendar_invite(
+                &fixture.vault,
+                fixture.actor,
+                &payload_for(&fixture, &blob_ref, RECIPIENT),
+                NOW,
+            )
+            .is_err(),
+            "a second event rode the booking's invite document (blob seed {seed:#x})"
+        );
+    }
+
     // The booking's own document dispatches.
     let own = ics_blob(&fixture.vault, 0x5D, fixture.actor, &fixture.uid, 0);
     enqueue_confirm_invite(

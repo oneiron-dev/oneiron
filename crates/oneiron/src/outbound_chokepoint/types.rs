@@ -54,9 +54,11 @@ pub(crate) enum PreparedAuthorization {
         prepared: Box<PreparedToolCall>,
     },
     /// The booking-page grant calendar admission bound to this invite's own
-    /// EVENT and recipient: the gate's only candidate for it.
+    /// booking EVENT and recipient, re-checked under the gate's writer.
     BookingPageInvite {
         grant_id: EntityId,
+        event_ref: EntityId,
+        recipient: String,
     },
 }
 

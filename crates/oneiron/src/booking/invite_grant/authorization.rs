@@ -148,6 +148,32 @@ impl BookingInviteCoverage {
     }
 }
 
+/// Whether booking-page grant `grant_ref` still covers an invite to
+/// `recipient` for the booking EVENT `booking_ref`, through the caller's
+/// transaction: that EVENT is a confirmed booking on the grant's page whose
+/// booker is the recipient.
+pub(crate) fn page_grant_covers_booking_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    grant_ref: &EntityId,
+    booking_ref: &EntityId,
+    recipient: &str,
+) -> Result<bool, BookingError> {
+    let Some(grant) =
+        crate::outbound_grant::standing_outbound_grant_in_txn(&vault.store, rtxn, grant_ref)
+            .map_err(|error| engine_failure("standing grant read", error))?
+    else {
+        return Ok(false);
+    };
+    let StandingOutboundGrantScope::BookingPageInvites { page_ref } = &grant.scope else {
+        return Ok(false);
+    };
+    let Some(binding) = confirmed_booking_binding_in_txn(vault, rtxn, booking_ref)? else {
+        return Ok(false);
+    };
+    Ok(binding.page_ref == *page_ref && identities_match(&binding.recipient, recipient))
+}
+
 /// The page/booker binding `booking_ref` carries, or `None` when this EVENT is
 /// not a confirmed booking with a resolvable booker.
 pub(super) fn confirmed_booking_binding(

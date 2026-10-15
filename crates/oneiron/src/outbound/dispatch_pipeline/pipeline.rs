@@ -7,6 +7,7 @@ use crate::error::Error;
 use crate::outbound::dispatch_types::{
     OutboundDispatchError, OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
 };
+use crate::outbound_chokepoint::PreparedAuthorization;
 use crate::receipt::{DispatchObservationKey, read_dispatch_observation};
 use crate::{EntityId, Vault};
 
@@ -159,7 +160,7 @@ impl OutboundDispatchPipeline {
             owner_proof,
             parked: None,
             suppression_receipt: None,
-            page_grant: None,
+            authorization: PreparedAuthorization::None,
         })?;
         let result = crate::outbound::receipt_fields::dispatch_result_receipt(
             &request,
@@ -221,7 +222,7 @@ impl OutboundDispatchPipeline {
             native_mail_recipient,
             step_binding: _,
         } = prepared;
-        let page_grant = admit_calendar_invite_at_door(
+        let authorization = admit_calendar_invite_at_door(
             vault,
             &request,
             verified_actor.as_ref().map(|(actor, _)| *actor),
@@ -255,7 +256,7 @@ impl OutboundDispatchPipeline {
                 &admission.window_decision,
                 &admission.window_resolution,
             ),
-            page_grant,
+            authorization,
         })?;
         let result = crate::outbound::receipt_fields::dispatch_result_receipt(
             &request,
@@ -282,9 +283,9 @@ fn admit_calendar_invite_at_door(
     vault: &Vault,
     request: &OutboundDispatchRequest,
     verified_actor: Option<EntityId>,
-) -> Result<Option<EntityId>, OutboundDispatchError> {
+) -> Result<PreparedAuthorization, OutboundDispatchError> {
     let Some(payload) = request.calendar_invite.as_ref() else {
-        return Ok(None);
+        return Ok(PreparedAuthorization::None);
     };
     let refused = |reason: &'static str| {
         OutboundDispatchError::Chokepoint(
@@ -308,11 +309,18 @@ fn admit_calendar_invite_at_door(
     let admission =
         crate::calendar::admit_calendar_invite(vault, actor, payload, vault.now_recorded_at())
             .map_err(|_| refused("calendar.invite failed calendar admission"))?;
-    crate::calendar::invite::booking_page_grant_for_invite(
+    let page_grant = crate::calendar::invite::booking_page_grant_for_invite(
         vault,
         actor,
         admission.event_ref(),
         &payload.recipient,
     )
-    .map_err(|_| refused("calendar.invite failed calendar admission"))
+    .map_err(|_| refused("calendar.invite failed calendar admission"))?;
+    Ok(page_grant.map_or(PreparedAuthorization::None, |grant_id| {
+        PreparedAuthorization::BookingPageInvite {
+            grant_id,
+            event_ref: admission.event_ref(),
+            recipient: payload.recipient.clone(),
+        }
+    }))
 }

@@ -166,11 +166,8 @@ fn send_pending_with_gate<T: OutboundTransport>(
             &prepared.payload,
             prepared.gate.provenance.actor_entity_ref,
         )?;
-        let required_grant_id = match &prepared.authorization {
-            PreparedAuthorization::None => None,
-            PreparedAuthorization::ScopedMcp { grant_id, .. }
-            | PreparedAuthorization::BookingPageInvite { grant_id } => Some(*grant_id),
-        };
+        let required_grant_id =
+            super::admission::required_grant_id(vault, &wtxn, &prepared.authorization);
         let posting_gate =
             vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
         let governance = gate::evaluate_external_effect_policy(

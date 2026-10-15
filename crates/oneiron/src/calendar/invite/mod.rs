@@ -57,9 +57,9 @@ pub use self::payload::{
     CalendarInvitePayload, decode_frozen_calendar_invite,
 };
 
-pub(crate) use self::hygiene::CalendarInviteConsentSnapshot;
 #[cfg(test)]
-pub(crate) use self::hygiene::{booking_page_grant_for_invite, resolve_consent_basis};
+pub(crate) use self::hygiene::resolve_consent_basis;
+pub(crate) use self::hygiene::{CalendarInviteConsentSnapshot, booking_page_grant_for_invite};
 
 use super::CalendarError;
 #[cfg(test)]

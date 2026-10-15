@@ -28,8 +28,8 @@ pub(super) struct EffectInput<'a, S> {
     pub(super) owner_proof: Option<crate::consent::AuthenticatedOwner>,
     pub(super) parked: Option<OutboundDispatchOutcome>,
     pub(super) suppression_receipt: Option<ReceiptRecord>,
-    /// The booking-page grant calendar admission bound to this invite.
-    pub(super) page_grant: Option<EntityId>,
+    /// The booking-page grant calendar admission bound to this invite, if any.
+    pub(super) authorization: crate::outbound_chokepoint::PreparedAuthorization,
 }
 
 pub(super) fn execute_admitted<S: OutboundExecutionSink>(
@@ -48,7 +48,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         owner_proof,
         parked,
         suppression_receipt,
-        page_grant,
+        authorization,
     } = input;
     let prepared = crate::outbound_chokepoint::PreparedEffect {
         attempt_id,
@@ -60,12 +60,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         resolved_endpoint: None,
         gate: effect,
         budget_class: crate::outbound_intent_ledger::BudgetClass::Send,
-        authorization: page_grant.map_or(
-            crate::outbound_chokepoint::PreparedAuthorization::None,
-            |grant_id| crate::outbound_chokepoint::PreparedAuthorization::BookingPageInvite {
-                grant_id,
-            },
-        ),
+        authorization,
         verified_actor,
         owner_proof,
         dedupe_key: request.intent.dedupe_key.clone(),
