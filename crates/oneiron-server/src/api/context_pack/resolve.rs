@@ -71,6 +71,13 @@ pub(crate) async fn run_context_pack(
     ),
     ApiError,
 > {
+    // Every ref the request names resolves under the caller's own read: a
+    // room or contact it cannot read is one that does not exist. A room's
+    // members read its roster by membership, as their room turns do.
+    let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
+    let principal = auth
+        .principal_ref()
+        .and_then(|id| oneiron::EntityId::from_hex(id).ok());
     let room_members = req
         .conversation_id
         .as_deref()
@@ -78,7 +85,7 @@ pub(crate) async fn run_context_pack(
             let room = super::super::parse_entity_id_param(room, "conversation_id")?;
             server
                 .vault
-                .room_audience_members(room)
+                .room_audience_members_under(&scoped_read, room, principal)
                 .map_err(|error| core_engine_error("room audience failed", error))
         })
         .transpose()?;
@@ -89,6 +96,7 @@ pub(crate) async fn run_context_pack(
     let interlocutors = resolve_core_interlocutor_set(
         &server.vault,
         auth,
+        &scoped_read,
         req.interlocutors.as_ref(),
         room.as_ref(),
     )?;
@@ -119,7 +127,6 @@ pub(crate) async fn run_context_pack(
         .or(req.view)
         .unwrap_or(View::Standard);
     let projection = context_pack_json_projection_config(view, req.budget.as_ref());
-    let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
     let scoped_read = if let (Some(members), Some(room)) = (room_members.as_deref(), &room) {
         // Every row a room reads lies in its members' met world set, as a
         // room turn's ceiling holds it (ARCH-0067 §8).

@@ -138,6 +138,10 @@ pub(crate) enum DeleteRendezvous {
     /// publication to bracket (its `write_crdt_tombstone` is a no-op).
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     BeforeTombstonePublish,
+    /// After the facade's read-only refusals of protected records, before its
+    /// header probe: a record that arrives here meets the refusal again in the
+    /// writer txn that would erase it.
+    AfterProtectedRecordPrecheck,
     /// After the target header/scope probe and facade gate, before deletion's
     /// first write txn. A second owner may delete the bound actor here.
     BeforeFirstDeletionTxn,
