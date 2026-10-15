@@ -233,25 +233,30 @@ pub(super) fn landed(
             "git smart-http produced no response",
         ));
     };
-    if report.ref_results.is_empty() {
-        return Landed::Report((status, headers), body);
-    }
-    let mut rewritten = body.sibling();
-    match rewrite_receive_pack_status(&mut body, &report.ref_results, &mut rewritten)
-        .and_then(|()| rewritten.flush().map_err(StatusFault::Held))
-    {
-        Ok(()) => {}
-        Err(StatusFault::Unreadable) => {
-            return Landed::Answer(text_response(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "git per-ref status is unavailable; ref effects may be partial; retry to recover",
-            ));
+    let body = if report.ref_results.is_empty() {
+        body
+    } else {
+        let mut rewritten = body.sibling();
+        match rewrite_receive_pack_status(&mut body, &report.ref_results, &mut rewritten)
+            .and_then(|()| rewritten.flush().map_err(StatusFault::Held))
+        {
+            Ok(()) => {}
+            Err(StatusFault::Unreadable) => {
+                return Landed::Answer(text_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "git per-ref status is unavailable; ref effects may be partial; retry to recover",
+                ));
+            }
+            Err(StatusFault::Held(error)) => return Landed::Answer(held_failure(&error)),
         }
-        Err(StatusFault::Held(error)) => return Landed::Answer(held_failure(&error)),
-    }
-    // The pkt-line lengths changed. A backend Content-Length is no longer valid.
+        rewritten
+    };
+    // The held length, whatever the backend said: the pkt-line lengths may
+    // have changed, and a report cut short must read as cut short however the
+    // client frames the response, HTTP/1.0 included.
     headers.retain(|(name, _)| !name.eq_ignore_ascii_case(CONTENT_LENGTH.as_str()));
-    Landed::Report((status, headers), rewritten)
+    headers.push((CONTENT_LENGTH.as_str().to_owned(), body.len().to_string()));
+    Landed::Report((status, headers), body)
 }
 
 /// [`landed`] as one whole response, for a report held in memory.

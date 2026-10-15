@@ -84,7 +84,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn git_http_partial_push_keeps_each_ref_status_and_removes_stale_length() {
+    async fn git_http_partial_push_keeps_each_ref_status_and_replaces_stale_length() {
         let mut report = landed_report();
         report.ref_results = partial_ref_results();
         let body = status_body(&[
@@ -97,18 +97,23 @@ mod tests {
         headers.push(("Content-Length".to_owned(), body.len().to_string()));
         let response = landed_response(Some((status, headers)), held(&body), Ok(Ok(report)));
         assert_eq!(response.status(), StatusCode::OK);
-        assert!(response.headers().get(CONTENT_LENGTH).is_none());
+        let rewritten = status_body(&[
+            "ok refs/heads/first\n",
+            "ng refs/heads/second publication pending; ref effects may exist\n",
+            "ng refs/heads/third ref was not applied\n",
+        ]);
+        assert_eq!(
+            response
+                .headers()
+                .get_all(CONTENT_LENGTH)
+                .iter()
+                .collect::<Vec<_>>(),
+            [rewritten.len().to_string().as_str()]
+        );
         let actual = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("body");
-        assert_eq!(
-            actual.as_ref(),
-            status_body(&[
-                "ok refs/heads/first\n",
-                "ng refs/heads/second publication pending; ref effects may exist\n",
-                "ng refs/heads/third ref was not applied\n",
-            ])
-        );
+        assert_eq!(actual.as_ref(), rewritten);
     }
 
     #[test]

@@ -15,6 +15,8 @@ use std::path::PathBuf;
 pub(super) struct HeldBytes {
     memory: Vec<u8>,
     file: Option<BufWriter<File>>,
+    /// Bytes held, wherever they are.
+    len: u64,
     /// Bytes held in memory before the rest goes to disk.
     limit: usize,
     /// Where the rest goes; `None` when the door root could not be resolved,
@@ -27,6 +29,7 @@ impl HeldBytes {
         Self {
             memory: Vec::new(),
             file: None,
+            len: 0,
             limit,
             dir,
         }
@@ -35,6 +38,11 @@ impl HeldBytes {
     /// An empty holder with the same memory bound and spill directory.
     pub(super) fn sibling(&self) -> Self {
         Self::new(self.limit, self.dir.clone())
+    }
+
+    /// How many bytes are held.
+    pub(super) fn len(&self) -> u64 {
+        self.len
     }
 
     /// Everything held, from its first byte.
@@ -54,10 +62,13 @@ impl HeldBytes {
 impl Write for HeldBytes {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         if let Some(file) = &mut self.file {
-            return file.write(bytes);
+            let written = file.write(bytes)?;
+            self.len += written as u64;
+            return Ok(written);
         }
         if bytes.len() <= self.limit.saturating_sub(self.memory.len()) {
             self.memory.extend_from_slice(bytes);
+            self.len += bytes.len() as u64;
             return Ok(bytes.len());
         }
         let dir = self
@@ -76,6 +87,7 @@ impl Write for HeldBytes {
         file.write_all(&std::mem::take(&mut self.memory))?;
         file.write_all(bytes)?;
         self.file = Some(file);
+        self.len += bytes.len() as u64;
         Ok(bytes.len())
     }
 
