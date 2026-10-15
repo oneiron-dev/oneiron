@@ -759,6 +759,13 @@ fn rejected_edit_buffer_keeps_preference_principals_separate() -> Result<()> {
         optimize_brief_for_principal_at(&vault, &candidate, other, 301).is_err(),
         "a person who is not the vault's owner read the owner's brief"
     );
+    // Past that check, another principal's brief (an earlier owner's) still
+    // carries none of this owner's rejected drafts.
+    assert!(
+        super::brief::optimize_brief_bound_at(&vault, &candidate, Some(other.entity_ref()), 301)?
+            .rejected_edits
+            .is_empty()
+    );
     assert_eq!(
         optimize_brief_for_principal_at(&vault, &candidate, owner, 301)?.rejected_edits[0].proposal,
         first

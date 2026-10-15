@@ -267,22 +267,31 @@ fn legacy_evidence_and_other_principals_do_not_cross_the_miner_threshold() -> Re
         .into_iter()
         .enumerate()
     {
-        let landed = sign_off(
+        let amendment = sign_off(
             &format!("gate:isolated-{i}"),
             "isolated",
             actor,
             i,
             100 + i as u64,
-        )
-        .land_bound(&vault, principal);
+        );
         if principal == Some(b) {
-            // A person who is not the vault's owner binds no preference
-            // principal (H149); the evidence stays unbound.
-            assert!(landed.is_err(), "a non-owner bound a preference principal");
+            // B's receipt is real: bound while B held the owner binding.
+            amendment.land_bound_by_earlier_owner(&vault, b.entity_ref())?;
         } else {
-            landed?;
+            amendment.land_bound(&vault, principal)?;
         }
     }
+    // Now that B is not the vault's owner, B binds no more evidence (H149).
+    assert!(
+        bind_amendment_preference_principal(
+            &vault,
+            b,
+            "gate:isolated-3",
+            &CompilationTarget::Fallback
+        )
+        .is_err(),
+        "a person who is not the vault's owner bound a preference principal"
+    );
     assert!(emitted(&super::super::run_substitution_miner_at(&vault, &run, 300)?).is_empty());
     sign_off("gate:isolated-last", "isolated", actor, 9, 200).land_bound(&vault, Some(a))?;
     let outcomes = emitted(&super::super::run_substitution_miner_at(&vault, &run, 300)?);
@@ -294,7 +303,7 @@ fn legacy_evidence_and_other_principals_do_not_cross_the_miner_threshold() -> Re
         crate::claim::claim_principal_id(&body)?,
         Some(a.entity_ref())
     );
-    // A different owner cannot approve A's mined preference.
+    // B, no longer the owner, cannot approve A's mined preference.
     assert!(
         vault
             .resolve_inbox_group_as_at(
@@ -383,6 +392,18 @@ fn optimizer_reads_only_live_dev_substitutions_for_its_explicit_principal() -> R
     assert!(
         optimize_brief_for_principal_at(&vault, &candidate, other, 300).is_err(),
         "a person who is not the vault's owner read the owner's brief"
+    );
+    // Past that check, another principal's brief (an earlier owner's) still
+    // carries none of this owner's corrections.
+    assert!(
+        crate::skill_optimize::optimize_brief_bound_at(
+            &vault,
+            &candidate,
+            Some(other.entity_ref()),
+            300
+        )?
+        .substitution_proposals
+        .is_empty()
     );
     assert!(
         optimize_brief_for_principal_at(&vault, &candidate, owner, 300 + YEAR * 2)?
