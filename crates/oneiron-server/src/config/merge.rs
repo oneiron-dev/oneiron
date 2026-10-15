@@ -13,6 +13,7 @@ use super::embedder::{EmbedderConfig, EmbedderProvider};
 use super::embedder::{EmbedderConfigOverride, lookup_embedder_override};
 use super::feedback::{FeedbackConfigOverride, lookup_feedback_override};
 use super::import::ImportConfigOverride;
+use super::limits::LimitsConfigOverride;
 use super::lookup::{
     DEFAULT_CONFIG_DIR, DEFAULT_CONFIG_FILE, expand_home, lookup_bool, lookup_list, lookup_parse,
     lookup_path, lookup_path_list, normalize_list, redacted_secret,
@@ -22,6 +23,7 @@ use super::oneironer::{OneironerConfig, OneironerConfigOverride, lookup_oneirone
 use super::recall::{RecallConfigOverride, lookup_recall_override};
 use super::serve_args::{ServeArgs, runtime_override_from_args};
 use super::server_config::ServeConfig;
+use super::trusted_proxy::parse_trusted_proxies;
 use crate::runtime::{
     RuntimeConfigOverride, RuntimeMode, RuntimeProviderKind, RuntimeRole, RuntimeRoleTargetOverride,
 };
@@ -81,6 +83,7 @@ impl EnvConfig {
         values.allow_unauthenticated =
             lookup_bool(&mut lookup, "ONEIRON_INSECURE_ALLOW_UNAUTHENTICATED")?;
         values.allowed_origins = lookup_list(&mut lookup, "ONEIRON_ALLOWED_ORIGINS");
+        values.trusted_proxies = lookup_list(&mut lookup, "ONEIRON_TRUSTED_PROXIES");
         values.lease_vault_id = lookup_parse(&mut lookup, "ONEIRON_LEASE_VAULT_ID")?;
         values.dimensions = lookup_parse(&mut lookup, "ONEIRON_DIMENSIONS")?;
         values.map_size = lookup_parse(&mut lookup, "ONEIRON_MAP_SIZE")?;
@@ -277,6 +280,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     config.backup.validate()?;
     config.feedback.validate()?;
     config.recall.validate()?;
+    config.limits.validate()?;
     config.import.validate(&config.vault_path)?;
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
@@ -450,6 +454,7 @@ struct FileServeConfig {
     oauth_resource_indicator: Option<String>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
+    trusted_proxies: Option<Vec<String>>,
     lease_vault_id: Option<u64>,
     dimensions: Option<usize>,
     map_size: Option<usize>,
@@ -476,6 +481,7 @@ struct FileServeConfig {
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
     recall: Option<RecallConfigOverride>,
+    limits: Option<LimitsConfigOverride>,
     import: Option<ImportConfigOverride>,
     models: Option<ModelsFile>,
     privacy_posture: Option<HostingPrivacyPosture>,
@@ -496,6 +502,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             oauth_resource_indicator: value.oauth_resource_indicator,
             allow_unauthenticated: value.allow_unauthenticated,
             allowed_origins: value.allowed_origins,
+            trusted_proxies: value.trusted_proxies,
             lease_vault_id: value.lease_vault_id,
             dimensions: value.dimensions,
             map_size: value.map_size,
@@ -522,6 +529,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             backup: value.backup,
             feedback: value.feedback,
             recall: value.recall,
+            limits: value.limits,
             import: value.import,
             models: None,
             privacy_posture: value.privacy_posture,
@@ -543,6 +551,7 @@ struct PartialServeConfig {
     oauth_resource_indicator: Option<String>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
+    trusted_proxies: Option<Vec<String>>,
     lease_vault_id: Option<u64>,
     dimensions: Option<usize>,
     map_size: Option<usize>,
@@ -569,6 +578,7 @@ struct PartialServeConfig {
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
     recall: Option<RecallConfigOverride>,
+    limits: Option<LimitsConfigOverride>,
     import: Option<ImportConfigOverride>,
     /// `[models]` is file-only: it is too structured for env or argv.
     models: Option<ModelsConfig>,
@@ -590,6 +600,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("oauth_resource_indicator", &self.oauth_resource_indicator)
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
+            .field("trusted_proxies", &self.trusted_proxies)
             .field("lease_vault_id", &self.lease_vault_id)
             .field("dimensions", &self.dimensions)
             .field("map_size", &self.map_size)
@@ -628,6 +639,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
             .field("recall", &self.recall)
+            .field("limits", &self.limits)
             .field("import", &self.import)
             .field("models", &self.models)
             .field("privacy_posture", &self.privacy_posture)
@@ -667,6 +679,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.allowed_origins {
             resolved.allowed_origins = normalize_list(value);
+        }
+        if let Some(value) = self.trusted_proxies {
+            resolved.trusted_proxies = parse_trusted_proxies(&normalize_list(value))?;
         }
         if let Some(value) = self.lease_vault_id {
             resolved.lease_vault_id = value;
@@ -723,7 +738,7 @@ impl PartialServeConfig {
             resolved.max_entity_blob = value;
         }
         if let Some(value) = self.max_lfs_object_bytes {
-            resolved.max_lfs_object_bytes = Some(value);
+            resolved.max_lfs_object_bytes = value;
         }
         if let Some(value) = self.max_bulk_decompressed {
             resolved.max_bulk_decompressed = value;
@@ -754,6 +769,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.recall {
             resolved.recall.apply_override(value);
+        }
+        if let Some(value) = self.limits {
+            resolved.limits.apply_override(value);
         }
         if let Some(value) = self.import {
             resolved.import.apply_override(value);
@@ -794,6 +812,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             oauth_resource_indicator: value.oauth_resource_indicator.clone(),
             allow_unauthenticated: value.insecure_allow_unauthenticated,
             allowed_origins: value.allowed_origins.clone(),
+            trusted_proxies: value.trusted_proxies.clone(),
             lease_vault_id: value.lease_vault_id,
             dimensions: value.dimensions,
             map_size: value.map_size,
@@ -821,6 +840,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             backup: None,
             feedback: None,
             recall: None,
+            limits: None,
             import: None,
             models: None,
             privacy_posture: value.privacy_posture,

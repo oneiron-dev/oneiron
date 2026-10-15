@@ -838,7 +838,7 @@ fn a_restore_keeps_every_agent_id_pin() -> Result<()> {
     use crate::agent_def::AgentCeiling;
 
     let (_dir, vault) = open_test_vault();
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
     let (custom_id, custom) = custom_agent(&vault, AgentCeiling::Proposed)?;
@@ -874,7 +874,7 @@ fn a_restored_row_narrows_its_pin() -> Result<()> {
 
     let (_dir, vault) = open_test_vault();
     let (kept_id, kept) = custom_agent(&vault, AgentCeiling::Proposed)?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
     let mut widened = kept.clone();
@@ -906,7 +906,7 @@ fn a_restore_refuses_past_a_pin_it_cannot_read() -> Result<()> {
 
     let (_dir, vault) = open_test_vault();
     let (agent_id, _) = custom_agent(&vault, AgentCeiling::Proposed)?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
     let pin_key = [&b"agent_def/id-pin/v1\0"[..], agent_id.as_bytes()].concat();
@@ -954,7 +954,7 @@ fn a_restore_names_the_lineage_an_unread_pin_waits_for() -> Result<()> {
     };
     let fork_id = crate::test_util::entity(0x5C);
     vault.put_agent_definition(&fork_id, &fork(Some(herald_id)), test_time_range(1, 1), 1)?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("image");
     vault.snapshot_checkpoint(&image, 100)?;
     let pin_key = [&b"agent_def/id-pin/v1\0"[..], fork_id.as_bytes()].concat();
@@ -980,9 +980,12 @@ fn a_restore_names_the_lineage_an_unread_pin_waits_for() -> Result<()> {
 fn a_replacement_publishes_no_looser_agent_id_pin() -> Result<()> {
     use crate::agent_def::AgentCeiling;
 
-    let (_dir, vault) = open_test_vault();
+    // The replacement takes the live vault's place, so both sit where a
+    // restore accepts them.
+    let staging = crate::test_support::restore_tempdir();
+    let vault = Vault::open(staging.path().join("live"), embedding_test_config())?;
+    clear_default_policy_manifest_for_test(&vault);
     let (agent_id, agent) = custom_agent(&vault, AgentCeiling::Auto)?;
-    let staging = tempfile::tempdir()?;
     let prepare = |name: &str| {
         let image = staging.path().join(format!("{name}-image"));
         vault.snapshot_checkpoint(&image, 100)?;
@@ -1043,7 +1046,7 @@ fn a_restore_pins_a_definition_its_live_vault_never_held() -> Result<()> {
 
     let (_dir, vault) = open_test_vault();
     let (custom_id, custom) = custom_agent(&vault, AgentCeiling::Proposed)?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("image");
     vault.snapshot_checkpoint(&image, 100)?;
     // The live vault as one that never held the definition: no row at its

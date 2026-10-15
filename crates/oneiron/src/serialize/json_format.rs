@@ -9,16 +9,16 @@ use super::types::GroupKey;
 pub(super) fn section_object(
     groups: &[(GroupKey, Vec<PreparedEntity>)],
     include_score: bool,
+    handles: &mut super::handles::Handles,
 ) -> Map<String, Value> {
     let mut map = Map::new();
     for (kind, entities) in groups {
         if entities.is_empty() {
             continue;
         }
-        map.insert(
-            group_key(*kind).to_owned(),
-            Value::Array(json_rows(entities, include_score)),
-        );
+        let mut rows = json_rows(entities, include_score);
+        handles.emitted_rows(entities, &mut rows);
+        map.insert(group_key(*kind).to_owned(), Value::Array(rows));
     }
     map
 }

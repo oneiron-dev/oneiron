@@ -893,6 +893,45 @@ fn ask_decided_despite_an_uncounted_word_binds_its_outcome() -> Result<()> {
     Ok(())
 }
 
+// H331: a collection whose only reply lacks a required source is not a
+// completed collection; the same reply citing the source still is.
+#[test]
+fn a_collection_with_no_counted_word_is_not_collected() -> Result<()> {
+    let collect = |cite_source: bool| -> Result<_> {
+        let fixture = RuledAskFixture::new(1)?;
+        let mut spec = fixture.spec();
+        let mut class = fixture.policy(false);
+        class.required_sources = [fixture.question].into();
+        spec.class = Some(class);
+        spec.decide = None;
+        let handle = fixture.ask(&spec)?;
+        let sources = if cite_source {
+            [fixture.question].into()
+        } else {
+            Default::default()
+        };
+        fixture.word_with_sources(handle, 0, "yes", sources)?;
+        fixture.clock.set(1_101);
+        fixture.result(handle)
+    };
+    let uncounted = collect(false)?;
+    assert_eq!(
+        uncounted
+            .evidence
+            .iter()
+            .map(|entry| entry.reason)
+            .collect::<Vec<_>>(),
+        [TaskAskEvidenceReason::MissingSource]
+    );
+    assert_ne!(uncounted.decision, TaskAskDecision::Collected);
+    assert!(uncounted.fallback.is_some());
+
+    let counted = collect(true)?;
+    assert_eq!(counted.decision, TaskAskDecision::Collected);
+    assert_eq!(counted.fallback, None);
+    Ok(())
+}
+
 #[test]
 fn ask_three_replies_one_yes_all_has_coverage_but_no_decision_and_fallback() -> Result<()> {
     let fixture = RuledAskFixture::new(3)?;
@@ -3050,7 +3089,7 @@ fn a_restore_never_widens_a_task_ask_class_narrowed_since() -> Result<()> {
         .tasks_create(&TaskCreateSpec::new(spec(&class)?, None, None, Some(1_000)))?
         .task_ref
         .expect("task ref");
-    let backups = tempfile::tempdir().expect("backups");
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     fixture.vault.snapshot_checkpoint(&image, 100)?;
 

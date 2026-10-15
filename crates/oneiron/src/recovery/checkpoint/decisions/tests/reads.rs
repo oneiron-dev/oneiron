@@ -256,7 +256,7 @@ fn a_restore_never_hands_a_rebound_claim_back_to_a_verified_slip() -> Result<()>
     );
     assert_eq!(read_value(&vault, sora, other.0)?, None);
 
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
     let restore = |name: &str| {
@@ -326,7 +326,7 @@ fn a_restore_never_hands_a_rebound_claim_back_to_a_paired_reader() -> Result<()>
         Some("first")
     );
 
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
     put_fact(&vault, fact, "rebound", Some("rin"), 30)?;

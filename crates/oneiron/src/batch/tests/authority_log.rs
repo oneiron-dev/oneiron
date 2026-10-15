@@ -296,7 +296,7 @@ fn authority_log_put_lands_at_an_id_an_agent_held() -> Result<()> {
             Some(genesis.clone()),
             "deleted first: {deleted}"
         );
-        let backups = tempfile::tempdir()?;
+        let backups = crate::test_support::restore_tempdir();
         let image = backups.path().join("image");
         vault.snapshot_checkpoint(&image, 100)?;
         let (restored, _) = Vault::restore_checkpoint_keeping_authority(

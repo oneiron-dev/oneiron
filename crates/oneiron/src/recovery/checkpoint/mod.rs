@@ -9,7 +9,7 @@ mod rebuild;
 mod restore_class;
 mod tiers;
 use crate::side_table::{self, Named, SideTable};
-use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody, directory_identity};
+use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody};
 use crate::{EntityId, Error, Result, Vault, VaultConfig};
 use heed::types::Bytes;
 use serde::{Deserialize, Serialize};
@@ -83,47 +83,6 @@ impl Drop for ForkedCustody {
         }
     }
 }
-/// The destination a restore created, removed on drop unless kept: a restore
-/// refused after it made its destination leaves nothing there, and the same
-/// destination can take a later restore. Named by device and inode, and held
-/// open so no other directory takes that inode meanwhile: a directory that
-/// took the path after the guard named it is not removed. Where no identity
-/// reads, nothing is. The guard names the path's directory just after
-/// `create_dir` and removes by path, so it assumes nothing else renames in
-/// the destination's parent while a restore runs. Held before the vault
-/// opened in it, so the vault closes first.
-struct CreatedDestination<'a>(Option<(&'a Path, (u64, u64), std::fs::File)>);
-impl<'a> CreatedDestination<'a> {
-    /// Names the directory `create_dir` just made at `destination`.
-    fn new(destination: &'a Path) -> Self {
-        let directory = std::fs::File::open(destination).ok();
-        Self(directory.and_then(|directory| {
-            let identity = directory_identity(&directory.metadata().ok()?)?;
-            Some((destination, identity, directory))
-        }))
-    }
-    /// Whether the path now names another directory than the one created.
-    fn replaced(&self) -> bool {
-        self.0.as_ref().is_some_and(|(destination, identity, _)| {
-            std::fs::symlink_metadata(destination)
-                .ok()
-                .and_then(|meta| directory_identity(&meta))
-                != Some(*identity)
-        })
-    }
-    fn keep(mut self) {
-        self.0 = None;
-    }
-}
-impl Drop for CreatedDestination<'_> {
-    fn drop(&mut self) {
-        if !self.replaced()
-            && let Some((destination, ..)) = self.0.take()
-        {
-            let _ = std::fs::remove_dir_all(destination);
-        }
-    }
-}
 /// The vault a side restore copies. Each restore reads its live key-custody
 /// state when it starts: where its custody is, and the key retirements it
 /// has committed. The copy never holds a key that state says is destroyed or
@@ -135,8 +94,13 @@ enum Source<'a> {
     /// A vault open in this process, read through its own handle.
     Open(&'a Vault),
     /// A vault read off its directory, as [`SideRestoreSource::read`] read
-    /// it first.
-    Disk { dir: PathBuf, first: LiveCustody },
+    /// it first, and the directory on its path another user could change.
+    Disk {
+        dir: PathBuf,
+        first: LiveCustody,
+        #[cfg(unix)]
+        shared: Option<crate::store::SharedPath>,
+    },
 }
 impl SideRestoreSource<'static> {
     /// The vault at `vault_dir`, read without opening it, so a running
@@ -146,18 +110,32 @@ impl SideRestoreSource<'static> {
     /// at its start, and refuses if the vault there is no longer the store
     /// read here, bound to the custody it bound here.
     pub fn read(vault_dir: &Path) -> Result<Self> {
+        let first = crate::store::read_live_custody(vault_dir)?;
         Ok(Self(Source::Disk {
             dir: vault_dir.to_path_buf(),
-            first: crate::store::read_live_custody(vault_dir)?,
+            first,
+            #[cfg(unix)]
+            shared: crate::store::shared_vault_root(vault_dir)?,
         }))
     }
 }
 impl SideRestoreSource<'_> {
+    /// A directory on the path of a source read off the disk that another
+    /// user could change, found when it was read. A restore from it goes
+    /// ahead, since the vault opens and writes there as it is; a caller
+    /// reports it with the fix. `None` for a vault open in this process.
+    #[cfg(unix)]
+    pub fn shared_path(&self) -> Option<&crate::store::SharedPath> {
+        match &self.0 {
+            Source::Disk { shared, .. } => shared.as_ref(),
+            Source::Open(_) => None,
+        }
+    }
     /// The source's live custody state, read now, at a restore's start.
     fn capture(&self) -> Result<LiveCustody> {
         match &self.0 {
             Source::Open(vault) => vault.store.live_custody(),
-            Source::Disk { dir, first } => {
+            Source::Disk { dir, first, .. } => {
                 let live = crate::store::read_live_custody(dir)?;
                 if !first.same_vault(&live) {
                     return Err(Error::InvalidConfig(
@@ -388,6 +366,11 @@ impl Vault {
     /// from another owner or old model can be served while that queue is rebuilt.
     /// The restored vault takes the image's vault's place and keeps its key
     /// custody; a copy served beside it is [`Vault::restore_checkpoint_beside`].
+    ///
+    /// Every restore is refused where another user could move a directory on
+    /// the way to `destination` (or, replacing a vault, on the way to it): a
+    /// directory not this user's or root's, or one a group or other may write
+    /// without its sticky bit. Nothing is made there.
     pub fn restore_checkpoint(
         path: &Path,
         destination: &Path,
@@ -397,7 +380,7 @@ impl Vault {
     ) -> Result<(Self, RestoreReport)> {
         let (mut image, checkpoint_id) = read_image(path)?;
         image.drop_machine_identity();
-        let (vault, report, forked, created) = Self::restore_image(
+        let (vault, report, forked) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -407,7 +390,6 @@ impl Vault {
             Custody::Keep,
         )?;
         forked.keep();
-        created.keep();
         Ok((vault, report))
     }
     /// [`Vault::restore_checkpoint`] as a copy served beside its source vault.
@@ -427,7 +409,7 @@ impl Vault {
         let live = source.capture()?;
         let (mut image, checkpoint_id) = read_image(path)?;
         image.drop_machine_identity();
-        let (vault, report, forked, created) = Self::restore_image(
+        let (vault, report, forked) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -437,7 +419,6 @@ impl Vault {
             Custody::Fork(Some(&live)),
         )?;
         forked.keep();
-        created.keep();
         Ok((vault, report))
     }
     /// This vault as the source of a restore beside it
@@ -495,13 +476,18 @@ impl Vault {
     /// keeps is read under its own keys before the activation commits; when
     /// this returns `Ok` it is done, and the vault opens live, joining as a
     /// new machine: its replacement is the machine it was. Refuses a vault
-    /// that is not archived, and a `source` whose custody is not the one it
-    /// binds; a refusal leaves it archived, as it was.
+    /// that is not archived, a `source` whose custody is not the one it
+    /// binds, and, before opening anything, a missing `path` or one where
+    /// another user could move a directory on it; a refusal leaves it
+    /// archived, as it was.
     pub fn activate_archived(
         path: &Path,
         config: VaultConfig,
         source: &SideRestoreSource<'_>,
     ) -> Result<()> {
+        // The archive is admitted like the source before anything opens it
+        // by name; a missing one is refused, not made.
+        crate::store::admit_existing_vault_root(path)?;
         let live = source.capture()?;
         let archive = Self::open_owned(path, config)?;
         archive.store.activate_archived(&live)
@@ -576,7 +562,7 @@ impl Vault {
         if let Custody::Fork(_) = custody {
             image.drop_machine_identity();
         }
-        let (vault, report, forked, created) = Self::restore_image(
+        let (vault, report, forked) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -588,24 +574,23 @@ impl Vault {
         if let Err(error) = authority_plane::refuse_new_members(current, &vault)
             .and_then(|()| decisions::refuse_loosened_decisions(current, &vault))
         {
-            // The destination this call created goes as `created` drops, and
-            // the custody it forked as `forked` does, once the vault closed.
-            drop(vault);
+            // This call created the destination; nothing else is in it. The
+            // custody it forked goes with it as `forked` drops.
+            crate::store::discard_restored_copy(vault, destination);
             return Err(error);
         }
         forked.keep();
-        created.keep();
         Ok((vault, report))
     }
-    fn restore_image<'d>(
+    fn restore_image(
         image: CheckpointImage,
         checkpoint_id: String,
-        destination: &'d Path,
+        destination: &Path,
         config: VaultConfig,
         reason: RestoreReason,
         restored_at: u64,
         custody: Custody<'_>,
-    ) -> Result<(Self, RestoreReport, ForkedCustody, CreatedDestination<'d>)> {
+    ) -> Result<(Self, RestoreReport, ForkedCustody)> {
         // A job row of another kind in the owner-retained key range would
         // hide from that kind's scans: refused before any destination exists.
         if image.databases["job_records"].iter().any(|(key, value)| {
@@ -626,17 +611,15 @@ impl Vault {
         if fork {
             crate::store::refuse_custody_beside(destination)?;
         }
+        // The pin pass below reads every agent id pin the restore brings
+        // back: one no pin decodes from is refused here, before a
+        // destination exists (H215).
+        crate::agent_def::refuse_unreadable_agent_id_pins(&image.databases["vault_meta"])?;
         // Existing content is never replaced or partially restored over.
-        std::fs::create_dir(destination)?;
-        let created = CreatedDestination::new(destination);
+        let made = crate::store::MadeDestination::make(destination, home)?;
         let mut forked = ForkedCustody(None);
         let vault = Self::open_owned(destination, config.clone())?;
-        // The vault opened by path: one that is not the directory this call
-        // created is existing content, refused before any database clears.
-        if created.replaced() {
-            drop(vault);
-            return Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists).into());
-        }
+        made.holds(&vault.store)?;
         vault.with_write_txn_grouped(|txn| {
             for entry in DB_MANIFEST {
                 let db = vault
@@ -658,6 +641,9 @@ impl Vault {
             vault
                 .store
                 .drop_erased_gate_decisions_in_txn(txn, gate_custody.erased())?;
+            // A written-here mark carried from the live vault binds only a
+            // carrier the restored rows hold, byte for byte.
+            crate::identity_topology::drop_unheld_author_marks_in_txn(&vault.store, txn)?;
             // Open-time seed/backfill gates consult type indexes. Reconstruct this
             // mechanical projection before reopening; tokenizer/model work waits
             // until those compatibility gates have passed.
@@ -686,6 +672,7 @@ impl Vault {
         drop(vault);
         // Re-open through all ABI, model, analyzer and manifest gates before rebuilding.
         let vault = Self::open_owned(destination, config)?;
+        made.holds(&vault.store)?;
         if let Some(home) = home {
             vault.store.unseal_replacement(home)?;
         }
@@ -724,7 +711,7 @@ impl Vault {
             rebuilt_text_documents,
             pending_embeddings,
         };
-        Ok((vault, report, forked, created))
+        Ok((vault, report, forked))
     }
     pub fn restore_epochs(&self) -> Result<Vec<RestoreEpoch>> {
         let txn = self.store.env.read_txn()?;

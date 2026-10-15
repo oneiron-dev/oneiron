@@ -391,6 +391,20 @@ pub(crate) fn agent_ids_in_txn(
     Ok(ids)
 }
 
+/// Refuses the `vault_meta` rows a restore is about to write when one is an
+/// agent id pin no pin decodes from. The restore's pin pass, and the
+/// open after it, would refuse the same pin once the copy exists; read
+/// here, before the restore makes its destination, the refusal leaves
+/// nothing behind.
+pub(crate) fn refuse_unreadable_agent_id_pins(vault_meta: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
+    for (key, value) in vault_meta {
+        if key.starts_with(PIN.decl().prefix) {
+            PIN.decode_value(value)?;
+        }
+    }
+    Ok(())
+}
+
 /// Pins every stored definition as [`pin_stored_row_in_txn`] pins one. Rows
 /// reach the store without a put two ways: a restore writes them raw, and a
 /// row older than the pin was put before the pin existed. So the restore

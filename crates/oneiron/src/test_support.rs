@@ -219,3 +219,34 @@ pub fn settle_outcome_ask(
             .created_at;
     Ok((handle, answered))
 }
+
+/// A temporary directory a restore accepts, for tests that restore, rehearse
+/// or activate a vault: made under the system temp directory when no other
+/// user could move a directory on the way to it (`store::refuse_shared_path`),
+/// else under `/tmp`. Panics with the refusals when neither passes, so a test
+/// never skips for its host's layout: where another account owns a directory
+/// above the temp directory, every restore under it is refused, as it should
+/// be, and the test would fail on that refusal instead of its own check.
+pub fn restore_tempdir() -> tempfile::TempDir {
+    tempfile::tempdir_in(restore_temp_base()).expect("a temporary directory")
+}
+
+#[cfg(unix)]
+fn restore_temp_base() -> std::path::PathBuf {
+    let mut refusals = Vec::new();
+    for base in [std::env::temp_dir(), std::path::PathBuf::from("/tmp")] {
+        match crate::store::refuse_shared_path(&base) {
+            Ok(()) => return base,
+            Err(refusal) => refusals.push(refusal.to_string()),
+        }
+    }
+    panic!(
+        "no temporary directory a restore accepts: {}",
+        refusals.join("; ")
+    );
+}
+
+#[cfg(not(unix))]
+fn restore_temp_base() -> std::path::PathBuf {
+    std::env::temp_dir()
+}

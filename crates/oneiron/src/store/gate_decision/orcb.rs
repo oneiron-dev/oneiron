@@ -497,16 +497,14 @@ impl ForkedCustodyDir {
     }
 }
 
-/// The device and inode of the directory `meta` describes; `None` for
-/// anything else, and where there is no inode.
 #[cfg(unix)]
-pub(crate) fn directory_identity(meta: &fs::Metadata) -> Option<(u64, u64)> {
+fn directory_identity(meta: &fs::Metadata) -> Option<(u64, u64)> {
     use std::os::unix::fs::MetadataExt;
     meta.is_dir().then(|| (meta.dev(), meta.ino()))
 }
 
 #[cfg(not(unix))]
-pub(crate) fn directory_identity(_: &fs::Metadata) -> Option<(u64, u64)> {
+fn directory_identity(_: &fs::Metadata) -> Option<(u64, u64)> {
     None
 }
 
