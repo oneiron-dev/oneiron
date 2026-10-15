@@ -3,11 +3,8 @@
 //! parents past the format bound. Owner entries that no longer name those
 //! rows fold the same in every arrival order.
 use super::machine_identity::{host, request_for};
-use super::owner_anchor::{YOURS, pin, profile, publish, root_record, signed};
-use super::support::{
-    EnrollSpec, authority_key_from_ed, cosign_ed, device, ed_key, enroll_device_entry,
-    genesis_entry,
-};
+use super::owner_anchor::{YOURS, agent, enrol_anchor, pin, profile, publish, root_record, signed};
+use super::support::{cosign_ed, ed_key, genesis_entry};
 use super::world_chain_reads::{edit, fold_under, hash, seeing};
 use super::world_key_doors::{Fresh, enrol_own, fresh_install, kit_seed, set};
 use super::world_privacy::world_row;
@@ -198,47 +195,22 @@ fn an_owner_removal_beside_a_foreign_root_folds_the_same_in_both_orders() {
     }
 }
 
-/// Ruling 2's check (b). The owner, with a second owner device's cosign,
-/// revokes roster device D while D's key, as an anchor, publishes a root of
-/// its own that does not name the revoke. In both arrival orders, pinned to
-/// the owner's root and unpinned, the revoke stands, D is revoked, its root
-/// stays foreign, and the two orders fold the same.
+/// Ruling 2's check (b). The owner enrols agent device D, whose key is also
+/// the anchor of a root of D's own, then revokes D with a second agent's
+/// cosign; D's root does not name the revoke. In both arrival orders, pinned
+/// to the owner's root and unpinned, the enrolments and the revoke stand, D
+/// is revoked, its root stays foreign, and the two orders fold the same.
 #[test]
 fn an_owner_revoke_beside_a_root_its_key_signed_folds_the_same_in_both_orders() {
     let owner_key = ed_key(160);
     let genesis = genesis_entry(160, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let (owner_root, _, owner_published) = publish(id, &genesis);
-    let second_admin = enroll_device_entry(
-        id,
-        &owner_published,
-        &owner_key,
-        EnrollSpec {
-            seed: 161,
-            roles: ROLE_OWNER | ROLE_ADMIN,
-            tier: AuthorityTier::Software,
-            seq: 1,
-            ts: 2,
-        },
-    );
-    let second_key = ed_key(161);
+    let second = agent(id, &owner_published, &owner_key, 161);
     let seed = RecoveryRootSeed::generate().unwrap();
-    let anchor = seed.anchor();
-    let device_key = authority_key_from_ed(&anchor);
     let theirs = seed.public(&id).unwrap();
-    let enrolled = cosign_ed(
-        signed(
-            id,
-            &[&second_admin],
-            &owner_key,
-            2,
-            AuthorityOp::EnrollDevice {
-                device: device(device_key.clone(), ROLE_ADMIN, AuthorityTier::Software),
-            },
-        ),
-        &owner_key,
-        &second_key,
-    );
+    let device_key = AuthorityKey::Ed25519(theirs.anchor_key);
+    let enrolled = enrol_anchor(id, &second, (&owner_key, &ed_key(161)), 2, &theirs);
     let revoked = cosign_ed(
         signed(
             id,
@@ -250,19 +222,19 @@ fn an_owner_revoke_beside_a_root_its_key_signed_folds_the_same_in_both_orders() 
             },
         ),
         &owner_key,
-        &second_key,
+        &ed_key(161),
     );
     let their_root = signed(
         id,
         &[&enrolled],
-        &anchor,
+        &seed.anchor(),
         1,
         AuthorityOp::OwnerRoot(root_record(&theirs)),
     );
     let owner_first = vec![
         genesis.clone(),
         owner_published.clone(),
-        second_admin.clone(),
+        second.clone(),
         enrolled.clone(),
         revoked.clone(),
         their_root.clone(),
@@ -270,22 +242,20 @@ fn an_owner_revoke_beside_a_root_its_key_signed_folds_the_same_in_both_orders() 
     let root_first = vec![
         genesis,
         owner_published,
-        second_admin,
-        enrolled,
+        second.clone(),
+        enrolled.clone(),
         their_root.clone(),
         revoked.clone(),
     ];
     let (nobody, world) = (EntityId::now(), EntityId::now());
     for root in [Some(&owner_root), None::<&RecoveryRoot>] {
-        let [first, second] =
+        let [first, other] =
             [&owner_first, &root_first].map(|entries| fold_under(entries, SelfHostLocal, root));
-        assert_eq!(
-            agreed(&first, nobody, world),
-            agreed(&second, nobody, world)
-        );
-        assert!(first.valid_entries.contains(&hash(&revoked)));
+        assert_eq!(agreed(&first, nobody, world), agreed(&other, nobody, world));
+        for entry in [&second, &enrolled, &revoked, &their_root] {
+            assert!(first.valid_entries.contains(&hash(entry)));
+        }
         assert!(first.roster[&device_key].revoked);
-        assert!(first.valid_entries.contains(&hash(&their_root)));
         assert!(first.root_anchors()[&theirs.anchor_key].contains(&theirs.id));
         assert_ne!(first.pinned_root.map(|pin| pin.id), Some(theirs.id));
     }
