@@ -357,6 +357,15 @@ pub(super) fn scrub_withdrawn_delete_carriers(
         require_history_free_window(vault, key)?;
     }
     let entities = doc.get_map("entities");
+    let carriers: Vec<_> = withdrawn
+        .iter()
+        .filter_map(|(raw_key, id)| map_get_bytes(&entities, raw_key).map(|carrier| (*id, carrier)))
+        .collect();
+    super::tombstones::mark_removed_carriers_first(
+        vault,
+        super::tombstones::CarrierRemoval::WithdrawnDeleteScrub,
+        &carriers,
+    )?;
     for (raw_key, _) in &withdrawn {
         map_delete(&entities, raw_key)?;
     }
