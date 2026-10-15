@@ -99,6 +99,12 @@ impl VerifiedSlip {
     pub fn claims(&self) -> &SlipClaims {
         &self.claims
     }
+    /// Whether the slip is its mint, with no caveat narrowing it (a scope,
+    /// a pact bound, a shorter lifetime, another key).
+    #[must_use]
+    pub(crate) fn is_unattenuated(&self) -> bool {
+        self.unattenuated
+    }
     /// A verified, unattenuated full-vault instrument, not merely `core:read`.
     #[must_use]
     pub fn is_full_vault_owner_grade(&self) -> bool {
