@@ -532,9 +532,9 @@ fn a_body_nested_past_its_decoder_is_refused_by_name() {
 
 /// The push door scans a blob whole, so a line may be as long as the blob
 /// (Astra F1, Sol F1 on the per-blob scan): the phrase detector keeps a
-/// bounded number of words however long a run of list words is. Before, it
-/// kept a vector for every one-word segment until the run ended, many times
-/// the line. Read where each test owns its process, so the peak is this
+/// bounded number of words however long a run of list words is. Before #1433
+/// it kept a vector for every one-word segment until the run ended, many
+/// times the line. Read where each test owns its process, so the peak is this
 /// scan's.
 #[cfg(target_os = "linux")]
 #[test]
@@ -564,10 +564,9 @@ fn a_long_run_of_list_words_scans_in_bounded_memory() {
     );
 }
 
-/// The phrase detector keeps at most one word past the longest phrase of a
-/// segment or a wrapped run, and two past it of a run of one-word segments
-/// (scan-cap review round 2): at each of those edges its verdict is the one
-/// the whole run gives.
+/// The phrase detector keeps a bounded window of a long run: at the edges of
+/// the longest phrase and its labels its verdict is the one the whole run
+/// gives (scan-cap review round 2).
 #[test]
 fn the_phrase_detector_decides_at_its_kept_edges_as_on_the_whole_run() {
     let words: Vec<&str> = VALID_PHRASES[3].split(' ').collect();
