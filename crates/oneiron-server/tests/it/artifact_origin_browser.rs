@@ -186,6 +186,7 @@ async fn a_code_artifact_cannot_read_the_api_through_a_frame_and_send_it_away() 
         1,
         "the bundle's own script runs and reports once: {leaks:?}"
     );
+    eprintln!("browser report: {}", leaks[0]);
     // Only an observed refusal counts: a timeout or a probe error fails.
     assert!(
         leaks[0].starts_with("denied"),
