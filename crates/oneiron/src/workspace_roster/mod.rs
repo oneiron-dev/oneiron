@@ -116,10 +116,10 @@ pub(crate) use project::create_project_signed_for_test;
 #[cfg(test)]
 pub(crate) use project::set_project_depth_signed_for_test;
 pub use project::{
-    DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, ProjectDisposition, ProjectEffective,
-    ProjectForkEvidence, ProjectForkOutcome, ProjectFrontier, ProjectHistoryOverBudget,
-    ProjectHistoryPolicy, ProjectRank, ProjectResolution, ProjectRevision, ProjectRevisionHash,
-    ProjectRevisionProof, ProjectSeal, ProjectWitness,
+    DEFAULT_PROJECT_CYCLE_WORLDS_MAX, DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, ProjectCycleQuestion,
+    ProjectDisposition, ProjectEffective, ProjectForkEvidence, ProjectForkOutcome, ProjectFrontier,
+    ProjectHistoryOverBudget, ProjectHistoryPolicy, ProjectRank, ProjectResolution,
+    ProjectRevision, ProjectRevisionHash, ProjectRevisionProof, ProjectSeal, ProjectWitness,
 };
 pub use project::{
     GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,

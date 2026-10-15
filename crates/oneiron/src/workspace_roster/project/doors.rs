@@ -9,7 +9,6 @@ use super::revision::{
     ProjectRevision, ProjectRevisionHash, REVISIONS, RevisionOrigin, held_in_txn,
     project_revision_type, revision_entity_id,
 };
-use super::validity::FoldCx;
 use super::*;
 use crate::authority::CapabilitySlip;
 use crate::consent::AuthenticatedOwner;
@@ -40,11 +39,24 @@ impl Vault {
         let Some(reader) = ProjectReader::new(&self.store, &txn, self.privacy_posture())? else {
             return Ok(Vec::new());
         };
-        let held = held_in_txn(&self.store, &txn, id, reader.kind())?;
-        let cx = FoldCx::new(&reader, id, &held);
+        let held = reader.held_of(id)?;
         let mut listed = std::collections::BTreeMap::new();
-        for hash in held.rows.keys() {
-            listed.insert(*hash, cx.verdict(*hash)?);
+        match reader
+            .decide(id)?
+            .as_ref()
+            .and_then(|decided| decided.fold.as_ref())
+        {
+            Some(fold) => listed.extend(
+                fold.verdicts
+                    .iter()
+                    .map(|(hash, verdict)| (*hash, *verdict)),
+            ),
+            None => {
+                let cx = reader.door_cx(id, &held)?;
+                for hash in held.rows.keys() {
+                    listed.insert(*hash, cx.verdict(*hash)?);
+                }
+            }
         }
         for ((_, hash), (_, origin)) in REVISIONS.scan_from(&self.store, &txn, id.as_bytes())? {
             if origin == RevisionOrigin::Forged {
@@ -91,7 +103,7 @@ impl Vault {
                     return Err(unresolved(id, "the resolution names another anchor"));
                 }
                 let held = held_in_txn(&self.store, txn, id, kind)?;
-                let cx = FoldCx::new(&reader, id, &held);
+                let cx = reader.door_cx(id, &held)?;
                 if cx.resolution_tips(anchor)? != resolution.prior {
                     return Err(unresolved(
                         id,
@@ -174,7 +186,7 @@ impl Vault {
                     return Err(Error::EntityNotFound);
                 };
                 let held = held_in_txn(&self.store, txn, id, kind)?;
-                let cx = FoldCx::new(&reader, id, &held);
+                let cx = reader.door_cx(id, &held)?;
                 if cx.verdict(over)? != ProjectVerdict::Visible {
                     return Err(unresolved(id, "a seal builds on a valid held revision"));
                 }
@@ -251,7 +263,7 @@ impl Vault {
             let reader = ProjectReader::new(&self.store, txn, self.privacy_posture())?
                 .ok_or_else(invalid)?;
             let held = held_in_txn(&self.store, txn, id, kind)?;
-            let sealed = FoldCx::new(&reader, id, &held).seal_tips()?
+            let sealed = reader.door_cx(id, &held)?.seal_tips()?
                 == std::collections::BTreeSet::from([envelope_hash]);
             let installed = sealed
                 && reader.frontier(id)?.is_some_and(|frontier| {

@@ -1,10 +1,9 @@
 //! Live admission of a PROJECT write: direct, batch and typed doors. Replay
 //! never reaches this check; the read fold judges replicated rows instead.
-use super::fold::{ProjectDisposition, ProjectEffective, ProjectRank, fold_project};
+use super::fold::{ProjectDisposition, ProjectEffective, ProjectRank};
 use super::history_policy::PROJECT_FROZEN_APPLIED;
 use super::read::{ProjectReader, ProjectVerdict, stored};
-use super::revision::{ProjectRevision, REVISIONS, RevisionOrigin, held_in_txn, revisions_of_row};
-use super::validity::FoldCx;
+use super::revision::{ProjectRevision, REVISIONS, revisions_of_row};
 use super::*;
 use crate::authority::{CapabilitySlip, authority_fold_readonly_for_store_in_txn};
 use crate::store::Store;
@@ -77,14 +76,16 @@ pub(crate) fn validate_transition(
         // The row returns to the head the fold already serves.
         return Ok(());
     }
-    let mut held = held_in_txn(store, txn, id, kind)?;
-    for (hash, revision) in chain {
-        held.insert(hash, revision, RevisionOrigin::AwaitingParent);
-    }
-    let cx = FoldCx::new(&reader, id, &held);
+    // The trial folds the row and its chain with every project its
+    // parents tie it to, as a read of the written state would.
+    let trial = reader.with_write(id, next.clone(), chain)?;
+    let held = trial.held_of(id)?;
+    let cx = trial.door_cx(id, &held)?;
     if let Some(current) = &current {
         match &current.disposition {
-            ProjectDisposition::Unsigned | ProjectDisposition::Settled => {
+            ProjectDisposition::Unsigned
+            | ProjectDisposition::Settled
+            | ProjectDisposition::ParentCycle { .. } => {
                 if parent != current.witness.as_ref().map(|witness| witness.head) {
                     return Err(refused("project write must build on its current authority"));
                 }
@@ -159,15 +160,15 @@ pub(crate) fn validate_transition(
             }
         }
     }
-    let fold = fold_project(&cx, &next)?;
-    let installed = matches!(fold.frontier.disposition, ProjectDisposition::Settled)
-        && fold.frontier.witness.as_ref().map(|witness| witness.head) == Some(candidate);
-    let Some(effective) = fold.frontier.effective.filter(|_| installed) else {
+    let frontier = trial.frontier(id)?.ok_or_else(invalid)?;
+    let installed = matches!(frontier.disposition, ProjectDisposition::Settled)
+        && frontier.witness.as_ref().map(|witness| witness.head) == Some(candidate);
+    let Some(effective) = frontier.effective.clone().filter(|_| installed) else {
         return Err(match cx.verdict(candidate)? {
             ProjectVerdict::Pending(reason) | ProjectVerdict::Quarantined(reason) => {
                 refused(reason)
             }
-            ProjectVerdict::Visible => match fold.frontier.disposition.verdict() {
+            ProjectVerdict::Visible => match frontier.disposition.verdict() {
                 ProjectVerdict::Pending(reason) | ProjectVerdict::Quarantined(reason) => {
                     refused(reason)
                 }

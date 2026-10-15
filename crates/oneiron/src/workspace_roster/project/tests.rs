@@ -1,8 +1,16 @@
 mod authority;
 #[cfg(feature = "sync")]
+mod cycle_model;
+#[cfg(feature = "sync")]
 mod history;
 #[cfg(feature = "sync")]
+mod history_bounds_fall;
+#[cfg(feature = "sync")]
 mod history_budget;
+#[cfg(feature = "sync")]
+mod history_cycles;
+#[cfg(feature = "sync")]
+mod history_cycles_named;
 #[cfg(feature = "sync")]
 mod history_doors;
 #[cfg(feature = "sync")]

@@ -23,6 +23,9 @@ thread_local! {
     /// How many resolution envelopes this thread verified: a frozen re-check
     /// verifies only the ones its saved view rests on.
     pub(super) static ENVELOPES_VERIFIED: Cell<u64> = const { Cell::new(0) };
+    /// How many verdicts this thread's folds asked for, memoized or not: the
+    /// visit count of the parent-cycle linear-cost check.
+    pub(super) static FOLD_VISITS: Cell<u64> = const { Cell::new(0) };
 }
 
 /// The settlement one resolution gives at its node.
@@ -35,11 +38,25 @@ pub(super) struct Settlement {
     pub(super) superseded: BTreeSet<ProjectRevisionHash>,
 }
 
+/// How a fold reads the parent projects a signed state must fit under.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Parents {
+    /// Each parent project's frontier, through the reader.
+    Read,
+    /// None: a state is judged on its own lineage, and a frontier's parent
+    /// bounds are its caller's (`joint.rs` judges them for a component).
+    Skip,
+}
+
 /// One project's fold over one held set, memoizing each revision's verdict.
 pub(super) struct FoldCx<'r, 'a, 't> {
     pub(super) reader: &'r ProjectReader<'a, 't>,
     pub(super) id: EntityId,
     pub(super) held: &'r HeldRevisions,
+    pub(super) parents: Parents,
+    /// Conduit successors hung under their nearest standing ancestor, by
+    /// that ancestor: a world of `joint.rs`.
+    rehomed: BTreeMap<ProjectRevisionHash, Vec<ProjectRevisionHash>>,
     verdicts: RefCell<BTreeMap<ProjectRevisionHash, ProjectVerdict>>,
     signers: RefCell<BTreeMap<ProjectRevisionHash, String>>,
     /// Per tree root: its exclusions, and each node's fork.
@@ -61,6 +78,8 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             reader,
             id,
             held,
+            parents: Parents::Read,
+            rehomed: BTreeMap::new(),
             verdicts: RefCell::new(BTreeMap::new()),
             signers: RefCell::new(BTreeMap::new()),
             exclusions: RefCell::new(BTreeMap::new()),
@@ -68,6 +87,51 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             depth: Cell::new(0),
             refusals: Cell::new(0),
         }
+    }
+
+    /// A fold that judges each state on its own lineage only.
+    pub(super) fn intrinsic(
+        reader: &'r ProjectReader<'a, 't>,
+        id: EntityId,
+        held: &'r HeldRevisions,
+    ) -> Self {
+        Self {
+            parents: Parents::Skip,
+            ..Self::new(reader, id, held)
+        }
+    }
+
+    /// A fold whose signed states already carry their verdicts and signers
+    /// (a component's decision, or one world of it); envelopes are judged
+    /// from them.
+    pub(super) fn seeded(
+        reader: &'r ProjectReader<'a, 't>,
+        id: EntityId,
+        held: &'r HeldRevisions,
+        verdicts: BTreeMap<ProjectRevisionHash, ProjectVerdict>,
+        signers: BTreeMap<ProjectRevisionHash, String>,
+        rehomed: BTreeMap<ProjectRevisionHash, Vec<ProjectRevisionHash>>,
+    ) -> Self {
+        Self {
+            parents: Parents::Skip,
+            rehomed,
+            verdicts: RefCell::new(verdicts),
+            signers: RefCell::new(signers),
+            ..Self::new(reader, id, held)
+        }
+    }
+
+    /// The verdicts and signers judged so far.
+    pub(super) fn judged(
+        &self,
+    ) -> (
+        BTreeMap<ProjectRevisionHash, ProjectVerdict>,
+        BTreeMap<ProjectRevisionHash, String>,
+    ) {
+        (
+            self.verdicts.borrow().clone(),
+            self.signers.borrow().clone(),
+        )
     }
 
     pub(super) fn row(&self, hash: &ProjectRevisionHash) -> Option<&'r ProjectRevision> {
@@ -88,6 +152,8 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
 
     /// Whether `hash` is valid on its own lineage at this snapshot.
     pub(super) fn verdict(&self, hash: ProjectRevisionHash) -> Result<ProjectVerdict> {
+        #[cfg(test)]
+        FOLD_VISITS.with(|count| count.set(count.get() + 1));
         if let Some(known) = self.verdicts.borrow().get(&hash) {
             return Ok(*known);
         }
@@ -190,7 +256,10 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             anchor: anchor.map(Box::new),
             version: proof.version,
         };
-        let holder = match self.reader.verify(self.id, authority, &write_proof)? {
+        let holder = match self
+            .reader
+            .verify_revision(self.id, hash, authority, &write_proof)?
+        {
             Ok(holder) => holder,
             Err(verdict) => return Ok(verdict),
         };
@@ -226,23 +295,23 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
                 }
             }
         };
-        if verdict != ProjectVerdict::Visible || host {
+        if verdict != ProjectVerdict::Visible || self.parents == Parents::Skip {
             return Ok(verdict);
         }
-        // A non-host revision never sees more than any parent project does.
-        for parent in &authority.parents {
-            match self.parent_effective(parent)? {
-                Ok(effective) if !authority_fits(authority, &effective) => {
-                    return Ok(ProjectVerdict::Quarantined(reason::EXCEEDS_PARENT));
-                }
-                Ok(_) => {}
+        for (parent, spawned_under) in read_parents(authority, parent.is_none(), host)? {
+            let effective = match parent_view(self.reader, parent)? {
+                Ok(effective) => effective,
                 Err(verdict) => return Ok(verdict),
+            };
+            if let Some(why) = refusal(&effective, authority, &holder.actor, spawned_under, host) {
+                return Ok(ProjectVerdict::Quarantined(why));
             }
         }
         Ok(ProjectVerdict::Visible)
     }
 
-    /// A spawn keeps main's rule against the parent project's effective leader.
+    /// A spawn's own part of main's rule: an attenuated slip whose audience
+    /// holds the parent. Its parent's leader is the parent's to judge.
     fn birth(
         &self,
         authority: &ProjectAuthority,
@@ -258,27 +327,13 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         };
         let parent_id = EntityId::from_hex(parent)
             .map_err(|_| RecordError::InvalidProjectBody("invalid parent id"))?;
-        Ok(match self.parent_effective(parent)? {
-            Err(verdict) => verdict,
-            Ok(effective)
-                if effective.leader == holder.actor
-                    && holder.attenuated
-                    && holder.audience.contains(&ScopeId(parent_id)) =>
-            {
+        Ok(
+            if holder.attenuated && holder.audience.contains(&ScopeId(parent_id)) {
                 ProjectVerdict::Visible
-            }
-            Ok(_) => ProjectVerdict::Quarantined(reason::SPAWN),
-        })
-    }
-
-    /// A parent project's effective view, or the verdict its absence gives.
-    fn parent_effective(
-        &self,
-        parent: &str,
-    ) -> Result<std::result::Result<ProjectEffective, ProjectVerdict>> {
-        let parent = EntityId::from_hex(parent)
-            .map_err(|_| RecordError::InvalidProjectBody("invalid parent id"))?;
-        parent_view(self.reader, parent)
+            } else {
+                ProjectVerdict::Quarantined(reason::SPAWN)
+            },
+        )
     }
 
     fn resolution(
@@ -425,7 +480,8 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         node: ProjectRevisionHash,
     ) -> Result<BTreeSet<ProjectRevisionHash>> {
         let mut valid = BTreeSet::new();
-        for child in self.held.children_of(&node) {
+        let rehomed = self.rehomed.get(&node).into_iter().flatten();
+        for child in self.held.children_of(&node).chain(rehomed) {
             if self.verdict(*child)? == ProjectVerdict::Visible {
                 valid.insert(*child);
             }
@@ -546,6 +602,46 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
 
     pub(super) fn authority_of(&self, hash: &ProjectRevisionHash) -> Option<&'r ProjectAuthority> {
         self.row(hash).and_then(ProjectRevision::authority)
+    }
+}
+
+/// The parent projects a signed state's admission reads, each with whether
+/// it is the one a birth was spawned under: none for an owner state but a
+/// birth's first; every parent otherwise.
+pub(super) fn read_parents(
+    authority: &ProjectAuthority,
+    birth: bool,
+    host: bool,
+) -> Result<Vec<(EntityId, bool)>> {
+    let mut read = Vec::new();
+    for (index, parent) in authority.parents.iter().enumerate() {
+        let spawned_under = birth && index == 0;
+        if host && !spawned_under {
+            continue;
+        }
+        let parent = EntityId::from_hex(parent)
+            .map_err(|_| RecordError::InvalidProjectBody("invalid parent id"))?;
+        read.push((parent, spawned_under));
+    }
+    Ok(read)
+}
+
+/// Why one parent's view refuses a state `signer` signed: a birth's parent
+/// must be led by its spawner, and a non-host state never sees more than
+/// any parent project does.
+pub(super) fn refusal(
+    view: &ProjectEffective,
+    authority: &ProjectAuthority,
+    signer: &str,
+    spawned_under: bool,
+    host: bool,
+) -> Option<&'static str> {
+    if spawned_under && view.leader != signer {
+        Some(reason::SPAWN)
+    } else if !host && !authority_fits(authority, view) {
+        Some(reason::EXCEEDS_PARENT)
+    } else {
+        None
     }
 }
 

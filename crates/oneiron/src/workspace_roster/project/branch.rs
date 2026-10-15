@@ -7,7 +7,8 @@
 //! or removes takes no authority from what it signed in a sibling branch,
 //! a resolution included, unless that act itself takes none. Every step is
 //! a function of the held set: no arrival order, no arbitrary winner.
-use super::fold::{ProjectEffective, ProjectRank, rank_at};
+use super::fold::{ProjectEffective, ProjectRank, rank_at, reason};
+use super::read::ProjectVerdict;
 use super::revision::{ProjectRevision, ProjectRevisionHash};
 use super::validity::{FoldCx, Settlement};
 use super::*;
@@ -41,6 +42,9 @@ pub(super) struct Fork {
     pub(super) view: Option<ProjectEffective>,
     /// Every node the view relies on, with the settlements on its way.
     pub(super) nodes: BTreeSet<ProjectRevisionHash>,
+    /// Why the frontier serves no authority: a child that fell only for its
+    /// parent's bounds, which no valid branch outranks, at or below the node.
+    pub(super) blocked: Option<&'static str>,
 }
 
 /// What takes no authority in the tree below one root.
@@ -54,6 +58,8 @@ pub(super) struct Exclusion {
     /// Every node the labelling relies on: each act that deposes anyone,
     /// and each valid resolution in the tree.
     pub(super) relied: BTreeSet<ProjectRevisionHash>,
+    /// The acts never excluded that depose each principal.
+    pub(super) deposers: BTreeMap<String, Vec<ProjectRevisionHash>>,
 }
 
 /// One valid signed revision below a root. Acts are kept in preorder, so
@@ -130,6 +136,7 @@ impl FoldCx<'_, '_, '_> {
             nodes: BTreeSet::from([node]),
             valid,
             settlement,
+            blocked: None,
         };
         // A settlement that excluded a valid child shapes the frontier,
         // whatever follows it.
@@ -152,7 +159,43 @@ impl FoldCx<'_, '_, '_> {
                 .max(branch.rank);
             branches.insert(*child, (rank, branch));
         }
-        let Some(top) = branches.values().filter_map(|(rank, _)| *rank).max() else {
+        // A child that falls only for its parent's bounds hands no authority
+        // back to this node or to a sibling it does not lose to (Engine
+        // ruling on #1434): a parent's narrowing never widens the child. A
+        // child whose signer an act never excluded deposes off its line
+        // takes nothing, as a valid act of that signer would not.
+        let mut fallen: Option<(Option<ProjectRank>, &'static str)> = None;
+        for child in self.held.children_of(&node) {
+            if fork.settlement.superseded.contains(child) {
+                continue;
+            }
+            let (
+                ProjectVerdict::Quarantined(why @ (reason::EXCEEDS_PARENT | reason::PARENT_HIDDEN)),
+                Some(signer),
+            ) = (self.verdict(*child)?, self.signer(child))
+            else {
+                continue;
+            };
+            if (exclusion.deposers.get(&signer).into_iter().flatten())
+                .any(|deposer| !self.on_line(root, node, *deposer))
+            {
+                continue;
+            }
+            let rank = rank_at(authority, &signer);
+            if fallen.is_none_or(|(highest, _)| rank > highest) {
+                fallen = Some((rank, why));
+            }
+        }
+        let top = branches.values().filter_map(|(rank, _)| *rank).max();
+        if let Some((rank, why)) = fallen
+            && top.is_none_or(|top| rank >= Some(top))
+        {
+            fork.rank = rank.max(top);
+            fork.view = None;
+            fork.blocked = Some(why);
+            return Ok(fork);
+        }
+        let Some(top) = top else {
             return Ok(fork);
         };
         let at_top: Vec<ProjectRevisionHash> = branches
@@ -164,6 +207,7 @@ impl FoldCx<'_, '_, '_> {
         if let [winner] = at_top[..] {
             let (_, branch) = &branches[&winner];
             fork.view = branch.view.clone();
+            fork.blocked = branch.blocked;
             fork.nodes.extend(branch.nodes.iter().copied());
             fork.step = Step::Advance {
                 winner,
@@ -175,7 +219,11 @@ impl FoldCx<'_, '_, '_> {
                 if let (Some(view), Some(frontier)) = (&mut fork.view, &branch.view) {
                     view.meet_view(frontier);
                 }
+                fork.blocked = fork.blocked.or(branch.blocked);
                 fork.nodes.extend(branch.nodes.iter().copied());
+            }
+            if fork.blocked.is_some() {
+                fork.view = None;
             }
             fork.step = Step::Tie {
                 rank: top,
@@ -183,6 +231,26 @@ impl FoldCx<'_, '_, '_> {
             };
         }
         Ok(fork)
+    }
+
+    /// Whether `hash` lies on the line from `root` down to `node`.
+    fn on_line(
+        &self,
+        root: ProjectRevisionHash,
+        node: ProjectRevisionHash,
+        hash: ProjectRevisionHash,
+    ) -> bool {
+        let mut at = Some(node);
+        while let Some(here) = at {
+            if here == hash {
+                return true;
+            }
+            if here == root {
+                return false;
+            }
+            at = self.held.get(&here).and_then(|row| row.revision.parent());
+        }
+        false
     }
 
     /// One pass over the tree below `root`: the well-founded labelling of
@@ -239,6 +307,15 @@ impl FoldCx<'_, '_, '_> {
             }
         }
         let (out, over) = well_founded(&acts, &resolvers);
+        let mut deposers: BTreeMap<String, Vec<ProjectRevisionHash>> = BTreeMap::new();
+        for (act, _) in acts.iter().zip(&over).filter(|(_, over)| !**over) {
+            for principal in &act.deposes {
+                deposers
+                    .entry(principal.clone())
+                    .or_default()
+                    .push(act.hash);
+            }
+        }
         Ok(Exclusion {
             excluded: (acts.iter().zip(&out))
                 .filter(|(_, out)| **out)
@@ -249,6 +326,7 @@ impl FoldCx<'_, '_, '_> {
                 .map(|(_, resolver)| (resolver.node, resolver.settlement))
                 .collect(),
             relied,
+            deposers,
         })
     }
 

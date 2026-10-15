@@ -500,6 +500,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "OWNER_POLICY_WORLD_PRIVACY_RECEIPT",
         "PORTS_WITHDRAWN",
         "PROJECT_DEPTH_LOCAL_BIRTH",
+        "PROJECT_CYCLE_QUESTION",
         "PROJECT_FRONTIER",
         "PROJECT_FROZEN_APPLIED",
         "PROJECT_FROZEN_WAIT_PROJECT",

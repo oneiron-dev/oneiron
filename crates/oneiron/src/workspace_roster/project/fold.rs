@@ -11,7 +11,7 @@ use super::history_policy::{
 };
 use super::read::{ProjectReader, ProjectVerdict};
 use super::revision::{ProjectRevision, ProjectRevisionHash, RevisionOrigin, anchor_of};
-use super::validity::{FoldCx, parent_view};
+use super::validity::{FoldCx, Parents, parent_view};
 use super::*;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -53,6 +53,7 @@ pub(super) mod reason {
     pub(crate) const STALE_RECORD: &str =
         "project history over budget and its frozen frontier no longer verifies";
     pub(crate) const UNRESOLVED: &str = "project authority unresolved";
+    pub(crate) const CYCLE_BOUND: &str = "project parent cycle past its world bound";
 
     const ALL: &[&str] = &[
         NOT_HELD,
@@ -87,6 +88,7 @@ pub(super) mod reason {
         NO_RECORD,
         STALE_RECORD,
         UNRESOLVED,
+        CYCLE_BOUND,
     ];
 
     /// The static text of a persisted reason; a reason this build does not
@@ -299,6 +301,12 @@ pub enum ProjectDisposition {
     ConflictingSeals {
         seals: BTreeSet<ProjectRevisionHash>,
     },
+    /// A parent cycle leaves revisions undefined (`joint.rs`): the deepest
+    /// state every candidate passes serves, with the meet of the candidates.
+    ParentCycle {
+        anchor: ProjectRevisionHash,
+        undefined: BTreeSet<ProjectRevisionHash>,
+    },
     /// Past the budget: the persisted frozen frontier and the state it froze in.
     OverBudget {
         state: ProjectHistoryOverBudget,
@@ -331,7 +339,7 @@ impl ProjectDisposition {
             _ => ProjectVerdict::Quarantined(reason::UNRESOLVED),
         }
     }
-    fn of_verdict(verdict: ProjectVerdict) -> Self {
+    pub(super) fn of_verdict(verdict: ProjectVerdict) -> Self {
         match verdict {
             ProjectVerdict::Pending(reason) => Self::pending(reason),
             ProjectVerdict::Quarantined(reason) => Self::unauthorized(reason),
@@ -384,6 +392,11 @@ pub(crate) fn fold_project(cx: &FoldCx<'_, '_, '_>, stored: &ProjectRecord) -> R
             return Ok(fold);
         }
     };
+    if let Some(why) = walk.served.blocked {
+        fold.frontier.disposition = ProjectDisposition::unauthorized(why);
+        finish(cx, &mut fold, Some(&walk))?;
+        return Ok(fold);
+    }
     let witness_head = *walk.path.last().unwrap_or(&walk.root);
     let disposition = match &walk.end {
         None => ProjectDisposition::Settled,
@@ -423,7 +436,12 @@ pub(crate) fn fold_project(cx: &FoldCx<'_, '_, '_>, stored: &ProjectRecord) -> R
         head: witness_head,
         anchor,
     });
-    match (parent_bounds(reader, id, &effective)?, witness) {
+    // A component judges its members' parents together (`joint.rs`).
+    let bounds = match cx.parents {
+        Parents::Read => parent_bounds(reader, id, &effective)?,
+        Parents::Skip => Ok(()),
+    };
+    match (bounds, witness) {
         (Ok(()), Some(witness)) => {
             fold.frontier.disposition = disposition;
             fold.frontier.witness = Some(witness);
@@ -619,8 +637,16 @@ fn no_root(id: EntityId, why: &'static str) -> ProjectFrontier {
 /// Main's stored-row verdict, translated: Visible serves the row as main
 /// reads it; Pending and Quarantined serve no authority.
 fn unsigned(cx: &FoldCx<'_, '_, '_>, stored: &ProjectRecord) -> Result<ProjectFrontier> {
-    let id = cx.id;
-    Ok(match cx.reader.judge_stored(id, stored)? {
+    unsigned_frontier(cx.id, stored, cx.reader.judge_stored(cx.id, stored)?)
+}
+
+/// The frontier an unsigned stored row serves under `verdict`.
+pub(super) fn unsigned_frontier(
+    id: EntityId,
+    stored: &ProjectRecord,
+    verdict: ProjectVerdict,
+) -> Result<ProjectFrontier> {
+    Ok(match verdict {
         ProjectVerdict::Visible => {
             let authority = stored.authority();
             let head = revision::revisions_of(id, &stored.anchor())?

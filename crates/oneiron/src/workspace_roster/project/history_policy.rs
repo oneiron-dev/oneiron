@@ -15,19 +15,41 @@ use super::*;
 use crate::consent::AuthenticatedOwner;
 
 pub const DEFAULT_PROJECT_HISTORY_MAX_REVISIONS: u64 = 10_000;
+/// How many worlds one member of a parent cycle may have (`joint.rs`).
+pub const DEFAULT_PROJECT_CYCLE_WORLDS_MAX: u64 = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectHistoryPolicy {
     pub max_revisions: u64,
+    /// Past this many distinct views of one cycle member (or this many per
+    /// undecided revision of assignments), the cycle serves no authority
+    /// until the owner seals.
+    #[serde(default = "default_cycle_worlds_max")]
+    pub cycle_worlds_max: u64,
+}
+
+fn default_cycle_worlds_max() -> u64 {
+    DEFAULT_PROJECT_CYCLE_WORLDS_MAX
 }
 
 impl Default for ProjectHistoryPolicy {
     fn default() -> Self {
         Self {
             max_revisions: DEFAULT_PROJECT_HISTORY_MAX_REVISIONS,
+            cycle_worlds_max: DEFAULT_PROJECT_CYCLE_WORLDS_MAX,
         }
     }
+}
+
+/// The owner's question about a parent cycle past its world bound (OF-520):
+/// node-local, raised by the batch-end refresh and cleared when the cycle
+/// serves again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectCycleQuestion {
+    /// The cycle's projects, in id order; the first keys the row.
+    pub members: Vec<EntityId>,
+    pub raised_at: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,6 +153,10 @@ pub(super) const PROJECT_FROZEN_WAIT_PROJECT: SideTable<
     (),
     Raw,
 > = SideTable::new(&side_table::PROJECT_FROZEN_WAIT_PROJECT);
+/// LOCAL: one open OF-520 question per parent cycle past its bound, by its
+/// first member.
+pub(super) const PROJECT_CYCLE_QUESTION: SideTable<EntityId, ProjectCycleQuestion, Named> =
+    SideTable::new(&side_table::PROJECT_CYCLE_QUESTION);
 /// The vault's history policy, set only through the owner door.
 const PROJECT_HISTORY_POLICY: SideTable<(), ProjectHistoryPolicy, Named> =
     SideTable::new(&side_table::PROJECT_HISTORY_POLICY);
@@ -147,11 +173,14 @@ pub(super) fn policy_in(
 /// The frontier of a project past its budget: the persisted record when every
 /// node it relies on still verifies exactly as the fold verifies it, and no
 /// authority otherwise. Nothing ever folds "the first N".
+/// `parents`: whether the saved view is also checked under its parents
+/// here (a component checks it with its other members' views instead).
 pub(super) fn frozen_frontier(
     reader: &ProjectReader<'_, '_>,
     cx: &FoldCx<'_, '_, '_>,
     held: u64,
     max_revisions: u64,
+    parents: bool,
 ) -> Result<ProjectFrontier> {
     let id = cx.id;
     let state = |frozen_head, narrowed| ProjectHistoryOverBudget {
@@ -180,7 +209,7 @@ pub(super) fn frozen_frontier(
         }
         verified = cx.verdict(*hash)? == ProjectVerdict::Visible;
     }
-    if let (true, Some(effective)) = (verified, &record.effective) {
+    if let (true, true, Some(effective)) = (verified, parents, &record.effective) {
         verified = parent_bounds(reader, id, effective)?.is_ok();
     }
     Ok(if verified {
@@ -210,6 +239,16 @@ pub(super) fn frozen_frontier(
 }
 
 impl Vault {
+    /// The open questions about parent cycles past their world bound.
+    pub fn project_cycle_questions(&self) -> Result<Vec<ProjectCycleQuestion>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(PROJECT_CYCLE_QUESTION
+            .scan_from(&self.store, &txn, &[])?
+            .into_iter()
+            .map(|(_, question)| question)
+            .collect())
+    }
+
     pub fn project_history_policy(&self) -> Result<ProjectHistoryPolicy> {
         let txn = self.store.env.read_txn()?;
         policy_in(&self.store, &txn)
@@ -222,9 +261,9 @@ impl Vault {
         owner: &AuthenticatedOwner,
         policy: ProjectHistoryPolicy,
     ) -> Result<()> {
-        if policy.max_revisions == 0 {
+        if policy.max_revisions == 0 || policy.cycle_worlds_max == 0 {
             return Err(Error::InvalidConfig(
-                "project history budget must admit at least one revision".into(),
+                "project history budgets must admit at least one revision and one world".into(),
             ));
         }
         self.with_write_txn(|txn| {

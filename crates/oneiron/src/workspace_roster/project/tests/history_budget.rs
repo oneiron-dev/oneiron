@@ -115,7 +115,10 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
         replay_project(&vault, q.id, &c2, 4)?;
         vault.set_project_history_policy(
             &owner(&vault)?,
-            ProjectHistoryPolicy { max_revisions: 3 },
+            ProjectHistoryPolicy {
+                max_revisions: 3,
+                ..Default::default()
+            },
         )?;
         assert!(matches!(
             vault.project_frontier(q.id)?.map(|f| f.disposition),
@@ -409,6 +412,7 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
         &owner(&g)?,
         ProjectHistoryPolicy {
             max_revisions: 1_000,
+            ..Default::default()
         },
     )?;
     assert_eq!(over(&g, id)?, None);
@@ -430,7 +434,13 @@ fn a_frozen_removal_waits_on_the_parent_project_its_ancestor_failed() -> Result<
     let (q, r) = (EntityId::now(), EntityId::now());
     let q_birth = spawn_signed(&vault, root_id, q, holder, holder, root.slice.clone(), 3)?;
     spawn_signed(&vault, root_id, r, holder, holder, root.slice, 4)?;
-    vault.set_project_history_policy(&owner(&vault)?, ProjectHistoryPolicy { max_revisions: 2 })?;
+    vault.set_project_history_policy(
+        &owner(&vault)?,
+        ProjectHistoryPolicy {
+            max_revisions: 2,
+            ..Default::default()
+        },
+    )?;
     let moved = signed_over(&vault, id, &project.s0, project.board, |row| {
         row.parents = vec![q.to_hex()];
         row.depth_remaining -= 1;
@@ -499,7 +509,13 @@ fn revoking_a_settlement_a_frozen_view_rested_on_serves_no_authority() -> Result
         .slip_id;
     put_companion(&vault, &envelope(id, settle), 10)?;
     assert!(seats_of(&vault, id).contains(&x));
-    vault.set_project_history_policy(&owner(&vault)?, ProjectHistoryPolicy { max_revisions: 1 })?;
+    vault.set_project_history_policy(
+        &owner(&vault)?,
+        ProjectHistoryPolicy {
+            max_revisions: 1,
+            ..Default::default()
+        },
+    )?;
     assert!(over(&vault, id)?.is_some());
     assert!(seats_of(&vault, id).contains(&x));
     let issuer = HostSlipIssuer::from_secret(FIXTURE_HOST)?;
@@ -551,7 +567,10 @@ fn revoking_a_conflicting_resolution_a_frozen_view_rested_on_serves_no_authority
         assert!(!seats_of(&vault, id).contains(&x));
         vault.set_project_history_policy(
             &owner(&vault)?,
-            ProjectHistoryPolicy { max_revisions: 1 },
+            ProjectHistoryPolicy {
+                max_revisions: 1,
+                ..Default::default()
+            },
         )?;
         assert!(over(&vault, id)?.is_some());
         assert!(vault.project(id)?.is_some());
@@ -588,7 +607,13 @@ fn a_frozen_re_check_verifies_only_the_envelopes_its_view_rests_on() -> Result<(
     );
     put_companion(&vault, &link, 10)?;
     assert!(!seats_of(&vault, id).contains(&x));
-    vault.set_project_history_policy(&owner(&vault)?, ProjectHistoryPolicy { max_revisions: 1 })?;
+    vault.set_project_history_policy(
+        &owner(&vault)?,
+        ProjectHistoryPolicy {
+            max_revisions: 1,
+            ..Default::default()
+        },
+    )?;
     for at in 11..15 {
         let prior = vec![link.hash()?];
         link = envelope(

@@ -1096,7 +1096,7 @@ fn every_project_read_path_goes_through_the_read_fold() {
     let tree = SourceTree::read(&src);
     // Write doors judge a body before it lands; they read the stored row.
     let write_doors = [
-        "workspace_roster/project/read.rs",
+        "workspace_roster/project/read/mod.rs",
         "workspace_roster/project/proof.rs",
         "workspace_roster/project/projection.rs",
         "workspace_roster/project/deletion.rs",

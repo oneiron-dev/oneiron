@@ -4,10 +4,10 @@
 //! budget at its last verified frontier, and, while frozen, applies every
 //! valid descendant of the frozen head as a narrowing meet (ruling F2
 //! condition 1), so no flood can freeze a replica ahead of a removal.
-use super::fold::{ProjectEffective, fold_project, reason};
+use super::fold::{ProjectDisposition, ProjectEffective, reason};
 use super::history_policy::{
-    PROJECT_FRONTIER, PROJECT_FROZEN_APPLIED, PROJECT_FROZEN_WAIT_PROJECT, ProjectFreeze,
-    ProjectFrontierRecord, budget_count, policy_in,
+    PROJECT_CYCLE_QUESTION, PROJECT_FRONTIER, PROJECT_FROZEN_APPLIED, PROJECT_FROZEN_WAIT_PROJECT,
+    ProjectCycleQuestion, ProjectFreeze, ProjectFrontierRecord, budget_count,
 };
 use super::read::{ProjectReader, ProjectVerdict};
 use super::revision::{
@@ -42,7 +42,16 @@ pub(crate) fn refresh_project_frontiers(
     while let Some(project) = queue.pop_first() {
         let round = rounds.entry(project).or_default();
         *round += 1;
-        if *round > MAX_REFRESH_ROUNDS || !refresh_one(store, txn, posture, kind, project)? {
+        if *round > MAX_REFRESH_ROUNDS {
+            continue;
+        }
+        let mut component = Vec::new();
+        let changed = refresh_one(store, txn, posture, kind, project, &mut component)?;
+        // A component is decided as one, so every member's record follows a
+        // change to any member (Astra #1434b).
+        component.retain(|member| !rounds.contains_key(member));
+        queue.extend(component);
+        if !changed {
             continue;
         }
         for key in PROJECT_FROZEN_WAIT_PROJECT.scan_keys(store, txn, project.as_bytes())? {
@@ -111,37 +120,43 @@ struct Drained {
     waits: Vec<(EntityId, ProjectRevisionHash)>,
 }
 
-/// Returns whether the project's served view changed.
+/// Returns whether the project's served view changed, and fills
+/// `component` with the members decided with it.
 fn refresh_one(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     posture: crate::HostingPrivacyPosture,
     kind: u8,
     project: EntityId,
+    component: &mut Vec<EntityId>,
 ) -> Result<bool> {
     authenticate_pending(store, txn, posture, project, kind)?;
     let now = crate::ports::recorded_at_in_txn(store, txn)?;
     let old = PROJECT_FRONTIER.get(store, txn, &project)?;
-    let refresh = {
-        let Some(stored) = read::stored(store, txn, project, kind)? else {
+    let (refresh, question) = {
+        let reader = ProjectReader::new(store, txn, posture)?.ok_or_else(invalid)?;
+        let Some(decided) = reader.decide(project)? else {
             return Ok(false);
         };
-        let reader = ProjectReader::new(store, txn, posture)?.ok_or_else(invalid)?;
         let held = held_in_txn(store, txn, project, kind)?;
-        let cx = FoldCx::new(&reader, project, &held);
-        let count = budget_count(&cx)?;
-        if count <= policy_in(store, txn)?.max_revisions {
-            let fold = fold_project(&cx, &stored)?;
+        let cx = reader.door_cx(project, &held)?;
+        let members = reader.component(project)?;
+        component.extend(members.iter().copied());
+        let dark = matches!(&decided.frontier.disposition,
+            ProjectDisposition::Unauthorized { reason } if reason.as_str() == super::fold::reason::CYCLE_BOUND);
+        let question = (members.len() > 1).then(|| (members.to_vec(), dark));
+        let refresh = if let Some(fold) = &decided.fold {
             Refresh::Within(Box::new(ProjectFrontierRecord {
-                witness: fold.frontier.witness,
-                disposition: fold.frontier.disposition,
-                effective: fold.frontier.effective,
-                dependencies: fold.dependencies,
-                evidence: fold.evidence,
+                witness: fold.frontier.witness.clone(),
+                disposition: fold.frontier.disposition.clone(),
+                effective: fold.frontier.effective.clone(),
+                dependencies: fold.dependencies.clone(),
+                evidence: fold.evidence.clone(),
                 verified_at: now,
                 frozen: None,
             }))
         } else if let Some(mut record) = old.clone() {
+            let count = budget_count(&cx)?;
             record.frozen.get_or_insert(ProjectFreeze {
                 at_counted: count,
                 narrowed: false,
@@ -160,8 +175,27 @@ fn refresh_one(
             Refresh::Frozen(Box::new(record), drained)
         } else {
             Refresh::Nothing
-        }
+        };
+        (refresh, question)
     };
+    // The owner's question about a cycle past its world bound (OF-520).
+    if let Some((members, dark)) = question
+        && let Some(first) = members.first().copied()
+    {
+        match (dark, PROJECT_CYCLE_QUESTION.get(store, txn, &first)?) {
+            (true, None) => {
+                let question = ProjectCycleQuestion {
+                    members,
+                    raised_at: now,
+                };
+                PROJECT_CYCLE_QUESTION.put(store, txn, &first, &question)?;
+            }
+            (false, Some(_)) => {
+                PROJECT_CYCLE_QUESTION.delete(store, txn, &first)?;
+            }
+            _ => {}
+        }
+    }
     let record = match refresh {
         Refresh::Nothing => return Ok(false),
         Refresh::Within(record) => {

@@ -15,6 +15,7 @@ mod doors;
 mod fold;
 mod fork_evidence;
 mod history_policy;
+mod joint;
 mod leader_chat;
 mod projection;
 mod proof;
@@ -48,7 +49,8 @@ pub(crate) use goal::{
     guard_pointer_put as guard_goal_pointer_put, precheck_goal_delete, retire_goal_for_delete,
 };
 pub use history_policy::{
-    DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, ProjectHistoryOverBudget, ProjectHistoryPolicy,
+    DEFAULT_PROJECT_CYCLE_WORLDS_MAX, DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, ProjectCycleQuestion,
+    ProjectHistoryOverBudget, ProjectHistoryPolicy,
 };
 pub(crate) use refresh::refresh_project_frontiers;
 pub use resolution::{ProjectResolution, ProjectSeal};

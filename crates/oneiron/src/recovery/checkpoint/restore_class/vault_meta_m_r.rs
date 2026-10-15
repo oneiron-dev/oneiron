@@ -97,6 +97,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::PORTS_STALE, CONTENT),
     (&t::PORTS_TOMBSTONE, CONTENT),
     (&t::PORTS_WITHDRAWN, CONTENT),
+    (&t::PROJECT_CYCLE_QUESTION, LIVE),
     (&t::PROJECT_FRONTIER, LIVE),
     (&t::PROJECT_FROZEN_APPLIED, LIVE),
     (&t::PROJECT_FROZEN_WAIT_PROJECT, LIVE),

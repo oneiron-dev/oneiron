@@ -4,8 +4,9 @@
 //! into one frontier (decision 7). The stored row supplies content; the
 //! frontier supplies authority. A project whose frontier serves no authority
 //! stays in storage, hidden from ordinary reads and listed for the owner.
-use super::fold::{ProjectEffective, ProjectFrontier, fold_project, reason};
-use super::history_policy::{budget_count, frozen_frontier, policy_in};
+use super::fold::{ProjectEffective, ProjectFold, ProjectFrontier, fold_project, reason};
+use super::history_policy::{frozen_frontier, policy_in};
+use super::revision::{HeldRevisions, ProjectRevision, ProjectRevisionHash, RevisionOrigin};
 use super::validity::FoldCx;
 use super::*;
 use crate::HostingPrivacyPosture;
@@ -14,6 +15,16 @@ use crate::federation::{ScopeAxis, ScopeId};
 use crate::store::Store;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
+
+mod component;
+
+#[cfg(test)]
+thread_local! {
+    /// How many signed revisions this thread verified: once per reader, however
+    /// many worlds fold them.
+    pub(super) static REVISIONS_VERIFIED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 
 /// How the fold judges one stored project row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,26 +65,87 @@ pub(super) fn bound_by_parents(record: &ProjectRecord) -> bool {
     })
 }
 
+/// Main's stored-row verdict on an unsigned row, before its parents are read
+/// (a component reads them for all its members at once).
+pub(super) fn stored_verdict(
+    reader: &ProjectReader<'_, '_>,
+    id: EntityId,
+    authority: &ProjectAuthority,
+) -> Result<ProjectVerdict> {
+    if authority.parents.is_empty() && Some(id) != reader.root() {
+        return Ok(ProjectVerdict::Quarantined(
+            "a parentless project is not this vault's root",
+        ));
+    }
+    reader.authorize(id, authority, None, 0)
+}
+
 /// The signer a verified proof names and the audience its slip reaches.
+#[derive(Clone)]
 pub(super) struct Holder {
     pub(super) actor: String,
     pub(super) audience: ScopeAxis<ScopeId>,
     pub(super) attenuated: bool,
 }
 
+/// One project's held history and what it says on its own, before any
+/// parent project is read.
+pub(super) struct Facts {
+    pub(super) record: ProjectRecord,
+    pub(super) held: HeldRevisions,
+    pub(super) count: u64,
+    pub(super) over_budget: bool,
+    /// Whether an authenticated signed state is held (else main's stored
+    /// row rule applies).
+    pub(super) signed: bool,
+    /// Each held state's verdict on its own lineage, and its signer: empty
+    /// past the budget, whose frozen view folds nothing.
+    pub(super) intrinsic: BTreeMap<ProjectRevisionHash, ProjectVerdict>,
+    pub(super) signers: BTreeMap<ProjectRevisionHash, String>,
+    /// Every parent project whose view can decide this one's.
+    pub(super) edges: BTreeSet<EntityId>,
+}
+
+/// What every door reads of one project, decided once per reader with every
+/// project its parents tie it to (`joint.rs`).
+pub(crate) struct Decided {
+    pub(crate) frontier: ProjectFrontier,
+    /// The within-budget fold the frontier came from; `None` past the budget.
+    pub(crate) fold: Option<ProjectFold>,
+    /// A component's verdict on each held state, which every door's fold
+    /// starts from; `None` when the project folds alone.
+    pub(super) labels: Option<BTreeMap<ProjectRevisionHash, ProjectVerdict>>,
+    /// Where each board conduit hangs once its prior has fallen.
+    pub(super) rehomed: BTreeMap<ProjectRevisionHash, Vec<ProjectRevisionHash>>,
+}
+
+/// A live write's trial: its row and chain, held beside the snapshot's.
+struct Overlay {
+    id: EntityId,
+    record: ProjectRecord,
+    chain: Vec<(ProjectRevisionHash, ProjectRevision)>,
+}
+
 /// One snapshot-bound fold over every project row. The authority fold is
-/// built once per reader, and each project's frontier is computed once.
+/// built once per reader, and each project's frontier is decided once.
 pub(crate) struct ProjectReader<'a, 't> {
     store: &'a Store,
     txn: &'a heed::RoTxn<'t>,
     posture: HostingPrivacyPosture,
     kind: u8,
     root: Option<EntityId>,
-    fold: RefCell<Option<std::rc::Rc<AuthorityFold>>>,
-    frontiers: RefCell<BTreeMap<EntityId, Option<ProjectFrontier>>>,
+    fold: RefCell<Option<Rc<AuthorityFold>>>,
+    overlay: Option<Overlay>,
+    facts: RefCell<BTreeMap<EntityId, Option<Rc<Facts>>>>,
+    components: RefCell<BTreeMap<EntityId, Rc<Vec<EntityId>>>>,
+    decided: RefCell<BTreeMap<EntityId, Option<Rc<Decided>>>>,
+    /// Each signed state's slip and signature check, by project and hash.
+    verified: RefCell<
+        BTreeMap<(EntityId, ProjectRevisionHash), std::result::Result<Holder, ProjectVerdict>>,
+    >,
     open: RefCell<BTreeSet<EntityId>>,
-    /// How often a fold met an open project (a parent cycle). A frontier whose
-    /// fold met one depends on where the read began, so it is not kept.
+    /// How often a decision met an open project. Components make this
+    /// unreachable; a decision that met one is kept from the memo.
     cycle_hits: std::cell::Cell<u64>,
     /// Whether this snapshot is committed, so its fork evidence may publish:
     /// only a door that opened a read transaction says so.
@@ -97,7 +169,11 @@ impl<'a, 't> ProjectReader<'a, 't> {
             kind,
             root: ROOT.get(store, txn, &())?,
             fold: RefCell::new(None),
-            frontiers: RefCell::new(BTreeMap::new()),
+            overlay: None,
+            facts: RefCell::new(BTreeMap::new()),
+            components: RefCell::new(BTreeMap::new()),
+            decided: RefCell::new(BTreeMap::new()),
+            verified: RefCell::new(BTreeMap::new()),
             open: RefCell::new(BTreeSet::new()),
             cycle_hits: std::cell::Cell::new(0),
             publish: false,
@@ -121,54 +197,148 @@ impl<'a, 't> ProjectReader<'a, 't> {
     pub(super) fn root(&self) -> Option<EntityId> {
         self.root
     }
-    pub(super) fn kind(&self) -> u8 {
-        self.kind
+
+    /// A reader over the same snapshot that also holds a live write's row
+    /// and chain for `id`: the trial its door folds.
+    pub(super) fn with_write(
+        &self,
+        id: EntityId,
+        record: ProjectRecord,
+        chain: Vec<(ProjectRevisionHash, ProjectRevision)>,
+    ) -> Result<Self> {
+        let mut trial = Self::new(self.store, self.txn, self.posture)?.ok_or_else(invalid)?;
+        trial.overlay = Some(Overlay { id, record, chain });
+        Ok(trial)
+    }
+
+    /// The stored row, or the trial's.
+    pub(super) fn stored_row(&self, id: EntityId) -> Result<Option<ProjectRecord>> {
+        match &self.overlay {
+            Some(overlay) if overlay.id == id => Ok(Some(overlay.record.clone())),
+            _ => stored(self.store, self.txn, id, self.kind),
+        }
+    }
+
+    /// Every held revision of `id`, with the trial's chain.
+    pub(super) fn held_of(&self, id: EntityId) -> Result<HeldRevisions> {
+        let mut held = super::revision::held_in_txn(self.store, self.txn, id, self.kind)?;
+        if let Some(overlay) = self.overlay.as_ref().filter(|overlay| overlay.id == id) {
+            for (hash, revision) in &overlay.chain {
+                held.insert(*hash, revision.clone(), RevisionOrigin::AwaitingParent);
+            }
+        }
+        Ok(held)
     }
 
     /// The folded view of one project's signed history; `None` when no
     /// PROJECT row is stored (revisions may still be held).
     pub(crate) fn frontier(&self, id: EntityId) -> Result<Option<ProjectFrontier>> {
-        if let Some(known) = self.frontiers.borrow().get(&id) {
-            return Ok(known.clone());
-        }
-        let Some(record) = stored(self.store, self.txn, id, self.kind)? else {
-            self.frontiers.borrow_mut().insert(id, None);
-            return Ok(None);
-        };
-        if !self.open.borrow_mut().insert(id) {
-            self.cycle_hits.set(self.cycle_hits.get() + 1);
-            return Ok(Some(ProjectFrontier {
-                id,
-                disposition: super::fold::ProjectDisposition::unauthorized(reason::CYCLE),
-                witness: None,
-                effective: None,
-            }));
-        }
-        let hits = self.cycle_hits.get();
-        let frontier = self.compute(id, &record);
-        self.open.borrow_mut().remove(&id);
-        let frontier = Some(frontier?);
-        if self.cycle_hits.get() == hits {
-            self.frontiers.borrow_mut().insert(id, frontier.clone());
-        }
-        Ok(frontier)
+        Ok(self.decide(id)?.map(|decided| decided.frontier.clone()))
     }
 
-    fn compute(&self, id: EntityId, record: &ProjectRecord) -> Result<ProjectFrontier> {
-        let held = super::revision::held_in_txn(self.store, self.txn, id, self.kind)?;
-        let cx = FoldCx::new(self, id, &held);
-        let count = budget_count(&cx)?;
-        let policy = policy_in(self.store, self.txn)?;
-        if count > policy.max_revisions {
-            return frozen_frontier(self, &cx, count, policy.max_revisions);
+    /// One project's decision, with every project of its component.
+    pub(crate) fn decide(&self, id: EntityId) -> Result<Option<Rc<Decided>>> {
+        if let Some(known) = self.decided.borrow().get(&id) {
+            return Ok(known.clone());
         }
-        let fold = fold_project(&cx, record)?;
-        if self.publish {
-            for fork in fold.forks {
-                self.store.project_forks.record(fork);
+        if self.facts(id)?.is_none() {
+            self.decided.borrow_mut().insert(id, None);
+            return Ok(None);
+        }
+        let members = self.component(id)?;
+        if members
+            .iter()
+            .any(|member| self.open.borrow().contains(member))
+        {
+            self.cycle_hits.set(self.cycle_hits.get() + 1);
+            return Ok(Some(Rc::new(Decided {
+                frontier: ProjectFrontier {
+                    id,
+                    disposition: super::fold::ProjectDisposition::unauthorized(reason::CYCLE),
+                    witness: None,
+                    effective: None,
+                },
+                fold: None,
+                labels: None,
+                rehomed: BTreeMap::new(),
+            })));
+        }
+        self.open.borrow_mut().extend(members.iter().copied());
+        let hits = self.cycle_hits.get();
+        let decided = match members[..] {
+            [only] => self
+                .decide_alone(only)
+                .map(|decided| BTreeMap::from([(only, decided)])),
+            _ => super::joint::solve(self, &members),
+        };
+        for member in members.iter() {
+            self.open.borrow_mut().remove(member);
+        }
+        let mut decided = decided?;
+        let own = decided.get(&id).cloned();
+        if self.cycle_hits.get() == hits {
+            for (member, decision) in std::mem::take(&mut decided) {
+                self.decided.borrow_mut().insert(member, Some(decision));
             }
         }
-        Ok(fold.frontier)
+        Ok(own)
+    }
+
+    fn decide_alone(&self, id: EntityId) -> Result<Rc<Decided>> {
+        let facts = self.facts(id)?.ok_or_else(invalid)?;
+        let cx = FoldCx::new(self, id, &facts.held);
+        if facts.over_budget {
+            let policy = policy_in(self.store, self.txn)?;
+            let frontier = frozen_frontier(self, &cx, facts.count, policy.max_revisions, true)?;
+            return Ok(Rc::new(Decided {
+                frontier,
+                fold: None,
+                labels: None,
+                rehomed: BTreeMap::new(),
+            }));
+        }
+        let fold = fold_project(&cx, &facts.record)?;
+        self.publish_forks(&fold.forks);
+        Ok(Rc::new(Decided {
+            frontier: fold.frontier.clone(),
+            fold: Some(fold),
+            labels: None,
+            rehomed: BTreeMap::new(),
+        }))
+    }
+
+    /// A fold of `id` for a door: it starts from the component's verdicts,
+    /// so a door never decides a parent admission on its own.
+    pub(super) fn door_cx<'r>(
+        &'r self,
+        id: EntityId,
+        held: &'r HeldRevisions,
+    ) -> Result<FoldCx<'r, 'a, 't>> {
+        let decided = self.decide(id)?;
+        let seed = decided.and_then(|decided| {
+            (decided.labels.clone()).map(|labels| (labels, decided.rehomed.clone()))
+        });
+        Ok(match (seed, self.facts(id)?) {
+            (Some((labels, rehomed)), Some(facts)) => {
+                FoldCx::seeded(self, id, held, labels, facts.signers.clone(), rehomed)
+            }
+            _ => FoldCx::new(self, id, held),
+        })
+    }
+
+    /// Records fork evidence when this snapshot is committed.
+    pub(super) fn publish_forks(&self, forks: &[super::fork_evidence::ProjectForkEvidence]) {
+        if self.publish {
+            for fork in forks {
+                self.store.project_forks.record(fork.clone());
+            }
+        }
+    }
+
+    /// How often a decision met an open project.
+    #[cfg(all(test, feature = "sync"))]
+    pub(super) fn cycle_hits(&self) -> u64 {
+        self.cycle_hits.get()
     }
 
     /// The effective authority every permission consumer reads.
@@ -194,7 +364,7 @@ impl<'a, 't> ProjectReader<'a, 't> {
         let Some(effective) = self.effective(id)? else {
             return Ok(None);
         };
-        Ok(stored(self.store, self.txn, id, self.kind)?.map(|record| (record, effective)))
+        Ok(self.stored_row(id)?.map(|record| (record, effective)))
     }
 
     /// A body read through another view (an off-record session composes its
@@ -206,7 +376,7 @@ impl<'a, 't> ProjectReader<'a, 't> {
         body: &[u8],
     ) -> Result<Option<(ProjectRecord, ProjectEffective)>> {
         let record: ProjectRecord = decode(body)?;
-        if stored(self.store, self.txn, id, self.kind)?.is_some() {
+        if self.stored_row(id)?.is_some() {
             return Ok(self.effective(id)?.map(|effective| (record, effective)));
         }
         if self.judge_stored(id, &record)? != ProjectVerdict::Visible {
@@ -225,7 +395,9 @@ impl<'a, 't> ProjectReader<'a, 't> {
         let Some(frontier) = self.frontier(id)? else {
             return Ok(None);
         };
-        Ok(stored(self.store, self.txn, id, self.kind)?.map(|record| (record, frontier.verdict())))
+        Ok(self
+            .stored_row(id)?
+            .map(|record| (record, frontier.verdict())))
     }
 
     /// Every stored project with its verdict, in id order.
@@ -272,15 +444,15 @@ impl<'a, 't> ProjectReader<'a, 't> {
         })
     }
 
-    pub(super) fn authority(&self) -> Result<std::rc::Rc<AuthorityFold>> {
+    pub(super) fn authority(&self) -> Result<Rc<AuthorityFold>> {
         self.fold()
     }
 
-    fn fold(&self) -> Result<std::rc::Rc<AuthorityFold>> {
+    fn fold(&self) -> Result<Rc<AuthorityFold>> {
         if let Some(fold) = self.fold.borrow().as_ref() {
             return Ok(fold.clone());
         }
-        let fold = std::rc::Rc::new(crate::authority::authority_fold_readonly_for_store_in_txn(
+        let fold = Rc::new(crate::authority::authority_fold_readonly_for_store_in_txn(
             self.store,
             self.posture,
             self.txn,
@@ -387,6 +559,26 @@ impl<'a, 't> ProjectReader<'a, 't> {
         } else {
             ProjectVerdict::Visible
         })
+    }
+
+    /// [`Self::verify`] of one held signed state, once per reader.
+    pub(super) fn verify_revision(
+        &self,
+        id: EntityId,
+        hash: ProjectRevisionHash,
+        authority: &ProjectAuthority,
+        proof: &ProjectWriteProof,
+    ) -> Result<std::result::Result<Holder, ProjectVerdict>> {
+        if let Some(known) = self.verified.borrow().get(&(id, hash)) {
+            return Ok(known.clone());
+        }
+        #[cfg(test)]
+        REVISIONS_VERIFIED.with(|count| count.set(count.get() + 1));
+        let verified = self.verify(id, authority, proof)?;
+        self.verified
+            .borrow_mut()
+            .insert((id, hash), verified.clone());
+        Ok(verified)
     }
 
     /// Verifies the slip chain and holder signature as of the signed time.
