@@ -634,6 +634,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "WEAVE_DIGEST_SCHEDULE",
         "WEAVE_DIGEST_SOURCE",
         "WEAVE_WRONG_LINK_LABEL",
+        "WIRE_LIMIT_QUESTION",
     ]
     .into_iter()
     .collect();
