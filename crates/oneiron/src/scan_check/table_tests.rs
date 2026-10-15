@@ -141,7 +141,9 @@ const REMAT_MARKERS: crate::side_table::SideTable<String, (), crate::side_table:
 /// the temporal channel's two scans
 /// (`pipeline::tests::temporal::temporal_scans_read_past_their_threshold_rows_and_check_once`)
 /// and the synced edge map's walk, which runs inside a sync observer
-/// (`sync::bridge` tests).
+/// (`it_sync`'s `child_of_arbitration_walks_the_whole_map_past_its_threshold_row`)
+/// and a Dreamer selection retry (`dreamer_consolidation::tests::late_budget::
+/// manifest_retry_source_budget_truncates_and_holder_cannot_widen`).
 fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
     let src = id(0x51, 0);
     match scan {
@@ -155,7 +157,8 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         EngineScan::MachineRows
         | EngineScan::TemporalSpannerRows
         | EngineScan::OccurredRangeRows
-        | EngineScan::ChildOfMapEntries => None,
+        | EngineScan::ChildOfMapEntries
+        | EngineScan::DreamerRetryPeers => None,
         EngineScan::MentionRows => {
             let seed = id(0x60, 0);
             vault

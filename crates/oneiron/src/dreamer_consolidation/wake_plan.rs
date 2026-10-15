@@ -8,6 +8,7 @@ use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_rol
 use crate::edge::EdgeKind;
 use crate::llm::{Scope, ScopeResource};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::{EntityId, Result, Vault};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -26,6 +27,9 @@ pub struct PreparedConsolidationAttempt {
     retry_budget: crate::gate::retry_source_policy::ResolvedRetryBudget,
     /// The known entities its turns name, read at the wake's snapshot.
     neighbourhood: super::neighbourhood::Neighbourhood,
+    /// A selection retry whose source budget left admissible sources out:
+    /// it runs every original and the oldest others that fit; more exist.
+    sources_truncated: bool,
 }
 
 impl PreparedConsolidationAttempt {
@@ -55,6 +59,9 @@ impl PreparedConsolidationAttempt {
     }
     pub(crate) fn neighbourhood(&self) -> &super::neighbourhood::Neighbourhood {
         &self.neighbourhood
+    }
+    pub(crate) fn sources_truncated(&self) -> bool {
+        self.sources_truncated
     }
 }
 
@@ -225,29 +232,17 @@ impl PreparedWake {
                 source_versions: BTreeMap::new(),
                 retry_budget: budget,
                 neighbourhood: Default::default(),
+                sources_truncated: false,
             };
             preparations.insert(*attempt.id.as_bytes(), AttemptPreparation::Ready(prepared));
             if attempt.retry_of.is_some() && effective_scope.is_none() {
-                let peers = match vault.filtered_edge_peers(
+                let peers = vault.filtered_edge_peers(
                     &txn,
                     EdgeDirection::In,
                     &partition.conversation_ref,
                     EdgeKind::ChildOf,
                     Some(ENTITY_TYPE_TURN),
-                ) {
-                    Ok(peers) => peers,
-                    Err(crate::Error::IndexOverflow(_)) => {
-                        preparations.insert(
-                            *attempt.id.as_bytes(),
-                            AttemptPreparation::Refused {
-                                reason: "selection retry graph limit exceeded",
-                                scope_error: false,
-                            },
-                        );
-                        continue;
-                    }
-                    Err(error) => return Err(error),
-                };
+                )?;
                 ids.extend(peers.iter().copied());
                 retries.push((*attempt.id.as_bytes(), partition, turns, watermark, peers));
             }
@@ -319,8 +314,17 @@ impl PreparedWake {
             };
             let parent = decode_turn_body(&parent.2);
             let original: BTreeSet<_> = original.into_iter().collect();
+            // Every peer is read: past the conversation's threshold row the
+            // retry raises one check and reads on.
+            let mut scanned = ScanCount::start(
+                &vault.store,
+                &txn,
+                EngineScan::DreamerRetryPeers,
+                partition.conversation_ref.as_bytes(),
+            )?;
             let mut turns = Vec::new();
             for id in peers {
+                scanned.row();
                 let Some((kind, stored, bytes)) = sources.get(&id) else {
                     continue;
                 };
@@ -344,6 +348,7 @@ impl PreparedWake {
                     turns.push((learned_at, key, id, carrier.map(|(_, order)| order)));
                 }
             }
+            scanned.finish(vault);
             turns.sort_unstable();
             let limit = preparations
                 .get(&attempt)
@@ -352,20 +357,32 @@ impl PreparedWake {
                     _ => None,
                 })
                 .ok_or_else(|| invalid_consolidation("prepared retry budget missing"))?;
-            if turns.len() > limit
-                || !original
-                    .iter()
-                    .all(|id| turns.iter().any(|(_, _, got, _)| got == id))
+            if !original
+                .iter()
+                .all(|id| turns.iter().any(|(_, _, got, _)| got == id))
             {
                 preparations.insert(
                     attempt,
                     AttemptPreparation::Refused {
-                        reason: "selection retry source limit or membership changed",
+                        reason: "selection retry membership changed",
                         scope_error: false,
                     },
                 );
                 continue;
             }
+            // The source budget truncates, never refuses: every original runs,
+            // with the oldest other sources that fit; the newest wait for the
+            // ordinary passes, and the plan says more exist.
+            let optional = limit.saturating_sub(original.len());
+            let mut kept_optional = 0_usize;
+            let admissible = turns.len();
+            turns.retain(|(_, _, id, _)| {
+                original.contains(id) || {
+                    kept_optional += 1;
+                    kept_optional <= optional
+                }
+            });
+            let sources_truncated = turns.len() < admissible;
             let working_set: Vec<super::WorkingSetTurn> = turns
                 .into_iter()
                 .map(|(learned_at, _, turn_id, carrier)| {
@@ -383,6 +400,7 @@ impl PreparedWake {
                 })
                 .collect();
             if let Some(AttemptPreparation::Ready(plan)) = preparations.get_mut(&attempt) {
+                plan.sources_truncated = sources_truncated;
                 plan.turn_ids = working_set.iter().map(|turn| turn.turn_id).collect();
                 plan.input = super::partition::encode_partition_payload(
                     &super::ConsolidationPartitionPlan {
@@ -509,14 +527,6 @@ impl PreparedWake {
 
     pub(crate) fn preparation(&self, id: AttemptId) -> Option<&AttemptPreparation> {
         self.preparations.get(id.as_bytes())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn retry_failure(&self, id: AttemptId) -> Option<&'static str> {
-        match self.preparation(id) {
-            Some(AttemptPreparation::Refused { reason, .. }) => Some(*reason),
-            _ => None,
-        }
     }
 
     pub(super) fn source(&self, id: &EntityId) -> Option<(u8, u64, Vec<u8>)> {

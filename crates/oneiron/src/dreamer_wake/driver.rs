@@ -257,6 +257,7 @@ impl<'a> DreamerWakeDriver<'a> {
             deferred: 0,
             parked: 0,
             landed: 0,
+            sources_truncated: 0,
             stop: WakePassStop::QueueEmpty,
         };
 
@@ -496,6 +497,12 @@ impl<'a> DreamerWakeDriver<'a> {
                         _ => None,
                     },
                 };
+                if ctx
+                    .prepared_attempt
+                    .is_some_and(|plan| plan.sources_truncated())
+                {
+                    report.sources_truncated = report.sources_truncated.saturating_add(1);
+                }
                 // Panic containment at the per-attempt boundary (ONE-1683): a
                 // panicking executor unwinding past the driver would skip
                 // the park/refund bookkeeping below, leaving the attempt leased

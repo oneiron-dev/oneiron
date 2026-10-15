@@ -90,11 +90,13 @@ pub enum EngineScan {
     OccurredRangeRows,
     /// The retrieval run ledger a blend-weight tuning pass walks.
     BlendTuningRuns,
+    /// One conversation's peers a Dreamer selection retry reads.
+    DreamerRetryPeers,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -118,6 +120,7 @@ impl EngineScan {
         Self::TemporalSpannerRows,
         Self::OccurredRangeRows,
         Self::BlendTuningRuns,
+        Self::DreamerRetryPeers,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -155,6 +158,7 @@ impl EngineScan {
             Self::TemporalSpannerRows => "temporal_spanner_rows",
             Self::OccurredRangeRows => "occurred_range_rows",
             Self::BlendTuningRuns => "blend_tuning_runs",
+            Self::DreamerRetryPeers => "dreamer_retry_peers",
         }
     }
 
@@ -183,6 +187,7 @@ impl EngineScan {
             Self::TemporalSpannerRows => 55,
             Self::OccurredRangeRows => 56,
             Self::BlendTuningRuns => 57,
+            Self::DreamerRetryPeers => 58,
         }]
     }
 }
