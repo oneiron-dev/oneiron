@@ -143,6 +143,8 @@ fn attach_evidence(
     );
     let refs: std::collections::BTreeSet<_> =
         candidate.evidence_turn_refs.iter().copied().collect();
+    // Read on this thread: a grouped commit may run the closure elsewhere.
+    let auto_write_rate = crate::own_rate::auto_write_rate();
     vault.with_write_txn_grouped(|txn| {
         // Source grants are judged at this writer's own clock.
         crate::ports::recorded_at_in_txn(&vault.store, txn)?;
@@ -190,7 +192,7 @@ fn attach_evidence(
         // below and its receipt share this transaction, including live pins.
         for source_id in &refs {
             let cited = evidence.for_source(*source_id);
-            attach_ref(vault, txn, run, head, *source_id, &cited)?;
+            attach_ref(vault, txn, run, head, *source_id, &cited, auto_write_rate)?;
         }
         if vault.get_claim_in_txn(txn, &head)?.as_ref() != Some(&original) {
             return Err(Error::InvalidClaimBody(
@@ -208,6 +210,7 @@ fn attach_ref(
     head: EntityId,
     source: EntityId,
     evidence: &VerifiedEvidenceSet,
+    auto_write_rate: crate::own_rate::OwnRate,
 ) -> Result<()> {
     let evidence_meet = evidence.meet();
     let locators = evidence.verified_locators();
@@ -363,5 +366,18 @@ fn attach_ref(
             generated_evidence: Some(derived_evidence),
         },
     )?;
+    // The new evidence assertion is an Auto write by the Dreamer actor, so it
+    // counts on that actor's own-rate window, as a promoted claim does; the
+    // replay above returned before this and counts nothing.
+    crate::own_rate::count_in_txn(
+        &vault.store,
+        txn,
+        crate::own_rate::OwnRateKind::AutoWrite,
+        run.agent_actor.entity_ref(),
+        vault.store.clock.now_recorded_at(),
+        auto_write_rate,
+    )?;
+    #[cfg(test)]
+    crate::own_rate::counted_auto_write(crate::own_rate::AutoWriteDoor::Attachment);
     evidence.record_message_dependencies_in_txn(vault, txn, &id)
 }
