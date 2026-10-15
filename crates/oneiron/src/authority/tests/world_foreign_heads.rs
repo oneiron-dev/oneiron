@@ -98,7 +98,7 @@ fn forty_foreign_roots_never_crowd_a_root_door() {
 #[test]
 fn an_owner_removal_beside_a_foreign_root_folds_the_same_in_both_orders() {
     let owner_key = ed_key(150);
-    let genesis = genesis_entry(150, 0, 1);
+    let genesis = genesis_entry(150, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let (owner_root, owner_anchor, owner_published) = publish(id, &genesis);
     let machine_key = ed_key(151);
@@ -187,7 +187,7 @@ fn an_owner_removal_beside_a_foreign_root_folds_the_same_in_both_orders() {
 #[test]
 fn an_owner_revoke_beside_a_root_its_key_signed_folds_the_same_in_both_orders() {
     let owner_key = ed_key(160);
-    let genesis = genesis_entry(160, 0, 1);
+    let genesis = genesis_entry(160, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
     let id = genesis_vault_id(&genesis).unwrap();
     let (owner_root, _, owner_published) = publish(id, &genesis);
     let seed = RecoveryRootSeed::generate().unwrap();

@@ -506,7 +506,9 @@ pub(super) fn side_branch_violations(
 /// pin are left out and retire nothing, so no door here names them and a
 /// host's own roots never crowd a door's parents past the format bound
 /// (Astra S2-R2 A2-F4). Each such anchor's own heads come back beside, for
-/// the rows that anchor signs.
+/// the rows that anchor signs: only a main-log entry, which carries them, or
+/// that anchor's own row retires one, so another anchor naming them never
+/// takes an anchor's door off its own rows.
 pub(super) fn main_log_heads(
     entries: &[AuthorityLogEntry],
     valid: &BTreeSet<AuthorityEntryHash>,
@@ -517,9 +519,8 @@ pub(super) fn main_log_heads(
     BTreeMap<[u8; 32], BTreeSet<AuthorityEntryHash>>,
 ) {
     let mut main = BTreeSet::new();
-    let mut foreign: BTreeMap<[u8; 32], BTreeSet<AuthorityEntryHash>> = BTreeMap::new();
     let mut named = BTreeSet::new();
-    let mut named_by_any = BTreeSet::new();
+    let mut foreign: BTreeMap<[u8; 32], (BTreeSet<_>, BTreeSet<_>)> = BTreeMap::new();
     for entry in entries {
         let Ok(hash) = authority_entry_hash(entry) else {
             continue;
@@ -527,12 +528,13 @@ pub(super) fn main_log_heads(
         if !valid.contains(&hash) || side_world(&entry.op).is_some() {
             continue;
         }
-        named_by_any.extend(entry.parent_hashes.iter().copied());
         match &entry.signer.public_key {
             AuthorityKey::Ed25519(anchor)
                 if anchored.contains(&hash) && pinned_anchor != Some(*anchor) =>
             {
-                foreign.entry(*anchor).or_default().insert(hash);
+                let (heads, own_named) = foreign.entry(*anchor).or_default();
+                heads.insert(hash);
+                own_named.extend(entry.parent_hashes.iter().copied());
             }
             _ => {
                 main.insert(hash);
@@ -541,10 +543,13 @@ pub(super) fn main_log_heads(
         }
     }
     main.retain(|hash| !named.contains(hash));
-    for heads in foreign.values_mut() {
-        heads.retain(|hash| !named_by_any.contains(hash));
-    }
-    foreign.retain(|_, heads| !heads.is_empty());
+    let foreign = foreign
+        .into_iter()
+        .filter_map(|(anchor, (mut heads, own_named))| {
+            heads.retain(|hash| !named.contains(hash) && !own_named.contains(hash));
+            (!heads.is_empty()).then_some((anchor, heads))
+        })
+        .collect();
     (main, foreign)
 }
 
