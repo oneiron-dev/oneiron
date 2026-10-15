@@ -87,10 +87,27 @@ fn a_forged_signature_in_an_untrusted_pack_grants_the_dreamer_nothing() -> Resul
     let (_tmp, vault) = temp_vault();
     let dreamer = vault.dreamer_authority()?;
     put_policy_manifest_bytes(&vault, test_id(0xC1), &encode_policy_manifest(vec![]))?;
-    let mut granting = encode_policy_manifest(vec![
-        source_trust_entry(ClaimSource::Generated, 0),
-        signatures_entry(),
-    ]);
+    // The Dreamer's own grants, in the shape weave reach reads: an Auto
+    // ceiling and an actor-bound, receipted and warned Generated permit.
+    let generated_permit = (
+        Value::from(POLICY_SOURCE_TRUST_KEY),
+        Value::Map(vec![(
+            Value::from(ClaimSource::Generated.as_str()),
+            Value::Map(vec![
+                (
+                    Value::from("actor_ref"),
+                    Value::from(dreamer.entity_ref().to_hex()),
+                ),
+                (
+                    Value::from("max_auto_sensitivity"),
+                    Value::from(u64::from(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+                ),
+                (Value::from("receipted"), Value::Boolean(true)),
+                (Value::from("warned"), Value::Boolean(true)),
+            ]),
+        )]),
+    );
+    let mut granting = encode_policy_manifest(vec![generated_permit, signatures_entry()]);
     append_actor_ceiling(
         &mut granting,
         actor_ceiling_row_for_ref("system", &dreamer.entity_ref().to_hex(), "auto"),
