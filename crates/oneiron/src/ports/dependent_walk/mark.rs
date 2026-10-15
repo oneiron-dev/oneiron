@@ -116,7 +116,7 @@ const EARLIER_MARKS: usize = 16;
 /// The earlier marks a walk keeps beside `latest`, newest first: none that a
 /// later mark answers for, and at most [`EARLIER_MARKS`].
 pub(super) fn keep_apart(mut earlier: Vec<Mark>, latest: &Mark) -> Vec<Mark> {
-    earlier.sort_by(|a, b| b.generation.cmp(&a.generation));
+    earlier.sort_by_key(|mark| std::cmp::Reverse(mark.generation));
     let mut kept: Vec<Mark> = Vec::with_capacity(earlier.len());
     for mark in earlier {
         if !std::iter::once(latest)
