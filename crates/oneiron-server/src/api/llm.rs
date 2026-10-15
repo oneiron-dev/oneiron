@@ -153,6 +153,10 @@ fn admit(
             })
         })?;
     *request = authorized.into_request();
+    // The world a caller names does not vouch for the text it sends (Astra
+    // R4): a fallback judges the call as naming none, so the vault-wide
+    // floor holds it while any world stays on the device.
+    request.envelope.scope.world = None;
     raw.call(request, server.run_receipts())
         .ok_or_else(|| Box::new(refusal(StatusCode::BAD_REQUEST, "invalid_request")))
 }

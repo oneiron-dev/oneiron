@@ -341,10 +341,16 @@ impl OfferLadder {
     /// refused for a limit), the first offer back, when, and the wait until
     /// then, if that is within the vault's longest wait. The rate law: a
     /// cooling chain is not refused for rate; its call waits for the first
-    /// offer back.
-    fn waits_for(&self, walk: &Walk) -> Option<Back> {
+    /// offer back. Each rung is judged again first, one already sent too, so
+    /// the wait goes only to an offer the call may use now.
+    fn waits_for(&self, call: Call<'_>, walk: &mut Walk) -> Option<Back> {
         if !walk.limited() {
             return None;
+        }
+        for index in 0..self.rungs.len() {
+            if self.kept_on_device(index, call.request) {
+                self.hold(call, index, walk);
+            }
         }
         let (index, at) = walk.back()?;
         let wait = at.saturating_sub(self.rests.now()?);
@@ -423,7 +429,7 @@ impl OfferLadder {
         // it, the chain once more after one wait for its first offer back.
         for waited in [false, true] {
             if waited {
-                let Some(back) = self.waits_for(&walk).filter(|_| may_send()) else {
+                let Some(back) = self.waits_for(call, &mut walk).filter(|_| may_send()) else {
                     break;
                 };
                 self.rests.wait(back.wait, back.at).await;
@@ -511,7 +517,7 @@ impl OfferLadder {
         let (start, wait) =
             match (0..self.rungs.len()).find(|index| !self.passes_over(call, *index, &mut walk)) {
                 Some(start) => (start, None),
-                None => match self.waits_for(&walk) {
+                None => match self.waits_for(call, &mut walk) {
                     Some(back) => (back.index, Some(back)),
                     None => return Err(self.unanswered(walk)),
                 },
@@ -569,7 +575,7 @@ impl OfferLadder {
             }
             wait = None;
             if !usable {
-                let Some(back) = self.waits_for(&walk) else {
+                let Some(back) = self.waits_for(call, &mut walk) else {
                     let _ = events.send(Err(self.unanswered(walk))).await;
                     return;
                 };
@@ -586,7 +592,7 @@ impl OfferLadder {
                 .await
             {
                 Flow::Ended => return,
-                Flow::On => self.waits_for(&walk),
+                Flow::On => self.waits_for(call, &mut walk),
             },
         };
         if let Some(back) = back {

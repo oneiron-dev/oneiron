@@ -8,7 +8,8 @@ use std::sync::Mutex;
 
 use futures_util::StreamExt;
 use oneiron::llm::run_admission::{
-    MemoryReceipts, RunDenied, RunEvent, RunReceipt, RunReceiptSink,
+    BudgetLine, LeaseUnit, MemoryReceipts, RunDeclaration, RunDenied, RunEvent, RunReceipt,
+    RunReceiptSink,
 };
 use oneiron::recovery::checkpoint::RestoreReason;
 use oneiron::store::ports::ManualClock;
@@ -150,18 +151,30 @@ async fn a_call_about_a_world_this_vault_does_not_hold_stays_on_the_device() {
     assert_eq!(text_of(&answer.message), "from the cloud");
 }
 
-/// Receipts that make the next world in line private as a cloud offer is
-/// admitted: the owner's edit lands while the call waits in admission.
-struct PrivateOnAdmission {
+/// Receipts that make the next world in line private when `fires` says:
+/// as a cloud offer is admitted, the owner's edit lands while the call waits
+/// in admission; as its sent call ends, it lands while the call is out.
+struct PrivateWhen {
     vault: Arc<Vault>,
     next: Mutex<Option<EntityId>>,
+    fires: fn(&RunEvent) -> bool,
     rows: MemoryReceipts,
 }
 
-impl RunReceiptSink for PrivateOnAdmission {
+impl PrivateWhen {
+    fn new(vault: &Arc<Vault>, world: EntityId, fires: fn(&RunEvent) -> bool) -> Arc<Self> {
+        Arc::new(Self {
+            vault: Arc::clone(vault),
+            next: Mutex::new(Some(world)),
+            fires,
+            rows: MemoryReceipts::default(),
+        })
+    }
+}
+
+impl RunReceiptSink for PrivateWhen {
     fn record(&self, receipt: RunReceipt) {
-        if let RunEvent::Admitted(facts) = &receipt.event
-            && facts.locality == ModelLocality::ThirdParty
+        if (self.fires)(&receipt.event)
             && let Some(world) = self.next.lock().unwrap().take()
         {
             self.vault
@@ -170,6 +183,16 @@ impl RunReceiptSink for PrivateOnAdmission {
         }
         self.rows.record(receipt);
     }
+}
+
+/// A cloud offer admitted.
+fn cloud_admitted(event: &RunEvent) -> bool {
+    matches!(event, RunEvent::Admitted(facts) if facts.locality == ModelLocality::ThirdParty)
+}
+
+/// The `big` model's sent call ended: the cloud offer of `two_offers`.
+fn cloud_call_ended(event: &RunEvent) -> bool {
+    matches!(event, RunEvent::Dispatched { subject, .. } if subject.contains("big"))
 }
 
 /// Review repro (Astra R1 P1): a world made private while its call's cloud
@@ -184,11 +207,7 @@ async fn a_world_made_private_while_its_fallback_is_admitted_never_goes_out() {
     let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
     let (one, two) = (portable_world(&vault), portable_world(&vault));
-    let sink = Arc::new(PrivateOnAdmission {
-        vault: Arc::clone(&vault),
-        next: Mutex::new(Some(one)),
-        rows: MemoryReceipts::default(),
-    });
+    let sink = PrivateWhen::new(&vault, one, cloud_admitted);
     let run = run_into(sink.clone());
 
     let error = seat.ladder.generate(&run, about(seat, one), None).await;
@@ -250,11 +269,7 @@ rungs = [{{ model = "local:small" }}, {{ model = "cloud:big" }}, {{ model = "oth
         .await;
     assert!(error.is_err(), "every offer rests");
 
-    let sink = Arc::new(PrivateOnAdmission {
-        vault: Arc::clone(&vault),
-        next: Mutex::new(Some(world)),
-        rows: MemoryReceipts::default(),
-    });
+    let sink = PrivateWhen::new(&vault, world, cloud_admitted);
     let run = run_into(sink.clone());
     let mut events = seat
         .ladder
@@ -273,6 +288,72 @@ rungs = [{{ model = "local:small" }}, {{ model = "cloud:big" }}, {{ model = "oth
         "the world's text stayed here"
     );
     assert_eq!(holds(&sink.rows.rows()).len(), 2);
+}
+
+/// Review repro (Astra R4 P2): a cloud offer sent while its world may leave,
+/// which refuses for a limit after the world was made private, never takes
+/// the call's one wait: every rung is judged again before it, so the call
+/// waits for the offer on the device and answers from it.
+#[tokio::test]
+async fn a_wait_never_goes_to_a_cloud_offer_the_world_was_since_kept_from() {
+    let limit = |seconds: &str| {
+        refusal(
+            429,
+            &[("retry-after", seconds)],
+            json!({"error": {"message": "rate limit"}}),
+        )
+    };
+    let first = FakeLlm::start(vec![limit("3")], Some(Reply::text("from the device"))).await;
+    let second = FakeLlm::start(vec![Reply::text("from the cloud"), limit("1")], None).await;
+    let (dir, clock) = (tempfile::tempdir().unwrap(), ManualClock::new(T0));
+    let vault = clocked_vault(dir.path(), &clock);
+    let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
+    let seat = runtime.seat(ModelRole::Checker).expect("seat");
+    let (other, world) = (portable_world(&vault), portable_world(&vault));
+    // The offer on the device refuses and rests until T0 + 3.
+    let answer = seat
+        .ladder
+        .generate(&test_run(), about(seat, other), None)
+        .await;
+    assert_eq!(
+        text_of(&answer.expect("answered").message),
+        "from the cloud"
+    );
+
+    let sink = PrivateWhen::new(&vault, world, cloud_call_ended);
+    let run = run_into(sink.clone());
+    let answer = seat.ladder.generate(&run, about(seat, world), None).await;
+    let answer = answer.expect("the offer on the device answers after the wait");
+    assert_eq!(text_of(&answer.message), "from the device");
+    assert_eq!(second.seen().len(), 2);
+    assert_eq!(holds(&sink.rows.rows()).len(), 1);
+}
+
+/// Review repro (Astra R4 P1): the world a raw or declared-run caller names
+/// does not vouch for the text it sends, so such a call to a seat is held on
+/// the device while any world stays on it, even when it names a portable
+/// world.
+#[tokio::test]
+async fn a_declared_run_call_naming_a_portable_world_stays_while_a_world_does() {
+    let first = FakeLlm::start(vec![], Some(Reply::Status(500))).await;
+    let second = FakeLlm::start(vec![], Some(Reply::text("from the cloud"))).await;
+    let (dir, clock) = (tempfile::tempdir().unwrap(), ManualClock::new(T0));
+    let vault = clocked_vault(dir.path(), &clock);
+    let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
+    let seat = runtime.seat(ModelRole::Checker).expect("seat");
+    private_world(&vault);
+    let portable = portable_world(&vault);
+    let line = BudgetLine {
+        limit_units: 100_000,
+        reserve_units: oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS,
+        unit: LeaseUnit::tokens(),
+    };
+    let run = runtime.declared_run("kept-declared", RunDeclaration::undeclared(line), None);
+    let error = run
+        .generate(seat.model.as_str(), about(seat, portable))
+        .await;
+    assert_eq!(error.expect_err("held"), kept_here(None));
+    assert!(second.seen().is_empty(), "the text stayed here");
 }
 
 /// Review repro (Astra R1 P2): an offer's cooldown belongs to the deployment
@@ -329,12 +410,12 @@ async fn a_checkpoint_carries_no_offer_cooldown() {
 const LADDER_CALLERS: [(&str, &str); 10] = [
     (
         "api/llm.rs",
-        "the caller's envelope; a world it names must be held here",
+        "none, as a caller's named world does not vouch for its text: the floor",
     ),
     ("api/ai/chat.rs", "none: the floor"),
     (
         "models/declared.rs",
-        "the declared run's envelope; a world it names must be held here",
+        "none, as a host's named world does not vouch for its text: the floor",
     ),
     ("models/raw.rs", "one host-injected offer, never a fallback"),
     (
