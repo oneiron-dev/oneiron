@@ -13,6 +13,7 @@ use super::embedder::{EmbedderConfig, EmbedderProvider};
 use super::embedder::{EmbedderConfigOverride, lookup_embedder_override};
 use super::feedback::{FeedbackConfigOverride, lookup_feedback_override};
 use super::import::ImportConfigOverride;
+use super::keystore::{KeystoreConfigOverride, lookup_keystore_override};
 use super::limits::LimitsConfigOverride;
 use super::lookup::{
     DEFAULT_CONFIG_DIR, DEFAULT_CONFIG_FILE, expand_home, lookup_bool, lookup_list, lookup_parse,
@@ -117,6 +118,7 @@ impl EnvConfig {
         values.backup = lookup_backup_override(&mut lookup)?;
         values.feedback = lookup_feedback_override(&mut lookup)?;
         values.recall = lookup_recall_override(&mut lookup)?;
+        values.keystore = lookup_keystore_override(&mut lookup)?;
         values.privacy_posture = lookup_parse(&mut lookup, "ONEIRON_PRIVACY_POSTURE")?;
         values.failure_signal_export = lookup_bool(&mut lookup, "ONEIRON_FAILURE_SIGNAL_EXPORT")?;
         values.failure_signal_training =
@@ -281,6 +283,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     config.backup.validate()?;
     config.feedback.validate()?;
     config.recall.validate()?;
+    config.keystore.validate()?;
     config.limits.validate()?;
     config.import.validate(&config.vault_path)?;
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
@@ -483,6 +486,7 @@ struct FileServeConfig {
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
     recall: Option<RecallConfigOverride>,
+    keystore: Option<KeystoreConfigOverride>,
     limits: Option<LimitsConfigOverride>,
     import: Option<ImportConfigOverride>,
     models: Option<ModelsFile>,
@@ -532,6 +536,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             backup: value.backup,
             feedback: value.feedback,
             recall: value.recall,
+            keystore: value.keystore,
             limits: value.limits,
             import: value.import,
             models: None,
@@ -582,6 +587,7 @@ struct PartialServeConfig {
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
     recall: Option<RecallConfigOverride>,
+    keystore: Option<KeystoreConfigOverride>,
     limits: Option<LimitsConfigOverride>,
     import: Option<ImportConfigOverride>,
     /// `[models]` is file-only: it is too structured for env or argv.
@@ -644,6 +650,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
             .field("recall", &self.recall)
+            .field("keystore", &self.keystore)
             .field("limits", &self.limits)
             .field("import", &self.import)
             .field("models", &self.models)
@@ -775,6 +782,9 @@ impl PartialServeConfig {
         if let Some(value) = self.feedback {
             resolved.feedback.apply_override(value);
         }
+        if let Some(value) = self.keystore {
+            resolved.keystore.apply_override(value);
+        }
         if let Some(value) = self.recall {
             resolved.recall.apply_override(value);
         }
@@ -849,6 +859,13 @@ impl From<&ServeArgs> for PartialServeConfig {
             backup: None,
             feedback: None,
             recall: None,
+            keystore: value
+                .keystore_dir
+                .clone()
+                .map(|dir| KeystoreConfigOverride {
+                    dir: Some(dir),
+                    ..KeystoreConfigOverride::default()
+                }),
             limits: None,
             import: None,
             models: None,

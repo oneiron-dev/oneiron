@@ -132,8 +132,12 @@ pub(super) async fn handle_sync_message(
                     let msg = protocol::encode_root_update(&delta);
                     let _ = direct_tx.send(msg);
                 }
-                Err(e) => {
-                    tracing::error!(conn_id, error = %e, "failed to export root delta for VV response");
+                Err(_) => {
+                    tracing::error!(
+                        conn_id,
+                        reason = "root_delta_export_failed",
+                        "failed to export root delta for VV response"
+                    );
                 }
             }
             Ok(())

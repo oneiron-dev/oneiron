@@ -31,7 +31,7 @@ use oneiron::affect::Vad;
 use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use oneiron::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
 use oneiron::sync::types::WindowKey;
-use oneiron::sync::window::{self, LoadedWindow};
+use oneiron::sync::window::{self, LoadedWindow, WindowExport};
 use oneiron::temporal::TimeRange;
 use oneiron::{EdgeInfo, EdgeKind, EntityId, HnswConfig, Vault, VaultConfig};
 
@@ -284,6 +284,28 @@ impl TestNode {
         let window = LoadedWindow::from_doc(doc, window_key, &self.vault, &self.materializer);
         self.windows.insert(key.to_owned(), window);
         self.window(key)
+    }
+
+    /// Installs a peer's replacement of [`WINDOW`] through the production seam, the old window's
+    /// observers live until the new one takes its place. Returns the keys it could not carry.
+    pub(crate) fn install_replacement(
+        &mut self,
+        snapshot: &[u8],
+    ) -> Vec<window::ReplacementConflict> {
+        let key = WindowKey::new(WINDOW);
+        let prepared = window::prepare_replacement(
+            &self.vault,
+            &self.materializer,
+            &key,
+            self.doc(WINDOW),
+            snapshot,
+            &std::collections::HashMap::new(),
+        )
+        .unwrap();
+        self.windows.remove(WINDOW);
+        let window = LoadedWindow::from_doc(prepared.doc, key, &self.vault, &self.materializer);
+        self.windows.insert(WINDOW.to_owned(), window);
+        prepared.conflicts
     }
 
     /// Drops the live window WITHOUT persisting `d:w:{key}` (crash-shaped:
@@ -549,6 +571,74 @@ pub(crate) fn exchange_docs(a_name: &str, doc_a: &LoroDoc, b_name: &str, doc_b: 
          ARCH-0023b mandates full re-bootstrap past this bound"
     );
     5
+}
+
+/// Brings both [`WINDOW`]s level the way a sync connection does, `hub` as the server and
+/// `device` as its client: each side answers the other's version vector through the window
+/// export door. The device imports the hub's updates, and the hub the device's. Whenever only a
+/// replacement could bring them level, the device installs the hub's: when the hub's door
+/// answers with one, when the device's door would (a device never pushes one on the hub), and
+/// when either side cannot apply the other's update past its own shallow root. Panics if either
+/// side is still behind after five rounds, the bound past which ARCH-0023b re-bootstraps.
+pub(crate) fn sync_through_doors(hub: &TestNode, device: &mut TestNode) {
+    let key = WindowKey::new(WINDOW);
+    for _ in 0..5 {
+        let (vv_hub, vv_device) = (hub.doc(WINDOW).oplog_vv(), device.doc(WINDOW).oplog_vv());
+        if vv_hub == vv_device {
+            return;
+        }
+        let to_device = window::export_window_updates_since(
+            &hub.vault,
+            &key,
+            hub.doc(WINDOW),
+            &vv_device.encode(),
+        )
+        .unwrap();
+        let mut rebase = match to_device {
+            WindowExport::Update(update) => imports_or_rebases(device.doc(WINDOW), &update),
+            WindowExport::Replacement(_) => true,
+        };
+        if !rebase {
+            let vv_hub = hub.doc(WINDOW).oplog_vv();
+            rebase = match window::export_window_updates_since(
+                &device.vault,
+                &key,
+                device.doc(WINDOW),
+                &vv_hub.encode(),
+            )
+            .unwrap()
+            {
+                WindowExport::Update(update) => imports_or_rebases(hub.doc(WINDOW), &update),
+                WindowExport::Replacement(snapshot) if vv_hub.is_empty() => {
+                    hub.doc(WINDOW).import(&snapshot).unwrap();
+                    false
+                }
+                WindowExport::Replacement(_) => true,
+            };
+        }
+        if rebase {
+            let snapshot =
+                window::export_window_replacement(&hub.vault, &key, hub.doc(WINDOW), None)
+                    .unwrap()
+                    .expect("the hub withholds no test window");
+            device.install_replacement(&snapshot);
+        }
+    }
+    assert_eq!(
+        hub.doc(WINDOW).oplog_vv(),
+        device.doc(WINDOW).oplog_vv(),
+        "a peer behind the other's window never caught up through its export door"
+    );
+}
+
+/// Imports `update` into `doc`; `true` when it builds on history `doc`'s own shallow root cut
+/// away, so the device must rebase on the hub.
+fn imports_or_rebases(doc: &LoroDoc, update: &[u8]) -> bool {
+    if window::update_reaches_below_root(doc, update) {
+        return true;
+    }
+    doc.import(update).unwrap();
+    false
 }
 
 /// First-divergent-key diff of two ordered byte-maps.

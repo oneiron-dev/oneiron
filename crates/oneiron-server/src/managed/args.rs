@@ -7,7 +7,7 @@ use std::time::Duration;
 use oneiron::federation::derivation::DerivationOwner;
 use oneiron_vault_contract::{CONTRACT_VERSION, valid_vault_name};
 
-use crate::config::{ServeArgs, ServeConfig};
+use crate::config::{KeystoreBackend, KeystoreConfig, ServeArgs, ServeConfig};
 
 use super::listener::HYPNOS_LISTEN_FD;
 
@@ -44,6 +44,9 @@ pub enum ManagedError {
 
     #[error("managed vault {vault:?} rejected its derivation owner: {reason}")]
     DerivationOwnerRejected { vault: String, reason: String },
+
+    #[error("--keystore-dir must be an absolute path")]
+    RelativeKeystoreDir,
 
     #[error("--{flag} must be a non-negative file descriptor, got {value}")]
     InvalidFd { flag: &'static str, value: i32 },
@@ -118,6 +121,9 @@ pub struct ManagedArgs {
     pub hypnos_socket: PathBuf,
     pub ready_fd: RawFd,
     pub credentials_fd: RawFd,
+    /// Where this install keeps its this-device-only key slots, a place the
+    /// supervisor chose. Without it managed mode installs no keystore.
+    pub keystore_dir: Option<PathBuf>,
 }
 
 impl ManagedArgs {
@@ -165,7 +171,15 @@ impl ManagedArgs {
             hypnos_socket: require(args.hypnos_socket.clone(), "hypnos-socket")?,
             ready_fd: require_fd(args.ready_fd, "ready-fd")?,
             credentials_fd: require_fd(args.credentials_fd, "credentials-fd")?,
+            keystore_dir: args.keystore_dir.clone(),
         };
+        if managed
+            .keystore_dir
+            .as_deref()
+            .is_some_and(std::path::Path::is_relative)
+        {
+            return Err(ManagedError::RelativeKeystoreDir);
+        }
         // Non-negative is not enough. Both descriptors are adopted by owners
         // that close what they hold — `read_managed_credentials` and
         // `signal_ready` each take theirs over with `from_raw_fd` — so one
@@ -222,6 +236,17 @@ impl ManagedArgs {
             // which managed mode does not get to read.
             dict_search_paths: args.dict_search_paths.clone().unwrap_or_default(),
             assistant_display_names: args.assistant_display_names.clone().unwrap_or_default(),
+            // The supervisor's key directory or none: the platform default
+            // lies under HOME and the XDG roots, which managed mode never reads.
+            keystore: KeystoreConfig {
+                backend: if self.keystore_dir.is_some() {
+                    KeystoreBackend::Platform
+                } else {
+                    KeystoreBackend::Off
+                },
+                dir: self.keystore_dir.clone(),
+                service: None,
+            },
             ..defaults
         };
         if let Some(log_level) = args.log_level.clone() {
@@ -346,6 +371,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "credentials-fd",
         |args| args.credentials_fd.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "keystore-dir",
+        |args| args.keystore_dir.is_some(),
         ArgvUse::Read,
     ),
     // The bind: the supervisor's socket, never a host:port.
