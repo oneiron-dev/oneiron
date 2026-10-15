@@ -74,9 +74,9 @@ impl Vault {
         }
         {
             let txn = self.store.env.read_txn()?;
-            owner.revalidate_in_txn(self, &txn)?;
+            let actor = owner.revalidate_in_txn(self, &txn)?;
             // An authenticated human is not by that alone this vault's owner.
-            if !crate::policy_model::is_live_vault_owner_in_txn(self, &txn, &owner.actor())? {
+            if !crate::policy_model::is_live_vault_owner_in_txn(self, &txn, &actor)? {
                 return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                     "window recovery is an owner act, and the actor is no owner of this vault",
                 )));

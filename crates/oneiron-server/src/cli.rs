@@ -8,9 +8,9 @@ use crate::config::ServeArgs;
 mod owner_args;
 pub use owner_args::{
     BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
-    ImportNotesArgs, ImportSourceArgs, RecoverClockArgs, RecoverWindowArgs, RestoreArgs, RunArgs,
-    RunDecisionArgs, RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs,
-    SecretScanArgs, SecretScanSwitch, SecretsCommand, ServeOnlyArgs, WhoamiArgs,
+    ImportNotesArgs, ImportSourceArgs, MaintainArgs, RecoverClockArgs, RecoverWindowArgs,
+    RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretClass, SecretRegisterArgs,
+    SecretRotateArgs, SecretScanArgs, SecretScanSwitch, SecretsCommand, ServeOnlyArgs, WhoamiArgs,
 };
 
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;
@@ -53,6 +53,9 @@ pub enum Command {
     Whoami(Box<WhoamiArgs>),
     /// Back up a stopped vault now (`--list` shows its backups).
     Backup(Box<BackupArgs>),
+    /// Run a stopped vault's housekeeping now, every sweep, and any repair
+    /// named; print the report. A running `serve` sweeps on its own.
+    Maintain(Box<MaintainArgs>),
     /// Restore a backup over a stopped vault, or `--rehearse` it in a
     /// scratch copy without touching the vault.
     Restore(Box<RestoreArgs>),
@@ -679,6 +682,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Doctor(args) => commands::doctor(args),
         Command::Whoami(args) => commands::whoami(*args),
         Command::Backup(args) => commands::backup(*args),
+        Command::Maintain(args) => commands::maintain(*args),
         Command::Restore(args) => commands::restore(*args),
         Command::RecoverWindow(args) => commands::recover_window(*args),
         Command::RecoverClock(args) => commands::recover_clock(*args),

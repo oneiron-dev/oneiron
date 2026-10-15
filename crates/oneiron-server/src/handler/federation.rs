@@ -85,10 +85,11 @@ pub(super) async fn handle_selector_fetch(
         send(direct_tx, key, window_sub_tags::SELECTOR_DEFERRED, &retry)?;
         return Ok(());
     }
-    let doc = server
-        .get_or_create_window(key)
+    let window = server
+        .serve_window(key)
         .await
         .map_err(|e| ProtocolError::Persistence(format!("window load failed: {e}")))?;
+    let doc = window.doc.clone();
     let filtered = filtered_window_doc(
         server.vault.as_ref(),
         &doc,
