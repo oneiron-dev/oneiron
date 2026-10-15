@@ -715,6 +715,60 @@ fn a_handoff_signed_by_a_rotated_owner_key_lands_through_sync() {
     assert!(roster_has_live_owner(&fold.roster, &host.public_key()));
 }
 
+/// Bug repro (Bugbot, #1449): a genesis vouched for itself while every
+/// stored root was its key, so the root key's second genesis with a new
+/// nonce, from a client that initializes again or a replayed init, was
+/// stored at either door and the fold read two roots, conflicted. A genesis
+/// now vouches for itself only in a log that holds none: another waits
+/// typed, the same genesis again changes nothing, and the owner's rows still
+/// land.
+#[test]
+fn the_root_keys_second_genesis_waits_and_its_first_again_changes_nothing() {
+    let at = TimeRange { start: 1, end: 1 };
+    let genesis = genesis_entry(132, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let mut second = genesis.clone();
+    if let AuthorityOp::Genesis { genesis_nonce, .. } = &mut second.op {
+        *genesis_nonce = [0x5A; 32];
+    }
+    let second = sign_ed(second, &ed_key(132));
+    assert_ne!(
+        authority_entry_hash(&second).unwrap(),
+        authority_entry_hash(&genesis).unwrap()
+    );
+    for replicated in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+        let put = |entry: &AuthorityLogEntry| {
+            if replicated {
+                put_replicated_row(&vault, entry)
+            } else {
+                vault.put_authority_log_entry(entry, at, 1).map(drop)
+            }
+        };
+        vault.put_authority_log_entry(&genesis, at, 1).unwrap();
+        let err = put(&second).unwrap_err();
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::AuthorityLogSignerPending,
+            "replicated: {replicated}"
+        );
+        put(&genesis).unwrap();
+        for entry in confirm_chain(&genesis, 132, 2, |_| Vec::new()) {
+            put(&entry).unwrap();
+        }
+        assert_eq!(
+            vault
+                .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
+                .unwrap(),
+            3
+        );
+        let fold = vault.authority_fold().unwrap();
+        assert!(!fold.vault_root_is_conflicted(), "replicated: {replicated}");
+        assert_eq!(fold.vault_id, Some(genesis_vault_id(&genesis).unwrap()));
+        assert_eq!(fold.valid_entries.len(), 3);
+    }
+}
+
 /// Bug repro (review round 1): in a pre-handoff line an admin key, with an
 /// agent's cosign for quorum, enrolls an owner, who hands off to the host.
 /// The fold accepts the line, so `require_host` accepts that host; the

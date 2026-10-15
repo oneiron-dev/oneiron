@@ -161,8 +161,9 @@ pub(super) fn admits_device(op: &AuthorityOp) -> Option<&DeviceAuthority> {
 /// fold's bounds and the store doors judge a row the same way.
 #[derive(Debug, Default)]
 pub(crate) struct AuthorityStructure {
-    /// The verified genesis keys. A log with more than one has no admitters.
-    roots: BTreeSet<AuthorityKey>,
+    /// The verified genesis rows. A log with more than one, even from one
+    /// key, has no admitters: the fold reads each as its own vault root.
+    roots: Vec<AuthorityLogEntry>,
     /// The keys whose signature vouches for a row: the genesis key, and
     /// each owner or admin key named by a signed re-root, rotation or
     /// enrollment that an admitter signed or cosigned, the fold's own
@@ -191,7 +192,7 @@ pub(super) fn is_consent_device(device: &DeviceAuthority) -> bool {
 /// against the fold's bounds. An owner key leaves the host-rooted roster
 /// only by a handoff, and a key a handoff retired signs nothing new at the
 /// replicated door. A machine, agent or peer key, a stranger, and every
-/// signer of a log without exactly one genesis key count as any other
+/// signer of a log without exactly one genesis row count as any other
 /// signer.
 pub(super) fn authority_structure<'a>(
     entries: impl Iterator<Item = &'a AuthorityLogEntry>,
@@ -239,9 +240,10 @@ impl<'a> StructureBuilder<'a> {
             AuthorityOp::Genesis { device, .. } => {
                 if device.key == *entry.signer_key()
                     && is_consent_device(device)
+                    && !self.structure.roots.contains(entry)
                     && verify_entry_signatures(entry).is_ok()
                 {
-                    self.structure.roots.insert(device.key.clone());
+                    self.structure.roots.push(entry.clone());
                     self.root_roles |= device.roles;
                 }
             }
@@ -262,7 +264,7 @@ impl<'a> StructureBuilder<'a> {
             .roots
             .first()
             .filter(|_| self.structure.roots.len() == 1)
-            .cloned()
+            .map(|genesis| genesis.signer_key().clone())
         else {
             self.structure.admitters.clear();
             self.structure.issuers.clear();
@@ -354,14 +356,16 @@ impl<'a> StructureBuilder<'a> {
 impl AuthorityStructure {
     /// Whether a key that may vouch for `entry` signed or cosigned it: an
     /// admitter, or, for a world edit, the install key of the machine it
-    /// names, as its primary signer. A genesis vouches for itself when it is
-    /// this log's only root. The caller verifies the signatures.
+    /// names, as its primary signer. A genesis vouches for itself only in a
+    /// log that holds none, or as the one it holds: any other, even from the
+    /// root key with a new nonce, would fork the root. The caller verifies
+    /// the signatures.
     pub(super) fn vouches_for(&self, entry: &AuthorityLogEntry) -> bool {
         match &entry.op {
             AuthorityOp::Genesis { device, .. } => {
                 device.key == *entry.signer_key()
                     && is_consent_device(device)
-                    && self.roots.iter().all(|root| *root == device.key)
+                    && self.roots.iter().all(|root| root == entry)
             }
             AuthorityOp::WorldPrivacy(edit) => self
                 .machine_keys
