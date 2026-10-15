@@ -112,7 +112,7 @@ impl ScopedRead<'_> {
             WeaveReader::Owner(owner) => {
                 let actor = owner.revalidate_in_txn(self.vault, txn)?;
                 if self.actor_key.actor_ref() != actor.to_hex()
-                    && self.actor_key.actor_ref() != owner.principal_ref_for_read(self.vault)?
+                    && self.actor_key.actor_ref() != owner.principal_ref_in_txn(self.vault, txn)?
                 {
                     return Err(Error::InvalidConfig(
                         "weave owner is not the scoped actor".into(),
@@ -122,11 +122,11 @@ impl ScopedRead<'_> {
             }
         };
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        validate_weave_recipe(self.vault, &policy, &reader, recipe)?;
+        validate_weave_recipe(self.vault, txn, &policy, &reader, recipe)?;
         let max_rows = crate::gate::weave_policy::effective_resolved(
             &policy,
             reader.role(),
-            reader.id(self.vault)?,
+            reader.id(self.vault, txn)?,
         )
         .ok_or_else(|| Error::InvalidConfig("missing weave report policy".into()))?
         .max_rows;
@@ -291,7 +291,7 @@ impl ScopedRead<'_> {
                 > crate::gate::weave_policy::effective_resolved(
                     &policy,
                     reader.role(),
-                    reader.id(self.vault)?,
+                    reader.id(self.vault, txn)?,
                 )
                 .ok_or_else(|| Error::InvalidConfig("missing weave report policy".into()))?
                 .max_rows
@@ -504,10 +504,12 @@ impl WeaveReader<'_> {
             Self::Agent(_) => "agent",
         }
     }
-    pub(super) fn id(&self, vault: &Vault) -> Result<EntityId> {
+    /// The reader's id, which selects the policy row that bounds a report
+    /// and a digest schedule: an owner's proof is revalidated in `txn`.
+    pub(super) fn id(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<EntityId> {
         match self {
             Self::Person(id) | Self::Agent(id) => Ok(*id),
-            Self::Owner(owner) => owner.actor_for_read(vault),
+            Self::Owner(owner) => owner.revalidate_in_txn(vault, txn),
         }
     }
 }
@@ -530,13 +532,17 @@ impl WeaveSectionKind {
 
 pub(super) fn validate_weave_recipe(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     policy: &crate::gate::PolicyManifestResolution,
     reader: &WeaveReader<'_>,
     recipe: &[WeaveSectionSpec],
 ) -> Result<()> {
-    let row =
-        crate::gate::weave_policy::effective_resolved(policy, reader.role(), reader.id(vault)?)
-            .ok_or_else(|| Error::InvalidConfig("missing weave report policy".into()))?;
+    let row = crate::gate::weave_policy::effective_resolved(
+        policy,
+        reader.role(),
+        reader.id(vault, txn)?,
+    )
+    .ok_or_else(|| Error::InvalidConfig("missing weave report policy".into()))?;
     if recipe.len() > row.max_sections
         || recipe.iter().any(|section| {
             section.predicates.len() > row.max_predicates

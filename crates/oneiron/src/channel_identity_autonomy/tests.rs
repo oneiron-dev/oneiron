@@ -2094,3 +2094,40 @@ fn graduation_duplicate_admission_is_atomic_and_survives_reopen() {
         [evidence.receipt_ref]
     );
 }
+
+/// F18 (H397): owner doors take their actor from a proof this vault
+/// authenticated. Another vault's proof for the same PERSON id acts on nothing.
+mod foreign_owner_proof {
+    use super::*;
+
+    #[test]
+    fn a_foreign_owner_proof_sets_no_autonomy_mode() {
+        let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+        let (_other_dir, _other, foreign) =
+            crate::test_util::foreign_owner_proof(owner.actor(), owner.principal_ref());
+        assert_eq!(
+            vault
+                .apply_channel_identity_autonomy(&request, &foreign)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        let state = vault
+            .apply_channel_identity_autonomy(&request, &owner)
+            .unwrap();
+        assert_eq!(
+            vault
+                .set_channel_identity_autonomy_mode(
+                    state.mode.clone(),
+                    &foreign,
+                    crate::unix_seconds_now()
+                )
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        vault
+            .set_channel_identity_autonomy_mode(state.mode, &owner, crate::unix_seconds_now())
+            .unwrap();
+    }
+}

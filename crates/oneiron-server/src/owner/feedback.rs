@@ -148,7 +148,7 @@ pub(crate) fn send(
         ConsentSurface::Dashboard,
         request.previewed_at,
     )?;
-    let evaluation = card.evaluate_action(&approval, owner)?;
+    let evaluation = card.evaluate_action(vault, &approval, owner)?;
     // The send carries the owner's proof to the transaction that admits it,
     // so a slip revoked while this request waited admits nothing.
     let sent = send_approved_feedback(

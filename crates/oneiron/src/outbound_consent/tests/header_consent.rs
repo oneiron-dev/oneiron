@@ -472,3 +472,37 @@ fn raw_payload_cannot_replace_preparation_or_downgrade_to_unscoped_authority() {
         assert!(intent_ledger_records(&vault).unwrap().is_empty());
     }
 }
+
+/// F18 (H397): owner doors take their actor from a proof this vault
+/// authenticated. Another vault's proof for the same PERSON id acts on nothing.
+mod foreign_owner_proof {
+    use super::*;
+
+    #[test]
+    fn a_foreign_owner_proof_mints_no_header_grant() {
+        let (_tmp, vault) = temp_vault();
+        let own = owner(&vault);
+        let (_other_tmp, _other, foreign) =
+            crate::test_util::foreign_owner_proof(own.actor(), own.principal_ref());
+        let id = entity(0xB2);
+        let mut intent = scoped_intent();
+        intent.principal_ref = own.principal_ref().to_owned();
+        intent.tool_data_classes = vec![
+            ToolGrantDataClass::Arguments,
+            ToolGrantDataClass::XMcpHeader,
+        ];
+
+        assert_eq!(
+            vault
+                .mint_scoped_mcp_outbound_grant_with_owner(&foreign, &id, &intent, 10)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert!(vault.get_standing_outbound_grant(&id).unwrap().is_none());
+        vault
+            .mint_scoped_mcp_outbound_grant_with_owner(&own, &id, &intent, 10)
+            .unwrap();
+        assert!(vault.get_standing_outbound_grant(&id).unwrap().is_some());
+    }
+}

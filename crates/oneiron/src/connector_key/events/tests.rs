@@ -213,3 +213,51 @@ fn deliver_queued_event(vault: &Vault, exec: &mut EventConsumer) -> Result<()> {
     }
     Err(invalid())
 }
+
+/// F18 (H397): owner doors take their actor from a proof this vault
+/// authenticated. Another vault's proof for the same PERSON id acts on nothing.
+mod foreign_owner_proof {
+    use super::*;
+
+    #[test]
+    fn a_foreign_owner_proof_subscribes_no_agent() -> Result<()> {
+        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        let owner_id = entity(0x71);
+        let agent = entity(0x72);
+        for id in [owner_id, agent] {
+            vault.put_entity(
+                &id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"actor",
+            )?;
+        }
+        let owner =
+            vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())?;
+        let (_other_dir, _other, foreign) =
+            crate::test_util::foreign_owner_proof(owner_id, &owner_id.to_hex());
+        let key = entity(0x74);
+        vault.register_connector_key(
+            &key,
+            ConnectorKeyRecord::active("calendar", Some(agent), Vec::new(), 1),
+        )?;
+        let filter = ConnectorEventFilter {
+            connector: "calendar".into(),
+            event_kind: Some("updated".into()),
+            predicate: Some("calendar.event".into()),
+        };
+
+        assert_eq!(
+            vault
+                .subscribe_connector_event(&foreign, agent, key, filter.clone())
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert!(vault.connector_event_subscriptions(agent)?.is_empty());
+        vault.subscribe_connector_event(&owner, agent, key, filter)?;
+        assert_eq!(vault.connector_event_subscriptions(agent)?.len(), 1);
+        Ok(())
+    }
+}

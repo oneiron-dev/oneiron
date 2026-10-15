@@ -176,7 +176,7 @@ pub(crate) fn record(
     // turns. A room the owner is not in is the same 404 as none.
     if record.room.is_some() {
         let record = bind(vault, owner, session_ref)?
-            .record_for(owner.actor_for_read(vault)?)
+            .record_for(owner.revalidate(vault)?)
             .map_err(|error| session_error(error, session_ref))?;
         return Ok(Session::from(record));
     }

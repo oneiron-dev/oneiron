@@ -86,13 +86,6 @@ impl AuthenticatedOwner {
         Ok(&self.principal_ref)
     }
 
-    /// Whether this proof was authenticated for `principal_ref`. A
-    /// comparison for a card with no vault at hand, never authority: the act
-    /// the card leads to revalidates the proof.
-    pub(crate) fn names_principal(&self, principal_ref: &str) -> bool {
-        self.principal_ref == principal_ref
-    }
-
     /// [`Self::revalidate_in_txn`], for a door that names its actor by
     /// principal reference.
     pub(crate) fn principal_ref_in_txn(

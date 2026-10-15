@@ -183,7 +183,7 @@ impl Vault {
         Ok(super::title_index::holder_in_txn(
             &self.store,
             &txn,
-            owner.actor_for_read(self)?,
+            owner.revalidate_in_txn(self, &txn)?,
             title,
         )?
         .is_none())

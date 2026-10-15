@@ -407,7 +407,7 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
-            super::weave_report::validate_weave_recipe(self, &policy, &reader, &row.recipe)?;
+            super::weave_report::validate_weave_recipe(self, txn, &policy, &reader, &row.recipe)?;
             self.store
                 .vault_meta
                 .put(txn, &row.reader.key(SCHEDULE_PREFIX), &bytes)?;
@@ -608,7 +608,7 @@ impl ScopedRead<'_> {
                 let txn = self.vault.store.env.read_txn()?;
                 let actor = owner.revalidate_in_txn(self.vault, &txn)?;
                 self.actor_key.actor_ref() != actor.to_hex()
-                    && self.actor_key.actor_ref() != owner.principal_ref_for_read(self.vault)?
+                    && self.actor_key.actor_ref() != owner.principal_ref_in_txn(self.vault, &txn)?
             }
         } {
             return Err(invalid());

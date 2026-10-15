@@ -127,7 +127,7 @@ impl Vault {
         tap: &ConsentActionRequest,
         owner: &AuthenticatedOwner,
     ) -> Result<ProjectMintReceipt> {
-        let intent = card.evaluate_action(tap, owner)?;
+        let intent = card.evaluate_action(self, tap, owner)?;
         let tap_key = *blake3::hash(card.card_id.as_bytes()).as_bytes();
         let source = EntityId::from_hex(&intent.source_message_ref).map_err(|_| invalid())?;
         let txn = self.store.env.read_txn()?;

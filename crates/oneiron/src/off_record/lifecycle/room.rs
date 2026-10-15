@@ -311,7 +311,13 @@ impl OffRecordSession<'_> {
     /// membership shows them are saved.
     pub fn save_talk_as(&self, owner: &crate::consent::AuthenticatedOwner) -> Result<SavedTurns> {
         let room = match self.room()? {
-            Some(_) => Some(self.require_in_room(owner.actor_for_read(self.vault)?)?),
+            Some(_) => {
+                let actor = owner.revalidate_as_vault_owner_in_txn(
+                    self.vault,
+                    &self.vault.store.env.read_txn()?,
+                )?;
+                Some(self.require_in_room(actor)?)
+            }
             None => None,
         };
         let authority = |vault: &Vault, txn: &heed::RoTxn<'_>| {

@@ -297,6 +297,30 @@ pub(crate) fn bind_test_owner(vault: &Vault, owner: EntityId) {
         .expect("owner binding");
 }
 
+/// An owner proof another vault authenticated for `actor` under `principal`,
+/// with `actor` a live PERSON there as in the vault under test: what a door
+/// of that vault must refuse. The other vault's `TempDir` and handle come
+/// back with it, for the proof's lifetime.
+pub(crate) fn foreign_owner_proof(
+    actor: EntityId,
+    principal: &str,
+) -> (tempfile::TempDir, Vault, crate::consent::AuthenticatedOwner) {
+    let (dir, other) = open_test_vault_with(VaultConfig::device());
+    other
+        .put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"owner",
+        )
+        .expect("the shared person");
+    let proof = other
+        .authenticate_owner(actor, principal, true, crate::store::GateDecisionId::now())
+        .expect("the other vault's proof");
+    (dir, other, proof)
+}
+
 /// Roots the vault under the test host and binds `agent` as one of the
 /// vault's own agents (an active `agent` binding). The host key holds one
 /// live binding, so this is the vault's only bound actor.

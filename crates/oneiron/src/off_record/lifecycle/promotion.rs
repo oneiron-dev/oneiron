@@ -67,7 +67,9 @@ impl OffRecordSession<'_> {
         if let Some(owner) = owner
             && self.room()?.is_some()
         {
-            self.require_in_room(owner.actor_for_read(self.vault)?)?;
+            let actor = owner
+                .revalidate_as_vault_owner_in_txn(self.vault, &self.vault.store.env.read_txn()?)?;
+            self.require_in_room(actor)?;
         }
         let outcome = {
             let mut state = self.recording_state()?;
