@@ -285,7 +285,7 @@ fn compact_window(
     // map. Remove every entities/edges key referencing an erased id —
     // across hex-casing aliases (fail closed). Tombstones map untouched
     // (permanent); receipt entities are receipt-ids, never erased ids.
-    let carriers = scrub_erased_ids_from_doc(&doc, erased)?;
+    scrub_erased_ids_from_doc(vault, &doc, erased)?;
 
     // Shallow snapshot at the latest frontiers: live state byte-exact, op
     // history (the payload carrier) dropped, doc identity + VV preserved.
@@ -370,7 +370,6 @@ fn compact_window(
         WINDOW_STATE_VECTOR.put(&vault.store, wtxn, &window, &vv)?;
         WINDOW_UPDATE.delete_from(&vault.store, wtxn, update_prefix.as_bytes())?;
         WINDOW_SHALLOW_FENCE.put(&vault.store, wtxn, &window, &[1u8])?;
-        crate::sync::window::note_removed_carriers_in_txn(vault, wtxn, &carriers)?;
 
         // Wire/SLA pin: the swept window cannot serve pre-shallow deltas —
         // peers behind the shallow start must take a full window resync.
@@ -451,13 +450,15 @@ fn inject_race_before_compact_write(
 /// map is PERMANENT and untouched.
 #[cfg(feature = "sync")]
 fn scrub_erased_ids_from_doc(
+    vault: &Vault,
     doc: &loro::LoroDoc,
     erased: &BTreeSet<EntityId>,
-) -> Result<Vec<(EntityId, Vec<u8>)>> {
+) -> Result<()> {
     use crate::sync::loro_support::{map_delete, map_get_bytes};
+    use crate::sync::window::{CarrierRemoval, mark_removed_carriers_first};
 
     if erased.is_empty() {
-        return Ok(Vec::new());
+        return Ok(());
     }
 
     let erased_hex: std::collections::HashSet<[u8; 32]> = erased
@@ -532,11 +533,11 @@ fn scrub_erased_ids_from_doc(
     });
 
     if doomed_entities.is_empty() && doomed_edges.is_empty() {
-        return Ok(Vec::new());
+        return Ok(());
     }
-    // The erased ids' carriers, kept so the compaction's transaction can
-    // mark the task of an authority fact this vault never admitted.
-    let carriers = doomed_entities
+    // The erased ids' carriers mark the task of an authority fact this vault
+    // never admitted before any of them leaves the doc.
+    let carriers: Vec<_> = doomed_entities
         .iter()
         .filter_map(|key| {
             let id = EntityId::from_hex(key)
@@ -545,6 +546,7 @@ fn scrub_erased_ids_from_doc(
             map_get_bytes(&entities, key).map(|carrier| (id, carrier))
         })
         .collect();
+    mark_removed_carriers_first(vault, CarrierRemoval::HardEraseSweep, &carriers)?;
     for key in &doomed_entities {
         map_delete(&entities, key)?;
     }
@@ -552,7 +554,7 @@ fn scrub_erased_ids_from_doc(
         map_delete(&edges, key)?;
     }
     doc.commit();
-    Ok(carriers)
+    Ok(())
 }
 
 /// Deletion-only scan of the already-recognized birth-source namespace. It
@@ -572,6 +574,16 @@ fn birth_payload_contains_erased_id(
         }
         erased.contains(&lower)
     })
+}
+
+/// [`compact_window`] for the carrier-removal checks outside the sweep.
+#[cfg(all(test, feature = "sync"))]
+pub(crate) fn compact_window_for_test(
+    vault: &Vault,
+    key: &crate::sync::types::WindowKey,
+    erased: &BTreeSet<EntityId>,
+) -> Result<()> {
+    compact_window(vault, key, erased).map(drop)
 }
 
 #[cfg(all(test, feature = "sync"))]

@@ -236,9 +236,10 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
     use crate::sync::bridge::BRIDGE_ORIGIN;
     use crate::sync::loro_support::{TombstoneIndex, doc_version_vector};
     use crate::sync::window::{
-        apply_tombstone_to_indexed_window_doc, entity_carriers, export_scrubbed_window_snapshot,
-        export_tombstone_commit_delta, load_window_from_state, merge_persisted_state_into_doc,
-        note_removed_carriers_in_txn, persist_window_doc_in_txn, rebuild_window_from_updates,
+        CarrierRemoval, apply_tombstone_to_indexed_window_doc, entity_carriers,
+        export_scrubbed_window_snapshot, export_tombstone_commit_delta, load_window_from_state,
+        mark_removed_carriers_first, merge_persisted_state_into_doc, persist_window_doc_in_txn,
+        rebuild_window_from_updates,
     };
     use loro::CommitOptions;
 
@@ -250,7 +251,7 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
     // Live vs transient doc routing — `write_crdt_tombstone`'s dual path.
     let live = manager.window(window_key);
     let ids: Vec<_> = markers.iter().map(|(key, _)| key.id).collect();
-    let (delete_update, snapshot, vv, carriers) = match &live {
+    let (delete_update, snapshot, vv) = match &live {
         Some(window) => {
             // Clobber guard OUTSIDE the materializer lock: importing into
             // an observed doc fires Observer B, which takes the
@@ -264,7 +265,13 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
             let _guard = manager.materializer().lock();
             let vv_before = window.doc.oplog_vv();
             let tombstones = TombstoneIndex::build(&window.doc.get_map("tombstones"));
-            let carriers = entity_carriers(&window.doc, &ids);
+            // Marked before the commit below: Observer A persists the removal
+            // in a transaction of its own, which could otherwise land first.
+            mark_removed_carriers_first(
+                vault,
+                CarrierRemoval::ReassertDrain,
+                &entity_carriers(&window.doc, &ids),
+            )?;
             for (key, value) in &markers {
                 apply_tombstone_to_indexed_window_doc(&window.doc, &tombstones, &key.id, value)?;
             }
@@ -279,7 +286,6 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
                 delete_update,
                 export_scrubbed_window_snapshot(vault, window_key, &window.doc)?,
                 doc_version_vector(&window.doc),
-                carriers,
             )
         }
         None => {
@@ -297,7 +303,11 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
             };
             let vv_before = doc.oplog_vv();
             let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
-            let carriers = entity_carriers(&doc, &ids);
+            mark_removed_carriers_first(
+                vault,
+                CarrierRemoval::ReassertDrain,
+                &entity_carriers(&doc, &ids),
+            )?;
             for (key, value) in &markers {
                 apply_tombstone_to_indexed_window_doc(&doc, &tombstones, &key.id, value)?;
             }
@@ -307,7 +317,6 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
                 delete_update,
                 export_scrubbed_window_snapshot(vault, window_key, &doc)?,
                 doc_version_vector(&doc),
-                carriers,
             )
         }
     };
@@ -317,7 +326,6 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
     // skips the queue push — nothing new to propagate.
     vault.with_write_txn_grouped(|wtxn| {
         persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv)?;
-        note_removed_carriers_in_txn(vault, wtxn, &carriers)?;
         if let Some(update) = &delete_update {
             crate::sync::queue::push_delete_bearing_in_txn(
                 vault,

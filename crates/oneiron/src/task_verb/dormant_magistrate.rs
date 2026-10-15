@@ -105,14 +105,12 @@ pub fn project_consult_task_to_a2a(
         TaskExecutionState::Interrupted {
             ladder: None,
             consent_required,
-        } => {
-            ConsultLadderState::Interrupted(crate::consult_ladder::InterruptedState {
-                kind: crate::consult_ladder::InterruptionKind::Contested,
-                consent_required: *consent_required,
-                case_ref: task_ref,
-                interrupted_at: body.created_at,
-            })
-        }
+        } => ConsultLadderState::Interrupted(crate::consult_ladder::InterruptedState {
+            kind: crate::consult_ladder::InterruptionKind::Contested,
+            consent_required: *consent_required,
+            case_ref: task_ref,
+            interrupted_at: body.created_at,
+        }),
         TaskExecutionState::Terminal(record) => match ladder_terminal_from_task_terminal(record) {
             Ok(terminal) => ConsultLadderState::Terminal(terminal),
             Err(_) => return Ok(None),

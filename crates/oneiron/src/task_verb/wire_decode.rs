@@ -580,9 +580,13 @@ fn decode_task_execution_state(value: &Value) -> Result<TaskExecutionState> {
             // asking: durably paused progress is not progress.
             let consent_required = match task_body_optional(entries, "consent_required")? {
                 None => ladder.is_none(),
-                Some(value) => value.as_bool().ok_or(Error::Record(
-                    RecordError::InvalidTaskBody("tasks.body.state.consent_required"),
-                ))?,
+                Some(value) => {
+                    value
+                        .as_bool()
+                        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                            "tasks.body.state.consent_required",
+                        )))?
+                }
             };
             Ok(TaskExecutionState::Interrupted {
                 ladder,
