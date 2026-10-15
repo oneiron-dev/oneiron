@@ -19,6 +19,7 @@ use axum::response::Response;
 use oneiron::origin::smart_http;
 use std::io::{self, Read, Write};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
@@ -57,6 +58,8 @@ pub(super) async fn run_serve(
     let (request_tx, request_rx) = mpsc::channel::<BodyPiece>(GIT_HTTP_STREAM_CHUNKS);
     let (head_tx, head_rx) = oneshot::channel::<Answer>();
     let (response_tx, response_rx) = mpsc::channel::<Bytes>(GIT_HTTP_STREAM_CHUNKS);
+    let sent = Arc::new(AtomicBool::new(false));
+    let all_sent = Arc::clone(&sent);
 
     tokio::spawn(transfer::feed_body(
         body,
@@ -104,7 +107,10 @@ pub(super) async fn run_serve(
             &mut reader,
             &mut holding,
         );
-        sink.answer(landed(holding.head, holding.held, holding.failed, served));
+        sink.answer(
+            landed(holding.head, holding.held, holding.failed, served),
+            &all_sent,
+        );
         None
     });
 
@@ -112,7 +118,9 @@ pub(super) async fn run_serve(
         // The backend answered, and a fetch's answer is the pack itself: it
         // streams out as it is produced and is never held. A push's answer
         // comes once its landing is journaled.
-        Ok(Answer::Head(head)) => streaming_response(head, response_rx),
+        Ok(Answer::Head(head)) => {
+            streaming_response(head, response_rx, held.is_some().then_some(sent))
+        }
         Ok(Answer::Whole(response)) => response,
         Err(_) => match worker.await {
             Ok(Some(served)) => serve_failure(Ok(served)),
@@ -212,13 +220,13 @@ pub(super) fn landed(
     failed: Option<io::Error>,
     served: oneiron::Result<smart_http::ServeReport>,
 ) -> Landed {
+    if let Some(error) = failed {
+        return Landed::Answer(held_failure(&error));
+    }
     let report = match served {
         Ok(report) => report,
         refused => return Landed::Answer(serve_failure(Ok(refused))),
     };
-    if let Some(error) = failed {
-        return Landed::Answer(held_failure(&error));
-    }
     let Some((status, mut headers)) = head else {
         return Landed::Answer(text_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -340,13 +348,31 @@ pub(super) fn serve_failure(
 /// Wraps the backend's own status and headers around a body that is still
 /// arriving. The body is a stream, so a large pack leaves the process the same
 /// way it entered: in chunks, never whole.
-fn streaming_response(head: ResponseHead, chunks: mpsc::Receiver<Bytes>) -> Response {
+///
+/// A held report comes with `sent`, which its worker sets once the last piece
+/// is queued. A report whose pieces stop before that (the client stopped
+/// reading past the idle limit, the file could not be read back, the worker
+/// unwound) ends as a body error, never as a complete report.
+fn streaming_response(
+    head: ResponseHead,
+    chunks: mpsc::Receiver<Bytes>,
+    sent: Option<Arc<AtomicBool>>,
+) -> Response {
     let (status, headers) = head;
-    let stream = futures_util::stream::unfold(chunks, |mut chunks| async move {
-        chunks
-            .recv()
-            .await
-            .map(|chunk| (Ok::<Bytes, io::Error>(chunk), chunks))
+    let stream = futures_util::stream::unfold((chunks, sent), |(mut chunks, sent)| async move {
+        match chunks.recv().await {
+            Some(chunk) => Some((Ok(chunk), (chunks, sent))),
+            None => match sent {
+                Some(sent) if !sent.load(Ordering::Acquire) => Some((
+                    Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "git status report ended before it was sent",
+                    )),
+                    (chunks, None),
+                )),
+                _ => None,
+            },
+        }
     });
     let mut response = Response::new(Body::from_stream(stream));
     apply_response_head(&mut response, status, headers);
@@ -403,7 +429,9 @@ impl ChannelSink {
     /// and then the report a piece at a time. Each piece waits at most the
     /// idle limit for the client to take it, so a client that stops reading
     /// ends the exchange, and the report, its file and the permit go with it.
-    fn answer(mut self, landed: Landed) {
+    /// `sent` is set once the whole report is queued, before the channel
+    /// closes.
+    fn answer(mut self, landed: Landed, sent: &AtomicBool) {
         let (head, mut body) = match landed {
             Landed::Answer(response) => {
                 if let Some(head) = self.head.take() {
@@ -431,7 +459,10 @@ impl ChannelSink {
         let mut piece = vec![0; GIT_HTTP_BODY_PIECE];
         loop {
             match reader.read(&mut piece) {
-                Ok(0) => return,
+                Ok(0) => {
+                    sent.store(true, Ordering::Release);
+                    return;
+                }
                 Ok(read) => {
                     if smart_http::ServeSink::write_chunk(&mut self, &piece[..read]).is_err() {
                         return;

@@ -3,10 +3,10 @@
 //! The report grows with the refs a push names, and a push may name any
 //! number of them (rule 5), so holding it is never refused for its size. It
 //! stays in memory up to a bound sized from the machine's memory and goes on
-//! in a file in the vault's door root past it. The file's name is removed
-//! before a byte is written, so nothing else can open it, and it is gone once
-//! the exchange drops it. Only the disk itself refuses: a write that fails, or
-//! a name that cannot be removed, ends the push as a held failure.
+//! in an unnamed file in the vault's door root past it. The file is checked to
+//! have no name before a byte is written, so nothing else can open it, and it
+//! is gone once the exchange drops it. Only the disk itself refuses: a write
+//! that fails, or a file that keeps a name, ends the push as a held failure.
 
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
@@ -64,10 +64,14 @@ impl Write for HeldBytes {
             .dir
             .as_ref()
             .ok_or_else(|| io::Error::other("no directory to hold a status report in"))?;
-        // Removing the name is checked, never assumed: a name left behind
-        // would keep the report findable after the exchange.
-        let (file, name) = tempfile::NamedTempFile::new_in(dir)?.into_parts();
-        name.close()?;
+        let file = tempfile::tempfile_in(dir)?;
+        // Anonymity is checked on the open file, never assumed from a name's
+        // removal: a file another name still links would keep the report
+        // after the exchange.
+        #[cfg(unix)]
+        if std::os::unix::fs::MetadataExt::nlink(&file.metadata()?) != 0 {
+            return Err(io::Error::other("the held report's file is still linked"));
+        }
         let mut file = BufWriter::new(file);
         file.write_all(&std::mem::take(&mut self.memory))?;
         file.write_all(bytes)?;
