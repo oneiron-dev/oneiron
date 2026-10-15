@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use formualizer_common::LiteralValue;
-use formualizer_parse::TokenStream;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_parse::{TokenStream, TokenSubType};
 
 use crate::Result;
 use crate::xml::unsupported;
@@ -191,6 +191,21 @@ pub(super) fn parse_bounded(formula: &str) -> Result<ASTNode> {
     let tokens = TokenStream::new(&expression).map_err(|_| unsupported("formula tokenization"))?;
     if tokens.len() > MAX_FORMULA_TOKENS {
         return Err(unsupported(TOKEN_LIMIT));
+    }
+    // The parser reads `[0]` (the workbook itself) off a reference and parses
+    // the rest again, once for each `[0]` the reference opens with, so one
+    // token of thousands recursed as deep as no token bound sees.
+    let repeated = tokens.spans.iter().any(|span| {
+        span.subtype != TokenSubType::Text
+            && tokens
+                .source()
+                .get(span.start..span.end)
+                .is_some_and(|text| text.contains("[0][0]"))
+    });
+    if repeated {
+        return Err(unsupported(
+            "reference repeating the workbook qualifier [0]",
+        ));
     }
     formualizer_parse::parse(expression.as_ref()).map_err(|_| unsupported("formula parsing"))
 }
