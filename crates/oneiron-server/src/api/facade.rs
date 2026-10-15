@@ -43,6 +43,8 @@ use serde::Serialize;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::ApiError;
 use crate::server::SyncServer;
+use oneiron::federation::record_scope::BirthPosition;
+use oneiron::federation::{ScopeAxis, ScopeId};
 use oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES;
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
@@ -53,6 +55,7 @@ use oneiron::memory::{
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::credential_memory;
+use super::write_facet::{landing_facet, request_session};
 
 /// Request-body ceiling for the facade nest: 64 MiB.
 ///
@@ -162,6 +165,78 @@ fn facade_invoke(
     value: serde_json::Value,
 ) -> Result<serde_json::Value, FacadeApiError> {
     let memory = credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality());
+    Ok(match facade_room_turn(headers)? {
+        Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
+        None => oneiron::task_verb::sdk::invoke(&memory, verb, value)?,
+    })
+}
+
+/// Where the records this credential births land (owner ruling FACET-READ;
+/// placement stays derived, ARCH-0028). A credential never narrowed to facets
+/// keeps the derived birth, under the same strict door as before. A narrowed
+/// one lands in its landing facet, which it must carry; any other narrowing
+/// still fails closed.
+fn facade_landing(
+    server: &SyncServer,
+    headers: &HeaderMap,
+    auth: &CoreAuth,
+) -> Result<BirthPosition, FacadeApiError> {
+    let Some(proof) = auth.verified_slip() else {
+        return Ok(BirthPosition::default());
+    };
+    if matches!(proof.scope().facets, ScopeAxis::All) {
+        auth.require_unrestricted_record_scope()?;
+        return Ok(BirthPosition::default());
+    }
+    let session = request_session(headers).map_err(|()| {
+        FacadeApiError::new(
+            StatusCode::BAD_REQUEST,
+            MEMORY_CODE_BAD_REQUEST,
+            "invalid session header",
+            ["Name the session as its 32-hex id."],
+        )
+    })?;
+    let write_facet = server
+        .vault
+        .paired_write_facet(&proof.claims().slip_id)
+        .map_err(MemoryError::from)?;
+    let landing = landing_facet(&server.vault, session, &proof.scope().facets, write_facet)
+        .map_err(|_| {
+            FacadeApiError::forbidden(
+                "the session this request names does not place this credential's writes",
+                ["Name a session whose facet this credential reads, or none."],
+            )
+        })?;
+    auth.require_record_scope_carried(
+        ScopeAxis::All,
+        landing.map_or(ScopeAxis::All, |facet| {
+            ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(facet)]))
+        }),
+    )?;
+    Ok(BirthPosition {
+        world: None,
+        facet: landing,
+    })
+}
+
+/// [`facade_invoke`] for a verb that births records at `position`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the generated route passes facade_invoke's inputs plus the birth position"
+)]
+fn facade_invoke_born(
+    server: &SyncServer,
+    headers: &HeaderMap,
+    auth: &CoreAuth,
+    actor: EntityId,
+    class: EdgeActorClass,
+    verb: &str,
+    value: serde_json::Value,
+    position: BirthPosition,
+) -> Result<serde_json::Value, FacadeApiError> {
+    let memory = credential_memory(&server.vault, Some(auth), actor, class)
+        .at(auth.locality())
+        .with_birth_position(position);
     Ok(match facade_room_turn(headers)? {
         Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
         None => oneiron::task_verb::sdk::invoke(&memory, verb, value)?,

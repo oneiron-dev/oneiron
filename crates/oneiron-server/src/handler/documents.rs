@@ -409,7 +409,11 @@ pub(super) fn document_delivery(
 
 fn document_principal(server: &SyncServer, state: &ConnState) -> Result<EntityId, ProtocolError> {
     let auth = require_bound_app_auth(server, state)?;
+    // A selector export serves its grant's rows, not the credential's lane,
+    // so a credential limited to facets is refused here (owner ruling
+    // FACET-READ), as the raw HTTP doors refuse it.
     auth.require(CoreScope::Read)
+        .and_then(|()| auth.require_unnarrowed_facets())
         .map_err(|_| ProtocolError::RpcNoPrincipal)?;
     EntityId::from_hex(
         auth.require_registered_principal()

@@ -590,7 +590,7 @@ fn a_restore_never_undoes_a_stop_or_a_contact_revocation_since() -> Result<()> {
         &contact,
         &CounterpartyContactRecord::user_introduction(identity, "sora@example.com", 10)?,
     )?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let refused = |image: &std::path::Path, name: &str| {
         let destination = backups.path().join(name);
         let error = Vault::restore_checkpoint_keeping_authority(
@@ -796,7 +796,7 @@ fn a_restore_never_drops_a_contact_the_send_gate_reads_first() -> Result<()> {
         &entity(0x91),
         &CounterpartyContactRecord::user_introduction(desk, "sora@example.com", 10)?,
     )?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
 
@@ -847,7 +847,7 @@ fn a_restore_drops_a_contact_the_send_gate_never_reads_first() -> Result<()> {
         &entity(0xA8),
         &CounterpartyContactRecord::user_introduction(desk, "rin@example.com", 12)?,
     )?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
 

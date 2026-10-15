@@ -66,10 +66,11 @@ impl Vault {
     /// ([`actor_is_vault_owner_in_txn`]) says whether `holder` is the vault
     /// owner. The owner check passes only a person, so only a person's
     /// credential (one naming no class, or `human`) counts as the owner's,
-    /// whatever class the caller bound its handle as. The owner's own live,
-    /// unattenuated credential reads as the owner: a manifest never narrows
-    /// the person on their own vault (ARCH-0057), and every read still checks
-    /// that the credential is unexpired and unrevoked in its own snapshot. A
+    /// whatever class the caller bound its handle as, and only while the key
+    /// the slip was minted to proves it. The owner's own live, unattenuated
+    /// credential reads as the owner: a manifest never narrows the person on
+    /// their own vault (ARCH-0057), and every read still checks that the
+    /// credential is unexpired and unrevoked in its own snapshot. A
     /// narrower credential, the owner's too, reads only what it grants; the
     /// owner's skips the relationship gate only while the owner binding holds
     /// in the read's own snapshot.
@@ -95,8 +96,13 @@ impl Vault {
         };
         // A handle bound as a person (the campaign surface binds every
         // caller so) may carry an agent's credential on the owner's PERSON:
-        // that credential is not the owner's (CodeRabbit on #1413).
-        if !owner || !matches!(claims.actor_class.as_deref(), None | Some("human")) {
+        // that credential is not the owner's (CodeRabbit on #1413). Nor is
+        // one the owner handed to another key: its holder is a delegate, so
+        // every bound the owner set on it binds (Astra on #1432).
+        if !owner
+            || !matches!(claims.actor_class.as_deref(), None | Some("human"))
+            || proof.is_transferred()
+        {
             return Ok(Some(key.require_relationship_grants(Some(holder))));
         }
         if proof.is_full_vault_owner_grade()

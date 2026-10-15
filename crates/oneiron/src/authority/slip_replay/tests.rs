@@ -111,7 +111,7 @@ impl Holder {
     fn paired(start: u64) -> Self {
         use crate::authority::{HostSlipIssuer, pairing_binding_transcript};
         use ed25519_dalek::Signer;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_support::restore_tempdir();
         let clock = crate::ports::ManualClock::new(start);
         let config = crate::VaultConfig {
             store_clock: clock.bundle(),
@@ -426,7 +426,7 @@ fn a_restore_made_before_a_clock_recovery_is_refused_at_its_swap() {
     let holder = Holder::paired(start);
     holder.clock.set(start + 50);
     holder.admit(start + 50, 1).unwrap();
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let image = root.path().join("image");
     holder
         .vault
