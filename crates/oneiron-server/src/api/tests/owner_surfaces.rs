@@ -1447,8 +1447,15 @@ async fn pack_drift_repairs_reach_the_owner() {
         },
     )
     .unwrap();
-    oneiron::saved_query::repair_pack_drift(vault, query.query_ref, &query.definition, &drift, 100)
-        .unwrap();
+    oneiron::saved_query::repair_pack_drift(
+        vault,
+        query.definition.owner_actor,
+        query.query_ref,
+        &query.definition,
+        &drift,
+        100,
+    )
+    .unwrap();
     for recipe in refused_recipes(&server) {
         let (status, _) = call(&server, "GET", "/v1/owner/pack-drift", recipe, None).await;
         assert_eq!(status, StatusCode::FORBIDDEN);

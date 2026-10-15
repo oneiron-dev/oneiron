@@ -6,8 +6,8 @@ mod one_1698_tests {
     use crate::VaultConfig;
     use crate::agent_def::{AgentCeiling, AgentScope};
     use crate::attempt_queue::{
-        ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
-        EnqueueOutcome,
+        AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome,
+        EnqueueAttempt, EnqueueOutcome,
     };
     use crate::claim::ClaimSource;
     use crate::error::ArtifactError;
@@ -57,6 +57,45 @@ mod one_1698_tests {
         status
     }
 
+    /// The lease a claim handed `record`'s runtime.
+    fn lease_of(record: &AttemptRecord) -> KillerLease {
+        KillerLease {
+            attempt: record.id,
+            lease_owner: record
+                .lease_owner
+                .clone()
+                .expect("a claimed attempt names its lease owner"),
+            attempt_count: record.attempt_count,
+        }
+    }
+
+    /// A lease no runtime holds, for a killer refused before its lease counts.
+    fn unheld(attempt: AttemptId) -> KillerLease {
+        KillerLease {
+            attempt,
+            lease_owner: "nobody".to_owned(),
+            attempt_count: 1,
+        }
+    }
+
+    /// Claims the oldest ready attempt, which must be `expected`.
+    fn claim_next(
+        queue: &AttemptQueue<'_>,
+        expected: AttemptId,
+        lease_owner: &str,
+        now: u64,
+    ) -> Result<KillerLease> {
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+            lease_owner: lease_owner.to_owned(),
+            now,
+        })?
+        else {
+            panic!("expected a lease");
+        };
+        assert_eq!(claimed.id, expected);
+        Ok(lease_of(&claimed))
+    }
+
     fn dispatch_child(
         dispatcher: &AgentDispatcher<'_>,
         target: AgentDispatchTarget,
@@ -83,6 +122,9 @@ mod one_1698_tests {
         let dispatcher = AgentDispatcher::new(&vault);
         let spawner = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 2)?);
         let non_spawner = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 3)?);
+        let leases = AttemptQueue::new(&vault);
+        let spawner_lease = claim_next(&leases, spawner.attempt.id, "worker-a", 3)?;
+        let non_spawner_lease = claim_next(&leases, non_spawner.attempt.id, "worker-b", 3)?;
         let system_child = dispatch_child(
             &dispatcher,
             seeded_target(&vault, "sys.scout"),
@@ -103,8 +145,8 @@ mod one_1698_tests {
         )?;
 
         let outcomes = [
-            dispatcher.kill_spawn(&system_child.attempt.id, &spawner.attempt.id, 7)?,
-            dispatcher.kill_spawn(&custom_child.attempt.id, &spawner.attempt.id, 8)?,
+            dispatcher.kill_spawn(&system_child.attempt.id, &spawner_lease, 7)?,
+            dispatcher.kill_spawn(&custom_child.attempt.id, &spawner_lease, 8)?,
         ];
         let killed = outcomes
             .into_iter()
@@ -112,8 +154,7 @@ mod one_1698_tests {
             .count();
         assert_eq!(killed, 2);
 
-        let proposal =
-            dispatcher.kill_spawn(&proposed_child.attempt.id, &non_spawner.attempt.id, 9)?;
+        let proposal = dispatcher.kill_spawn(&proposed_child.attempt.id, &non_spawner_lease, 9)?;
         assert_eq!(
             proposal,
             KillOutcome::Proposed(KillProposal {
@@ -159,7 +200,7 @@ mod one_1698_tests {
             1,
         )?;
         let fabricated_outcome =
-            dispatcher.kill_spawn(&fabricated_child.attempt.id, &fabricated, 2)?;
+            dispatcher.kill_spawn(&fabricated_child.attempt.id, &unheld(fabricated), 2)?;
         assert_eq!(
             fabricated_outcome,
             KillOutcome::Proposed(KillProposal {
@@ -185,8 +226,11 @@ mod one_1698_tests {
             now: 5,
         })?;
         assert_eq!(cancelled.effect, AttemptInterventionEffect::Cancelled);
-        let terminal_outcome =
-            dispatcher.kill_spawn(&terminal_child.attempt.id, &terminal_killer.attempt.id, 6)?;
+        let terminal_outcome = dispatcher.kill_spawn(
+            &terminal_child.attempt.id,
+            &unheld(terminal_killer.attempt.id),
+            6,
+        )?;
         assert_eq!(
             terminal_outcome,
             KillOutcome::Proposed(KillProposal {
@@ -239,7 +283,8 @@ mod one_1698_tests {
             2,
         )?;
 
-        let outcome = dispatcher.kill_spawn(&child.attempt.id, &non_agent.id, 3)?;
+        let lease = claim_next(&queue, non_agent.id, "worker-a", 3)?;
+        let outcome = dispatcher.kill_spawn(&child.attempt.id, &lease, 3)?;
         assert_eq!(
             outcome,
             KillOutcome::Proposed(KillProposal {
@@ -288,7 +333,8 @@ mod one_1698_tests {
         // valid agent dispatch, so it cannot be confirmed as a real killer. The old
         // `?` aborted with InvalidAgentDispatchInput; it must fail closed to Proposed
         // with the target left alive.
-        let outcome = dispatcher.kill_spawn(&child.attempt.id, &malformed_killer.id, 3)?;
+        let lease = claim_next(&queue, malformed_killer.id, "worker-a", 3)?;
+        let outcome = dispatcher.kill_spawn(&child.attempt.id, &lease, 3)?;
         assert_eq!(
             outcome,
             KillOutcome::Proposed(KillProposal {
@@ -331,7 +377,8 @@ mod one_1698_tests {
         // The killer is the child's named parent, but its envelope does not decode, so
         // it cannot be confirmed as a real killer. The old `?` aborted the call with a
         // decode error; it must fail closed to Proposed with the target left alive.
-        let outcome = dispatcher.kill_spawn(&child.attempt.id, &undecodable_killer.id, 3)?;
+        let lease = claim_next(&queue, undecodable_killer.id, "worker-a", 3)?;
+        let outcome = dispatcher.kill_spawn(&child.attempt.id, &lease, 3)?;
         assert_eq!(
             outcome,
             KillOutcome::Proposed(KillProposal {
@@ -375,7 +422,7 @@ mod one_1698_tests {
         assert_eq!(claimed_spawner.id, spawner.attempt.id);
         assert_eq!(claimed_child.id, child.attempt.id);
 
-        let outcome = dispatcher.kill_spawn(&child.attempt.id, &spawner.attempt.id, 5)?;
+        let outcome = dispatcher.kill_spawn(&child.attempt.id, &lease_of(&claimed_spawner), 5)?;
         assert_eq!(outcome, KillOutcome::CancellationRequested);
         let observed = queue.get(child.attempt.id)?.expect("child exists");
         assert_eq!(observed.state, AttemptState::Leased);
@@ -455,7 +502,7 @@ mod one_1698_tests {
 
         // Pre-lease child: stopped outright, exactly as a leased parent's is.
         assert_eq!(
-            dispatcher.kill_spawn(&queued_child.attempt.id, &spawner.attempt.id, 7)?,
+            dispatcher.kill_spawn(&queued_child.attempt.id, &lease_of(&claimed_spawner), 7)?,
             KillOutcome::Killed
         );
         assert_eq!(
@@ -476,7 +523,7 @@ mod one_1698_tests {
         };
         assert_eq!(claimed_child.id, running_child.attempt.id);
         assert_eq!(
-            dispatcher.kill_spawn(&running_child.attempt.id, &spawner.attempt.id, 9)?,
+            dispatcher.kill_spawn(&running_child.attempt.id, &lease_of(&claimed_spawner), 9)?,
             KillOutcome::CancellationRequested,
             "a landing parent may still ask its running child to stop"
         );
@@ -538,12 +585,18 @@ mod one_1698_tests {
             2,
         )?;
 
+        let lease = claim_next(
+            &AttemptQueue::new(&vault),
+            spawner.attempt.id,
+            "worker-a",
+            3,
+        )?;
         assert_eq!(
-            dispatcher.kill_spawn(&child.attempt.id, &spawner.attempt.id, 3)?,
+            dispatcher.kill_spawn(&child.attempt.id, &lease, 3)?,
             KillOutcome::Killed
         );
         assert_eq!(
-            dispatcher.kill_spawn(&child.attempt.id, &spawner.attempt.id, 4)?,
+            dispatcher.kill_spawn(&child.attempt.id, &lease, 4)?,
             KillOutcome::AlreadyTerminal
         );
         assert_eq!(
@@ -580,7 +633,7 @@ mod one_1698_tests {
         };
 
         let error = dispatcher
-            .kill_spawn(&masquerader.id, &spawner.attempt.id, 4)
+            .kill_spawn(&masquerader.id, &unheld(spawner.attempt.id), 4)
             .expect_err("non-dreamer target must be rejected");
         assert!(matches!(
             error,
@@ -657,6 +710,71 @@ mod one_1698_tests {
             panic!("expected invalid agent dispatch input");
         };
         assert_eq!(reason, "existing dedupe row belongs to a different parent");
+        Ok(())
+    }
+
+    /// F15 / H159: `kill_spawn` took the killer's attempt id on the caller's
+    /// word, and every queue read shows attempt ids, so any caller that saw a
+    /// spawner's id could stop its children, and a queued or paused spawner,
+    /// which no runtime runs, kept that standing. The killer now names the
+    /// lease it runs under; anything less only proposes.
+    #[test]
+    fn a_killer_holds_the_live_lease_of_the_spawner_it_names() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+        let dispatcher = AgentDispatcher::new(&vault);
+        let queue = AttemptQueue::new(&vault);
+        let spawner = dispatched_status(dispatcher.dispatch_default_base(None, None, None, 1)?);
+        let child = dispatch_child(
+            &dispatcher,
+            seeded_target(&vault, "sys.scout"),
+            spawner.attempt.id,
+            2,
+        )?;
+        let proposed = |killer: &KillerLease| {
+            KillOutcome::Proposed(KillProposal {
+                spawn_attempt_id: child.attempt.id,
+                proposer: killer.attempt,
+            })
+        };
+
+        // A queued spawner has no runtime: naming it proves nothing.
+        let queued = unheld(spawner.attempt.id);
+        assert_eq!(
+            dispatcher.kill_spawn(&child.attempt.id, &queued, 3)?,
+            proposed(&queued)
+        );
+
+        let lease = claim_next(&queue, spawner.attempt.id, "worker-a", 4)?;
+        // Another worker's name, or another lease generation, is not the lease.
+        for forged in [
+            KillerLease {
+                lease_owner: "worker-b".to_owned(),
+                ..lease.clone()
+            },
+            KillerLease {
+                attempt_count: lease.attempt_count + 1,
+                ..lease.clone()
+            },
+        ] {
+            assert_eq!(
+                dispatcher.kill_spawn(&child.attempt.id, &forged, 5)?,
+                proposed(&forged)
+            );
+        }
+        assert_eq!(
+            queue.get(child.attempt.id)?.expect("child exists").state,
+            AttemptState::Queued
+        );
+
+        // The runtime holding the spawner's lease stops its child.
+        assert_eq!(
+            dispatcher.kill_spawn(&child.attempt.id, &lease, 6)?,
+            KillOutcome::Killed
+        );
+        assert_eq!(
+            queue.get(child.attempt.id)?.expect("child exists").state,
+            AttemptState::Cancelled
+        );
         Ok(())
     }
 }

@@ -284,7 +284,18 @@ impl Vault {
         &self,
         task_ref: &EntityId,
     ) -> Result<Option<ConnectorSendTask>, Error> {
-        let Some(raw) = self.get_raw(task_ref)? else {
+        let rtxn = self.store.env.read_txn()?;
+        self.connector_send_task_in(&rtxn, task_ref)
+    }
+
+    /// [`Self::connector_send_task`] through the caller's transaction, so a
+    /// write that acts on the TASK's actor judges the same validated body.
+    pub(crate) fn connector_send_task_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        task_ref: &EntityId,
+    ) -> Result<Option<ConnectorSendTask>, Error> {
+        let Some(raw) = self.get_raw_in(txn, task_ref)? else {
             return Ok(None);
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -341,12 +352,22 @@ impl Vault {
                 "noncanonical counterparty-bound connector verb",
             )));
         }
-        let assignee_ref = connector_actor_id(&body.channel)?;
-        let assigned = self
-            .edges_out(task_ref)?
-            .into_iter()
-            .any(|edge| edge.kind == EdgeKind::AssignedTo && edge.target == assignee_ref);
-        if !assigned || !connector_actor_matches(self, assignee_ref, &body.channel)? {
+        let assignee_ref = connector_actor_id(&body.channel).map_err(|_| {
+            Error::Record(RecordError::InvalidTaskBody(
+                "invalid connector send channel",
+            ))
+        })?;
+        let assigned = crate::ports::EdgeStore::port_edge_neighbors(
+            self,
+            txn,
+            task_ref,
+            crate::ports::EdgeDirection::Out,
+            None,
+            crate::vault::MAX_EDGE_QUERY_RESULTS,
+        )?
+        .into_iter()
+        .any(|edge| edge.kind == EdgeKind::AssignedTo && edge.target == assignee_ref);
+        if !assigned || !connector_actor_matches(self, txn, assignee_ref, &body.channel)? {
             return Ok(None);
         }
         Ok(Some(ConnectorSendTask {
@@ -690,10 +711,11 @@ fn has_connector_send_subkind(body: &[u8]) -> Result<bool, Error> {
 
 pub(super) fn connector_actor_matches(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     actor_ref: EntityId,
     connector_class: &str,
 ) -> Result<bool, Error> {
-    let Some(raw) = vault.get_raw(&actor_ref)? else {
+    let Some(raw) = vault.get_raw_in(txn, &actor_ref)? else {
         return Ok(false);
     };
     connector_actor_raw_matches(&raw, connector_class)
