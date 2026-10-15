@@ -30,6 +30,8 @@ pub(crate) fn restore_recovery_shell_in_txn(
     vault
         .store
         .validate_public_entity_type(header.entity_type)?;
+    // An id that has been an agent stays one, on this door too (H215).
+    crate::agent_def::refuse_agent_id_retype_in_txn(&vault.store, txn, id, header.entity_type)?;
     reject_overlay_member_base_write(&vault.store, id, BaseWriteOrigin::Ordinary)?;
     crate::claim::validate_claim_write_target_in_txn(&vault.store, txn, id, false)?;
     if vault.local_hard_delete_marker_exists_in_txn(txn, id)? {
@@ -65,6 +67,13 @@ pub(crate) fn restore_recovery_shell_in_txn(
         None
     };
     crate::ports::EntityStoreMaintenance::port_retained_shell_restore(&vault.store, txn, id, blob)?;
+    // A definition's shell keeps no body to bound its id by: it pins the id
+    // at `Proposed` (on its seed's lineage, or with the lineage unread for
+    // the next put to name) unless the id already answers to a pin, so
+    // deleting the shell cannot reopen the id wider (H215).
+    if header.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF {
+        crate::agent_def::pin_stored_row_in_txn(&vault.store, txn, id)?;
+    }
     stage_entity_index_rows(
         &vault.store,
         txn,
