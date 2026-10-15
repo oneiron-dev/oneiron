@@ -880,3 +880,33 @@ fn a_foreign_owner_proof_opens_no_standing_block() -> Result<()> {
     vault.open_standing_block(&own, agent, world, "identity", 64)?;
     Ok(())
 }
+
+mod revoked_owner_credential {
+    use super::*;
+
+    /// Astra r1 on #1458: the owner's credential is revoked while the block
+    /// waits for the writer. The writing transaction refuses it.
+    #[test]
+    fn a_credential_revoked_while_the_block_waits_configures_no_standing_block() -> Result<()> {
+        let (_dir, vault) = test_vault();
+        let agent = put_person(&vault, 0x72)?;
+        let world = put_world(&vault, 0x73)?;
+        let vault = std::rc::Rc::new(vault);
+        let (owner, slip) = crate::test_util::credentialed_owner_proof(&vault, b"standing block");
+        crate::test_util::revoke_before_the_next_write(&vault, slip);
+
+        assert_eq!(
+            vault
+                .open_standing_block(&owner, agent, world, "identity", 64)
+                .unwrap_err()
+                .kind(),
+            ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert!(vault.standing_block(agent, world)?.is_none());
+        let (fresh, _) =
+            crate::test_util::credentialed_owner_proof(&vault, b"standing block again");
+        vault.open_standing_block(&fresh, agent, world, "identity", 64)?;
+        assert!(vault.standing_block(agent, world)?.is_some());
+        Ok(())
+    }
+}

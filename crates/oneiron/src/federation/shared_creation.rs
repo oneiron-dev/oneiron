@@ -102,7 +102,9 @@ impl Vault {
             return Err(invalid("shared vault id cannot be zero"));
         }
         let mut txn = self.store.env.write_txn()?;
-        let actor = owner.revalidate_in_txn(self, &txn)?;
+        // Only the vault's owner shares it: a native host's proof shows a
+        // live person, not whose vault this is.
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         if SHARED_VAULT_CREATION.contains(&self.store, &txn, &())? || has_member_grant(self, &txn)?
         {
             return Err(invalid("shared membership has already been initialized"));

@@ -49,7 +49,7 @@ impl Vault {
         {
             return Err(invalid_autonomy());
         }
-        self.record_graduation_evidence_by(evidence, actor.entity_ref(), false)
+        self.record_graduation_evidence_by(evidence, actor.entity_ref(), None)
     }
 
     /// Owner-attributed review/correction. A caller-asserted Human WriteActor
@@ -60,14 +60,17 @@ impl Vault {
         owner: &AuthenticatedOwner,
     ) -> Result<EntityId> {
         let actor = self.autonomy_owner(owner)?;
-        self.record_graduation_evidence_by(evidence, actor, true)
+        self.record_graduation_evidence_by(evidence, actor, Some(owner))
     }
 
+    /// `owner` is the proof an owner-attributed review carries: the writing
+    /// transaction checks it again, so a revocation that commits first
+    /// records nothing.
     fn record_graduation_evidence_by(
         &self,
         evidence: GraduationEvidence,
         writer: EntityId,
-        owner_authenticated: bool,
+        owner: Option<&AuthenticatedOwner>,
     ) -> Result<EntityId> {
         let scope = scope_value(&evidence.scope)?;
         token(&evidence.receipt_ref)?;
@@ -76,6 +79,9 @@ impl Vault {
         }
         let (task_ref, outcome, distance) = self.validate_graduation_review(&evidence)?;
         let mut txn = self.store.env.write_txn()?;
+        if let Some(owner) = owner {
+            owner.revalidate_in_txn(self, &txn)?;
+        }
         if self.autonomy_identity_actor(&txn, evidence.scope.identity_ref)?
             != evidence.scope.actor_ref
         {
@@ -96,7 +102,7 @@ impl Vault {
             Value::from(outcome),
             distance,
             id_value(evidence.scope.actor_ref),
-            Value::from(owner_authenticated),
+            Value::from(owner.is_some()),
             id_value(task_ref),
         ]);
         if AUTONOMY.contains(&self.store, &txn, &key)? {

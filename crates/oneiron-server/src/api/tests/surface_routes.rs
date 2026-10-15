@@ -1261,10 +1261,11 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
     assert_eq!(direct.0, StatusCode::OK);
     assert_eq!(direct.1.get(CACHE_CONTROL).unwrap(), "private, no-store");
 
-    let owner = oneiron::EntityId::now();
+    // The personal vault's owner, who shares it.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let member = oneiron::EntityId::now();
     let stranger = oneiron::EntityId::now();
-    for id in [owner, member, stranger] {
+    for id in [member, stranger] {
         server
             .vault
             .put_entity(
@@ -1676,10 +1677,11 @@ async fn blob_link_and_member_tiers_follow_pact_revocation_and_pointer_death() {
         allow_unauthenticated: false,
         ..Default::default()
     });
-    let owner = oneiron::EntityId::now();
+    // The personal vault's owner, who shares it.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let member = oneiron::EntityId::now();
     let stranger = oneiron::EntityId::now();
-    for id in [owner, member, stranger] {
+    for id in [member, stranger] {
         server
             .vault
             .put_entity(
@@ -2141,20 +2143,19 @@ async fn member_grant_scope_must_admit_the_exact_code_or_blob_export() {
             10,
         )
         .unwrap();
-    let owner = oneiron::EntityId::now();
+    // The personal vault's owner, who shares it.
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
     let member = oneiron::EntityId::now();
-    for id in [owner, member] {
-        server
-            .vault
-            .put_entity(
-                &id,
-                oneiron::registry::ENTITY_TYPE_PERSON,
-                oneiron::TimeRange { start: 1, end: 1 },
-                1,
-                b"human",
-            )
-            .unwrap();
-    }
+    server
+        .vault
+        .put_entity(
+            &member,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )
+        .unwrap();
     server
         .vault
         .append_blob_artifact_version(

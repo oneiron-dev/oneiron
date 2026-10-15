@@ -64,7 +64,7 @@ impl Vault {
                 ),
             ));
         }
-        self.persist_scoped_mcp_outbound_grant(id, intent, created_at)
+        self.persist_scoped_mcp_outbound_grant(None, id, intent, created_at)
     }
 
     /// Extends the same scoped grant vocabulary using the existing owner proof.
@@ -85,13 +85,15 @@ impl Vault {
         }
         // The owner token supplies the authentication result. Recheck it
         // against this vault: a proof another vault authenticated, or an absent
-        // or inactive owner, cannot mint authority.
+        // or inactive owner, cannot mint authority. The minting transaction
+        // checks it again, so a revocation that commits first mints nothing.
         owner.revalidate(self)?;
-        self.persist_scoped_mcp_outbound_grant(id, intent, created_at)
+        self.persist_scoped_mcp_outbound_grant(Some(owner), id, intent, created_at)
     }
 
     fn persist_scoped_mcp_outbound_grant(
         &self,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
         id: &EntityId,
         intent: &ScopedMcpGrantMintIntent,
         created_at: u64,
@@ -109,6 +111,9 @@ impl Vault {
         )?;
         let data = encode_standing_outbound_grant_body(&grant)?;
         let mut wtxn = self.store.env.write_txn()?;
+        if let Some(owner) = owner {
+            owner.revalidate_in_txn(self, &wtxn)?;
+        }
         if self.store.port_entity_record(&wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::OutboundGrantAlreadyExists));
         }

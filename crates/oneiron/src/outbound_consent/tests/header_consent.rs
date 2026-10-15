@@ -506,3 +506,38 @@ mod foreign_owner_proof {
         assert!(vault.get_standing_outbound_grant(&id).unwrap().is_some());
     }
 }
+
+mod revoked_owner_credential {
+    use super::*;
+
+    /// Astra r1 on #1458: the owner's credential is revoked while the mint
+    /// waits for the writer. The minting transaction refuses it.
+    #[test]
+    fn a_credential_revoked_while_the_mint_waits_mints_no_header_grant() {
+        let (_tmp, vault) = temp_vault();
+        let vault = std::rc::Rc::new(vault);
+        let (owner, slip) = crate::test_util::credentialed_owner_proof(&vault, b"header grant");
+        let id = entity(0xB2);
+        let mut intent = scoped_intent();
+        intent.principal_ref = owner.principal_ref().to_owned();
+        intent.tool_data_classes = vec![
+            ToolGrantDataClass::Arguments,
+            ToolGrantDataClass::XMcpHeader,
+        ];
+        crate::test_util::revoke_before_the_next_write(&vault, slip);
+
+        assert_eq!(
+            vault
+                .mint_scoped_mcp_outbound_grant_with_owner(&owner, &id, &intent, 10)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert!(vault.get_standing_outbound_grant(&id).unwrap().is_none());
+        let (fresh, _) = crate::test_util::credentialed_owner_proof(&vault, b"header grant again");
+        vault
+            .mint_scoped_mcp_outbound_grant_with_owner(&fresh, &id, &intent, 10)
+            .unwrap();
+        assert!(vault.get_standing_outbound_grant(&id).unwrap().is_some());
+    }
+}

@@ -250,6 +250,8 @@ impl Vault {
             1.0,
         );
         let now = crate::unix_seconds_now();
+        // Checked again in the writer's snapshot: a revocation that commits
+        // first subscribes nothing.
         self.batch()
             .claim_candidate(
                 &id,
@@ -261,7 +263,7 @@ impl Vault {
                 },
                 now,
             )
-            .commit()
+            .commit_with_target_guard(|txn| owner.revalidate_in_txn(self, txn).map(drop))
     }
     /// Host ingress. The event data never becomes authority. Match, live-key
     /// check, budget charge, wake enqueue and decision receipt share one txn.

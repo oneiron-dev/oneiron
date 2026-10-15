@@ -2131,3 +2131,48 @@ mod foreign_owner_proof {
             .unwrap();
     }
 }
+
+mod revoked_owner_credential {
+    use super::*;
+
+    /// Astra r1 on #1458: the owner's credential is revoked while the review
+    /// waits for the writer. The writing transaction refuses it.
+    #[test]
+    fn a_credential_revoked_while_the_review_waits_records_no_evidence() {
+        let (_dir, vault, owner, request) = fixture(ChannelIdentityAutonomyRung::DraftOnly);
+        vault
+            .apply_channel_identity_autonomy(&request, &owner)
+            .unwrap();
+        let scope = review_scope(&request);
+        let evidence = persist_review(&vault, &scope, 1, DraftReviewOutcome::ApprovedUntouched);
+        let vault = std::rc::Rc::new(vault);
+        let (bound, slip) =
+            crate::test_util::credentialed_owner_proof(&vault, b"graduation review");
+        crate::test_util::revoke_before_the_next_write(&vault, slip);
+
+        assert_eq!(
+            vault
+                .record_graduation_evidence_as_owner(evidence.clone(), &bound)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert!(
+            vault
+                .evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now())
+                .unwrap()
+                .is_none()
+        );
+        let (fresh, _) =
+            crate::test_util::credentialed_owner_proof(&vault, b"graduation review again");
+        vault
+            .record_graduation_evidence_as_owner(evidence, &fresh)
+            .unwrap();
+        assert!(
+            vault
+                .evaluate_graduation_offer(&scope, 1, crate::unix_seconds_now())
+                .unwrap()
+                .is_some()
+        );
+    }
+}
