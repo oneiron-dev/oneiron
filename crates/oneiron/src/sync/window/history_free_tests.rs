@@ -988,7 +988,7 @@ fn a_replacement_keeps_every_write_the_hub_never_saw() {
                 "{work:?}: an unsent local row left LMDB"
             );
         }
-        if let Some(ours) = erased {
+        if let Some(ours) = &erased {
             assert!(
                 entities.get(&shared).is_none(),
                 "{work:?}: a carried write put a hard-deleted body back"
@@ -998,7 +998,7 @@ fn a_replacement_keeps_every_write_the_hub_never_saw() {
                 vec![ReplacementConflict {
                     map: "entities".to_owned(),
                     key: shared.clone(),
-                    held: Some(LoroValue::Binary(ours.into())),
+                    held: Some(LoroValue::Binary(ours.clone().into())),
                 }],
                 "{work:?}: the edit delete beat is not named"
             );

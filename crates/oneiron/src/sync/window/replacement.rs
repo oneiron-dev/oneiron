@@ -207,7 +207,7 @@ pub struct ReplacementConflict {
 fn carry_over_unseen_writes(
     old: &LoroDoc,
     candidate: &LoroDoc,
-) -> Result<(Vec<ReplacementConflict>, BTreeSet<(String, String)>)> {
+) -> Result<(Vec<ReplacementConflict>, RootKeys)> {
     old.commit();
     let old_vv = old.oplog_vv();
     let seen = candidate.oplog_vv();
@@ -346,10 +346,7 @@ fn carry_over_unseen_writes(
 /// Delete wins over what this vault wrote into `candidate`: a `written` key holding the body of
 /// an entity the candidate hard-deleted, or an edge naming one, is taken back out and returned as
 /// a conflict with the value it held, so no carried write re-authors an erased body.
-fn delete_wins(
-    candidate: &LoroDoc,
-    written: &BTreeSet<(String, String)>,
-) -> Result<Vec<ReplacementConflict>> {
+fn delete_wins(candidate: &LoroDoc, written: &RootKeys) -> Result<Vec<ReplacementConflict>> {
     let tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));
     let hard = |id: &EntityId| {
         tombstones
@@ -378,6 +375,9 @@ fn delete_wins(
     candidate.commit();
     Ok(conflicts)
 }
+
+/// Root-map keys, as (map, key).
+type RootKeys = BTreeSet<(String, String)>;
 
 /// Per root-map key (map, key): the newest operation's Lamport and peer, and the value it wrote
 /// (`None` for a removal).
