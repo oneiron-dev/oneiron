@@ -252,9 +252,8 @@ in `embedder_answer_bytes` before the model makes it, and keeps it until it is
 delivered. Past `embedder_requests`, past a full budget or
 `embedder_answer_bytes`, and past the few requests the model works on at once,
 a request with the key waits its turn in order and is never refused for how
-many wait. Each wait ends at
-`queue_wait_timeout_ms` (503, to retry, nothing started), and crossing the
-row or a budget logs a `limit_crossed` question. A body has 120 s to arrive
+many wait. Each wait ends at `queue_wait_timeout_ms` (503, to retry, nothing
+started), and crossing a row or a budget logs a `limit_crossed` question. A body has 120 s to arrive
 once its budget is reserved (408 after).
 
 On a GPU host, build with candle's CUDA kernels (the CUDA toolkit's `nvcc` on
