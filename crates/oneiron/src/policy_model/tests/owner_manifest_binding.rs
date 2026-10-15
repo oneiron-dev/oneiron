@@ -823,7 +823,11 @@ fn an_owner_answer_naming_no_row_fails_the_plane_open() -> Result<()> {
         &backend,
         &lease("policy-invented-row"),
     ))?;
-    assert_eq!(outcome.action, PolicyEnforcementAction::Allow);
+    assert_eq!(outcome.action, PolicyEnforcementAction::Skipped);
+    assert_eq!(
+        outcome.verdict.decision,
+        PolicyClassifyDecision::Skipped(PolicySkipReason::ResponseUnusable)
+    );
     assert!(outcome.custom_tier_skipped);
     Ok(())
 }
