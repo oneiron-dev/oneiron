@@ -64,7 +64,7 @@ fn a_late_reference_at_an_id_another_kind_holds_leaves_that_row_alone() -> Resul
 /// the erase did not reach yet: a `blob.version` claim naming `erased` with `OTHER_ONLY`, as a
 /// second vault appended them to the artifact before the erase reached it. `other` still holds
 /// `OTHER_ONLY` as v1 here.
-fn erased_with_late_reference() -> Result<(Shared, tempfile::TempDir, Vault, EntityId)> {
+pub(super) fn erased_with_late_reference() -> Result<(Shared, tempfile::TempDir, Vault, EntityId)> {
     let origin = Shared::open()?;
     let (dir, appender) = open_test_vault_with(embedding_test_config());
     replicate(&origin.vault, &appender, &[origin.person, origin.erased])?;

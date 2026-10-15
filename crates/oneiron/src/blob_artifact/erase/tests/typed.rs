@@ -178,6 +178,45 @@ fn a_deleted_record_at_the_bytes_id_erases_no_bytes() -> Result<()> {
     Ok(())
 }
 
+/// Bug repro (#1465 R3, Astra 2): a late reference widens an erase only as the replicated put
+/// would admit it. The same claim carrying a forged machine signature, which that put refuses,
+/// leaves the bytes it names and every reference to them as they were.
+#[test]
+fn a_forged_machine_claim_widens_no_erase() -> Result<()> {
+    let (origin, _dir, appender, late) = super::late::erased_with_late_reference()?;
+    let vault = &origin.vault;
+    let raw = appender.get_raw(&late)?.expect("the late reference");
+    let header = EntityMetadataHeader::parse(&raw).expect("stored header");
+    let mut body =
+        crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)?;
+    let mut evidence = match body.evidence.take() {
+        Some(rmpv::Value::Map(entries)) => entries,
+        _ => Vec::new(),
+    };
+    evidence.push((
+        rmpv::Value::from("machine_signature"),
+        rmpv::Value::Binary(b"forged".to_vec()),
+    ));
+    body.evidence = Some(rmpv::Value::Map(evidence));
+    let data = crate::claim::encode_claim_body(&body)?;
+    let forged = EntityId::now();
+    let refused = vault.with_write_txn_grouped(|txn| {
+        vault.refuse_erased_blob_arrival_in_txn(txn, &forged, &header, &data)
+    })?;
+    assert!(!refused, "the gate acted on a body the put refuses");
+    let txn = vault.store.env.read_txn()?;
+    assert!(
+        content_erased(&vault.store, &txn, blake3::hash(OTHER_ONLY).as_bytes())?.is_none(),
+        "a forged claim erased the bytes it names"
+    );
+    drop(txn);
+    assert_eq!(
+        vault.read_blob_artifact_version(&origin.other, 1)?,
+        Some(OTHER_ONLY.to_vec())
+    );
+    Ok(())
+}
+
 fn fenced(vault: &Vault, id: &EntityId) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
     crate::deletion::ROW_DELETION_FENCE.contains(&vault.store, &txn, &HexId(*id))
