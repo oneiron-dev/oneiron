@@ -137,6 +137,18 @@ pub(super) fn fold_as_install(
             .entry(entry.signer.public_key.clone())
             .and_modify(|seq| *seq = (*seq).max(entry.seq))
             .or_insert(entry.seq);
+        if let AuthorityOp::WorldKeyWraps(record) = &entry.op
+            && let Ok(hash) = authority_entry_hash(entry)
+            && fold.valid_entries.contains(&hash)
+        {
+            let head = fold
+                .key_record_heads
+                .entry((entry.signer.public_key.clone(), record.key.world))
+                .or_insert((entry.seq, hash));
+            if entry.seq > head.0 {
+                *head = (entry.seq, hash);
+            }
+        }
     }
     fold
 }

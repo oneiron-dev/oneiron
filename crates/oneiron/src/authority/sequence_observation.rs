@@ -103,14 +103,19 @@ pub(super) fn authority_observation_peer_id(signer: &AuthorityKey) -> String {
     hasher.finalize().to_hex().to_string()
 }
 
-/// A signer's sequences order within one scope: the main log, or one world's
-/// side branch. Entries of different worlds never name each other, so one
-/// world's later entry is no rollback floor for another's.
+/// A signer's sequences order within one scope: the main log, one world's
+/// settings edits, or one world's key records. Entries of different worlds
+/// never name each other, so one world's later entry is no rollback floor
+/// for another's. A key record names the world's live edits but no later
+/// edit names it, so a settings edit is no floor for a key record either;
+/// a machine's key records of a world name its previous one, so a later one
+/// that arrives first vouches for the earlier (Astra #1422b F1).
 fn sequence_key(entry: &AuthorityLogEntry) -> String {
     let peer = authority_observation_peer_id(entry.signer_key());
-    match super::world_privacy::side_world(&entry.op) {
-        None => peer,
-        Some(world) => format!("{peer}:{}", world.to_hex()),
+    match (&entry.op, super::world_privacy::side_world(&entry.op)) {
+        (_, None) => peer,
+        (AuthorityOp::WorldKeyWraps(_), Some(world)) => format!("{peer}:{}:keys", world.to_hex()),
+        (_, Some(world)) => format!("{peer}:{}", world.to_hex()),
     }
 }
 

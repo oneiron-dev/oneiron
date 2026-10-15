@@ -7,7 +7,7 @@
 //! and the transaction refuses when the machine id changed in between. No
 //! key, seed or secret is ever written; only the signed records are.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use ed25519_dalek::SigningKey;
@@ -20,7 +20,8 @@ use super::{
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, AuthorityLogEntry, AuthorityOp, Destination, EffectiveRead,
     FoldedWorldKey, MAX_PARENTS, RecoveryRootId, WORLD_KEY_WRAPS_MAX, WorldKeyWrapsRecord,
-    invalid_authority, next_sequence, owner_root_record_in_txn, sign_side_entry, standing_rows,
+    invalid_authority, key_record_head, next_sequence, owner_root_record_in_txn, sign_side_entry,
+    standing_rows,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
@@ -54,22 +55,50 @@ pub(crate) struct MachineSecret {
     pub(crate) secret: HybridSecretKey,
 }
 
-/// One machine's next sequences inside one door transaction.
-pub(crate) struct SequenceCounter(Option<u64>);
+/// The parents one key record names beside its signer's previous record of
+/// the world.
+const RECORD_PARENTS: usize = MAX_PARENTS - 1;
+
+/// One machine's next sequences inside one door transaction, and the last
+/// key record it wrote there for each world.
+pub(crate) struct SequenceCounter {
+    last: Option<u64>,
+    chained: BTreeMap<EntityId, AuthorityEntryHash>,
+}
 
 impl SequenceCounter {
     pub(crate) fn new() -> Self {
-        Self(None)
+        Self {
+            last: None,
+            chained: BTreeMap::new(),
+        }
     }
 
     fn next(&mut self, fold: &AuthorityFold, signing: &SigningKey) -> Result<u64> {
         let signer = crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
-        let next = match self.0 {
+        let next = match self.last {
             None => next_sequence(fold, &signer)?,
             Some(last) => last.checked_add(1).ok_or_else(invalid_authority)?,
         };
-        self.0 = Some(next);
+        self.last = Some(next);
         Ok(next)
+    }
+
+    /// The machine's previous key record of `world`, which its next one
+    /// names. A machine's key records of a world thus form one chain, and a
+    /// receiver that stores a later one first still admits the earlier one
+    /// under its sequence floor (Astra #1422b F1).
+    fn chain(
+        &self,
+        fold: &AuthorityFold,
+        signing: &SigningKey,
+        world: EntityId,
+    ) -> Option<AuthorityEntryHash> {
+        let signer = crate::authority::AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+        self.chained
+            .get(&world)
+            .copied()
+            .or_else(|| key_record_head(fold, &signer, world))
     }
 }
 
@@ -418,8 +447,8 @@ impl Vault {
         if base.union(&authors).count() <= MAX_PARENTS / 2 {
             base.extend(authors);
         }
-        if base.len() > MAX_PARENTS {
-            self.world_keys.frontier_wide(world, base.len());
+        if base.len() > RECORD_PARENTS {
+            self.world_keys.frontier_wide(world, base.len() + 1);
             return Ok(Err(FrontierWide(
                 "the world's key rests on more rows than one record names: merge this world's \
                  settings from one machine that sees every edit, then retry",
@@ -434,7 +463,7 @@ impl Vault {
                 WrapRecipient::RecoveryRoot(_) => BTreeSet::new(),
             };
             let full = |parents: &BTreeSet<_>, wraps: &Vec<_>| {
-                parents.union(&rows).count() > MAX_PARENTS || wraps.len() == WORLD_KEY_WRAPS_MAX
+                parents.union(&rows).count() > RECORD_PARENTS || wraps.len() == WORLD_KEY_WRAPS_MAX
             };
             if full(&parents, &wraps) && !wraps.is_empty() {
                 chunks.push((
@@ -444,7 +473,7 @@ impl Vault {
             }
             if full(&parents, &wraps) {
                 self.world_keys
-                    .frontier_wide(world, parents.union(&rows).count());
+                    .frontier_wide(world, parents.union(&rows).count() + 1);
                 return Ok(Err(FrontierWide(
                     "a recipient's standing and the world's edits are more rows than one record \
                      names: merge this world's settings from one machine that sees every edit, \
@@ -490,7 +519,7 @@ impl Vault {
         if let Some(pinned) = self.pinned_root_recipient_in_txn(txn, fold)? {
             parents.insert(pinned.entry);
         }
-        let room = MAX_PARENTS
+        let room = RECORD_PARENTS
             .checked_sub(parents.len())
             .ok_or_else(invalid_authority)?;
         let live: BTreeSet<AuthorityEntryHash> = fold
@@ -546,7 +575,9 @@ impl Vault {
         let now = self.instant_in_txn(txn)?.secs();
         let mut rows: Vec<(AuthorityLogEntry, TimeRange, u64)> = Vec::new();
         let mut hashes = Vec::new();
-        for (parents, wraps) in chunks {
+        let world = key.id().world;
+        for (mut parents, wraps) in chunks {
+            parents.extend(seq.chain(fold, signing, world));
             let wraps = wraps
                 .into_iter()
                 .map(|(recipient, public)| {
@@ -570,7 +601,9 @@ impl Vault {
                 AuthorityOp::WorldKeyWraps(record),
                 now,
             )?;
-            hashes.push(crate::authority::authority_entry_hash(&entry)?);
+            let hash = crate::authority::authority_entry_hash(&entry)?;
+            seq.chained.insert(world, hash);
+            hashes.push(hash);
             rows.push((
                 entry,
                 TimeRange {

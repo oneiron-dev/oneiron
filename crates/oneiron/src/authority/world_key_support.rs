@@ -19,6 +19,18 @@ pub(crate) fn next_sequence(fold: &AuthorityFold, signer: &AuthorityKey) -> Resu
     }
 }
 
+/// The key record `signer` last wrote for `world` on `fold`, which its next
+/// key record of the world names (Astra #1422b F1).
+pub(crate) fn key_record_head(
+    fold: &AuthorityFold,
+    signer: &AuthorityKey,
+    world: EntityId,
+) -> Option<AuthorityEntryHash> {
+    fold.key_record_heads
+        .get(&(signer.clone(), world))
+        .map(|(_, hash)| *hash)
+}
+
 /// One entry of `fold`'s vault that `signing` signs alone over `parents`.
 pub(crate) fn sign_side_entry(
     fold: &AuthorityFold,
