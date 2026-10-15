@@ -1704,6 +1704,38 @@ fn git_wire_and_repo_mutation_share_one_repository_coordinator() {
     }
 }
 
+/// #1464 merged with #1456's maintenance hold (Engine bar, arm c): a writer
+/// that waits for the repository waits for another writer holding it, and
+/// takes it once that writer is done.
+#[test]
+fn a_writer_waits_for_another_writer_and_takes_the_repository_after_it() {
+    let repo = init_repo();
+    let common_dir = repo.path().join(".git").canonicalize().expect("common dir");
+    let (held, holding) = std::sync::mpsc::channel();
+    let first = {
+        let common_dir = common_dir.clone();
+        std::thread::spawn(move || {
+            let guard = lock_repository(&common_dir).expect("the first writer");
+            held.send(()).expect("held");
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let released = std::time::Instant::now();
+            drop(guard);
+            released
+        })
+    };
+    holding
+        .recv()
+        .expect("the first writer holds the repository");
+    let second = lock_repository(&common_dir).expect("the second writer is given the repository");
+    let taken = std::time::Instant::now();
+    let released = first.join().expect("the first writer");
+    assert!(
+        taken >= released,
+        "the second writer took the repository only once the first was done"
+    );
+    drop(second);
+}
+
 // ---------------------------------------------------------------------------
 // M7 — pinned checkout custody
 // ---------------------------------------------------------------------------
