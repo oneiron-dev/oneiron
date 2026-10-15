@@ -147,6 +147,7 @@ fn raw_control_capability(key: &str, value: &JsonValue) -> Option<LlmCapability>
         | "cachedContent"
         | "cached_content" => Some(LlmCapability::ToolCalling),
         "structured_outputs"
+        | "output_format"
         | "guided_json"
         | "json_schema"
         | "responseSchema"
