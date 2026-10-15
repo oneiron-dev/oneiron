@@ -1207,11 +1207,6 @@ fn mixed_room_messages() -> (
             crate::conversation::HistoryChoice::Share,
         )
         .expect("join");
-    // Membership reads nothing, and Bob is not the vault's owner (H149): he
-    // reads the room's rows by an explicit read grant.
-    vault
-        .install_read_permit_for_test(crate::WriteActor::new(bob, EdgeActorClass::Human))
-        .expect("Bob's read grant");
     let first = vault
         .memory(alice, EdgeActorClass::Human)
         .witness(&WitnessTurn {
@@ -1241,9 +1236,11 @@ fn mixed_room_messages() -> (
             occurred_at: 11,
         })
         .expect("second actor appends to the first TURN");
+    // Bob is not the vault's owner (H149), and the room's rows carry no
+    // record scope a read grant could name, so the owner resolves his message.
     let b_message = EntityId::from_hex(
         &vault
-            .memory(bob, EdgeActorClass::Human)
+            .memory(alice, EdgeActorClass::Human)
             .get_entity(&second.message_short_ids[0])
             .unwrap()
             .value
@@ -1291,9 +1288,10 @@ fn per_person_room_erasure_sweeps_messages_inside_another_persons_turn() {
     assert_eq!(outcomes.len(), 1);
     assert!(outcomes[0].receipt_id.is_some());
     assert!(vault.get(&b_message).unwrap().is_none());
+    // Read as the owner, who read it before (Bob is not the vault's owner).
     assert!(
         vault
-            .memory(bob, EdgeActorClass::Human)
+            .memory(alice, EdgeActorClass::Human)
             .get_entity(&b_message.to_hex())
             .unwrap()
             .is_none()
@@ -1447,9 +1445,10 @@ fn persisted_personal_turn_tombstone_erases_only_its_authored_messages_on_receiv
                 .unwrap()
         );
         assert!(vault.get(&b_message).unwrap().is_some());
+        // Bob's message still reads through the facade, as the owner reads it.
         assert!(
             vault
-                .memory(bob, EdgeActorClass::Human)
+                .memory(alice, EdgeActorClass::Human)
                 .get_entity(&b_message.to_hex())
                 .unwrap()
                 .is_some()
