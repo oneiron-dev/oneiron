@@ -4,8 +4,9 @@
 //!
 //! # Custody classes (S1/S2)
 //!
-//! * `custody-portable` — the value may replicate beyond this device (the
-//!   default reach; the ONE-1865 per-credential dial narrows it).
+//! * `custody-portable` — the value may leave this device (the default
+//!   reach; the ONE-1865 per-credential dial narrows it). No sync door
+//!   carries it yet: see the seal below.
 //! * `custody-device-bound` — the value is pinned to this device.
 //! * `cross-vault` — door-only: the value never replicates at all.
 //!
@@ -29,8 +30,9 @@
 //! vault DEK plane** — the same at-rest protection every entity body gets.
 //! The custody discipline is about planes, not a second encryption layer:
 //! the value NEVER leaves this body into claims (secrets are never claims),
-//! into same-vault sync only for portable credentials without the device-only dial;
-//! never into cross-vault export, receipts, or logs. `Debug`
+//! same-vault sync, cross-vault export, receipts, or logs. A peer cannot prove
+//! the owner wrote a custody body, so every replicated door refuses the type
+//! byte and every sync egress drops it (`reject_secret_custody_byte`). `Debug`
 //! for the record redacts the value; `SecretCustodyMetadata` has no value
 //! field by construction.
 //!
@@ -59,7 +61,6 @@ mod codec;
 mod doors;
 mod floor;
 mod owner_door;
-mod replication;
 mod types;
 
 /// MessagePack keys the custody floor reads out of POLICY_MANIFEST bodies.
@@ -74,7 +75,7 @@ mod floor_keys {
     pub(super) const ENV_BINDINGS: &str = "secret.custody.env_bindings";
 }
 
-pub(crate) use self::codec::{custody_sync_allowed, reject_secret_custody_byte};
+pub(crate) use self::codec::{CUSTODY_SEAL_REASON, reject_secret_custody_byte};
 pub use self::codec::{decode_secret_custody_body, encode_secret_custody_body};
 pub(crate) use self::doors::{
     SecretCustodyAdmission, put_secret_custody_in_txn, read_secret_custody_admission_in_txn,
@@ -83,9 +84,6 @@ pub(crate) use self::doors::{
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 pub use self::owner_door::{
     ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered,
-};
-pub(crate) use self::replication::{
-    plan_replicated_name_index, stage_replicated_name_index, validate_replicated_custody_put,
 };
 pub use self::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,

@@ -82,8 +82,8 @@ pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()>
 }
 
 /// Removes local-only diagnostic and secret-custody carriers from the window
-/// doc. Diagnostic observations never sync; secret custody follows its
-/// same-vault locality predicate. Neither refused body may ship in an update.
+/// doc. Diagnostic observations and secret custody never sync. Neither
+/// refused body may ship in an update.
 /// The write-side mirror (`reverse_rematerialize`) already refuses to
 /// insert one; this is the export-side backstop for a carrier that landed
 /// before the seal or arrived from a peer. Deleting the row does not erase its
@@ -105,7 +105,6 @@ pub(super) fn scrub_local_only_carriers(
     let edges_map = doc.get_map("edges");
     let mut custody_ids = HashSet::new();
     let mut malformed_key_carriers: Vec<String> = Vec::new();
-    let mut portable_ids = Vec::new();
     map_for_each_value_bytes(&entities_map, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
         let lfs_chunk = EntityId::from_hex(raw_key)
@@ -123,26 +122,11 @@ pub(super) fn scrub_local_only_carriers(
         }
         match EntityId::from_hex(raw_key) {
             Ok(id) if id.to_hex() == raw_key => {
-                if lfs_chunk
-                    || is_unsyncable_secret_custody(blob)
-                    || is_delegated_channel_identity_carrier(blob)
-                {
-                    custody_ids.insert(id);
-                } else {
-                    portable_ids.push(id);
-                }
+                custody_ids.insert(id);
             }
             _ => malformed_key_carriers.push(raw_key.to_owned()),
         }
     });
-    for id in portable_ids {
-        if vault
-            .get_raw_unsealed(&id)?
-            .is_some_and(|raw| is_unsyncable_secret_custody(&raw))
-        {
-            custody_ids.insert(id);
-        }
-    }
     // Pin before touching the live map. If storage fails, the carrier stays
     // visible to the next scrub instead of leaving unpinned private history.
     if !custody_ids.is_empty() || !malformed_key_carriers.is_empty() {
@@ -195,6 +179,35 @@ pub(super) fn scrub_local_claim_carriers(
     let edges = doc.get_map("edges");
     let rtxn = vault.store.env.read_txn()?;
     let (mut keys, mut ids) = withheld_claim_carriers(vault, &rtxn, &entities, &edges)?;
+    // The stored row decides here, not the carrier: a peer's carrier of
+    // another type at the id of a CLAIM deleted here goes with the CLAIM's
+    // shell (or under it, for a retained shell). Each such carrier at an id
+    // deleted here marks first, as every local removal does.
+    let mut deleted_carriers = Vec::new();
+    let mut failure = None;
+    map_for_each_value_bytes(&entities, |raw_key, blob| {
+        let (Ok(id), Some(carrier)) = (EntityId::from_hex(raw_key), blob) else {
+            return;
+        };
+        if failure.is_some() || !ids.contains(&id) {
+            return;
+        }
+        let deleted = vault
+            .store
+            .entities
+            .get(&rtxn, id.as_bytes())
+            .and_then(|raw| {
+                crate::deletion::row_deletion_marked(&vault.store, &rtxn, &id, raw.as_deref())
+            });
+        match deleted {
+            Ok(true) => deleted_carriers.push((id, carrier.to_vec())),
+            Ok(false) => {}
+            Err(error) => failure = Some(error),
+        }
+    });
+    if let Some(error) = failure {
+        return Err(error);
+    }
     // An exact UserDelete shell with a matching local deletion address is a
     // portable active carrier, not a malformed claim. Its world witness is
     // emitted beside it so a fresh replica can prove residence without an
@@ -220,6 +233,11 @@ pub(super) fn scrub_local_claim_carriers(
         }
     }
     drop(rtxn);
+    super::tombstones::mark_removed_carriers_first(
+        vault,
+        super::tombstones::CarrierRemoval::LocalClaimScrub,
+        &deleted_carriers,
+    )?;
     for id in &retained {
         ids.remove(id);
         keys.retain(|raw_key| EntityId::from_hex(raw_key).ok().as_ref() != Some(id));

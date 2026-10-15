@@ -60,7 +60,11 @@ fn history(turn: oneiron::EntityId, reader: oneiron::EntityId) -> Request<Body> 
 /// A delegated board reader the disclosure clamp serves: a counterparty
 /// contact cleared for everything. A reader with no contact is cleared for
 /// nothing, and its board shows no rows.
-fn cleared_reader(server: &SyncServer, principal: oneiron::EntityId, identity: oneiron::EntityId) {
+pub(super) fn cleared_reader(
+    server: &SyncServer,
+    principal: oneiron::EntityId,
+    identity: oneiron::EntityId,
+) {
     seed_counterparty_contact(server, principal, identity, "board-reader@example.test");
     seed_disclosure_scope(server, principal, oneiron::federation::Scope::top());
 }
@@ -781,4 +785,282 @@ async fn a_keyed_board_turn_retry_replays_its_first_success() {
         refused.to_string().contains("board_document_unreadable"),
         "{refused:#}"
     );
+}
+
+/// F16 H311: a board delivers only the notifications its reader reads. A
+/// notification with no recipient marker is for every caller that reads it,
+/// never for one whose grant reads no notification.
+#[tokio::test]
+async fn a_board_delivers_no_notification_its_reader_cannot_read() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x2516_0101);
+    let notice = seeded_test_entity_id(0x2516_0102);
+    server
+        .vault
+        .put_entity(
+            &notice,
+            oneiron::registry::ENTITY_TYPE_NOTIFICATION,
+            oneiron::TimeRange { start: 2, end: 2 },
+            2,
+            &rmp_serde::to_vec_named(&json!({ "title": "vault-wide notice" })).unwrap(),
+        )
+        .unwrap();
+    let delivered = || async {
+        let (status, board) =
+            route_json(server.clone(), hydrate(principal, "core:read", &json!({}))).await;
+        assert_eq!(status, StatusCode::OK, "{board:#}");
+        board["notifications"]
+            .to_string()
+            .contains(&notice.to_hex())
+    };
+    restrict_principal_read_types(&server, principal, &[oneiron::registry::ENTITY_TYPE_TURN]);
+    assert!(
+        !delivered().await,
+        "a notification the reader cannot read is not its own"
+    );
+    restrict_principal_read_types(
+        &server,
+        principal,
+        &[
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::registry::ENTITY_TYPE_NOTIFICATION,
+        ],
+    );
+    assert!(
+        delivered().await,
+        "a reader that reads the notification receives it"
+    );
+}
+
+/// F16 (S-F1, round 4): a board's session prefix counts and dates no row
+/// for any key. The vault's counts span rows no key reads all of (another
+/// principal's claims), so a narrowed reader, the host root and the owner's
+/// own credential all read `{}` and `null`, and a hidden row moves neither.
+#[tokio::test]
+async fn a_board_counts_and_dates_nothing_for_any_key() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x2516_0111);
+    restrict_principal_read_types(&server, principal, &[oneiron::registry::ENTITY_TYPE_TURN]);
+    let owner = test_bearer(&format!(
+        "principal_ref={};actor_class=human",
+        server.vault.ensure_embedded_owner_actor().unwrap().to_hex()
+    ));
+    let sessions = || async {
+        let mut sessions = Vec::new();
+        for bearer in [
+            test_bearer(&format!(
+                "scope=core:read;principal_ref={}",
+                principal.to_hex()
+            )),
+            owner_bearer(),
+            owner.clone(),
+        ] {
+            let (status, board) = route_json(
+                server.clone(),
+                core_request_with_authz("POST", "/v1/core/context-board", bearer, Some(&json!({}))),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{board:#}");
+            assert_eq!(board["session"]["counts"], json!({}), "{board:#}");
+            assert!(board["session"]["last_activity"].is_null(), "{board:#}");
+            sessions.push(board["session"].clone());
+        }
+        sessions
+    };
+    // FACET-READ: the board door refuses a credential limited to a facet
+    // before it reads any row, so a hidden row moves its answer no more.
+    let faceted = || async {
+        let bearer = test_bearer(&format!(
+            "scope=core:read;facets={}",
+            seeded_test_entity_id(0x2516_0113).to_hex()
+        ));
+        let (status, mut refused) = route_json(
+            server.clone(),
+            core_request_with_authz("POST", "/v1/core/context-board", bearer, Some(&json!({}))),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{refused:#}");
+        refused["error"]
+            .as_object_mut()
+            .unwrap()
+            .remove("requestId");
+        refused
+    };
+    let before = sessions().await;
+    let refused = faceted().await;
+    put_person(
+        &server,
+        seeded_test_entity_id(0x2516_0112),
+        "hidden counted person",
+    );
+    assert_eq!(
+        sessions().await,
+        before,
+        "a hidden row moves no count or date"
+    );
+    assert_eq!(faceted().await, refused);
+}
+
+/// F16 (A-F6): a keyed board's replay re-admits the notifications it
+/// delivered under its reader's read as it stands now. Once that read reads
+/// no notification, the replay is refused as a board naming an unreadable
+/// document is.
+#[tokio::test]
+async fn a_board_replay_delivers_no_notification_its_reader_no_longer_reads() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x2516_0121);
+    let notice = seeded_test_entity_id(0x2516_0122);
+    server
+        .vault
+        .put_entity(
+            &notice,
+            oneiron::registry::ENTITY_TYPE_NOTIFICATION,
+            oneiron::TimeRange { start: 2, end: 2 },
+            2,
+            &rmp_serde::to_vec_named(&json!({ "title": "replayed notice" })).unwrap(),
+        )
+        .unwrap();
+    // A board's owner is a row: its history is recorded against it.
+    put_person(&server, principal, "notice reader");
+    let turn = seeded_test_entity_id(0x2516_0123);
+    put_turn(&server, turn, principal);
+    let keyed = || {
+        let mut request = hydrate(
+            principal,
+            "core:read,core:write",
+            &json!({
+                "retrieval": {"query": "unrelated empty query", "limit": 1},
+                "session": {"session_id": principal.to_hex()},
+                "turn": {"id": turn.to_hex()}
+            }),
+        );
+        request.headers_mut().insert(
+            "Idempotency-Key",
+            axum::http::HeaderValue::from_static("board-notice-retry"),
+        );
+        request
+    };
+    restrict_principal_read_types(
+        &server,
+        principal,
+        &[
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::registry::ENTITY_TYPE_NOTIFICATION,
+        ],
+    );
+    let (status, first) = route_json(server.clone(), keyed()).await;
+    assert_eq!(status, StatusCode::OK, "{first:#}");
+    assert!(
+        first["notifications"]
+            .to_string()
+            .contains(&notice.to_hex()),
+        "{first:#}"
+    );
+    let (status, retried) = route_json(server.clone(), keyed()).await;
+    assert_eq!(status, StatusCode::OK, "{retried:#}");
+    assert_eq!(retried, first);
+
+    restrict_principal_read_types(&server, principal, &[oneiron::registry::ENTITY_TYPE_TURN]);
+    let (status, refused) = route_json(server.clone(), keyed()).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused:#}");
+    assert!(
+        refused.to_string().contains("board_document_unreadable"),
+        "{refused:#}"
+    );
+}
+
+/// F16 round 3 (Astra F1): a keyed board's replay re-admits every contact its
+/// pack resolved: one it stamped as known, and one the request named by ref,
+/// whose stored label a revoked contact resolves to. Once its reader reads no
+/// contact, the replay is refused. A fresh board would stamp the pair with
+/// the caller's own label and refuse the ref as a missing one.
+#[tokio::test]
+async fn a_keyed_board_replays_no_contact_its_reader_no_longer_reads() {
+    use oneiron::registry::{ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_TURN};
+    let (_dir, server) = interlocutor_test_server();
+    let principal = seeded_test_entity_id(0x2516_0131);
+    let identity = seeded_test_entity_id(0x2516_0132);
+    let known = seeded_test_entity_id(0x2516_0133);
+    let revoked = seeded_test_entity_id(0x2516_0134);
+    seed_counterparty_contact(&server, known, identity, "known@example.com");
+    seed_counterparty_contact(&server, revoked, identity, "revoked@example.com");
+    server
+        .vault
+        .revoke_counterparty_contact(&revoked, 200)
+        .unwrap();
+    // A board's owner is a row: its history is recorded against it.
+    put_person(&server, principal, "contact reader");
+    let boards = [
+        (
+            json!({
+                "channel_identity_ref": identity.to_hex(),
+                "counterparty": "known@example.com"
+            }),
+            "board-known-contact",
+            known.to_hex(),
+            seeded_test_entity_id(0x2516_0135),
+        ),
+        (
+            json!({ "contact_ref": revoked.to_hex() }),
+            "board-revoked-contact",
+            "revoked@example.com".to_owned(),
+            seeded_test_entity_id(0x2516_0136),
+        ),
+    ];
+    let keyed = |party: &Value, key: &'static str, turn: oneiron::EntityId| {
+        let mut request = hydrate(
+            principal,
+            "core:read,core:write",
+            &json!({
+                "retrieval": {
+                    "query": "unrelated empty query",
+                    "limit": 1,
+                    "interlocutors": { "third_parties": [party] }
+                },
+                "session": {"session_id": key},
+                "turn": {"id": turn.to_hex()}
+            }),
+        );
+        request
+            .headers_mut()
+            .insert("Idempotency-Key", axum::http::HeaderValue::from_static(key));
+        route_json(server.clone(), request)
+    };
+    restrict_principal_read_types(
+        &server,
+        principal,
+        &[ENTITY_TYPE_TURN, ENTITY_TYPE_COUNTERPARTY_CONTACT],
+    );
+    for (party, key, speaker, turn) in &boards {
+        put_turn(&server, *turn, principal);
+        let (status, first) = keyed(party, key, *turn).await;
+        assert_eq!(status, StatusCode::OK, "{key}: {first:#}");
+        assert!(
+            first["pack"]["interlocutors"]
+                .to_string()
+                .contains(speaker.as_str()),
+            "{key}: {first:#}"
+        );
+        let (status, retried) = keyed(party, key, *turn).await;
+        assert_eq!(status, StatusCode::OK, "{key}: {retried:#}");
+        assert_eq!(retried, first);
+    }
+
+    restrict_principal_read_types(&server, principal, &[ENTITY_TYPE_TURN]);
+    for (party, key, speaker, turn) in &boards {
+        let (status, refused) = keyed(party, key, *turn).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{key}: {refused:#}");
+        let refused = refused.to_string();
+        assert!(refused.contains("board_document_unreadable"), "{refused}");
+        assert!(!refused.contains(speaker.as_str()), "{refused}");
+    }
 }

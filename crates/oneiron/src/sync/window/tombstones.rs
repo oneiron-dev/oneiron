@@ -63,6 +63,9 @@ pub(crate) enum CarrierRemoval {
     ReassertDrain,
     /// The egress scrub of a carrier whose tombstone a peer withdrew.
     WithdrawnDeleteScrub,
+    /// The egress scrub of the carriers at an id whose stored row is a CLAIM
+    /// held back from sync, such as a soft-deleted CLAIM's shell.
+    LocalClaimScrub,
     /// The local delete's tombstone publication, live and transient.
     LocalPublication,
     /// The sweep's compaction of a hard-erased id's residue.
@@ -75,22 +78,22 @@ pub(crate) enum CarrierRemoval {
 impl CarrierRemoval {
     /// Every path, for the check that each marks before it removes.
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::PendingTombstoneReplay,
         Self::ReassertDrain,
         Self::WithdrawnDeleteScrub,
+        Self::LocalClaimScrub,
         Self::LocalPublication,
         Self::HardEraseSweep,
         Self::CanonicalCapture,
     ];
 }
 
-/// Marks the task of each carrier among `carriers` that holds an authority
-/// fact this vault never admitted, in a write transaction of its own,
-/// committed before `path` touches the document. The id is deleted here, so
-/// the fact can never be admitted: a removal that fails after the mark leaves
-/// the task reading as a refusal, never as a fact never made, and no observer
-/// or later persist can make the removal durable without its mark.
+/// [`crate::task_authority::mark_removed_carriers`], committed before `path`
+/// touches the document. The id is deleted here, so the fact can never be
+/// admitted: a removal that fails after the mark leaves the task reading as a
+/// refusal, never as a fact never made, and no observer or later persist can
+/// make the removal durable without its mark.
 pub(crate) fn mark_removed_carriers_first(
     vault: &Vault,
     #[cfg_attr(
@@ -100,19 +103,7 @@ pub(crate) fn mark_removed_carriers_first(
     path: CarrierRemoval,
     carriers: &[(EntityId, Vec<u8>)],
 ) -> Result<()> {
-    if !carriers.is_empty() {
-        vault.with_write_txn_grouped(|wtxn| {
-            for (id, carrier) in carriers {
-                crate::task_authority::note_removed_carrier_in_txn(
-                    &vault.store,
-                    wtxn,
-                    id,
-                    carrier,
-                )?;
-            }
-            Ok(())
-        })?;
-    }
+    crate::task_authority::mark_removed_carriers(vault, carriers)?;
     #[cfg(test)]
     fail_after_carrier_mark(path)?;
     Ok(())
