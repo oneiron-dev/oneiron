@@ -5,7 +5,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use loro::LoroDoc;
 
 use crate::Vault;
-use crate::authority::{AuthorityFold, FederationPactStatus};
+use crate::authority::{AuthorityFold, FederationGrantActivation, federation_grant_activation};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::COREFERENCE_PACT_ID_LEN;
 use crate::edge::EdgeKind;
@@ -221,22 +221,19 @@ pub(super) fn document_coreference_context_in_txn(
     })
 }
 
-/// The id of every pact bound to `grant_id`, or none when the grant is
-/// unpacted or its governing pact is not Active.
+/// The id of every pact bound to `grant_id`, or none when the grant is not
+/// Active on this fold.
 ///
-/// Whether the grant may export at all is [`AuthorityFold::pact_for_grant`]'s
-/// decision and stays there: it folds every bound pact to the most
-/// restrictive status, so an Active answer means each bound pact is Active.
-/// Every one of them is then a context the export runs under, never only the
-/// one the fold happened to return.
+/// Activation is judged again on the fold the consent check reads: the export
+/// door authorized the grant on an earlier snapshot, and a divergent binding
+/// merged in between can leave a registered pact no longer naming the grant.
+/// Active means every registered binding is operative and Active, so each one
+/// is in the set below, never only the one the fold happened to return.
 fn active_export_pacts(
     fold: &AuthorityFold,
     grant_id: &EntityId,
 ) -> BTreeSet<[u8; COREFERENCE_PACT_ID_LEN]> {
-    if fold
-        .pact_for_grant(grant_id)
-        .is_none_or(|pact| pact.status != FederationPactStatus::Active)
-    {
+    if federation_grant_activation(fold, grant_id) != FederationGrantActivation::Active {
         return BTreeSet::new();
     }
     fold.federation_pacts

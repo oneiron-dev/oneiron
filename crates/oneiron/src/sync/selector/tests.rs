@@ -8177,6 +8177,62 @@ fn multi_pact_grant_needs_every_pacts_consent_and_ships_no_consent_claim() {
     );
 }
 
+/// H212 — the export door authorizes the grant on one snapshot and reads
+/// consent on a later one. A divergent binding merged in between leaves pact P
+/// registered under the grant but naming another; the consent read must not
+/// then run under Q alone.
+#[test]
+fn consent_read_after_a_divergent_binding_runs_under_every_registered_pact() {
+    let fixture = coreference_export(false);
+    seed_scoped_pacts_for_grant(
+        &fixture.vault,
+        fixture.grant_id,
+        &[all_direction_scope(), all_direction_scope()],
+    );
+    let (pact_p, pact_q) = ([0x81; 32], [0x82; 32]);
+    fixture.consent(&pact_q);
+    let (a, b) = (fixture.person_a, fixture.person_b);
+    let selector = SyncSelector::new(
+        fixture.grant_id,
+        fixture.member,
+        SyncSelectorWorld::All,
+        vec![fixture.facet],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
+    );
+    let rtxn = fixture.vault.store.env.read_txn().unwrap();
+    let allows = |fold: &crate::authority::AuthorityFold| {
+        super::scope::document_coreference_context_in_txn(
+            &fixture.vault,
+            &rtxn,
+            fold,
+            &selector,
+            a,
+            b,
+        )
+        .unwrap()
+        .allows(a, b)
+    };
+    let mut merged = fixture.vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
+    merged
+        .federation_pacts
+        .get_mut(&pact_p)
+        .expect("pact P is seeded")
+        .grant_ref = entity_id(0x6D);
+    assert!(
+        !allows(&merged),
+        "Q's consent exported the link while P is still registered under the grant"
+    );
+
+    // Control: with P no longer registered under the grant, Q's consent alone
+    // carries the link, so the refusal above is P's registered binding.
+    merged
+        .federation_grant_bindings
+        .get_mut(&fixture.grant_id)
+        .expect("the grant's bindings")
+        .remove(&pact_p);
+    assert!(allows(&merged));
+}
+
 /// H212 — a share consent counts only inside its valid-time window, at every
 /// door that reads one: the federation answer (which the restore comparison
 /// also asks), the export filter, the document writer's context, and whether
