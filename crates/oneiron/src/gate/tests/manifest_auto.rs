@@ -86,6 +86,9 @@ fn system_dreamer_auto_write_still_requires_a_signed_manifest() -> Result<()> {
 fn a_forged_signature_in_an_untrusted_pack_grants_the_dreamer_nothing() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let dreamer = vault.dreamer_authority()?;
+    // The host roots the vault and enrolls its engine writers, the Dreamer
+    // among them, as at bootstrap: a machine writes only with its host key.
+    crate::test_util::provision_engine_machines(&vault);
     put_policy_manifest_bytes(&vault, test_id(0xC1), &encode_policy_manifest(vec![]))?;
     // The Dreamer's own grants, in the shape weave reach reads: an Auto
     // ceiling and an actor-bound, receipted and warned Generated permit.
