@@ -49,6 +49,7 @@ pub mod entity_doc;
 pub(crate) mod fusion;
 pub mod graph_fs;
 pub(crate) mod hnsw;
+pub mod live_rows;
 pub mod llm;
 pub mod pipeline;
 pub(crate) mod ppr;

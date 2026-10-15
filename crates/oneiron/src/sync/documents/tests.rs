@@ -32,6 +32,23 @@ fn document_crash_child() {
     std::process::abort();
 }
 
+/// Rule 5: the 257th resident document at once, which the old count
+/// refused, opens.
+#[test]
+fn more_live_documents_than_the_old_count_stay_resident() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    let registry = DocumentRegistry::new(vault.clone());
+    let held: Vec<_> = (0..257)
+        .map(|_| {
+            let id = EntityId::now();
+            seed(&vault, id);
+            registry.open(id).unwrap()
+        })
+        .collect();
+    assert_eq!(registry.resident_count(), held.len());
+}
+
 #[test]
 fn recovery_replays_snapshot_then_updates_after_kill_and_evicts_idle_docs() {
     let dir = tempfile::tempdir().unwrap();

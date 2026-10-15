@@ -326,18 +326,37 @@ fn message_stream_policy_precedence_bounds_and_actor_ownership() {
         memory.append_to_stream(explicit, "stale"),
         Err(MessageStreamError::StreamNotFound)
     ));
-    let mut handles = Vec::new();
-    for _ in 0..MAX_MESSAGE_STREAMS {
-        handles.push(memory.begin_message_stream_at(&input(), None, 100).unwrap());
+    // Rule 5: the 257th stream at once, which the old count refused, opens.
+    for _ in 0..=256 {
+        memory.begin_message_stream_at(&input(), None, 100).unwrap();
     }
-    assert!(matches!(
-        memory.begin_message_stream(&input(), None),
-        Err(MessageStreamError::TooManyStreams)
-    ));
-    memory
-        .cancel_stream(handles[0], StreamCancelReason::UserInterrupted)
-        .unwrap();
-    assert!(memory.begin_message_stream(&input(), None).is_ok());
+    assert_eq!(vault.active_message_streams().unwrap(), 257);
+}
+/// Rule 5: open-time recovery retires every seed a crash left, however many.
+/// Past 256 it once refused, and the vault did not open.
+#[test]
+fn reopen_retires_every_surviving_stream_seed() {
+    let (dir, vault, actor) = fixture();
+    let memory = vault.memory(actor, EdgeActorClass::Human);
+    let messages: Vec<_> = (0..300)
+        .map(|_| {
+            memory
+                .begin_message_stream_at(&input(), None, 100)
+                .unwrap()
+                .message_id()
+        })
+        .collect();
+    drop(memory);
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    assert_eq!(vault.active_message_streams().unwrap(), 0);
+    for message in messages {
+        let receipt = vault.message_stream_receipt(&message).unwrap().unwrap();
+        assert_eq!(
+            receipt.finality_reason,
+            StreamFinalityReason::ProcessCrashRecovery
+        );
+    }
 }
 #[cfg(feature = "sync")]
 fn frame_text(frame: &[u8]) -> Option<String> {

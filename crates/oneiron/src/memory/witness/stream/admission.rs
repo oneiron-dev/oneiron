@@ -86,6 +86,13 @@ impl Memory<'_> {
             message: id,
             generation: seed.generation,
         };
+        // Past the vault's row the stream waits its turn here, holding no
+        // transaction, lock or lease (rule 5): never refused for the count.
+        let turn = self
+            .vault
+            .message_streams
+            .line
+            .enter(self.vault, self.actor.as_bytes())?;
         let entry = Arc::new(Mutex::new(State {
             seed,
             base: String::new(),
@@ -95,6 +102,7 @@ impl Memory<'_> {
             emitted_chars: 0,
             dirty: true,
             terminal: false,
+            _turn: Some(turn),
         }));
         // Take the new entry before exposing it to the sweep. No registry lock
         // is held while waiting for an entry or for the LMDB writer.
@@ -103,9 +111,6 @@ impl Memory<'_> {
             let mut entries = lock(&self.vault.message_streams.entries)?;
             if entries.contains_key(&id) {
                 return Err(MessageStreamError::StreamAlreadyActive(id));
-            }
-            if entries.len() >= MAX_MESSAGE_STREAMS {
-                return Err(MessageStreamError::TooManyStreams);
             }
             entries.insert(id, Arc::clone(&entry));
         }

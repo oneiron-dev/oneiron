@@ -68,6 +68,9 @@ pub struct Vault {
     /// Live seat prefixes are vault-owned, never process-global.
     pub(crate) model_seats: std::sync::Mutex<crate::llm::seat::SeatPool>,
     pub(crate) message_streams: crate::memory::MessageStreamRuntime,
+    /// The rows over live work this vault holds open, and the host's door
+    /// for their crossings ([`Vault::set_live_rows`]).
+    pub(crate) live_rows: crate::live_rows::LiveRowsCell,
     /// Serializes per-request voice-ref uploads with consent withdrawal.
     pub(crate) voice_ref_guard: std::sync::RwLock<()>,
     #[cfg(feature = "sync")]
