@@ -138,7 +138,12 @@ pub(super) fn dreamer_precommit_denial(
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_CLAIM,
                 ..
-            } => crate::gate::claim_critical_confirm_settled_in_txn(store, txn, id)?,
+            } => crate::gate::claim_consolidation_eligible_in_txn(
+                store,
+                txn,
+                id,
+                crate::gate::ConsolidationReader::PrecommitEvidence,
+            )?,
             LiveEntityRow::Live { .. } => true,
         })
     };
@@ -273,4 +278,15 @@ fn live_entity_row_has_type(
         live_entity_row_in_txn(store, txn, id),
         Ok(LiveEntityRow::Live { entity_type: found, .. }) if found == entity_type
     )
+}
+
+impl crate::Vault {
+    #[cfg(test)]
+    pub(crate) fn dreamer_precommit_denial_for_test(
+        &self,
+        body: &ClaimBody,
+    ) -> Result<Option<GateReasonCode>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(dreamer_precommit_denial(&self.store, &txn, body))
+    }
 }

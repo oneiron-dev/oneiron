@@ -8,9 +8,11 @@
 //! only its own turn, minted a new subject, and nothing bound.
 //!
 //! Where it binds follows the seeded policy (Engine ruling 2026-10-13): a
-//! correction on a predicate no rule names lands with its grant, and one on a
-//! class canon declares critical is held for the owner, in a fresh vault and
-//! in one seeded before those classes shipped.
+//! correction on a predicate a rule declares normal lands with its grant, and
+//! one on a class canon declares critical is held for the owner, in a fresh
+//! vault and in one seeded before those classes shipped. A predicate no rule
+//! names takes the criticality floor, so its claim waits for the owner's
+//! confirmation before any pass may hold it as a prior.
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -320,11 +322,11 @@ async fn binds_once(case: Case) {
     held(&Vault::open_owned(&vault_path, vault_config()).unwrap());
 }
 
-/// A predicate no rule names: the correction lands with its grant.
+/// A predicate a rule declares normal: the correction lands with its grant.
 #[tokio::test]
 async fn a_later_pass_binds_a_correction_to_the_claim_an_earlier_pass_wrote() {
     binds_once(Case {
-        predicate: "residence.city",
+        predicate: "profile.city",
         first: ("I'm Oleksii and I live in Lisbon.", "Lisbon"),
         owner_states_first: false,
         second: (

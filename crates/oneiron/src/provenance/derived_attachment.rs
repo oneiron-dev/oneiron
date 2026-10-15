@@ -102,10 +102,11 @@ pub(super) fn verify(
                     "generated claim cannot corroborate",
                 ));
             }
-            if !crate::gate::claim_critical_confirm_settled_in_txn(
+            if !crate::gate::claim_consolidation_eligible_in_txn(
                 &vault.store,
                 txn,
                 &subject.source,
+                crate::gate::ConsolidationReader::DerivedSupport,
             )? {
                 return Err(Error::InvalidClaimBody(
                     "a claim awaiting its owner's confirmation cannot corroborate",
@@ -177,4 +178,17 @@ pub(super) fn verify(
         ));
     }
     Ok((decoded.source_meet, project))
+}
+
+impl Vault {
+    #[cfg(test)]
+    pub(crate) fn verify_derived_support_for_test(
+        &self,
+        subject: &EdgeRef,
+        evidence: &Value,
+        reader: WriteActor,
+    ) -> Result<(ClaimSource, EntityId)> {
+        let txn = self.store.env.read_txn()?;
+        verify(self, &txn, subject, evidence, reader)
+    }
 }

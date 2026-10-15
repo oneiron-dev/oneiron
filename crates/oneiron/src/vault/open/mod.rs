@@ -531,7 +531,9 @@ impl Vault {
                 &store,
             )?,
             store,
-            vector_evidence: std::sync::RwLock::new(config.vector_evidence),
+            vector_evidence: std::sync::RwLock::new(super::vector_evidence::NoMatchFloors::new(
+                config.vector_evidence,
+            )),
             config,
             analyzer,
             writer_lease: None,
@@ -557,6 +559,10 @@ impl Vault {
         // A published deletion must finish its request-bound topology tear
         // before any caller can apply a new merge or observe this vault.
         crate::deletion::topology_delete_intent::recover_topology_delete_intents_on_open(&vault)?;
+        // Whose seals count follows the posture this handle opened with and
+        // the authority a restore carried in; the stored shell edges follow
+        // it before any caller observes this vault (H161).
+        vault.reconcile_identity_topology_on_open()?;
         vault.with_write_txn_grouped(|txn| vault.dreamer_authority_in_txn(txn, 0))?;
         // Rebuilds the content-hash → holder index (import/sync dedup) when it
         // is missing or stale; completes before any caller receives a usable

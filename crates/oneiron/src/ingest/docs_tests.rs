@@ -152,6 +152,45 @@ impl<F: Fn(&DocsSegment) -> Result<()>> DocsDeepExtractor for CallbackNer<F> {
     }
 }
 
+/// Installs the shipped policy with an explicit, receipted `Auto` permit for
+/// imported claims, so a deep pass's derived claims land `Auto` and read as
+/// live facts.
+fn trust_imported_claims(vault: &crate::Vault) -> Result<()> {
+    use rmpv::Value;
+    let bytes = crate::gate::default_policy_manifest_with_scoped_grants(Vec::new())?;
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice())
+        .map_err(|_| crate::Error::InvalidClaimBody("policy manifest"))?
+    else {
+        return Err(crate::Error::InvalidClaimBody("policy manifest"));
+    };
+    let permit = (
+        Value::from("imported"),
+        Value::Map(vec![
+            (Value::from("max_auto_sensitivity"), Value::from(255_u64)),
+            (Value::from("receipted"), Value::Boolean(true)),
+            (Value::from("warned"), Value::Boolean(true)),
+        ]),
+    );
+    match entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("source_trust"))
+    {
+        Some((_, Value::Map(rows))) => {
+            rows.retain(|(source, _)| source.as_str() != Some("imported"));
+            rows.push(permit);
+        }
+        _ => entries.push((Value::from("source_trust"), Value::Map(vec![permit]))),
+    }
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &Value::Map(entries))
+        .map_err(|_| crate::Error::InvalidClaimBody("policy manifest"))?;
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &data,
+    )
+}
+
 fn grant_core_read(vault: &crate::Vault, actor_ref: &str) -> Result<()> {
     use rmpv::Value;
     let bytes = crate::gate::default_policy_manifest_with_scoped_grants(vec![Value::Map(vec![
@@ -787,6 +826,7 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
     use std::collections::BTreeSet;
 
     let (_dir, vault, owner, first_doc, ceiling, first_import) = deep_fixture()?;
+    trust_imported_claims(&vault)?;
     let first_project = first_doc.project_id;
     let first_asset = EntityId::from_hex(&first_import.asset_refs[0])?;
     let first = vault.deep_ingest_docs_asset(
@@ -1157,6 +1197,7 @@ fn docs_deep_claims_wait_for_review_under_bulk_import_consent() -> Result<()> {
 fn docs_deep_transport_reimport_preserves_claims_and_receipt() -> Result<()> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let (_dir, vault, owner, mut doc, ceiling, receipt) = deep_fixture()?;
+    trust_imported_claims(&vault)?;
     let asset = EntityId::from_hex(&receipt.asset_refs[0])?;
     let ner = Ner(AtomicUsize::new(0));
     let original =
@@ -1193,6 +1234,7 @@ fn docs_deep_transport_reimport_preserves_claims_and_receipt() -> Result<()> {
 #[test]
 fn deleting_docs_asset_invalidates_its_deep_claim_at_normal_read() -> Result<()> {
     let (_dir, vault, owner, _doc, _ceiling, receipt) = deep_fixture()?;
+    trust_imported_claims(&vault)?;
     let asset = EntityId::from_hex(&receipt.asset_refs[0])?;
     let deep =
         vault.deep_ingest_docs_asset(&owner, asset, DocsDeepTrigger::Explicit, &MultiNer, 3)?;
@@ -1212,6 +1254,7 @@ fn deleting_docs_asset_invalidates_its_deep_claim_at_normal_read() -> Result<()>
 fn ordinary_docs_source_put_invalidates_live_deep_claims() -> Result<()> {
     for change_asset in [false, true] {
         let (_dir, vault, owner, _doc, _ceiling, receipt) = deep_fixture()?;
+        trust_imported_claims(&vault)?;
         let asset = EntityId::from_hex(&receipt.asset_refs[0])?;
         let chunk = EntityId::from_hex(&receipt.chunk_refs[1])?;
         let deep = vault.deep_ingest_docs_asset(

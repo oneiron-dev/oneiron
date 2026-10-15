@@ -37,6 +37,7 @@ mod repair_tests;
 
 mod actor_fork;
 mod auto_checker;
+mod auto_checker_closure;
 mod carry_forward;
 #[cfg(feature = "sync")]
 mod carry_forward_sync;
@@ -44,6 +45,7 @@ mod charter_ceiling;
 mod claim_candidate_lineage;
 mod connector_budget;
 mod consent_bundle;
+mod consolidation_readers;
 mod credential_lifetimes;
 mod critical_confirm_index;
 mod critical_confirm_lifecycle;
@@ -59,6 +61,7 @@ mod manifest_authenticity;
 mod manifest_auto;
 mod policy_inputs;
 mod posture_override;
+mod replicated_critical_confirm;
 mod scoped_policy_values;
 mod scoped_read;
 mod special_doors;

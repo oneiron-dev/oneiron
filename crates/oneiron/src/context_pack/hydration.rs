@@ -86,6 +86,53 @@ pub(crate) fn context_entity_matches_read_snapshot(
     Ok(true)
 }
 
+/// Whether two decoded claim bodies are one body. `ClaimBody`'s derived
+/// equality is not reflexive over a NaN in an opaque value, and takes 0.0
+/// for -0.0, so floats are compared by their bits and every other field as
+/// derived. An encoding is no witness: a string that is not UTF-8 encodes as
+/// a binary of its bytes.
+pub(crate) fn same_claim_body(left: &ClaimBody, right: &ClaimBody) -> bool {
+    use rmpv::Value;
+    let rest = |body: &ClaimBody| ClaimBody {
+        value: Value::Nil,
+        confidence: 0.0,
+        salience: None,
+        evidence: None,
+        scope: None,
+        ..body.clone()
+    };
+    let same_option = |left: Option<&Value>, right: Option<&Value>| match (left, right) {
+        (Some(left), Some(right)) => same_value(left, right),
+        (left, right) => left.is_none() && right.is_none(),
+    };
+    same_value(&left.value, &right.value)
+        && left.confidence.to_bits() == right.confidence.to_bits()
+        && left.salience.map(f32::to_bits) == right.salience.map(f32::to_bits)
+        && same_option(left.evidence.as_ref(), right.evidence.as_ref())
+        && same_option(left.scope.as_ref(), right.scope.as_ref())
+        && rest(left) == rest(right)
+}
+
+/// [`same_claim_body`] for an opaque value: a float by its bits.
+fn same_value(left: &rmpv::Value, right: &rmpv::Value) -> bool {
+    use rmpv::Value;
+    match (left, right) {
+        (Value::F32(left), Value::F32(right)) => left.to_bits() == right.to_bits(),
+        (Value::F64(left), Value::F64(right)) => left.to_bits() == right.to_bits(),
+        (Value::Array(left), Value::Array(right)) => {
+            left.len() == right.len() && left.iter().zip(right).all(|(l, r)| same_value(l, r))
+        }
+        (Value::Map(left), Value::Map(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|((lk, lv), (rk, rv))| same_value(lk, rk) && same_value(lv, rv))
+        }
+        _ => left == right,
+    }
+}
+
 /// Hydrates one entity for the context pack.
 ///
 /// Type-0 (CLAIM) records pass through the D19 status gate here too — pack
@@ -140,10 +187,13 @@ pub(super) fn hydrate_entity(
     else {
         return Ok(None);
     };
-    // A history pin cannot restore a claim inadmissible at the current door.
+    // A history pin cannot restore a claim inadmissible at the current door,
+    // its live support included, as the scoped read lane admits a pin.
     if raw != live_raw && live_raw[0] == ENTITY_TYPE_CLAIM {
         match crate::claim::decode_claim_body(&live_raw[ENTITY_METADATA_HEADER_LEN..], true) {
-            Ok(body) if claim_surfaceable(&body) => {}
+            Ok(body)
+                if claim_surfaceable(&body)
+                    && crate::claim::has_live_support_in_txn(store, rtxn, &body)? => {}
             _ => {
                 *claims_suppressed += 1;
                 return Ok(None);
@@ -164,28 +214,51 @@ pub(super) fn hydrate_entity(
     let mut gated_claim_body: Option<&ClaimBody> = None;
     let decoded_here: Option<ClaimBody>;
     if header.entity_type == ENTITY_TYPE_CLAIM {
-        match options
-            .claim_bodies
-            .filter(|_| raw == live_raw)
-            .and_then(|cache| cache.get(&id))
-        {
-            // Pipeline-gated result: already decoded once and surfaceable.
-            Some(body) => gated_claim_body = Some(body),
-            None => {
-                // Neighbor (or cache miss): decode once for gate +
-                // projection; reads allow reserved `edge.*` predicates.
-                decoded_here = raw
-                    .get(ENTITY_METADATA_HEADER_LEN..)
-                    .and_then(|body| crate::claim::decode_claim_body(body, true).ok());
-                match &decoded_here {
-                    Some(body) if claim_surfaceable(body) => gated_claim_body = Some(body),
-                    _ => {
-                        *claims_suppressed += 1;
-                        return Ok(None);
-                    }
-                }
+        // Decoded once for gate + projection; reads allow reserved `edge.*`
+        // predicates.
+        decoded_here = raw
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            .and_then(|body| crate::claim::decode_claim_body(body, true).ok());
+        // The gate's verdict stands for the body in hand only when it is the
+        // body the gate read, in retrieval's own snapshot. A pin's words, or
+        // a row no verdict covers (a neighbor), are judged here. An unpinned
+        // row whose body is another was written since retrieval read it, and
+        // no verdict in this run stands for it: it is not served.
+        let cached = options.claim_bodies.and_then(|cache| cache.get(&id));
+        let pinned = matches!(options.read_mode, crate::vault::ReadMode::Pinned(_));
+        let judged_here = cached.is_none() || pinned || raw != live_raw;
+        match (cached, &decoded_here) {
+            // Pipeline-gated result: the body the gate admitted.
+            (Some(cached), Some(body)) if same_claim_body(cached, body) => {
+                gated_claim_body = Some(cached);
+            }
+            (_, Some(body)) if judged_here && claim_surfaceable(body) => {
+                gated_claim_body = Some(body);
+            }
+            _ => {
+                *claims_suppressed += 1;
+                return Ok(None);
             }
         }
+    }
+
+    // Live support is read where the claim is served: the gate read a
+    // result's in retrieval's snapshot, and validation reads no neighbor's.
+    // A claim whose cited sources are gone by now is not served, as a result
+    // or a neighbor, from the cache or decoded here.
+    if let Some(body) = gated_claim_body
+        && !crate::claim::has_live_support_in_txn(store, rtxn, body)?
+    {
+        *claims_suppressed += 1;
+        return Ok(None);
+    }
+
+    // The clamp's sweeps judge a claim on the body the gate read or on its
+    // live row, and a pin may serve another: the body served is judged too.
+    if let (Some(clamp), Some(body)) = (options.clamp, gated_claim_body)
+        && !clamp.admits(store.base(), rtxn, &id, ENTITY_TYPE_CLAIM, Some(body))?
+    {
+        return Ok(None);
     }
 
     // A claim the write door refuses, stored while the owner's scan was off,
@@ -334,6 +407,7 @@ fn pins_indexed_frontier(
         rtxn,
         id,
         crate::vault::ReadMode::Indexed,
+        false,
     )?
     .is_some_and(|text| text.revision == revision))
 }
@@ -446,8 +520,8 @@ fn decode_entity_fields(
     let mut cursor = Cursor::new(payload);
     let value = rmpv::decode::read_value(&mut cursor).ok()?;
     // A body that reads as a secret whole, before this projection drops a
-    // float's width, hydrates no field.
-    if crate::batch::secret_scan::release_parts_read_whole(&[&value]) {
+    // float's width and in the bytes it was stored as, hydrates no field.
+    if crate::batch::secret_scan::release_body_reads_whole_as_stored(&value, payload) {
         return Some(HashMap::new());
     }
     let rmpv::Value::Map(entries) = value else {

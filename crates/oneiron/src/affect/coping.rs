@@ -415,13 +415,13 @@ impl Vault {
         confidence: f32,
         now: u64,
     ) -> Result<CopingOutcomeUpdate> {
-        let baseline =
-            self.get_turn_vad_annotation(baseline_turn_id)?
-                .ok_or(Error::InvalidClaimBody(
-                    "baseline turn VAD annotation missing",
-                ))?;
+        let baseline = self
+            .turn_vad_annotation_for_consolidation(baseline_turn_id)?
+            .ok_or(Error::InvalidClaimBody(
+                "baseline turn VAD annotation missing",
+            ))?;
         let later = self
-            .get_turn_vad_annotation(later_turn_id)?
+            .turn_vad_annotation_for_consolidation(later_turn_id)?
             .ok_or(Error::InvalidClaimBody("later turn VAD annotation missing"))?;
         let delta = VadDelta::new(
             later.vad.valence - baseline.vad.valence,
@@ -488,10 +488,11 @@ impl Vault {
             }));
         }
         if !claim_consolidatable(&prior_body)
-            || !crate::gate::claim_critical_confirm_settled_in_txn(
+            || !crate::gate::claim_consolidation_eligible_in_txn(
                 &self.store,
                 &wtxn,
                 prior_claim_id,
+                crate::gate::ConsolidationReader::CopingOutcome,
             )?
         {
             return Err(Error::InvalidClaimBody("claim is not consolidatable"));

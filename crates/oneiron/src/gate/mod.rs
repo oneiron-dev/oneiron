@@ -15,6 +15,7 @@ pub(crate) use manifest_authenticity::{seeded_manifest_key, trusted_manifest_key
 mod carry_forward_policy;
 mod confirm;
 mod connector_admission;
+mod consolidation_readers;
 mod constants;
 pub(crate) use constants::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY;
 mod decision;
@@ -46,6 +47,7 @@ mod project_conversion;
 pub(crate) mod project_depth;
 pub(crate) mod proposal_observation;
 mod repair;
+mod replicated_confirm;
 mod resolution;
 mod tracker_limits;
 pub use self::dreamer_grant::DreamerWeaveReach;
@@ -89,6 +91,9 @@ pub(crate) use self::confirm::{
     reconcile_critical_write_confirm_on_replicated_overwrite,
 };
 pub(crate) use self::connector_admission::ConnectorAdmissionQuotas;
+pub(crate) use self::consolidation_readers::{
+    ConsolidationReader, claim_consolidation_eligible_in_txn,
+};
 pub(crate) use self::constants::POLICY_OWNER_POLICY_NOTIFY_KEY;
 #[cfg(test)]
 pub(crate) use self::constants::{
@@ -127,9 +132,8 @@ pub(crate) use self::doors::{
     ClaimGateWrite, GateWriteMode, RecordedClaimGateDecision, check_claim_policy_for_write,
     check_claim_policy_for_write_with_preflight_decision, check_claim_policy_for_write_with_record,
     check_edge_provenance_claim_policy, check_reserved_claim_policy,
-    check_unattributed_claim_lineage, claim_consent_binding_parts,
-    claim_source_trust_admits_auto, standing_outbound_grant_binding_parts,
-    validate_write_envelope,
+    check_unattributed_claim_lineage, claim_consent_binding_parts, claim_source_trust_admits_auto,
+    standing_outbound_grant_binding_parts, validate_write_envelope,
 };
 pub(crate) use self::foreign_agent::{
     introduced_foreign_agents, resolve as resolve_foreign_agent_ceiling,
@@ -173,6 +177,7 @@ pub(crate) use self::project_conversion::{
     LeaderFallback, ProjectConversionPolicy, RosterSelection, TaskHolderFallback,
 };
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
+pub(crate) use self::replicated_confirm::attach_replicated_critical_confirm_in_txn;
 pub(crate) use self::resolution::{
     GateDecisionRetentionPolicy, GateRetentionContext, LeaderChatDefault, ManifestDecodeMemo,
     PolicyManifestResolution, ProjectWidenAskFallback, ResidenceOperationBudgetLimits,

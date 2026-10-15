@@ -596,8 +596,10 @@ fn evidence_ref_admissible(vault: &Vault, entry: &EntityId) -> Result<bool> {
             {
                 return Ok(false);
             }
-            let txn = vault.store.env.read_txn()?;
-            crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, &txn, entry)
+            vault.claim_consolidation_eligible(
+                entry,
+                crate::gate::ConsolidationReader::PromotionEvidence,
+            )
         }
         Some(_) => Ok(true),
     }
@@ -693,3 +695,8 @@ impl crate::dreamer_consolidation::ConsolidationSink for PromotionWriterSink<'_>
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) fn evidence_ref_admissible_for_test(vault: &Vault, entry: &EntityId) -> Result<bool> {
+    evidence_ref_admissible(vault, entry)
+}

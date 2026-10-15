@@ -316,8 +316,8 @@ fn pre_move_fixture_coverage_is_explicit() {
         );
         covered.insert(owners[0].name);
     }
-    assert_eq!(rows.len(), 535, "the sampled pre-move rows changed");
-    assert_eq!(covered.len(), 526, "the sampled table count changed");
+    assert_eq!(rows.len(), 534, "the sampled pre-move rows changed");
+    assert_eq!(covered.len(), 525, "the sampled table count changed");
     let uncovered: BTreeSet<_> = declarations
         .iter()
         .filter(|decl| !covered.contains(decl.name))
@@ -336,7 +336,9 @@ fn pre_move_fixture_coverage_is_explicit() {
         "AUTHORITY_SLIP_PROOF_CLOCK",
         "AUTHORITY_SLIP_PROOF_NOT_BEFORE",
         "AUTH_REVOKED_TOKEN_JTI",
+        "BLOB_ARTIFACT_CLAIMED_HASH",
         "BLOB_ARTIFACT_HIGHWATER",
+        "BLOB_ARTIFACT_VERSION_CLAIM",
         "BOARD_HISTORY_FOLDED",
         "BOOKING_EVENT_TYPE_CONFIG_SHORTCUT",
         "BOOKING_PUBLICATION_WRITE_STAGE",
@@ -385,7 +387,6 @@ fn pre_move_fixture_coverage_is_explicit() {
         "DELETION_ROW_FENCE_BACKFILLED",
         "DELETION_TOPOLOGY_DELETE_INTENT",
         "DELETION_WINDOW_LABEL",
-        "DEVICE_ONLY_GENERATION",
         "DISPATCH_OBSERVATION",
         "DREAMER_BUDGET_STEP_CHARGE",
         "DREAMER_CONSOLIDATION_KEY_RULES",
@@ -447,6 +448,8 @@ fn pre_move_fixture_coverage_is_explicit() {
         "IDENTITY_DEVICE_SK",
         "IDENTITY_MACHINE_ID",
         "IDENTITY_MACHINE_SK",
+        "IDENTITY_TOPOLOGY_MINE_SIGNERS",
+        "IDENTITY_TOPOLOGY_SEALED_HERE",
         "INGEST_DOCS_DEEP_CEILING",
         "INGEST_DOCS_DEEP_RECEIPT",
         "INGEST_HISTORY_LEDGER",
@@ -494,6 +497,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "OWNER_POLICY_NOTIFICATION_RULE_RECEIPT",
         "OWNER_POLICY_SECRET_SCAN_MODE",
         "OWNER_POLICY_SECRET_SCAN_RECEIPT",
+        "OWNER_POLICY_WORLD_PRIVACY_RECEIPT",
         "PORTS_WITHDRAWN",
         "PROJECT_DEPTH_LOCAL_BIRTH",
         "PROJECT_GOAL_INTAKE_ADMISSION",

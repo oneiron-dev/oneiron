@@ -182,7 +182,12 @@ fn project(
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         if !crate::claim::claim_consolidatable(&body)
             || !crate::claim::claim_evidence_admissible(&body)
-            || !crate::gate::claim_critical_confirm_settled_in_txn(store, txn, id)?
+            || !crate::gate::claim_consolidation_eligible_in_txn(
+                store,
+                txn,
+                id,
+                crate::gate::ConsolidationReader::ArrivalProjection,
+            )?
         {
             continue;
         }
@@ -285,7 +290,12 @@ pub(super) fn evaluate_fact(
         || !record.definition.units.contains(&answer.unit)
         || !crate::claim::claim_consolidatable(body)
         || !crate::claim::claim_evidence_admissible(body)
-        || !crate::gate::claim_critical_confirm_settled_in_txn(store, txn, &fact.id)?
+        || !crate::gate::claim_consolidation_eligible_in_txn(
+            store,
+            txn,
+            &fact.id,
+            crate::gate::ConsolidationReader::ArrivalFact,
+        )?
     {
         return Ok(None);
     }

@@ -190,4 +190,11 @@ async fn a_revoked_owner_proof_refuses_the_write_it_was_bound_to() {
     let stale = seeded_test_entity_id(0x2440_0031);
     assert!(upsert(stale, "mould").is_err(), "a revoked proof wrote");
     assert_eq!(server.vault.get_claim(&stale).unwrap(), None);
+    // A request admitted before the revocation reaches the facade's door
+    // after it: the owner's own credential is refused there, never downgraded
+    // to an ordinary write.
+    assert!(
+        crate::api::facade::owner_authorship(&auth, &server).is_err(),
+        "a revoked owner credential fell back to the ordinary writer"
+    );
 }

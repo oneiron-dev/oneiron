@@ -57,7 +57,7 @@ impl Default for MeasureOptions {
         Self {
             max_setup_cells: 1024,
             max_formula_bytes: 16 * 1024,
-            max_grid_cells: 4096,
+            max_grid_cells: crate::engine::MAX_READ_RANGE_CELLS,
         }
     }
 }

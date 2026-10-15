@@ -233,7 +233,7 @@ pub(super) fn discover_in(
     };
     #[cfg(feature = "sync")]
     let device_only = crate::settings::device_local_worlds_at(
-        &vault.store,
+        vault,
         txn,
         crate::claim::CallerLocality::OffDevice,
     )?;
@@ -443,7 +443,7 @@ fn newest_claims(
     // The worlds this device keeps to itself; none without sync.
     #[cfg(feature = "sync")]
     let device_only = crate::settings::device_local_worlds_at(
-        &vault.store,
+        vault,
         txn,
         crate::claim::CallerLocality::OffDevice,
     )?;
@@ -457,7 +457,12 @@ fn newest_claims(
         }
         // A head awaiting its owner's confirmation is no prior for anyone.
         if let Some(row) = row
-            && crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &id)?
+            && crate::gate::claim_consolidation_eligible_in_txn(
+                &vault.store,
+                txn,
+                &id,
+                crate::gate::ConsolidationReader::NewestClaims,
+            )?
             && let Some(known) = listable(subject, id, &row, axes, bound, &device_only)
         {
             claims.push((known, (id, row)));
@@ -542,4 +547,22 @@ fn cut(text: &str, limit: usize) -> String {
         end -= 1;
     }
     format!("{}…", &text[..end])
+}
+
+impl Vault {
+    #[cfg(test)]
+    pub(crate) fn newest_claim_ids_for_test(
+        &self,
+        principal: EntityId,
+        subject: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        let actor = crate::claim::ScopedReadActorKey::new(principal.to_hex())
+            .ok_or(crate::Error::InvariantViolation("reader fixture actor"))?;
+        let read = self.scoped_read(actor);
+        Ok(newest_claims(self, &txn, &read, subject, &Scope::default(), None)?
+            .into_iter()
+            .map(|(known, _)| known.id)
+            .collect())
+    }
 }

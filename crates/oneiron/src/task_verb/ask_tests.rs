@@ -893,6 +893,45 @@ fn ask_decided_despite_an_uncounted_word_binds_its_outcome() -> Result<()> {
     Ok(())
 }
 
+// H331: a collection whose only reply lacks a required source is not a
+// completed collection; the same reply citing the source still is.
+#[test]
+fn a_collection_with_no_counted_word_is_not_collected() -> Result<()> {
+    let collect = |cite_source: bool| -> Result<_> {
+        let fixture = RuledAskFixture::new(1)?;
+        let mut spec = fixture.spec();
+        let mut class = fixture.policy(false);
+        class.required_sources = [fixture.question].into();
+        spec.class = Some(class);
+        spec.decide = None;
+        let handle = fixture.ask(&spec)?;
+        let sources = if cite_source {
+            [fixture.question].into()
+        } else {
+            Default::default()
+        };
+        fixture.word_with_sources(handle, 0, "yes", sources)?;
+        fixture.clock.set(1_101);
+        fixture.result(handle)
+    };
+    let uncounted = collect(false)?;
+    assert_eq!(
+        uncounted
+            .evidence
+            .iter()
+            .map(|entry| entry.reason)
+            .collect::<Vec<_>>(),
+        [TaskAskEvidenceReason::MissingSource]
+    );
+    assert_ne!(uncounted.decision, TaskAskDecision::Collected);
+    assert!(uncounted.fallback.is_some());
+
+    let counted = collect(true)?;
+    assert_eq!(counted.decision, TaskAskDecision::Collected);
+    assert_eq!(counted.fallback, None);
+    Ok(())
+}
+
 #[test]
 fn ask_three_replies_one_yes_all_has_coverage_but_no_decision_and_fallback() -> Result<()> {
     let fixture = RuledAskFixture::new(3)?;
@@ -3141,7 +3180,7 @@ fn an_ask_off_this_device_takes_nothing_from_a_device_local_task() -> Result<()>
     let portable = portable?;
     assert_eq!(listed, vec![task, question]);
 
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     let (kept, listed) = can(CallerLocality::OffDevice);
     assert!(kept.is_err(), "{kept:?}");
     assert_eq!(listed, vec![task]);
@@ -3205,7 +3244,7 @@ fn an_agents_omitted_target_lists_the_assignment_it_comes_from() -> Result<()> {
     assert_eq!(portable.recipients[0].who, human);
     assert_eq!(listed, vec![assignment, question.entity_ref()]);
 
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     let (kept, listed) = can(CallerLocality::OffDevice);
     assert!(kept.is_err(), "{kept:?}");
     assert!(listed.is_empty(), "{listed:?}");
@@ -3297,7 +3336,7 @@ fn an_ask_off_this_device_reads_no_device_local_context_claim() -> Result<()> {
         assert!(listed.contains(&context), "{status}: {listed:?}");
     }
 
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     for status in [false, true] {
         let (kept, listed) = read(CallerLocality::OffDevice, status);
         assert!(kept.is_err(), "{status}: {kept:?}");
@@ -3362,7 +3401,9 @@ fn an_ask_off_this_device_takes_no_class_from_a_device_local_governed_task() -> 
     let portable = portable?;
     assert!(listed.contains(&governed), "{listed:?}");
 
-    fixture.vault.set_world_device_only(world, true)?;
+    fixture
+        .vault
+        .keep_world_on_this_machine_for_test(world, true)?;
     let (kept, listed) = status(CallerLocality::OffDevice);
     assert!(kept.is_err(), "{kept:?}");
     assert!(listed.contains(&governed), "{listed:?}");
@@ -3441,7 +3482,7 @@ fn task_scans_off_this_device_count_no_device_local_task() -> Result<()> {
                 None,
             ))?;
     }
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
 
     let exhausted = |locality| -> Result<bool> {
         let txn = vault.store.env.read_txn()?;

@@ -1348,19 +1348,49 @@ fn federated_selector_guest_response_cannot_auto_approve_above_local_ceiling() {
     );
 }
 
+/// W1b T2 (H60 residue): the federated selector doors refuse a client with
+/// no federation peer bound, whose responses would import as its own
+/// device's, as the federated import door does: the request builder, and a
+/// deferred-selector reply, which would otherwise send the retry (PR review
+/// r1). The bound client's request encodes in the guest test above, and its
+/// retry here. The refusal records nothing: the next full-window update is
+/// untouched.
 #[test]
-fn selector_request_builder_does_not_reclassify_next_update() {
+fn selector_request_builder_refuses_an_unbound_client_and_records_nothing() {
     let manager = test_manager();
     let vault = Arc::clone(manager.vault());
     let (mut client, _rx) = test_client(&manager);
     let key = "2026-03";
-    let _request = client
-        .federated_selector_vv_request(key, &test_selector(), &VersionVector::new().encode())
-        .expect("selector request encodes without recording a marker");
-
     let id = test_entity_id(0x98);
     let remote_body = internal_source_trust_claim(ClaimSource::ToolOutput);
     let update = federated_claim_update(&id, &remote_body);
+    let refused = client
+        .federated_selector_vv_request(key, &test_selector(), &VersionVector::new().encode())
+        .expect_err("an unbound client has no federated door");
+    let import_refused = client
+        .import_federated_window_update(key, &update, FederationAdmissionRole::Member)
+        .expect_err("an unbound client imports nothing federated");
+    assert_eq!(format!("{refused:?}"), format!("{import_refused:?}"));
+
+    let mut deferred = vec![0x5a; 32];
+    deferred.extend(
+        crate::sync::encode_selector_vv_request(&test_selector(), &VersionVector::new().encode())
+            .expect("selector request encodes"),
+    );
+    let deferred =
+        transport::encode_window_sync(key, window_sub_tags::SELECTOR_DEFERRED, &deferred)
+            .into_result()
+            .expect("deferred selector reply encodes");
+    let retry_refused = client
+        .handle_server_message(&deferred)
+        .expect_err("an unbound client sends no selector retry");
+    assert_eq!(format!("{retry_refused:?}"), format!("{refused:?}"));
+    let (mut bound, _bound_rx) = test_federated_client(&manager);
+    let retry = bound
+        .handle_server_message(&deferred)
+        .expect("a bound client retries the deferred selector");
+    assert_eq!(retry.len(), 1);
+
     let response = transport::encode_window_sync(key, window_sub_tags::UPDATE, &update)
         .into_result()
         .expect("full-window update encodes");
@@ -2473,10 +2503,14 @@ fn device_only_claim_text_stays_journaled_until_the_flag_clears() {
         frame,
         ..
     } = journaled_claim_text();
-    vault.set_world_device_only(world, true).unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
 
     assert_eq!(client.handle_server_message(&frame).unwrap().len(), 1);
-    vault.set_world_device_only(world, false).unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, false)
+        .unwrap();
     assert_eq!(client.handle_server_message(&frame).unwrap().len(), 2);
 }
 
@@ -2511,10 +2545,14 @@ fn claim_text_whose_world_cannot_be_read_stays_journaled_while_a_flag_stands() {
                 )
             })
             .unwrap();
-        vault.set_world_device_only(world, true).unwrap();
+        vault
+            .keep_world_on_this_machine_for_test(world, true)
+            .unwrap();
 
         assert_eq!(client.handle_server_message(&frame).unwrap().len(), 1);
-        vault.set_world_device_only(world, false).unwrap();
+        vault
+            .keep_world_on_this_machine_for_test(world, false)
+            .unwrap();
         assert_eq!(client.handle_server_message(&frame).unwrap().len(), 2);
     }
 }
@@ -2553,7 +2591,9 @@ fn a_flag_committed_while_the_raw_guard_inspects_withholds_the_update() {
     .unwrap();
     body.world = Some(world);
     vault.put_claim(&claim, &body, at, learned).unwrap();
-    vault.set_world_device_only(other, true).unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(other, true)
+        .unwrap();
     let key = WindowKey::for_world(learned, world);
     let update = manager
         .open_window(&key)
@@ -2567,6 +2607,104 @@ fn a_flag_committed_while_the_raw_guard_inspects_withholds_the_update() {
     );
 
     crate::sync::window::test_hooks::arm_device_only_flag_race(world);
+    assert_eq!(
+        raw_update_verdict(&manager, key.as_str(), &update),
+        UpdateVerdict::Withheld
+    );
+}
+
+/// Sol P2 round 2, F2: a machine's standing that expires while the raw guard
+/// inspects a window narrows a world with no authority-log write. The bytes
+/// are still withheld.
+#[test]
+fn a_standing_that_expires_while_the_raw_guard_inspects_withholds_the_update() {
+    use crate::authority::{
+        AuthorityAttestation, AuthorityTier, DEFAULT_STALE_ROSTER_WINDOW_SECS, DeviceAuthority,
+        HostSlipIssuer, ROLE_ADMIN, ROLE_OWNER,
+    };
+    use crate::sync::window::{UpdateVerdict, raw_update_verdict};
+    use ed25519_dalek::Signer;
+    let manager = test_manager();
+    let vault = Arc::clone(manager.vault());
+    let learned = 1_772_323_260;
+    let at = TimeRange {
+        start: learned,
+        end: learned,
+    };
+    let [world, other, person, claim] =
+        [0x68, 0x69, 0x6a, 0x6b].map(|byte| EntityId::from_bytes([byte; 16]).unwrap());
+    for (id, entity_type) in [
+        (world, crate::registry::ENTITY_TYPE_WORLD),
+        (other, crate::registry::ENTITY_TYPE_WORLD),
+        (person, crate::registry::ENTITY_TYPE_PERSON),
+    ] {
+        vault
+            .put_entity(&id, entity_type, at, learned, b"row")
+            .unwrap();
+    }
+    let mut body = ClaimBody::new(
+        "test.device_only",
+        ClaimSubject::Entity(person),
+        rmpv::Value::from("fact"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world);
+    vault.put_claim(&claim, &body, at, learned).unwrap();
+    // This machine keeps `other` to itself, and lets `world` go after
+    // keeping it.
+    vault
+        .keep_world_on_this_machine_for_test(other, true)
+        .unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
+    vault
+        .keep_world_on_this_machine_for_test(world, false)
+        .unwrap();
+    // The vault moves to a root that never marks this machine again.
+    let root = crate::test_support::test_host_issuer();
+    let next = HostSlipIssuer::from_secret(b"expiring standing successor root").unwrap();
+    let signer = ed25519_dalek::SigningKey::from_bytes(&blake3::derive_key(
+        "oneiron/host-authority-signing/v2",
+        b"oneiron unit test host root",
+    ));
+    vault
+        .re_root_authority(
+            DeviceAuthority {
+                key: next.public_key(),
+                transport_key_binding: next.binding_key(),
+                attestation: AuthorityAttestation {
+                    kind: "HostRoot".into(),
+                    evidence: Vec::new(),
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER | ROLE_ADMIN,
+            },
+            root.public_key(),
+            |bytes| Ok(signer.sign(bytes).to_bytes().to_vec()),
+        )
+        .unwrap();
+    let key = WindowKey::for_world(learned, world);
+    let update = manager
+        .open_window(&key)
+        .unwrap()
+        .doc
+        .export(ExportMode::all_updates())
+        .unwrap();
+    assert_eq!(
+        raw_update_verdict(&manager, key.as_str(), &update),
+        UpdateVerdict::Portable
+    );
+
+    // The window passes mid-inspection: this machine goes stale, and its
+    // widening of `world` now only narrows.
+    let past = crate::unix_seconds_now() + DEFAULT_STALE_ROSTER_WINDOW_SECS + 60;
+    crate::sync::window::test_hooks::arm_device_only_race(move |vault| {
+        vault.advance_authority_clock_for_test(past)
+    });
     assert_eq!(
         raw_update_verdict(&manager, key.as_str(), &update),
         UpdateVerdict::Withheld

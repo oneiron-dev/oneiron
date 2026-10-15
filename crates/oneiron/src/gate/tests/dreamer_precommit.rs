@@ -219,9 +219,10 @@ fn invalid_dreamer_write_rejected_precommit_evidence_floor() -> Result<()> {
 #[test]
 fn dreamer_evidence_is_what_was_said_never_who_or_where() -> Result<()> {
     let (_tmp, vault) = precommit_vault()?;
+    // Raw rows: the floor reads only that a row of this type is live.
     let live = |seed: u8, entity_type: u8| -> Result<EntityId> {
         let id = test_id(seed);
-        vault.put_entity(&id, entity_type, test_time(1), 1, b"a cited row")?;
+        put_raw_entity_row(&vault, &id, entity_type, b"a cited row")?;
         Ok(id)
     };
     let claim = |seed: u8, confirm_open: bool| -> Result<EntityId> {
