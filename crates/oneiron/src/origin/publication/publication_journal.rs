@@ -17,8 +17,9 @@ use super::publication_codec::{
     keep_owner_oid_scan_prefix, origin_keep_ref_name, visible_ref_key,
 };
 use super::publication_types::{
-    ORIGIN_PUBLICATION_MAX_REQUIRED_OBJECTS, OriginCensusDisposition, OriginPublicationReceipt,
-    OriginPublicationRecord, OriginPublicationRequest, OriginPublicationStatus,
+    ORIGIN_PUBLICATION_MAX_REQUIRED_OBJECTS, OriginCensusDisposition, OriginPublicationAnswer,
+    OriginPublicationReceipt, OriginPublicationRecord, OriginPublicationRequest,
+    OriginPublicationStatus,
 };
 // ---------------------------------------------------------------------------
 // Journal access
@@ -148,6 +149,27 @@ impl Vault {
         Ok(rows)
     }
 
+    /// The publication that owns one move: a `Prepared` one making it, or
+    /// the `Published` one that made it, whose CAS row names it for good. A
+    /// refused move frees its row, so it has no owner.
+    pub(in crate::origin) fn origin_move_owner(
+        &self,
+        repo_id: EntityId,
+        ref_name: &GitRefName,
+        expected_old_oid: Option<&GitOid>,
+        new_oid: &GitOid,
+    ) -> Result<Option<OriginPublicationRecord>> {
+        let key = CasIntentKey::of_move(repo_id, ref_name, expected_old_oid, new_oid);
+        let owner = {
+            let rtxn = self.store.env.read_txn()?;
+            CAS_INTENT.get(&self.store, &rtxn, &key)?
+        };
+        let Some(owner) = owner else {
+            return Ok(None);
+        };
+        self.origin_publication(owner)
+    }
+
     /// Takes one Published row's CAS row and the backfill marker away: the
     /// state a vault written before Published rows kept their CAS row opens
     /// in.
@@ -258,6 +280,7 @@ pub(super) fn origin_receipt(
         record,
         ref_was_already_applied,
         wire,
+        answer: OriginPublicationAnswer::Own,
     })
 }
 

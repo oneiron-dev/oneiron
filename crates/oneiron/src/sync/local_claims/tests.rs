@@ -268,7 +268,8 @@ fn esign_event_raw_exports_scrub_aliases_stale_bodies_and_history() -> Result<()
                 &f.key,
                 &doc,
                 &VersionVector::default().encode(),
-            )?,
+            )?
+            .into_bytes(),
             1 => crate::sync::server_state::persist_window_snapshot(&f.vault, &f.key, &doc)?,
             _ => {
                 // Live persistence must scrub AFTER it merges the on-disk
@@ -306,7 +307,8 @@ fn esign_event_raw_exports_scrub_aliases_stale_bodies_and_history() -> Result<()
             &f.key,
             &doc,
             &VersionVector::default().encode(),
-        )?;
+        )?
+        .into_bytes();
         let reopened = create_window_doc("again", &f.key);
         import_doc(&reopened, &again)?;
         assert!(reopened.checkout(&dirty_frontiers).is_err());
