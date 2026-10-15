@@ -211,7 +211,9 @@ impl Vault {
                 return Ok(());
             }
             let mut rows = Vec::new();
+            let mut journaled = false;
             for row in PUBLICATIONS.iter_from(&self.store, &rtxn, &[])? {
+                journaled = true;
                 let (_, row) = row?;
                 let record = row.into_record()?;
                 if record.status != OriginPublicationStatus::Published {
@@ -221,6 +223,11 @@ impl Vault {
                 if !CAS_INTENT.contains(&self.store, &rtxn, &key)? {
                     rows.push((key, record.publication_id));
                 }
+            }
+            // An empty journal has nothing to give, and a vault that never
+            // published takes no marker row for it.
+            if !journaled {
+                return Ok(());
             }
             rows
         };
