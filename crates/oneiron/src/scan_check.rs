@@ -24,7 +24,7 @@ use crate::Vault;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 use crate::side_table::{self, Named, Raw, SideTable};
-use crate::store::{Store, active_write_txn_depth};
+use crate::store::{ManifestDbs, active_write_txn_depth};
 
 /// Rows one engine scan reads past which it asks whether everything is
 /// okay: ten times the count each of the origin scans once refused at.
@@ -117,7 +117,7 @@ impl ScanCheck {
     pub const KIND: &'static str = "scan_size";
 }
 
-fn threshold_in_txn(store: &Store, txn: &RoTxn<'_>, scan: EngineScan) -> Result<u64> {
+fn threshold_in_txn(store: &impl ManifestDbs, txn: &RoTxn<'_>, scan: EngineScan) -> Result<u64> {
     Ok(POLICY
         .get(store, txn, &scan.tag())?
         .unwrap_or(DEFAULT_SCAN_CHECK_THRESHOLD))
@@ -136,7 +136,7 @@ impl ScanCount {
     /// Starts counting `scan` of `scope` (empty for a vault-wide scan), under
     /// the row `txn` reads.
     pub(crate) fn start(
-        store: &Store,
+        store: &impl ManifestDbs,
         txn: &RoTxn<'_>,
         scan: EngineScan,
         scope: &[u8],
@@ -168,19 +168,19 @@ impl ScanCount {
 
     /// Leaves a crossing with the store, for a scan that ran in a
     /// transaction its caller opened and may still hold as a write.
-    pub(crate) fn defer(self, store: &Store) {
+    pub(crate) fn defer(self, store: &impl ManifestDbs) {
         if self.rows <= self.threshold {
             return;
         }
         let check = self.check();
         store
-            .pending_scan_checks
+            .pending_scan_checks()
             .park((self.scan.tag(), self.scope), check);
     }
 
     /// [`Self::finish`] for a scan that ran in the write transaction `txn`:
     /// the check is kept with that transaction's other rows.
-    pub(crate) fn finish_in(self, store: &Store, txn: &mut RwTxn<'_>) -> Result<()> {
+    pub(crate) fn finish_in(self, store: &impl ManifestDbs, txn: &mut RwTxn<'_>) -> Result<()> {
         if self.rows <= self.threshold {
             return Ok(());
         }
