@@ -993,6 +993,8 @@ fn a_forked_owner_companion_does_not_poison_the_board() {
                     kind: crate::task_authority::TaskAuthorityFactKind::Owner,
                     actor_ref: intruder,
                     assigned_ref: None,
+                    actor_generation: None,
+                    assigned_generation: None,
                     occurred_at: 121,
                 },
             )
