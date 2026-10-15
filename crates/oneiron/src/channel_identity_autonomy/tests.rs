@@ -8,7 +8,6 @@ use crate::channel_identity::{
 use crate::edge::EdgeActorClass;
 use crate::receipt::{ReceiptRecord, SendReceiptOutcome, persist_send_receipt};
 use crate::store::GateDecisionId;
-use crate::temporal::TimeRange;
 use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
 
 fn fixture(

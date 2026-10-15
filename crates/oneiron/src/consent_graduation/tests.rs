@@ -17,6 +17,23 @@ fn eligible_scope() -> RampScope {
     RampScope::new("send_email", "client_followup", "agent-a").expect("scope")
 }
 
+fn put_person(vault: &Vault, seed: u8) -> EntityId {
+    let person = crate::test_util::entity(seed);
+    vault
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+            b"ramp fixture person",
+        )
+        .expect("put person");
+    person
+}
+
 /// The authenticated owner every graduation tap needs: the vault's embedded
 /// owner, distinct from the merge fixtures so no identity is doing two jobs.
 fn owner(vault: &Vault) -> crate::consent::AuthenticatedOwner {
