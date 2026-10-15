@@ -494,7 +494,8 @@ fn a_late_reference_carries_the_erase_to_a_vault_holding_only_another_reference(
             b"uploader",
         )
         .unwrap();
-    b.vault
+    let late = b
+        .vault
         .append_blob_artifact_version(
             &erased,
             PIERCED,
@@ -503,19 +504,33 @@ fn a_late_reference_carries_the_erase_to_a_vault_holding_only_another_reference(
             time_range(T0 + 6),
             T0 + 6,
         )
-        .unwrap();
-    b.recover(WINDOW);
+        .unwrap()
+        .claim_id;
     upload(&mut a, T0 + 10, &[PIERCED]);
     let theirs = upload(&mut c, T0 + 20, &[PIERCED]);
+    let asset = asset_of(&c.vault, PIERCED).expect("C stores its bytes");
     delete_artifact(&mut a, &erased, DeleteReason::GdprDelete);
-    sync_through_doors(&a, &b);
+    // B's version reaches A's window after the erase. (Through A's export door it would park:
+    // the erase pins A's window history-free, and B's version depends on history before it.)
+    let raw = b.vault.get_raw(&late).unwrap().expect("B's version");
+    map_insert_bytes(&a.doc(WINDOW).get_map("entities"), &late.to_hex(), &raw);
+    a.doc(WINDOW).commit();
     // The window's replay publishes what the late walk staged, as the host's tick would.
     a.recover(WINDOW);
-    sync_through_doors(&a, &c);
+    let value = map_get_bytes(&a.doc(WINDOW).get_map("tombstones"), &asset.to_hex())
+        .expect("the late walk tombstoned the bytes' ASSET");
+    // C, holding only its own reference, applies that tombstone.
+    map_insert_bytes(
+        &c.doc(WINDOW).get_map("tombstones"),
+        &asset.to_hex(),
+        &value,
+    );
+    c.doc(WINDOW).commit();
     assert!(
         reads_erased(&c, &theirs, 1),
         "a vault holding only another reference never learned of the erase"
     );
+    assert!(!holds(&c, &asset), "C kept the erased bytes");
 }
 
 /// Acceptance (#1465 R2, Engine ruling on Astra F12): the erased artifact's own version reads as

@@ -40,9 +40,9 @@ pub use self::body::{
 };
 pub(crate) use self::erase::{
     Holding, asset_holding_in_txn, bytes_erased, claim_holding_in_txn, erase_holds_in_txn,
-    erased_derivation_pending, holdings_in_txn, mark_erased_assets_in_txn, other_versions_in_txn,
-    record_erase_scope_in_txn, references_in_txn, release_erased_bytes_in_txn,
-    take_erase_scope_in_txn, unerased_holdings_in_txn,
+    erased_derivation_pending, holdings_in_txn, mark_erased_artifact_in_txn,
+    mark_erased_assets_in_txn, other_versions_in_txn, record_erase_scope_in_txn, references_in_txn,
+    release_erased_bytes_in_txn, take_erase_scope_in_txn, unerased_holdings_in_txn,
 };
 #[cfg(any(feature = "sync", test))]
 pub(crate) use self::erase::{

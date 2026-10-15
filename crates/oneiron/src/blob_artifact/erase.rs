@@ -19,7 +19,7 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::ClaimBody;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
 
@@ -38,6 +38,12 @@ type ContentHash = [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN];
 /// value. Key: id16 (claim).
 const ERASED_REFERENCE: SideTable<EntityId, Vec<u8>, Raw> =
     SideTable::new(&side_table::BLOB_ARTIFACT_ERASED_REFERENCE);
+
+/// The artifacts a hard erase tore here, each valued with that erase's tombstone wire value: the
+/// row it tore was a BLOB_ARTIFACT, so a version of it that arrives later is a late reference.
+/// Key: id16 (artifact).
+const ERASED_ARTIFACT: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::BLOB_ARTIFACT_ERASED_ARTIFACT);
 
 /// The ASSETs carrying bytes a hard erase took here, each valued with that erase's tombstone wire
 /// value: an ASSET row the walk tore, or the id the bytes' hash names where no row stood. Never
@@ -309,21 +315,50 @@ pub(crate) fn late_reference_in_txn(
     }))
 }
 
-/// The tombstone wire value of a hard erase of `artifact` decided here, published or in flight,
-/// when a version chain was recorded for it here: its high-water mark, kept after its delete,
-/// shows it was an artifact. A hard-delete marker on any other id names no artifact.
+/// The tombstone wire value of a hard erase of `artifact` decided here, when this vault knows it
+/// was an artifact: the erase tore its BLOB_ARTIFACT row here, or, while the erase is published or
+/// in flight, its row here is one or a version chain was recorded for it here (its high-water
+/// mark outlives the delete). A hard-delete marker on any other id names no artifact.
 fn artifact_erase_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     artifact: &EntityId,
 ) -> Result<Option<Vec<u8>>> {
-    if !super::versions::versioned_here(store, txn, artifact)? {
+    if let Some(erase) = ERASED_ARTIFACT.get(store, txn, artifact)? {
+        return Ok(Some(erase));
+    }
+    if !super::versions::versioned_here(store, txn, artifact)?
+        && stored_kind(store, txn, artifact)? != Some(ENTITY_TYPE_BLOB_ARTIFACT)
+    {
         return Ok(None);
     }
     if let Some(erase) = crate::deletion::HARD_DELETE_MARKER.get(store, txn, &HexId(*artifact))? {
         return Ok(Some(erase));
     }
     crate::deletion::hard_delete_in_flight_in_txn(store, txn, artifact)
+}
+
+fn stored_kind(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<u8>> {
+    Ok(store
+        .entities
+        .get(txn, id.as_bytes())?
+        .and_then(|raw| raw.first().copied()))
+}
+
+/// Marks `id` erased with `tombstone` when the row a hard erase is tearing there is a
+/// BLOB_ARTIFACT, so a version of it that arrives after the tear is a late reference.
+pub(crate) fn mark_erased_artifact_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    tombstone: &[u8],
+) -> Result<()> {
+    if stored_kind(store, wtxn, id)? == Some(ENTITY_TYPE_BLOB_ARTIFACT)
+        && !ERASED_ARTIFACT.contains(store, wtxn, id)?
+    {
+        ERASED_ARTIFACT.put(store, wtxn, id, &tombstone.to_vec())?;
+    }
+    Ok(())
 }
 
 /// Whether a hard erase here took `body`'s bytes.

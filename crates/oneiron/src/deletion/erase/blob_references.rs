@@ -69,6 +69,8 @@ impl Vault {
         tombstone: &[u8],
         tombstoning: bool,
     ) -> Result<ErasedBlobReferences> {
+        // A version of it that arrives later is a late reference, though none arrived before.
+        crate::blob_artifact::mark_erased_artifact_in_txn(&self.store, wtxn, id, tombstone)?;
         let Some(walk) = self.blob_reference_walk_in_txn(wtxn, id)? else {
             return Ok(ErasedBlobReferences::default());
         };
@@ -115,11 +117,10 @@ impl Vault {
             {
                 continue;
             }
-            let fenced = ROW_DELETION_FENCE.contains(&self.store, wtxn, &HexId(*carrier))?;
             let (_existed, carrier_had_vector, _ledger_changed) =
                 self.soft_erase_active_store_in_txn(wtxn, carrier)?;
             had_vector |= carrier_had_vector;
-            crate::blob_artifact::fence_erased_carrier(&self.store, wtxn, carrier, fenced)?;
+            crate::blob_artifact::fence_erased_carrier(&self.store, wtxn, carrier)?;
         }
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
@@ -361,13 +362,12 @@ impl Vault {
                 // A legal hold defers it: the edge waits, and the next pass tries again.
                 return Ok(true);
             }
-            let fenced = ROW_DELETION_FENCE.contains(&self.store, wtxn, &HexId(*source))?;
             let (_existed, had_vector, _ledger_changed) =
                 self.soft_erase_active_store_in_txn(wtxn, source)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, wtxn)?;
             }
-            crate::blob_artifact::fence_erased_carrier(&self.store, wtxn, source, fenced)?;
+            crate::blob_artifact::fence_erased_carrier(&self.store, wtxn, source)?;
             self.enqueue_hard_erase_sweep_in_txn(
                 wtxn,
                 RedactionScope {
@@ -425,22 +425,14 @@ impl Vault {
                 else {
                     return Ok(false);
                 };
-                // A body widens an erase only as the replicated put would admit it: a forged
-                // machine claim changes nothing.
-                let occurred = crate::TimeRange {
-                    start: header.occurred_start,
-                    end: header.occurred_end,
-                };
-                if crate::batch::admit_replicated_claim_in_txn(
-                    &self.store,
-                    wtxn,
-                    *id,
-                    occurred,
-                    header.learned_at,
-                    data,
-                    self.privacy_posture(),
-                )
-                .is_err()
+                if late.reach == LateReach::Taken {
+                    return Ok(true);
+                }
+                // A reference arriving after its own delete teaches nothing: delete-wins skips
+                // it. Any other widens an erase only as far as the replicated put would take it.
+                if ROW_DELETION_FENCE.contains(&self.store, wtxn, &HexId(*id))?
+                    || HARD_DELETE_MARKER.contains(&self.store, wtxn, &HexId(*id))?
+                    || !self.put_reaches_late_reference_refusal_in_txn(wtxn, id, header, data)?
                 {
                     return Ok(false);
                 }
@@ -469,15 +461,13 @@ impl Vault {
                 None
             }
         };
-        let deleted_before = ROW_DELETION_FENCE.contains(&self.store, wtxn, &HexId(*id))?
-            || HARD_DELETE_MARKER.contains(&self.store, wtxn, &HexId(*id))?;
         let Some(crate::blob_artifact::LateReference {
             holding,
             erase,
             reach,
         }) = late
         else {
-            return self.fence_refused_arrival_in_txn(wtxn, id, deleted_before, Vec::new());
+            return self.fence_refused_arrival_in_txn(wtxn, id, Vec::new());
         };
         let mut carriers = Vec::new();
         match reach {
@@ -539,21 +529,57 @@ impl Vault {
                 self.stage_late_walk_tombstones_in_txn(wtxn, tombstoned, &erase)?;
             }
         }
-        self.fence_refused_arrival_in_txn(wtxn, id, deleted_before, carriers)
+        self.fence_refused_arrival_in_txn(wtxn, id, carriers)
     }
 
-    /// Fences `id`, a body the ingest gate refused, unless a delete fenced it before, and queues
-    /// one sweep row for it and the `carriers` its walk scrubbed. Returns that it is refused.
+    /// Whether the replicated put would take `data` at `id` as far as its claim chokepoint, where
+    /// it refuses a late reference: every check that can refuse a replicated row runs before that
+    /// point (`batch::put_apply::apply`). Probed in a savepoint that is always rolled back, so a
+    /// body the put refuses for anything else widens no erase.
+    #[cfg(any(feature = "sync", test))]
+    fn put_reaches_late_reference_refusal_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        header: &EntityMetadataHeader,
+        data: &[u8],
+    ) -> Result<bool> {
+        let probe = {
+            let mut savepoint = self.store.env.nested_write_txn(wtxn)?;
+            self.batch_in()
+                .put_replicated(
+                    id,
+                    header.entity_type,
+                    crate::TimeRange {
+                        start: header.occurred_start,
+                        end: header.occurred_end,
+                    },
+                    header.learned_at,
+                    data,
+                )
+                .apply(&mut savepoint)
+        };
+        Ok(matches!(
+            probe,
+            Err(Error::Artifact(
+                crate::error::ArtifactError::BlobContentErased
+                    | crate::error::ArtifactError::BlobVersionErased
+            ))
+        ))
+    }
+
+    /// Fences `id`, a body the ingest gate refused, with a hard erase's own fence, raising any
+    /// other fence it held, and queues one sweep row for it and the `carriers` its walk scrubbed.
+    /// An id the gate fenced before adds nothing. Returns that it is refused.
     #[cfg(any(feature = "sync", test))]
     fn fence_refused_arrival_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
-        deleted_before: bool,
         mut carriers: Vec<EntityId>,
     ) -> Result<bool> {
-        if !deleted_before {
-            crate::blob_artifact::fence_erased_carrier(&self.store, wtxn, id, false)?;
+        if !crate::blob_artifact::erase_fenced(&self.store, wtxn, id)? {
+            crate::blob_artifact::fence_erased_carrier(&self.store, wtxn, id)?;
             carriers.push(*id);
         }
         if carriers.is_empty() {

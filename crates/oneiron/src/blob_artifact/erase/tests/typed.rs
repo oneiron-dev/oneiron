@@ -178,17 +178,18 @@ fn a_deleted_record_at_the_bytes_id_erases_no_bytes() -> Result<()> {
     Ok(())
 }
 
-/// Bug repro (#1465 R3, Astra 2): a late reference widens an erase only as the replicated put
-/// would admit it. The same claim carrying a forged machine signature, which that put refuses,
-/// leaves the bytes it names and every reference to them as they were.
+/// Bug repro (#1465 R3 Astra 2, R4 Astra F1): a late reference widens an erase only as far as the
+/// replicated put would take it. The same claim with a forged machine signature, or with its
+/// occurred range reversed, both of which the put refuses, leaves the bytes it names and every
+/// reference to them as they were.
 #[test]
-fn a_forged_machine_claim_widens_no_erase() -> Result<()> {
+fn a_late_reference_the_put_refuses_widens_no_erase() -> Result<()> {
     let (origin, _dir, appender, late) = super::late::erased_with_late_reference()?;
     let vault = &origin.vault;
     let raw = appender.get_raw(&late)?.expect("the late reference");
     let header = EntityMetadataHeader::parse(&raw).expect("stored header");
-    let mut body =
-        crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)?;
+    let data = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    let mut body = crate::claim::decode_claim_body(data, true)?;
     let mut evidence = match body.evidence.take() {
         Some(rmpv::Value::Map(entries)) => entries,
         _ => Vec::new(),
@@ -198,21 +199,100 @@ fn a_forged_machine_claim_widens_no_erase() -> Result<()> {
         rmpv::Value::Binary(b"forged".to_vec()),
     ));
     body.evidence = Some(rmpv::Value::Map(evidence));
-    let data = crate::claim::encode_claim_body(&body)?;
-    let forged = EntityId::now();
-    let refused = vault.with_write_txn_grouped(|txn| {
-        vault.refuse_erased_blob_arrival_in_txn(txn, &forged, &header, &data)
-    })?;
-    assert!(!refused, "the gate acted on a body the put refuses");
-    let txn = vault.store.env.read_txn()?;
+    let forged = crate::claim::encode_claim_body(&body)?;
+    let mut reversed = header;
+    reversed.occurred_start = header.occurred_end + 1;
+    for (case, header, data) in [
+        ("a forged machine signature", header, forged.as_slice()),
+        ("a reversed occurred range", reversed, data),
+    ] {
+        let refused = vault.with_write_txn_grouped(|txn| {
+            vault.refuse_erased_blob_arrival_in_txn(txn, &EntityId::now(), &header, data)
+        })?;
+        assert!(!refused, "{case}: the gate acted on a body the put refuses");
+        let txn = vault.store.env.read_txn()?;
+        assert!(
+            content_erased(&vault.store, &txn, blake3::hash(OTHER_ONLY).as_bytes())?.is_none(),
+            "{case}: the claim erased the bytes it names"
+        );
+        drop(txn);
+        assert_eq!(
+            vault.read_blob_artifact_version(&origin.other, 1)?,
+            Some(OTHER_ONLY.to_vec()),
+            "{case}"
+        );
+    }
+    Ok(())
+}
+
+/// Bug repro (#1465 R4, Astra F2): a vault that holds an artifact only as a replica, and erases
+/// it, still takes the bytes a version of it that arrives later names: the row the erase tore was
+/// an artifact, typed evidence as a version chain recorded here is.
+#[test]
+fn a_late_version_of_a_replicated_artifact_the_owner_erased_takes_its_bytes() -> Result<()> {
+    let origin = Shared::open()?;
+    let (_dir, vault, other, _shared) = only_other()?;
+    replicate(
+        &origin.vault,
+        &vault,
+        &[origin.person, origin.erased, origin.erased_version.claim_id],
+    )?;
+    vault.delete_entity_with_reason(&origin.erased, DeleteReason::GdprDelete)?;
+    let (_appender_dir, appender) = open_test_vault_with(embedding_test_config());
+    replicate(&origin.vault, &appender, &[origin.person, origin.erased])?;
+    let late = appender
+        .append_blob_artifact_version(
+            &origin.erased,
+            OTHER_ONLY,
+            &BlobVersionProvenance::UserUpload,
+            WriteActor::new(origin.person, EdgeActorClass::Human),
+            at(15),
+            15,
+        )?
+        .claim_id;
+    assert_eq!(replicate(&appender, &vault, &[late])?, [false]);
     assert!(
-        content_erased(&vault.store, &txn, blake3::hash(OTHER_ONLY).as_bytes())?.is_none(),
-        "a forged claim erased the bytes it names"
+        erased(vault.read_blob_artifact_version(&other, 1)),
+        "the late version's bytes outlived the owner's erase of its artifact"
     );
-    drop(txn);
-    assert_eq!(
-        vault.read_blob_artifact_version(&origin.other, 1)?,
-        Some(OTHER_ONLY.to_vec())
+    Ok(())
+}
+
+/// Bug repro (#1465 R4, Astra F3): a text an ordinary delete fenced before its DerivedFrom edge
+/// and its body arrived still takes a hard erase's own fence on arrival: a local put of it is
+/// refused, as for any text the erase took.
+#[cfg(feature = "sync")]
+#[test]
+fn an_ordinary_fence_on_a_derived_text_is_raised_to_the_erase_fence() -> Result<()> {
+    const WORDS: &[u8] = b"words from the erased bytes";
+    let fixture = Shared::open()?;
+    let vault = &fixture.vault;
+    let asset = fixture.asset()?;
+    vault.delete_entity_with_reason(&fixture.erased, DeleteReason::GdprDelete)?;
+    let (_dir, peer) = open_test_vault_with(embedding_test_config());
+    let text = EntityId::now();
+    peer.put_entity(&text, ENTITY_TYPE_ASSET_TEXT, at(40), 40, WORDS)?;
+    apply_tombstone(vault, &text, &tombstone(TombstoneReason::UserDelete))?;
+    assert!(vault.with_write_txn_grouped(|txn| {
+        vault.scrub_text_derived_from_erased_in_txn(txn, &text, &asset)
+    })?);
+    let refused = vault.with_write_txn_grouped(|txn| {
+        let raw = peer.get_raw(&text)?.expect("the peer's text");
+        let header = EntityMetadataHeader::parse(&raw).expect("stored header");
+        vault.refuse_erased_blob_arrival_in_txn(
+            txn,
+            &text,
+            &header,
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )
+    })?;
+    assert!(refused, "the text's arrival was not refused");
+    assert!(
+        matches!(
+            vault.put_entity(&text, ENTITY_TYPE_ASSET_TEXT, at(50), 50, WORDS),
+            Err(Error::Artifact(ArtifactError::BlobContentErased))
+        ),
+        "a local put wrote the erased words back over an ordinary fence"
     );
     Ok(())
 }

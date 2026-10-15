@@ -76,6 +76,10 @@ side_tables! {
     /// the transaction that writes its receipt and sweep row. Key: id16 (the erased record);
     /// value: the carriers' id16s.
     BLOB_ARTIFACT_ERASE_SCOPE: VaultMeta b"blob_artifact:erase_scope:v1:" Raw;
+    /// The artifacts a hard erase tore here (a BLOB_ARTIFACT row), each valued with that erase's
+    /// tombstone wire value: a version of one that arrives later is a late reference. Key: id16
+    /// (artifact).
+    BLOB_ARTIFACT_ERASED_ARTIFACT: VaultMeta b"blob_artifact:erased_artifact:v1:" Raw;
     /// The ASSETs carrying bytes a hard erase's walk took here, each valued with that erase's
     /// tombstone wire value: a text derived from one goes with it. Never another kind's row. Key:
     /// id16 (ASSET).

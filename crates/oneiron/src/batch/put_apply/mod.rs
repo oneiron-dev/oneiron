@@ -28,8 +28,6 @@ use super::{
 };
 
 pub(super) use self::apply::apply_put;
-#[cfg(any(feature = "sync", test))]
-pub(crate) use self::claim_admission::admit_replicated_claim_in_txn;
 #[cfg(test)]
 pub(crate) use self::put_staging::wiped_rows;
 pub(crate) use self::put_staging::{delete_entity_index_rows, stage_entity_index_rows};

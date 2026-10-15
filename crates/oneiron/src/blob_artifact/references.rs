@@ -311,17 +311,14 @@ fn release_fenced_only(store: &Store, txn: &RoTxn<'_>, asset: &EntityId) -> Resu
         && !crate::deletion::HARD_DELETE_MARKER.contains(store, txn, &key)?)
 }
 
-/// Marks a carrier a hard erase just scrubbed (`super::erase`) with the erase's fence, when the
-/// scrub planted the fence it holds. A fence it held before the erase stays as it was.
+/// Marks a carrier a hard erase took (`super::erase`) with the erase's fence: never lifted, and a
+/// local put there is refused. An ordinary or release fence it held before is raised to it, as
+/// one can be lifted or cleared by a put; a hard-delete marker beside it stays.
 pub(crate) fn fence_erased_carrier(
     store: &Store,
     txn: &mut RwTxn<'_>,
     carrier: &EntityId,
-    fenced_before: bool,
 ) -> Result<()> {
-    if fenced_before {
-        return Ok(());
-    }
     crate::deletion::ROW_DELETION_FENCE.put(store, txn, &HexId(*carrier), &ERASE_FENCE.to_vec())
 }
 
