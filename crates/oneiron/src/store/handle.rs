@@ -559,6 +559,9 @@ macro_rules! manifest_dbs {
             $(fn $name(&self) -> &$ty { self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.base.core.diagnostics }
+            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks {
+                &self.base.core.pending_scan_checks
+            }
             fn clock(&self) -> &crate::ports::StoreClock { &self.base.core.clock }
             fn gate_key_root(&self) -> &std::path::Path { &self.base.core.gate_custody_root }
             fn gate_custody_archived(&self) -> bool { self.base.core.gate_custody_archived() }
@@ -597,6 +600,9 @@ macro_rules! manifest_dbs {
             /// over `&impl ManifestDbs` must record into the vault it is
             /// writing, and the write target is the only handle it holds.
             fn diagnostics(&self) -> &Diagnostics;
+            /// The scan checks this vault holds until no write is held
+            /// ([`crate::scan_check::ScanCount::defer`]).
+            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks;
             fn clock(&self) -> &crate::ports::StoreClock;
             fn gate_key_root(&self) -> &std::path::Path;
             fn gate_custody_archived(&self) -> bool;
@@ -612,6 +618,9 @@ macro_rules! manifest_dbs {
             $(fn $name(&self) -> &$ty { &self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
+            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks {
+                &self.core.pending_scan_checks
+            }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
             fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
@@ -625,6 +634,9 @@ macro_rules! manifest_dbs {
             $(fn $name(&self) -> &$ty { &self.$name })+
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
+            fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks {
+                &self.core.pending_scan_checks
+            }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
             fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
