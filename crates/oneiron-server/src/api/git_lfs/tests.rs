@@ -1248,3 +1248,77 @@ async fn a_stalled_lfs_upload_ends_at_the_idle_limit_and_frees_its_permit() {
         StatusCode::OK
     );
 }
+
+/// Review r2 (Sol and Astra, P1): an upload with no declared size claimed no
+/// room until its end, so between two looks at the disk it wrote up to 8 MiB
+/// that no claim covered, and many such uploads at once took the disk
+/// through its reserve. Each look now claims the piece in hand and all the
+/// upload may write before its next look.
+#[tokio::test]
+async fn an_undeclared_upload_claims_what_it_may_write_before_its_next_look() {
+    let (_dir, server) = test_server(secret_config());
+    // Room past the reserve for 4 MiB: less than one look covers.
+    server
+        .transfers
+        .disk
+        .show_free(server.config.limits.disk_reserve_bytes + 4 * 1024 * 1024);
+    let bytes = vec![b'x'; 2_048];
+    let oid = LfsOid::digest(&bytes);
+    let (status, _, _) = tokio::time::timeout(
+        PATIENCE,
+        route(
+            &server,
+            request(
+                "PUT",
+                &object_uri(&oid.to_hex()),
+                Some(&writer_token()),
+                stalled_body(bytes),
+            ),
+        ),
+    )
+    .await
+    .expect("ended at its first look, without waiting for the rest of its body");
+    assert_eq!(status, StatusCode::INSUFFICIENT_STORAGE);
+    assert_eq!(
+        put(&server, &writer_token(), b"a small declared object").await,
+        StatusCode::OK,
+        "an upload whose whole size fits still lands"
+    );
+}
+
+/// Review r2 (Astra, P1): an upload with no declared size reserved the size
+/// row against the quota and never more, so however far past the quota it
+/// went, the quota row never asked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_undeclared_upload_past_the_quota_lands_and_the_quota_row_asks() {
+    let config = SyncServerConfig {
+        max_lfs_object_bytes: 512,
+        limits: crate::config::LimitsConfig {
+            lfs_quota_bytes: 1_024,
+            ..Default::default()
+        },
+        ..secret_config()
+    };
+    let (_dir, server) = test_server(config);
+    let bytes = vec![b'q'; 2_048];
+    let oid = LfsOid::digest(&bytes);
+    let (status, _, _) = route(
+        &server,
+        request(
+            "PUT",
+            &object_uri(&oid.to_hex()),
+            Some(&writer_token()),
+            Body::from(bytes),
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "past the quota an upload still lands"
+    );
+    assert!(
+        asked(&server, crate::wire_telemetry::LimitRow::LfsQuota),
+        "and the quota row asks"
+    );
+}

@@ -238,34 +238,38 @@ fn a_request_without_the_key_is_refused_before_its_body_is_read() {
 
 /// Review P2: callers with the key share a byte budget for bodies, taken
 /// before a body is read. Past it a large body is not read until an earlier
-/// one's request ends, a few at most wait for that, and a query, which draws
-/// on its own budget, still answers. Review R7-3 and R7-4 (Sol): a body of no
-/// declared length waited on the large budget whatever its size, and any
-/// number of requests could wait, each holding what the transport had read.
+/// one's request ends, and a query, which draws on its own budget, still
+/// answers. Review R7-3 (Sol): a body of no declared length waited on the
+/// large budget whatever its size. Review r2 (Sol and Astra, P1): past 32
+/// waiters the next request with the key was refused with a 503; under the
+/// rate law it waits its turn like the rest.
 #[test]
 fn bodies_wait_for_their_budget_before_they_are_read() {
     use std::io::Write;
+    /// More than the 32 that once could wait.
+    const WAITERS: usize = 40;
     let served = Arc::new(Served::new(
         synthetic(),
         Vec::new(),
         Some(Zeroizing::new(KEY.to_owned())),
     ));
     let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
-    let mut uploads: Vec<_> = (0..2 + BODY_WAITERS)
+    let mut uploads: Vec<_> = (0..2 + WAITERS)
         .map(|_| post_head(addr, Some(KEY), MAX_BODY_BYTES))
         .collect();
     let queued = (0..500).any(|_| {
         std::thread::sleep(std::time::Duration::from_millis(10));
-        served.large_bodies.waiting() == BODY_WAITERS
+        served.large_bodies.waiting() == WAITERS
     });
-    assert!(queued, "every waiter queued");
+    assert!(
+        queued,
+        "every request past the budget waits; none is turned away"
+    );
     assert_eq!(
         served.body_bytes_held(),
         LARGE_BODIES_BYTES,
         "two bodies reserved, the rest wait unread"
     );
-    let mut one_more = post_head(addr, Some(KEY), MAX_BODY_BYTES);
-    assert_eq!(status(&mut one_more).expect("refused at once"), 503);
 
     let mut chunked = std::net::TcpStream::connect(addr).expect("connected");
     chunked
@@ -340,4 +344,123 @@ fn every_row_and_answer_names_the_model_loaded() {
         answer["provenance"],
         serde_json::json!({ "device": "cuda", "runtime": "candle 0.11.0 q8_0" })
     );
+}
+
+/// A model that takes a while over each request, so several are in flight.
+struct Slow(Arc<dyn ServedModel>);
+
+impl ServedModel for Slow {
+    fn model_id(&self) -> &str {
+        self.0.model_id()
+    }
+
+    fn dimensions(&self) -> usize {
+        self.0.dimensions()
+    }
+
+    fn transform(&self) -> &str {
+        self.0.transform()
+    }
+
+    fn profile(&self) -> &RunProfile {
+        self.0.profile()
+    }
+
+    fn provenance(&self) -> EmbeddingProvenance {
+        self.0.provenance()
+    }
+
+    fn embed_raw(
+        &self,
+        texts: &[String],
+        side: Side,
+        instruction: Option<&str>,
+        priority: Priority,
+    ) -> oneiron::Result<Embedded> {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        self.0.embed_raw(texts, side, instruction, priority)
+    }
+}
+
+/// Sends a whole embeddings request for `input` and reads its status.
+fn embed(addr: SocketAddr, input: &serde_json::Value) -> u16 {
+    use std::io::Write;
+    let body = serde_json::json!({ "model": SYNTHETIC_MODEL, "input": input }).to_string();
+    let mut stream = post_head(addr, Some(KEY), body.len());
+    stream.write_all(body.as_bytes()).expect("body sent");
+    status(&mut stream).unwrap_or_default()
+}
+
+/// Rule five at the embedder's request row: `callers` bulk requests past
+/// the two the model works on at once all answer, and the row asks.
+pub(crate) fn cross_the_requests(callers: usize) -> crate::admission::Crossing {
+    let served = Arc::new(Served::new(
+        Arc::new(Slow(synthetic())),
+        Vec::new(),
+        Some(Zeroizing::new(KEY.to_owned())),
+    ));
+    let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
+    let calls: Vec<_> = (0..callers)
+        .map(|n| {
+            std::thread::spawn(move || {
+                embed(
+                    addr,
+                    &serde_json::json!([format!("document {n}"), "another"]),
+                )
+            })
+        })
+        .collect();
+    let refused = calls
+        .into_iter()
+        .filter(|call| call.join().ok() != Some(200))
+        .count();
+    crate::admission::Crossing {
+        refused,
+        asked: served
+            .questions
+            .latest(LimitRow::EmbedderRequests)
+            .is_some(),
+    }
+}
+
+/// Rule five at the embedder's body row: past a large budget two held
+/// bodies fill, `callers` large requests wait, then all answer once the two
+/// let go, and the row asks.
+pub(crate) fn cross_the_bodies(callers: usize) -> crate::admission::Crossing {
+    let served = Arc::new(Served::new(
+        synthetic(),
+        Vec::new(),
+        Some(Zeroizing::new(KEY.to_owned())),
+    ));
+    let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
+    let holders: Vec<_> = (0..2)
+        .map(|_| post_head(addr, Some(KEY), MAX_BODY_BYTES))
+        .collect();
+    assert!(holds(&served, LARGE_BODIES_BYTES), "the budget is full");
+    // Over the small-body size, so each draws on the large budget.
+    let large = "x".repeat(SMALL_BODY_BYTES + 1);
+    let calls: Vec<_> = (0..callers)
+        .map(|_| {
+            let large = large.clone();
+            std::thread::spawn(move || embed(addr, &serde_json::json!(large)))
+        })
+        .collect();
+    let queued = (0..500).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        served.large_bodies.waiting() + calls.iter().filter(|call| call.is_finished()).count()
+            == callers
+    });
+    assert!(queued, "every caller reached the budget");
+    drop(holders);
+    let refused = calls
+        .into_iter()
+        .filter(|call| call.join().ok() != Some(200))
+        .count();
+    crate::admission::Crossing {
+        refused,
+        asked: served
+            .questions
+            .latest(LimitRow::EmbedderBodyBytes)
+            .is_some(),
+    }
 }

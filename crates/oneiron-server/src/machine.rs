@@ -80,6 +80,9 @@ pub(crate) struct DiskFloor {
     dir: PathBuf,
     reserve: u64,
     claimed: Arc<Mutex<u64>>,
+    /// The free space a test has the disk show; `None` reads the disk.
+    #[cfg(test)]
+    shown_free: Arc<Mutex<Option<u64>>>,
 }
 
 /// Room one piece of work holds on the disk: bytes it has still to write.
@@ -96,7 +99,16 @@ impl DiskFloor {
             dir,
             reserve,
             claimed: Arc::default(),
+            #[cfg(test)]
+            shown_free: Arc::default(),
         }
+    }
+
+    /// Has every clone of this floor see `bytes` free on its disk, whatever
+    /// the disk holds.
+    #[cfg(test)]
+    pub(crate) fn show_free(&self, bytes: u64) {
+        *lock(&self.shown_free) = Some(bytes);
     }
 
     /// Whether `bytes` more still leave the reserve free, past every claim.
@@ -130,8 +142,16 @@ impl DiskFloor {
     /// A disk that cannot be read is taken as full: a floor that cannot be
     /// checked holds.
     fn room(&self, claimed: u64, bytes: u64) -> bool {
-        free_disk_bytes(&self.dir)
+        self.free()
             .is_ok_and(|free| free >= self.reserve.saturating_add(claimed).saturating_add(bytes))
+    }
+
+    fn free(&self) -> std::io::Result<u64> {
+        #[cfg(test)]
+        if let Some(free) = *lock(&self.shown_free) {
+            return Ok(free);
+        }
+        free_disk_bytes(&self.dir)
     }
 }
 
@@ -144,6 +164,6 @@ impl Drop for DiskClaim {
 
 /// The claim count changes in one step under its lock, so a holder that
 /// panicked left it whole.
-fn lock(mutex: &Mutex<u64>) -> MutexGuard<'_, u64> {
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }

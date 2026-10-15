@@ -1,5 +1,5 @@
-//! Rule five, checked at every `[limits]` row the code lists: crossed by a
-//! burst on one credential, a row turns nobody away and asks whether
+//! Rule five, checked at every row the code lists (`LimitRow::ALL`): crossed
+//! by a burst on one credential, a row turns nobody away and asks whether
 //! everything is okay (ARCH-0044 C5, OF-520). The match below has no
 //! wildcard, so a row added without a driver does not compile.
 
@@ -21,6 +21,16 @@ async fn cross(row: LimitRow) -> Crossing {
         LimitRow::CodeRuns => super::mcp_code_admission::cross_the_runs(CALLERS).await,
         LimitRow::CompactionPasses => {
             tokio::task::spawn_blocking(|| crate::ai_host::cross_the_passes(CALLERS))
+                .await
+                .unwrap()
+        }
+        LimitRow::EmbedderRequests => tokio::task::spawn_blocking(|| {
+            crate::embedder::serve::tests::cross_the_requests(CALLERS)
+        })
+        .await
+        .unwrap(),
+        LimitRow::EmbedderBodyBytes => {
+            tokio::task::spawn_blocking(|| crate::embedder::serve::tests::cross_the_bodies(CALLERS))
                 .await
                 .unwrap()
         }

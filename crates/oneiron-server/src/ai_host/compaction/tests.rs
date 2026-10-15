@@ -23,12 +23,15 @@ fn spawner(bound: usize, wait: Duration) -> (ThreadSpawn, Arc<LimitQuestions>) {
         bound,
         wait,
     );
-    (
-        ThreadSpawn {
-            passes: Arc::new(passes),
-        },
-        questions,
-    )
+    (on_behalf_of(&Arc::new(passes), "a credential"), questions)
+}
+
+/// A run's spawner on `passes`, its passes queued as `credential`'s.
+fn on_behalf_of(passes: &Arc<Admission<String>>, credential: &str) -> ThreadSpawn {
+    ThreadSpawn {
+        passes: Arc::clone(passes),
+        credential: credential.to_owned(),
+    }
 }
 
 /// Spawns a pass that only reports it ran; the receiver hears it.
@@ -111,5 +114,61 @@ fn a_pass_that_waits_past_its_deadline_never_starts() {
     assert!(
         started.elapsed() >= Duration::from_millis(200),
         "a pass waits its deadline rather than being dropped at once"
+    );
+}
+
+/// Review r2 (Sol and Astra, P1): every pass queued under one key, so passes
+/// waited first come, first served across every credential. A credential
+/// with a backlog of passes held another's one pass back until its whole
+/// backlog had run, and past its deadline that pass never ran at all.
+#[test]
+fn a_credentials_backlog_of_passes_never_holds_another_credentials_pass_back() {
+    let passes = Arc::new(Admission::new(
+        LimitRow::CompactionPasses,
+        Arc::new(LimitQuestions::default()),
+        1,
+        PATIENCE,
+    ));
+    let fleet = on_behalf_of(&passes, "a fleet's credential");
+    let other = on_behalf_of(&passes, "another credential");
+
+    // The fleet's first pass holds the only permit.
+    let (release, released) = mpsc::channel::<()>();
+    let (started, first) = mpsc::channel();
+    fleet.spawn(Box::new(move || {
+        let _ = started.send(());
+        let _ = released.recv();
+    }));
+    first.recv_timeout(PATIENCE).expect("the first pass runs");
+
+    // Three more of the fleet's passes queue, then the other credential's.
+    let (ran, order) = mpsc::channel();
+    let queue = |spawn: &ThreadSpawn, name: &'static str| {
+        let before = passes.waiting();
+        let ran = ran.clone();
+        spawn.spawn(Box::new(move || {
+            let _ = ran.send(name);
+        }));
+        while passes.waiting() == before {
+            std::thread::yield_now();
+        }
+    };
+    for name in ["fleet 2", "fleet 3", "fleet 4"] {
+        queue(&fleet, name);
+    }
+    queue(&other, "other");
+
+    drop(release);
+    let served: Vec<_> = (0..4)
+        .map(|_| {
+            order
+                .recv_timeout(PATIENCE)
+                .expect("every queued pass runs")
+        })
+        .collect();
+    assert_eq!(
+        served,
+        ["fleet 2", "other", "fleet 3", "fleet 4"],
+        "turns go round the credentials, in order within one"
     );
 }

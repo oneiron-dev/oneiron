@@ -148,3 +148,60 @@ async fn a_crossing_asks_its_row_once_and_refuses_nothing() {
         assert_eq!(waiter.await.unwrap(), Ok(()), "every waiter gets its turn");
     }
 }
+
+/// Review r2 (Astra and Sol, P1): a pool asked again only once a permit came
+/// back to it, so a wait that began after the last waiter took its turn
+/// asked nothing; and the row's question took only the first crossing of its
+/// minute. A wait that begins when nobody waits is a new crossing, and each
+/// one counts in the row's question.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_crossing_counts_in_its_rows_question() {
+    // One window holds every crossing below.
+    let into_minute = oneiron_vault_contract::now_ts() % 60;
+    if into_minute > 50 {
+        tokio::time::sleep(Duration::from_secs(61 - into_minute)).await;
+    }
+    let (pool, questions) = pool(1, LONG);
+    let crossings = || {
+        questions
+            .latest(LimitRow::GitExchanges)
+            .map_or(0, |question| question.crossings)
+    };
+    let queue = |key: &'static str| {
+        let pool = Arc::clone(&pool);
+        tokio::spawn(async move { pool.admit(key).await })
+    };
+    let until_one_waits = || {
+        let pool = Arc::clone(&pool);
+        async move {
+            while pool.waiting() == 0 {
+                tokio::task::yield_now().await;
+            }
+        }
+    };
+
+    let first = pool.admit("first").await.unwrap();
+    let second = queue("second");
+    until_one_waits().await;
+    assert_eq!(crossings(), 1);
+
+    // The permit passes to the one waiter, and the line is empty: the next
+    // wait crosses the row again.
+    drop(first);
+    let second = second.await.unwrap().unwrap();
+    let third = queue("third");
+    until_one_waits().await;
+    assert_eq!(crossings(), 2, "a wait after the line ran empty crosses");
+
+    // Everything ends and the pool is idle; a burst in the same minute
+    // crosses once more.
+    drop(second);
+    drop(third.await.unwrap().unwrap());
+    assert!(pool.is_idle());
+    let fourth = pool.admit("fourth").await.unwrap();
+    let fifth = queue("fifth");
+    until_one_waits().await;
+    assert_eq!(crossings(), 3, "a crossing in the same minute still counts");
+    drop(fourth);
+    assert!(fifth.await.unwrap().is_ok(), "nobody is refused");
+}

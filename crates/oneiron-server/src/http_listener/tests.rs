@@ -327,21 +327,27 @@ async fn past_the_floor_a_new_socket_waits_its_turn_and_the_row_asks() {
     assert_eq!(read_response(&mut third).await.0, 200);
 }
 
+/// The address this host would send from to reach the outside: an
+/// off-device peer as far as the listener can tell. No packet is sent.
+fn off_device_address() -> Option<std::net::IpAddr> {
+    let probe = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
+    let local = probe
+        .connect("192.0.2.1:9")
+        .and_then(|()| probe.local_addr())
+        .ok()?
+        .ip();
+    assert!(!local.is_loopback() && !local.is_unspecified());
+    Some(local)
+}
+
 #[tokio::test]
 async fn an_address_sheds_strangers_past_its_share_but_never_its_authenticated_connections() {
     const LOGIN: &[u8] = b"GET /login HTTP/1.1\r\nhost: listener\r\n\r\n";
 
-    // The address this host would send from to reach the outside: an
-    // off-device peer as far as the listener can tell. No packet is sent.
-    let probe = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
-    let routed = probe
-        .connect("192.0.2.1:9")
-        .and_then(|()| probe.local_addr());
-    let Ok(local) = routed.map(|addr| addr.ip()) else {
+    let Some(local) = off_device_address() else {
         eprintln!("no routed interface on this host; the off-device share is unprovable here");
         return;
     };
-    assert!(!local.is_loopback() && !local.is_unspecified());
     let served = start(
         &SocketAddr::new(local, 0).to_string(),
         ConnectionLimits {
@@ -387,6 +393,54 @@ async fn an_address_sheds_strangers_past_its_share_but_never_its_authenticated_c
         stream.write_all(REQUEST).await.unwrap();
         assert_eq!(read_response(stream).await.0, 200);
     }
+}
+
+/// Review r2 (Sol and Astra, P1): the default share (256) is larger than
+/// the floor a low open-file limit gives (128 at 256 descriptors), so one
+/// address's strangers could hold every socket the floor admits and stop
+/// the loop before any caller could reach it to authenticate.
+#[tokio::test]
+async fn strangers_from_one_address_never_fill_the_floor() {
+    const LOGIN: &[u8] = b"GET /login HTTP/1.1\r\nhost: listener\r\n\r\n";
+    let Some(local) = off_device_address() else {
+        eprintln!("no routed interface on this host; the off-device share is unprovable here");
+        return;
+    };
+    let served = start(
+        &SocketAddr::new(local, 0).to_string(),
+        ConnectionLimits {
+            max_connections: 4,
+            max_unauthenticated_per_peer: 256,
+            header_read_timeout: PATIENCE,
+            body_idle_timeout: PATIENCE,
+            queue_wait: PATIENCE,
+        },
+    )
+    .await;
+
+    // Strangers take half the floor, and the next one is shed.
+    let mut strangers = Vec::new();
+    for _ in 0..2 {
+        let mut stream = TcpStream::connect(served.addr).await.unwrap();
+        stream.write_all(REQUEST).await.unwrap();
+        assert_eq!(read_response(&mut stream).await.0, 200);
+        strangers.push(stream);
+    }
+    let mut flood = TcpStream::connect(served.addr).await.unwrap();
+    let answer = until_closed(&mut flood)
+        .await
+        .expect("a stranger past half the floor is closed at once");
+    assert!(answer.starts_with("HTTP/1.1 503"), "{answer:?}");
+
+    // A caller from the same address still finds room to authenticate.
+    let mut caller = TcpStream::connect(served.addr).await.unwrap();
+    caller.write_all(LOGIN).await.unwrap();
+    assert_eq!(
+        tokio::time::timeout(PATIENCE, read_response(&mut caller))
+            .await
+            .expect("the floor kept room for a caller"),
+        (200, "welcome".to_owned())
+    );
 }
 
 #[tokio::test]
