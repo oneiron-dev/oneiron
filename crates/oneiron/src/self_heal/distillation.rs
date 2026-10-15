@@ -106,14 +106,13 @@ impl Vault {
                 "label must cite matching T3 telemetry".into(),
             ));
         }
-        let label = ReviewedFinding {
-            family: family.into(),
-            event_id,
-            reviewer: owner.actor(),
-            positive,
-        };
         self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, &*txn)?;
+            let label = ReviewedFinding {
+                family: family.into(),
+                event_id,
+                reviewer: owner.revalidate_in_txn(self, &*txn)?,
+                positive,
+            };
             let k = key(family, &event_id);
             if let Some(stored) = LABEL
                 .get(&self.store, txn, &k)

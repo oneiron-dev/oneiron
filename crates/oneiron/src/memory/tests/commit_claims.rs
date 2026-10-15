@@ -1183,7 +1183,9 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
     use std::collections::BTreeSet;
 
     let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0xB1);
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
     let member = put_person(&vault, 0xB2);
     let viewer = put_person(&vault, 0xB3);
     let authenticated = vault

@@ -2160,7 +2160,7 @@ fn similarity_result_is_not_a_consent_actor_and_cannot_auto_clear() -> Result<()
         1_000,
     )?;
     assert!(matches!(
-        card.evaluate_action(&request, &owner)
+        card.evaluate_action(&vault, &request, &owner)
             .expect_err("a voice similarity match must not clear a consequential action")
             .kind(),
         ErrorKind::ConsentUnauthenticatedActor,

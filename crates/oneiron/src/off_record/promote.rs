@@ -180,11 +180,16 @@ pub(crate) struct PromoteInitiator {
 }
 
 impl PromoteInitiator {
-    pub(crate) fn owner(owner: &crate::consent::AuthenticatedOwner) -> Self {
-        Self {
-            actor: owner.actor(),
+    /// The owner whose proof `vault` revalidates; the landing checks the
+    /// proof again in the transaction that writes.
+    pub(crate) fn owner(
+        vault: &crate::Vault,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> crate::error::Result<Self> {
+        Ok(Self {
+            actor: owner.revalidate(vault)?,
             kind: PROMOTE_INITIATOR_OWNER,
-        }
+        })
     }
 
     pub(crate) const fn room_owner(person: EntityId) -> Self {

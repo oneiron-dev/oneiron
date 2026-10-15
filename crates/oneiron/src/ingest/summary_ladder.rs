@@ -200,7 +200,9 @@ impl ScopedRead<'_> {
         ScopedReadResult<Option<serde_json::Value>>,
         Option<super::DocsDeepReceipt>,
     )> {
-        if self.actor_key().actor_ref() != owner.principal_ref() {
+        if self.actor_key().actor_ref()
+            != owner.principal_ref_in_txn(self.vault(), &self.vault().store.env.read_txn()?)?
+        {
             return Err(crate::Error::InvalidConfig(
                 "docs read principal differs from owner".into(),
             ));

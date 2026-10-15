@@ -754,3 +754,37 @@ fn a_document_past_the_text_ceiling_is_written_and_left_out_of_search() -> Resul
     assert!(!found("lantern")? && !found("tidewater")?);
     Ok(())
 }
+
+/// F18 (H397): owner doors take their actor from a proof this vault
+/// authenticated. Another vault's proof for the same PERSON id acts on nothing.
+mod foreign_owner_proof {
+    use super::*;
+
+    #[test]
+    fn a_foreign_owner_proof_purges_no_text_history() -> Result<()> {
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let (writer, owner) = actor(&vault)?;
+        let id = entity(&vault, writer, &owner, "seed")?;
+        let frontier = append(&vault, id, writer, &owner, " one", 11)?;
+        let (_other_dir, _other, foreign) =
+            crate::test_util::foreign_owner_proof(owner.actor(), owner.principal_ref());
+
+        assert_eq!(
+            vault
+                .purge_entity_text_history(&id, &frontier, &DocAuthorization::Owner(&foreign), 30)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert!(vault.entity_text_purge_receipts(&id)?.is_empty());
+        let receipt = vault.purge_entity_text_history(
+            &id,
+            &frontier,
+            &DocAuthorization::Owner(&owner),
+            30,
+        )?;
+        assert_eq!(vault.entity_text_purge_receipts(&id)?, vec![receipt]);
+        Ok(())
+    }
+}

@@ -173,7 +173,6 @@ const FIRST_STORED_REVISION: u64 = 1;
 /// something a caller writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelIdentitySelectionWriter {
-    actor_ref: EntityId,
     kind: SelectionRuleWriterKind,
     owner: Option<AuthenticatedOwner>,
     /// The agent's write actor, frontier included, rechecked against the
@@ -186,7 +185,6 @@ impl ChannelIdentitySelectionWriter {
     #[must_use]
     pub fn owner(owner: &AuthenticatedOwner) -> Self {
         Self {
-            actor_ref: owner.actor(),
             kind: SelectionRuleWriterKind::Owner,
             owner: Some(owner.clone()),
             agent: None,
@@ -201,7 +199,6 @@ impl ChannelIdentitySelectionWriter {
     pub fn from_authenticated_write(actor: &WriteActor) -> ChannelIdentitySelectionResult<Self> {
         match actor.actor_class() {
             EdgeActorClass::Agent => Ok(Self {
-                actor_ref: actor.entity_ref(),
                 kind: SelectionRuleWriterKind::Agent,
                 owner: None,
                 agent: Some(*actor),
@@ -214,33 +211,30 @@ impl ChannelIdentitySelectionWriter {
     /// The writer still holds in the write's own transaction: the owner proof
     /// belongs to this vault and is live, and an agent writer names a live
     /// actor of this vault whose type can act as an agent and, in a rooted
-    /// vault, whose authority binding is live.
+    /// vault, whose authority binding is live. Returns the actor stamped into
+    /// every row the write touches: the owner's from the proof's revalidation,
+    /// never from the proof's fields.
     pub(super) fn revalidate_in_txn(
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
-    ) -> ChannelIdentitySelectionResult<()> {
+    ) -> ChannelIdentitySelectionResult<EntityId> {
         if let Some(owner) = &self.owner {
-            owner.revalidate_in_txn(vault, txn)?;
-            return Ok(());
+            return Ok(owner.revalidate_in_txn(vault, txn)?);
         }
+        let Some(agent) = &self.agent else {
+            return Err(ChannelIdentitySelectionError::WriterNotInVault);
+        };
+        let actor_ref = agent.entity_ref();
         let live_type =
-            crate::vault::live_entity_row_in_txn(&vault.store, txn, &self.actor_ref)?.live_type();
+            crate::vault::live_entity_row_in_txn(&vault.store, txn, &actor_ref)?.live_type();
         if !live_type.is_some_and(|entity_type| {
             crate::provenance::validate_actor_class(entity_type, EdgeActorClass::Agent).is_ok()
         }) {
             return Err(ChannelIdentitySelectionError::WriterNotInVault);
         }
-        if let Some(agent) = &self.agent {
-            vault.verify_write_actor_in_txn(txn, agent)?;
-        }
-        Ok(())
-    }
-
-    /// Entity stamped into every row this writer touches.
-    #[must_use]
-    pub const fn actor_ref(&self) -> EntityId {
-        self.actor_ref
+        vault.verify_write_actor_in_txn(txn, agent)?;
+        Ok(actor_ref)
     }
 
     /// Derived provenance class.

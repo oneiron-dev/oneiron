@@ -48,7 +48,7 @@ pub(crate) fn record_explicit_ruling_in_txn(
         rationale: format!(
             "{};owner={};authentication={}",
             receipt.rationale,
-            owner.principal_ref(),
+            owner.principal_ref_in_txn(vault, &*txn)?,
             owner.decision_id().to_hex()
         ),
         budget_band: receipt.budget_band,

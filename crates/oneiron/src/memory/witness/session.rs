@@ -135,18 +135,22 @@ impl Memory<'_> {
                 &["Authenticate again as a live owner of this vault, then retry."],
             )
         };
-        if owner.actor() != self.actor {
+        if owner
+            .revalidate(self.vault)
+            .map_err(|error| refused(error.to_string()))?
+            != self.actor
+        {
             return Err(refused(
                 "the owner proof names another actor than the witness".to_owned(),
             ));
         }
         let room = session.room()?;
         let admit = |txn: &heed::RoTxn<'_>| -> MemoryResult<()> {
-            owner
+            let actor = owner
                 .revalidate_in_txn(self.vault, txn)
                 .map_err(|error| refused(error.to_string()))?;
             match room {
-                Some(room) if !session.is_member_in_txn(txn, room, owner.actor())? => {
+                Some(room) if !session.is_member_in_txn(txn, room, actor)? => {
                     Err(MemoryError::new(
                         MEMORY_CODE_FORBIDDEN,
                         "the owner is not in this stretch's room".to_owned(),

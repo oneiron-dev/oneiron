@@ -10,7 +10,9 @@ use std::collections::BTreeSet;
 
 fn shared() -> (tempfile::TempDir, Vault, EntityId, EntityId, Vec<String>) {
     let (dir, vault) = open_vault();
-    let owner = put_person(&vault, 0xD1);
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
     let member = put_person(&vault, 0xD2);
     let viewer = put_person(&vault, 0xD3);
     let authenticated = vault

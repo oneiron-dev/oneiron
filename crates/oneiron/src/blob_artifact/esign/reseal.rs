@@ -18,9 +18,9 @@ impl Vault {
     ) -> Result<()> {
         let now = self.now_recorded_at();
         self.with_write_txn_grouped(|txn| {
-            verify_owner(self, txn, owner)?;
+            let actor = verify_owner(self, txn, owner)?;
             let required = GrantBound::action(
-                ActorBound::new(owner.actor().to_hex())?,
+                ActorBound::new(actor.to_hex())?,
                 ActionClass::new("esign.reseal")?,
                 ActionEnvelope::new([format!("document:{}", document.to_hex())])?,
             )?;
@@ -40,14 +40,14 @@ impl Vault {
                 txn,
                 document,
                 EsignEvent::ResealRequested {
-                    owner: owner.actor().to_hex(),
+                    owner: actor.to_hex(),
                     authority: format!(
                         "grant:{grant_ref};owner_decision:{}",
                         owner.decision_id().to_hex()
                     ),
                 },
                 EsignAuditActor {
-                    actor: owner.actor().to_hex(),
+                    actor: actor.to_hex(),
                     ip,
                     user_agent,
                 },

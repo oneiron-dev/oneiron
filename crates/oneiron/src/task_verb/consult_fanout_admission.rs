@@ -285,14 +285,14 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         policy: &ConsultFanOutPolicy,
     ) -> MemoryResult<()> {
-        self.reauthenticate_fanout_owner(owner)?;
+        let actor = self.reauthenticate_fanout_owner(owner)?;
         if !valid_rates(policy.create_rate, policy.peer_rate.as_ref()) {
             return Err(MemoryError::bad_request(
                 "fan-out policy rate and quota must be nonzero",
             ));
         }
         self.vault()
-            .memory(owner.actor(), crate::EdgeActorClass::Human)
+            .memory(actor, crate::EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {
                 self.reauthenticate_fanout_owner(owner)?;
                 rewrite_fanout_manifest(self.vault(), owner, txn, |entries| {
@@ -324,7 +324,7 @@ impl Memory<'_> {
         policy: &ConsultFanOutPolicy,
         holder_override: bool,
     ) -> MemoryResult<()> {
-        self.reauthenticate_fanout_owner(owner)?;
+        let actor = self.reauthenticate_fanout_owner(owner)?;
         if !scope.is_valid()
             || scope.level() == 0
             || !valid_rates(policy.create_rate, policy.peer_rate.as_ref())
@@ -344,10 +344,10 @@ impl Memory<'_> {
             row_ref: row_ref.clone(),
             scope: scope.clone(),
             policy: policy.clone(),
-            holder_ref: holder_override.then(|| owner.actor().to_hex()),
+            holder_ref: holder_override.then(|| actor.to_hex()),
         };
         self.vault()
-            .memory(owner.actor(), crate::EdgeActorClass::Human)
+            .memory(actor, crate::EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {
                 self.reauthenticate_fanout_owner(owner)?;
                 rewrite_fanout_manifest(self.vault(), owner, txn, |entries| {
@@ -413,14 +413,10 @@ impl Memory<'_> {
     pub(super) fn reauthenticate_fanout_owner(
         &self,
         owner: &AuthenticatedOwner,
-    ) -> MemoryResult<()> {
-        self.vault().authenticate_owner(
-            owner.actor(),
-            owner.principal_ref(),
-            true,
-            owner.decision_id(),
-        )?;
-        verify_actor_binding(self.vault(), owner.actor(), crate::EdgeActorClass::Human)
+    ) -> MemoryResult<EntityId> {
+        let actor = owner.revalidate(self.vault())?;
+        verify_actor_binding(self.vault(), actor, crate::EdgeActorClass::Human)?;
+        Ok(actor)
     }
 
     pub(super) fn require_fanout_ceiling(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {

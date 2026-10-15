@@ -516,14 +516,20 @@ pub(super) fn validate_mailbox_request(mailbox: &DelegatedMailboxOnboarding) -> 
 }
 
 pub(super) fn require_mailbox_owner<'a>(
+    vault: &Vault,
     intent: &MemberOnboardingIntent,
     owner: Option<&'a AuthenticatedOwner>,
 ) -> Result<&'a AuthenticatedOwner> {
-    owner
-        .filter(|owner| owner.actor() == intent.person_ref)
-        .ok_or(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+    let refused = || {
+        Error::Gate(GateError::ConsentOwnerNotAuthenticated(
             "mailbox onboarding requires its member's authenticated consent owner",
-        )))
+        ))
+    };
+    let owner = owner.ok_or_else(refused)?;
+    if owner.revalidate(vault)? != intent.person_ref {
+        return Err(refused());
+    }
+    Ok(owner)
 }
 
 pub(super) fn require_active_mailbox(
@@ -553,7 +559,7 @@ pub(super) fn verify_mailbox_revision(
     let Some(mailbox) = &intent.delegated_mailbox else {
         return Ok(None);
     };
-    let owner = require_mailbox_owner(intent, owner)?;
+    let owner = require_mailbox_owner(vault, intent, owner)?;
     let now = vault.store.authorization_now()?;
     let revision = vault.store.env.info().last_txn_id;
     let txn = vault.store.env.read_txn()?;

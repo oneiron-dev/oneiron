@@ -347,7 +347,7 @@ impl Vault {
     ) -> Result<ConsentReceipt> {
         let claims = credential.claims();
         if claims.single_use
-            || claims.holder_ref != owner.actor().to_hex()
+            || claims.holder_ref != owner.revalidate(self)?.to_hex()
             || claims.actor_class.as_deref() != Some("human")
             || !credential.allows_verb("core:auth")
         {
@@ -368,7 +368,7 @@ impl Vault {
         validate_reference_shape(reference)?;
         let key = reference.to_owned();
         self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, &*txn)?;
+            let principal_ref = owner.principal_ref_in_txn(self, &*txn)?;
             if let Some(credential) = credential
                 && !self.capability_slip_is_live_in_txn(&*txn, credential)?
             {
@@ -381,7 +381,7 @@ impl Vault {
                 .ok_or_else(invalid_row)?;
             let mut row = validate_row(row, reference)?;
             let proposal = &row.proposal;
-            if proposal.owner_ref != owner.principal_ref() {
+            if proposal.owner_ref != principal_ref {
                 return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                     "widen proposal belongs to another holder",
                 )));

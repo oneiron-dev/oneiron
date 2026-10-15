@@ -1006,3 +1006,53 @@ fn server_sink_logs_a_failed_owner_action_by_kind_never_its_text() {
     assert!(written.contains("Some(InvalidConfig)"), "{written}");
     assert!(written.contains("owner action failed"), "{written}");
 }
+
+/// F18 (H397), end to end through a host that holds two vaults: an owner
+/// proof vault A authenticated is refused at vault B's owner write door, even
+/// for a PERSON id the two share, and B's own proof still writes there.
+mod foreign_owner_proof {
+    use super::*;
+
+    #[test]
+    fn a_proof_from_one_vault_writes_nothing_on_another() {
+        let (_dir_a, server_a) = auth_test_server();
+        let (_dir_b, server_b) = auth_test_server();
+        let (a, b): (&oneiron::Vault, &oneiron::Vault) = (server_a.vault(), server_b.vault());
+        let actor = oneiron::EntityId::now();
+        for vault in [a, b] {
+            vault
+                .put_entity(
+                    &actor,
+                    ENTITY_TYPE_PERSON,
+                    oneiron::TimeRange { start: 1, end: 1 },
+                    1,
+                    b"owner",
+                )
+                .unwrap();
+        }
+        let proof = |vault: &oneiron::Vault| {
+            vault
+                .authenticate_owner(
+                    actor,
+                    &actor.to_hex(),
+                    true,
+                    oneiron::store::GateDecisionId::now(),
+                )
+                .unwrap()
+        };
+        let before = b.dreamer_wake_policy().unwrap().wake_grain_turns;
+        let grain = oneiron::dreamer_wake::WakeGrain::new(before + 6).unwrap();
+
+        assert_eq!(
+            b.set_wake_grain(&proof(a), grain).unwrap_err().kind(),
+            oneiron::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert_eq!(b.dreamer_wake_policy().unwrap().wake_grain_turns, before);
+        b.set_wake_grain(&proof(b), grain).unwrap();
+        assert_eq!(
+            b.dreamer_wake_policy().unwrap().wake_grain_turns,
+            before + 6
+        );
+        assert_eq!(a.dreamer_wake_policy().unwrap().wake_grain_turns, before);
+    }
+}

@@ -179,7 +179,9 @@ fn visible_bundle(
     run_id: &str,
     locality: CallerLocality,
 ) -> OwnerResult<(GateConsentBundle, Vec<ClaimBody>)> {
-    let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
+    // Resolve admits an act on what this shows, so the proof is revalidated,
+    // not only read.
+    let actor = WriteActor::new(owner.revalidate(vault)?, EdgeActorClass::Human);
     let (bundle, bodies) = vault.review_gate_consent_bundle_with_bodies(&actor, run_id)?;
     let members = bundle
         .members

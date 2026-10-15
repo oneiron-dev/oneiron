@@ -324,13 +324,9 @@ impl Vault {
         at: u64,
     ) -> Result<ConnectorKeyRecord> {
         let mut txn = self.store.env.write_txn()?;
-        crate::memory::verify_deletion_authority_in_txn(
-            self,
-            &txn,
-            owner.actor(),
-            EdgeActorClass::Human,
-        )
-        .map_err(|_| invalid_body("connector manifest owner binding required"))?;
+        let actor = owner.revalidate_in_txn(self, &txn)?;
+        crate::memory::verify_deletion_authority_in_txn(self, &txn, actor, EdgeActorClass::Human)
+            .map_err(|_| invalid_body("connector manifest owner binding required"))?;
         let record =
             read_connector_key_in_txn(&self.store, &txn, id)?.ok_or(Error::EntityNotFound)?;
         if record.status == ConnectorKeyStatus::Revoked {

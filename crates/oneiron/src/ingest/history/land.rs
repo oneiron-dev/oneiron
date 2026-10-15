@@ -325,7 +325,7 @@ impl Vault {
         let mut report = HistoryImportReport::new(conversation);
         let import = Import {
             vault: self,
-            memory: self.memory(owner.actor(), EdgeActorClass::Human),
+            memory: self.memory(owner.revalidate(self)?, EdgeActorClass::Human),
             owner,
             source,
             conversation,

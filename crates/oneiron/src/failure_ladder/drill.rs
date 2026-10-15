@@ -37,8 +37,8 @@ impl Vault {
     ) -> Result<CustomFailureDrill> {
         let trace = {
             let txn = self.store.env.read_txn()?;
-            owner.revalidate_in_txn(self, &txn)?;
-            if owner.actor() != crate::vault::embedded_owner_actor_id()? {
+            let actor = owner.revalidate_in_txn(self, &txn)?;
+            if actor != crate::vault::embedded_owner_actor_id()? {
                 // An unrooted vault has no authority-bound non-bootstrap owner.
                 // Store-truth PERSON status alone is not a tier-0 read grant.
                 let denied = || {
@@ -52,7 +52,7 @@ impl Vault {
                 if fold.vault_id.is_none() || fold.vault_root_is_conflicted() {
                     return Err(denied());
                 }
-                crate::memory::verify_owner_actor_binding_in_txn(self, &txn, owner.actor())
+                crate::memory::verify_owner_actor_binding_in_txn(self, &txn, actor)
                     .map_err(|_| denied())?;
             }
             member_in_txn(self, &txn, attempt_id, class)?

@@ -230,6 +230,10 @@ pub struct StoreCore {
     pub(in crate::store) retrieval_telemetry_capture: bool,
     /// Open-time posture for exact authority scope checks without a Vault handle.
     pub(crate) privacy_posture: crate::HostingPrivacyPosture,
+    /// Drawn at random when this environment opened and shared by every
+    /// handle on it. An owner proof binds to it, so a proof minted before a
+    /// close never acts on another vault opened later at the same path.
+    pub(crate) open_nonce: [u8; 16],
     #[cfg(target_os = "linux")]
     pub(in crate::store) retrieval_telemetry_lease:
         Mutex<Option<super::retrieval_telemetry::RetrievalTelemetryLease>>,

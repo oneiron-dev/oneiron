@@ -18,17 +18,20 @@ fn fixture(
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), crate::test_util::embedding_test_config()).unwrap();
     let mut holders = Vec::new();
-    for _ in 0..3 {
-        let id = EntityId::now();
-        vault
-            .put_entity(
-                &id,
-                crate::registry::ENTITY_TYPE_PERSON,
-                TimeRange { start: 1, end: 1 },
-                1,
-                b"human",
-            )
-            .unwrap();
+    // The first is the personal vault's owner, who shares it.
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    for id in [owner, EntityId::now(), EntityId::now()] {
+        if id != owner {
+            vault
+                .put_entity(
+                    &id,
+                    crate::registry::ENTITY_TYPE_PERSON,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    b"human",
+                )
+                .unwrap();
+        }
         holders.push(
             vault
                 .authenticate_owner(id, &id.to_hex(), true, GateDecisionId::now())
@@ -92,6 +95,14 @@ fn window_notifies_named_holders_refuses_admin_and_holds_until_withdrawn() -> Re
     assert!(!vault.advance_authority_act(&act.id, 100 + WEEK)?.completed);
     drop(vault);
     let reopened = Vault::open(dir.path(), crate::test_util::embedding_test_config())?;
+    // A proof binds to the open it was minted on: the reopened vault takes a
+    // fresh one.
+    let other = reopened.authenticate_owner(
+        other.actor(),
+        other.principal_ref(),
+        true,
+        GateDecisionId::now(),
+    )?;
     assert!(
         !reopened
             .advance_authority_act(&act.id, 100 + WEEK + 1)?

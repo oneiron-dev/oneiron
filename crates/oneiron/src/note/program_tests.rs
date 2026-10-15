@@ -648,3 +648,37 @@ fn erased_note_releases_title_for_another_authoritative_note() {
         Some("reusable TITLE")
     );
 }
+
+/// F18 (H397): owner doors take their actor from a proof this vault
+/// authenticated. Another vault's proof for the same PERSON id reads nothing
+/// of this vault's titles.
+mod foreign_owner_proof {
+    use super::*;
+
+    #[test]
+    fn a_foreign_owner_proof_reads_no_note_title() {
+        let (_dir, vault, actor) = fixture();
+        let note = vault
+            .create_note("research", "private body", actor)
+            .unwrap();
+        vault
+            .memory(actor.entity_ref(), actor.actor_class())
+            .set_note_title(note, "Field Notes")
+            .unwrap();
+        let id = actor.entity_ref();
+        let (_other_dir, _other, foreign) = crate::test_util::foreign_owner_proof(id, &id.to_hex());
+
+        assert_eq!(
+            vault
+                .note_title_free(&foreign, "field   notes")
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        let own = vault
+            .authenticate_owner(id, &id.to_hex(), true, crate::store::GateDecisionId::now())
+            .unwrap();
+        assert!(!vault.note_title_free(&own, "field   notes").unwrap());
+        assert!(vault.note_title_free(&own, "an unused title").unwrap());
+    }
+}

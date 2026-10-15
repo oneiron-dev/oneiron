@@ -60,20 +60,23 @@ impl Vault {
         if previous.as_ref().is_some_and(|(_, stored)| stored == spec) {
             return Ok(previous.expect("checked").0);
         }
-        let envelope = WriteEnvelope::new(
-            WriteActor::new(owner.actor(), crate::edge::EdgeActorClass::Human),
-            ClaimSource::UserStated,
-            WriteProvenance::new(Value::Map(vec![
-                (Value::from("op"), Value::from("agent.bind_resident")),
-                (
-                    Value::from("authentication"),
-                    Value::from(format!("{:?}", owner.decision_id())),
-                ),
-            ]))?,
-            ClaimApprovalStatus::Approved,
-        );
         let id = self.new_entity_id()?;
         self.with_write_txn_grouped(|txn| {
+            let envelope = WriteEnvelope::new(
+                WriteActor::new(
+                    owner.revalidate_in_txn(self, txn)?,
+                    crate::edge::EdgeActorClass::Human,
+                ),
+                ClaimSource::UserStated,
+                WriteProvenance::new(Value::Map(vec![
+                    (Value::from("op"), Value::from("agent.bind_resident")),
+                    (
+                        Value::from("authentication"),
+                        Value::from(format!("{:?}", owner.decision_id())),
+                    ),
+                ]))?,
+                ClaimApprovalStatus::Approved,
+            );
             self.batch_in()
                 .claim_candidate(
                     &id,

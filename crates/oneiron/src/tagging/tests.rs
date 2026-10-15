@@ -1206,15 +1206,9 @@ fn a_promoted_off_record_turn_owes_one_marker_committed_with_the_promotion() {
         .expect("overlay snapshot")
         .plan_promotion(promoted)
         .expect("promotion plan");
+    let initiator = crate::off_record::PromoteInitiator::owner(&vault, &proof).unwrap();
     let aborted = vault.with_write_txn(|wtxn| {
-        FloorWrites::new(&vault.store).promote(
-            &vault,
-            wtxn,
-            SESSION,
-            &plan,
-            &crate::off_record::PromoteInitiator::owner(&proof),
-            NOW,
-        )?;
+        FloorWrites::new(&vault.store).promote(&vault, wtxn, SESSION, &plan, &initiator, NOW)?;
         Err::<(), _>(crate::Error::InvalidConfig("fixture abort".into()))
     });
     assert!(aborted.is_err());

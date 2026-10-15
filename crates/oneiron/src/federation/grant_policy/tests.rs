@@ -8,8 +8,9 @@ use crate::{TimeRange, Vault, VaultConfig};
 fn fixture() -> (tempfile::TempDir, Vault, EntityId, EntityId, EntityId) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
-    let mut people = Vec::new();
-    for _ in 0..3 {
+    // The first is the personal vault's owner, who shares it.
+    let mut people = vec![vault.ensure_embedded_owner_actor().unwrap()];
+    for _ in 0..2 {
         let id = EntityId::now();
         vault
             .put_entity(

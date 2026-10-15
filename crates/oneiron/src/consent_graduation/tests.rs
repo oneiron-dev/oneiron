@@ -422,10 +422,12 @@ fn a_scoped_member_still_steps_back_from_its_own_standing_grant() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault =
         Vault::open(dir.path(), crate::test_util::embedding_test_config()).expect("open vault");
+    // Only the vault's owner shares it; the 0x25 owner the ramp doors take
+    // is an Owner member from then on.
     let owner = owner(&vault);
     vault
         .initialize_shared_vault(
-            &owner,
+            &crate::test_util::embedded_owner_proof(&vault),
             42,
             None,
             &[InitialSharedMember {

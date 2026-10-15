@@ -101,13 +101,14 @@ impl ConsentAskCard {
 
     pub fn evaluate_action(
         &self,
+        vault: &crate::Vault,
         request: &ConsentActionRequest,
         authenticated_owner: &AuthenticatedOwner,
     ) -> Result<ConsentActionEvaluation> {
         ensure_component_request(&self.card_id, request)?;
         ensure_principal_ref(&self.principal_ref)?;
         ensure_declared_action(&self.actions(), request)?;
-        ensure_authenticated_actor(&self.principal_ref, request, authenticated_owner)?;
+        ensure_authenticated_actor(vault, &self.principal_ref, request, authenticated_owner)?;
 
         let (decision, grant_mint_intent) = match request.action {
             ConsentActionKind::Approve => (ConsentActionDecision::ApprovedOnce, None),
@@ -265,6 +266,7 @@ impl BundleApproveCard {
 
     pub fn evaluate_action(
         &self,
+        vault: &crate::Vault,
         request: &ConsentActionRequest,
         authenticated_owner: &AuthenticatedOwner,
     ) -> Result<ConsentActionEvaluation> {
@@ -276,7 +278,7 @@ impl BundleApproveCard {
                 "bundle approve card must include at least one send item".to_string(),
             ));
         }
-        ensure_authenticated_actor(&self.principal_ref, request, authenticated_owner)?;
+        ensure_authenticated_actor(vault, &self.principal_ref, request, authenticated_owner)?;
 
         let (decision, grant_mint_intent) = match request.action {
             ConsentActionKind::Decline => (ConsentActionDecision::Declined, None),

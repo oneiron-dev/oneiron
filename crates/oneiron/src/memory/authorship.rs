@@ -74,11 +74,12 @@ pub(super) fn verify_owner(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     owner: &AuthenticatedOwner,
-) -> Result<()> {
-    if !is_root_owner(vault, txn, owner.actor())? {
+) -> Result<EntityId> {
+    let actor = owner.revalidate_in_txn(vault, txn)?;
+    if !is_root_owner(vault, txn, actor)? {
         return Err(authority_denied("an active root owner binding is required"));
     }
-    Ok(())
+    Ok(actor)
 }
 
 /// A named owner-delegated slice. Target and verb are never caller-selected
@@ -213,10 +214,11 @@ impl super::Memory<'_> {
         target: EntityId,
     ) -> super::MemoryResult<crate::consent::ConsentReceipt> {
         self.with_verified_actor_write_txn(|txn| {
-            if self.actor != owner.actor() || self.actor_class != EdgeActorClass::Human {
+            if self.actor != verify_owner(self.vault, txn, owner)?
+                || self.actor_class != EdgeActorClass::Human
+            {
                 return Err(authority_denied("owner proof must name the bound caller").into());
             }
-            verify_owner(self.vault, txn, owner)?;
             verify_live_actor(self.vault, txn, delegate)?;
             let bound = action_bound(self.vault, txn, delegate, action.verb(), target)?;
             Ok(self.vault.create_standing_grant_in_txn(txn, owner, bound)?)

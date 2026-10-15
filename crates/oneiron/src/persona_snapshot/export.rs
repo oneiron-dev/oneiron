@@ -56,7 +56,7 @@ impl crate::Vault {
         previewed_stamp: &str,
     ) -> Result<PersonaSnapshotArtifact> {
         let consent = PersonaSnapshotExportConsent {
-            granted_by: owner.actor().to_hex(),
+            granted_by: owner.revalidate(self)?.to_hex(),
             compile_stamp: previewed_stamp.to_owned(),
             granted_at_secs: self.store.clock.now_recorded_at(),
         };

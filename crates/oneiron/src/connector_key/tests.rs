@@ -2165,3 +2165,134 @@ fn connector_admission_quota_policy_vault_and_holder_rows_narrow_without_poisoni
     );
     Ok(())
 }
+
+/// F18 (H397): owner doors take their actor from a proof this vault
+/// authenticated. Another vault's proof for the same PERSON id acts on nothing.
+mod foreign_owner_proof {
+    use super::*;
+
+    fn owner(vault: &Vault, actor: EntityId) -> Result<crate::consent::AuthenticatedOwner> {
+        vault.put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            b"owner",
+        )?;
+        vault.authenticate_owner(
+            actor,
+            &actor.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+    }
+
+    #[test]
+    fn a_foreign_owner_proof_overrides_no_slate() -> Result<()> {
+        let (_tmp, vault) = temp_vault();
+        let manifest = vec![SlateToolManifest {
+            name: "send".into(),
+            data_class: SlateDataClass::Personal,
+            header_parameters: vec![],
+            resolved_input_schema: Some(serde_json::json!({"type":"object"})),
+            trigger: None,
+            destroys: false,
+            spends: false,
+            sends_outward: true,
+            legacy_ask: false,
+        }];
+        let rows = draft_connector_slate(&manifest);
+        let id = vault.store_connector_slate(
+            &manifest,
+            &serde_json::to_string(&rows)
+                .map_err(|_| Error::InvariantViolation("test slate encoding"))?,
+        )?;
+        let actor = test_id(0xC1);
+        let own = owner(&vault, actor)?;
+        let (_other_tmp, _other, foreign) =
+            crate::test_util::foreign_owner_proof(actor, &actor.to_hex());
+        let overrides: std::collections::BTreeMap<_, _> = [(
+            "send".to_owned(),
+            SlateOwnerOverride {
+                disposition: SlateDisposition::Auto,
+                enabled: true,
+            },
+        )]
+        .into();
+
+        assert_eq!(
+            vault
+                .override_connector_slate(&foreign, id, 0, &overrides)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        let unchanged = vault.connector_slate(id)?.unwrap();
+        assert_eq!((unchanged.revision(), unchanged.owner_actor()), (0, None));
+        let slate = vault.override_connector_slate(&own, id, 0, &overrides)?;
+        assert_eq!(
+            slate.rows()[0].effective_disposition(),
+            SlateDisposition::Auto
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_foreign_owner_proof_approves_no_manifest() -> Result<()> {
+        use serde_json::json;
+        use std::collections::BTreeSet;
+        struct Suite;
+        impl ConnectorManifestQualifier for Suite {
+            fn qualify(&self, _: &ResolvedConnectorManifest, _: &str) -> Result<String> {
+                Ok("a".repeat(64))
+            }
+        }
+        let (_tmp, vault) = temp_vault();
+        let id = test_id(0xB9);
+        vault.register_connector_key(
+            &id,
+            ConnectorKeyRecord::active("mcp", None, Vec::new(), 100),
+        )?;
+        let source = || {
+            ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+                name: "read".into(),
+                permissions: ["read".into()].into(),
+                triggers: BTreeSet::new(),
+                input_schema: json!({"type":"object"}),
+            }])
+        };
+        vault.stage_connector_manifest(&id, source()?, "2026-07-28", &Suite, 101)?;
+        let candidate_id = vault
+            .get_connector_key(&id)?
+            .and_then(|key| key.pending_manifest)
+            .map(|pending| pending.candidate_id)
+            .ok_or(Error::InvariantViolation("a staged candidate"))?;
+        let actor = test_id(0xB8);
+        let own = owner(&vault, actor)?;
+        let (_other_tmp, _other, foreign) =
+            crate::test_util::foreign_owner_proof(actor, &actor.to_hex());
+        let hash = source()?.hash()?;
+
+        assert_eq!(
+            vault
+                .approve_connector_manifest(&foreign, &id, candidate_id, hash, &"a".repeat(64), 102)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert_eq!(
+            vault.get_connector_key(&id)?.map(|key| key.status),
+            Some(ConnectorKeyStatus::Pending)
+        );
+        let approved = vault.approve_connector_manifest(
+            &own,
+            &id,
+            candidate_id,
+            hash,
+            &"a".repeat(64),
+            102,
+        )?;
+        assert_eq!(approved.status, ConnectorKeyStatus::Active);
+        Ok(())
+    }
+}

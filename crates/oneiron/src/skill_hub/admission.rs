@@ -61,9 +61,8 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         owner: &AuthenticatedOwner,
     ) -> Result<()> {
-        owner.revalidate_in_txn(self, txn)?;
-        if crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, txn, &owner.actor())?
-            .deleted
+        let actor = owner.revalidate_in_txn(self, txn)?;
+        if crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, txn, &actor)?.deleted
         {
             return Err(crate::error::Error::Gate(
                 crate::error::GateError::ConsentOwnerNotAuthenticated(

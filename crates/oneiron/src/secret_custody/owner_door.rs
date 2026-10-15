@@ -145,8 +145,8 @@ impl Vault {
 
         let id = self.store.clock.entity_id()?;
         let mut wtxn = self.store.env.write_txn()?;
-        owner.revalidate_in_txn(self, &wtxn)?;
-        if !crate::policy_model::is_live_vault_owner_in_txn(self, &wtxn, &owner.actor())? {
+        let actor = owner.revalidate_in_txn(self, &wtxn)?;
+        if !crate::policy_model::is_live_vault_owner_in_txn(self, &wtxn, &actor)? {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "only the vault owner registers a secret",
             )));

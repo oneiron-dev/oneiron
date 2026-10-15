@@ -2254,3 +2254,29 @@ fn a_restore_never_reopens_a_ceremony_rejected_since() -> Result<()> {
     );
     Ok(())
 }
+
+/// F18 (H397): owner doors take their actor from a proof this vault
+/// authenticated. Another vault's proof for the same PERSON id acts on nothing.
+mod foreign_owner_proof {
+    use super::*;
+
+    #[test]
+    fn a_foreign_owner_proof_issues_no_signing_credentials() -> Result<()> {
+        let (_dir, vault, id, doc, owner) = ceremony_setup()?;
+        let (_other_dir, _other, foreign) =
+            crate::test_util::foreign_owner_proof(owner.actor(), owner.principal_ref());
+        assert_eq!(
+            vault
+                .issue_esign_capabilities(&foreign, id)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert_eq!(
+            vault.issue_esign_capabilities(&owner, id)?.len(),
+            doc.recipients.len(),
+            "the refused call minted no recipient's credential"
+        );
+        Ok(())
+    }
+}

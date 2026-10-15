@@ -180,7 +180,13 @@ impl Vault {
     /// A storage error.
     pub fn note_title_free(&self, owner: &AuthenticatedOwner, title: &str) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
-        Ok(super::title_index::holder_in_txn(&self.store, &txn, owner.actor(), title)?.is_none())
+        Ok(super::title_index::holder_in_txn(
+            &self.store,
+            &txn,
+            owner.revalidate_in_txn(self, &txn)?,
+            title,
+        )?
+        .is_none())
     }
 
     /// The exact batch, described for one approve-once act of `owner`.
@@ -197,7 +203,7 @@ impl Vault {
     ) -> Result<ComposedEffect> {
         validate_batch(batch)?;
         let bound = GrantBound::action(
-            ActorBound::new(owner.actor().to_hex())?,
+            ActorBound::new(owner.revalidate(self)?.to_hex())?,
             ActionClass::new(REVIEW)?,
             ActionEnvelope::new([
                 format!("request:{}", batch.request_id.to_hex()),
@@ -237,9 +243,9 @@ impl Vault {
             .iter()
             .map(|note| Self::imported_note_id(&batch.folder, &note.path))
             .collect::<Result<Vec<_>>>()?;
-        let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
         self.with_write_txn(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
+            let owner_actor = owner.revalidate_in_txn(self, txn)?;
+            let actor = WriteActor::new(owner_actor, EdgeActorClass::Human);
             scan_titles(&self.store, txn, batch)?;
             let receipt = self.approve_once_in_txn(txn, owner, digest)?;
             self.take_decision_slot_in_txn(txn, &slot, receipt.decision_id())?;
@@ -282,7 +288,7 @@ impl Vault {
             for ((note, kind), id) in batch.notes.iter().zip(kinds).zip(&ids) {
                 let body = encode_note_body(&NoteBody {
                     kind,
-                    author_ref: owner.actor(),
+                    author_ref: owner_actor,
                     markdown: note.markdown.clone(),
                     source_revision_ref: revision(&batch.folder, &note.path, &note.markdown),
                 })?;
@@ -290,7 +296,7 @@ impl Vault {
                     self.batch_in()
                         .put_authored_note(
                             id,
-                            &owner.actor(),
+                            &owner_actor,
                             TimeRange {
                                 start: note.written_at,
                                 end: note.written_at,
@@ -298,7 +304,7 @@ impl Vault {
                             at,
                             &body,
                         )
-                        .edge(id, EdgeKind::AuthoredBy, &owner.actor(), 1.0),
+                        .edge(id, EdgeKind::AuthoredBy, &owner_actor, 1.0),
                 )?;
                 content.update_note(*id, |txn| {
                     let doc = super::document_store::load(self, txn, *id)?;
@@ -308,7 +314,7 @@ impl Vault {
                             &doc,
                             &super::NoteAuthorship {
                                 operation: self.new_entity_id()?,
-                                actor: owner.actor(),
+                                actor: owner_actor,
                                 actor_class: EdgeActorClass::Human.gate_actor_class().to_owned(),
                                 grant: None,
                                 command_hash: *blake3::hash(title.as_bytes()).as_bytes(),

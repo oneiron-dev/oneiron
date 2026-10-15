@@ -61,7 +61,7 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         remembered_cap: Option<u64>,
     ) -> MemoryResult<ConsultFanOutReceipt> {
-        self.reauthenticate_fanout_owner(owner)?;
+        let actor = self.reauthenticate_fanout_owner(owner)?;
         if remembered_cap.is_some() && choice != ConsultFanOutChoice::ApproveAndRemember {
             return Err(consult_refusal(
                 MEMORY_CODE_INVALID_STATE,
@@ -71,7 +71,7 @@ impl Memory<'_> {
         }
         let now = self.vault().now_recorded_at();
         self.vault()
-            .memory(owner.actor(), crate::EdgeActorClass::Human)
+            .memory(actor, crate::EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {
                 self.reauthenticate_fanout_owner(owner)?;
                 verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
@@ -128,12 +128,13 @@ impl Memory<'_> {
                     ConsultFanOutChoice::Deny => FanoutApprovalChoice::KeepPaused,
                 };
                 let action = core_choice.action_id();
+                let principal_ref = owner.principal_ref_in_txn(self.vault(), &*txn)?;
                 let resumed = approve_and_resume_fanout(
                     &plan,
                     &row,
                     core_choice,
                     action,
-                    owner.principal_ref(),
+                    principal_ref,
                     &mut TxnSurface {
                         vault: self.vault(),
                         txn,
