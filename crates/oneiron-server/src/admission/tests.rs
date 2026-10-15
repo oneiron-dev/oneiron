@@ -171,10 +171,20 @@ async fn every_crossing_counts_in_its_rows_question() {
         let pool = Arc::clone(&pool);
         tokio::spawn(async move { pool.admit(key).await })
     };
-    let until_one_waits = || {
+    // A wait is in line before its crossing asks, which it does outside the
+    // queue's lock, on another worker: give it until a deadline.
+    let until_one_waits_and = |crossed: u64| {
         let pool = Arc::clone(&pool);
+        let questions = Arc::clone(&questions);
         async move {
-            while pool.waiting() == 0 {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while (pool.waiting() == 0
+                || questions
+                    .latest(LimitRow::GitExchanges)
+                    .map_or(0, |question| question.crossings)
+                    < crossed)
+                && Instant::now() < deadline
+            {
                 tokio::task::yield_now().await;
             }
         }
@@ -182,7 +192,7 @@ async fn every_crossing_counts_in_its_rows_question() {
 
     let first = pool.admit("first").await.unwrap();
     let second = queue("second");
-    until_one_waits().await;
+    until_one_waits_and(1).await;
     assert_eq!(crossings(), 1);
 
     // The permit passes to the one waiter, and the line is empty: the next
@@ -190,7 +200,7 @@ async fn every_crossing_counts_in_its_rows_question() {
     drop(first);
     let second = second.await.unwrap().unwrap();
     let third = queue("third");
-    until_one_waits().await;
+    until_one_waits_and(2).await;
     assert_eq!(crossings(), 2, "a wait after the line ran empty crosses");
 
     // Everything ends and the pool is idle; a burst in the same minute
@@ -200,7 +210,7 @@ async fn every_crossing_counts_in_its_rows_question() {
     assert!(pool.is_idle());
     let fourth = pool.admit("fourth").await.unwrap();
     let fifth = queue("fifth");
-    until_one_waits().await;
+    until_one_waits_and(3).await;
     assert_eq!(crossings(), 3, "a crossing in the same minute still counts");
     drop(fourth);
     assert!(fifth.await.unwrap().is_ok(), "nobody is refused");
