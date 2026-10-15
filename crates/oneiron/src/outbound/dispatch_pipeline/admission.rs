@@ -4,7 +4,9 @@ use crate::outbound::OutboundDeliveryWindowDecision;
 use crate::outbound::capability::OutboundVerbContract;
 use crate::outbound::dispatch_types::{OutboundDispatchOutcome, OutboundDispatchRequest};
 
-use super::seat_policy::{SeatPolicyAction, SeatPolicyDecision, evaluate_seat_policy};
+use super::seat_policy::{
+    SeatLedgerCount, SeatPolicyAction, SeatPolicyDecision, evaluate_seat_policy,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum DispatchAdmission {
@@ -23,6 +25,7 @@ impl AdmissionStage {
     pub(super) fn evaluate(
         request: &OutboundDispatchRequest,
         contract: &OutboundVerbContract,
+        seat_ledger: SeatLedgerCount,
         window_resolution: DeliveryWindowResolution,
         window_decision: OutboundDeliveryWindowDecision,
     ) -> Self {
@@ -37,7 +40,7 @@ impl AdmissionStage {
         };
         // A window that parks a send never evaluates the connector's seat policy.
         let seat = if parked.is_none() {
-            evaluate_seat_policy(request, contract)
+            evaluate_seat_policy(request, contract, seat_ledger)
         } else {
             None
         };

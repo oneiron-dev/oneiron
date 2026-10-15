@@ -125,6 +125,47 @@ pub(super) fn ledger_rows<'txn>(
         .map(move |row| row.map(|(key, value)| ([prefix, key.as_slice()].concat(), value))))
 }
 
+/// How many ledger rows of this server and tool were created or last touched
+/// at or after `since_ms`, read in the caller's transaction. A row counts in
+/// the window it was admitted in and in any window a retry renewed it or an
+/// ack landed on it; counting it twice only ever holds. Every row is an
+/// admitted call, settled or not, except a suppressed semantic duplicate,
+/// which was never admitted for transport, and the `exclude`d attempt (an
+/// exact retry's own row). Server and tool compare as the capability lookup spells them
+/// (trimmed, ASCII case folded). A row that does not decode counts as well:
+/// an accounting gap never opens a bound.
+pub(crate) fn admitted_calls_since_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    server: &str,
+    tool: &str,
+    since_ms: u64,
+    exclude: Option<crate::attempt_queue::AttemptId>,
+) -> IntentLedgerResult<u32> {
+    let same = |stored: &str, wanted: &str| stored.trim().eq_ignore_ascii_case(wanted.trim());
+    let mut admitted = 0_u32;
+    for row in ledger_rows(vault, txn)? {
+        let (key, raw) = row?;
+        let counts = match decode_record(&key, &raw) {
+            Ok(record) => {
+                same(&record.server, server)
+                    && same(&record.tool, tool)
+                    && record.created_ms.max(record.updated_ms) >= since_ms
+                    && Some(record.attempt_id) != exclude
+                    && record.recorded_outcome
+                        != Some(RecordedOutboundOutcome::Abandoned(
+                            IntentEscalationReason::DedupeSuppressed,
+                        ))
+            }
+            Err(_) => true,
+        };
+        if counts {
+            admitted = admitted.saturating_add(1);
+        }
+    }
+    Ok(admitted)
+}
+
 /// Decodes one raw row already read by a full-table walk ([`ledger_rows`]). Shares the
 /// attempt-binding check with [`read_intent_record_in_txn`].
 pub(super) fn decode_record_in_txn(
@@ -367,10 +408,13 @@ pub(crate) fn abandon_record(
 /// Persist positive uncertainty before a later attempt can replace the
 /// current attempt's outcome with definite non-delivery. Never reset this bit
 /// on retry; only confirmed Done or an explicit reconciliation can resolve it.
+///
+/// The bit pays for no admission, so the row's timestamp stays where its
+/// admission, renewal or last outcome put it: an aged retry marked here,
+/// even one a full ceiling then holds, still meets today's ceiling next time.
 pub(crate) fn record_possible_delivery(
     vault: &Vault,
     id: [u8; 32],
-    now_ms: u64,
 ) -> IntentLedgerResult<IntentLedgerRecord> {
     let mut wtxn = vault.store.env.write_txn()?;
     let mut record = get_ledger_record(vault, &wtxn, &id)?.ok_or(
@@ -383,7 +427,6 @@ pub(crate) fn record_possible_delivery(
     }
     if !record.delivery_uncertain {
         record.delivery_uncertain = true;
-        record.updated_ms = now_ms.max(record.created_ms);
         LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
         wtxn.commit().map_err(Error::from)?;
     } else {
@@ -436,6 +479,20 @@ pub(crate) fn record_definite_non_delivery(
         Some(RecordedOutboundOutcome::DefiniteNonDelivery),
         now_ms,
     )
+}
+
+/// Renews a Pending retry's admission at `now_ms`, in the caller's
+/// writer-locked transaction, so the window it is about to send in counts it.
+pub(crate) fn renew_admission_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &IntentLedgerRecord,
+    now_ms: u64,
+) -> IntentLedgerResult<()> {
+    let mut renewed = record.clone();
+    renewed.updated_ms = now_ms.max(record.updated_ms);
+    LEDGER.put(&vault.store, wtxn, &renewed.id, &renewed)?;
+    Ok(())
 }
 
 pub(crate) fn begin_definite_non_delivery_retry(

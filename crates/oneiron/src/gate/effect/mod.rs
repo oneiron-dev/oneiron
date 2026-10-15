@@ -765,6 +765,31 @@ pub(crate) fn check_external_effect_policy(
     Ok((decision_id, decision, effector_charge))
 }
 
+/// Records governance for an effect held BEFORE admission, such as a count
+/// ceiling reached under the admission writer lock. The decision stays as
+/// evidence, but nothing was admitted: no approve-once authorization is spent
+/// and no standing grant is touched as used, so the held effect can still
+/// run on its approval once the ceiling clears.
+pub(crate) fn record_held_external_effect_policy(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    policy: &PolicyManifestResolution,
+) -> Result<(GateDecisionId, GateDecision)> {
+    let mut governance = evaluate_external_effect_policy(
+        store,
+        wtxn,
+        effect,
+        policy,
+        None,
+        None,
+        ApprovalContext::Observe,
+    )?;
+    governance.approve_once = None;
+    governance.matched_grant = None;
+    record_external_effect_policy(store, wtxn, governance)
+}
+
 /// Debits the governance-selected connector key exactly once for an admitted
 /// effect, mirroring the chokepoint `charge_once`: send-dimension rows debit
 /// only for send-like effects, an exhausted suspend-class row suspends the key,

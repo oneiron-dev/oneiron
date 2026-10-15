@@ -54,7 +54,20 @@ impl BatchBuilder<'_> {
     /// same transaction as the claim. Errors during batch apply or `after_apply`
     /// roll back those writes and their allow receipts. Full landed verification
     /// of predicate, source, and taint runs after commit; its failures cannot
-    /// roll back the committed transaction.
+    /// roll back the committed transaction. `before_apply` reads the writer
+    /// snapshot first, in the same transaction, before policy preflight; it
+    /// mutates nothing.
+    pub(crate) fn commit_with_checker_guard_and_then(
+        self,
+        checker: &BoundedAutoChecker,
+        before_apply: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+        after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
+        self.commit_inner(Some(checker), before_apply, after_apply)
+    }
+
+    /// [`Self::commit_with_checker_guard_and_then`] with nothing read first.
+    #[cfg(test)]
     pub(crate) fn commit_with_checker_and_then(
         self,
         checker: &BoundedAutoChecker,

@@ -719,6 +719,51 @@ fn admitted_wrapper_charges_budget_and_denies_exhausted_key() -> Result<()> {
     Ok(())
 }
 
+/// F26 H359: an effect a count ceiling holds before admission keeps its
+/// governance record, but nothing was admitted. The owner's approve-once
+/// stays unspent, so the effect still runs on it once the ceiling clears; the
+/// observe recorder the ceiling used to call spent it.
+#[test]
+fn a_held_effect_keeps_its_approve_once() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let owner_id = test_id(0xE0);
+    vault.put_entity(&owner_id, ENTITY_TYPE_PERSON, test_time(1), 1, b"owner")?;
+    let owner =
+        vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())?;
+    let actor_ref = owner_id.to_hex();
+    let policy_data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
+        &actor_ref,
+        "external:send",
+        Value::Map(vec![(
+            Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
+            Value::from("line"),
+        )]),
+        None,
+    )]);
+    put_policy_manifest_bytes(&vault, test_id(0xD5), &policy_data)?;
+    let policy = resolve(&vault)?;
+    let effect = external_effect_gate_input(&actor_ref, "send", "line");
+    let digest = external_effect_composed_effect(&effect)
+        .expect("effect composes")
+        .digest();
+    vault.approve_once(&owner, digest)?;
+
+    let held = vault.with_write_txn(|wtxn| {
+        record_held_external_effect_policy(&vault.store, wtxn, &effect, &policy)
+            .map(|(_, decision)| decision.outcome())
+    })?;
+    assert_eq!(held, GateOutcome::Allow, "the hold keeps the decision");
+    let admitted = vault.with_write_txn(|wtxn| {
+        check_external_effect_policy(&vault.store, wtxn, &effect, &policy, true)
+            .map(|(_, decision, _)| decision.outcome())
+    });
+    assert!(
+        matches!(admitted, Ok(GateOutcome::Allow)),
+        "FAILBEFORE H359: the hold spent the owner's approval ({admitted:?})"
+    );
+    Ok(())
+}
+
 /// TARGET A pin: the store marker is spent by the transaction that authorizes
 /// delivery, not by minting or by caller-supplied digest equality.
 #[test]

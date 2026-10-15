@@ -519,3 +519,31 @@ fn task_rate_limit_corruption_fails_all_readers_closed() -> Result<()> {
     }
     Ok(())
 }
+
+/// H328: past the create limit an own actor's tasks still land (OF-520), and
+/// the first crossing in the window leaves a typed check.
+#[test]
+fn an_own_create_burst_lands_and_leaves_a_typed_check() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let rate = TaskCreateRateLimit {
+        limit: 1,
+        window_seconds: u64::MAX,
+    };
+    let memory = vault.memory(own, EdgeActorClass::Agent);
+    for _ in 0..2 {
+        let receipt = memory
+            .tasks_create_with_rate_limit(&spec(120), rate)
+            .expect("own create");
+        assert!(receipt.effected);
+    }
+    assert_eq!(task_entity_census(&vault), 2);
+    let check = vault
+        .own_rate_check(own, crate::own_rate::OwnRateKind::TaskCreate)
+        .expect("check reads");
+    assert_eq!(
+        check.map(|check| (check.actor, check.count, check.threshold)),
+        Some((own.to_hex(), 2, 1)),
+        "H328: an own create burst left no typed check"
+    );
+}

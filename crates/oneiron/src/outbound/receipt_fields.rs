@@ -301,6 +301,8 @@ pub(super) fn dispatch_result_receipt(
         outcome,
         execution,
         suppression_receipt,
+        // Already folded into the admission's seat decision by the pipeline.
+        ceiling_count: _,
     } = verdict;
     let gate_outcome_kind = gate_outcome;
     let gate_outcome = gate_outcome_kind.as_str().to_owned();

@@ -503,6 +503,8 @@ fn pre_move_fixture_coverage_is_explicit() {
         "OWNER_POLICY_SECRET_SCAN_MODE",
         "OWNER_POLICY_SECRET_SCAN_RECEIPT",
         "OWNER_POLICY_WORLD_PRIVACY_RECEIPT",
+        "OWN_RATE_CHECK",
+        "OWN_RATE_WINDOW",
         "PORTS_WITHDRAWN",
         "PROJECT_DEPTH_LOCAL_BIRTH",
         "PROJECT_GOAL_INTAKE_ADMISSION",

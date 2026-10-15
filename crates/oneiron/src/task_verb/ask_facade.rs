@@ -59,6 +59,15 @@ impl Memory<'_> {
                     "Propose the ask through the authority surface.",
                 ));
             }
+            // One ask counts once on the asker's ask window, whatever its
+            // recipients; a replay returned above never counts again.
+            super::rate_limit::record_task_ask(
+                self.vault(),
+                txn,
+                self.actor(),
+                now,
+                super::TaskCreateRateLimit::default(),
+            )?;
             let mut no_live_route = true;
             let mut validated = Vec::with_capacity(holders.len());
             for actor in &holders {

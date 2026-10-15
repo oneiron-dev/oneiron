@@ -50,7 +50,7 @@ pub(super) fn replay_record<T: OutboundTransport>(
         (IntentState::Pending, None) if !record.idempotency_supported => {
             // A previous node may have sent before crashing. The stop reason
             // does not carry this delivery fact; store it independently.
-            record_possible_delivery(vault, record.id, now_ms)?;
+            record_possible_delivery(vault, record.id)?;
             let abandoned = abandon_record(
                 vault,
                 record.id,
@@ -74,7 +74,7 @@ pub(super) fn replay_record<T: OutboundTransport>(
             // This row was committed before a prior transport attempt. A crash
             // could have hidden a delivered response; persist that possibility
             // BEFORE a resumed no-wire failure can replace its retry marker.
-            let uncertain = record_possible_delivery(vault, record.id, now_ms)?;
+            let uncertain = record_possible_delivery(vault, record.id)?;
             send_pending_with_gate(
                 vault, authority, uncertain, prepared, now_ms, true, transport,
             )
@@ -195,6 +195,14 @@ fn send_pending_with_gate<T: OutboundTransport>(
             result.dispatch.replayed = replayed;
             return Ok(result);
         }
+        // Governance lets this Pending send out; only now does an aged
+        // admission meet its ceiling, under this same writer lock.
+        if let Some(mut held) =
+            super::admission::aged_admission_ceiling(vault, wtxn, prepared, &record, now_ms)?
+        {
+            held.dispatch.replayed = replayed;
+            return Ok(held);
+        }
     } else if crate::llm::StepEffectBinding::from_frozen_payload(record.payload())?.is_some() {
         // Engine-owned Resume has no PreparedEffect. Its frozen step identity
         // still rechecks the resident restriction before a Pending live send.
@@ -268,11 +276,11 @@ fn send_pending_with_gate<T: OutboundTransport>(
             Ok(effect_result(&done, Some(outcome), replayed, None))
         }
         OutboundSendOutcome::Ambiguous if record.idempotency_supported => {
-            let uncertain = record_possible_delivery(vault, record.id, now_ms)?;
+            let uncertain = record_possible_delivery(vault, record.id)?;
             Ok(effect_result(&uncertain, Some(outcome), replayed, None))
         }
         OutboundSendOutcome::Ambiguous => {
-            record_possible_delivery(vault, record.id, now_ms)?;
+            record_possible_delivery(vault, record.id)?;
             let abandoned = abandon_record(
                 vault,
                 record.id,
@@ -411,6 +419,7 @@ pub(super) fn effect_result(
         budget_charge: None,
         dedupe_suppressed: false,
         suppression_receipt: None,
+        ceiling_count: None,
     }
 }
 
@@ -444,6 +453,7 @@ pub(super) fn gate_rejection(
         budget_charge: None,
         dedupe_suppressed: false,
         suppression_receipt: None,
+        ceiling_count: None,
     }
 }
 

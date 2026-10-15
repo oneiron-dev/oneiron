@@ -428,6 +428,7 @@ fn prepared_effect(
         owner_proof: None,
         dedupe_key: None,
         suppression_receipt: None,
+        admission_ceiling: None,
     }
 }
 
