@@ -1775,3 +1775,93 @@ fn restore_refuses_another_kinds_job_row_in_the_owner_retained_range() {
         }
     }
 }
+
+/// A refused restore keeps nothing it made (#1457's C8 inventory). Failed at
+/// its first open, in its image write, at its second open or in its receipt
+/// check, a restore kept in place and one served beside its source each leave
+/// no directory at the destination, and a retry at the same path restores.
+#[test]
+fn a_refused_restore_leaves_nothing_at_its_destination() {
+    let root = crate::test_support::restore_tempdir();
+    let vault = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let (claim, _) = claim_with_receipt(&vault);
+    let image = root.path().join("image");
+    vault.snapshot_checkpoint(&image, 100).expect("image");
+    let source = vault.side_restore_source().unwrap();
+    for beside in [false, true] {
+        for step in [
+            RestoreStep::FirstOpen,
+            RestoreStep::ImageWrite,
+            RestoreStep::SecondOpen,
+            RestoreStep::ReceiptCheck,
+        ] {
+            let destination = root.path().join(format!("copy-{beside}-{step:?}"));
+            let restore = || {
+                if beside {
+                    Vault::restore_checkpoint_beside(
+                        &image,
+                        &destination,
+                        VaultConfig::device(),
+                        &source,
+                        120,
+                    )
+                } else {
+                    Vault::restore_checkpoint(
+                        &image,
+                        &destination,
+                        VaultConfig::device(),
+                        RestoreReason::Restore,
+                        120,
+                    )
+                }
+            };
+            arm_restore_failure(step);
+            let refused = restore();
+            assert!(refused.is_err(), "{step:?}: {:?}", refused.map(|_| ()));
+            assert!(
+                std::fs::symlink_metadata(&destination).is_err(),
+                "beside {beside}, {step:?}: the refused restore left its copy"
+            );
+            let (copy, _) = restore().unwrap_or_else(|error| {
+                panic!("beside {beside}, {step:?}: a retry at the same path: {error}")
+            });
+            assert!(copy.get(&claim).unwrap().is_some(), "{step:?}");
+        }
+    }
+}
+
+/// Control: a refused restore removes only the directory it made. One moved
+/// in under the destination's name after the make is left as it is, and so
+/// is the directory made, now under another name.
+#[cfg(unix)]
+#[test]
+fn a_refused_restore_leaves_a_directory_moved_in_under_its_name() {
+    let root = crate::test_support::restore_tempdir();
+    let vault = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let image = root.path().join("image");
+    vault.snapshot_checkpoint(&image, 100).expect("image");
+    let destination = root.path().join("copy");
+    let (moved_in, aside) = (root.path().join("moved-in"), root.path().join("aside"));
+    std::fs::create_dir(&moved_in).unwrap();
+    std::fs::write(moved_in.join("note"), "placeholder\n").unwrap();
+    crate::store::arm_after_restore_destination_made({
+        let (destination, moved_in, aside) = (destination.clone(), moved_in, aside.clone());
+        move || {
+            std::fs::rename(&destination, aside).unwrap();
+            std::fs::rename(moved_in, &destination).unwrap();
+        }
+    });
+    let refused = Vault::restore_checkpoint(
+        &image,
+        &destination,
+        VaultConfig::device(),
+        RestoreReason::Restore,
+        120,
+    );
+    assert!(refused.is_err(), "{:?}", refused.map(|_| ()));
+    assert_eq!(
+        std::fs::read_to_string(destination.join("note")).unwrap(),
+        "placeholder\n"
+    );
+    assert!(aside.is_dir());
+}

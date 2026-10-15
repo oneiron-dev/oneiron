@@ -619,6 +619,8 @@ impl Vault {
         let made = crate::store::MadeDestination::make(destination, home)?;
         let mut forked = ForkedCustody(None);
         let vault = Self::open_owned(destination, config.clone())?;
+        #[cfg(test)]
+        fail_at(RestoreStep::FirstOpen)?;
         made.holds(&vault.store)?;
         vault.with_write_txn_grouped(|txn| {
             for entry in DB_MANIFEST {
@@ -667,11 +669,15 @@ impl Vault {
             // Rows came back without a put: each definition pins its id as a
             // put of it would have (H215).
             crate::agent_def::pin_stored_rows_in_txn(&vault.store, txn)?;
+            #[cfg(test)]
+            fail_at(RestoreStep::ImageWrite)?;
             Ok(())
         })?;
         drop(vault);
         // Re-open through all ABI, model, analyzer and manifest gates before rebuilding.
         let vault = Self::open_owned(destination, config)?;
+        #[cfg(test)]
+        fail_at(RestoreStep::SecondOpen)?;
         made.holds(&vault.store)?;
         if let Some(home) = home {
             vault.store.unseal_replacement(home)?;
@@ -685,6 +691,8 @@ impl Vault {
             vault
                 .store
                 .for_each_gate_decision_in_txn(&txn, |_| Ok(()))?;
+            #[cfg(test)]
+            fail_at(RestoreStep::ReceiptCheck)?;
         }
         let (rebuilt_entities, rebuilt_text_documents, pending_embeddings) =
             rebuild::rebuild(&vault)?;
@@ -723,5 +731,39 @@ impl Vault {
         Ok(epochs)
     }
 }
+/// A step of a restore after its destination is made, which a test fails
+/// as a refusal there would.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RestoreStep {
+    FirstOpen,
+    ImageWrite,
+    SecondOpen,
+    ReceiptCheck,
+}
+
+#[cfg(test)]
+thread_local! {
+    static RESTORE_FAILS_AT: std::cell::Cell<Option<RestoreStep>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Fails the next restore on this thread at `step`.
+#[cfg(test)]
+pub(crate) fn arm_restore_failure(step: RestoreStep) {
+    RESTORE_FAILS_AT.with(|slot| slot.set(Some(step)));
+}
+
+#[cfg(test)]
+fn fail_at(step: RestoreStep) -> Result<()> {
+    if RESTORE_FAILS_AT.with(|slot| slot.get()) != Some(step) {
+        return Ok(());
+    }
+    RESTORE_FAILS_AT.with(|slot| slot.set(None));
+    Err(Error::InvalidConfig(
+        "a restore step was failed by a test".into(),
+    ))
+}
+
 #[cfg(test)]
 mod tests;
