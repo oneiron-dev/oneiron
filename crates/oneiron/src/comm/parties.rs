@@ -72,16 +72,32 @@ pub(super) fn active_comm_party_key_in_txn(
     if vault.entity_lifecycle_state_in_txn(rtxn, &id)? != EntityLifecycleState::Active {
         return Ok(None);
     }
-    let mut cursor = Cursor::new(&raw.body);
-    let Ok(value) = rmpv::decode::read_value(&mut cursor) else {
+    Ok(party_key_of_body(&raw.body))
+}
+
+/// The `party_key` a comm-owned PERSON row carries, whatever its lifecycle: a
+/// merge shell still names the party its claims were said about.
+pub(super) fn comm_party_key_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> CommResult<Option<String>> {
+    let Some(raw) = vault.store.port_entity_record(rtxn, &id)? else {
         return Ok(None);
     };
-    let Ok(entries) = value_map(&value) else {
+    if raw.entity_type != ENTITY_TYPE_PERSON {
         return Ok(None);
-    };
-    Ok(required_string(entries, KEY_PARTY_KEY)
+    }
+    Ok(party_key_of_body(&raw.body))
+}
+
+fn party_key_of_body(body: &[u8]) -> Option<String> {
+    let mut cursor = Cursor::new(body);
+    let value = rmpv::decode::read_value(&mut cursor).ok()?;
+    let entries = value_map(&value).ok()?;
+    required_string(entries, KEY_PARTY_KEY)
         .ok()
-        .map(str::to_owned))
+        .map(str::to_owned)
 }
 
 /// The `party_key` of every comm-owned PERSON row, whatever its lifecycle:

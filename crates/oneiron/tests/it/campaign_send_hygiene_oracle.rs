@@ -412,6 +412,34 @@ fn duplicate_member_heads_never_veto_an_unsubscribe() -> Result<()> {
     Ok(())
 }
 
+/// R1 F5: one head already suppressed and one enrolled. The first unsubscribe
+/// reuses one and replaces the other; a redelivery reuses both and must hand
+/// back the same receipt.
+#[test]
+fn mixed_member_heads_keep_a_stable_receipt_on_redelivery() -> Result<()> {
+    let (_dir, vault) = oracle_vault();
+    let person = test_id(PERSON_SEED);
+    let suppressed = CampaignMemberValue {
+        state: CampaignMemberState::Suppressed,
+        ..enrolled_member()
+    };
+    put_member(&vault, MEMBER_SEED, &enrolled_member(), person);
+    put_member(&vault, SECOND_MEMBER_SEED, &suppressed, person);
+    let input = SuppressionInput {
+        person_ref: person,
+        campaign_ref: Some(test_id(CAMPAIGN_SEED)),
+        channel: CHANNEL.to_owned(),
+        sender_ref: None,
+        evidence_ref: test_id(EVIDENCE_SEED),
+        occurred_at: 60,
+    };
+    let first = apply_suppression(&vault, SuppressionCause::Unsubscribe, &input)?;
+    let again = apply_suppression(&vault, SuppressionCause::Unsubscribe, &input)?;
+    assert_eq!(first.member_claim_refs.len(), 2);
+    assert_eq!(again, first);
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Leg 3 — unsubscribe is honored before the handler returns
 // ---------------------------------------------------------------------------

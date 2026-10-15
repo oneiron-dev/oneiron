@@ -6,8 +6,8 @@ use super::claims::{
     SendOverrideMatch, SendOverrideScope, validate_comm_claim_structure,
 };
 use super::parties::{
-    active_comm_party_key_in_txn, resolve_or_create_party_in_txn, resolve_party,
-    resolve_party_ref_in_txn,
+    active_comm_party_key_in_txn, comm_party_key_in_txn, resolve_or_create_party_in_txn,
+    resolve_party, resolve_party_ref_in_txn,
 };
 use super::projection_writes::{
     build_contact_view_in_txn, count_comm_claims, matching_claims_in_txn,
@@ -19,9 +19,7 @@ use super::records::{
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::claim::ClaimBody;
-use crate::counterparty_contact::{
-    CounterpartyOptOutReason, normalize_channel_class, rematerialize_contact_cache_in_txn,
-};
+use crate::counterparty_contact::{CounterpartyOptOutReason, normalize_channel_class};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -723,10 +721,12 @@ pub(crate) fn supersede_party_opt_out_head_in_txn(
 /// `channel_class`, inside the projector's own write transaction.
 ///
 /// Claims moved; the cache follows in the SAME transaction, so the gate's
-/// type-132-fed fold can never observe the old suppression state. The
-/// party-channel index (ONE-1868) names the contacts, which keeps an
-/// email-scoped STOP from re-deriving a telegram contact: channel scope is
-/// decided by which contacts are enumerated here.
+/// type-132-fed fold can never observe the old suppression state. The party is
+/// named by the subject's own `party_key`, so a STOP that lands on a merge
+/// shell still refreshes the party's rows (F06 H170), and the contacts come
+/// from the full scan the send gate also uses: the party-channel index
+/// (ONE-1868) cannot prove it lists every contact. Channel scope stays the
+/// fold's class match, so an email STOP never re-derives a telegram contact.
 pub(super) fn rematerialize_party_channel_contact_cache_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -734,17 +734,15 @@ pub(super) fn rematerialize_party_channel_contact_cache_in_txn(
     channel_class: &str,
     now: u64,
 ) -> CommResult<()> {
-    let Some(party_key) = active_comm_party_key_in_txn(vault, &*wtxn, party_ref)? else {
+    let Some(party_key) = comm_party_key_in_txn(vault, &*wtxn, party_ref)? else {
         return Ok(());
     };
-    let contacts = crate::counterparty_contact::counterparty_contacts_by_party_channel(
-        &vault.store,
-        &*wtxn,
+    crate::counterparty_contact::rematerialize_party_contact_cache_in_txn(
+        vault,
+        wtxn,
         &party_key,
-        &normalize_channel_class(channel_class),
+        Some(&normalize_channel_class(channel_class)),
+        now,
     )?;
-    for (contact_id, _) in contacts {
-        rematerialize_contact_cache_in_txn(vault, wtxn, &contact_id, now)?;
-    }
     Ok(())
 }

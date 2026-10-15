@@ -100,7 +100,7 @@ pub struct SuppressionReceipt {
     /// external-effect gate reads.
     pub do_not_contact_claim_ref: EntityId,
     /// The suppressed `campaign.member` heads, one per live head the campaign
-    /// had, in the replaced heads' id order; empty when none matched.
+    /// had, in their own claim-id order; empty when none matched.
     pub member_claim_refs: Vec<EntityId>,
 }
 
@@ -249,6 +249,9 @@ fn suppress_membership_in_txn(
             },
         )?);
     }
+    // Ordered by the heads' own ids, so a redelivery that reuses them returns
+    // the same receipt.
+    suppressed_ids.sort_unstable();
     Ok(suppressed_ids)
 }
 

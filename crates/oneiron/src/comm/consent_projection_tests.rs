@@ -302,3 +302,65 @@ fn stop_on_a_merged_twin_still_holds_the_survivors_sends() -> CommResult<()> {
     )?);
     Ok(())
 }
+
+/// H170, R1 F1: a delayed STOP naming a twin that an EARLIER pass already
+/// merged projects onto the shell, and the party's contact rows must still be
+/// refreshed: the refresh used to require an active subject.
+#[test]
+fn delayed_stop_on_an_already_merged_twin_refreshes_the_party() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    put_policy_manifest_bytes(&vault, entity(0x9D), &allow_email_send_manifest())?;
+    put_email_identity(&vault, entity(0x91), "owner@example.com")?;
+    let first = mint_comm_person(&vault, "late-twin@example.com")?;
+    let second = mint_comm_person(&vault, "late-twin@example.com")?;
+    let mut sorted = [first, second];
+    sorted.sort_unstable();
+    let [survivor, loser] = sorted;
+    point_party_index(&vault, "late-twin@example.com", survivor)?;
+    email_contact(&vault, entity(0x91), entity(0x98), "late-twin@example.com")?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser)?,
+        EntityLifecycleState::Merged
+    );
+    assert!(!contact_cache_opted_out(&vault, entity(0x98))?);
+
+    let stop = CommRecord::Event {
+        sequence: 0,
+        kind: CommEventKind::InboundStop,
+        party_ref: loser,
+        channel_class: Some("email".to_owned()),
+        thread_ref: None,
+        occurred_at: 30,
+        projected: false,
+    };
+    vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, entity(0x79), &stop))?;
+    run_comm_projector(&vault)?;
+    assert!(comm_event_is_projected(&vault, entity(0x79))?);
+    assert!(contact_cache_opted_out(&vault, entity(0x98))?);
+    assert!(gate_holds_for_counterparty_opt_out(
+        &vault,
+        "late-twin@example.com"
+    )?);
+    Ok(())
+}
+
+/// R1 F2: a contact created before its sending identity has no party-channel
+/// index entry, and the STOP refresh enumerated only that index, so the row
+/// stayed not opted out after the STOP projected.
+#[test]
+fn stop_refreshes_a_contact_missing_from_the_party_index() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    put_policy_manifest_bytes(&vault, entity(0x9D), &allow_email_send_manifest())?;
+    email_contact(&vault, entity(0x91), entity(0x99), "unindexed@example.com")?;
+    put_email_identity(&vault, entity(0x91), "owner@example.com")?;
+    record_comm_inbound_stop(&vault, "unindexed@example.com", "email", 30)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(pending_comm_events(&vault)?, 0);
+    assert!(contact_cache_opted_out(&vault, entity(0x99))?);
+    assert!(gate_holds_for_counterparty_opt_out(
+        &vault,
+        "unindexed@example.com"
+    )?);
+    Ok(())
+}
