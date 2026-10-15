@@ -1071,13 +1071,28 @@ fn foreign_entity_type_at_pinned_id_is_conflict() -> Result<()> {
         Vec::new(),
         provenance(0xE1),
     );
-    vault.put_entity(
-        &keeper_id,
-        ENTITY_TYPE_SKILL,
-        TimeRange { start: 1, end: 1 },
-        1,
-        &encode_skill_record(&skill)?,
-    )?;
+    let body = encode_skill_record(&skill)?;
+    // A put of another type at a seeded agent id is refused (H215); the
+    // occupant is a row stored before that, planted raw.
+    let err = vault
+        .put_entity(
+            &keeper_id,
+            ENTITY_TYPE_SKILL,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &body,
+        )
+        .expect_err("a SKILL put at a seeded agent id");
+    assert_eq!(err.kind(), ErrorKind::EntityTypeImmutable, "{err:?}");
+    let mut row = vec![ENTITY_TYPE_SKILL];
+    for stamp in [1_u64, 1, 1] {
+        row.extend_from_slice(&stamp.to_be_bytes());
+    }
+    row.extend_from_slice(&body);
+    vault.with_write_txn(|txn| {
+        vault.store.entities.put(txn, keeper_id.as_bytes(), &row)?;
+        Ok(())
+    })?;
 
     let err = reconcile(
         &vault,

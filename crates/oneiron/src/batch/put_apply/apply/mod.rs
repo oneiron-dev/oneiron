@@ -163,6 +163,7 @@ pub(in crate::batch) fn apply_put(
     let mut new_skill_record = None;
     let mut hub_origin_marker = None;
     let mut new_agent_definition = None;
+    let mut agent_id_pin = None;
     // STO-03: `Some` only when the incoming TASK body named a derived streak
     // counter, i.e. only on the sync door — the body that gets stored instead.
     let mut task_body_without_streaks = None;
@@ -173,6 +174,8 @@ pub(in crate::batch) fn apply_put(
     // and acted on only at the pre-write site: see the eviction comment there
     // for why the mutation cannot ride along with the check.
     let mut authority_dominates_key_squatter = false;
+    // H215: an id that has been an agent stays one, across a delete too.
+    crate::agent_def::refuse_agent_id_retype_in_txn(store, wtxn, &id, entity_type)?;
     if let Some(body) = incoming_claim_body {
         if let Some(prior) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &id)?
             && prior.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
@@ -304,10 +307,11 @@ pub(in crate::batch) fn apply_put(
         new_skill_record = Some(decoded);
     } else if entity_type == ENTITY_TYPE_AGENT_DEF {
         let decoded = crate::agent_def::decode_agent_definition(data)?;
-        // ONE-1890 `sys.*` reservation, at the one arm that holds both the
-        // decoded body and its destination row id — ALL puts, mirroring
-        // SKILL's decode-site capture of `new_skill_record`.
+        // ONE-1890 `sys.*` reservation and the H215 id pin, at the one arm
+        // that holds both the decoded body and its destination row id — ALL
+        // puts, mirroring SKILL's decode-site capture of `new_skill_record`.
         crate::agent_def::validate_reserved_logical_id(&id, &decoded)?;
+        agent_id_pin = crate::agent_def::agent_id_pin_for_put_in_txn(store, wtxn, &id, &decoded)?;
         new_agent_definition = Some(decoded);
     } else if entity_type == crate::registry::ENTITY_TYPE_WORKFLOW {
         crate::agent_def::workflow::validate_workflow_put(store, wtxn, &id, data, replicated)?;
@@ -653,6 +657,7 @@ pub(in crate::batch) fn apply_put(
     // never be re-presented as an ordinary birth. Only a genuine optimizer-born
     // create at an unmarked id produces a row here.
     stage_optional_side_row(store, wtxn, optimizer_birth_marker)?;
+    stage_optional_side_row(store, wtxn, agent_id_pin)?;
     crate::ports::audit_entity_put_in_txn(
         store,
         wtxn,

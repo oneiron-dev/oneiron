@@ -24,8 +24,9 @@
 //! is stale) is asked only of entities both vaults hold: one only one vault
 //! holds is content the restore returns or drops (RD-20). A settlement is the
 //! exception: it closes its ask for good, so every ask the live vault has
-//! settled is asked. A decision about a subject no single row is (a party
-//! name, a holder set) is asked of every subject either vault names.
+//! settled is asked. So is an agent id's pin, which outlives the id's row:
+//! every agent id is asked. A decision about a subject no single row is (a
+//! party name, a holder set) is asked of every subject either vault names.
 use crate::ports::EntityStoreRead;
 use crate::{EntityId, Error, Result, Vault};
 use std::collections::BTreeSet;
@@ -123,6 +124,7 @@ const DECISIONS: &[(&str, Check)] = &[
     ("dispatchable agents", loosened::<tasks::DispatchableAgents>),
     ("resident agent wakes", loosened::<tasks::ResidentWakes>),
     ("agent approval ceilings", loosened::<tasks::AgentCeilings>),
+    ("agent id pins", loosened::<tasks::AgentIdPins>),
     ("ask authority holders", loosened::<tasks::AskHolders>),
     ("skill activations", loosened::<skills::SkillActivations>),
     (

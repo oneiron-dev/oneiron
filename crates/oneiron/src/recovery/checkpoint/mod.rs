@@ -447,7 +447,8 @@ impl Vault {
     /// Reopen the replacement before it mints or retires a key. A vault that
     /// admitted an agent request, or recovered its proof clock, after the
     /// replacement was made refuses it, and nothing moves: the replacement
-    /// would not know those proofs.
+    /// would not know those proofs; so does one that holds an agent id looser
+    /// than this vault now does (H215).
     pub fn swap_in_replacement(
         &self,
         replacement: &Self,
@@ -455,7 +456,14 @@ impl Vault {
     ) -> Result<()> {
         self.store.swap_out(
             &replacement.store,
-            |txn| crate::authority::refuse_moved_proof_freshness(self, txn, replacement),
+            |txn| {
+                crate::authority::refuse_moved_proof_freshness(self, txn, replacement)?;
+                crate::agent_def::refuse_loosened_agent_id_pins(
+                    &self.store,
+                    txn,
+                    &replacement.store,
+                )
+            },
             swap,
         )
     }
@@ -603,6 +611,10 @@ impl Vault {
         if fork {
             crate::store::refuse_custody_beside(destination)?;
         }
+        // The pin pass below reads every agent id pin the restore brings
+        // back: one no pin decodes from is refused here, before a
+        // destination exists (H215).
+        crate::agent_def::refuse_unreadable_agent_id_pins(&image.databases["vault_meta"])?;
         // Existing content is never replaced or partially restored over.
         let made = crate::store::MadeDestination::make(destination, home)?;
         let mut forked = ForkedCustody(None);
@@ -652,6 +664,9 @@ impl Vault {
                     h.learned_at,
                 )?;
             }
+            // Rows came back without a put: each definition pins its id as a
+            // put of it would have (H215).
+            crate::agent_def::pin_stored_rows_in_txn(&vault.store, txn)?;
             Ok(())
         })?;
         drop(vault);

@@ -327,6 +327,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "ACCESS_REQUEST",
         "AFFECT_VAD_ANNOTATION_META",
         "AGENT_DEF_BIRTH_CUSTODY_OWNED",
+        "AGENT_DEF_ID_PIN",
         "AGENT_DEF_RESERVED_ACTOR_CENSUS_V2",
         "AGENT_WORKFLOW_RECORD",
         "ARTIFACT_PUBLISH_ADMISSION",

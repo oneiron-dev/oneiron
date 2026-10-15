@@ -13,6 +13,7 @@
 mod codec;
 mod decode;
 mod doors;
+mod id_pin;
 mod manifest;
 mod types;
 pub mod workflow;
@@ -30,6 +31,13 @@ pub use self::types::{
 
 pub(crate) use self::codec::{
     legacy_logical_id_row, validate_agent_definition_bytes, validate_agent_definition_update,
+};
+#[cfg(feature = "sync")]
+pub(crate) use self::id_pin::validate_put_at_seeded_id;
+pub(crate) use self::id_pin::{
+    AgentIdAnswer, agent_id_answer_in_txn, agent_id_pin_for_put_in_txn, agent_ids_in_txn,
+    is_agent_id_in_txn, pin_stored_row_in_txn, pin_stored_rows_in_txn,
+    refuse_agent_id_retype_in_txn, refuse_loosened_agent_id_pins, refuse_unreadable_agent_id_pins,
 };
 pub(crate) use self::manifest::{
     seed_system_agent_definitions, system_export_identity, validate_reserved_logical_id,

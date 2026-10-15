@@ -34,6 +34,9 @@ pub(crate) fn ensure_person_substrate(
             return Err(Error::CorruptedIndex("substrate identity collision"));
         }
     } else {
+        // A caller can choose the id a PERSON's substrate lands at; an id that
+        // has been an agent stays one (H215).
+        crate::agent_def::refuse_agent_id_retype_in_txn(store, txn, &facet, ENTITY_TYPE_FACET)?;
         let body = Value::Map(vec![
             ("kind".into(), "substrate".into()),
             (

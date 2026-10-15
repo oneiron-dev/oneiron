@@ -244,12 +244,19 @@ fn pinned_actor_without_row_is_proposed() -> Result<()> {
         Some(PolicyApprovalCeiling::Proposed)
     );
 
-    // A non-type-17 row at a pinned id is simply not agent-bearing (`None`),
-    // the same answer any other non-agent entity gives. Reachable only through
-    // the raw store door: the batch.rs write-door lockout still rejects it.
+    // A non-type-17 row at a pinned id is no agent's definition, and holds
+    // the agent there at Proposed rather than lifting its bound (H215).
+    // Reachable only through the raw store door: the put doors refuse it.
     let keeper_id = pinned_actor_id(0xA2);
     put_raw_entity_row(&vault, &keeper_id, ENTITY_TYPE_PERSON, b"occupant")?;
-    assert_eq!(resolved_ceiling(&vault, keeper_id)?, None);
+    assert_eq!(
+        resolved_ceiling(&vault, keeper_id)?,
+        Some(PolicyApprovalCeiling::Proposed)
+    );
+    // The same row at an id that never was an agent bears no ceiling.
+    let person_id = test_id(0x59);
+    put_raw_entity_row(&vault, &person_id, ENTITY_TYPE_PERSON, b"occupant")?;
+    assert_eq!(resolved_ceiling(&vault, person_id)?, None);
     Ok(())
 }
 
@@ -370,6 +377,26 @@ fn effect_actor_class_spoof_fails_closed() -> Result<()> {
         GateOutcome::Allow,
         "a first_party principal over a non-agent entity is not clamped"
     );
+    drop(wtxn);
+
+    // H215 (Astra R4 F2): a deleted definition leaves its id's pin, and the
+    // id stays held at Proposed under any class asserted for it.
+    vault.batch().delete(&herald_id).commit()?;
+    let mut wtxn = vault.store.env.write_txn()?;
+    for class in ["human", "system", "first_party", "agent"] {
+        let (_, decision, _) = check_external_effect_policy(
+            &vault.store,
+            &mut wtxn,
+            &effect_for(class, herald_id),
+            &policy,
+            true,
+        )?;
+        assert_ne!(
+            decision.outcome(),
+            GateOutcome::Allow,
+            "a deleted agent's id auto-fired under class {class:?}"
+        );
+    }
     drop(wtxn);
     Ok(())
 }

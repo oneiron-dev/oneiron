@@ -80,6 +80,7 @@ const CASES: &[fn() -> Result<Case>] = &[
     tasks::dispatchable_agents,
     tasks::resident_wakes,
     tasks::agent_ceilings,
+    tasks::agent_id_pins,
     tasks::ask_holders,
     skills::skill_activations,
     skills::installed_script_packs,
