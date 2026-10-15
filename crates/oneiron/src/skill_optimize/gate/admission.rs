@@ -137,10 +137,10 @@ fn resolve_skill_edit_tradeoff_with_cycle(
         ));
     }
     vault.with_write_txn_grouped(|txn| {
-        owner.revalidate_in_txn(vault, txn)?;
+        let actor = owner.revalidate_in_txn(vault, txn)?;
         let decision = TradeoffResolution {
             pending: pending_id,
-            owner: owner.actor(),
+            owner: actor,
             authentication: format!("{:?}", owner.decision_id()),
             evidence: evidence.to_owned(),
             rung: TradeoffRung::Person,

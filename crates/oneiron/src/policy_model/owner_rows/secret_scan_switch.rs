@@ -61,8 +61,8 @@ impl Vault {
         now: u64,
     ) -> Result<SecretScanReceipt> {
         let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
-        if !super::authority::owners_in_txn(self, &txn)?.contains(&owner.actor()) {
+        let actor = owner.revalidate_in_txn(self, &txn)?;
+        if !super::authority::owners_in_txn(self, &txn)?.contains(&actor) {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "only the vault owner switches the secret scan",
             )));
@@ -82,7 +82,7 @@ impl Vault {
         let receipt = SecretScanReceipt {
             receipt_id: self.store.clock.entity_id()?.to_hex(),
             revision,
-            author: owner.actor().to_hex(),
+            author: actor.to_hex(),
             mode,
             previous,
             at: now,

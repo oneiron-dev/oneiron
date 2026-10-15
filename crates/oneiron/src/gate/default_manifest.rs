@@ -896,6 +896,9 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
             Value::from(POLICY_CONSULT_FANOUT_APPROVAL_THRESHOLD_KEY),
             Value::from(25_u64),
         ),
+        // An actor's fan-out requests past create_rate still land; the first
+        // past it in a window raises OF-520's question. The row sits at ten
+        // times a fleet of 200 agents each sending one a minute.
         (
             Value::from(POLICY_CONSULT_FANOUT_CONTROLS_KEY),
             Value::Map(vec![
@@ -904,7 +907,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 (
                     Value::from("create_rate"),
                     Value::Map(vec![
-                        (Value::from("limit"), Value::from(10_u64)),
+                        (Value::from("limit"), Value::from(2_000_u64)),
                         (Value::from("window_seconds"), Value::from(60_u64)),
                     ]),
                 ),
