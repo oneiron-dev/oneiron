@@ -40,6 +40,7 @@ mod conversation_list;
 mod credential_key;
 mod dreamer;
 mod entity_delete;
+mod entity_erase;
 mod export;
 mod expression_preference;
 pub mod extraction;
@@ -84,6 +85,9 @@ pub use claims::{
 };
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
 pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView};
+pub use entity_erase::{
+    EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
+};
 pub use export::{ExportOptions, ExportReceipt, MemoryExport};
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,

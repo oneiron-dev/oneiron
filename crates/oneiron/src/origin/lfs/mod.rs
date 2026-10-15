@@ -34,8 +34,8 @@ pub use self::store::{
 pub use self::upload::LFS_DEFAULT_OBJECT_CAP;
 pub(crate) use chunks::random_lfs_chunk_seed;
 pub(crate) use lifecycle::{
-    delete_lfs_lifecycle_in_txn, guard_lfs_asset_put, reject_direct_lfs_chunk_delete,
-    unpublished_lfs_chunk_in_txn,
+    delete_lfs_lifecycle_in_txn, guard_lfs_asset_put, lfs_chunk_owners_in_txn,
+    reject_direct_lfs_chunk_delete, unpublished_lfs_chunk_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use lifecycle::{is_lfs_chunk_asset_in_txn, is_lfs_chunk_blob};
