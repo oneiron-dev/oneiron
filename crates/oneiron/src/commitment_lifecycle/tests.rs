@@ -534,8 +534,25 @@ fn overdue_instance_lapses_with_let_go_receipt_and_successor() -> Result<()> {
     Ok(())
 }
 
+/// What the write that made claim `id` declared as its provenance.
+fn provenance_of(vault: &Vault, id: &EntityId) -> Result<Option<Value>> {
+    let body = vault.get_claim(id)?.expect("claim exists");
+    let Some(Value::Map(entries)) = body.evidence else {
+        return Ok(None);
+    };
+    Ok(entries
+        .into_iter()
+        .find(|(key, _)| key.as_str() == Some("provenance"))
+        .map(|(_, value)| value))
+}
+
 /// A running host lapses an overdue instance the projector minted, with no
 /// caller: its housekeeping pass runs the sweep in the vault owner's name.
+/// Engine ruling on #1456: the lapse only closes. The instance turns Lapsed
+/// with nothing else of it changed, its series and a commitment with no due
+/// row stay byte for byte, and the lapse and the successor the close hook
+/// mints carry the housekeeping provenance, so a reader can tell them from
+/// the owner's hand.
 #[test]
 fn the_housekeeping_pass_lapses_an_overdue_instance() -> Result<()> {
     use crate::housekeeping::{HousekeepingBudget, HousekeepingSweep, SweepOutcome, SweepWork};
@@ -548,9 +565,17 @@ fn the_housekeeping_pass_lapses_an_overdue_instance() -> Result<()> {
     config.store_clock = clock.bundle();
     let vault = Vault::open(dir.path(), config)?;
     let parties = parties(&vault)?;
-    let instance =
-        parties.put_interval_instance(&vault, &crate::test_util::entity(0x3D), 1_000_000)?;
+    let series = crate::test_util::entity(0x3D);
+    let instance = parties.put_interval_instance(&vault, &series, 1_000_000)?;
+    let plain = crate::test_util::entity(0x3E);
+    parties.put_plain(&vault, &plain, 10)?;
     assert_eq!(status(&vault, &instance)?, CommitmentStatus::Open);
+    let instance_before = vault.get_claim(&instance)?.expect("instance");
+    let untouched = [series, plain];
+    let untouched_before = untouched
+        .iter()
+        .map(|id| vault.get_claim(id))
+        .collect::<Result<Vec<_>>>()?;
 
     let report = vault.housekeeping(HousekeepingBudget::unbounded())?;
     assert!(
@@ -563,8 +588,40 @@ fn the_housekeeping_pass_lapses_an_overdue_instance() -> Result<()> {
         ),
         "{report:#?}"
     );
-    assert_eq!(status(&vault, &instance)?, CommitmentStatus::Lapsed);
     assert_eq!(receipts_for(&vault, &instance)?[0].outcome, "let_go");
+
+    let minted = crate::commitment::decode_commitment_value(&instance_before.value)?;
+    let mut lapsed = vault
+        .get_commitment_claim(&instance)?
+        .expect("instance record");
+    assert_eq!(lapsed.status, CommitmentStatus::Lapsed);
+    lapsed.status = minted.status;
+    assert_eq!(lapsed, minted, "only the status moved");
+    let instance_after = vault.get_claim(&instance)?.expect("instance");
+    assert_eq!(
+        (
+            &instance_after.predicate,
+            &instance_after.subject,
+            instance_after.valid_from,
+            instance_after.valid_to,
+        ),
+        (
+            &instance_before.predicate,
+            &instance_before.subject,
+            instance_before.valid_from,
+            instance_before.valid_to,
+        ),
+        "the lapse neither re-targets nor extends the instance"
+    );
+    for (id, before) in untouched.iter().zip(&untouched_before) {
+        assert_eq!(&vault.get_claim(id)?, before, "no other commitment moved");
+    }
+    let provenance = Some(Value::from("oneiron.housekeeping.commitment_lapse.v1"));
+    assert_eq!(provenance_of(&vault, &instance)?, provenance);
+    let successors = other_instances(&vault, &instance)?;
+    assert_eq!(successors.len(), 1);
+    assert_eq!(status(&vault, &successors[0])?, CommitmentStatus::Open);
+    assert_eq!(provenance_of(&vault, &successors[0])?, provenance);
     Ok(())
 }
 

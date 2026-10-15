@@ -136,25 +136,99 @@ fn a_run_with_no_due_obligation_leaves_every_window_as_it_was() {
         1_771_027_200,
         b"later-window-body",
     );
-    let sync_rows = |vault: &Vault| -> Vec<(String, Vec<u8>)> {
-        let rtxn = vault.store.env.read_txn().unwrap();
-        vault
-            .store
-            .sync_state
-            .iter(&rtxn)
-            .unwrap()
-            .map(|entry| {
-                let (key, value) = entry.unwrap();
-                (key.into_owned(), value.to_vec())
-            })
-            .collect()
-    };
     let before = sync_rows(&vault);
 
     let run = run_scheduled_hard_erase_sweep(&vault).unwrap();
 
     assert_eq!(run.windows_compacted, 0);
     assert_eq!(sync_rows(&vault), before, "no window was rewritten");
+}
+
+/// Every persisted window row, byte for byte.
+#[cfg(feature = "sync")]
+fn sync_rows(vault: &Vault) -> Vec<(String, Vec<u8>)> {
+    let rtxn = vault.store.env.read_txn().unwrap();
+    vault
+        .store
+        .sync_state
+        .iter(&rtxn)
+        .unwrap()
+        .map(|entry| {
+            let (key, value) = entry.unwrap();
+            (key.into_owned(), value.to_vec())
+        })
+        .collect()
+}
+
+/// Engine ruling on #1456: the owner's maintain on a live host unloads the
+/// windows no caller holds and compacts them, as the owner asked. A
+/// scheduled pass with no due obligation leaves them loaded and as they
+/// were.
+#[cfg(feature = "sync")]
+#[test]
+fn the_owners_maintain_compacts_a_live_hosts_idle_windows_and_a_scheduled_pass_leaves_them() {
+    use crate::housekeeping::{
+        HardEraseWork, HousekeepingBudget, HousekeepingSweep, SweepOutcome, SweepWork,
+    };
+    use crate::sync::bridge::Materializer;
+    use crate::sync::manager::WindowManager;
+    use crate::sync::types::WindowKey;
+    use std::sync::Arc;
+
+    let erase_work = |outcome: Option<&SweepOutcome>| match outcome {
+        Some(SweepOutcome::Ran {
+            work: SweepWork::HardErase(work),
+            ..
+        }) => *work,
+        other => panic!("the erasure sweep did not run: {other:?}"),
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), embedding_test_config()).unwrap());
+    let learned_at = 1_771_027_200;
+    let erased = EntityId::now();
+    put_entity(&vault, &erased, learned_at, b"erased-window-body");
+    vault
+        .delete_entity_with_reason(&erased, DeleteReason::GdprDelete)
+        .unwrap();
+    assert_eq!(run_hard_erase_sweep(&vault).unwrap().jobs_processed, 1);
+    // History the window gains after the erasure, served by a live host
+    // that leaves the window registered with no caller holding it.
+    put_entity(&vault, &EntityId::now(), learned_at, b"later-window-body");
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::new()),
+        "owner-maintain-test",
+    ));
+    let key = WindowKey::from_timestamp(learned_at);
+    drop(manager.open_window(&key).unwrap());
+    let before = sync_rows(&vault);
+
+    let scheduled = vault.housekeeping(HousekeepingBudget::unbounded()).unwrap();
+    let HardEraseWork {
+        windows_unloaded,
+        windows_compacted,
+        ..
+    } = erase_work(scheduled.sweep(HousekeepingSweep::HardEraseSweep));
+    assert_eq!((windows_unloaded, windows_compacted), (0, 0));
+    assert!(
+        manager.loaded_keys().contains(&key),
+        "the window stays loaded"
+    );
+    assert_eq!(sync_rows(&vault), before, "no window was rewritten");
+
+    let owners = vault
+        .housekeeping_all(HousekeepingBudget::unbounded())
+        .unwrap();
+    let HardEraseWork {
+        windows_unloaded,
+        windows_compacted,
+        windows_deferred_live,
+        ..
+    } = erase_work(owners.sweep(HousekeepingSweep::HardEraseSweep));
+    assert!(windows_unloaded >= 1, "the idle window was unloaded");
+    assert!(windows_compacted >= 1, "the owner's run compacted it");
+    assert_eq!(windows_deferred_live, 0);
+    assert!(!manager.loaded_keys().contains(&key));
 }
 
 /// Astra F4 (#1456): a window opened while the sweep compacts it cannot
