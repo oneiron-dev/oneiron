@@ -60,6 +60,8 @@ pub(super) struct Scaffold {
     pub(super) ids: Vec<EntityId>,
     pub(super) leaders: Vec<EntityId>,
     pub(super) revisions: Vec<(ProjectRevisionHash, ProjectRevision)>,
+    /// Each project's birth, then each revision's row.
+    pub(super) records: Vec<ProjectRecord>,
 }
 
 pub(super) fn scaffold(graph: &Graph) -> Result<Scaffold> {
@@ -139,6 +141,7 @@ pub(super) fn scaffold(graph: &Graph) -> Result<Scaffold> {
         ids,
         leaders,
         revisions,
+        records,
     })
 }
 

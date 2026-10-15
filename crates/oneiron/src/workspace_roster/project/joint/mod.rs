@@ -59,6 +59,9 @@ struct State {
     host: bool,
     /// The parents its admission reads in the component: (member, spawned under).
     inside: Vec<(usize, bool)>,
+    /// Whether it names a parent in the component, read or not: a host
+    /// state reads none past its birth (Astra #1434 r15 F7).
+    names_inside: bool,
 }
 
 struct Member {
@@ -238,6 +241,9 @@ impl Solver<'_, '_, '_> {
                     inside.push((*index, spawned_under));
                 }
             }
+            let names_inside = (authority.parents.iter())
+                .filter_map(|parent| EntityId::from_hex(parent).ok())
+                .any(|parent| self.at.contains_key(&parent));
             member.states.push(State {
                 hash,
                 prior: *parent,
@@ -246,6 +252,7 @@ impl Solver<'_, '_, '_> {
                 birth: parent.is_none(),
                 host,
                 inside,
+                names_inside,
             });
         }
         Ok(member)
@@ -326,7 +333,7 @@ impl Solver<'_, '_, '_> {
                 let Some(prior) = state.prior else {
                     continue;
                 };
-                if !state.inside.is_empty()
+                if state.names_inside
                     || member.labels.get(&state.hash) != Some(&Label::Open)
                     || member.labels.get(&prior) != Some(&Label::Open)
                 {
@@ -349,7 +356,7 @@ impl Solver<'_, '_, '_> {
                     if !seated(&ancestor.authority) {
                         break None;
                     }
-                    if ancestor.inside.is_empty() {
+                    if !ancestor.names_inside {
                         break Some(at);
                     }
                     let fits = (ancestor.inside.iter()).all(|(parent, spawned_under)| {

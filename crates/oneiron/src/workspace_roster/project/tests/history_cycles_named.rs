@@ -368,6 +368,54 @@ fn a_chain_still_in_the_cycle_stays_a_chain() -> Result<()> {
     Ok(())
 }
 
+/// Bug repro (Astra r15 F7): the owner signs B2 over B1, still under A with
+/// kept and extra at depth 2, and a peer replays it before or after Astra's
+/// fixture. A host successor reads no parent's bounds, but it names a parent
+/// in the component, so it is no conduit: it stands only on B1, and every
+/// door still serves A1's narrowing. (The reference has no host signer.)
+#[cfg(feature = "sync")]
+#[test]
+fn a_host_successor_still_in_the_cycle_is_no_conduit() -> Result<()> {
+    use super::super::fold::reason;
+    use super::super::revision::revisions_of_row;
+    use super::history::{copy_of, open};
+    use super::history_resolution::put_companion;
+    let graph = astra(Vec::new());
+    let scaffold = scaffold(&graph)?;
+    let b = scaffold.ids[1];
+    let (b2, row) = {
+        let vault = open(&scaffold.dir)?;
+        let b1 = &scaffold.records[graph.projects + 2];
+        let mut b2 = b1.clone();
+        sign_with(&vault, b, &mut b2, None, Some(b1.anchor()), None)?;
+        revisions_of_row(b, &b2)?.pop().ok_or_else(invalid)?
+    };
+    let all = vec![true; graph.revs.len()];
+    let reference = model::solve(&graph, &all);
+    assert_eq!(
+        reference.served,
+        [Some(view(KEPT, 0, None)), Some(view(KEPT, 1, None))]
+    );
+    for first in [true, false] {
+        let (_dir, vault) = copy_of(&scaffold.dir)?;
+        if first {
+            put_companion(&vault, &row, 9)?;
+        }
+        scaffold.deliver(&vault, &[0, 1, 2, 3])?;
+        if !first {
+            put_companion(&vault, &row, 20)?;
+        }
+        let wrong = doors(&scaffold, &vault, &graph, &reference, &all)?;
+        assert!(wrong.is_empty(), "B2 first: {first}\n{}", wrong.join("\n"));
+        let listed = vault.project_revisions(b)?;
+        assert!(
+            listed.contains(&(b2, ProjectVerdict::Quarantined(reason::CYCLE))),
+            "{listed:?}"
+        );
+    }
+    Ok(())
+}
+
 /// Linear cost (Engine ruling, the 200-chain check): each member holds `n`
 /// board revisions over its birth, with the cycle edges at the tips (A1 over
 /// A's first naming B, B1 over B's first naming A). One reader folds the
