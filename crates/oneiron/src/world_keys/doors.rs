@@ -28,6 +28,12 @@ use crate::ports::TombstoneStoreRead;
 use crate::registry::ENTITY_TYPE_WORLD;
 use crate::{EntityId, TimeRange, Vault};
 
+/// One key record's parents and the recipients it wraps to.
+type WrapChunk<'a> = (
+    BTreeSet<AuthorityEntryHash>,
+    Vec<(WrapRecipient, &'a HybridPublicKey)>,
+);
+
 /// What [`Vault::ensure_world_key`] did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorldKeyStatus {
@@ -534,10 +540,7 @@ impl Vault {
         machine: EntityId,
         key: &WorldKey,
         binding: &WorldKeyBinding,
-        chunks: Vec<(
-            BTreeSet<AuthorityEntryHash>,
-            Vec<(WrapRecipient, &HybridPublicKey)>,
-        )>,
+        chunks: Vec<WrapChunk<'_>>,
         seq: &mut SequenceCounter,
     ) -> Result<Vec<AuthorityEntryHash>> {
         let now = self.instant_in_txn(txn)?.secs();
