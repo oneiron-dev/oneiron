@@ -1322,3 +1322,39 @@ async fn an_undeclared_upload_past_the_quota_lands_and_the_quota_row_asks() {
         "and the quota row asks"
     );
 }
+
+/// Review r3 (Astra, P1): transfer workers ran on the runtime's shared
+/// blocking pool (512 threads) while the transfer rows admit 2,048, so one
+/// credential's slow uploads could hold every pooled thread. The rest of the
+/// server's blocking work, and transfers already admitted, then waited in
+/// the pool's own line, with no deadline and no turns.
+#[test]
+fn slow_uploads_never_hold_the_threads_the_rest_of_the_server_needs() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .max_blocking_threads(2)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    runtime.block_on(async {
+        let (_dir, server) = test_server(secret_config());
+        let token = writer_token();
+        let mut held = Vec::new();
+        for _ in 0..3 {
+            held.push(hold_upload(&server, &token, 4_096).await);
+        }
+        assert!(
+            tokio::time::timeout(PATIENCE, tokio::task::spawn_blocking(|| ()))
+                .await
+                .is_ok(),
+            "three stalled uploads leave the shared pool's two threads free"
+        );
+        assert!(
+            held.iter().all(|upload| !upload.is_finished()),
+            "each upload is still in flight, holding its worker"
+        );
+        for upload in held {
+            upload.abort();
+        }
+    });
+}

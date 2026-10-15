@@ -224,6 +224,7 @@ fn a_request_without_the_key_is_refused_before_its_body_is_read() {
         synthetic(),
         Vec::new(),
         Some(Zeroizing::new(KEY.to_owned())),
+        &crate::config::LimitsConfig::default(),
     ));
     let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
     for key in [None, Some("another key")] {
@@ -252,6 +253,7 @@ fn bodies_wait_for_their_budget_before_they_are_read() {
         synthetic(),
         Vec::new(),
         Some(Zeroizing::new(KEY.to_owned())),
+        &crate::config::LimitsConfig::default(),
     ));
     let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
     let mut uploads: Vec<_> = (0..2 + WAITERS)
@@ -391,13 +393,19 @@ fn embed(addr: SocketAddr, input: &serde_json::Value) -> u16 {
     status(&mut stream).unwrap_or_default()
 }
 
-/// Rule five at the embedder's request row: `callers` bulk requests past
-/// the two the model works on at once all answer, and the row asks.
+/// Rule five at the embedder's request row: `callers` requests past a row
+/// of one all answer, and the row asks.
 pub(crate) fn cross_the_requests(callers: usize) -> crate::admission::Crossing {
+    // A row of one: past the first request in flight, the rest wait.
+    let limits = crate::config::LimitsConfig {
+        embedder_requests: 1,
+        ..Default::default()
+    };
     let served = Arc::new(Served::new(
         Arc::new(Slow(synthetic())),
         Vec::new(),
         Some(Zeroizing::new(KEY.to_owned())),
+        &limits,
     ));
     let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
     let calls: Vec<_> = (0..callers)
@@ -412,7 +420,8 @@ pub(crate) fn cross_the_requests(callers: usize) -> crate::admission::Crossing {
         .collect();
     let refused = calls
         .into_iter()
-        .filter(|call| call.join().ok() != Some(200))
+        .map(|call| call.join().ok())
+        .filter(|status| *status != Some(200))
         .count();
     crate::admission::Crossing {
         refused,
@@ -431,6 +440,7 @@ pub(crate) fn cross_the_bodies(callers: usize) -> crate::admission::Crossing {
         synthetic(),
         Vec::new(),
         Some(Zeroizing::new(KEY.to_owned())),
+        &crate::config::LimitsConfig::default(),
     ));
     let (addr, _runtime) = on_loopback(routes(Arc::clone(&served)));
     let holders: Vec<_> = (0..2)
@@ -454,7 +464,8 @@ pub(crate) fn cross_the_bodies(callers: usize) -> crate::admission::Crossing {
     drop(holders);
     let refused = calls
         .into_iter()
-        .filter(|call| call.join().ok() != Some(200))
+        .map(|call| call.join().ok())
+        .filter(|status| *status != Some(200))
         .count();
     crate::admission::Crossing {
         refused,
