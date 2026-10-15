@@ -13,9 +13,11 @@ use super::publication_codec::{
     KEEP_OWNER, PUBLICATIONS, keep_owner_key, origin_keep_ref_name, origin_publication_id,
 };
 use super::publication_journal::{origin_receipt, validate_origin_publication_request};
+use super::publication_machine::OriginAdmission;
 use super::publication_types::{
-    OriginCensusDisposition, OriginCensusReport, OriginKeepRefKind, OriginPublicationReceipt,
-    OriginPublicationRecord, OriginPublicationRequest, OriginPublicationStatus,
+    OriginCensusDisposition, OriginCensusReport, OriginKeepRefKind, OriginPublicationAnswer,
+    OriginPublicationReceipt, OriginPublicationRecord, OriginPublicationRequest,
+    OriginPublicationStatus,
 };
 // ---------------------------------------------------------------------------
 // The public protocol surface
@@ -123,6 +125,10 @@ impl Vault {
     ///
     /// Terminal refusals never retry. Published replay uses the original CAS
     /// expectation and proves the live ref again before reporting success.
+    /// The same move under another source resolves to the publication that
+    /// made it when the ref carries its value (observed, never re-run), and
+    /// is refused, naming them, when it needs objects that publication never
+    /// certified.
     pub fn publish_origin_ref(
         &self,
         git: &GitWire<'_>,
@@ -157,7 +163,14 @@ impl Vault {
                 return origin_receipt(record, false, None);
             }
             Some(record) => record,
-            None => self.stage_origin_publication(git, &request, publication_id)?,
+            None => match self.admit_origin_publication(git, &request, publication_id)? {
+                OriginAdmission::Staged(record) => record,
+                OriginAdmission::Resolved(owner) => {
+                    let mut receipt = origin_receipt(owner, true, None)?;
+                    receipt.answer = OriginPublicationAnswer::ResolvedToOwner;
+                    return Ok(receipt);
+                }
+            },
         };
         if record.status.is_terminal() {
             return origin_receipt(record, false, None);
