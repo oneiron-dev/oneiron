@@ -577,7 +577,7 @@ fn an_actor_burst_of_200_fan_outs_lands_whole() {
     for request in 1..=200 {
         let receipt = facade
             .fan_out_consults(&input)
-            .unwrap_or_else(|error| panic!("fan-out {request} was refused: {}", error.message));
+            .unwrap_or_else(|error| panic!("fan-out {request} was refused: {}", error.code));
         assert_eq!((receipt.task_refs.len(), receipt.paused), (1, None));
     }
     assert_eq!(task_entity_census(&vault), 200);
@@ -627,5 +627,55 @@ fn fan_outs_past_the_owner_row_land_and_leave_one_typed_check() {
             check.window_seconds
         ),
         (actor.to_hex(), 21, 20, u64::MAX)
+    );
+}
+
+/// Review r1 (Sol F1 and F2): an actor's fan-outs count in one window
+/// against one bound, the vault's own row, whatever scope each runs in. A
+/// scoped row of another duration and bound neither resets the count nor
+/// asks again: 30 requests alternating between the vault and a project
+/// leave the vault row's one check, at the 21st.
+#[test]
+fn fan_outs_across_scopes_count_in_one_window_against_the_vault_row() {
+    let (_dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let human = owner(&vault);
+    let input = plan(&vault, 1);
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    let row = |limit, window_seconds| ConsultFanOutPolicy {
+        create_rate: TaskCreateRateLimit {
+            limit,
+            window_seconds,
+        },
+        ..ConsultFanOutPolicy::default()
+    };
+    // Windows of about 31 and 63 years: the clock's window number differs
+    // between the two, and holds for the test.
+    facade
+        .set_consult_fanout_policy(&human, &row(20, 1_000_000_000))
+        .unwrap();
+    let project = ConsultFanOutScope {
+        project_ref: Some(consult_peer(&vault, 0xA1).to_hex()),
+        ..ConsultFanOutScope::default()
+    };
+    facade
+        .set_consult_fanout_scope_policy(&human, &project, &row(10, 2_000_000_000), false)
+        .unwrap();
+    for request in 0..30 {
+        let receipt = if request % 2 == 0 {
+            facade.fan_out_consults(&input)
+        } else {
+            facade.fan_out_counted_consults_in_scope(&input, "research", &project, &human, None)
+        }
+        .unwrap();
+        assert_eq!(receipt.task_refs.len(), 1);
+    }
+    let check = vault
+        .own_rate_check(actor, OwnRateKind::ConsultFanout)
+        .unwrap()
+        .expect("the crossing left a check");
+    assert_eq!(
+        (check.count, check.threshold, check.window_seconds),
+        (21, 20, 1_000_000_000)
     );
 }
