@@ -400,6 +400,11 @@ impl Vault {
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
         E: From<Error>,
     {
+        // Scan checks raised since the last write are kept first, in a write
+        // of their own (no scan opens one). It takes the writer where this
+        // write is about to, holding nothing more: no answer exists yet to
+        // carry a permit another write waits on.
+        self.keep_waiting_scan_checks();
         // One logical write in the single writer's group commit: the closure
         // runs in a transaction of its own, and `Ok` comes back only once the
         // shared commit is durable.
@@ -436,9 +441,6 @@ impl Vault {
                     Err(err) => Rows::Discard(Err(E::from(err))),
                 }
             })?;
-        // The host's write is durable: scan checks raised since the last
-        // write are kept now, in a write of their own (no scan opens one).
-        self.keep_waiting_scan_checks();
         self.store.notify_attempt_observers();
         if proactivity_changed {
             self.store.notify_proactivity_changes();
