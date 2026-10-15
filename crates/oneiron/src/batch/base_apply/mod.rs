@@ -233,6 +233,9 @@ pub(super) fn apply_ops_with_origin(
     let mut had_graph_mutation = false;
     let mut had_vector_mutation = false;
     let mut materialized_entity_ids = BTreeSet::new();
+    // ARCH-0005a: the refusal a late `blob.version` reference ends the batch with, raised after
+    // its every other check.
+    let mut late_reference = None;
     let mut project_edge_endpoints = BTreeSet::new();
     let local_chat_turns = super::leader_chat_admission::local_turns(&ops);
     // ONE-1604-D1: shell-edge sources orphaned by a dominance eviction. Their
@@ -413,6 +416,9 @@ pub(super) fn apply_ops_with_origin(
                     // A grant, or a policy manifest's read grant, may let the
                     // Dreamer read words the sieve left.
                     crate::dreamer_wake::sieve_grant_written_in_txn(store, wtxn)?;
+                }
+                if late_reference.is_none() {
+                    late_reference = applied.late_reference;
                 }
                 if let Some((source_id, source_bytes)) = applied.portable_agent_source {
                     apply_ops_with_origin(
@@ -772,6 +778,9 @@ pub(super) fn apply_ops_with_origin(
         config.privacy.posture,
         &materialized_entity_ids,
     )?;
+    if let Some(refusal) = late_reference {
+        return Err(Error::Artifact(refusal));
+    }
 
     #[cfg(feature = "sync")]
     for (id, token) in &pending_embedding_tokens_written {

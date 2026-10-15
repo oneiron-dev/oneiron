@@ -484,12 +484,7 @@ impl Vault {
                 TopologyDeletePhase::Published,
             )?;
             if value.reason.is_hard() {
-                super::tombstone::ROW_DELETION_FENCE.put(
-                    &self.store,
-                    &mut wtxn,
-                    &crate::side_table::HexId(*id),
-                    &Vec::new(),
-                )?;
+                super::tombstone::fence_deleted_row_in_txn(&self.store, &mut wtxn, id)?;
             }
             published.push(*id);
         }
@@ -658,12 +653,7 @@ impl Vault {
         // The fence commits with the tombstone, so the row reads deleted from
         // the publication on, even if the purge never lands.
         if value.reason.is_hard() {
-            super::tombstone::ROW_DELETION_FENCE.put(
-                &self.store,
-                &mut wtxn,
-                &crate::side_table::HexId(*id),
-                &Vec::new(),
-            )?;
+            super::tombstone::fence_deleted_row_in_txn(&self.store, &mut wtxn, id)?;
         }
         Ok(wtxn)
     }

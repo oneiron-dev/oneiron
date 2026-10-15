@@ -260,7 +260,8 @@ fn a_late_version_of_a_replicated_artifact_the_owner_erased_takes_its_bytes() ->
 
 /// Bug repro (#1465 R4, Astra F3): a text an ordinary delete fenced before its DerivedFrom edge
 /// and its body arrived still takes a hard erase's own fence on arrival: a local put of it is
-/// refused, as for any text the erase took.
+/// refused, as for any text the erase took, also after the ordinary delete is replayed again
+/// (#1465 R5, Astra P2).
 #[cfg(feature = "sync")]
 #[test]
 fn an_ordinary_fence_on_a_derived_text_is_raised_to_the_erase_fence() -> Result<()> {
@@ -287,6 +288,8 @@ fn an_ordinary_fence_on_a_derived_text_is_raised_to_the_erase_fence() -> Result<
         )
     })?;
     assert!(refused, "the text's arrival was not refused");
+    // The soft tombstone replayed again (Astra R5 P2): its ordinary fence leaves the erase's.
+    apply_tombstone(vault, &text, &tombstone(TombstoneReason::UserDelete))?;
     assert!(
         matches!(
             vault.put_entity(&text, ENTITY_TYPE_ASSET_TEXT, at(50), 50, WORDS),

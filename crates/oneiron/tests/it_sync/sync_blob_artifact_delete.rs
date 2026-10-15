@@ -478,7 +478,7 @@ fn a_derived_text_arriving_after_its_edge_goes_with_the_bytes() {
 /// vault holding only another reference to the bytes learns of the erase too.
 #[test]
 fn a_late_reference_carries_the_erase_to_a_vault_holding_only_another_reference() {
-    let (mut a, mut b) = vault_pair();
+    let (mut a, b) = vault_pair();
     let mut c = TestNode::new("node-c", 3);
     c.open_window(WINDOW);
     let erased = upload(&mut a, T0, &[UNIQUE]);

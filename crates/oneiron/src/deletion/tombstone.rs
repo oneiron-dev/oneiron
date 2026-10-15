@@ -386,6 +386,19 @@ pub(crate) const IDENTITY_SOFT_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
 pub(crate) const ROW_DELETION_FENCE: SideTable<HexId, Vec<u8>, Raw> =
     SideTable::new(&side_table::DELETION_ROW_FENCE);
 
+/// Fences `id` as deleted here with a presence-only fence, unless a hard erase fenced it with its
+/// own (`blob_artifact::erase_fenced`): that fence is never lowered to one a put can clear.
+pub(crate) fn fence_deleted_row_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> crate::error::Result<()> {
+    if crate::blob_artifact::erase_fenced(store, wtxn, id)? {
+        return Ok(());
+    }
+    ROW_DELETION_FENCE.put(store, wtxn, &HexId(*id), &Vec::new())
+}
+
 /// Set once [`ROW_DELETION_FENCE`] has been backfilled from the applied
 /// soft-delete markers of a vault written before the fence existed.
 pub(crate) const ROW_DELETION_FENCE_BACKFILLED: SideTable<(), Vec<u8>, Raw> =

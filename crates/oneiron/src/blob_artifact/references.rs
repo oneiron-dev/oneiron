@@ -17,7 +17,7 @@ use rmpv::Value;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
-use crate::error::{ArtifactError, Error, Result};
+use crate::error::{ArtifactError, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
@@ -76,9 +76,10 @@ pub(super) fn version_claim_reference(body: &ClaimBody) -> Option<(EntityId, Con
 /// live artifact lifts a fence an earlier release left on its bytes, so the export door keeps
 /// their carrier and the next rematerialization takes them back.
 ///
-/// A late reference (`super::erase::LateReference`) is refused: a claim a hard erase took, a claim
-/// naming bytes a hard erase took here, and a claim naming an artifact whose hard erase was decided
-/// here. Replicated ingest pierces such a claim before it reaches this put
+/// A late reference (`super::erase::LateReference`) records nothing: a claim a hard erase took, a
+/// claim naming bytes a hard erase took here, or a claim naming an artifact whose hard erase was
+/// decided here. Its put refuses it ([`late_reference_refusal`]) once every other check of the
+/// batch passed. Replicated ingest pierces such a claim before it reaches this put
 /// (`Vault::refuse_erased_blob_arrival_in_txn`); every other door gets the refusal.
 pub(crate) fn record_version_claim(
     store: &Store,
@@ -90,13 +91,7 @@ pub(crate) fn record_version_claim(
         return Ok(());
     };
     if super::erase::late_reference_in_txn(store, txn, claim, body)?.is_some() {
-        return Err(Error::Artifact(
-            if super::erase::reference_erased(store, txn, claim)? {
-                ArtifactError::BlobVersionErased
-            } else {
-                ArtifactError::BlobContentErased
-            },
-        ));
+        return Ok(());
     }
     let deleted_here = {
         let raw = store.entities.get(txn, artifact.as_bytes())?;
@@ -115,6 +110,27 @@ pub(crate) fn record_version_claim(
         )?;
     }
     Ok(())
+}
+
+/// The refusal a put of `body` at `claim` ends with when it is a late reference
+/// (`super::erase::LateReference`): `BlobVersionErased` for a reference a hard erase took,
+/// `BlobContentErased` otherwise. The batch raises it after its every other check, so a gate that
+/// probes the put learns that nothing else would refuse it.
+pub(crate) fn late_reference_refusal(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    claim: &EntityId,
+    body: &ClaimBody,
+) -> Result<Option<ArtifactError>> {
+    if super::erase::late_reference_in_txn(store, txn, claim, body)?.is_none() {
+        return Ok(None);
+    }
+    let refusal = if super::erase::reference_erased(store, txn, claim)? {
+        ArtifactError::BlobVersionErased
+    } else {
+        ArtifactError::BlobContentErased
+    };
+    Ok(Some(refusal))
 }
 
 /// The version number a `blob.version` claim body names.

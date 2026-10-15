@@ -60,7 +60,7 @@ impl Vault {
         {
             return Ok(());
         }
-        ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(*id), &Vec::new())
+        super::super::tombstone::fence_deleted_row_in_txn(&self.store, wtxn, id)
     }
 
     /// One-time open backfill of [`ROW_DELETION_FENCE`]. A vault written
@@ -81,7 +81,7 @@ impl Vault {
                 if crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &id)?
                     .is_some_and(|raw| raw.len() == ENTITY_METADATA_HEADER_LEN)
                 {
-                    ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(id), &Vec::new())?;
+                    super::super::tombstone::fence_deleted_row_in_txn(&self.store, wtxn, &id)?;
                 }
             }
             #[cfg(feature = "sync")]

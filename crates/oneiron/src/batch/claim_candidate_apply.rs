@@ -121,6 +121,9 @@ pub(super) fn apply_claim_candidate(
             },
         },
     )?;
+    if let Some(refusal) = applied_put.late_reference {
+        return Err(Error::Artifact(refusal));
+    }
 
     crate::claim::history_store::stage_machine_birth_after_candidate(
         store,
