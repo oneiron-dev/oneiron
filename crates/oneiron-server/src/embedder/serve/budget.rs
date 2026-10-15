@@ -1,4 +1,4 @@
-//! Bytes request bodies may hold at once.
+//! Bytes request bodies, or answers, may hold at once.
 //!
 //! Requests that find too few free wait in arrival order. Freed bytes are
 //! handed to the oldest waiters under the budget's lock, as an admission
@@ -16,10 +16,13 @@ use tokio::sync::Notify;
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
 /// Bytes request bodies may hold at once, taken before a body is read and
-/// held until its request's work ends.
+/// held until its request's work ends; or answers, taken before the model
+/// makes one and held until it is delivered.
 pub(super) struct BodyBudget {
     budget: Arc<Mutex<Budget>>,
     total: usize,
+    /// The row a wait crosses.
+    row: LimitRow,
 }
 
 struct Budget {
@@ -45,13 +48,24 @@ pub(super) struct BodyBytes {
 }
 
 impl BodyBudget {
+    /// A budget for request bodies.
     pub(super) fn new(total: usize) -> Self {
+        Self::crossing(total, LimitRow::EmbedderBodyBytes)
+    }
+
+    /// A budget for answers.
+    pub(super) fn answers(total: usize) -> Self {
+        Self::crossing(total, LimitRow::EmbedderAnswerBytes)
+    }
+
+    fn crossing(total: usize, row: LimitRow) -> Self {
         Self {
             budget: Arc::new(Mutex::new(Budget {
                 free: total,
                 line: VecDeque::new(),
             })),
             total,
+            row,
         }
     }
 
@@ -85,7 +99,7 @@ impl BodyBudget {
             drop(budget);
             if first {
                 questions.ask(
-                    LimitRow::EmbedderBodyBytes,
+                    self.row,
                     self.total as u64,
                     held.saturating_add(bytes) as u64,
                 );

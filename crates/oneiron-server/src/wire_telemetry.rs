@@ -82,10 +82,12 @@ pub enum LimitRow {
     EmbedderRequests,
     /// Bytes the embedder endpoint's request bodies hold at once.
     EmbedderBodyBytes,
+    /// Bytes the embedder endpoint's answers hold until they are delivered.
+    EmbedderAnswerBytes,
 }
 impl LimitRow {
     /// Every row, the list every permit site and byte check is built from.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Connections,
         Self::GitExchanges,
         Self::LfsTransfers,
@@ -95,6 +97,7 @@ impl LimitRow {
         Self::CompactionPasses,
         Self::EmbedderRequests,
         Self::EmbedderBodyBytes,
+        Self::EmbedderAnswerBytes,
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.
@@ -110,6 +113,7 @@ impl LimitRow {
             Self::CompactionPasses => "models.code_mode.max_runs:compaction",
             Self::EmbedderRequests => "limits.embedder_requests",
             Self::EmbedderBodyBytes => "embedder.serve:body_bytes",
+            Self::EmbedderAnswerBytes => "limits.embedder_answer_bytes",
         }
     }
 }

@@ -35,14 +35,18 @@
 //! is read. A body must declare its length, and is read only once that fits a
 //! budget, which it holds until its request's work ends: small bodies
 //! (queries, a vault's document batches) and large ones each have their own,
-//! so a recall never waits behind an upload. Past the `embedder_requests`
-//! row of `[limits]`, past a full budget, and past the few requests the
-//! model works on at once, a request with the key waits its turn in order,
-//! each wait up to the queue deadline; it is never refused for how many wait
-//! (the owner's rate law, ARCH-0044 C5). Crossing the requests row or a
-//! budget asks whether everything is okay (OF-520). A body that does not
-//! arrive in time gives its budget back, so however many callers wait, the
-//! server holds little more than both budgets.
+//! so a recall never waits behind an upload. An answer takes room for its
+//! rows and their encoding in the `embedder_answer_bytes` row of `[limits]`
+//! before the model makes it, and keeps it until it is delivered. Past the
+//! `embedder_requests` row, past a full budget or answer row, and past the
+//! few requests the model works on at once, a request with the key waits
+//! its turn in order, each wait up to the queue deadline; it is never
+//! refused for how many wait (the owner's rate law, ARCH-0044 C5). Crossing
+//! a row or a budget asks whether everything is okay (OF-520). A body that
+//! does not arrive in time gives its budget back, and an answer its reader
+//! stops taking gives its room back at the idle limit, so however many
+//! callers wait, the server holds little more than the budgets and the
+//! answer row.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -231,6 +235,8 @@ struct Served {
     /// The bytes request bodies may hold, by size ([`SMALL_BODY_BYTES`]).
     small_bodies: BodyBudget,
     large_bodies: BodyBudget,
+    /// Room answers hold until they are delivered (`embedder_answer_bytes`).
+    answers: BodyBudget,
     /// Where crossed rows ask, the listener's descriptor floor's too. No
     /// vault keeps them here; each is logged.
     questions: Arc<LimitQuestions>,
@@ -266,6 +272,9 @@ impl Served {
             queries: Arc::new(tokio::sync::Semaphore::new(QUERY_REQUESTS)),
             small_bodies: BodyBudget::new(SMALL_BODIES_BYTES),
             large_bodies: BodyBudget::new(LARGE_BODIES_BYTES),
+            answers: BodyBudget::answers(
+                usize::try_from(limits.embedder_answer_bytes).unwrap_or(usize::MAX),
+            ),
             questions,
             wait,
             idle: Duration::from_millis(limits.transfer_idle_timeout_ms),
@@ -590,6 +599,19 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
             &format!("an instruction is at most {MAX_INSTRUCTION_BYTES} bytes"),
         );
     }
+    // The answer's room, taken before the model makes it: its rows and their
+    // encoding are held until it is delivered.
+    let Some(answer_held) = served
+        .answers
+        .reserve(
+            answer_bytes(texts.len(), served.embedder.dimensions()),
+            served.wait,
+            &served.questions,
+        )
+        .await
+    else {
+        return waited_out();
+    };
     let turns = match priority {
         Priority::Query => &served.queries,
         Priority::Bulk => &served.bulk,
@@ -600,14 +622,14 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
     };
     let embedder = Arc::clone(&served.embedder);
     let instruction = request.instruction;
-    // The request's place goes into the work and comes back with its
-    // answer: a caller who hangs up frees nothing the work still takes, and
-    // the place is held until the answer is delivered.
+    // The request's place and its answer's room go into the work and come
+    // back with its answer: a caller who hangs up frees nothing the work
+    // still takes, and both are held until the answer is delivered.
     let embedded = tokio::task::spawn_blocking(move || {
         let _turn = (turn, body_held);
         (
             embedder.embed_raw(&texts, side, instruction.as_deref(), priority),
-            held,
+            (held, answer_held),
         )
     })
     .await;
@@ -682,9 +704,10 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
 }
 
 /// Streams `answer` out in copied pieces, holding the request's place in
-/// `embedder_requests` until the last piece is handed on, the client goes
-/// away, or the client reads nothing for `idle`.
-fn answer_body(answer: Vec<u8>, held: Permit, idle: Duration) -> axum::body::Body {
+/// `embedder_requests` and the answer's room in `embedder_answer_bytes`
+/// until the last piece is handed on, the client goes away, or the client
+/// reads nothing for `idle`.
+fn answer_body(answer: Vec<u8>, held: (Permit, BodyBytes), idle: Duration) -> axum::body::Body {
     let (pieces, receiver) = tokio::sync::mpsc::channel::<axum::body::Bytes>(2);
     tokio::spawn(async move {
         let _held = held;
@@ -703,6 +726,24 @@ fn answer_body(answer: Vec<u8>, held: Permit, idle: Duration) -> axum::body::Bod
         },
     ))
 }
+
+/// What an answer of `inputs` rows of `dimensions` floats may hold until it
+/// is delivered: the rows as the model returns them (4 bytes a float), and
+/// at the same time their encoding, at most 16 bytes a float as JSON (an
+/// f32's shortest form and its comma; base64 takes under 6), with room for
+/// each row's own fields and the answer's.
+fn answer_bytes(inputs: usize, dimensions: usize) -> usize {
+    inputs
+        .saturating_mul(dimensions.saturating_mul(4 + 16).saturating_add(ROW_FIELDS))
+        .saturating_add(ANSWER_FIELDS)
+}
+
+/// One answer row's fields past its floats, counted generously.
+const ROW_FIELDS: usize = 256;
+
+/// An answer's fields past its rows (the model, its transform, profile and
+/// provenance), counted generously.
+const ANSWER_FIELDS: usize = 16 * 1024;
 
 /// The refusal for a request without the configured bearer key; `None` when
 /// no key is configured or the request carries it.
