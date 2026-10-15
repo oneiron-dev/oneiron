@@ -504,6 +504,14 @@ fn workflow_widen_parks_whole_composition_and_replays_one_wrapper_after_reopen()
     } = case;
     drop(vault);
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    // A proof binds to the open it was minted on: the reopened vault takes a
+    // fresh one.
+    let owner = vault.authenticate_owner(
+        owner.actor(),
+        owner.principal_ref(),
+        true,
+        GateDecisionId::now(),
+    )?;
     let dispatcher = AgentDispatcher::new(&vault);
     let AgentDispatchOutcome::WorkflowExisting(replayed) =
         dispatcher.approve_context_widen(&owner, &proposal, 6)?

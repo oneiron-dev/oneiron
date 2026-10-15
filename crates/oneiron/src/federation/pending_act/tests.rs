@@ -95,6 +95,14 @@ fn window_notifies_named_holders_refuses_admin_and_holds_until_withdrawn() -> Re
     assert!(!vault.advance_authority_act(&act.id, 100 + WEEK)?.completed);
     drop(vault);
     let reopened = Vault::open(dir.path(), crate::test_util::embedding_test_config())?;
+    // A proof binds to the open it was minted on: the reopened vault takes a
+    // fresh one.
+    let other = reopened.authenticate_owner(
+        other.actor(),
+        other.principal_ref(),
+        true,
+        GateDecisionId::now(),
+    )?;
     assert!(
         !reopened
             .advance_authority_act(&act.id, 100 + WEEK + 1)?
