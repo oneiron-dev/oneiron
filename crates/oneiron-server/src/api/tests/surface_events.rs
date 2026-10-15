@@ -543,8 +543,9 @@ async fn a_submitter_learns_nothing_of_an_identity_it_cannot_read() {
     for receipt in &receipts[1..] {
         assert_eq!(receipt, &receipts[0]);
     }
-    // FACET-READ: a submitter limited to a facet no identity sits in learns
-    // of each what it learns of a missing one, and queues nothing.
+    // FACET-READ: the submit door refuses a credential limited to a facet
+    // before it looks up any identity, so each hidden identity answers as a
+    // missing one does, and nothing is queued.
     let faceted = test_bearer(&format!(
         "scope=core:read,core:write;facets={}",
         seeded_test_entity_id(0x2516_0306).to_hex()
@@ -557,11 +558,12 @@ async fn a_submitter_learns_nothing_of_an_identity_it_cannot_read() {
         "hidden-provisioning@example.com",
     ] {
         let (status, mut receipt) = submit(faceted.clone(), address).await;
-        if let Some(fields) = receipt.as_object_mut() {
-            fields.remove("event_id");
-            fields.remove("receiving_address_or_handle");
-        }
-        faceted_receipts.push((status, receipt));
+        assert_eq!(status, StatusCode::FORBIDDEN, "{receipt}");
+        receipt["error"]
+            .as_object_mut()
+            .unwrap()
+            .remove("requestId");
+        faceted_receipts.push(receipt);
     }
     for receipt in &faceted_receipts[1..] {
         assert_eq!(receipt, &faceted_receipts[0]);
