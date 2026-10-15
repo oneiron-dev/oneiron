@@ -1255,16 +1255,18 @@ fn a_queued_send_never_softens_this_vaults_hard_delete() {
     map_insert_bytes(&author.get_map("tombstones"), &shared, &soft).unwrap();
     author.commit();
     let update = author.export(ExportMode::updates(&hub.oplog_vv())).unwrap();
-    crate::sync::queue::SyncQueue::new(Arc::clone(&vault))
-        .unwrap()
-        .push(key.as_str(), &update)
-        .unwrap();
     let hard = tombstone(crate::deletion::TombstoneReason::UserHardDelete);
     map_insert_bytes(&receiver.doc.get_map("tombstones"), &shared, &hard).unwrap();
     crate::sync::loro_support::map_delete(&receiver.doc.get_map("entities"), &shared).unwrap();
     receiver.doc.commit();
     let old = receiver.doc.fork();
     drop(receiver);
+    // Queued once the live window is gone: materializing this vault's own hard delete there scrubs
+    // the window's outbox (ONE-1135), and the state under test is a queue that outlived it.
+    crate::sync::queue::SyncQueue::new(Arc::clone(&vault))
+        .unwrap()
+        .push(key.as_str(), &update)
+        .unwrap();
     assert!(
         old.fork()
             .import(&update)
