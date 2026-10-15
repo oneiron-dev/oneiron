@@ -110,3 +110,36 @@ fn window_lookup_tracks_issued_handle_before_discard_can_deregister() {
         "dead issued handles should prune after the external handle drops"
     );
 }
+
+/// Sol R4 F1 (#1456): two sweeps that reach one window at once, the
+/// housekeeping pass and an owner's `maintain()`, must not let the one that
+/// ends first reopen the window while the other is still between its read
+/// and its compaction write. The second is left out, and an open that comes
+/// meanwhile waits for the first.
+#[test]
+fn a_second_sweep_of_a_window_another_holds_closed_leaves_it_closed() {
+    let (_dir, manager, key) = test_manager();
+    let (opened_tx, opened_rx) = mpsc::channel();
+
+    let ran = manager.while_window_closed(&key, || {
+        assert!(
+            manager.while_window_closed(&key, || ()).is_none(),
+            "the second sweep is left out"
+        );
+        let open_manager = Arc::clone(&manager);
+        let open_key = key.clone();
+        std::thread::spawn(move || {
+            drop(open_manager.open_window(&open_key).unwrap());
+            let _ = opened_tx.send(());
+        });
+        assert!(
+            opened_rx.recv_timeout(Duration::from_millis(300)).is_err(),
+            "the window opened while the first sweep held it closed"
+        );
+    });
+
+    assert!(ran.is_some());
+    opened_rx
+        .recv_timeout(Duration::from_secs(20))
+        .expect("the open goes ahead once the first sweep is done");
+}

@@ -346,7 +346,8 @@ impl WindowManager {
     /// The window is marked closed under the registry lock, so no open of it
     /// is under way, and an open that comes during `f` waits and then reads
     /// what `f` wrote, rather than registering the history `f` drops. Opens
-    /// of other windows go through.
+    /// of other windows go through. A window another sweep holds closed is
+    /// left to it, so the mark is released only by the sweep that made it.
     pub(crate) fn while_window_closed<T>(
         &self,
         key: &WindowKey,
@@ -363,7 +364,7 @@ impl WindowManager {
         if retained {
             return None;
         }
-        let closed = self.sweep_fence.close(key);
+        let closed = self.sweep_fence.close(key)?;
         drop(registry);
         let result = f();
         drop(closed);

@@ -330,3 +330,63 @@ fn a_confirm_walk_that_spans_passes_ends_and_retires_the_deadline_it_covered() {
         "the overdue write was demoted"
     );
 }
+
+/// Sol R4 F2 (#1456): an owner's erasure run cut short before it compacts is
+/// still the owner's when the next pass retries it, so the retry compacts the
+/// history the owner asked to drop, with no obligation due. A scheduled run
+/// would leave it.
+#[cfg(feature = "sync")]
+#[test]
+fn an_owners_erasure_run_cut_short_is_retried_as_the_owners() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let clock = ManualClock::new(T0);
+    let config = || VaultConfig {
+        store_clock: clock.bundle(),
+        ..crate::test_util::embedding_test_config()
+    };
+    {
+        let vault = Vault::open(dir.path(), config()).expect("open vault");
+        // A persisted window, and no obligation left: an erasure the owner's
+        // own sweep has already discharged.
+        let erased = EntityId::now();
+        vault
+            .batch()
+            .put(
+                &erased,
+                1,
+                TimeRange { start: T0, end: T0 },
+                T0,
+                b"window-history",
+            )
+            .commit()
+            .expect("put");
+        vault
+            .delete_entity_with_reason(&erased, crate::deletion::DeleteReason::GdprDelete)
+            .expect("delete");
+        let discharged = crate::sweep::run_hard_erase_sweep(&vault).expect("erase");
+        assert_eq!(discharged.jobs_processed, 1);
+        inject(HousekeepingSweep::HardEraseSweep, Injected::Crash);
+        let crashed = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            vault.housekeeping_all(HousekeepingBudget::unbounded())
+        }));
+        assert!(crashed.is_err(), "the injected crash ends the owner's pass");
+    }
+
+    clock.set(T0 + 3_600);
+    let vault = Vault::open(dir.path(), config()).expect("reopen vault");
+    let report = pass(&vault);
+
+    assert!(
+        matches!(
+            outcome(&report, HousekeepingSweep::HardEraseSweep),
+            SweepOutcome::Ran {
+                work: super::SweepWork::HardErase(super::HardEraseWork {
+                    windows_compacted: 1..,
+                    ..
+                }),
+                ..
+            }
+        ),
+        "{report:#?}"
+    );
+}

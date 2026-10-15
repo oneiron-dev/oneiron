@@ -40,10 +40,11 @@ impl SweepFence {
     }
 
     /// Holds `key` closed until the returned mark drops, by return or by
-    /// unwinding.
-    pub(super) fn close<'a>(&'a self, key: &'a WindowKey) -> Closed<'a> {
-        self.closed().insert(key.clone());
-        Closed { fence: self, key }
+    /// unwinding; `None` when another sweep holds it closed already.
+    pub(super) fn close<'a>(&'a self, key: &'a WindowKey) -> Option<Closed<'a>> {
+        // Lazily: a mark made and dropped would release the holder's.
+        let inserted = self.closed().insert(key.clone());
+        inserted.then(|| Closed { fence: self, key })
     }
 }
 

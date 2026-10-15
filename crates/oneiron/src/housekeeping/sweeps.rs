@@ -85,7 +85,7 @@ pub(super) fn run(
             }
         }
         HousekeepingSweep::CriticalConfirmExpiry => {
-            return critical_confirms(vault, now, deadline, cursor);
+            return critical_confirms(vault, deadline, cursor);
         }
         HousekeepingSweep::SymbolLeaseExpiry => SweepWork::SymbolLeases {
             released: count(vault.expire_symbol_leases(now)?.len()),
@@ -149,66 +149,42 @@ fn count(n: usize) -> u64 {
     u64::try_from(n).unwrap_or(u64::MAX)
 }
 
-/// Pages through the pending critical confirms until a whole walk that began
-/// at a known time has ended, or the deadline passes. The expiry cursor is
-/// durable and shared with the confirm listing, so a run that finds a walk
-/// already in progress finishes it and then walks again from the head: only
-/// a walk that began at a time has seen every confirm due by then. A walk
-/// that outlasts one run goes on in the next, from the coverage `cursor`
-/// keeps: the walk ends still owed and the time the covering walk began. A
-/// complete run covers the deadlines due by that time.
-fn critical_confirms(
-    vault: &Vault,
-    now: u64,
-    deadline: &Deadline,
-    cursor: Option<&[u8]>,
-) -> Result<Run> {
-    let expiry_cursor = || -> Result<Option<u64>> {
-        let txn = vault.store.env.read_txn()?;
-        Ok(vault
-            .store
-            .critical_confirm_expiry_sweep_state_in_txn(&txn)?
-            .0)
-    };
-    let (mut walks_to_end, mut covers_from) = match cursor.and_then(confirm_coverage) {
-        Some(coverage) => coverage,
-        None if expiry_cursor()?.is_none() => (1, now),
-        None => (2, now),
-    };
+/// Pages through the pending critical confirms until a walk this sweep saw
+/// begin has ended, or the deadline passes. The expiry cursor is durable and
+/// shared with the confirm listing, so a run that finds a walk already in
+/// progress finishes it and then walks again from the head: only a walk whose
+/// beginning is known has seen every confirm due by then, since each page
+/// judges at the clock read in its own transaction. A walk that outlasts one
+/// run goes on in the next, from the begin time `cursor` keeps. A complete
+/// run covers the deadlines due by that time.
+fn critical_confirms(vault: &Vault, deadline: &Deadline, cursor: Option<&[u8]>) -> Result<Run> {
+    let mut began = cursor.and_then(confirm_walk_began);
     let mut demoted = 0;
     let mut pages = 0;
     loop {
-        demoted += count(vault.expire_critical_write_confirms()?);
+        let page = vault.expire_critical_write_confirms_page()?;
+        demoted += count(page.demoted);
         pages += 1;
-        if expiry_cursor()?.is_none() {
-            walks_to_end -= 1;
-            if walks_to_end == 1 {
-                // The walk in progress has ended; the covering one begins.
-                covers_from = vault.now_recorded_at();
-            }
+        if let Some(at) = page.began_at {
+            began = Some(at);
         }
-        let complete = walks_to_end == 0;
+        let complete = page.ended && began.is_some();
         if complete || deadline.passed() {
-            let mut coverage = vec![walks_to_end];
-            coverage.extend_from_slice(&covers_from.to_be_bytes());
             return Ok(Run {
                 work: SweepWork::CriticalConfirms { demoted, pages },
                 complete,
-                cursor: (!complete).then_some(coverage),
-                covered_until: Some(covers_from),
+                cursor: (!complete)
+                    .then(|| began.map_or_else(Vec::new, |at| at.to_be_bytes().to_vec())),
+                covered_until: began,
             });
         }
     }
 }
 
-/// A coverage an unfinished confirm walk kept: the walk ends still owed and
-/// the time the covering walk began. One that does not decode starts over.
-fn confirm_coverage(bytes: &[u8]) -> Option<(u8, u64)> {
-    let (&walks_to_end, began) = bytes.split_first()?;
-    let began = u64::from_be_bytes(began.try_into().ok()?);
-    (1..=2)
-        .contains(&walks_to_end)
-        .then_some((walks_to_end, began))
+/// When the walk an unfinished confirm run followed began, if it saw it
+/// begin. One that does not decode starts over.
+fn confirm_walk_began(bytes: &[u8]) -> Option<u64> {
+    Some(u64::from_be_bytes(bytes.try_into().ok()?))
 }
 
 /// Finishes staged key retirements, then ages out decisions past the owner's

@@ -629,8 +629,8 @@ impl Vault {
 
     /// Runs one sweep between its start marker and its finish row. The marker
     /// is what tells the next pass that a run was interrupted. The run is the
-    /// owner's when this pass is, or when it carries an owner's request an
-    /// earlier pass left for later.
+    /// owner's when this pass is, or when it answers an owner's request an
+    /// earlier pass left for later, failed or was cut short on.
     fn run_scheduled_sweep(
         &self,
         sweep: HousekeepingSweep,
@@ -639,9 +639,8 @@ impl Vault {
         deadline: &Deadline,
         owner_asked: bool,
     ) -> SweepOutcome {
-        let owner_asked = owner_asked || state.owner_asked();
         let start = self.now_recorded_at();
-        let running = state.started(start);
+        let running = state.started(start, owner_asked);
         if let Err(error) = schedule::write_state(self, sweep, &running) {
             return SweepOutcome::Failed { kind: error.kind() };
         }
@@ -671,7 +670,7 @@ impl Vault {
                 start,
                 deadline,
                 running.cursor.as_deref(),
-                owner_asked,
+                running.owners(),
             )
         }));
         let end = self.now_recorded_at();

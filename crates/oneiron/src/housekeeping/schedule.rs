@@ -51,6 +51,10 @@ pub(super) struct SweepState {
     /// An earlier run of the walk in progress left items it could not finish.
     #[serde(default)]
     cycle_failed: bool,
+    /// The run in flight, or the one that goes on from an unfinished,
+    /// failed or interrupted run, answers an owner's request.
+    #[serde(default)]
+    owners: bool,
 }
 
 impl SweepState {
@@ -68,6 +72,7 @@ impl SweepState {
         items_failed: bool,
     ) -> Self {
         let cycle_failed = self.cycle_failed || items_failed;
+        let answered = complete && !cycle_failed;
         let (next_due_at, failures, cycle_failed) = if !complete {
             (end, self.failures, cycle_failed)
         } else if cycle_failed {
@@ -88,13 +93,16 @@ impl SweepState {
             requested_at: None,
             cursor,
             cycle_failed,
+            owners: self.owners && !answered,
         }
     }
 
     /// The row of a run in flight. A start marker already there was left by
-    /// an interrupted run, which counts as a failure. The owner's request is
-    /// answered by this run.
-    pub(super) fn started(self, start: u64) -> Self {
+    /// an interrupted run, which counts as a failure. The run is the owner's
+    /// when `owner_pass` says so, when the owner's request is still pending,
+    /// or when it goes on from an owner's run that has not finished; it stays
+    /// the owner's until a run of it ends complete with nothing failed.
+    pub(super) fn started(self, start: u64, owner_pass: bool) -> Self {
         let failures = if self.started_at.is_some() {
             self.failures.saturating_add(1)
         } else {
@@ -103,6 +111,7 @@ impl SweepState {
         Self {
             started_at: Some(start),
             failures,
+            owners: owner_pass || self.requested_at.is_some() || self.owners,
             requested_at: None,
             ..self
         }
@@ -131,9 +140,9 @@ impl SweepState {
         }
     }
 
-    /// Whether it holds an owner's request no run has started on yet.
-    pub(super) const fn owner_asked(&self) -> bool {
-        self.requested_at.is_some()
+    /// Whether the run in flight answers an owner's request.
+    pub(super) const fn owners(&self) -> bool {
+        self.owners
     }
 }
 
