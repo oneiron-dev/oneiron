@@ -52,9 +52,10 @@ pub(crate) use self::erase::{
 pub(crate) use self::erase::{asset_erased, record_erased_derivation_in_txn};
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 pub use self::provenance::BlobVersionProvenance;
+#[cfg(any(feature = "sync", test))]
+pub(crate) use self::references::mark_late_probe_in_txn;
 pub(crate) use self::references::{
     claimed_hash_rows_exist, erase_fenced, fence_erased_carrier, record_version_claim,
-    refuse_late_references_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::references::{fenced_without_pin, readmit_held_asset_in_txn};

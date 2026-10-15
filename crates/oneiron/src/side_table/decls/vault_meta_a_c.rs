@@ -106,6 +106,9 @@ side_tables! {
     /// their tombstones publish. Local, never replicated. Key: id16; value: learned_at, the
     /// tombstone value and the window label.
     BLOB_ARTIFACT_LATE_PIERCED: VaultMeta b"blob_artifact:late_pierced:v1:" Raw;
+    /// Set only inside the savepoint the ingest gate probes a late reference's put in, which is
+    /// always rolled back. Key: ().
+    BLOB_ARTIFACT_LATE_PROBE: VaultMeta b"blob_artifact:late_probe:v1" Raw;
     /// Edit proposal settlement ledger row. Key: id16 + hash32.
     EDIT_SETTLE_RECORD: VaultMeta b"blob_artifact:settlement:v1:" Raw;
     /// Blob artifact version record. Key: id16 + u64be.

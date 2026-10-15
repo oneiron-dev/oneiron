@@ -432,7 +432,7 @@ impl Vault {
                 // it. Any other widens an erase only as far as the replicated put would take it.
                 if ROW_DELETION_FENCE.contains(&self.store, wtxn, &HexId(*id))?
                     || HARD_DELETE_MARKER.contains(&self.store, wtxn, &HexId(*id))?
-                    || !self.put_reaches_late_reference_refusal_in_txn(wtxn, id, header, data)?
+                    || !self.put_admits_late_reference_in_txn(wtxn, id, header, data)?
                 {
                     return Ok(false);
                 }
@@ -532,12 +532,12 @@ impl Vault {
         self.fence_refused_arrival_in_txn(wtxn, id, carriers)
     }
 
-    /// Whether the replicated put of `data` at `id` fails only as a late reference: its batch
-    /// refuses one after every other check passed (`blob_artifact::refuse_late_references_in_txn`).
-    /// Probed in a savepoint that is always rolled back, so a body the put refuses for anything
-    /// else widens no erase.
+    /// Whether the replicated put of `data` at `id` would be admitted but for being a late
+    /// reference. Probed in a savepoint that is always rolled back and marked as the probe
+    /// (`blob_artifact::mark_late_probe_in_txn`), where the reference records nothing and the
+    /// batch runs every other check: a body the put refuses for anything else widens no erase.
     #[cfg(any(feature = "sync", test))]
-    fn put_reaches_late_reference_refusal_in_txn(
+    fn put_admits_late_reference_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
@@ -546,6 +546,7 @@ impl Vault {
     ) -> Result<bool> {
         let probe = {
             let mut savepoint = self.store.env.nested_write_txn(wtxn)?;
+            crate::blob_artifact::mark_late_probe_in_txn(&self.store, &mut savepoint)?;
             self.batch_in()
                 .put_replicated(
                     id,
@@ -559,13 +560,7 @@ impl Vault {
                 )
                 .apply(&mut savepoint)
         };
-        Ok(matches!(
-            probe,
-            Err(Error::Artifact(
-                crate::error::ArtifactError::BlobContentErased
-                    | crate::error::ArtifactError::BlobVersionErased
-            ))
-        ))
+        Ok(probe.is_ok())
     }
 
     /// Fences `id`, a body the ingest gate refused, with a hard erase's own fence, raising any

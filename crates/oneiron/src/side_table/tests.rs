@@ -347,6 +347,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "BLOB_ARTIFACT_ERASE_SCOPE",
         "BLOB_ARTIFACT_HIGHWATER",
         "BLOB_ARTIFACT_LATE_PIERCED",
+        "BLOB_ARTIFACT_LATE_PROBE",
         "BLOB_ARTIFACT_VERSION_CLAIM",
         "BOARD_HISTORY_FOLDED",
         "BOOKING_EVENT_TYPE_CONFIG_SHORTCUT",

@@ -18,7 +18,7 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
-use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
+use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
 
@@ -78,9 +78,10 @@ pub(super) fn version_claim_reference(body: &ClaimBody) -> Option<(EntityId, Con
 ///
 /// A late reference (`super::erase::LateReference`) records nothing: a claim a hard erase took, a
 /// claim naming bytes a hard erase took here, or a claim naming an artifact whose hard erase was
-/// decided here. Its batch refuses it ([`refuse_late_references_in_txn`]) once every other check
-/// passed. Replicated ingest pierces such a claim before it reaches this put
-/// (`Vault::refuse_erased_blob_arrival_in_txn`); every other door gets the refusal.
+/// decided here. Its put is refused here, so its batch commits nothing of it. Replicated ingest
+/// pierces such a claim before it reaches this put (`Vault::refuse_erased_blob_arrival_in_txn`),
+/// after probing the put in a savepoint marked by [`mark_late_probe_in_txn`]: there it records
+/// nothing and the put runs on, so every other check decides; every other door gets the refusal.
 pub(crate) fn record_version_claim(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -90,8 +91,11 @@ pub(crate) fn record_version_claim(
     let Some((artifact, hash)) = version_claim_reference(body) else {
         return Ok(());
     };
-    if super::erase::late_reference_in_txn(store, txn, claim, body)?.is_some() {
-        return Ok(());
+    if let Some(refusal) = late_reference_refusal(store, txn, claim, body)? {
+        if LATE_PROBE.contains(store, txn, &())? {
+            return Ok(());
+        }
+        return Err(Error::Artifact(refusal));
     }
     let deleted_here = {
         let raw = store.entities.get(txn, artifact.as_bytes())?;
@@ -112,39 +116,21 @@ pub(crate) fn record_version_claim(
     Ok(())
 }
 
-/// Refuses a batch that stores a late reference (`super::erase::LateReference`) at any of `ids`,
-/// the entities it materialized, with `late_reference_refusal`. The batch runs this after its
-/// every other check (`batch::base_apply`), so a gate that probes the put learns that nothing
-/// else would refuse it.
-pub(crate) fn refuse_late_references_in_txn(
-    store: &Store,
-    txn: &RoTxn<'_>,
-    ids: &std::collections::BTreeSet<EntityId>,
-) -> Result<()> {
-    let predicate = BLOB_VERSION_CLAIM_PREDICATE.as_bytes();
-    for id in ids {
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
-            continue;
-        };
-        // Only a body naming the version predicate can be a reference; no other is decoded again.
-        if raw.len() <= ENTITY_METADATA_HEADER_LEN
-            || raw[0] != ENTITY_TYPE_CLAIM
-            || !raw
-                .windows(predicate.len())
-                .any(|window| window == predicate)
-        {
-            continue;
-        }
-        let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        if let Some(refusal) = late_reference_refusal(store, txn, id, &body)? {
-            return Err(Error::Artifact(refusal));
-        }
-    }
-    Ok(())
+/// Set only inside the savepoint the ingest gate probes a late reference's put in, which is always
+/// rolled back (`Vault::refuse_erased_blob_arrival_in_txn`).
+const LATE_PROBE: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::BLOB_ARTIFACT_LATE_PROBE);
+
+/// Marks `savepoint` as the ingest gate's probe of a late reference's put: there the reference
+/// records nothing and its put runs every other check. The caller never commits `savepoint`.
+#[cfg(any(feature = "sync", test))]
+pub(crate) fn mark_late_probe_in_txn(store: &Store, savepoint: &mut RwTxn<'_>) -> Result<()> {
+    LATE_PROBE.put(store, savepoint, &(), &Vec::new())
 }
 
-/// The refusal a put of `body` at `claim` ends with when it is a late reference:
-/// `BlobVersionErased` for a reference a hard erase took, `BlobContentErased` otherwise.
+/// The refusal a put of `body` at `claim` meets when it is a late reference
+/// (`super::erase::LateReference`): `BlobVersionErased` for a reference a hard erase took,
+/// `BlobContentErased` otherwise.
 fn late_reference_refusal(
     store: &Store,
     txn: &RoTxn<'_>,

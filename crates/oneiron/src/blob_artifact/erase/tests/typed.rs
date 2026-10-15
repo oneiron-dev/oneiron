@@ -179,6 +179,41 @@ fn a_deleted_record_at_the_bytes_id_erases_no_bytes() -> Result<()> {
     Ok(())
 }
 
+/// Bug repro (#1465 R8, Astra P2): a late reference that a later put in the same batch rewrites
+/// into one that is not late still refuses the batch: nothing of it is stored, not even as a
+/// revision of the claim.
+#[test]
+fn a_late_reference_rewritten_in_its_batch_still_refuses_the_batch() -> Result<()> {
+    let (origin, _dir, appender, late) = super::late::erased_with_late_reference()?;
+    let vault = &origin.vault;
+    let raw = appender.get_raw(&late)?.expect("the late reference");
+    let header = EntityMetadataHeader::parse(&raw).expect("stored header");
+    let data = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    // The same claim naming the live artifact that holds the same bytes: not late.
+    let mut live = crate::claim::decode_claim_body(data, true)?;
+    live.subject = crate::claim::ClaimSubject::Entity(origin.other);
+    let live = crate::claim::encode_claim_body(&live)?;
+    let id = EntityId::now();
+    let range = crate::TimeRange {
+        start: header.occurred_start,
+        end: header.occurred_end,
+    };
+    let result = vault
+        .batch()
+        .put_replicated(&id, header.entity_type, range, header.learned_at, data)
+        .put_replicated(&id, header.entity_type, range, header.learned_at, &live)
+        .commit();
+    assert!(
+        matches!(
+            result,
+            Err(Error::Artifact(ArtifactError::BlobContentErased))
+        ),
+        "a late reference rewritten in its batch was stored: {result:?}"
+    );
+    assert!(vault.get_raw(&id)?.is_none());
+    Ok(())
+}
+
 /// Bug repro (#1465 R3 Astra 2, R4 Astra F1, R5 Astra P1): a late reference widens an erase only
 /// as far as the replicated put would take it. The same claim with a forged machine signature, with
 /// its occurred range reversed, or replacing a live claim of another record scope, all of which

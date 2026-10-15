@@ -772,7 +772,6 @@ pub(super) fn apply_ops_with_origin(
         config.privacy.posture,
         &materialized_entity_ids,
     )?;
-    crate::blob_artifact::refuse_late_references_in_txn(store, wtxn, &materialized_entity_ids)?;
 
     #[cfg(feature = "sync")]
     for (id, token) in &pending_embedding_tokens_written {
