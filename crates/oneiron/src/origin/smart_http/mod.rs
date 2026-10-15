@@ -91,10 +91,6 @@ mod paths;
 mod serve;
 mod serve_cmd;
 
-// The flat module reached its sibling as `super::publication`; the children
-// keep that path through this seam.
-use super::publication;
-
 pub use self::door::{DoorAdmissionStamp, DoorSeam};
 pub use self::door_window::{DoorWindowReport, DoorWindowVerdict};
 pub use self::evidence::{ObservedRef, PackStats, ReceivePackOutcome, RefUpdate};

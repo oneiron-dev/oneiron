@@ -90,6 +90,7 @@ impl Vault {
     }
 
     /// Every journal row, for one repository or every one.
+    #[cfg(test)]
     pub(in crate::origin) fn origin_publication_rows(
         &self,
         repo_id: Option<EntityId>,
