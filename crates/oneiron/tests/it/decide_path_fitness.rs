@@ -50,7 +50,7 @@ const DECIDE_DIR: &str = "crates/oneiron/src/llm/decision/";
 const ADAPTER_PREFIX: &str = "crates/oneiron-llm-";
 
 /// The length of [`BYPASSES`]. Lower it as a surface moves into `decide()`; never raise it.
-const BYPASS_CEILING: usize = 23;
+const BYPASS_CEILING: usize = 22;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Edge {
@@ -89,6 +89,12 @@ const BYPASSES: &[Pin] = &[
         "consolidation conflict judge: merge, supersede, accumulate or escalate conflicting claims",
     ),
     pin(
+        "crates/oneiron/src/dreamer_consolidation/executor.rs",
+        "call_as_step_checked(",
+        "let outcome = call_as_step_checked(",
+        "extraction-time supersede: a claim's corrects field supersedes the head it names, skipping the conflict judge",
+    ),
+    pin(
         "crates/oneiron/src/saved_query/evaluator.rs",
         ".generate(",
         ".generate(request, lease)",
@@ -123,18 +129,6 @@ const BYPASSES: &[Pin] = &[
         "call_as_step(",
         "call_as_step(",
         "routed verdict: a caller's schema verdict sent through the step seam after a description-judge route",
-    ),
-    pin(
-        "crates/oneiron-bench/src/beam/llm_judge.rs",
-        ".invoke_with_lease(",
-        "let (answer, cost) = session.invoke_with_lease(",
-        "BEAM answer judge: 0, 0.5 or 1 against gold, by three votes",
-    ),
-    pin(
-        "crates/oneiron-bench/src/interface_bench/wire_and_scoring.rs",
-        "call_openrouter(",
-        "let response = call_openrouter(",
-        "interface-bench browse judge: three grades on a 1 to 5 rubric",
     ),
     pin(
         "crates/oneiron/src/critic/review.rs",
@@ -224,6 +218,18 @@ const BYPASSES: &[Pin] = &[
 
 /// Model calls and seams that are not typed decisions. They stay outside `decide()`.
 const OUTSIDE: &[Pin] = &[
+    pin(
+        "crates/oneiron-bench/src/beam/llm_judge.rs",
+        ".invoke_with_lease(",
+        "let (answer, cost) = session.invoke_with_lease(",
+        "eval judge: fixed model for comparability (BEAM answer 0, 0.5 or 1 against gold)",
+    ),
+    pin(
+        "crates/oneiron-bench/src/interface_bench/wire_and_scoring.rs",
+        "call_openrouter(",
+        "let response = call_openrouter(",
+        "eval judge: fixed model for comparability (interface-bench browse grades, 1 to 5)",
+    ),
     pin(
         "crates/oneiron-bench/src/beam/llm_host.rs",
         ".generate(",
@@ -361,12 +367,6 @@ const OUTSIDE: &[Pin] = &[
         ".generate(",
         ".generate(request, lease)",
         "foreign-agent transcript for a dispatched run",
-    ),
-    pin(
-        "crates/oneiron/src/dreamer_consolidation/executor.rs",
-        "call_as_step_checked(",
-        "let outcome = call_as_step_checked(",
-        "consolidation claim extraction (its corrects field can name a held head)",
     ),
     pin(
         "crates/oneiron/src/dreamer_consolidation/scope_summary_attempt.rs",
