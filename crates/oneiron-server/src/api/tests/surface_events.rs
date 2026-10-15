@@ -629,7 +629,7 @@ async fn a_handoff_status_reads_only_under_its_identity() {
 /// F16 round 2 (Sol F1, Astra F1): two events under one correlation id, each
 /// to its own identity. A handoff its reader cannot read is set aside before
 /// the run's cardinality is judged: a reader of neither gets the missing
-/// 404, and a reader of one gets that one's status.
+/// 404, and a reader of only one gets that one's status.
 #[tokio::test]
 async fn a_hidden_handoff_never_makes_a_correlation_ambiguous() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
@@ -690,22 +690,15 @@ async fn a_hidden_handoff_never_makes_a_correlation_ambiguous() {
     }
     assert_eq!(held, missing);
 
-    // A reader whose credential names the first identity alone.
-    let one = seeded_test_entity_id(0x2516_0326);
-    super::context_board_history::restrict_principal_read_types(
-        &server,
-        one,
-        &[
-            oneiron::registry::ENTITY_TYPE_TURN,
-            oneiron::registry::ENTITY_TYPE_CHANNEL_IDENTITY,
-        ],
+    // Once the second identity is gone, a reader of the vault reads the
+    // first handoff alone, and gets its status.
+    assert!(
+        server
+            .vault
+            .delete_entity(&seeded_test_entity_id(0x2516_0323))
+            .expect("delete the second identity")
     );
-    let one = test_bearer(&format!(
-        "scope=core:read;principal_ref={};records={}",
-        one.to_hex(),
-        seeded_test_entity_id(0x2516_0321).to_hex()
-    ));
-    let (status, snapshot) = status_as(one, "pair-shared").await;
+    let (status, snapshot) = status_as(test_bearer("scope=core:read"), "pair-shared").await;
     assert_eq!(status, StatusCode::OK, "{snapshot}");
     assert_eq!(snapshot["attempt_ref"], acks[0]["attempt_ref"]);
 }

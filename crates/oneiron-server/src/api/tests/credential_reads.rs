@@ -1081,3 +1081,39 @@ async fn a_room_its_reader_cannot_read_is_a_missing_room() {
         "a reader that reads the room resolves it: {body}"
     );
 }
+
+/// F16 round 3 (Sol F3): membership stands in for a member's grant on its
+/// room, never for the credential it presents. A member whose credential
+/// names other records reads its room as a missing one, and no member's id;
+/// on its whole credential it reads the room.
+#[tokio::test]
+async fn a_members_bounded_credential_reads_its_room_as_missing() {
+    let room = room();
+    let pack = |recipe: String, conversation: oneiron::EntityId| {
+        route_json(
+            room.server.clone(),
+            core_request_with_authz(
+                "POST",
+                "/v1/core/context-pack",
+                test_bearer(&recipe),
+                Some(&json!({ "conversation_id": conversation.to_hex(), "query": "credkey" })),
+            ),
+        )
+    };
+    let bounded = room.agent_recipe(Some(&[room.unscoped]));
+    let (missing_status, missing) = pack(bounded.clone(), seeded_test_entity_id(0x2401_0012)).await;
+    assert_eq!(missing_status, StatusCode::NOT_FOUND, "{missing}");
+    let (status, body) = pack(bounded, room.room).await;
+    assert_eq!(
+        (status, &body["error"]["code"], &body["error"]["details"]),
+        (
+            missing_status,
+            &missing["error"]["code"],
+            &missing["error"]["details"]
+        ),
+        "{body}"
+    );
+    assert!(!body.to_string().contains(&room.owner.to_hex()), "{body}");
+    let (status, body) = pack(room.agent_recipe(None), room.room).await;
+    assert_eq!(status, StatusCode::OK, "a member reads its room: {body}");
+}

@@ -188,12 +188,8 @@ struct CachedHttpResponse {
     body: Vec<u8>,
     /// The rows the handler derived `body` from ([`ServedRows`]).
     rows: Vec<oneiron::EntityId>,
-    /// The rows a replay re-admits ([`ServedRows::admit`]); `None` for an
-    /// entry written before they were kept.
+    /// The rows a replay re-admits ([`ServedRows::admit`]).
     admit: Option<Vec<oneiron::EntityId>>,
-    /// Whether the response was derived on this device; `None` for an entry
-    /// written before it was kept.
-    derived_on_device: Option<bool>,
 }
 
 /// The rows a response was derived from, as its handler listed them while it
@@ -205,19 +201,18 @@ pub(crate) struct ServedRows {
     /// The rows the response named beyond its documents: an identity it
     /// addressed, a notification it delivered, a rider outcome or a pack
     /// source. A replay goes out only while the caller's read, as it stands
-    /// then, still reads each of them.
-    pub(crate) admit: Vec<oneiron::EntityId>,
+    /// then, still reads each of them. `None` when the handler could not list
+    /// them all: a route that keeps them never replays such a response.
+    pub(crate) admit: Option<Vec<oneiron::EntityId>>,
 }
 
 /// A cached success as its release judges it.
 pub(crate) struct Replay<'a> {
     pub(crate) body: &'a [u8],
     pub(crate) rows: &'a [oneiron::EntityId],
-    /// [`ServedRows::admit`]; `None` for an entry written before it was kept.
+    /// [`ServedRows::admit`]; `None` as well for an entry written before it
+    /// was kept.
     pub(crate) admit: Option<&'a [oneiron::EntityId]>,
-    /// Whether the response was derived on this device; `None` for an entry
-    /// written before it was kept.
-    pub(crate) derived_on_device: Option<bool>,
 }
 
 /// Whether the caller's read, as it stands now, still reads every row a
@@ -249,7 +244,6 @@ impl CachedHttpResponse {
             body: &self.body,
             rows: &self.rows,
             admit: self.admit.as_deref(),
-            derived_on_device: self.derived_on_device,
         }
     }
 
@@ -281,10 +275,6 @@ struct StoredIdempotencyEntry {
     /// were kept carry none.
     #[serde(default)]
     replay_admits: Option<Vec<String>>,
-    /// Whether the response was derived on this device. Entries written
-    /// before it was kept carry none.
-    #[serde(default)]
-    derived_on_device: Option<bool>,
 }
 
 impl StoredIdempotencyEntry {
@@ -310,7 +300,6 @@ impl StoredIdempotencyEntry {
             replay_admits: cached
                 .admit
                 .map(|admit| admit.iter().map(oneiron::EntityId::to_hex).collect()),
-            derived_on_device: cached.derived_on_device,
         }
     }
 }
@@ -347,7 +336,6 @@ impl TryFrom<StoredIdempotencyEntry> for CachedHttpResponse {
                 })
                 .transpose()
                 .map_err(IdempotencyStoreError::rows)?,
-            derived_on_device: stored.derived_on_device,
         })
     }
 }
@@ -565,8 +553,7 @@ async fn idempotent(
             headers: parts.headers.clone(),
             body: response_body.clone(),
             rows: served.rows,
-            admit: Some(served.admit),
-            derived_on_device: Some(locality == oneiron::claim::CallerLocality::OnDevice),
+            admit: served.admit,
         };
 
         if let Err(_error) = state.store.insert(&store_key, target, request_body, cached) {

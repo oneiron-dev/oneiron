@@ -150,7 +150,7 @@ pub(crate) fn resolve_core_interlocutor_set(
         parties,
         voice_session_ref,
     };
-    let read_rosters = super::super::core_auth_reads_whole_vault(auth, read);
+    let read_rosters = read.reads_whole_vault();
     vault
         .resolve_interlocutors_under(&input, read, read_rosters)
         .map(Some)

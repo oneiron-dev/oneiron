@@ -265,3 +265,36 @@ fn an_outcome_delivered_past_a_full_watch_rides_once_per_submission() -> crate::
     assert_eq!(wake(&mut session)?, 0);
     Ok(())
 }
+
+/// F16 round 3 (Sol F2): a session's lifecycle rider names an agent's
+/// retraction only while the caller's read reads the agent. To a read that
+/// does not, the retraction is no change, as for a missing row.
+#[test]
+fn a_lifecycle_rider_names_no_retraction_its_reader_cannot_read() -> crate::Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let agent = crate::test_util::seed_agent_definition(&vault, id(0x31), "rider");
+    let mut session = SessionReadSet::default();
+    session.served(agent.to_hex(), ServedLifecycle::Active);
+    let mut definition = vault.get_agent_definition(&agent)?.expect("seeded agent");
+    definition.version.push_str("-retired");
+    definition.lifecycle_status = crate::claim::ClaimLifecycleStatus::Retracted;
+    vault.update_agent_definition(
+        &agent,
+        &definition,
+        crate::TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    crate::test_util::authorize_readers(&vault, &[&id(7).to_hex()]);
+    let rows = |actor: u8| {
+        let read =
+            vault.scoped_read(crate::claim::ScopedReadActorKey::new(id(actor).to_hex()).unwrap());
+        session.refresh(&read, 16).map(|line| line.rows)
+    };
+    assert_eq!(rows(7)?, vec![(agent.to_hex(), ServedLifecycle::Retracted)]);
+    assert_eq!(
+        rows(8)?,
+        Vec::new(),
+        "a reader of no agent learns no retraction"
+    );
+    Ok(())
+}

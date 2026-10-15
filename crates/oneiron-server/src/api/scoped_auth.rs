@@ -75,25 +75,6 @@ pub(crate) fn scoped_read_for_core_auth<'a>(
     Ok(vault.scoped_read(key.at(auth.locality())))
 }
 
-/// Whether `auth`, reading as `read` (its [`scoped_read_for_core_auth`]),
-/// reads the whole vault: an owner-grade credential that is the server's
-/// own secret, the unattenuated host root, or the owner's own full
-/// credential. An agent's full-scope slip still reads a relationship's rows
-/// only on a grant, so it does not.
-pub(crate) fn core_auth_reads_whole_vault(
-    auth: &CoreAuth,
-    read: &oneiron::claim::ScopedRead<'_>,
-) -> bool {
-    if !auth.is_owner_grade() {
-        return false;
-    }
-    match auth.verified_slip() {
-        None => true,
-        Some(proof) if proof.claims().holder_ref == "host" => proof.is_full_vault_owner_grade(),
-        Some(_) => read.actor_key().reads_as_vault_owner(),
-    }
-}
-
 /// The legacy read lane for the credential [`check_api_auth`] admitted, where
 /// its connection sits. A verified slip reads under its own key, through the
 /// one builder, so an agent's full-scope slip reads a relationship's rows here

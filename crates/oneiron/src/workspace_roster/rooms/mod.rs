@@ -221,7 +221,9 @@ impl Vault {
     /// [`Self::room_audience_members`] as `read` reads the room, in one
     /// snapshot: a room `read` cannot read is a missing room, unless
     /// `member` is one of its members, who reads its roster by membership as
-    /// its room turns do.
+    /// its room turns do. Membership never widens the credential: one whose
+    /// records leave the room out, or a caller whose locality keeps it here,
+    /// reads it as missing.
     pub fn room_audience_members_under(
         &self,
         read: &crate::claim::ScopedRead<'_>,
@@ -233,6 +235,9 @@ impl Vault {
         let policy = read.live_policy_manifest_in(&txn)?;
         if read.is_ref_readable_with_policy_in(&txn, &policy, &room)? {
             return self.room_audience_members_in_txn(&txn, room);
+        }
+        if !read.reaches_by_membership_in(&txn, &room)? {
+            return Err(Error::EntityNotFound);
         }
         self.room_audience_members_in_txn(&txn, room)
             .ok()

@@ -85,6 +85,18 @@ impl<'a> ScopedRead<'a> {
         self
     }
 
+    /// Whether this read reads the whole vault: the vault owner's own key
+    /// (`ScopedReadActorKey::reads_as_vault_owner`), with no world ceiling,
+    /// audience or peer read narrowing what it serves. Any other read may
+    /// withhold a row, so nothing it serves may tell that one exists.
+    #[must_use]
+    pub fn reads_whole_vault(&self) -> bool {
+        self.actor_key.reads_as_vault_owner()
+            && self.actor_key.worlds.is_none()
+            && self.audience.is_none()
+            && self.peer_reads.is_empty()
+    }
+
     /// Number of immutable room ledger snapshots loaded by this read handle.
     pub fn audience_ledger_reads(&self) -> Result<usize> {
         Ok(self
@@ -322,6 +334,19 @@ impl<'a> ScopedRead<'a> {
             return Ok(false);
         }
         self.peers_read_raw_in(txn, &self.peer_reads, id, raw)
+    }
+
+    /// Whether membership may stand in for this read's own grant on `id`,
+    /// in `txn`: the credential presented reaches `id` (no records or
+    /// channel caveat leaves it out) and this caller's locality reads it.
+    /// Membership replaces an actor's grant on its room; it never widens the
+    /// credential it was presented with.
+    pub(crate) fn reaches_by_membership_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        Ok(self.credential_allows_id(id) && !self.device_withholds_in(txn, id, None)?)
     }
 
     pub(super) fn credential_allows_id(&self, id: &EntityId) -> bool {

@@ -1548,3 +1548,68 @@ async fn a_keyed_board_counted_on_this_device_never_replays_off_it() {
     assert_eq!(status, StatusCode::OK, "{replayed}");
     assert_eq!(replayed, first);
 }
+
+/// F16 round 3 (Astra F3): a keyed board counted off this device never
+/// replays off it either. Its counts and activity name no row a replay could
+/// re-admit: once a world they counted is kept on this machine, a fresh board
+/// off it counts that world's rows no more
+/// (`discovery_off_this_device_counts_no_device_local_row`), and the replay
+/// is refused rather than repeat them.
+#[tokio::test]
+async fn a_keyed_board_counted_off_this_device_never_replays_off_it() {
+    let (_dir, server, caller, grower) = serve();
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
+    let kept_world = put_world(&server.vault);
+    put_orchid_claim(
+        &server,
+        grower,
+        "keptspace.orchid",
+        Some(kept_world),
+        "orchid ledger kept",
+    );
+    let turn = EntityId::now();
+    let author = rmp_serde::to_vec_named(&json!({ "actor": owner.to_hex() })).unwrap();
+    server
+        .vault
+        .put_entity(
+            &turn,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::TimeRange { start: 2, end: 2 },
+            2,
+            &author,
+        )
+        .unwrap();
+    let board = json!({"session": {"session_id": "counted-away"}, "turn": {"id": turn.to_hex()}});
+    let away = || {
+        caller.call_keyed(
+            AWAY,
+            "POST",
+            "/v1/core/context-board",
+            Some(board.clone()),
+            Some("counted-away"),
+        )
+    };
+    let (status, first) = away().await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert!(
+        first["session"]["counts"][oneiron::registry::ENTITY_TYPE_CLAIM.to_string()]
+            .as_u64()
+            .is_some_and(|claims| claims >= 1),
+        "{first}"
+    );
+
+    server
+        .vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            kept_world,
+            true,
+        )
+        .unwrap();
+    let (status, refused) = away().await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert!(
+        refused.to_string().contains("board_document_unreadable"),
+        "{refused}"
+    );
+}

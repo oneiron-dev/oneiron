@@ -237,7 +237,7 @@ pub(crate) async fn context_board_hydrate(
     // The session's counts and latest activity span the whole vault: only a
     // caller that reads all of it learns them. Any other reads an empty
     // inventory, the same whatever rows it cannot read hold.
-    let session = if super::core_auth_reads_whole_vault(&auth, &read) {
+    let session = if read.reads_whole_vault() {
         session_prefix(&server, auth.locality()).await?
     } else {
         empty_session_prefix()
@@ -254,6 +254,11 @@ pub(crate) async fn context_board_hydrate(
         },
     );
 
+    let named_contacts = req
+        .retrieval
+        .as_ref()
+        .map(CoreContextPackRequest::named_contacts)
+        .unwrap_or_default();
     let (pack, memories, advanced) = match req.retrieval {
         Some(retrieval) => {
             let memories = resolve_memories_request(
@@ -458,7 +463,9 @@ pub(crate) async fn context_board_hydrate(
     }
     // The rows this board was derived from, kept beside a keyed replay of it.
     // A replay re-admits each row it named beyond its documents: every
-    // notification, rider row and pack source.
+    // notification, rider row, pack source, named or stamped contact and
+    // discovered capability. A rider that counts rows it does not name can
+    // never be re-admitted, so its board never replays.
     let mut admit: Vec<_> = response
         .notifications
         .iter()
@@ -466,6 +473,10 @@ pub(crate) async fn context_board_hydrate(
         .collect();
     admit.extend(rider_admits(&changed_line));
     admit.extend(pack_sources);
+    admit.extend(named_contacts);
+    if let Some(pack) = &response.pack {
+        admit.extend(pack.replay_admits());
+    }
     let mut served: Vec<_> = crate::device_local::changed_line_rows(&changed_line).collect();
     served.extend(admit.iter().copied());
     if let Some(pack) = &response.pack {
@@ -485,7 +496,8 @@ pub(crate) async fn context_board_hydrate(
     Ok((
         axum::Extension(crate::idempotency::ServedRows {
             rows: served,
-            admit,
+            admit: (changed_line.overflow == 0 && changed_line.install_overflow == 0)
+                .then_some(admit),
         }),
         Json(response),
     ))

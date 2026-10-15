@@ -1424,6 +1424,17 @@ async fn a_keyed_board_replays_no_pack_whose_source_its_reader_no_longer_reads()
         json!([])
     );
     let first_hash = install_board_pack_version(&server, "alice.keyed", 1);
+    // A board's owner is a row: its history is recorded against it.
+    server
+        .vault
+        .put_entity(
+            &principal,
+            ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"pack reader",
+        )
+        .unwrap();
     let turn = put_authored_turn(&server, principal);
     let keyed = || {
         route_json(
@@ -1449,4 +1460,114 @@ async fn a_keyed_board_replays_no_pack_whose_source_its_reader_no_longer_reads()
     let refused = refused.to_string();
     assert!(refused.contains("board_document_unreadable"), "{refused}");
     assert!(!refused.contains(&first_hash), "{refused}");
+}
+
+/// F16 round 3 (Astra F4): a keyed board's replay re-admits each capability
+/// its retrieval discovered, which no document it served names. Once its
+/// reader reads no skill, the replay is refused rather than naming it.
+#[tokio::test]
+async fn a_keyed_board_replays_no_capability_its_reader_no_longer_reads() {
+    use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN};
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x2516_0431);
+    let skill = seeded_test_entity_id(0x2516_0432);
+    seed_board_skill(&server, skill, "keyedcapsneedle");
+    // A board's owner is a row: its history is recorded against it.
+    server
+        .vault
+        .put_entity(
+            &principal,
+            ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"capability reader",
+        )
+        .unwrap();
+    let turn = put_authored_turn(&server, principal);
+    let restrict = |types: &[u8]| {
+        super::context_board_history::restrict_principal_read_types(&server, principal, types);
+    };
+    let keyed = || {
+        let mut request = core_request_with_authz(
+            "POST",
+            "/v1/core/context-board",
+            test_bearer(&format!(
+                "scope=core:read,core:write;principal_ref={};actor_class=agent",
+                principal.to_hex()
+            )),
+            Some(&json!({
+                "retrieval": {"query": "keyedcapsneedle", "limit": 1},
+                "session": {"session_id": "caps-keyed"},
+                "turn": {"id": turn.to_hex()}
+            })),
+        );
+        request.headers_mut().insert(
+            "Idempotency-Key",
+            axum::http::HeaderValue::from_static("caps-keyed"),
+        );
+        route_json(server.clone(), request)
+    };
+    restrict(&[ENTITY_TYPE_TURN, ENTITY_TYPE_PERSON, ENTITY_TYPE_SKILL]);
+    let (status, first) = keyed().await;
+    assert_eq!(status, StatusCode::OK, "{first:#}");
+    assert!(
+        first["pack"]["capabilities"]
+            .to_string()
+            .contains(&skill.to_hex()),
+        "{first:#}"
+    );
+    let (status, again) = keyed().await;
+    assert_eq!(status, StatusCode::OK, "{again:#}");
+    assert_eq!(again, first);
+
+    restrict(&[ENTITY_TYPE_TURN, ENTITY_TYPE_PERSON]);
+    let (status, refused) = keyed().await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused:#}");
+    let refused = refused.to_string();
+    assert!(refused.contains("board_document_unreadable"), "{refused}");
+    assert!(!refused.contains(&skill.to_hex()), "{refused}");
+}
+
+/// F16 round 3 (Astra F5): a rider that counts outcomes past its cap names
+/// none of them, so a replay could re-admit none of them: its keyed board
+/// never replays, even while every outcome still reads.
+#[tokio::test]
+async fn a_keyed_board_whose_rider_overflowed_never_replays() {
+    let (_dir, server) = auth_test_server();
+    let agent = seeded_test_entity_id(0x2516_0441);
+    for outcome in 0..17 {
+        server
+            .vault
+            .park_run_proposal_for_test(
+                "rider-overflow",
+                agent,
+                oneiron::EntityId::now(),
+                format!("outcome {outcome}"),
+            )
+            .unwrap();
+    }
+    assert!(agent_board(&server, agent, "overflow").await.is_empty());
+    settle_run(&server, "rider-overflow", "decline").await;
+    let turn = put_authored_turn(&server, agent);
+    let keyed = || {
+        route_json(
+            server.clone(),
+            keyed_board(agent, turn, "overflow", "rider-overflow"),
+        )
+    };
+    let (status, first) = keyed().await;
+    assert_eq!(status, StatusCode::OK, "{first:#}");
+    assert!(
+        first["changed"].to_string().contains("changed: +"),
+        "{first:#}"
+    );
+    let (status, refused) = keyed().await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused:#}");
+    assert!(
+        refused.to_string().contains("board_document_unreadable"),
+        "{refused:#}"
+    );
 }

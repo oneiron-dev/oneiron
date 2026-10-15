@@ -832,8 +832,9 @@ async fn a_board_delivers_no_notification_its_reader_cannot_read() {
 }
 
 /// F16 (S-F1): a narrowed board's session prefix counts and dates no row its
-/// reader cannot read: a hidden row moves none of it. A caller that reads the
-/// whole vault still gets the vault's counts and latest activity.
+/// reader cannot read: a hidden row moves none of it. The owner's own
+/// credential reads the whole vault and still gets its counts and latest
+/// activity; the host root does not, since a policy grant can narrow it.
 #[tokio::test]
 async fn a_narrowed_board_counts_and_dates_no_row_it_cannot_read() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
@@ -860,15 +861,20 @@ async fn a_narrowed_board_counts_and_dates_no_row_it_cannot_read() {
         "a hidden row moves no count or date"
     );
 
-    let (status, board) = route_json(
-        server.clone(),
-        core_request_with_authz(
-            "POST",
-            "/v1/core/context-board",
-            owner_bearer(),
-            Some(&json!({})),
-        ),
-    )
+    let board = |bearer: String| {
+        route_json(
+            server.clone(),
+            core_request_with_authz("POST", "/v1/core/context-board", bearer, Some(&json!({}))),
+        )
+    };
+    let (status, host) = board(owner_bearer()).await;
+    assert_eq!(status, StatusCode::OK, "{host:#}");
+    assert_eq!(host["session"]["counts"], json!({}), "{host:#}");
+    assert!(host["session"]["last_activity"].is_null(), "{host:#}");
+    let (status, board) = board(test_bearer(&format!(
+        "principal_ref={};actor_class=human",
+        server.vault.ensure_embedded_owner_actor().unwrap().to_hex()
+    )))
     .await;
     assert_eq!(status, StatusCode::OK, "{board:#}");
     let people = oneiron::registry::ENTITY_TYPE_PERSON.to_string();
@@ -901,6 +907,8 @@ async fn a_board_replay_delivers_no_notification_its_reader_no_longer_reads() {
             &rmp_serde::to_vec_named(&json!({ "title": "replayed notice" })).unwrap(),
         )
         .unwrap();
+    // A board's owner is a row: its history is recorded against it.
+    put_person(&server, principal, "notice reader");
     let turn = seeded_test_entity_id(0x2516_0123);
     put_turn(&server, turn, principal);
     let keyed = || {
@@ -946,4 +954,91 @@ async fn a_board_replay_delivers_no_notification_its_reader_no_longer_reads() {
         refused.to_string().contains("board_document_unreadable"),
         "{refused:#}"
     );
+}
+
+/// F16 round 3 (Astra F1): a keyed board's replay re-admits every contact its
+/// pack resolved: one it stamped as known, and one the request named by ref,
+/// whose stored label a revoked contact resolves to. Once its reader reads no
+/// contact, the replay is refused. A fresh board would stamp the pair with
+/// the caller's own label and refuse the ref as a missing one.
+#[tokio::test]
+async fn a_keyed_board_replays_no_contact_its_reader_no_longer_reads() {
+    use oneiron::registry::{ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_TURN};
+    let (_dir, server) = interlocutor_test_server();
+    let principal = seeded_test_entity_id(0x2516_0131);
+    let identity = seeded_test_entity_id(0x2516_0132);
+    let known = seeded_test_entity_id(0x2516_0133);
+    let revoked = seeded_test_entity_id(0x2516_0134);
+    seed_counterparty_contact(&server, known, identity, "known@example.com");
+    seed_counterparty_contact(&server, revoked, identity, "revoked@example.com");
+    server
+        .vault
+        .revoke_counterparty_contact(&revoked, 200)
+        .unwrap();
+    // A board's owner is a row: its history is recorded against it.
+    put_person(&server, principal, "contact reader");
+    let boards = [
+        (
+            json!({
+                "channel_identity_ref": identity.to_hex(),
+                "counterparty": "known@example.com"
+            }),
+            "board-known-contact",
+            known.to_hex(),
+            seeded_test_entity_id(0x2516_0135),
+        ),
+        (
+            json!({ "contact_ref": revoked.to_hex() }),
+            "board-revoked-contact",
+            "revoked@example.com".to_owned(),
+            seeded_test_entity_id(0x2516_0136),
+        ),
+    ];
+    let keyed = |party: &Value, key: &'static str, turn: oneiron::EntityId| {
+        let mut request = hydrate(
+            principal,
+            "core:read,core:write",
+            &json!({
+                "retrieval": {
+                    "query": "unrelated empty query",
+                    "limit": 1,
+                    "interlocutors": { "third_parties": [party] }
+                },
+                "session": {"session_id": key},
+                "turn": {"id": turn.to_hex()}
+            }),
+        );
+        request
+            .headers_mut()
+            .insert("Idempotency-Key", axum::http::HeaderValue::from_static(key));
+        route_json(server.clone(), request)
+    };
+    restrict_principal_read_types(
+        &server,
+        principal,
+        &[ENTITY_TYPE_TURN, ENTITY_TYPE_COUNTERPARTY_CONTACT],
+    );
+    for (party, key, speaker, turn) in &boards {
+        put_turn(&server, *turn, principal);
+        let (status, first) = keyed(party, key, *turn).await;
+        assert_eq!(status, StatusCode::OK, "{key}: {first:#}");
+        assert!(
+            first["pack"]["interlocutors"]
+                .to_string()
+                .contains(speaker.as_str()),
+            "{key}: {first:#}"
+        );
+        let (status, retried) = keyed(party, key, *turn).await;
+        assert_eq!(status, StatusCode::OK, "{key}: {retried:#}");
+        assert_eq!(retried, first);
+    }
+
+    restrict_principal_read_types(&server, principal, &[ENTITY_TYPE_TURN]);
+    for (party, key, speaker, turn) in &boards {
+        let (status, refused) = keyed(party, key, *turn).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{key}: {refused:#}");
+        let refused = refused.to_string();
+        assert!(refused.contains("board_document_unreadable"), "{refused}");
+        assert!(!refused.contains(speaker.as_str()), "{refused}");
+    }
 }
