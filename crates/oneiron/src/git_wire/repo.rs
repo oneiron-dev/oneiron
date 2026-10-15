@@ -333,7 +333,10 @@ fn acquire_cell(cell: &Arc<GitWireRepoLockCell>, take: Take) -> Result<bool> {
 fn release_cell(cell: &Arc<GitWireRepoLockCell>) {
     if let Ok(mut hold) = cell.hold.lock() {
         *hold = Hold::Free;
-        cell.released.notify_one();
+        // Every waiter looks again: one behind maintenance waits with no
+        // timer, and must see the writer that takes the hold next and wait
+        // for it only until its own deadline.
+        cell.released.notify_all();
     }
 }
 

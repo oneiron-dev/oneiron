@@ -1736,6 +1736,54 @@ fn a_writer_waits_for_another_writer_and_takes_the_repository_after_it() {
     drop(second);
 }
 
+/// Sol, on the merged hold (P2): two writers with a deadline wait behind
+/// maintenance, which wakes one when it gives the repository up. The other
+/// slept on with no timer behind the writer that took it, past its own
+/// deadline. Now it wakes too, and gives up at its deadline.
+#[test]
+fn a_writer_behind_maintenance_gives_up_at_its_deadline_when_another_takes_the_repository() {
+    let repo = init_repo();
+    let common_dir = repo.path().join(".git").canonicalize().expect("common dir");
+    let maintenance = try_lock_repository_for_maintenance(&common_dir)
+        .expect("maintenance")
+        .expect("the repository is free");
+    let wait = std::time::Duration::from_millis(500);
+    let writers: Vec<_> = (0..2)
+        .map(|_| {
+            let common_dir = common_dir.clone();
+            std::thread::spawn(move || {
+                let started = std::time::Instant::now();
+                let guard = lock_repository_within(&common_dir, wait).expect("lock");
+                let waited = started.elapsed();
+                let took = guard.is_some();
+                // The writer that takes it holds on well past the other's deadline.
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                drop(guard);
+                (took, waited)
+            })
+        })
+        .collect();
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    drop(maintenance);
+    let ended: Vec<_> = writers
+        .into_iter()
+        .map(|writer| writer.join().expect("writer"))
+        .collect();
+    assert_eq!(
+        ended.iter().filter(|(took, _)| *took).count(),
+        1,
+        "one writer took the repository: {ended:?}"
+    );
+    for (took, waited) in ended {
+        if !took {
+            assert!(
+                waited < std::time::Duration::from_secs(2),
+                "the other gave up at its deadline, not when the first let go: {waited:?}"
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // M7 — pinned checkout custody
 // ---------------------------------------------------------------------------
