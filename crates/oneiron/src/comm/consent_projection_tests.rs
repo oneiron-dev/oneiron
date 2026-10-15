@@ -397,3 +397,135 @@ fn stop_refreshes_a_contact_missing_from_the_party_index() -> CommResult<()> {
     )?);
     Ok(())
 }
+
+/// Merges `source` into `survivor` read-through, through the identity door
+/// that takes any two PERSON rows: nothing there requires their party keys to
+/// agree.
+fn merge_read_through(vault: &Vault, source: EntityId, survivor: EntityId) -> CommResult<()> {
+    use crate::identity_topology::{
+        IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
+        SurvivorshipPlan,
+    };
+    let outcome = vault.apply_identity_topology_op(
+        &IdentityTopologyOp::Merge(MergeOp {
+            sources: vec![source],
+            survivor,
+            evidence: IdentityOpEvidence {
+                refs: vec![survivor, source],
+                rationale: "one person, two addresses".to_owned(),
+            },
+            survivorship_plan: SurvivorshipPlan::ReadThrough,
+        }),
+        &IdentityOpWrite::auto(crate::claim::ClaimSource::Inferred),
+        vault.store.clock.now_recorded_at(),
+    )?;
+    assert!(matches!(outcome, IdentityOpOutcome::Applied { .. }));
+    Ok(())
+}
+
+/// An unprojected email STOP naming `party_ref` directly, as a delayed or
+/// replicated event still does after its party was merged away.
+fn put_stop_naming(
+    vault: &Vault,
+    event_id: EntityId,
+    party_ref: EntityId,
+    sequence: u64,
+    occurred_at: u64,
+) -> CommResult<()> {
+    let stop = CommRecord::Event {
+        sequence,
+        kind: CommEventKind::InboundStop,
+        party_ref,
+        channel_class: Some("email".to_owned()),
+        thread_ref: None,
+        occurred_at,
+        projected: false,
+    };
+    vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(vault, wtxn, event_id, &stop))
+}
+
+/// R2-F1: a STOP on a merged twin holds the survivor's sends, so the human
+/// clear must reach it. The request read only the survivor's own slot and
+/// answered `ActiveOptOutNotFound`, leaving no way to lift the hold. The
+/// restrictive-wins rule holds across the twins too: a STOP on the shell after
+/// the request refuses the ruling.
+#[test]
+fn a_human_clear_reaches_a_merged_twins_stop() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    let party = "cleared-twin@example.com";
+    put_policy_manifest_bytes(&vault, entity(0x9D), &allow_email_send_manifest())?;
+    put_email_identity(&vault, entity(0x91), "owner@example.com")?;
+    let first = mint_comm_person(&vault, party)?;
+    let second = mint_comm_person(&vault, party)?;
+    let mut sorted = [first, second];
+    sorted.sort_unstable();
+    let [survivor, loser] = sorted;
+    point_party_index(&vault, party, survivor)?;
+    email_contact(&vault, entity(0x91), entity(0x9A), party)?;
+    put_stop_naming(&vault, entity(0x7B), loser, 0, 30)?;
+    run_comm_projector(&vault)?;
+    assert_eq!(
+        vault.entity_lifecycle_state(&loser)?,
+        EntityLifecycleState::Merged
+    );
+    assert!(gate_holds_for_counterparty_opt_out(&vault, party)?);
+    let human = WriteActor::new(survivor, EdgeActorClass::Human);
+
+    assert_eq!(
+        request_opt_out_clear(&vault, party, "email", 60)?,
+        CommClearOptOutOutcome::PendingHumanRuling
+    );
+    put_stop_naming(&vault, entity(0x7C), loser, 1, 70)?;
+    run_comm_projector(&vault)?;
+    let error = approve_pending_opt_out_clear(&vault, party, "email", human, 71)
+        .expect_err("a STOP on the shell after the request refuses the ruling");
+    assert!(matches!(error, CommError::PendingClearSupersededByStop));
+    assert!(gate_holds_for_counterparty_opt_out(&vault, party)?);
+
+    assert_eq!(
+        request_opt_out_clear(&vault, party, "email", 80)?,
+        CommClearOptOutOutcome::PendingHumanRuling
+    );
+    approve_pending_opt_out_clear(&vault, party, "email", human, 81)?;
+    assert!(!contact_cache_opted_out(&vault, entity(0x9A))?);
+    assert!(!gate_holds_for_counterparty_opt_out(&vault, party)?);
+    assert_eq!(contact_view_opt_outs(&vault, party)?, 0);
+    assert_eq!(count_opt_out_clear_receipts(&vault, party)?, 1);
+    assert_eq!(count_pending_comm_consent_gates(&vault)?, 0);
+    Ok(())
+}
+
+/// R2-F3: a read-through merge may join two different party keys. A delayed
+/// STOP naming the merged party projects onto its shell, and the survivor's
+/// fold reads it through, but the refresh followed only the shell's own key,
+/// so the survivor's contact row stayed not opted out and its send passed.
+#[test]
+fn delayed_stop_on_a_merged_alias_refreshes_the_survivors_contacts() -> CommResult<()> {
+    let (_dir, vault) = open_vault();
+    put_policy_manifest_bytes(&vault, entity(0x9D), &allow_email_send_manifest())?;
+    put_email_identity(&vault, entity(0x91), "owner@example.com")?;
+    let alias = mint_comm_person(&vault, "old@example.com")?;
+    let survivor = mint_comm_person(&vault, "new@example.com")?;
+    point_party_index(&vault, "new@example.com", survivor)?;
+    email_contact(&vault, entity(0x91), entity(0x9B), "new@example.com")?;
+    merge_read_through(&vault, alias, survivor)?;
+    assert!(!contact_cache_opted_out(&vault, entity(0x9B))?);
+
+    put_stop_naming(&vault, entity(0x7D), alias, 0, 30)?;
+    run_comm_projector(&vault)?;
+    assert!(comm_event_is_projected(&vault, entity(0x7D))?);
+    assert_eq!(
+        contact_view_opt_outs(&vault, "new@example.com")?,
+        1,
+        "the survivor's view reads the alias's STOP through"
+    );
+    assert!(
+        contact_cache_opted_out(&vault, entity(0x9B))?,
+        "the survivor's contact row follows the STOP it reads through"
+    );
+    assert!(gate_holds_for_counterparty_opt_out(
+        &vault,
+        "new@example.com"
+    )?);
+    Ok(())
+}

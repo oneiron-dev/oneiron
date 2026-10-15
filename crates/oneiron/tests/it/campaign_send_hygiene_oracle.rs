@@ -210,9 +210,18 @@ fn enrolled_member() -> CampaignMemberValue {
 }
 
 fn put_member(vault: &Vault, claim_seed: u8, value: &CampaignMemberValue, subject: EntityId) {
+    put_member_at(vault, test_id(claim_seed), value, subject);
+}
+
+fn put_member_at(
+    vault: &Vault,
+    claim_id: EntityId,
+    value: &CampaignMemberValue,
+    subject: EntityId,
+) {
     vault
         .put_claim(
-            &test_id(claim_seed),
+            &claim_id,
             &ClaimBody::new(
                 PREDICATE_CAMPAIGN_MEMBER,
                 ClaimSubject::Entity(subject),
@@ -416,6 +425,13 @@ fn duplicate_member_heads_never_veto_an_unsubscribe() -> Result<()> {
 /// R1 F5: one head already suppressed and one enrolled. The first unsubscribe
 /// reuses one and replaces the other; a redelivery reuses both and must hand
 /// back the same receipt.
+///
+/// The ids order the enrolled head A below the suppressed head B, and both
+/// below the replacement C the store clock mints (UUIDv7, so its first bytes
+/// are today's timestamp). The first call meets A then B and answers C then B;
+/// the redelivery meets B then C. Only the receipt's own claim-id order makes
+/// the two answers agree (R2-F2: seeds 0x67/0x69 sorted above C, so the
+/// redelivery met C first and the check passed without the fix).
 #[test]
 fn mixed_member_heads_keep_a_stable_receipt_on_redelivery() -> Result<()> {
     let (_dir, vault) = oracle_vault();
@@ -424,8 +440,15 @@ fn mixed_member_heads_keep_a_stable_receipt_on_redelivery() -> Result<()> {
         state: CampaignMemberState::Suppressed,
         ..enrolled_member()
     };
-    put_member(&vault, MEMBER_SEED, &enrolled_member(), person);
-    put_member(&vault, SECOND_MEMBER_SEED, &suppressed, person);
+    let below_the_clock = |seed: u8| {
+        let mut bytes = [seed; 16];
+        bytes[..2].copy_from_slice(&[0x01, 0x00]);
+        EntityId::from_bytes(bytes).unwrap()
+    };
+    let enrolled = below_the_clock(MEMBER_SEED);
+    let already_suppressed = below_the_clock(SECOND_MEMBER_SEED);
+    put_member_at(&vault, enrolled, &enrolled_member(), person);
+    put_member_at(&vault, already_suppressed, &suppressed, person);
     let input = SuppressionInput {
         person_ref: person,
         campaign_ref: Some(test_id(CAMPAIGN_SEED)),
@@ -435,8 +458,15 @@ fn mixed_member_heads_keep_a_stable_receipt_on_redelivery() -> Result<()> {
         occurred_at: 60,
     };
     let first = apply_suppression(&vault, SuppressionCause::Unsubscribe, &input)?;
-    let again = apply_suppression(&vault, SuppressionCause::Unsubscribe, &input)?;
     assert_eq!(first.member_claim_refs.len(), 2);
+    assert!(
+        first
+            .member_claim_refs
+            .iter()
+            .all(|id| *id >= already_suppressed),
+        "the replacement sorts above both seeded heads"
+    );
+    let again = apply_suppression(&vault, SuppressionCause::Unsubscribe, &input)?;
     assert_eq!(again, first);
     Ok(())
 }

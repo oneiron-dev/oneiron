@@ -4,13 +4,15 @@
 //! COMM_RECORD storage and codec; `parties` the party identity doors;
 //! `projector` the ordered projector pass; `projection_writes` the
 //! deterministic claim writes; `consent` the human gates, send overrides and
-//! standing opt-out folds; `thread_membership` the alias-aware membership
-//! reads. This file keeps the seam (module declarations and the re-exports
+//! standing opt-out folds; `opt_out_slots` the opt-out slot and clear-gate
+//! reads the human clear takes across a party's redirect shells;
+//! `thread_membership` the alias-aware membership reads. This file keeps the seam (module declarations and the re-exports
 //! that preserve every `crate::comm::` path), the projector's pass index,
 //! and the test-only scan counters.
 
 mod claims;
 mod consent;
+mod opt_out_slots;
 mod parties;
 mod projection_writes;
 mod projector;
