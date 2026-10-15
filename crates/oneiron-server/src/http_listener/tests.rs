@@ -509,3 +509,70 @@ async fn routes_see_the_socket_peer_and_shutdown_drains_requests_in_flight() {
         .unwrap();
     assert!(TcpStream::connect(served.addr).await.is_err());
 }
+
+/// Review r7 (Sol, P1): the read-only slip check let a connection leave the
+/// anonymous share before its request's proof was used, so a replayed
+/// proof, refused with 401, still took its socket out of the share, and one
+/// address could fill the floor with replays. A connection leaves the share
+/// only once a fresh proof is admitted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_replayed_proof_leaves_its_connection_in_the_anonymous_share() {
+    let Some(local) = off_device_address() else {
+        eprintln!("no routed interface on this host; the off-device share is unprovable here");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let config = crate::config::SyncServerConfig {
+        auth_secret: Some("listener-trust-root".to_owned()),
+        ..Default::default()
+    };
+    let server = Arc::new(crate::server::SyncServer::new(vault, config).unwrap());
+    let listener = TcpListener::bind(SocketAddr::new(local, 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let task = tokio::spawn(serve(
+        listener,
+        crate::build_app(Arc::clone(&server)),
+        ConnectionLimits {
+            max_connections: 64,
+            max_unauthenticated_per_peer: 1,
+            header_read_timeout: PATIENCE,
+            body_idle_timeout: PATIENCE,
+            queue_wait: PATIENCE,
+        },
+        Arc::new(LimitQuestions::default()),
+        std::future::pending(),
+    ));
+    // One signed request: its proof is sent twice.
+    let signed = crate::test_credentials::bind_request(
+        &server,
+        axum::http::Request::builder()
+            .header(
+                axum::http::header::AUTHORIZATION,
+                format!("{}scope=core:read", crate::test_credentials::RECIPE_PREFIX),
+            )
+            .body(axum::body::Body::empty())
+            .unwrap(),
+    );
+    let request = format!(
+        "GET /api/health HTTP/1.1\r\nhost: listener\r\nauthorization: {}\r\nx-oneiron-binding: {}\r\n\r\n",
+        signed.headers()["authorization"].to_str().unwrap(),
+        signed.headers()["x-oneiron-binding"].to_str().unwrap(),
+    );
+
+    // Its first use is admitted, and that connection leaves the share.
+    let mut fresh = TcpStream::connect(addr).await.unwrap();
+    fresh.write_all(request.as_bytes()).await.unwrap();
+    assert_eq!(read_response(&mut fresh).await.0, 200);
+    // Its replay is refused, and that connection stays a stranger's: it
+    // holds the address's one place, so the next stranger is shed.
+    let mut replay = TcpStream::connect(addr).await.unwrap();
+    replay.write_all(request.as_bytes()).await.unwrap();
+    assert_eq!(read_response(&mut replay).await.0, 401);
+    let mut next = TcpStream::connect(addr).await.unwrap();
+    let answer = until_closed(&mut next)
+        .await
+        .expect("a replay freed no place: the next stranger is closed at once");
+    assert!(answer.starts_with("HTTP/1.1 503"), "{answer:?}");
+    task.abort();
+}
