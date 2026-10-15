@@ -1391,3 +1391,60 @@ fn a_refused_replacement_keeps_its_pending_mirror() {
         );
     }
 }
+
+/// Bug repro (ASTRA-S6-004): the carry-over named this vault's value of a row as a conflict, since
+/// the hub's concurrent edit outranked it, and the conflict stayed after a newer queued send wrote
+/// the same value again over the hub's edit and the installed window kept it. Done-means: a
+/// conflict names only a value the installed window does not hold.
+#[test]
+fn a_value_a_newer_queued_send_puts_back_is_no_conflict() {
+    let (_dir, vault) = test_vault();
+    let at = vault.store.clock.now_recorded_at();
+    let key = WindowKey::from_timestamp(at);
+    let (hub, shared, receiver) = shared_hub(&vault, at, &key);
+    let local = blob(ENTITY_TYPE_TURN, at + 2, b"queued receiver edit");
+    let from = receiver.doc.oplog_vv();
+    map_insert_bytes(&receiver.doc.get_map("entities"), &shared, &local).unwrap();
+    receiver.doc.commit();
+    let first = receiver.doc.export(ExportMode::updates(&from)).unwrap();
+    // The hub's concurrent edits, which the receiver's window never takes in.
+    for n in 0..2 {
+        let theirs = blob(ENTITY_TYPE_TURN, at + 3 + n, b"hub edit");
+        map_insert_bytes(&hub.get_map("entities"), &shared, &theirs).unwrap();
+        hub.commit();
+    }
+    let root = hub.oplog_frontiers();
+    // The same value again, built on the hub's edits and ordered after them.
+    let author = hub.fork();
+    map_insert_bytes(&author.get_map("entities"), &shared, &local).unwrap();
+    author.commit();
+    let second = author.export(ExportMode::updates(&hub.oplog_vv())).unwrap();
+    let old = receiver.doc.fork();
+    drop(receiver);
+    let queue = crate::sync::queue::SyncQueue::new(Arc::clone(&vault)).unwrap();
+    for update in [&first, &second] {
+        queue.push(key.as_str(), update).unwrap();
+    }
+    assert!(
+        old.fork()
+            .import(&second)
+            .is_ok_and(|status| status.pending.is_some()),
+        "fixture: the old window cannot apply the newer send"
+    );
+
+    let prepared = install(&vault, &key, &old, &hub, &root);
+    assert_eq!(
+        map_get_bytes(&prepared.doc.get_map("entities"), &shared),
+        Some(local.clone()),
+        "fixture: the newer send's value is kept"
+    );
+    assert!(
+        !prepared.conflicts.contains(&ReplacementConflict {
+            map: "entities".to_owned(),
+            key: shared,
+            held: Some(LoroValue::Binary(local.into())),
+        }),
+        "a kept value is named as a conflict: {:?}",
+        prepared.conflicts
+    );
+}

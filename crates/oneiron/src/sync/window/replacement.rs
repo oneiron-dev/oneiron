@@ -22,6 +22,9 @@
 //! 5. every pending tombstone (`pt:`), left in place for the next open;
 //! 6. the reverse and forward rematerializations, as a window open runs.
 //!
+//! A conflict names a value the candidate does not hold once every step has run; one a later step
+//! put back is dropped.
+//!
 //! Below the old window's own shallow root no operation is left to read. There a key carries
 //! over when the candidate's value came from a peer whose every operation the old window holds
 //! and the old value from one the peer has not fully seen. A key both sides edited there, each
@@ -176,6 +179,9 @@ pub fn prepare_replacement(
             conflicts.push(conflict);
         }
     }
+    // Every conflict is provisional until here: a value a later step put back, such as a newer
+    // queued send writing it again, was kept after all.
+    conflicts.retain(|conflict| !holds_value(&candidate, conflict));
     forward_rematerialize(vault, &candidate, materializer, key)?;
 
     let state = export_scrubbed_window_snapshot(vault, key, &candidate)?;
@@ -440,22 +446,23 @@ fn lost_queued_writes(
             }
         }
     }
-    let mut lost = Vec::new();
-    for ((name, key), (_, _, value)) in newest {
-        let holds = match (candidate.get_map(name.as_str()).get(&key), &value) {
-            (Some(ValueOrContainer::Value(held)), Some(value)) => held == *value,
-            (None, None) => true,
-            _ => false,
-        };
-        if !holds {
-            lost.push(ReplacementConflict {
-                map: name,
-                key,
-                held: value,
-            });
-        }
+    Ok(newest
+        .into_iter()
+        .map(|((map, key), (_, _, held))| ReplacementConflict { map, key, held })
+        .filter(|conflict| !holds_value(candidate, conflict))
+        .collect())
+}
+
+/// Whether `candidate` holds the value `conflict` names for its key: then nothing was lost.
+fn holds_value(candidate: &LoroDoc, conflict: &ReplacementConflict) -> bool {
+    match (
+        candidate.get_map(conflict.map.as_str()).get(&conflict.key),
+        &conflict.held,
+    ) {
+        (Some(ValueOrContainer::Value(held)), Some(value)) => held == *value,
+        (None, None) => true,
+        _ => false,
     }
-    Ok(lost)
 }
 
 /// Every hard delete `candidate` holds, as its tombstone key and raw value. A value that is not
