@@ -659,19 +659,20 @@ fn a_fill_leased_before_a_same_body_put_mid_walk_writes_nothing() -> Result<()> 
     vault.store.test_hooks.stop_dependent_walks_after(0);
     assert!(vault.delete_entity(&source)?);
     assert!(withdrawn(&vault, &claim)?);
-    vault
-        .batch()
-        .put(&claim, claim_row.0, claim_row.1, claim_row.2, &claim_body)
-        .commit()?;
-    vault
-        .batch()
-        .vector_for_pending_embedding(&claim, &[1.0, 0.0, 0.0, 0.0], &token)
-        .commit()?;
-    assert_eq!(
-        vault.get_vector(&claim)?,
-        None,
-        "a withdrawn claim takes no fill"
-    );
+    // The same row again, then the same body at a later stamp: each marks it
+    // for embedding with the lease's token, and idle publication runs.
+    for learned_at in [claim_row.2, claim_row.2 + 1] {
+        vault
+            .batch()
+            .put(&claim, claim_row.0, claim_row.1, learned_at, &claim_body)
+            .commit()?;
+        vault
+            .batch()
+            .vector_for_pending_embedding(&claim, &[1.0, 0.0, 0.0, 0.0], &token)
+            .commit()?;
+        vault.refresh_staged_indexed_at_idle(u64::MAX)?;
+        assert_eq!(vault.get_vector(&claim)?, None, "withdrawn: no fill");
+    }
     Ok(())
 }
 
