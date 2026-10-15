@@ -128,6 +128,8 @@ mod landing_tests;
 #[cfg(test)]
 mod push_cert_tests;
 #[cfg(test)]
+mod recreate_tests;
+#[cfg(test)]
 mod scan_cap_tests;
 #[cfg(test)]
 mod tests;
