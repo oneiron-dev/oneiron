@@ -12,8 +12,10 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::sync::ingest::{
-    EntityStep, IngestCtx, Residence, ingest_entity_in_savepoint, waits_for_sibling_row,
+    EntityStep, IngestCtx, Residence, ingest_entity_in_savepoint, note_born, waits_for_sibling_row,
+    watches,
 };
+use crate::sync::loro_support::TombstoneIndex;
 use crate::sync::pack_sync;
 use crate::sync::quarantine;
 use crate::vault::ReadMode;
@@ -55,8 +57,8 @@ pub(super) fn materialize_entities_with_changes(
     window_key: &str,
     lease_vault_id: u64,
 ) -> (bool, Vec<crate::vault::EntityRevisionChange>) {
-    let tombstones_map = doc.get_map("tombstones");
-    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones_map)
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
+    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones)
         .with_residence(Residence::Quarantine(doc));
     // ONE-1147: ids + op bytes applied into the batch txn, retained outside
     // it — on whole-txn failure there is no surviving per-entity failure
@@ -65,6 +67,9 @@ pub(super) fn materialize_entities_with_changes(
     let mut applied_ops: Vec<(EntityId, Vec<u8>)> = Vec::new();
     let mut revision_changes = Vec::new();
     let mut pending_companion_scrubs = Vec::new();
+    // Rows a federated import watches that this batch wrote where none was
+    // stored: their births, noted only once the batch commits.
+    let mut born = Vec::new();
     let result = vault.with_write_txn_grouped(|wtxn| {
         // One delta has no row order: an ask word, receipt or project home room
         // must not reach its sibling check before the row it names.
@@ -92,12 +97,21 @@ pub(super) fn materialize_entities_with_changes(
                 .map(|id| revision_for_mode_in_txn(&vault.store, wtxn, &id, ReadMode::Live))
                 .transpose()?
                 .flatten();
+            let unborn = match EntityId::from_hex(key.as_ref()) {
+                Ok(id) if watches(vault, &id) => {
+                    vault.store.entities.get(wtxn, id.as_bytes())?.is_none()
+                }
+                _ => false,
+            };
             match ingest_entity_in_savepoint(&ingest, wtxn, key.as_ref(), value)? {
                 EntityStep::LocalOnlyCompanion(id) => {
                     pending_companion_scrubs.push(CompanionCrdtScrub::new(key.as_ref(), id));
                 }
                 step => {
                     if let (Some(id), Some(blob)) = (step.written(), value) {
+                        if unborn {
+                            born.push((id, blob.to_vec()));
+                        }
                         applied_ops.push((id, blob.to_vec()));
                         // The savepoint has no postcommit owner. Carry its
                         // claim change to the outer transaction's watch,
@@ -146,6 +160,11 @@ pub(super) fn materialize_entities_with_changes(
         Ok(())
     });
 
+    if result.is_ok() {
+        for (id, blob) in &born {
+            note_born(vault, *id, blob);
+        }
+    }
     if result.is_ok()
         && let Err(e) = scrub_local_only_companions_from_crdt(doc, &pending_companion_scrubs)
     {

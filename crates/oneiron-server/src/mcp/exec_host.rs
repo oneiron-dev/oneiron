@@ -2,6 +2,7 @@
 
 use super::actors::McpResolvedActor;
 use super::run_seats::RunSeats;
+use crate::admission::Admission;
 use oneiron::code_run::GatedActorWrite;
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor,
@@ -54,6 +55,17 @@ pub fn mcp_scoped_identity_id(namespace: &str, key: &str, actor: &McpResolvedAct
         hasher.update(facet_ref.as_bytes());
     } else {
         hasher.update(b"f0");
+    }
+    // A several-facet ceiling also binds every facet it reads; a one-facet
+    // one hashes as before.
+    if let oneiron::federation::ScopeAxis::Some(facets) = &actor.scope.facets
+        && facets.len() > 1
+    {
+        hasher.update(b"fs");
+        hasher.update(&(facets.len() as u64).to_be_bytes());
+        for facet in facets {
+            hasher.update(facet.0.as_bytes());
+        }
     }
     hasher.update(&(key.len() as u64).to_be_bytes());
     hasher.update(key.as_bytes());
@@ -113,6 +125,8 @@ pub enum McpCodeExecutionError {
     HostUnbound,
     #[error("execute_code run is already active; retry the same run_ref")]
     RunBusy,
+    #[error("execute_code is running as many runs as this server admits; retry later")]
+    RunSaturated,
     #[error("execute_code run binding failed: {0}")]
     RunBinding(String),
     #[error("execute_code run failed: {0}")]
@@ -126,6 +140,7 @@ impl McpCodeExecutionError {
         match self {
             Self::HostUnbound => super::MCP_CODE_HOST_UNBOUND_CODE,
             Self::RunBusy => "code_run_busy",
+            Self::RunSaturated => "code_run_saturated",
             Self::RunBinding(_) => "code_run_binding_failed",
             Self::Run(_) => "code_run_failed",
         }
@@ -200,12 +215,37 @@ pub trait McpCodeModeProvider: Send + Sync {
 /// Builds one run's compaction seat from the run's write actor.
 pub type RunCompactionSeat = Arc<dyn Fn(WriteActor) -> RunCompaction + Send + Sync>;
 
+/// How many `execute_code` runs one server works on at once.
+///
+/// Each run is an OS thread with its own reactor and sandbox runtime, so the
+/// bound is on runs, not calls: a run holds its place until its worker ends,
+/// whether or not its caller is still waiting.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CodeRunLimits {
+    /// Runs at once, across every credential.
+    pub total: usize,
+    /// Runs at once under one registered credential.
+    pub per_credential: usize,
+}
+
+impl Default for CodeRunLimits {
+    fn default() -> Self {
+        Self {
+            total: 4,
+            per_credential: 2,
+        }
+    }
+}
+
 /// The PRODUCTION adapter: the injected provider, entered through the engine's
 /// own durable executor.
 pub struct McpEngineNativeCodeHost {
     provider: Arc<dyn McpCodeModeProvider>,
     active: Arc<Mutex<HashSet<EntityId>>>,
     seats: Arc<Mutex<RunSeats>>,
+    /// Keyed by the credential's stream connection, its registered
+    /// fingerprint.
+    runs: Admission<String>,
 }
 
 impl fmt::Debug for McpEngineNativeCodeHost {
@@ -216,11 +256,12 @@ impl fmt::Debug for McpEngineNativeCodeHost {
 
 impl McpEngineNativeCodeHost {
     #[must_use]
-    pub fn new(provider: Arc<dyn McpCodeModeProvider>) -> Self {
+    pub fn new(provider: Arc<dyn McpCodeModeProvider>, limits: CodeRunLimits) -> Self {
         Self {
             provider,
             active: Arc::new(Mutex::new(HashSet::new())),
             seats: Arc::default(),
+            runs: Admission::new(limits.total, limits.per_credential),
         }
     }
 }
@@ -246,6 +287,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
         // The gated run source is HOST-derived: the caller's handle is a label
         // inside it, never the WHO.
         let run_ref = format!("mcp.execute_code:{}", request.run_ref);
+        let runs = &self.runs;
         Box::pin(async move {
             let changed =
                 || McpCodeExecutionError::RunBinding("provider changed scoped run identity".into());
@@ -253,6 +295,12 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                 return Err(changed());
             }
             let guard = ActiveRun::acquire(active, request.run_id)?;
+            // Never a wait: past the bound a new run is refused, and the
+            // permit moves into the worker below, so a caller who hangs up
+            // frees nothing its run still holds.
+            let permit = runs
+                .try_admit(request.actor.stream_connection.0.clone())
+                .map_err(|_| McpCodeExecutionError::RunSaturated)?;
             // Read under single-flight: what the provider derives from the
             // run's record is not raced by another attempt making it.
             let config = provider
@@ -299,9 +347,11 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         });
                         seats.put(run_id, seat, ended);
                     }
-                    // Completion must release single-flight before waking an
-                    // awaiter that may immediately re-enter this persisted run.
+                    // Completion must release single-flight and the run's
+                    // permit before waking an awaiter that may immediately
+                    // re-enter this persisted run or start another.
                     drop(guard);
+                    drop(permit);
                     let _ = sender.send(outcome);
                 })
                 .map_err(|error| McpCodeExecutionError::Run(error.to_string()))?;

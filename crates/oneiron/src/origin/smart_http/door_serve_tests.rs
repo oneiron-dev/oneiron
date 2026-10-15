@@ -3,7 +3,13 @@
 
 use super::tests::{git, landing_outcome, landing_time, seeded_repo, temp_vault};
 use super::*;
+use crate::credential_door::PushedBlob;
 use crate::error::CodeError;
+
+/// The tip stream alone, under the full line budget.
+fn parse_pushed_blobs(framed: &[u8]) -> Result<Vec<PushedBlob>> {
+    parse_door_streams(framed, b"", DOOR_MAX_SCAN_LINES).map(|(blobs, _)| blobs)
+}
 
 #[cfg(unix)]
 #[test]

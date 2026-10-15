@@ -206,7 +206,7 @@ impl<'a> ScopedRead<'a> {
             return Ok(false);
         }
         let flagged = crate::settings::device_local_worlds_at(
-            &self.vault.store,
+            self.vault,
             txn,
             crate::claim::CallerLocality::OffDevice,
         )?;
@@ -528,12 +528,14 @@ impl ScopedRead<'_> {
         // policy; scope honesty names its world instead. A row in a world the
         // credential cannot read, or one a device-local world keeps from a
         // caller off this device, has no name and no count (DEC-0005), and
-        // neither has a TASK outside the credential's worlds or facets.
+        // neither has a TASK outside the credential's worlds or facets, nor
+        // any row outside the facets it is limited to.
         if self.actor_key.room_turn.is_none()
             && !self.outside_asked_worlds_in(txn, id, &row)?
             && !self.outside_credential_worlds_in(txn, id, &row)?
             && !self.device_withholds_in(txn, id, None)?
             && !self.outside_credential_task_position_in(txn, id, &row)?
+            && !self.outside_credential_facets_in(txn, id, &row)?
             && crate::note::countable_read_suppression(row.entity_type, &row.body)
         {
             Ok(ReadAdmission::Suppressed)

@@ -68,15 +68,24 @@ pub(super) fn authorize_sync_selector_at(
 /// authority on its own.
 fn live_federation_grant(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
     let txn = vault.store.env.read_txn()?;
+    live_federation_grant_in(vault, &txn, id)
+}
+
+/// [`live_federation_grant`], read in `txn`.
+pub(super) fn live_federation_grant_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<u8>> {
     let raw = vault
-        .get_raw_in(&txn, id)?
+        .get_raw_in(txn, id)?
         .ok_or_else(|| selector_err(SelectorError::GrantNotFound))?;
     let header = EntityMetadataHeader::parse(&raw)
         .ok_or_else(|| selector_err(SelectorError::GrantHeader))?;
     if header.entity_type != ENTITY_TYPE_FEDERATION_GRANT {
         return Err(selector_err(SelectorError::GrantWrongType));
     }
-    if !crate::vault::live_entity_row_in_txn(&vault.store, &txn, id)?.is_live() {
+    if !crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live() {
         return Err(selector_err(SelectorError::GrantNotFound));
     }
     Ok(raw)
@@ -660,7 +669,7 @@ pub(super) fn filter_window_doc(
     // authority-mode NOTE drop).
     let flagged = if withhold_device_only {
         crate::settings::device_local_worlds_at(
-            &vault.store,
+            vault,
             &rtxn,
             crate::claim::CallerLocality::OffDevice,
         )?

@@ -1,5 +1,6 @@
 //! The one receipted point-read entry: ids and short references, each at its
 //! own read frontier, answered from one snapshot under one receipt.
+use super::access_gate::HeldAuthority;
 use super::versions::AdmittedRevision;
 use super::{RetrievalFilter, ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -37,6 +38,23 @@ impl ScopedRead<'_> {
             header.learned_at,
             raw.raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
         )))
+    }
+
+    /// Whether this reader may read each of `ids` now, as
+    /// [`Self::get_entities_parts_in_txn`] admits it, without taking its
+    /// body out: no live projection and no short-reference hash. Every id is
+    /// judged in the one snapshot, so the reader's relationship authority is
+    /// resolved once for all of them.
+    pub(crate) fn entities_readable_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        ids: &[EntityId],
+    ) -> Result<Vec<bool>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        let authority = HeldAuthority::default();
+        ids.iter()
+            .map(|id| self.is_entity_readable_held_in(txn, &policy, id, &filter, &authority))
+            .collect()
     }
 
     /// Actor-gated entity bodies at a caller-owned ledger snapshot. A wake
@@ -329,6 +347,7 @@ impl ScopedRead<'_> {
             // Only authority covering every possible old position may reveal
             // deletion metadata, never a narrow grant.
             && self.credential_allows_id(&hydrated.id)
+            && self.facets_allow_shell_in(txn, &hydrated.id)?
             && crate::gate::scoped_read_record_allowed(
                 policy,
                 &self.actor_key,

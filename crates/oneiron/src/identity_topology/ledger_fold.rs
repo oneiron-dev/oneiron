@@ -237,6 +237,7 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
 ) -> Result<Vec<IdentityTopologyEvent>> {
     let events = identity_topology_events_for_store_in_txn(store, rtxn)?;
     let mut effective = Vec::with_capacity(events.len());
+    let mut trust = super::admission_disposition::SealTrust::default();
     for event in events {
         let record = super::store_entity_helpers::identity_topology_event_for_store_in_txn(
             store,
@@ -259,6 +260,7 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
             rtxn,
             &event.event_id,
             &record,
+            &mut trust,
         )?;
         if verdict.is_some_and(|v| v != super::AdmissionVerdict::Validated) {
             continue;
@@ -363,11 +365,12 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
             }
         };
         // The author is not embedded in the immutable decision. A bound
-        // attribution that later materializes with the wrong class is an
-        // observed admission failure, even if its producer supplied a signed
-        // positive fact. A missing actor is historical only when the same
-        // replica has deletion evidence; a merely late actor still defers.
-        let actor = super::effective_author_in_txn(store, rtxn, event.event_id)?.or(record.actor);
+        // attribution this vault wrote that later materializes with the wrong
+        // class is an observed admission failure, even if its producer
+        // supplied a signed positive fact. A missing actor is historical only
+        // when the same replica has deletion evidence; a merely late actor
+        // still defers. A peer's unsigned carrier is no admission input.
+        let actor = super::admitted_author_in_txn(store, rtxn, event.event_id)?.or(record.actor);
         let actor_complete = match actor {
             None => true,
             Some(actor) => match identity_topology_entity_type_for_store_in_txn(

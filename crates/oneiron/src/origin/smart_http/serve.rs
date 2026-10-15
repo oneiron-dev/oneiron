@@ -8,27 +8,29 @@ use std::path::{Path, PathBuf};
 use std::process::{ChildStderr, ChildStdin};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::advertise::AdvertisedRefGate;
 use super::cgi_finish::{finish_serve, stream_response};
 use super::door::{DoorAdmissionStamp, DoorHook, DoorSeam, NoopDoorHook};
 use super::door_window::{DoorWindowContext, DoorWindowReport, serve_door_window};
 use super::evidence::{ReceivePackOutcome, receive_pack_provenance_refused};
+use super::exchange_idle::{Progress, ProgressRead, ProgressSink, Watched, stall_as_idle, watch};
 use super::hooks::DoorHooksDir;
 use super::intent::ReceivePackRefResult;
 use super::landing::ReceivePackLanding;
 use super::paths::{
-    DOOR_WINDOW_TIMEOUT, SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES, origin_door_root,
-    origin_repo_dir, origin_serving_root, serve_failed,
+    DOOR_WINDOW_TIMEOUT, ORIGIN_MAX_COMMAND_SECTION_BYTES, SERVE_IDLE_TIMEOUT,
+    SERVE_MAX_STDERR_BYTES, SERVE_STREAM_CHUNK_BYTES, origin_door_root, origin_repo_dir,
+    origin_serving_root, push_refused, repository_busy, serve_failed, serve_idle,
 };
-use super::serve_cmd::{ServeChild, ServeCommand, ServeRequest};
+use super::serve_cmd::{IncomingQuarantines, ServeChild, ServeCommand, ServeRequest};
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::credential_door::CredentialDoorService;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::lock_repository;
+use crate::git_wire::{lock_repository, try_lock_repository};
 use crate::origin::residence::{OriginAuthorityLease, OriginAuthorityStamp};
 
 /// Where a serve invocation writes its response.
@@ -93,6 +95,16 @@ pub struct ServeReport {
 ///
 /// Streaming is unchanged: the wait happens before the exchange begins, so no
 /// request is admitted and then stalled mid-body.
+///
+/// # The idle limit
+///
+/// This function owns the child for its whole life. An exchange that moves no
+/// byte in either direction for [`SERVE_IDLE_TIMEOUT`] has its backend killed
+/// and fails with [`CodeError::GitHttpExchangeIdle`], which also releases the
+/// coordinator a push holds; [`serve_bounded`] sets another limit. A child
+/// is always reaped before this returns.
+///
+/// [`CodeError::GitHttpExchangeIdle`]: crate::error::CodeError::GitHttpExchangeIdle
 pub fn serve(
     vault: &Arc<Vault>,
     repo_name: &str,
@@ -102,6 +114,36 @@ pub fn serve(
     sink: &mut dyn ServeSink,
 ) -> Result<ServeReport> {
     serve_with_provenance(vault, repo_name, request, seam, None, body, sink)
+}
+
+/// [`serve`] for a transport that admits exchanges by permit.
+///
+/// It runs under its own idle limit in place of [`SERVE_IDLE_TIMEOUT`]: a
+/// transport whose body and sink bound their own waits passes the same limit,
+/// so whichever side sees the stall first ends the exchange the same way. And
+/// it never waits for the repository: a push that finds the coordinator taken
+/// fails at once with [`CodeError::GitHttpRepositoryBusy`], so an admitted
+/// exchange never sits queued behind another push. A read is never refused
+/// for it: it recovers and projects its ref list under the coordinator only
+/// when it finds it free.
+///
+/// [`CodeError::GitHttpRepositoryBusy`]: crate::error::CodeError::GitHttpRepositoryBusy
+pub fn serve_bounded(
+    vault: &Arc<Vault>,
+    repo_name: &str,
+    request: &ServeRequest,
+    seam: DoorSeam,
+    idle: Duration,
+    body: &mut (dyn Read + Send),
+    sink: &mut dyn ServeSink,
+) -> Result<ServeReport> {
+    let terms = ServeTerms {
+        seam,
+        authority: None,
+        idle,
+        wait_for_repository: false,
+    };
+    serve_request(vault, repo_name, request, terms, body, sink)
 }
 
 /// Compatibility entry point. A new exchange always produces its own evidence;
@@ -121,7 +163,13 @@ pub fn serve_with_provenance(
             "a new exchange cannot reuse external evidence",
         ));
     }
-    serve_request(vault, repo_name, request, seam, None, body, sink)
+    let terms = ServeTerms {
+        seam,
+        authority: None,
+        idle: SERVE_IDLE_TIMEOUT,
+        wait_for_repository: true,
+    };
+    serve_request(vault, repo_name, request, terms, body, sink)
 }
 
 /// Serves using a lease supplied by trusted host configuration, not by the
@@ -136,18 +184,39 @@ pub fn serve_with_authority(
     body: &mut (dyn Read + Send),
     sink: &mut dyn ServeSink,
 ) -> Result<ServeReport> {
-    serve_request(vault, repo_name, request, seam, Some(authority), body, sink)
+    let terms = ServeTerms {
+        seam,
+        authority: Some(authority),
+        idle: SERVE_IDLE_TIMEOUT,
+        wait_for_repository: true,
+    };
+    serve_request(vault, repo_name, request, terms, body, sink)
+}
+
+/// What one invocation runs under besides its request: the door seam, a lease
+/// from trusted host configuration, the exchange's idle limit, and whether a
+/// push waits for a repository another writer holds or is refused.
+struct ServeTerms<'a> {
+    seam: DoorSeam,
+    authority: Option<&'a OriginAuthorityLease>,
+    idle: Duration,
+    wait_for_repository: bool,
 }
 
 fn serve_request(
     vault: &Arc<Vault>,
     repo_name: &str,
     request: &ServeRequest,
-    seam: DoorSeam,
-    authority: Option<&OriginAuthorityLease>,
+    terms: ServeTerms<'_>,
     body: &mut (dyn Read + Send),
     sink: &mut dyn ServeSink,
 ) -> Result<ServeReport> {
+    let ServeTerms {
+        seam,
+        authority,
+        idle,
+        wait_for_repository,
+    } = terms;
     let repo_dir = origin_repo_dir(vault, repo_name)?;
     let project_root = origin_serving_root(vault)?;
     let mut tickets = request
@@ -169,7 +238,12 @@ fn serve_request(
     let hooks = DoorHooksDir::materialize(&origin_door_root(vault)?)?;
     let command = ServeCommand::http_backend(&repo_dir, &project_root, hooks.path())?;
     let coordinator = if request.is_receive_pack() {
-        Some(lock_repository(&repo_common_dir(&repo_dir)?)?)
+        let common_dir = repo_common_dir(&repo_dir)?;
+        if wait_for_repository {
+            Some(lock_repository(&common_dir)?)
+        } else {
+            Some(try_lock_repository(&common_dir)?.ok_or_else(repository_busy)?)
+        }
     } else {
         // A fetch and an advertisement mutate nothing, so neither queues behind
         // a push and neither delays one.
@@ -184,7 +258,50 @@ fn serve_request(
     }
     // This also runs for advertisements and no-op retries. A crash after the
     // backend effect must not leave a ref hidden merely because no new hook runs.
-    vault.reconcile_receive_pack_operations(&repo_dir)?;
+    // Recovery takes the coordinator, which a push already holds here. A read
+    // that may not wait for it leaves recovery to whoever holds it or to the
+    // next request that finds it free: a ref still hidden is the safe side,
+    // and a read never queues behind a write.
+    if coordinator.is_some() || wait_for_repository {
+        vault.reconcile_receive_pack_operations(&repo_dir)?;
+    } else if let Some(_free) = try_lock_repository(&repo_common_dir(&repo_dir)?)? {
+        vault.reconcile_receive_pack_operations(&repo_dir)?;
+    }
+    // No byte of the body is read before the admission above is checked and
+    // recorded. A push body the backend would inflate is inflated here
+    // instead, once: the command section read below is then the one
+    // receive-pack reads, and the backend gets the whole body plain.
+    let plain;
+    let mut inflated;
+    let (request, body): (&ServeRequest, &mut (dyn Read + Send)) =
+        if request.is_receive_pack() && backend_inflates(request) {
+            plain = ServeRequest {
+                content_length: None,
+                content_encoding: None,
+                ..request.clone()
+            };
+            inflated = flate2::read::GzDecoder::new(body);
+            (&plain, &mut inflated)
+        } else {
+            (request, body)
+        };
+    // A body that stalls here ends at the idle limit, as it would mid-exchange.
+    let commands = if request.is_receive_pack() {
+        read_command_section(body).map_err(stall_as_idle)?
+    } else {
+        Vec::new()
+    };
+    let body = &mut io::Cursor::new(commands).chain(body);
+    // Between the coordinator and the child, so on every way out the child
+    // is reaped first, then what a killed backend left in quarantine is
+    // swept, and only then is the coordinator let go. Noted only now: a push
+    // refused before its backend runs made no quarantine, so it sweeps none.
+    let mut quarantines = match coordinator {
+        Some(_) => Some(IncomingQuarantines::note(
+            repo_common_dir(&repo_dir)?.join("objects"),
+        )),
+        None => None,
+    };
     let mut child = command.spawn(request)?;
     let exchange = run_exchange(
         &ExchangeSetup {
@@ -196,6 +313,8 @@ fn serve_request(
             },
             repo_dir: &repo_dir,
             hooks: &hooks,
+            idle,
+            wait_for_repository,
         },
         &mut child,
         body,
@@ -205,10 +324,17 @@ fn serve_request(
         Ok(exchange) => exchange,
         Err(error) => {
             child.kill();
+            if let Some(quarantines) = quarantines.as_mut() {
+                quarantines.settle(&child);
+            }
             return Err(error);
         }
     };
-    let succeeded = child.wait()?;
+    let succeeded = child.wait();
+    if let Some(quarantines) = quarantines.as_mut() {
+        quarantines.settle(&child);
+    }
+    let succeeded = succeeded?;
     if !succeeded {
         return Err(serve_failed(format!(
             "git http-backend exited with a failure: {}",
@@ -218,6 +344,7 @@ fn serve_request(
     let report = finish_serve(vault, request, &repo_dir, admission, exchange);
     // Held to here on purpose: the ref mutation, the quarantine migration and
     // the journaled advance are one window, and it closes here.
+    drop(quarantines);
     drop(coordinator);
     report
 }
@@ -344,14 +471,17 @@ pub(super) struct ServeExchange {
 
 /// The immutable setup one exchange runs against: who is serving, what was
 /// asked, under which door window, out of which repository and hooks
-/// directory. Every field is fixed before the backend is spawned; the live
-/// handles the exchange consumes are the separate parameters beside it.
+/// directory, and how long it may sit idle. Every field is fixed before the
+/// backend is spawned; the live handles the exchange consumes are the
+/// separate parameters beside it.
 struct ExchangeSetup<'a> {
     vault: &'a Arc<Vault>,
     request: &'a ServeRequest,
     context: DoorWindowContext<'a>,
     repo_dir: &'a Path,
     hooks: &'a DoorHooksDir,
+    idle: Duration,
+    wait_for_repository: bool,
 }
 
 fn run_exchange(
@@ -366,6 +496,8 @@ fn run_exchange(
         context,
         repo_dir,
         hooks,
+        idle,
+        wait_for_repository,
     } = setup;
     let stdin = child.take_stdin()?;
     let stdout = child.take_stdout()?;
@@ -374,9 +506,26 @@ fn run_exchange(
     let repo = unpinned_repo_ref(repo_dir);
     let deadline = Instant::now() + DOOR_WINDOW_TIMEOUT;
     let receive_pack = request.is_receive_pack();
+    let progress = Progress::new();
+    let mut body = ProgressRead {
+        body,
+        progress: &progress,
+    };
+    let mut sink = ProgressSink {
+        sink,
+        progress: &progress,
+    };
+    let (watching, watched) = std::sync::mpsc::channel::<Watched>();
 
     std::thread::scope(|scope| {
-        let pump = scope.spawn(move || pump_request_body(body, stdin));
+        // Closed when this body returns, however it returns, so the
+        // watchdog never outlives the exchange it watches; closed by an
+        // unwind, as when a thread below cannot start, it ends the backend.
+        let watching = watching;
+        let _finished = FinishedOnDrop(&finished);
+        let clock = &progress;
+        let watchdog = scope.spawn(move || watch(clock, idle, &watched, child));
+        let pump = scope.spawn(move || pump_request_body(&mut body, stdin));
         let drain = scope.spawn(move || drain_stderr(stderr));
         let door = receive_pack.then(|| {
             scope.spawn(|| serve_door_window(vault, &repo, hooks, &finished, deadline, context))
@@ -385,19 +534,35 @@ fn run_exchange(
         // is rewritten in flight: the gate holds one pkt-line, never the
         // advertisement.
         let streamed = if request.is_ref_advertisement() {
-            let mut gate = AdvertisedRefGate::new(vault, repo_dir, sink);
+            let mut gate = AdvertisedRefGate::new(vault, repo_dir, wait_for_repository, &mut sink);
             stream_response(stdout, &mut gate)
         } else {
-            stream_response(stdout, sink)
+            stream_response(stdout, &mut sink)
         };
         finished.store(true, Ordering::SeqCst);
-        let (status, response_bytes) = streamed?;
-        let request_bytes = join_thread(pump.join())?;
+        if streamed.is_err() {
+            // Nothing more is wanted from the backend, and a push's hook may
+            // be waiting on a verdict the door window will now never give:
+            // end it, so the joins below see their ends.
+            let _ = watching.send(Watched::End);
+        }
+        let pumped = join_thread(pump.join());
         let stderr = drain.join().unwrap_or_default();
         let door = match door {
-            Some(handle) => join_thread(handle.join())?,
-            None => DoorWindowReport::not_invoked(),
+            Some(handle) => join_thread(handle.join()),
+            None => Ok(DoorWindowReport::not_invoked()),
         };
+        // Disarmed only once every thread is joined: until then, a backend
+        // one of them still waited on was watched.
+        let _ = watching.send(Watched::Joined);
+        // A response cut short by the watchdog's kill reads as an ending; it
+        // is the idle limit's, never a success.
+        if join_thread(watchdog.join().map(Ok))? {
+            return Err(serve_idle());
+        }
+        let (status, response_bytes) = streamed.map_err(stall_as_idle)?;
+        let request_bytes = pumped.map_err(stall_as_idle)?;
+        let door = door?;
         Ok(ServeExchange {
             status,
             request_bytes,
@@ -408,11 +573,93 @@ fn run_exchange(
     })
 }
 
+/// Marks the response finished when the exchange body ends however it ends,
+/// an unwind included, so the door window stops waiting for a request that
+/// can no longer come.
+struct FinishedOnDrop<'a>(&'a AtomicBool);
+
+impl Drop for FinishedOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
 fn join_thread<T>(joined: std::thread::Result<Result<T>>) -> Result<T> {
     match joined {
         Ok(result) => result,
         Err(_) => Err(serve_failed("a serve worker panicked")),
     }
+}
+
+/// Reads a receive-pack's command section, up to its first flush, before the
+/// backend reads any of the body, and refuses one carrying a push certificate.
+///
+/// `git receive-pack` writes a push certificate into the repository's object
+/// store as a blob before any hook runs, so its bytes would stay there with no
+/// door having read them, even on a delete-only push. This origin offers no
+/// signed push (the advertisement drops the capability), and a request that
+/// sends a certificate anyway is refused here. A section this cannot read is
+/// refused too: a malformed pkt-line, or one past
+/// [`ORIGIN_MAX_COMMAND_SECTION_BYTES`]. `body` is what receive-pack would
+/// read, already inflated where the backend would inflate it. Returns the
+/// bytes read, which go to the backend ahead of the rest.
+fn read_command_section(body: &mut (dyn Read + Send)) -> Result<Vec<u8>> {
+    let mut section = Vec::new();
+    loop {
+        let start = section.len();
+        // The bound counts every byte read, each header and the flush too.
+        if start + 4 > ORIGIN_MAX_COMMAND_SECTION_BYTES {
+            return Err(push_refused("the push's command section is too large"));
+        }
+        // A body that ends before its flush goes on as it is: receive-pack's
+        // reader dies at that end before any command runs or any certificate
+        // is written, and no certificate line here was whole.
+        if !read_exactly(body, &mut section, 4)? {
+            return Ok(section);
+        }
+        let hex = &section[start..];
+        let length = std::str::from_utf8(hex)
+            .ok()
+            .filter(|_| hex.iter().all(u8::is_ascii_hexdigit))
+            .and_then(|hex| usize::from_str_radix(hex, 16).ok())
+            .ok_or_else(|| push_refused("the push's command section is malformed"))?;
+        match length {
+            0 => return Ok(section),
+            1..=3 => return Err(push_refused("the push's command section is malformed")),
+            _ if start + length > ORIGIN_MAX_COMMAND_SECTION_BYTES => {
+                return Err(push_refused("the push's command section is too large"));
+            }
+            _ => {}
+        }
+        if !read_exactly(body, &mut section, length - 4)? {
+            return Ok(section);
+        }
+        // receive-pack's own reading: one trailing newline chomped, and the
+        // line's name ends at the NUL before any capabilities.
+        let line = &section[start + 4..];
+        let line = line.strip_suffix(b"\n").unwrap_or(line);
+        if line.split(|byte| *byte == 0).next() == Some(b"push-cert".as_slice()) {
+            return Err(push_refused("the origin accepts no push certificate"));
+        }
+    }
+}
+
+/// Whether `git http-backend` would inflate this request's body before
+/// receive-pack reads it: for exactly these two encodings, spelled exactly so
+/// (http-backend.c, `run_service`). Any other body reaches receive-pack as it
+/// came, and is read here as it came.
+fn backend_inflates(request: &ServeRequest) -> bool {
+    matches!(request.content_encoding.as_deref(), Some("gzip" | "x-gzip"))
+}
+
+/// Appends up to `count` bytes of `body` to `into`; whether all of them came.
+fn read_exactly(body: &mut (dyn Read + Send), into: &mut Vec<u8>, count: usize) -> Result<bool> {
+    let want = into.len() + count;
+    (&mut *body)
+        .take(count as u64)
+        .read_to_end(into)
+        .map_err(Error::Io)?;
+    Ok(into.len() == want)
 }
 
 /// Streams the request body into the backend. Nothing is buffered whole: the

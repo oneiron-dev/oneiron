@@ -33,6 +33,10 @@ side_tables! {
     AGENT_DEF_BIRTH_INPUT: VaultMeta b"agent_def/birth-input/v1\0" Raw;
     /// Empty marker: an agent's birth source has been retired. Key: id16.
     AGENT_DEF_BIRTH_RETIRED: VaultMeta b"agent_def/birth-retired/v1\0" Raw;
+    /// What an agent id answers to on every later put, across a delete: the widest ceiling a
+    /// row at the id may hold (one byte, 0 proposed, 1 auto), then the 16-byte parent row it was
+    /// born forked from, if any. Key: id16.
+    AGENT_DEF_ID_PIN: VaultMeta b"agent_def/id-pin/v1\0" Raw;
     /// Frozen source-tree identity (source id + skill content hash, 48 raw bytes) recorded at an
     /// agent's genuine local birth. Key: id16.
     AGENT_DEF_PORTABLE_BIRTH: VaultMeta b"agent_def/portable-birth/v1\0" Raw;
@@ -69,6 +73,9 @@ side_tables! {
     AUTHORITY_CHECKPOINT_ROW: VaultMeta b"authority.checkpoint.v1." Raw;
     /// Asset refcount marker. Key: bytes32 + id16.
     BLOB_ARTIFACT_ASSET_REF: VaultMeta b"blob_artifact:asset_ref:v1:" Raw;
+    /// `BLOB_ARTIFACT_VERSION_CLAIM` keyed by artifact, so an artifact's delete reads its own
+    /// bytes without a scan. Key: id16 (artifact) + bytes32.
+    BLOB_ARTIFACT_CLAIMED_HASH: VaultMeta b"blob_artifact:claimed_hash:v1:" Raw;
     /// Blob artifact head version. Key: id16.
     BLOB_ARTIFACT_HEAD: VaultMeta b"blob_artifact:head:v1:" Raw;
     /// Monotonic last version, retained after deletion. Key: id16; value: u64be.
@@ -77,6 +84,10 @@ side_tables! {
     EDIT_SETTLE_RECORD: VaultMeta b"blob_artifact:settlement:v1:" Raw;
     /// Blob artifact version record. Key: id16 + u64be.
     BLOB_ARTIFACT_VERSION: VaultMeta b"blob_artifact:version:v1:" Raw;
+    /// Which artifacts hold which bytes: one row per artifact and content hash a `blob.version`
+    /// claim named here, replicated claims included, kept until the artifact's delete. Key:
+    /// bytes32 + id16 (artifact).
+    BLOB_ARTIFACT_VERSION_CLAIM: VaultMeta b"blob_artifact:version_claim:v1:" Raw;
     /// Revision-ref frontier (16 bytes) a board-selection CLAIM was written under, authenticated on
     /// every read. Key: id16.
     BOARD_HISTORY_CLAIM_FRONTIER: VaultMeta b"board_history:claim_frontier:" Raw;

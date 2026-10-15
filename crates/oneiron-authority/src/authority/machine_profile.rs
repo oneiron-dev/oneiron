@@ -8,6 +8,8 @@
 //! identity material, so the owner can re-issue the profile at a new revision
 //! (change its role, remove it) without the machine taking part.
 
+use std::collections::BTreeSet;
+
 use ed25519_dalek::{Signature, VerifyingKey};
 use rmpv::Value;
 
@@ -23,6 +25,9 @@ const MACHINE_PROFILE_PROOF_DOMAIN: &[u8] = b"oneiron/machine-profile/v1\0";
 pub const MACHINE_ENCRYPTION_SUITE_HYBRID_V1: u16 = 0x0101;
 /// `ek_mlkem1024 || x25519_public`.
 pub const MACHINE_ENCRYPTION_KEY_LEN: usize = 1568 + 32;
+/// At most this many world edits one profile revision lists as seen.
+pub const MACHINE_SEEN_WORLD_EDITS_MAX: usize = 4096;
+const SEEN_WORLD_EDITS_KEY: &str = "seen_world_edits";
 const MACHINE_PROFILE_KEYS: [&str; 9] = [
     OP_KEY_KIND,
     "machine",
@@ -120,11 +125,15 @@ pub struct MachineProfile {
     pub revision: u64,
     /// `machine_key`'s signature over [`machine_profile_proof_transcript`].
     pub machine_proof: [u8; 64],
+    /// The world edits this machine signed that the revision's author had
+    /// seen. When the revision takes the machine's "yours" away, those edits
+    /// keep their effect; one it never saw raced it and counts only stricter.
+    pub seen_world_edits: BTreeSet<AuthorityEntryHash>,
 }
 
 impl MachineProfile {
     pub fn validate(&self) -> Result<()> {
-        if self.revision == 0 {
+        if self.revision == 0 || self.seen_world_edits.len() > MACHINE_SEEN_WORLD_EDITS_MAX {
             return Err(invalid_authority());
         }
         VerifyingKey::from_bytes(&self.machine_key).map_err(|_| invalid_authority())?;
@@ -170,7 +179,7 @@ pub fn machine_profile_proof_transcript(
 }
 
 pub(super) fn machine_profile_value(profile: &MachineProfile) -> Value {
-    Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from(OP_KEY_KIND),
             Value::from(OP_KIND_MACHINE_PROFILE),
@@ -198,11 +207,45 @@ pub(super) fn machine_profile_value(profile: &MachineProfile) -> Value {
             Value::from("machine_proof"),
             Value::Binary(profile.machine_proof.to_vec()),
         ),
-    ])
+    ];
+    // Absent when empty, so a profile that saw no world edit keeps its bytes.
+    if !profile.seen_world_edits.is_empty() {
+        entries.push((
+            Value::from(SEEN_WORLD_EDITS_KEY),
+            Value::Array(
+                profile
+                    .seen_world_edits
+                    .iter()
+                    .map(|hash| binary_value(*hash))
+                    .collect(),
+            ),
+        ));
+    }
+    Value::Map(entries)
 }
 
 pub(super) fn decode_machine_profile(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
-    validate_keys(entries, &MACHINE_PROFILE_KEYS)?;
+    let seen_world_edits = match entries
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some(SEEN_WORLD_EDITS_KEY)).then_some(value))
+    {
+        None => {
+            validate_keys(entries, &MACHINE_PROFILE_KEYS)?;
+            BTreeSet::new()
+        }
+        Some(value) => {
+            let mut keys = MACHINE_PROFILE_KEYS.to_vec();
+            keys.push(SEEN_WORLD_EDITS_KEY);
+            validate_keys(entries, &keys)?;
+            let hashes = decode_hash_array(value)?;
+            let seen: BTreeSet<_> = hashes.iter().copied().collect();
+            // Canonical only: non-empty, sorted and distinct.
+            if seen.is_empty() || !hashes.iter().eq(seen.iter()) {
+                return Err(invalid_authority());
+            }
+            seen
+        }
+    };
     let machine_proof = match required(entries, "machine_proof")? {
         Value::Binary(bytes) => <[u8; 64]>::try_from(bytes.as_slice()),
         _ => return Err(invalid_authority()),
@@ -231,11 +274,12 @@ pub(super) fn decode_machine_profile(entries: &[(Value, Value)]) -> Result<Autho
             .as_u64()
             .ok_or_else(invalid_authority)?,
         machine_proof,
+        seen_world_edits,
     }))
 }
 
 /// A 32-hex entity id, refused unless it round-trips (the `actor_ref` rule).
-fn decode_canonical_id(value: &Value) -> Result<EntityId> {
+pub(super) fn decode_canonical_id(value: &Value) -> Result<EntityId> {
     let hex = value.as_str().ok_or_else(invalid_authority)?;
     let id = EntityId::from_hex(hex).map_err(|_| invalid_authority())?;
     if id.to_hex() != hex {

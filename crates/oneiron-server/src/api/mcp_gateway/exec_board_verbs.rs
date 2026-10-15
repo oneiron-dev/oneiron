@@ -152,7 +152,8 @@ pub(crate) async fn execute_mcp_execute_code(
 fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGatewayError {
     let code = match error {
         crate::mcp::McpCodeExecutionError::HostUnbound
-        | crate::mcp::McpCodeExecutionError::RunBusy => -32020,
+        | crate::mcp::McpCodeExecutionError::RunBusy
+        | crate::mcp::McpCodeExecutionError::RunSaturated => -32020,
         crate::mcp::McpCodeExecutionError::RunBinding(_)
         | crate::mcp::McpCodeExecutionError::Run(_) => -32603,
     };

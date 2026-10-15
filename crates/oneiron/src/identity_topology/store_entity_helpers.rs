@@ -27,6 +27,7 @@ pub(crate) fn guard_batch_identity_delete_in_txn(
     let effective =
         super::ledger_fold::fold_effective_identity_topology_events_for_store_in_txn(store, rtxn)?;
     let fold = super::ledger_fold::fold_identity_topology_log(&effective);
+    let mut trust = super::admission_disposition::SealTrust::default();
     // A deferred proposal is still an open proposal. It cannot appear in
     // the effective projection until its missing peer arrives, so read raw
     // records as well when deciding whether a generic delete may tear one.
@@ -45,6 +46,7 @@ pub(crate) fn guard_batch_identity_delete_in_txn(
                 rtxn,
                 &event.event_id,
                 &record,
+                &mut trust,
             )?
             .is_some_and(|verdict| verdict != super::AdmissionVerdict::Validated)
         {
@@ -60,7 +62,7 @@ pub(crate) fn guard_batch_identity_delete_in_txn(
                 .any(|source| fold.current_event.get(source) == Some(&event.event_id))
             && (*id == *survivor
                 || sources.contains(id)
-                || super::effective_author_in_txn(store, rtxn, event.event_id)?
+                || super::admitted_author_in_txn(store, rtxn, event.event_id)?
                     .is_some_and(|actor| actor.entity_ref() == *id))
         {
             return Err(Error::Sync(

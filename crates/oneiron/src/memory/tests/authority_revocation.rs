@@ -428,6 +428,16 @@ fn an_owner_lane_read_after_revocation_keeps_the_binding_code() {
     let (_dir, vault) = open_vault();
     let owner = put_person(&vault, 0x6B);
     let subject = put_person(&vault, 0x6C);
+    let facet = EntityId::from_bytes([0x6D; 16]).expect("facet id");
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            test_time(1),
+            1,
+            b"facet",
+        )
+        .expect("put facet");
     let facade = facade_for(&vault, owner);
 
     let (genesis, signing) = authority_root(0x74);
@@ -495,6 +505,17 @@ fn an_owner_lane_read_after_revocation_keeps_the_binding_code() {
     let error = lane
         .is_entity_readable(&subject)
         .expect_err("the owner key no longer holds");
+    assert_eq!(
+        MemoryError::from(error).code,
+        MEMORY_CODE_OWNER_BINDING_REQUIRED
+    );
+    // So does code mode's facet placement onto a stored facet, judged in the
+    // edge's own write transaction: a door that kept the key places no row
+    // (Sol R4 F5 on #1432).
+    let txn = vault.store.env.read_txn().expect("read txn");
+    let error =
+        crate::code_run::require_facet_placement_in(&vault, lane.actor_key(), &txn, subject, facet)
+            .expect_err("the owner key no longer holds");
     assert_eq!(
         MemoryError::from(error).code,
         MEMORY_CODE_OWNER_BINDING_REQUIRED

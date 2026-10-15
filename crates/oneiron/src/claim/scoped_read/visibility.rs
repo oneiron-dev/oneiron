@@ -1,6 +1,7 @@
+use super::access_gate::HeldAuthority;
 use super::*;
 
-impl ScopedRead<'_> {
+impl<'v> ScopedRead<'v> {
     /// Whether this lane reads `id` now, an owner lane's standing rechecked
     /// in the snapshot it reads (see `Self::live_policy_manifest_in`).
     pub fn is_entity_readable(&self, id: &EntityId) -> Result<bool> {
@@ -50,10 +51,23 @@ impl ScopedRead<'_> {
         id: &EntityId,
         filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
+        self.is_entity_readable_held_in(rtxn, policy, id, filter, &HeldAuthority::default())
+    }
+
+    /// [`Self::is_entity_readable_with_filter_in`] for one row of a batch
+    /// read in `rtxn`, under the relationship authority the batch holds.
+    pub(super) fn is_entity_readable_held_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        filter: &ResolvedRetrievalFilter,
+        authority: &HeldAuthority<'v>,
+    ) -> Result<bool> {
         let Some(raw) = self.entity_record_in(rtxn, id)?.map(|row| row.encode()) else {
             return Ok(false);
         };
-        self.is_entity_raw_readable_with_filter_in(rtxn, policy, id, &raw, filter)
+        self.is_entity_raw_readable_held_in(rtxn, policy, id, &raw, filter, authority)
     }
 
     pub(super) fn is_entity_raw_readable_with_filter_in(
@@ -64,9 +78,28 @@ impl ScopedRead<'_> {
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
+        self.is_entity_raw_readable_held_in(
+            rtxn,
+            policy,
+            id,
+            raw,
+            filter,
+            &HeldAuthority::default(),
+        )
+    }
+
+    fn is_entity_raw_readable_held_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        raw: &[u8],
+        filter: &ResolvedRetrievalFilter,
+        authority: &HeldAuthority<'v>,
+    ) -> Result<bool> {
         Ok(
-            self.is_entity_raw_readable_own_in(rtxn, policy, id, raw, filter)?
-                && self.derived_sources_readable_in(rtxn, policy, id, raw)?,
+            self.is_entity_raw_readable_own_in(rtxn, policy, id, raw, filter, authority)?
+                && self.derived_sources_readable_in(rtxn, policy, id, raw, authority)?,
         )
     }
 
@@ -82,6 +115,7 @@ impl ScopedRead<'_> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
         raw: &[u8],
+        authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
         if self.actor_key.vault_owner_ref().is_some() {
             return Ok(true);
@@ -94,6 +128,7 @@ impl ScopedRead<'_> {
                 policy,
                 id,
                 &raw[ENTITY_METADATA_HEADER_LEN..],
+                authority,
             )?
         {
             return Ok(admitted);
@@ -108,7 +143,7 @@ impl ScopedRead<'_> {
             let Some(raw) = self.entity_record_in(rtxn, source)?.map(|row| row.encode()) else {
                 return Ok(false);
             };
-            if !self.is_entity_raw_readable_own_in(rtxn, policy, source, &raw, &floor)? {
+            if !self.is_entity_raw_readable_own_in(rtxn, policy, source, &raw, &floor, authority)? {
                 return Ok(false);
             }
         }
@@ -125,11 +160,12 @@ impl ScopedRead<'_> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
         body: &[u8],
+        authority: &HeldAuthority<'v>,
     ) -> Result<Option<bool>> {
         let floor = self.actor_retrieval_floor(policy)?;
         let admit = |source: &EntityId, row: &crate::ports::EntityRecord| {
             let raw = row.encode();
-            if !self.is_entity_raw_readable_own_in(rtxn, policy, source, &raw, &floor)? {
+            if !self.is_entity_raw_readable_own_in(rtxn, policy, source, &raw, &floor, authority)? {
                 return Ok(false);
             }
             // The walk itself expands a nested epoch summary, in any form.
@@ -147,7 +183,7 @@ impl ScopedRead<'_> {
             {
                 return Ok(true);
             }
-            self.derived_sources_readable_in(rtxn, policy, source, &raw)
+            self.derived_sources_readable_in(rtxn, policy, source, &raw, authority)
         };
         match self.session_view {
             Some(view) => crate::compaction::epoch_sources_admitted_in(view, rtxn, id, body, admit),
@@ -169,6 +205,7 @@ impl ScopedRead<'_> {
         id: &EntityId,
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
+        authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
@@ -216,13 +253,16 @@ impl ScopedRead<'_> {
         {
             return Ok(false);
         }
-        if !self.relationship_raw_allowed_in(rtxn, id, raw)? {
+        if !self.relationship_raw_allowed_in(rtxn, id, raw, authority)? {
             return Ok(false);
         }
         if !self.audience_readable_raw_in(rtxn, id, raw)? {
             return Ok(false);
         }
-        if !self.credential_allows_id(id) || !self.proof_live_in(rtxn)? {
+        if !self.credential_allows_id(id)
+            || !self.proof_live_in(rtxn)?
+            || !self.facets_allow_in(rtxn, id, raw)?
+        {
             return Ok(false);
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {

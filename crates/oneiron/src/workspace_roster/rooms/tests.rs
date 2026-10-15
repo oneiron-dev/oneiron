@@ -967,7 +967,14 @@ fn consult_question_turn_projects_an_open_wait_without_a_room_state_row() -> Res
         TaskCreateSpec, TaskKind, TaskTtl,
     };
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    // The engine's clock sits inside the consult's window, where its answer lands.
+    let vault = Vault::open(
+        dir.path(),
+        crate::VaultConfig {
+            store_clock: crate::test_util::pinned_store_clock(1_000_001),
+            ..crate::VaultConfig::default()
+        },
+    )?;
     let owner = EntityId::now();
     let asker = EntityId::from_bytes([0xE1; 16])?;
     let peer = EntityId::from_bytes([0xE2; 16])?;
@@ -1281,7 +1288,7 @@ fn a_peer_ask_wait_lists_the_task_its_class_came_from() -> Result<()> {
         assert!(listed.contains(row), "{listed:?}");
     }
 
-    vault.set_world_device_only(world, true)?;
+    vault.keep_world_on_this_machine_for_test(world, true)?;
     let (kept, listed) = notices(CallerLocality::OffDevice);
     assert_eq!(
         kept,

@@ -22,6 +22,7 @@ impl crate::memory::RecallRerankHost for ScriptedReranker<'_> {
         &self,
         _query: &str,
         documents: &[crate::memory::RerankDocument<'_>],
+        _egress: &crate::memory::RerankEgress<'_>,
         _answer_at: Option<std::time::Instant>,
     ) -> MemoryResult<crate::memory::RerankScores> {
         let call = self
