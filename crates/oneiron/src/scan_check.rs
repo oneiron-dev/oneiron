@@ -108,7 +108,7 @@ fn check_key(scan: OriginScan, repo_id: Option<EntityId>) -> ([u8; 1], Vec<u8>) 
 }
 
 /// One scan's rows, counted against its threshold row.
-pub(in crate::origin) struct ScanCount {
+pub(crate) struct ScanCount {
     scan: OriginScan,
     repo_id: Option<EntityId>,
     threshold: u64,
@@ -117,7 +117,7 @@ pub(in crate::origin) struct ScanCount {
 
 impl ScanCount {
     /// Starts counting `scan` of `repo_id`, under the row `txn` reads.
-    pub(in crate::origin) fn start(
+    pub(crate) fn start(
         store: &Store,
         txn: &RoTxn<'_>,
         scan: OriginScan,
@@ -132,14 +132,14 @@ impl ScanCount {
     }
 
     /// Counts one row read.
-    pub(in crate::origin) fn row(&mut self) {
+    pub(crate) fn row(&mut self) {
         self.rows = self.rows.saturating_add(1);
     }
 
     /// Raises the scan's check when it read past its row, once per scope.
     /// Call it after the scan's read transaction has closed. The scan has
     /// served either way, so a check that could not be kept is dropped.
-    pub(in crate::origin) fn finish(self, vault: &Vault) {
+    pub(crate) fn finish(self, vault: &Vault) {
         if self.rows <= self.threshold {
             return;
         }
