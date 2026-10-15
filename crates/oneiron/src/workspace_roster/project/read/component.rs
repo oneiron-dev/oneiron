@@ -221,10 +221,7 @@ fn sealed_tree(
     cx: &FoldCx<'_, '_, '_>,
     tips: &BTreeSet<ProjectRevisionHash>,
 ) -> Option<BTreeSet<ProjectRevisionHash>> {
-    let only = (tips.len() == 1).then(|| tips.first().copied()).flatten();
-    let Some(tip) = only else {
-        return None;
-    };
+    let tip = *tips.first().filter(|_| tips.len() == 1)?;
     let mut tree = BTreeSet::new();
     let Some(ProjectRevision::Seal { seal: active, .. }) = cx.row(&tip) else {
         return Some(tree);

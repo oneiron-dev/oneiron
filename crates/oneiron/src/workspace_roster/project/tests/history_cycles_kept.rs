@@ -100,9 +100,12 @@ fn a_frozen_cycle_record_rests_on_every_worlds_dependencies() -> Result<()> {
 }
 
 /// A0 seats X under R. B's board signed B1, putting B under A, and B2, back
-/// under R, both withheld. A's board put A under B without X (A1), and the
-/// owner sealed A over A1 (S1); on a copy, the owner sealed A over A0 (S2),
-/// keeping X. Both seals arrive, then B1 and B2 as companions in `order`.
+/// under R at depth 2, both withheld. A's board put A under B without X
+/// (A1), and the owner sealed A over A1 (S1); on a copy, the owner sealed A
+/// over A0 (S2), keeping X. Both seals arrive, then B1 and B2 as companions
+/// in `order`. The cycle then has two consistent worlds: B1 refused, so B
+/// serves B0, A1 fits it, and the seals conflict; or B1 standing, so A1
+/// exceeds B2, S1 falls, and S2 seats X.
 fn conflicting_seals_meet_a_cycle(b1_first: bool) -> Result<()> {
     let dir = tempfile::tempdir()?;
     let (a, b, x) = (EntityId::now(), EntityId::now(), EntityId::now());
@@ -128,7 +131,7 @@ fn conflicting_seals_meet_a_cycle(b1_first: bool) -> Result<()> {
         })?;
         let b2 = signed_over(&vault, b, &b1, holder, |row| {
             row.parents = vec![root.to_hex()];
-            row.depth_remaining = 4;
+            row.depth_remaining = 2;
         })?;
         let a1 = signed_over(&vault, a, &a0, holder, |row| {
             row.parents = vec![b.to_hex()];
@@ -175,7 +178,8 @@ fn conflicting_seals_meet_a_cycle(b1_first: bool) -> Result<()> {
 /// Bug repro (Astra #1434c F2): conflicting seals left A with no parent
 /// edges, so A folded alone, read B, and B read A while A was open: the
 /// refusal B took from it dropped S1, and A served S2 alone, seating X.
-/// In both arrival orders, A serves `ConflictingSeals` and no authority.
+/// In both arrival orders, A serves `ConflictingSeals` and no authority,
+/// though one of the cycle's worlds would seat X (Engine, Astra-c).
 #[test]
 fn conflicting_seals_in_a_cycle_serve_no_authority() -> Result<()> {
     conflicting_seals_meet_a_cycle(true)?;
