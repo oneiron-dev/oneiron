@@ -9,7 +9,7 @@ mod rebuild;
 mod restore_class;
 mod tiers;
 use crate::side_table::{self, Named, SideTable};
-use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody};
+use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody, MadeDestination};
 use crate::{EntityId, Error, Result, Vault, VaultConfig};
 use heed::types::Bytes;
 use serde::{Deserialize, Serialize};
@@ -380,7 +380,7 @@ impl Vault {
     ) -> Result<(Self, RestoreReport)> {
         let (mut image, checkpoint_id) = read_image(path)?;
         image.drop_machine_identity();
-        let (vault, report, forked) = Self::restore_image(
+        let (vault, report, forked, made) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -390,6 +390,7 @@ impl Vault {
             Custody::Keep,
         )?;
         forked.keep();
+        made.keep();
         Ok((vault, report))
     }
     /// [`Vault::restore_checkpoint`] as a copy served beside its source vault.
@@ -409,7 +410,7 @@ impl Vault {
         let live = source.capture()?;
         let (mut image, checkpoint_id) = read_image(path)?;
         image.drop_machine_identity();
-        let (vault, report, forked) = Self::restore_image(
+        let (vault, report, forked, made) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -419,6 +420,7 @@ impl Vault {
             Custody::Fork(Some(&live)),
         )?;
         forked.keep();
+        made.keep();
         Ok((vault, report))
     }
     /// This vault as the source of a restore beside it
@@ -562,7 +564,7 @@ impl Vault {
         if let Custody::Fork(_) = custody {
             image.drop_machine_identity();
         }
-        let (vault, report, forked) = Self::restore_image(
+        let (vault, report, forked, made) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -574,12 +576,13 @@ impl Vault {
         if let Err(error) = authority_plane::refuse_new_members(current, &vault)
             .and_then(|()| decisions::refuse_loosened_decisions(current, &vault))
         {
-            // This call created the destination; nothing else is in it. The
-            // custody it forked goes with it as `forked` drops.
-            crate::store::discard_restored_copy(vault, destination);
+            // The copy closes first; then the directory made for it goes as
+            // `made` drops, and the custody it forked as `forked` drops.
+            drop(vault);
             return Err(error);
         }
         forked.keep();
+        made.keep();
         Ok((vault, report))
     }
     fn restore_image(
@@ -590,7 +593,7 @@ impl Vault {
         reason: RestoreReason,
         restored_at: u64,
         custody: Custody<'_>,
-    ) -> Result<(Self, RestoreReport, ForkedCustody)> {
+    ) -> Result<(Self, RestoreReport, ForkedCustody, MadeDestination)> {
         // A job row of another kind in the owner-retained key range would
         // hide from that kind's scans: refused before any destination exists.
         if image.databases["job_records"].iter().any(|(key, value)| {
@@ -615,8 +618,10 @@ impl Vault {
         // back: one no pin decodes from is refused here, before a
         // destination exists (H215).
         crate::agent_def::refuse_unreadable_agent_id_pins(&image.databases["vault_meta"])?;
-        // Existing content is never replaced or partially restored over.
-        let made = crate::store::MadeDestination::make(destination, home)?;
+        // Existing content is never replaced or partially restored over. A
+        // refusal from here on drops the copy, then the directory made for
+        // it: only a committed restore keeps them (C8).
+        let made = MadeDestination::make(destination, home)?;
         let mut forked = ForkedCustody(None);
         let vault = Self::open_owned(destination, config.clone())?;
         #[cfg(test)]
@@ -719,7 +724,7 @@ impl Vault {
             rebuilt_text_documents,
             pending_embeddings,
         };
-        Ok((vault, report, forked))
+        Ok((vault, report, forked, made))
     }
     pub fn restore_epochs(&self) -> Result<Vec<RestoreEpoch>> {
         let txn = self.store.env.read_txn()?;

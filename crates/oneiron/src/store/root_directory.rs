@@ -228,9 +228,9 @@ pub fn shared_vault_root(root: &Path) -> Result<Option<SharedPath>> {
 }
 
 /// Makes the directory `path` names, owner-only whatever the umask, through
-/// a descriptor of the directory holding it, and returns the identity of the
-/// one made, read through that same descriptor.
-pub(super) fn make_directory(path: &Path) -> Result<FileIdentity> {
+/// a descriptor of the directory holding it, and returns the one made,
+/// opened through that same descriptor.
+pub(super) fn make_directory(path: &Path) -> Result<File> {
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
         return Err(Error::InvalidConfig(
             "a directory to make needs a parent and a name".to_owned(),
@@ -244,7 +244,7 @@ pub(super) fn make_directory(path: &Path) -> Result<FileIdentity> {
     rustix::fs::mkdirat(&parent, name, Mode::from_raw_mode(0o700)).map_err(std::io::Error::from)?;
     let made = openat(&parent, name, flags | OFlags::NOFOLLOW, Mode::empty())
         .map_err(std::io::Error::from)?;
-    Ok(file_identity(&File::from(made).metadata()?))
+    Ok(File::from(made))
 }
 
 /// `parent`, or the working directory when a relative path has none.

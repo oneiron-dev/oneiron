@@ -221,9 +221,18 @@ fn names(_: &Path, (): &()) -> Result<bool> {
 /// name, and is checked against the directory made: rows are written into,
 /// and a mark lifted from, only that one, never a directory moved in under
 /// its name since.
+///
+/// The copy is kept only once its restore commits ([`MadeDestination::keep`]).
+/// Dropped before that, after the copy's vault has closed, this removes the
+/// directory it made with everything in it, through the descriptor it holds:
+/// a directory moved in under the name since is left as it is.
 pub(crate) struct MadeDestination {
+    destination: PathBuf,
     #[cfg(unix)]
-    made: FileIdentity,
+    made: std::fs::File,
+    #[cfg(unix)]
+    identity: FileIdentity,
+    kept: bool,
 }
 
 impl MadeDestination {
@@ -246,21 +255,26 @@ impl MadeDestination {
             let _ = home;
             std::fs::create_dir(destination)?;
         }
+        let made = Self {
+            destination: destination.to_owned(),
+            #[cfg(unix)]
+            identity: file_identity(&made.metadata()?),
+            #[cfg(unix)]
+            made,
+            kept: false,
+        };
         #[cfg(test)]
         if let Some(callback) = AFTER_RESTORE_DESTINATION_MADE.with(|slot| slot.borrow_mut().take())
         {
             callback();
         }
-        Ok(Self {
-            #[cfg(unix)]
-            made,
-        })
+        Ok(made)
     }
 
     /// Refuses unless `store` is open on the directory made.
     pub(crate) fn holds(&self, store: &Store) -> Result<()> {
         #[cfg(unix)]
-        if opened_directory(store)? != self.made {
+        if opened_directory(store)? != self.identity {
             return Err(Error::InvalidConfig(
                 "a restore's copy no longer sits where it was made".into(),
             ));
@@ -269,34 +283,25 @@ impl MadeDestination {
         let _ = store;
         Ok(())
     }
+
+    /// Keeps the copy: its restore has committed.
+    pub(crate) fn keep(mut self) {
+        self.kept = true;
+    }
 }
 
-/// Drops `vault`, the copy a refused restore made at `destination`, and
-/// removes the directory it made there: the one the copy had open, never a
-/// directory moved in under that name since, which is left as it is.
-pub(crate) fn discard_restored_copy(vault: crate::Vault, destination: &Path) {
-    #[cfg(unix)]
-    {
-        let held = vault
-            .store
-            .owner
-            .env
-            ._bound_root_dir
-            .as_ref()
-            .map(std::fs::File::try_clone);
-        drop(vault);
-        let removed = match held {
-            Some(Ok(held)) => remove_held_directory(destination, &held).is_ok(),
-            _ => false,
-        };
+impl Drop for MadeDestination {
+    fn drop(&mut self) {
+        if self.kept {
+            return;
+        }
+        #[cfg(unix)]
+        let removed = remove_held_directory(&self.destination, &self.made).is_ok();
+        #[cfg(not(unix))]
+        let removed = std::fs::remove_dir_all(&self.destination).is_ok();
         if !removed {
             tracing::warn!("a refused restore left the copy it made in place");
         }
-    }
-    #[cfg(not(unix))]
-    {
-        drop(vault);
-        let _ = std::fs::remove_dir_all(destination);
     }
 }
 
