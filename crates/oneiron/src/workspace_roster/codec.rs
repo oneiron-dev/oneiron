@@ -586,9 +586,13 @@ pub(super) fn require_mailbox_member_in_txn(
     Ok(())
 }
 
+/// A test's act at the consent window.
+#[cfg(test)]
+type ConsentWindowHook = Box<dyn FnOnce(&Vault)>;
+
 #[cfg(test)]
 thread_local! {
-    static CONSENT_WINDOW: std::cell::RefCell<Option<Box<dyn FnOnce(&Vault)>>> =
+    static CONSENT_WINDOW: std::cell::RefCell<Option<ConsentWindowHook>> =
         const { std::cell::RefCell::new(None) };
 }
 
