@@ -123,11 +123,12 @@ pub(crate) struct ContextBoardSession {
     #[schema(example = "v1")]
     api_version: String,
     /// Live entity counts keyed by numeric entity type; zero counts are omitted.
-    /// Empty unless the caller reads the whole vault.
+    /// Always empty: a count may count only rows the caller's key reads, and
+    /// no key reads every row.
     #[schema(example = json!({ "16": 1 }))]
     counts: BTreeMap<String, u64>,
-    /// Latest learned-at timestamp across agent-visible entities. Null unless
-    /// the caller reads the whole vault.
+    /// Latest learned-at timestamp across agent-visible entities. Always
+    /// null, for the same reason.
     #[serde(rename = "last_activity")]
     #[schema(example = 1_770_000_000_u64)]
     last_activity: Option<u64>,
@@ -234,14 +235,9 @@ pub(crate) async fn context_board_hydrate(
     let caller = auth.principal_ref().unwrap_or(auth.principal()).trim();
 
     let read = super::scoped_read_for_core_auth(&server.vault, &auth)?;
-    // The session's counts and latest activity span the whole vault: only a
-    // caller that reads all of it learns them. Any other reads an empty
-    // inventory, the same whatever rows it cannot read hold.
-    let session = if read.reads_whole_vault() {
-        session_prefix(&server, auth.locality()).await?
-    } else {
-        empty_session_prefix()
-    };
+    // The vault's counts and latest activity span rows no key reads all of
+    // (another principal's claims), so every caller reads an empty inventory.
+    let session = empty_session_prefix();
     let notifications = pending_notifications(&server, &read, caller)?;
     let unprocessed = pending_unprocessed_items(&server, caller);
     let budget = standing.as_ref().map_or_else(
@@ -463,9 +459,8 @@ pub(crate) async fn context_board_hydrate(
     }
     // The rows this board was derived from, kept beside a keyed replay of it.
     // A replay re-admits each row it named beyond its documents: every
-    // notification, rider row, pack source, named or stamped contact and
-    // discovered capability. A rider that counts rows it does not name can
-    // never be re-admitted, so its board never replays.
+    // notification, rider row (those its overflow counts too), pack source,
+    // named or stamped contact and discovered capability.
     let mut admit: Vec<_> = response
         .notifications
         .iter()
@@ -496,41 +491,22 @@ pub(crate) async fn context_board_hydrate(
     Ok((
         axum::Extension(crate::idempotency::ServedRows {
             rows: served,
-            admit: (changed_line.overflow == 0 && changed_line.install_overflow == 0)
-                .then_some(admit),
+            admit: Some(admit),
         }),
         Json(response),
     ))
 }
 
-/// The rows a board's rider named, each of which a replay of the board
-/// re-admits: every lifecycle row and its successor, every installed skill,
-/// every own proposal whose outcome it carried, and the key of every
-/// connector it mounted. An erased proposal has no row left to admit, and a
+/// The rows a board's rider named or counted, each of which a replay of the
+/// board re-admits (`ChangedLine::named_rows`): every lifecycle row and its
+/// successor, every installed skill, every own proposal whose outcome it
+/// carried, and the key of every connector it mounted, those its overflow
+/// counts included. An erased proposal has no row left to admit, and a
 /// removed connector's key is one the reader was already shown.
 fn rider_admits(
     line: &oneiron::context_board::ChangedLine,
 ) -> impl Iterator<Item = oneiron::EntityId> + '_ {
-    use oneiron::context_board::{ChangedEvent, ConnectorChange, ServedLifecycle};
-    let lifecycle = line.rows.iter().flat_map(|(id, state)| {
-        let successor = match state {
-            ServedLifecycle::Superseded(next) => Some(next.as_str()),
-            _ => None,
-        };
-        std::iter::once(id.as_str()).chain(successor)
-    });
-    let installs = line
-        .install_rows
-        .iter()
-        .map(|receipt| receipt.entity.as_str());
-    let events = line.events.iter().filter_map(|event| match event {
-        ChangedEvent::Proposal { id, change } if change.to != "erased" => Some(id.as_str()),
-        ChangedEvent::Connector { change, mount, .. } if *change != ConnectorChange::Removed => {
-            Some(mount.key.as_str())
-        }
-        ChangedEvent::Proposal { .. } | ChangedEvent::Connector { .. } => None,
-    });
-    lifecycle.chain(installs).chain(events).filter_map(|id| {
+    line.named_rows().filter_map(|id| {
         let hex = id.rsplit_once(':').map_or(id, |(_, hex)| hex);
         oneiron::EntityId::from_hex(hex).ok()
     })

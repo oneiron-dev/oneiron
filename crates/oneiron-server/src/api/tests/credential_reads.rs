@@ -1082,10 +1082,11 @@ async fn a_room_its_reader_cannot_read_is_a_missing_room() {
     );
 }
 
-/// F16 round 3 (Sol F3): membership stands in for a member's grant on its
-/// room, never for the credential it presents. A member whose credential
-/// names other records reads its room as a missing one, and no member's id;
-/// on its whole credential it reads the room.
+/// F16 round 3 (Sol F3) and round 4 (Sol F2 = Astra F2): membership stands
+/// in for a member's grant on its room, never for the credential it
+/// presents. A member whose credential names other records, or reads TURN
+/// rows alone, reads its room as a missing one, and no member's id; on its
+/// whole credential it reads the room.
 #[tokio::test]
 async fn a_members_bounded_credential_reads_its_room_as_missing() {
     let room = room();
@@ -1114,6 +1115,21 @@ async fn a_members_bounded_credential_reads_its_room_as_missing() {
         "{body}"
     );
     assert!(!body.to_string().contains(&room.owner.to_hex()), "{body}");
+    let banded = format!(
+        "{};bands={}",
+        room.agent_recipe(None),
+        oneiron::registry::ENTITY_TYPE_TURN
+    );
+    let (status, body) = pack(banded, room.room).await;
+    assert_eq!(
+        (status, &body["error"]["code"], &body["error"]["details"]),
+        (
+            missing_status,
+            &missing["error"]["code"],
+            &missing["error"]["details"]
+        ),
+        "{body}"
+    );
     let (status, body) = pack(room.agent_recipe(None), room.room).await;
     assert_eq!(status, StatusCode::OK, "a member reads its room: {body}");
 }

@@ -6,7 +6,7 @@
 
 use super::read_set::{
     ChangedDelivery, ChangedEvent, ConnectorChange, ConnectorMount, MAX_EVENT_REF_BYTES,
-    ProposalChange, ProposalReason, lifecycle_line,
+    ProposalChange, ProposalReason, lifecycle_line, lifecycle_refs,
 };
 use super::{ChangedLine, MAX_BOARD_ROW_BYTES, SessionReadSet};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
@@ -123,7 +123,13 @@ impl SessionReadSet {
         // off the next wake. Answers are looked up only for what can ride.
         settled.sort_by_key(|proposal| proposal.to != "rejected");
         let mut held = settled.len().saturating_sub(cap);
-        settled.truncate(cap);
+        let past_cap = settled.split_off(cap.min(settled.len()));
+        line.overflow_rows.extend(
+            past_cap
+                .into_iter()
+                .filter(|proposal| proposal.to != "erased")
+                .map(|proposal| proposal.id),
+        );
         let mut events = settled
             .into_iter()
             .map(|proposal| {
@@ -157,6 +163,8 @@ impl SessionReadSet {
                 kept.push(event);
             } else {
                 held += 1;
+                line.overflow_rows
+                    .extend(event.named_row().map(str::to_owned));
             }
         }
         // Install receipts keep their own rows and cap, inside the same row.
@@ -170,6 +178,7 @@ impl SessionReadSet {
                 installs.push(receipt);
             } else {
                 line.install_overflow += 1;
+                line.overflow_rows.push(receipt.entity);
             }
         }
         line.install_rows = installs;
@@ -180,6 +189,7 @@ impl SessionReadSet {
                 fitted.push((id, state));
             } else {
                 held += 1;
+                line.overflow_rows.extend(lifecycle_refs(&id, &state));
             }
         }
         line.rows = fitted;

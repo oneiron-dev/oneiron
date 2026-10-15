@@ -517,19 +517,11 @@ async fn discovery_off_this_device_counts_no_device_local_row() {
             body["session"].clone()
         }
     };
+    // A board counts and dates nothing for any key (F16), here or away.
     let (here, away) = (board(HERE).await, board(AWAY).await);
-    for kind in [
-        oneiron::registry::ENTITY_TYPE_CLAIM,
-        oneiron::registry::ENTITY_TYPE_WORLD,
-    ] {
-        assert_eq!(
-            count(&here, kind),
-            count(&away, kind) + 1,
-            "board type {kind}"
-        );
-    }
-    assert_eq!(here["last_activity"], json!(latest));
-    assert!(away["last_activity"].as_u64().unwrap() < latest, "{away}");
+    assert_eq!(here, away);
+    assert_eq!(here["counts"], json!({}), "{here}");
+    assert!(here["last_activity"].is_null(), "{here}");
 }
 
 /// Sol R2 F2 and F7: a pack off this device for a query only a device-local
@@ -1497,119 +1489,5 @@ async fn a_run_off_this_device_holding_a_device_local_proposal_reads_as_no_run()
             .unwrap()
             .approval,
         ClaimApprovalStatus::Proposed
-    );
-}
-
-/// F16 round 2 (Astra F6): a keyed board derived on this device carries the
-/// session counts and activity counted here. Its replay never leaves this
-/// device: off it, the retry is refused, though it names no device-local
-/// row; on it, the retry replays.
-#[tokio::test]
-async fn a_keyed_board_counted_on_this_device_never_replays_off_it() {
-    let (_dir, server, caller, _grower) = serve();
-    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
-    let turn = EntityId::now();
-    let author = rmp_serde::to_vec_named(&json!({ "actor": owner.to_hex() })).unwrap();
-    server
-        .vault
-        .put_entity(
-            &turn,
-            oneiron::registry::ENTITY_TYPE_TURN,
-            oneiron::TimeRange { start: 2, end: 2 },
-            2,
-            &author,
-        )
-        .unwrap();
-    let board = json!({"session": {"session_id": "counted"}, "turn": {"id": turn.to_hex()}});
-    let keyed = |from| {
-        let (caller, board) = (&caller, board.clone());
-        async move {
-            caller
-                .call_keyed(
-                    from,
-                    "POST",
-                    "/v1/core/context-board",
-                    Some(board),
-                    Some("counted-board"),
-                )
-                .await
-        }
-    };
-    let (status, first) = keyed(HERE).await;
-    assert_eq!(status, StatusCode::OK, "{first}");
-    assert_ne!(first["session"]["counts"], json!({}), "{first}");
-    let (status, refused) = keyed(AWAY).await;
-    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
-    assert!(
-        refused.to_string().contains("board_document_unreadable"),
-        "{refused}"
-    );
-    let (status, replayed) = keyed(HERE).await;
-    assert_eq!(status, StatusCode::OK, "{replayed}");
-    assert_eq!(replayed, first);
-}
-
-/// F16 round 3 (Astra F3): a keyed board counted off this device never
-/// replays off it either. Its counts and activity name no row a replay could
-/// re-admit: once a world they counted is kept on this machine, a fresh board
-/// off it counts that world's rows no more
-/// (`discovery_off_this_device_counts_no_device_local_row`), and the replay
-/// is refused rather than repeat them.
-#[tokio::test]
-async fn a_keyed_board_counted_off_this_device_never_replays_off_it() {
-    let (_dir, server, caller, grower) = serve();
-    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
-    let kept_world = put_world(&server.vault);
-    put_orchid_claim(
-        &server,
-        grower,
-        "keptspace.orchid",
-        Some(kept_world),
-        "orchid ledger kept",
-    );
-    let turn = EntityId::now();
-    let author = rmp_serde::to_vec_named(&json!({ "actor": owner.to_hex() })).unwrap();
-    server
-        .vault
-        .put_entity(
-            &turn,
-            oneiron::registry::ENTITY_TYPE_TURN,
-            oneiron::TimeRange { start: 2, end: 2 },
-            2,
-            &author,
-        )
-        .unwrap();
-    let board = json!({"session": {"session_id": "counted-away"}, "turn": {"id": turn.to_hex()}});
-    let away = || {
-        caller.call_keyed(
-            AWAY,
-            "POST",
-            "/v1/core/context-board",
-            Some(board.clone()),
-            Some("counted-away"),
-        )
-    };
-    let (status, first) = away().await;
-    assert_eq!(status, StatusCode::OK, "{first}");
-    assert!(
-        first["session"]["counts"][oneiron::registry::ENTITY_TYPE_CLAIM.to_string()]
-            .as_u64()
-            .is_some_and(|claims| claims >= 1),
-        "{first}"
-    );
-
-    server
-        .vault
-        .keep_world_on_this_machine_under_for_test(
-            &crate::test_credentials::host_issuer(&server),
-            kept_world,
-            true,
-        )
-        .unwrap();
-    let (status, refused) = away().await;
-    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
-    assert!(
-        refused.to_string().contains("board_document_unreadable"),
-        "{refused}"
     );
 }

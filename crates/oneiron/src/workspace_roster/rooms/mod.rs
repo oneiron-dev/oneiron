@@ -221,9 +221,9 @@ impl Vault {
     /// [`Self::room_audience_members`] as `read` reads the room, in one
     /// snapshot: a room `read` cannot read is a missing room, unless
     /// `member` is one of its members, who reads its roster by membership as
-    /// its room turns do. Membership never widens the credential: one whose
-    /// records leave the room out, or a caller whose locality keeps it here,
-    /// reads it as missing.
+    /// its room turns do. Membership never widens the credential: one
+    /// narrowed on any read axis or whose records leave the room out, or a
+    /// caller whose locality keeps it here, reads it as missing.
     pub fn room_audience_members_under(
         &self,
         read: &crate::claim::ScopedRead<'_>,

@@ -279,7 +279,7 @@ fn owner_session_flag_is_the_only_supervision_path() -> Result<()> {
     Ok(())
 }
 
-/// F16 (S-F8): a caller that reads the whole vault resolves a voice roster as
+/// F16 (S-F8): the owner's own unnarrowed read resolves a voice roster as
 /// the unscoped resolver does, a subject with no entity row of its own
 /// included. A roster's segments carry no record scope, so for any other
 /// caller it is the one unresolved entry a missing roster gives.

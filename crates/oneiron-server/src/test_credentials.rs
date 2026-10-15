@@ -59,6 +59,14 @@ pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, 
                 .collect::<BTreeSet<_>>(),
         );
     }
+    if let Some(bands) = fields.get("bands") {
+        scope.bands = ScopeAxis::Some(
+            bands
+                .split(',')
+                .map(|band| band.trim().parse().expect("credential recipe band"))
+                .collect(),
+        );
+    }
     let cache = format!("test:api:slip:{}", hex(&id));
     if let Some(bytes) = server.vault().sync_state_get(&cache).unwrap() {
         let slip = CapabilitySlip::from_token(std::str::from_utf8(&bytes).unwrap()).unwrap();

@@ -24,7 +24,8 @@ use crate::error::ApiError;
 /// Every contact the set names is one `read`, the caller's own read, reads:
 /// one it cannot read resolves as a missing one does, so a narrowed caller
 /// learns no contact's existence, status, label or id by naming it. A voice
-/// roster resolves only for a caller that reads the whole vault.
+/// roster's segments carry no record scope, so it resolves only for the
+/// owner's own unnarrowed read (`ScopedRead::is_unnarrowed_owner`).
 pub(crate) fn resolve_core_interlocutor_set(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
@@ -150,7 +151,7 @@ pub(crate) fn resolve_core_interlocutor_set(
         parties,
         voice_session_ref,
     };
-    let read_rosters = read.reads_whole_vault();
+    let read_rosters = read.is_unnarrowed_owner();
     vault
         .resolve_interlocutors_under(&input, read, read_rosters)
         .map(Some)

@@ -298,3 +298,49 @@ fn a_lifecycle_rider_names_no_retraction_its_reader_cannot_read() -> crate::Resu
     );
     Ok(())
 }
+
+/// F16 round 4 (Sol F1 = Astra F1): a claim's lifecycle rider holds every
+/// condition of its reader's read but the claim's status. A retraction of a
+/// claim private to one principal rides to that principal alone; to another
+/// reader it is no change, as for a missing row.
+#[test]
+fn a_lifecycle_rider_names_no_retraction_of_a_claim_its_reader_cannot_read() -> crate::Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let subject = id(0x32);
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"subject",
+    )?;
+    let claim = id(0x33);
+    let mut body = crate::claim::ClaimBody::new(
+        "profile.orchid",
+        crate::claim::ClaimSubject::Entity(subject),
+        rmpv::Value::from("prefers orchids"),
+        1.0,
+        crate::claim::ClaimApprovalStatus::Approved,
+        crate::claim::ClaimLifecycleStatus::Retracted,
+    )?;
+    body.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("principal"),
+        rmpv::Value::Binary(id(9).as_bytes().to_vec()),
+    )]));
+    vault.put_claim(&claim, &body, crate::TimeRange { start: 1, end: 1 }, 1)?;
+    let mut session = SessionReadSet::default();
+    session.served(claim.to_hex(), ServedLifecycle::Active);
+    crate::test_util::authorize_readers(&vault, &[&id(7).to_hex(), &id(9).to_hex()]);
+    let rows = |actor: u8| {
+        let read =
+            vault.scoped_read(crate::claim::ScopedReadActorKey::new(id(actor).to_hex()).unwrap());
+        session.refresh(&read, 16).map(|line| line.rows)
+    };
+    assert_eq!(rows(9)?, vec![(claim.to_hex(), ServedLifecycle::Retracted)]);
+    assert_eq!(
+        rows(7)?,
+        Vec::new(),
+        "another principal's reader learns no retraction"
+    );
+    Ok(())
+}

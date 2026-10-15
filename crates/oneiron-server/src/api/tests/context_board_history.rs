@@ -831,58 +831,55 @@ async fn a_board_delivers_no_notification_its_reader_cannot_read() {
     );
 }
 
-/// F16 (S-F1): a narrowed board's session prefix counts and dates no row its
-/// reader cannot read: a hidden row moves none of it. The owner's own
-/// credential reads the whole vault and still gets its counts and latest
-/// activity; the host root does not, since a policy grant can narrow it.
+/// F16 (S-F1, round 4): a board's session prefix counts and dates no row
+/// for any key. The vault's counts span rows no key reads all of (another
+/// principal's claims), so a narrowed reader, the host root and the owner's
+/// own credential all read `{}` and `null`, and a hidden row moves neither.
 #[tokio::test]
-async fn a_narrowed_board_counts_and_dates_no_row_it_cannot_read() {
+async fn a_board_counts_and_dates_nothing_for_any_key() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
     });
     let principal = seeded_test_entity_id(0x2516_0111);
     restrict_principal_read_types(&server, principal, &[oneiron::registry::ENTITY_TYPE_TURN]);
-    let session = || async {
-        let (status, board) =
-            route_json(server.clone(), hydrate(principal, "core:read", &json!({}))).await;
-        assert_eq!(status, StatusCode::OK, "{board:#}");
-        board["session"].clone()
+    let owner = test_bearer(&format!(
+        "principal_ref={};actor_class=human",
+        server.vault.ensure_embedded_owner_actor().unwrap().to_hex()
+    ));
+    let sessions = || async {
+        let mut sessions = Vec::new();
+        for bearer in [
+            test_bearer(&format!(
+                "scope=core:read;principal_ref={}",
+                principal.to_hex()
+            )),
+            owner_bearer(),
+            owner.clone(),
+        ] {
+            let (status, board) = route_json(
+                server.clone(),
+                core_request_with_authz("POST", "/v1/core/context-board", bearer, Some(&json!({}))),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{board:#}");
+            assert_eq!(board["session"]["counts"], json!({}), "{board:#}");
+            assert!(board["session"]["last_activity"].is_null(), "{board:#}");
+            sessions.push(board["session"].clone());
+        }
+        sessions
     };
-    let before = session().await;
+    let before = sessions().await;
     put_person(
         &server,
         seeded_test_entity_id(0x2516_0112),
         "hidden counted person",
     );
     assert_eq!(
-        session().await,
+        sessions().await,
         before,
         "a hidden row moves no count or date"
     );
-
-    let board = |bearer: String| {
-        route_json(
-            server.clone(),
-            core_request_with_authz("POST", "/v1/core/context-board", bearer, Some(&json!({}))),
-        )
-    };
-    let (status, host) = board(owner_bearer()).await;
-    assert_eq!(status, StatusCode::OK, "{host:#}");
-    assert_eq!(host["session"]["counts"], json!({}), "{host:#}");
-    assert!(host["session"]["last_activity"].is_null(), "{host:#}");
-    let (status, board) = board(test_bearer(&format!(
-        "principal_ref={};actor_class=human",
-        server.vault.ensure_embedded_owner_actor().unwrap().to_hex()
-    )))
-    .await;
-    assert_eq!(status, StatusCode::OK, "{board:#}");
-    let people = oneiron::registry::ENTITY_TYPE_PERSON.to_string();
-    assert!(
-        board["session"]["counts"][people].as_u64().unwrap_or(0) >= 1,
-        "{board:#}"
-    );
-    assert!(board["session"]["last_activity"].is_u64(), "{board:#}");
 }
 
 /// F16 (A-F6): a keyed board's replay re-admits the notifications it

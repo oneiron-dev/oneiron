@@ -1531,27 +1531,36 @@ async fn a_keyed_board_replays_no_capability_its_reader_no_longer_reads() {
     assert!(!refused.contains(&skill.to_hex()), "{refused}");
 }
 
-/// F16 round 3 (Astra F5): a rider that counts outcomes past its cap names
-/// none of them, so a replay could re-admit none of them: its keyed board
-/// never replays, even while every outcome still reads.
+/// F16 rounds 3 and 4 (Astra F5): a rider that counts outcomes past its cap
+/// keeps the rows it counted. Its keyed board replays while each of them
+/// still reads, so a lost response loses no outcome, and is refused once a
+/// row it only counted no longer reads.
 #[tokio::test]
-async fn a_keyed_board_whose_rider_overflowed_never_replays() {
+async fn a_keyed_board_replays_no_count_of_a_row_its_reader_no_longer_reads() {
+    use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
     let (_dir, server) = auth_test_server();
     let agent = seeded_test_entity_id(0x2516_0441);
-    for outcome in 0..17 {
-        server
-            .vault
-            .park_run_proposal_for_test(
-                "rider-overflow",
-                agent,
-                oneiron::EntityId::now(),
-                format!("outcome {outcome}"),
-            )
-            .unwrap();
-    }
+    let own: Vec<_> = (0..17)
+        .map(|outcome| {
+            server
+                .vault
+                .park_run_proposal_for_test(
+                    "rider-overflow",
+                    agent,
+                    oneiron::EntityId::now(),
+                    format!("outcome {outcome}"),
+                )
+                .unwrap()
+        })
+        .collect();
     assert!(agent_board(&server, agent, "overflow").await.is_empty());
     settle_run(&server, "rider-overflow", "decline").await;
     let turn = put_authored_turn(&server, agent);
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        agent,
+        &[ENTITY_TYPE_TURN, ENTITY_TYPE_CLAIM],
+    );
     let keyed = || {
         route_json(
             server.clone(),
@@ -1560,10 +1569,18 @@ async fn a_keyed_board_whose_rider_overflowed_never_replays() {
     };
     let (status, first) = keyed().await;
     assert_eq!(status, StatusCode::OK, "{first:#}");
-    assert!(
-        first["changed"].to_string().contains("changed: +"),
-        "{first:#}"
-    );
+    let changed = first["changed"].to_string();
+    assert!(changed.contains("changed: +"), "{first:#}");
+    let counted: Vec<_> = own
+        .iter()
+        .filter(|id| !changed.contains(&id.to_hex()))
+        .collect();
+    assert!(!counted.is_empty(), "{first:#}");
+    let (status, again) = keyed().await;
+    assert_eq!(status, StatusCode::OK, "{again:#}");
+    assert_eq!(again, first);
+
+    assert!(server.vault.delete_entity(counted[0]).unwrap());
     let (status, refused) = keyed().await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused:#}");
     assert!(

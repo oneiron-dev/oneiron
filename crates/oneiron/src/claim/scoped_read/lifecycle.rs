@@ -53,6 +53,16 @@ impl ScopedRead<'_> {
                 ) {
                     return Ok(None);
                 }
+                // Every other condition of this read holds too: relationship
+                // grants, the credential's caveats and a principal audience,
+                // with only the claim's status waived, so a closed claim the
+                // reader still reads tells its state and no other one does.
+                if !self
+                    .recorded_lane()?
+                    .is_entity_readable_with_policy_in(&txn, &policy, id)?
+                {
+                    return Ok(None);
+                }
                 claim.lifecycle
             }
             ENTITY_TYPE_SKILL => {

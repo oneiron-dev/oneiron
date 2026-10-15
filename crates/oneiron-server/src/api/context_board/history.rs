@@ -133,15 +133,12 @@ pub(crate) async fn board_turn_idempotency(
 /// as on the board's read-back, and every other row it named (each
 /// notification, rider outcome, connector key, lifecycle row and pack
 /// source, kept beside it as `admit`) is one the caller's read still reads
-/// (409 `board_document_unreadable` otherwise). A board kept without those
-/// rows, because it was kept before they were or its rider counted rows it
-/// did not name, never replays.
-/// Session counts and activity name no row to re-admit: a board carrying
-/// them replays only on this device, to a caller whose read still reads the
-/// whole vault. Off this device it goes out only while every row it was
-/// derived from (`rows`, listed when it was cached) may leave this device
-/// and it names no row a device-local world keeps now. A refused replay
-/// records nothing again; the turn's recorded board still reads back.
+/// (409 `board_document_unreadable` otherwise). A board kept before those
+/// rows were never replays.
+/// Off this device it goes out only while every row it was derived from
+/// (`rows`, listed when it was cached) may leave this device, and it names
+/// no row a device-local world keeps now. A refused replay records nothing
+/// again.
 fn release_board_replay(
     server: &SyncServer,
     auth: Option<&CoreAuth>,
@@ -153,8 +150,6 @@ fn release_board_replay(
         memories: Option<Rows>,
         #[serde(default)]
         pack: Option<Pack>,
-        #[serde(default)]
-        session: Option<Session>,
     }
     #[derive(Deserialize)]
     struct Rows {
@@ -168,13 +163,6 @@ fn release_board_replay(
     #[derive(Deserialize)]
     struct Row {
         id: String,
-    }
-    #[derive(Deserialize)]
-    struct Session {
-        #[serde(default)]
-        counts: BTreeMap<String, serde::de::IgnoredAny>,
-        #[serde(default)]
-        last_activity: Option<u64>,
     }
     let auth = auth.ok_or_else(ApiError::unauthorized)?;
     let refused = || ApiError::invalid_state(Some("board_document_unreadable"));
@@ -202,10 +190,6 @@ fn release_board_replay(
         return Err(refused());
     }
     let disclosed: Disclosed = serde_json::from_slice(replay.body).map_err(|_| unreadable())?;
-    let counted = disclosed
-        .session
-        .as_ref()
-        .is_some_and(|session| !session.counts.is_empty() || session.last_activity.is_some());
     let documents = disclosed
         .memories
         .into_iter()
@@ -220,12 +204,6 @@ fn release_board_replay(
         .collect::<Result<BTreeSet<_>, _>>()
         .map_err(|_| unreadable())?;
     let (read, disclosure) = current_board_authority(&server.vault, auth)?;
-    if counted
-        && (auth.locality() != oneiron::claim::CallerLocality::OnDevice
-            || !read.reads_whole_vault())
-    {
-        return Err(refused());
-    }
     let admitted = server
         .vault
         .board_documents_admitted(&documents, &read, disclosure.as_ref())

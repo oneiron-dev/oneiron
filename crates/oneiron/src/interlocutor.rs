@@ -486,9 +486,9 @@ impl Vault {
     /// pair that finds it stays the caller's own unknown label. Denial reads
     /// as absence, so no status, label or id tells them apart. A voice
     /// roster's segments carry no record scope of their own, so a roster
-    /// resolves only when `read_rosters`, for a caller that reads the whole
-    /// vault; any other caller gets the one unresolved entry a missing
-    /// roster gives.
+    /// resolves only when `read_rosters`, for the owner's own unnarrowed read
+    /// (`ScopedRead::is_unnarrowed_owner`); any other caller gets the one
+    /// unresolved entry a missing roster gives.
     pub fn resolve_interlocutors_under(
         &self,
         input: &InterlocutorResolutionInput,
