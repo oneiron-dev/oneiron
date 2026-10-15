@@ -2575,19 +2575,19 @@ fn expression_preference_fixture() -> (tempfile::TempDir, Vault, EntityId, Write
             b"subject",
         )
         .expect("seed expression preference subject");
-    let human = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
+    // The human is the vault's owner, who may override an agent (H149).
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let human = WriteActor::new(owner, EdgeActorClass::Human);
     let agent = WriteActor::new(EntityId::now(), EdgeActorClass::Agent);
-    for actor in [&human, &agent] {
-        vault
-            .put_entity(
-                &actor.entity_ref(),
-                crate::registry::ENTITY_TYPE_PERSON,
-                TimeRange { start: 1, end: 1 },
-                1,
-                b"actor",
-            )
-            .expect("seed write actor");
-    }
+    vault
+        .put_entity(
+            &agent.entity_ref(),
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"actor",
+        )
+        .expect("seed write actor");
     (temp, vault, subject, human, agent)
 }
 
@@ -2869,12 +2869,55 @@ fn expression_preference_retract_refuses_non_author_agent() -> Result<()> {
 fn expression_preference_retract_admits_human_owner_actor() -> Result<()> {
     let (_temp, vault, subject, human, agent) = expression_preference_fixture();
     let claim_id = seed_agent_expression_preference(&vault, &agent, subject)?;
-    // No authority root is folded in this vault, so owner verbs keep the
-    // store-truth check only.
+    // No authority root is folded in this vault, so its embedded owner holds
+    // the owner verbs.
     vault.retract_expression_preference(&human, &claim_id, 3)?;
     assert_eq!(
         vault.get_claim(&claim_id)?.expect("claim").lifecycle,
         ClaimLifecycleStatus::Retracted
+    );
+    Ok(())
+}
+
+/// H149: on a vault with no authority root, a PERSON that names itself
+/// human is not the owner. It neither retracts another actor's preference nor
+/// replaces it with an explicit one.
+#[test]
+fn expression_preference_override_refuses_a_human_who_is_not_the_owner() -> Result<()> {
+    let (_temp, vault, subject, _owner, agent) = expression_preference_fixture();
+    let claim_id = seed_agent_expression_preference(&vault, &agent, subject)?;
+    let persona = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
+    vault.put_entity(
+        &persona.entity_ref(),
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"human",
+    )?;
+    assert_matches!(
+        vault.retract_expression_preference(&persona, &claim_id, 3),
+        Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. }))
+    );
+    let replaced = vault.set_expression_preference(
+        &persona,
+        EntityId::now(),
+        ExpressionPreferenceChange {
+            subject,
+            value: ExpressionPreferenceValue::Language("en-US".to_owned()),
+            origin: ExpressionPreferenceOrigin::ExplicitUser,
+            valid_from: 3,
+        },
+        TimeRange { start: 3, end: 3 },
+        3,
+    );
+    assert_matches!(
+        replaced,
+        Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. }))
+    );
+    assert_eq!(
+        vault.get_claim(&claim_id)?.expect("claim").lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the agent's preference stands"
     );
     Ok(())
 }
@@ -3896,7 +3939,6 @@ fn the_typed_memory_door_still_refuses_an_agent_explicit_user_write() {
 #[test]
 fn facade_retract_still_closes_an_ordinary_claim() -> Result<()> {
     let (_temp, vault, subject, human, _agent) = expression_preference_fixture();
-    crate::test_util::bind_test_owner(&vault, human.entity_ref());
     let ordinary = guard_claim(&vault, &subject, "osaka", 2);
     let facade = vault.memory(human.entity_ref(), EdgeActorClass::Human);
 

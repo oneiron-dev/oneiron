@@ -55,21 +55,14 @@ pub fn record_review_outcome(
                 "review changed during outcome admission",
             ));
         }
+        // The owner check every owner verb takes, rooted or not (H149).
+        if actor.actor_class() != crate::EdgeActorClass::Human
+            || crate::memory::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref())
+                .is_err()
         {
-            let fold = vault.authority_fold_readonly_in_txn(txn)?;
-            if actor.actor_class() != crate::EdgeActorClass::Human
-                || fold.vault_root_is_conflicted()
-                || (fold.vault_id.is_some()
-                    && !crate::authority::actor_binding_is_active(
-                        &fold,
-                        &actor.entity_ref(),
-                        "human",
-                    ))
-            {
-                return Err(invalid_critic_config(
-                    "owner verdict requires an active human owner",
-                ));
-            }
+            return Err(invalid_critic_config(
+                "owner verdict requires an active human owner",
+            ));
         }
         let predicate = critic_reliability_predicate(&artifact.domain, &artifact.lens_id)?;
         let mut reliability = CriticReliability::prior(&artifact.lens_id, &artifact.domain)?;

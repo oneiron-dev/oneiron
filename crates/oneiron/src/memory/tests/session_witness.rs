@@ -746,7 +746,7 @@ fn session_witness_turn_carries_the_mint_contract() {
 fn promoted_session_turn_lands_with_speaker_and_conversation_binding() {
     let (_dir, vault) = open_vault();
     let proof = crate::test_util::embedded_owner_proof(&vault);
-    let (session, actor) = session_owner_fixture(&vault, "sess-witness-promote-stamp");
+    let (session, actor) = session_witness_fixture(&vault, "sess-witness-promote-stamp", 0x5E);
     let facade = facade_for(&vault, actor);
 
     let receipt = facade
@@ -779,8 +779,9 @@ fn promoted_session_turn_lands_with_speaker_and_conversation_binding() {
         "the closure replays shell + turn + message"
     );
 
-    // Base now holds the turn with exactly the minted body —
-    let turn = facade
+    // Base now holds the turn with exactly the minted body, the speaker's and
+    // not the promoting owner's, as the owner reads it —
+    let turn = facade_for(&vault, put_owner(&vault))
         .get_entity(&turn_id.to_hex())
         .expect("get promoted turn")
         .value
