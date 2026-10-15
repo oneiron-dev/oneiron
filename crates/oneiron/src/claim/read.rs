@@ -86,6 +86,40 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<ClaimBody>> {
+        self.claim_in_txn(
+            rtxn,
+            id,
+            super::history_projection::resolved_machine_history,
+        )
+    }
+
+    /// [`Vault::get_claim_in_txn`] for a door that only restricts the claim:
+    /// a MACHINE claim's history folds with its carriers held or not, and
+    /// the door's own staging and live-row guard keep any approval from
+    /// projecting. Never for a read that could project or approve.
+    pub(crate) fn claim_for_restriction_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<ClaimBody>> {
+        self.claim_in_txn(
+            rtxn,
+            id,
+            super::history_projection::machine_history_for_restriction,
+        )
+    }
+
+    fn claim_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        history: fn(
+            &crate::store::Store,
+            &heed::RoTxn<'_>,
+            &crate::authority::AuthorityFold,
+            EntityId,
+        ) -> Result<super::transition::ClaimTransitionProjection>,
+    ) -> Result<Option<ClaimBody>> {
         let body = crate::ports::ClaimStore::port_claim_get(self, rtxn, id)?;
         let Some(body) = body else { return Ok(None) };
         if crate::authority::machine_claim_needs_history(&self.store, rtxn, &body)?
@@ -98,8 +132,7 @@ impl Vault {
                 .is_some()
         {
             let fold = self.authority_fold_readonly_in_txn(rtxn)?;
-            let projection =
-                super::history_projection::resolved_machine_history(&self.store, rtxn, &fold, *id)?;
+            let projection = history(&self.store, rtxn, &fold, *id)?;
             // A superseded history's same-id successor is an ordinary claim.
             if !projection.admits_successor_by(crate::memory::claim_author(&body))
                 || crate::authority::machine_claim_needs_history(&self.store, rtxn, &body)?

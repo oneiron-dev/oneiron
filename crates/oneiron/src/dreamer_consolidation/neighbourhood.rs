@@ -560,9 +560,11 @@ impl Vault {
         let actor = crate::claim::ScopedReadActorKey::new(principal.to_hex())
             .ok_or(crate::Error::InvariantViolation("reader fixture actor"))?;
         let read = self.scoped_read(actor);
-        Ok(newest_claims(self, &txn, &read, subject, &Scope::default(), None)?
-            .into_iter()
-            .map(|(known, _)| known.id)
-            .collect())
+        Ok(
+            newest_claims(self, &txn, &read, subject, &Scope::default(), None)?
+                .into_iter()
+                .map(|(known, _)| known.id)
+                .collect(),
+        )
     }
 }

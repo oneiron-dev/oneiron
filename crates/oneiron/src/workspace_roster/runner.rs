@@ -44,7 +44,7 @@ impl Vault {
     ) -> Result<Option<MemberOnboardingOutcome>> {
         intent.validate()?;
         if intent.delegated_mailbox.is_some() {
-            require_mailbox_owner(&intent, mailbox_owner)?;
+            require_mailbox_owner(self, &intent, mailbox_owner)?;
         }
         require_workspace_authority(
             self,
@@ -151,7 +151,7 @@ impl Vault {
             MemberOnboardingStep::MailboxBound => match &intent.delegated_mailbox {
                 Some(mailbox) => {
                     bind_delegated_mailbox(self, intent, mailbox, writer)?;
-                    let owner = require_mailbox_owner(intent, mailbox_owner)?;
+                    let owner = require_mailbox_owner(self, intent, mailbox_owner)?;
                     self.apply_channel_identity_autonomy(&mailbox.autonomy, owner)?;
                     self.verify_channel_identity_autonomy(&mailbox.autonomy, owner)?;
                     Ok(())

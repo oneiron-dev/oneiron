@@ -158,7 +158,9 @@ impl Vault {
         now: u64,
     ) -> Result<AccessRequest> {
         let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
+        // A grant is the vault's to give: a native host's proof shows a live
+        // person, not whose vault this is.
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let row = REQUESTS
             .get(&self.store, &txn, &id)?
             .ok_or(Error::EntityNotFound)?;
@@ -171,7 +173,7 @@ impl Vault {
         } else {
             AccessRequestStatus::Denied
         };
-        request.decided_by = Some(owner.actor());
+        request.decided_by = Some(actor);
         request.decided_at = Some(now);
         if approve {
             if crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?.is_some() {
@@ -197,14 +199,7 @@ mod tests {
     #[test]
     fn request_approve_and_deny_are_durable_terminal_and_atomic() -> Result<()> {
         let (_dir, vault) = open_test_vault_with(embedding_test_config());
-        let actor = entity(0x51);
-        vault.put_entity(
-            &actor,
-            crate::registry::ENTITY_TYPE_PERSON,
-            crate::TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )?;
+        let actor = vault.ensure_embedded_owner_actor().expect("the owner");
         let owner = vault.authenticate_owner(
             actor,
             "principal:owner",
@@ -253,6 +248,63 @@ mod tests {
                     .is_err()
             );
         }
+        Ok(())
+    }
+
+    /// Astra r1 on #1458: a native host's proof shows a live person, not
+    /// whose vault this is. A person who does not own it answers no request.
+    #[test]
+    fn a_non_owner_persons_proof_answers_no_access_request() -> Result<()> {
+        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        let person = entity(0x54);
+        vault.put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            b"a member",
+        )?;
+        let id = EntityId::now();
+        let grant = AccessGrant {
+            principal_ref: person,
+            scope: AccessGrantScope::Messages {
+                space_ref: entity(0x53),
+            },
+            capability: super::super::AccessGrantCapability::MessagesRead,
+            status: AccessGrantStatus::Active,
+            created_at: 1,
+            revoked_at: None,
+            expires_at: None,
+            authority_scope: crate::federation::scope_codec::read_preset(),
+        };
+        vault.request_access(id, grant.clone())?;
+        let proof = vault.authenticate_owner(
+            person,
+            &person.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )?;
+
+        assert!(matches!(
+            vault.respond_access_request(&proof, id, true, 2),
+            Err(Error::Gate(
+                crate::error::GateError::ConsentOwnerNotAuthenticated(_)
+            ))
+        ));
+        assert!(vault.get_access_grant(&id)?.is_none());
+        assert_eq!(
+            vault.get_access_request(id)?.map(|request| request.status),
+            Some(AccessRequestStatus::Pending)
+        );
+        let owner = vault.ensure_embedded_owner_actor().expect("the owner");
+        let owner = vault.authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )?;
+        vault.respond_access_request(&owner, id, true, 2)?;
+        assert_eq!(vault.get_access_grant(&id)?, Some(grant));
         Ok(())
     }
 }

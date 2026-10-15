@@ -36,6 +36,7 @@ mod hosted_tts_policy;
 mod input;
 pub(crate) mod mail_policy;
 mod operational_policy;
+mod owner_answer;
 mod owner_policy_mutation;
 mod pack_install_policy;
 mod policy_upgrade;
@@ -87,9 +88,8 @@ pub use self::confirm::{
     GATE_REASON_CRITICAL_CONFIRM_DECLINED, GATE_REASON_CRITICAL_CONFIRM_TIMEOUT,
 };
 pub(crate) use self::confirm::{
-    GATE_REASON_PENDING_CRITICAL_CONFIRM_CARRIED, claim_critical_confirm_settled_in_txn,
-    critical_write_confirm_binding, pending_row_holds_critical_confirm,
-    reconcile_critical_write_confirm_on_replicated_overwrite,
+    claim_critical_confirm_settled_in_txn, critical_write_confirm_binding,
+    pending_row_holds_critical_confirm, reconcile_critical_write_confirm_on_replicated_overwrite,
 };
 pub(crate) use self::connector_admission::ConnectorAdmissionQuotas;
 pub(crate) use self::consolidation_readers::{
@@ -155,7 +155,7 @@ pub(crate) use self::effect::{
     check_external_effect_policy_pair, counterparty_send_override_in_txn,
     evaluate_external_effect_policy, external_effect_approval_digest,
     hydrate_external_effect_contact, native_mail_cold_approval_digest,
-    record_external_effect_policy,
+    record_external_effect_policy, record_held_external_effect_policy,
 };
 pub(crate) use self::grants::{
     PolicyScopedGrant, companion_profile_access_grant, scoped_read_claim_allowed,
@@ -169,6 +169,9 @@ pub(crate) use self::input::{
 };
 pub(crate) use self::operational_policy::{
     LinearMirrorPolicy, LinearSyncBudget, WaveHandoffPolicy,
+};
+pub(crate) use self::owner_answer::{
+    OwnerAnswer, close_owner_answer_obligation_in_txn, show_owner_answer_item_in_txn,
 };
 pub(crate) use self::owner_policy_mutation::apply_owner_policy_row_change_in_txn;
 pub use self::owner_policy_mutation::{

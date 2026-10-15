@@ -62,7 +62,7 @@ pub(crate) fn guard_batch_identity_delete_in_txn(
                 .any(|source| fold.current_event.get(source) == Some(&event.event_id))
             && (*id == *survivor
                 || sources.contains(id)
-                || super::effective_author_in_txn(store, rtxn, event.event_id)?
+                || super::admitted_author_in_txn(store, rtxn, event.event_id)?
                     .is_some_and(|actor| actor.entity_ref() == *id))
         {
             return Err(Error::Sync(

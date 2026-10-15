@@ -160,7 +160,11 @@ impl<F: Fn(&DocsSegment) -> Result<()>> DocsDeepExtractor for CallbackNer<F> {
 fn trust_imported_claims(vault: &crate::Vault) -> Result<()> {
     use rmpv::Value;
     let id = crate::gate::default_policy_manifest_id()?;
-    let bytes = vault.get(&id)?.ok_or(crate::Error::EntityNotFound)?;
+    // A legacy test vault stores no manifest and reads the shipped one.
+    let bytes = match vault.get(&id)? {
+        Some(bytes) => bytes,
+        None => crate::gate::default_policy_manifest_with_scoped_grants(Vec::new())?,
+    };
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice())
         .map_err(|_| crate::Error::InvalidClaimBody("policy manifest"))?
     else {
@@ -826,8 +830,30 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
     use std::collections::BTreeSet;
 
     let (_dir, vault, owner, first_doc, ceiling, first_import) = deep_fixture()?;
-    trust_imported_claims(&vault)?;
     let first_project = first_doc.project_id;
+    // No derived claim lands `Auto` without the owner's word, and a vault
+    // with no stored manifest parks none in the tray: the fixture stands in
+    // for the owner's approval of each, at its own times, so it reads as a
+    // live fact. A Proposed one is not queryable.
+    let approve = |ids: &BTreeSet<EntityId>| -> Result<()> {
+        for id in ids {
+            let raw = vault.get_raw(id)?.ok_or(crate::Error::EntityNotFound)?;
+            let header = crate::batch::EntityMetadataHeader::parse(&raw)
+                .ok_or(crate::Error::CorruptedIndex("entity header"))?;
+            let mut body = vault.get_claim(id)?.ok_or(crate::Error::EntityNotFound)?;
+            body.approval = ClaimApprovalStatus::Approved;
+            vault.put_claim(
+                id,
+                &body,
+                TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                header.learned_at,
+            )?;
+        }
+        Ok(())
+    };
     let first_asset = EntityId::from_hex(&first_import.asset_refs[0])?;
     let first = vault.deep_ingest_docs_asset(
         &owner,
@@ -841,6 +867,7 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
         .iter()
         .map(|id| EntityId::from_hex(id))
         .collect::<Result<_>>()?;
+    approve(&first_ids)?;
 
     let mut second_doc = first_doc;
     second_doc.corpus_id = "second-corpus".into();
@@ -860,6 +887,7 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
         .iter()
         .map(|id| EntityId::from_hex(id))
         .collect::<Result<_>>()?;
+    approve(&second_ids)?;
     assert_eq!(first_ids.len(), 2);
     assert_eq!(second_ids.len(), 2);
 

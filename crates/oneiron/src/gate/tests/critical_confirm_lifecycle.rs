@@ -327,10 +327,12 @@ fn rematerialized_critical_claim_overwrite_invalidates_attachment_and_rejects_st
     )?;
     doc.commit();
     forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
-    assert!(
-        vault
-            .with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?
-            .is_none(),
+    let reopened = vault
+        .with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?
+        .expect("the owner's item for the changed revision");
+    assert_ne!(
+        critical_write_confirm_binding(&reopened)?.confirm_id,
+        binding.confirm_id,
         "changed replay must atomically invalidate the persisted attachment"
     );
     assert_eq!(
@@ -365,6 +367,11 @@ fn rematerialized_critical_claim_overwrite_invalidates_attachment_and_rejects_st
         vault.get_claim(&claim)?.expect("changed claim").approval,
         ClaimApprovalStatus::Proposed
     );
+    assert_eq!(
+        vault.with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?,
+        Some(reopened),
+        "a stale Clear leaves the owner's item for the changed revision"
+    );
     Ok(())
 }
 
@@ -390,10 +397,14 @@ fn replicated_critical_claim_overwrite_invalidates_attachment_before_stale_clear
             &replacement_data,
         )
         .commit()?;
-    assert!(
-        vault
-            .with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?
-            .is_none(),
+    assert_ne!(
+        critical_write_confirm_binding(
+            &vault
+                .with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?
+                .expect("the owner's item for the replicated revision"),
+        )?
+        .confirm_id,
+        binding.confirm_id,
         "the replicated door must invalidate in its overwrite transaction"
     );
     assert!(

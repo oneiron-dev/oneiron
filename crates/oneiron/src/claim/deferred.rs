@@ -16,6 +16,13 @@ pub(super) enum DeferredAction {
     Weaken(f32),
     Stale,
 }
+impl DeferredAction {
+    /// A decay or the stale mark only restricts the claim it rewrites, so it
+    /// settles on a held machine history; every other action waits for it.
+    fn demotes_in_place(&self) -> bool {
+        matches!(self, Self::Decay(_) | Self::Stale)
+    }
+}
 #[derive(Serialize, Deserialize)]
 pub(super) struct DeferredClaim {
     pub(super) action: DeferredAction,
@@ -33,6 +40,16 @@ pub(super) fn body_hash(body: &ClaimBody) -> Result<[u8; 32]> {
     body.approval = ClaimApprovalStatus::Proposed;
     Ok(*blake3::hash(&encode_claim_body(&body)?).as_bytes())
 }
+/// Whether a destructive action is parked on `id`, behind the confirm its tray
+/// row shows.
+pub(crate) fn claim_has_deferred_action_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(DEFERRED.get(store, txn, id)?.is_some())
+}
+
 pub(super) fn load(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -117,6 +134,14 @@ impl Vault {
     ) -> Result<bool> {
         Ok(load(self, txn, id)?
             .is_some_and(|row| matches!(row.action, DeferredAction::Supersede { .. })))
+    }
+    /// A parked decay or stale mark: a restriction written in place.
+    pub(crate) fn deferred_claim_is_in_place_demotion_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        Ok(load(self, txn, id)?.is_some_and(|row| row.action.demotes_in_place()))
     }
     pub(crate) fn cancel_deferred_claim_in_txn(
         &self,
@@ -204,6 +229,8 @@ impl Vault {
         precheck: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
         then: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
+        // Read on the calling thread: a grouped commit may run the closure elsewhere.
+        let auto_write_rate = crate::own_rate::auto_write_rate();
         let decision = self.with_write_txn_grouped(|txn| {
             precheck(txn)?;
             let proposal = load(self, txn, id)?.ok_or(Error::EntityNotFound)?;
@@ -216,10 +243,21 @@ impl Vault {
                 .get_claim_in_txn(txn, id)?
                 .ok_or(Error::EntityNotFound)?;
             let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+            let parked = self.store.pending_gate_consent_in_txn(txn, id)?;
+            // The Dreamer actor that parked this replacement, from the parking
+            // decision it wrote; `None` for anything a Dreamer run did not park.
+            let dreamer_writer = match parked.as_ref() {
+                Some(pending) if pending.dreamer_run_id.is_some() => self
+                    .store
+                    .gate_decision_in_txn(txn, pending.decision_id)?
+                    .and_then(|record| record.actor_ref)
+                    .and_then(|actor| EntityId::from_hex(&actor).ok()),
+                _ => None,
+            };
             if proposal.body_hash != body_hash(&body)?
                 || proposal.frontier != policy.read_frontier_hash()?
                 || old_hash != body_hash(&prior)?
-                || self.store.pending_gate_consent_in_txn(txn, id)?.is_none()
+                || parked.is_none()
             {
                 return Err(Error::Gate(crate::error::GateError::GateConsentStale {
                     claim_id: *id,
@@ -236,6 +274,21 @@ impl Vault {
             )?;
             let closure_decision =
                 self.complete_deferred_claim_with_checker_in_txn(txn, id, false, now, checker)?;
+            // A Dreamer replacement granted Auto is an Auto write like any the
+            // Dreamer lands, through whichever door granted it, so it counts on
+            // that actor's own-rate window. The count never holds the grant.
+            if let Some(actor) = dreamer_writer {
+                crate::own_rate::count_in_txn(
+                    &self.store,
+                    txn,
+                    crate::own_rate::OwnRateKind::AutoWrite,
+                    actor,
+                    self.store.clock.now_recorded_at(),
+                    auto_write_rate,
+                )?;
+                #[cfg(test)]
+                crate::own_rate::counted_auto_write(crate::own_rate::AutoWriteDoor::DeferredGrant);
+            }
             then(txn)?;
             Ok((decision, closure_decision))
         })?;
@@ -324,9 +377,12 @@ impl Vault {
         let Some(proposal) = load(self, txn, id)? else {
             return Ok(None);
         };
-        let body = self
-            .get_claim_in_txn(txn, id)?
-            .ok_or(Error::EntityNotFound)?;
+        let body = if proposal.action.demotes_in_place() {
+            self.claim_for_restriction_in_txn(txn, id)?
+        } else {
+            self.get_claim_in_txn(txn, id)?
+        }
+        .ok_or(Error::EntityNotFound)?;
         if proposal.body_hash != body_hash(&body)?
             || proposal.frontier
                 != crate::gate::resolve_policy_manifest(&self.store, txn)?.read_frontier_hash()?

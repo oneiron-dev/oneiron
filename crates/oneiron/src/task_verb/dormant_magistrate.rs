@@ -96,19 +96,21 @@ pub fn project_consult_task_to_a2a(
         // follow-on: the ladder half is exact, so it lifts back whole.
         TaskExecutionState::Interrupted {
             ladder: Some(terminal),
+            ..
         } => ConsultLadderState::Terminal(*terminal),
         // ONE-1699's body keeps interruption DETAIL in the referenced case, so
-        // the kind is unknown here. `consent_required` is the fail-closed
-        // reading — durably paused progress is not progress — and the invented
-        // kind is stripped from the projection below rather than guessed at.
-        TaskExecutionState::Interrupted { ladder: None } => {
-            ConsultLadderState::Interrupted(crate::consult_ladder::InterruptedState {
-                kind: crate::consult_ladder::InterruptionKind::Contested,
-                consent_required: true,
-                case_ref: task_ref,
-                interrupted_at: body.created_at,
-            })
-        }
+        // the kind is unknown here and the invented kind is stripped from the
+        // projection below rather than guessed at. `consent_required` is the
+        // persisted flag (a row from before it was persisted reads as asking).
+        TaskExecutionState::Interrupted {
+            ladder: None,
+            consent_required,
+        } => ConsultLadderState::Interrupted(crate::consult_ladder::InterruptedState {
+            kind: crate::consult_ladder::InterruptionKind::Contested,
+            consent_required: *consent_required,
+            case_ref: task_ref,
+            interrupted_at: body.created_at,
+        }),
         TaskExecutionState::Terminal(record) => match ladder_terminal_from_task_terminal(record) {
             Ok(terminal) => ConsultLadderState::Terminal(terminal),
             Err(_) => return Ok(None),

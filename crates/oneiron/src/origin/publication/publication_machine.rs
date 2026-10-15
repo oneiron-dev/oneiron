@@ -7,6 +7,7 @@ use crate::error::{Error, Result};
 use crate::git_wire::{
     GitOid, GitWire, GitWireCommitOutcome, GitWireRejection, GitWireRepo, lock_repository,
 };
+use crate::origin::scan_check::{OriginScan, ScanCount};
 
 #[cfg(test)]
 use super::publication_codec::origin_publication_id;
@@ -19,9 +20,9 @@ use super::publication_codec::{
 use super::publication_journal::validate_origin_publication_request;
 use super::publication_journal::{OriginAdvance, origin_receipt};
 use super::publication_types::{
-    ORIGIN_PUBLICATION_INTENT_PREDICATE, ORIGIN_PUBLICATION_MAX_ROWS, ORIGIN_PUBLICATION_PREDICATE,
-    OriginCensusDisposition, OriginKeepRefKind, OriginPublicationReceipt, OriginPublicationRecord,
-    OriginPublicationRequest, OriginPublicationStatus,
+    ORIGIN_PUBLICATION_INTENT_PREDICATE, ORIGIN_PUBLICATION_PREDICATE, OriginCensusDisposition,
+    OriginKeepRefKind, OriginPublicationReceipt, OriginPublicationRecord, OriginPublicationRequest,
+    OriginPublicationStatus,
 };
 // ---------------------------------------------------------------------------
 // The state machine
@@ -98,8 +99,8 @@ impl Vault {
             finished_at: None,
         };
         // Reconcile a colliding owner before creating anything for this caller.
-        // Completed Published rows retain the consumed triple after T2 removes
-        // the in-flight index. A different provenance is not a second effect.
+        // A Published owner keeps the consumed triple's CAS row for good (T2):
+        // a different provenance is not a second effect.
         let intent_key = CasIntentKey::new(&record);
         let owner = {
             let rtxn = self.store.env.read_txn()?;
@@ -119,27 +120,17 @@ impl Vault {
                     request.learned_at,
                 )?;
             }
-            if self.origin_publication(owner)?.is_some_and(|row| {
-                matches!(
-                    row.status,
-                    OriginPublicationStatus::Prepared | OriginPublicationStatus::Published
-                )
-            }) {
-                return Err(Error::ConcurrentWrite("origin CAS intent already owned"));
+            match self.origin_publication(owner)?.map(|row| row.status) {
+                Some(OriginPublicationStatus::Prepared) => {
+                    return Err(Error::ConcurrentWrite("origin CAS intent already owned"));
+                }
+                Some(OriginPublicationStatus::Published) => {
+                    return Err(Error::ConcurrentWrite(
+                        "origin CAS intent already published",
+                    ));
+                }
+                _ => {}
             }
-        }
-        if self
-            .origin_publication_rows(Some(record.repo_id))?
-            .iter()
-            .any(|row| {
-                row.publication_id != publication_id
-                    && row.status == OriginPublicationStatus::Published
-                    && CasIntentKey::new(row) == intent_key
-            })
-        {
-            return Err(Error::ConcurrentWrite(
-                "origin CAS intent already published",
-            ));
         }
         // A missing tip cannot be pinned. Still commit an intent, then refuse
         // through the same terminal transaction as every other missing object.
@@ -494,7 +485,10 @@ impl Vault {
                 &terminal.publication_id,
                 &OriginPublicationRow::from_record(&terminal),
             )?;
-            CAS_INTENT.delete(&self.store, wtxn, &intent_key)?;
+            // A refused move may be tried again; a published one is consumed.
+            if terminal.status != OriginPublicationStatus::Published {
+                CAS_INTENT.delete(&self.store, wtxn, &intent_key)?;
+            }
             KEEP_OWNER.delete(&self.store, wtxn, &owner_key)?;
             Ok(terminal)
         })
@@ -640,16 +634,18 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         let _guard = lock_repository(repo.common_dir())?;
-        let owners = {
+        // Every kind's owners share the repository's prefix, and a change
+        // owner stays as long as its change: it is the root that keeps a
+        // published commit readable once no ref reaches it (RA4). So the
+        // scan reads the repository's change history, and never refuses for
+        // its length (rule 5).
+        let (owners, count) = {
             let rtxn = self.store.env.read_txn()?;
+            let mut count =
+                ScanCount::start(&self.store, &rtxn, OriginScan::KeepOwnerRows, Some(repo_id))?;
             let mut owners = Vec::new();
-            for (index, row) in KEEP_OWNER
-                .iter_from(&self.store, &rtxn, repo_id.as_bytes())?
-                .enumerate()
-            {
-                if index >= ORIGIN_PUBLICATION_MAX_ROWS {
-                    return Err(Error::IndexOverflow("origin keep owner rows"));
-                }
+            for row in KEEP_OWNER.iter_from(&self.store, &rtxn, repo_id.as_bytes())? {
+                count.row();
                 let (key, _) = row?;
                 if key.kind != OriginKeepRefKind::Publication.as_str() {
                     continue;
@@ -663,8 +659,9 @@ impl Vault {
                     owners.push((GitOid::parse_hex(&key.oid)?, key.owner_key));
                 }
             }
-            owners
+            (owners, count)
         };
+        count.finish(self);
         for (oid, owner) in owners {
             self.unpin_origin_object(
                 git,

@@ -19,7 +19,13 @@ use heed::{Env, RoTxn, RwTxn};
 
 use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, Raw, SideKey, SideTable};
-use crate::store::{Store, read_existing_vault_meta};
+use crate::store::not_an_existing_root;
+#[cfg(unix)]
+use crate::store::root_directory::{
+    FileIdentity, file_identity, make_directory, named_directory_identity, parent_or_here,
+    refuse_shared_path, refuse_shared_vault_root, remove_held_directory,
+};
+use crate::store::{Store, VaultWriterLease, read_existing_vault_meta};
 
 use super::keys::GATE_DECISION_KEY_PREFIX;
 use super::ledger::{CUSTODY_ROOT, LEDGER};
@@ -125,11 +131,43 @@ impl LiveCustody {
     }
 }
 
+/// Refuses a missing vault at `vault_dir` here, not by a later lookup, which
+/// could find a vault someone else put under the name: a sticky parent stops
+/// no one from making a new entry in it. Links are followed, so a link to a
+/// missing directory is missing too (C8 review r9).
+fn refuse_missing_vault_root(vault_dir: &Path) -> Result<()> {
+    match std::fs::metadata(vault_dir) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(not_an_existing_root(vault_dir, false))
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Admits the existing vault at `vault_dir` before anything opens it by name,
+/// as a restore admits its destination: refused when missing, and where
+/// another user could move a directory on its path.
+pub(crate) fn admit_existing_vault_root(vault_dir: &Path) -> Result<()> {
+    refuse_missing_vault_root(vault_dir)?;
+    #[cfg(unix)]
+    refuse_shared_vault_root(vault_dir)?;
+    Ok(())
+}
+
 /// The live custody state of the vault at `vault_dir`, read without opening
 /// it as a vault, through the read-only door (`read_existing_vault_meta`): a
 /// vault another process serves reads beside it, and one this process holds,
 /// under any name, is refused. A missing or unreadable vault refuses.
 pub(crate) fn read_live_custody(vault_dir: &Path) -> Result<LiveCustody> {
+    // A shared directory on the source's path is no reason to refuse: the
+    // vault opens, reads and writes there as it is, so whoever could move it
+    // could change it already. The source reports it instead.
+    refuse_missing_vault_root(vault_dir)?;
+    #[cfg(test)]
+    if let Some(callback) = BEFORE_LIVE_CUSTODY_READ.with(|slot| slot.borrow_mut().take()) {
+        callback();
+    }
     let read = read_existing_vault_meta(vault_dir, &live_custody_prefixes())?;
     LiveCustody::from_rows(&read.root, read.rows)
 }
@@ -149,18 +187,161 @@ fn vault_meta_rows(env: &Env, txn: &RoTxn<'_>, prefixes: &[&[u8]]) -> Result<Row
     Ok(rows)
 }
 
-/// The device and inode of the directory at `path`.
+/// The directory `store`'s environment was opened on, by its bound root
+/// descriptor: the same directory wherever any name of it now points.
 #[cfg(unix)]
-fn directory_identity(path: &Path) -> std::io::Result<(u64, u64)> {
-    use std::os::unix::fs::MetadataExt;
-    let metadata = std::fs::metadata(path)?;
-    Ok((metadata.dev(), metadata.ino()))
+fn opened_directory(store: &Store) -> Result<FileIdentity> {
+    let root = store
+        .owner
+        .env
+        ._bound_root_dir
+        .as_ref()
+        .ok_or(Error::InvariantViolation("vault root descriptor missing"))?;
+    Ok(file_identity(&root.metadata()?))
 }
 
 /// No directory identity here; nothing is archived to check it for.
 #[cfg(not(unix))]
-fn directory_identity(_: &Path) -> std::io::Result<()> {
+fn opened_directory(_: &Store) -> Result<()> {
     Ok(())
+}
+
+/// Whether `path` itself, not a link at it, names the directory `opened`.
+#[cfg(unix)]
+fn names(path: &Path, opened: &FileIdentity) -> Result<bool> {
+    Ok(named_directory_identity(path)?.as_ref() == Some(opened))
+}
+
+#[cfg(not(unix))]
+fn names(_: &Path, (): &()) -> Result<bool> {
+    Ok(true)
+}
+
+/// The directory a restore made for its copy, and the copy's writer lease.
+/// Each open of the copy goes by name, and is checked against the directory
+/// made: rows are written into, and a mark lifted from, only that one, never a
+/// directory moved in under its name since.
+///
+/// The lease is taken as the directory is made and held to the commit, where
+/// the copy's vault takes it over ([`MadeDestination::keep`]): no other owner
+/// opens the copy between the restore's opens. Dropped before that, after the
+/// copy's vault has closed, this removes the directory it made with
+/// everything in it, through the descriptor it holds and still under the
+/// lease. A directory moved in under the name since is left as it is, and so
+/// is one another owner leased first (review r1, both F1). Off unix, with no
+/// identity to check, it removes the destination by name, still only under
+/// the copy's lease, as main's discard did once the copy had opened; no lease
+/// is granted off unix today, so there it removes nothing.
+pub(crate) struct MadeDestination {
+    destination: PathBuf,
+    #[cfg(unix)]
+    made: std::fs::File,
+    #[cfg(unix)]
+    identity: FileIdentity,
+    lease: Option<VaultWriterLease>,
+    kept: bool,
+}
+
+impl MadeDestination {
+    /// Makes `destination`, which must not exist yet, owner-only, and takes
+    /// its writer lease. It is refused unless no other user can move an entry
+    /// on the way to it, or, for a copy that will replace the live vault at
+    /// `home`, on the way to that vault or inside it: on such a path no name
+    /// this restore makes, opens or exchanges can be changed under it.
+    pub(crate) fn make(destination: &Path, home: Option<&Path>) -> Result<Self> {
+        #[cfg(unix)]
+        let made = {
+            refuse_shared_path(parent_or_here(destination.parent().unwrap_or(destination)))?;
+            if let Some(home) = home {
+                refuse_shared_vault_root(home)?;
+            }
+            make_directory(destination)?
+        };
+        #[cfg(not(unix))]
+        {
+            let _ = home;
+            std::fs::create_dir(destination)?;
+        }
+        let mut guard = Self {
+            destination: destination.to_owned(),
+            #[cfg(unix)]
+            identity: file_identity(&made.metadata()?),
+            #[cfg(unix)]
+            made,
+            lease: None,
+            kept: false,
+        };
+        #[cfg(test)]
+        if let Some(callback) = AFTER_RESTORE_DESTINATION_MADE.with(|slot| slot.borrow_mut().take())
+        {
+            callback();
+        }
+        // Through the directory made, so nothing is locked or written in one
+        // moved in under the name (review r2, Astra F2).
+        #[cfg(unix)]
+        let lease =
+            VaultWriterLease::acquire_held(guard.made.try_clone()?, &destination.canonicalize()?)?;
+        #[cfg(not(unix))]
+        let lease = VaultWriterLease::acquire(&destination.canonicalize()?)?;
+        guard.lease = Some(lease);
+        Ok(guard)
+    }
+
+    /// The copy's writer lease, for each open of it.
+    pub(crate) fn lease(&self) -> Result<&VaultWriterLease> {
+        self.lease
+            .as_ref()
+            .ok_or_else(|| Error::InvalidConfig("a restore's copy holds no writer lease".into()))
+    }
+
+    /// Refuses unless `store` is open on the directory made.
+    pub(crate) fn holds(&self, store: &Store) -> Result<()> {
+        #[cfg(unix)]
+        if opened_directory(store)? != self.identity {
+            return Err(moved());
+        }
+        #[cfg(not(unix))]
+        let _ = store;
+        Ok(())
+    }
+
+    /// Keeps the copy, its restore committed: `copy`, its vault, takes over
+    /// the writer lease.
+    pub(crate) fn keep(mut self, copy: &mut crate::Vault) {
+        self.kept = true;
+        if let Some(lease) = self.lease.take() {
+            copy.adopt_writer_lease(lease);
+        }
+    }
+}
+
+/// A restore's copy is no longer where the restore made it.
+fn moved() -> Error {
+    Error::InvalidConfig("a restore's copy no longer sits where it was made".into())
+}
+
+impl Drop for MadeDestination {
+    fn drop(&mut self) {
+        if self.kept {
+            return;
+        }
+        // Only under its own lease: without it, the copy is another owner's,
+        // or, off unix, was never opened (review r3, Sol F3).
+        let removed = self.lease.take().is_some_and(|lease| {
+            #[cfg(unix)]
+            let removed = remove_held_directory(&self.destination, &self.made).is_ok();
+            // With no directory identity to check, the destination goes by
+            // name after the copy's vault has closed, as main's discard took
+            // it (Engine ruling on review r1's F2).
+            #[cfg(not(unix))]
+            let removed = std::fs::remove_dir_all(&self.destination).is_ok();
+            drop(lease);
+            removed
+        });
+        if !removed {
+            tracing::warn!("a refused restore left the copy it made in place");
+        }
+    }
 }
 
 /// Syncs the directory holding `path`, so a rename of `path` is on disk.
@@ -347,13 +528,14 @@ impl Store {
     /// this vault's path when it was made, takes that place through `swap`,
     /// which exchanges the two directories, and this vault is archived.
     ///
+    /// The two paths must name the two directories the handles opened, by
+    /// their bound root descriptors, or nothing is marked and nothing moves.
     /// Before the swap this vault gets the same mark, committed under the
     /// writer, and this handle is sealed before any other writer begins. So
     /// whichever of the two sits at the path is the one live vault on the
     /// custody they share, at every instant and after a crash anywhere. A
-    /// swap that fails lifts the mark again and changes nothing; one that
-    /// returns without the replacement's own directory found at this vault's
-    /// path is refused and leaves both marks as they are. Once the
+    /// swap that fails, or returns without each directory found at the
+    /// other's path, is refused and leaves both marks as they are. Once the
     /// swap is on disk, this vault is archived wherever it goes and the
     /// replacement's mark is lifted; a failure there is only logged, both
     /// marks already saying the same, and the replacement keeps its mark,
@@ -380,21 +562,31 @@ impl Store {
                 "the replacement was not restored for this vault's place".into(),
             ));
         }
-        let replacement_dir = directory_identity(replacement.env.path())?;
+        // Each path must name the directory its handle opened, before any
+        // mark: a directory moved under either name refuses, nothing changed.
+        let live_dir = opened_directory(self)?;
+        let replacement_dir = opened_directory(replacement)?;
+        let in_place =
+            names(self.env.path(), &live_dir)? && names(replacement.env.path(), &replacement_dir)?;
+        if !in_place {
+            return Err(Error::InvalidConfig(
+                "a vault directory no longer sits at its path".into(),
+            ));
+        }
         let mut wtxn = self.env.write_txn()?;
         fence(&wtxn)?;
         ARCHIVED.put(self, &mut wtxn, &(), &mark)?;
         self.env.seal();
         wtxn.commit()?;
-        if let Err(err) = swap() {
-            if let Err(lift) = self.put_archive_mark(None) {
-                tracing::warn!(error = %lift, "a failed swap left its vault marked live only where it is");
-            }
-            return Err(err.into());
-        }
-        if directory_identity(self.env.path())? != replacement_dir {
+        // A failed swap is no proof that nothing moved, and a name checked
+        // now could move before a lift commits: the mark stays, and whichever
+        // of the two sits at the path is still the one live vault.
+        swap()?;
+        let exchanged =
+            names(self.env.path(), &replacement_dir)? && names(replacement.env.path(), &live_dir)?;
+        if !exchanged {
             return Err(Error::InvalidConfig(
-                "the swap did not put the replacement in this vault's place".into(),
+                "the swap did not exchange the two vault directories".into(),
             ));
         }
         // Neither mark stops depending on where its vault sits before the
@@ -523,6 +715,10 @@ impl Store {
 thread_local! {
     static BEFORE_ACTIVATION_FORK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         std::cell::RefCell::new(None);
+    static AFTER_RESTORE_DESTINATION_MADE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+    static BEFORE_LIVE_CUSTODY_READ: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
 }
 
 /// Runs `callback` once, the next time this thread activates an archived
@@ -530,4 +726,18 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn arm_before_activation_fork(callback: impl FnOnce() + 'static) {
     BEFORE_ACTIVATION_FORK.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
+/// Runs `callback` once, the next time this thread makes a restore's
+/// destination, between making it and opening the copy in it.
+#[cfg(test)]
+pub(crate) fn arm_after_restore_destination_made(callback: impl FnOnce() + 'static) {
+    AFTER_RESTORE_DESTINATION_MADE.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
+/// Runs `callback` once, the next time this thread reads a vault's live
+/// custody off its directory, between the path's admission and the read.
+#[cfg(test)]
+pub(crate) fn arm_before_live_custody_read(callback: impl FnOnce() + 'static) {
+    BEFORE_LIVE_CUSTODY_READ.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
 }

@@ -65,7 +65,8 @@ mod predicate_validators;
 mod projection_index;
 pub(crate) use projection_index::{
     PENDING_PRODUCER, claim_ids_for_predicate_bounded_in_txn, claim_ids_for_predicate_in_txn,
-    maintain_claim_projection_index, remove_claim_projection_index,
+    claim_ids_for_predicate_page_in_txn, maintain_claim_projection_index,
+    remove_claim_projection_index,
 };
 mod put;
 mod read;
@@ -80,6 +81,7 @@ mod write_target;
 
 pub use core_types::*;
 pub use decay::*;
+pub(crate) use deferred::claim_has_deferred_action_in_txn;
 pub(crate) use evidence_support::has_live_support_in_txn;
 pub(crate) use expression_archive::{ArchivedExpressionPreference, ExpressionPreferenceArchive};
 pub use history_handoff::*;

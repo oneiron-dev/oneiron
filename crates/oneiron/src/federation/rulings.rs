@@ -67,7 +67,7 @@ impl Vault {
             return Err(invalid());
         }
         let mut txn = self.store.env.write_txn()?;
-        holder.revalidate_in_txn(self, &txn)?;
+        let holder_actor = holder.revalidate_in_txn(self, &txn)?;
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         let mut grant_ref = None;
         for row in self
@@ -94,7 +94,7 @@ impl Vault {
             let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             if !grant.role.is_guest()
                 && grant.scope == FederationGrantScope::vault(vault_id)
-                && grant.member_ref == holder.actor()
+                && grant.member_ref == holder_actor
                 && grant.is_admin()
                 && grant.confers_at(now)
                 && fold.pact_for_grant(&id).is_none_or(|pact| {
@@ -120,7 +120,7 @@ impl Vault {
         let ruling = AdminRuling {
             ledger_order,
             id: self.store.clock.entity_id()?.to_hex(),
-            holder: holder.actor().to_hex(),
+            holder: holder_actor.to_hex(),
             grant_ref,
             vault_id,
             key: key.to_owned(),
@@ -160,7 +160,7 @@ impl Vault {
         );
         let envelope = crate::write_envelope::WriteEnvelope::new(
             crate::write_envelope::WriteActor::new(
-                holder.actor(),
+                holder_actor,
                 crate::edge::EdgeActorClass::Human,
             ),
             crate::claim::ClaimSource::UserStated,

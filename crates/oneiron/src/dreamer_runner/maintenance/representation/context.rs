@@ -99,7 +99,13 @@ fn read_source(
         return Err(invalid());
     }
     let body = decode_claim_body(&bytes, true)?;
-    if !claim_evidence_admissible(&body) || !reader.vault().claim_critical_confirm_settled(&id)? {
+    // A source awaiting its owner's answer is a missing required source.
+    if !claim_evidence_admissible(&body)
+        || !reader.vault().claim_consolidation_eligible(
+            &id,
+            crate::gate::ConsolidationReader::RepresentationSource,
+        )?
+    {
         return Err(invalid());
     }
     if let Some(owner) = voice_owner

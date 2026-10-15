@@ -162,7 +162,14 @@ pub(super) fn read_reliabilities(
             continue;
         }
         for lens in &catalog.lenses {
-            if body.predicate == critic_reliability_predicate(&lens.domain, &lens.id)? {
+            if body.predicate == critic_reliability_predicate(&lens.domain, &lens.id)?
+                && crate::gate::claim_consolidation_eligible_in_txn(
+                    &vault.store,
+                    &rtxn,
+                    &id,
+                    crate::gate::ConsolidationReader::CriticReliability,
+                )?
+            {
                 rows.insert(
                     (lens.domain.clone(), lens.id.clone()),
                     reliability_from_body(&body, &lens.id, &lens.domain)?,

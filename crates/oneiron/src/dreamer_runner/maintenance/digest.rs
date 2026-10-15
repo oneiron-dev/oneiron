@@ -171,8 +171,8 @@ impl Vault {
         claim_ref: EntityId,
     ) -> Result<ProactivityPolicyProposal> {
         let txn = self.store.env.read_txn()?;
-        super::validate_owner_in_txn(self, &txn, owner)?;
-        load_policy_proposal(self, &txn, owner.actor(), claim_ref)
+        let actor = super::validate_owner_in_txn(self, &txn, owner)?;
+        load_policy_proposal(self, &txn, actor, claim_ref)
     }
 
     /// Confirm the exact proposal the host showed the authenticated owner.
@@ -185,11 +185,11 @@ impl Vault {
         expected_revision: [u8; 32],
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
-            super::validate_owner_in_txn(self, txn, owner)?;
+            let actor = super::validate_owner_in_txn(self, txn, owner)?;
             if POLICY_CONFIRMED.contains(&self.store, &*txn, &claim_ref)? {
                 return Err(invalid());
             }
-            let proposal = load_policy_proposal(self, &*txn, owner.actor(), claim_ref)?;
+            let proposal = load_policy_proposal(self, &*txn, actor, claim_ref)?;
             if proposal.revision != expected_revision {
                 return Err(invalid());
             }
@@ -278,9 +278,9 @@ impl Vault {
     ) -> Result<Option<ProactivityDigest>> {
         let authority = self.dreamer_authority()?.entity_ref();
         self.with_write_txn_grouped(|txn| {
-            if let Some(owner) = owner {
-                super::validate_owner_in_txn(self, txn, owner)?;
-            }
+            let recipient = owner
+                .map(|owner| super::validate_owner_in_txn(self, txn, owner))
+                .transpose()?;
             let cadence = load_cadence(self, &*txn)?;
             let presentation = load_presentation(self, &*txn)?;
             let mut state = load_state(self, &*txn)?;
@@ -291,37 +291,36 @@ impl Vault {
             // Judge asks spend one human's funded minutes, so each recipient
             // keeps its own mark on the shared vault cadence: one person's
             // digest never consumes another's.
-            let recipient = owner.map(crate::consent::AuthenticatedOwner::actor);
             let asks_due = match &recipient {
                 Some(actor) => load_ask_mark(self, &*txn, actor)?
                     .is_none_or(|last| now >= last.saturating_add(cadence.period_secs)),
                 None => false,
             };
-            let breakthrough = if let (Some(wake), Some(next), Some(owner)) = (urgent, next, owner)
-            {
-                if cadence.urgent_breakthrough
-                    && wake.waiting_harms_intent
-                    && wake.needed_before < next
-                {
-                    self.get_claim_in_txn(&*txn, &wake.intent_ref)?
-                        .is_some_and(|body| {
-                            body.predicate == "profile.intent"
-                                && body.subject == crate::ClaimSubject::Entity(owner.actor())
-                                && body.source == Some(ClaimSource::UserStated)
-                                && body
-                                    .value
-                                    .as_str()
-                                    .is_some_and(|text| !text.trim().is_empty())
-                                && body.approval == ClaimApprovalStatus::Approved
-                                && body.lifecycle == ClaimLifecycleStatus::Active
-                                && !body.stale
-                        })
+            let breakthrough =
+                if let (Some(wake), Some(next), Some(owner)) = (urgent, next, recipient) {
+                    if cadence.urgent_breakthrough
+                        && wake.waiting_harms_intent
+                        && wake.needed_before < next
+                    {
+                        self.get_claim_in_txn(&*txn, &wake.intent_ref)?
+                            .is_some_and(|body| {
+                                body.predicate == "profile.intent"
+                                    && body.subject == crate::ClaimSubject::Entity(owner)
+                                    && body.source == Some(ClaimSource::UserStated)
+                                    && body
+                                        .value
+                                        .as_str()
+                                        .is_some_and(|text| !text.trim().is_empty())
+                                    && body.approval == ClaimApprovalStatus::Approved
+                                    && body.lifecycle == ClaimLifecycleStatus::Active
+                                    && !body.stale
+                            })
+                    } else {
+                        false
+                    }
                 } else {
                     false
-                }
-            } else {
-                false
-            };
+                };
             if !due && !breakthrough && !asks_due {
                 return Ok(None);
             }

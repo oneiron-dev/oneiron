@@ -687,6 +687,25 @@ impl Vault {
         self.put_authority_log_entries(&[(revoke, at, now)])?;
         Ok(())
     }
+
+    /// Logs `op` under the host root, the owner's own device in a self-host
+    /// vault, as an owner's answer to a critical confirm arrives.
+    #[cfg(test)]
+    pub(crate) fn log_host_op_for_test(
+        &self,
+        issuer: &HostSlipIssuer,
+        op: AuthorityOp,
+    ) -> Result<()> {
+        let fold = self.authority_fold()?;
+        let now = self.now_recorded_at();
+        let entry = next_entry(issuer, &fold, op, now)?;
+        let at = TimeRange {
+            start: now,
+            end: now,
+        };
+        self.put_authority_log_entries(&[(entry, at, now)])?;
+        Ok(())
+    }
 }
 pub(super) fn require_host(fold: &AuthorityFold, issuer: &HostSlipIssuer) -> Result<()> {
     if fold.vault_id.is_none()

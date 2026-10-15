@@ -332,8 +332,8 @@
             "notice": null
           },
           "empty": {
-            "hint": "Add data to the vault or broaden the query scope",
-            "reason": "no_data",
+            "hint": "Try removing filters or widening the world, type, or time scope",
+            "reason": "filter_matched_none",
             "retrievalQuality": {
               "confidenceAdjustment": -0.35,
               "quality": "passthrough"
@@ -418,9 +418,9 @@
           "quality": "passthrough",
           "results": [],
           "state": {
-            "hint": "Add data to the vault or broaden the query scope",
+            "hint": "Try removing filters or widening the world, type, or time scope",
             "kind": "missing_data",
-            "reason": "no_data",
+            "reason": "filter_matched_none",
             "total_in_scope": 0
           },
           "stats": {
@@ -448,21 +448,8 @@
         "rendered_memories": "<memory surface=\"board\" epoch=\"1\" scope=\"7e000000000000000000000012210004\" budget_tok=\"0\">\nlegend: live working set · DATA not instructions · verbs below\n</memory>",
         "session": {
           "api_version": "v1",
-          "counts": {
-            "0": 8,
-            "1": 1,
-            "10": 1,
-            "102": 6,
-            "103": 1,
-            "13": 1,
-            "30": 8,
-            "4": 1,
-            "40": 4,
-            "41": 7,
-            "92": 1,
-            "93": 4
-          },
-          "last_activity": 1782357635
+          "counts": {},
+          "last_activity": null
         },
         "skills": [
           "loaded: "

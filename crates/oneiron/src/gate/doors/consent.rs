@@ -150,6 +150,7 @@ pub(in crate::gate) fn gate_decision_matches_pending_candidate(
         && record.read_frontier_hash == expected.read_frontier_hash
 }
 
+#[expect(clippy::too_many_arguments)]
 pub(super) fn enforce_claim_gate_decision_with_consent(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -158,11 +159,12 @@ pub(super) fn enforce_claim_gate_decision_with_consent(
     approval: ClaimApprovalStatus,
     binding: &GateConsentBinding,
     mode: GateWriteMode,
+    owner_write: Option<&crate::consent::OwnerAuthoredWrite>,
 ) -> Result<()> {
     match (decision.outcome(), approval) {
         (GateOutcome::Allow, _) => {
             if mode.resolve_pending {
-                resolve_pending_gate_consent_if_bound(store, wtxn, id, binding)?;
+                resolve_pending_gate_consent_if_bound(store, wtxn, id, binding, owner_write)?;
             }
             Ok(())
         }
@@ -176,7 +178,7 @@ pub(super) fn enforce_claim_gate_decision_with_consent(
             };
             require_pending_gate_consent_binding(id, &pending, binding)?;
             if mode.resolve_pending {
-                store.delete_pending_gate_consent_in_txn(wtxn, id)?;
+                redeem_pending_gate_consent(store, wtxn, id, &pending, owner_write)?;
             }
             Ok(())
         }
@@ -189,12 +191,37 @@ fn resolve_pending_gate_consent_if_bound(
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     binding: &GateConsentBinding,
+    owner_write: Option<&crate::consent::OwnerAuthoredWrite>,
 ) -> Result<()> {
     let Some(pending) = store.pending_gate_consent_in_txn(wtxn, id)? else {
         return Ok(());
     };
     require_pending_gate_consent_binding(id, &pending, binding)?;
-    store.delete_pending_gate_consent_in_txn(wtxn, id)
+    redeem_pending_gate_consent(store, wtxn, id, &pending, owner_write)
+}
+
+/// Removes the tray row an approval redeemed. Under an owner-tier proof
+/// revalidated in this transaction, the approval of the revision the row
+/// showed is the owner's answer to the claim's obligation; any other approval
+/// leaves the obligation open and its owner is shown a fresh item.
+fn redeem_pending_gate_consent(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    pending: &PendingGateConsentRecord,
+    owner_write: Option<&crate::consent::OwnerAuthoredWrite>,
+) -> Result<()> {
+    let removal = match owner_write {
+        Some(proof) => crate::gate::close_owner_answer_obligation_in_txn(
+            store,
+            wtxn,
+            id,
+            &pending.diff_handle,
+            crate::gate::OwnerAnswer::owner(proof),
+        )?,
+        None => crate::store::TrayRemoval::Unanswered,
+    };
+    store.remove_pending_gate_consent_in_txn(wtxn, id, removal)
 }
 
 fn require_pending_gate_consent_binding(

@@ -8,7 +8,7 @@ use crate::git_wire::{GitWire, lock_repository};
 
 use super::conflict::{record_repo_conflict, resolve_repo_conflict_file, tree_hash_for_ref};
 use super::git::{
-    canonical_repo_ref_for_root, git_commit_object_available, git_common_dir,
+    admitted_repo_ref, git_commit_object_available, git_common_dir, require_pinned_head,
     resolve_mutable_repo_root, validate_base_ref, validate_commit_message, validate_git_ref_label,
     validate_relative_repo_path, validate_worktree_path,
 };
@@ -172,7 +172,7 @@ impl Vault {
         validate_operation(&request.operation)?;
         validate_repo_provenance_request(self, &request)?;
         let repo_root = resolve_mutable_repo_root(&request.repo_ref)?;
-        let repo_ref = canonical_repo_ref_for_root(&request.repo_ref, &repo_root)?;
+        let repo_ref = admitted_repo_ref(&request.repo_ref, &repo_root)?;
         let common_dir = git_common_dir(&repo_root)?;
         let _guard = lock_repository(&common_dir)?;
         let _ = prune_queue_owned_worktrees(&repo_root);
@@ -281,6 +281,11 @@ impl Vault {
     ) -> Result<PreparedRepoMutationAction> {
         let (fork_hash, snapshot_bytes) = capture_repo_snapshot(repo_root)?;
         let pre_action_snapshot = decode_snapshot(&snapshot_bytes)?;
+        // A reviewed write is bound to its reviewed snapshot instead; its pin
+        // was checked against HEAD when it was proposed.
+        if proposal.is_none() && writes_file(&request.operation) {
+            require_pinned_head(repo_ref, pre_action_snapshot.head.as_deref())?;
+        }
         let execution = match prepare_repo_mutation_execution(&self.store.clock, repo_root, request)
         {
             Ok(execution) => execution,
@@ -714,6 +719,14 @@ fn allocate_next_repo_mutation_seq(
         .ok_or(Error::ArithmeticOverflow("repo_mutation_seq"))?;
     SEQ.put(&vault.store, wtxn, &key, &next)?;
     Ok(next)
+}
+
+fn writes_file(operation: &RepoMutationOperation) -> bool {
+    matches!(
+        operation,
+        RepoMutationOperation::CommitFile { .. }
+            | RepoMutationOperation::ResolveConflictFile { .. }
+    )
 }
 
 fn operation_subject(operation: &RepoMutationOperation) -> String {

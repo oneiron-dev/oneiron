@@ -4,6 +4,12 @@ use crate::Vault;
 use crate::gate::ConsolidationReader;
 use std::collections::BTreeSet;
 
+mod history;
+mod identity;
+mod questions;
+mod reserved;
+mod skill;
+
 fn reader_body() -> ClaimBody {
     public_stamped(source_trust_claim(ClaimSource::UserStated))
 }
@@ -28,8 +34,18 @@ fn check_transition(
         before,
         "{reader:?}: held claim changed"
     );
+    // The owner's Clear answers the item and lets the claim go.
     vault.with_write_txn(|txn| {
-        vault.store.delete_pending_gate_consent_in_txn(txn, &id)?;
+        let removal = crate::gate::owner_answer::close_owner_answer_obligation_in_txn(
+            &vault.store,
+            txn,
+            &id,
+            &pending.diff_handle,
+            crate::gate::owner_answer::OwnerAnswer::authority_log(),
+        )?;
+        vault
+            .store
+            .remove_pending_gate_consent_in_txn(txn, &id, removal)?;
         Ok(())
     })?;
     let consumed = consumes(vault, &id)
@@ -75,55 +91,31 @@ fn seed_question_answer(
     reader: ConsolidationReader,
 ) -> Result<(EntityId, EntityId)> {
     use crate::llm::decision::questions::{
-        AnswerProposal, OutcomeBinding, OutcomeSource, QuestionActivation, QuestionDefinition,
-        RefreshPolicy, RefreshTrigger, create_question, refresh_question,
+        AnswerProposal, OutcomeBinding, OutcomeSource, RefreshTrigger, refresh_question,
     };
-    use crate::llm::decision::{
-        AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial,
-        DecisionQuestion, DecisionRung, ProviderPin,
-    };
+    use crate::llm::decision::{DecisionAnswer, DecisionRung, ProviderPin};
+    // A question reads its unit through its principal's scoped read: both
+    // rows land through the entity door, as a host writes them.
+    for id in [principal, subject] {
+        vault.put_entity(
+            &id,
+            ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"source",
+        )?;
+    }
     crate::test_util::authorize_readers(vault, &[&principal.to_hex()]);
-    let record = create_question(
-        vault,
-        principal,
-        QuestionDefinition {
-            question: DecisionQuestion {
-                id: EntityId::now(),
-                version: 1,
-                text: "fixture question".into(),
-                class: DecisionClass::Judgment,
-                contract: AnswerContract::Noul,
-                accept_type: false,
-            },
-            adapter: "graph".into(),
-            units: vec![subject],
-            recipe: "unit".into(),
-            profile: "fixture".into(),
-            dial: DecisionDial {
-                first: DecisionRung::Rule,
-                ceiling: DecisionRung::Big,
-                band: DecisionBand::default(),
-            },
-            activation: QuestionActivation::Standing,
-            refresh: RefreshPolicy {
-                on_arrival: true,
-                every_seconds: None,
-            },
-            delivery: "now".into(),
-            learning: true,
-            binding: Some(OutcomeBinding {
-                source: OutcomeSource::Claim {
-                    predicate: "profile.name".into(),
-                },
-                horizon: 100,
-                mapping: std::collections::BTreeMap::from([("Ada".to_owned(), true)]),
-                noise_weight: 1.0,
-                linked_by: None,
-            }),
+    let binding = Some(OutcomeBinding {
+        source: OutcomeSource::Claim {
+            predicate: "profile.name".into(),
         },
-        1,
-    )?;
-    let question = record.definition.question.id;
+        horizon: 100,
+        mapping: std::collections::BTreeMap::from([("Ada".to_owned(), true)]),
+        noise_weight: 1.0,
+        linked_by: None,
+    });
+    let question = fixture_question(vault, principal, vec![subject], binding)?;
     let answers = refresh_question(
         vault,
         WriteActor::new(principal, EdgeActorClass::Human),
@@ -146,6 +138,55 @@ fn seed_question_answer(
     assert_eq!(answers.len(), 1, "{reader:?}: answer fixture");
     assert_eq!(answers[0].unit, subject, "{reader:?}: answer unit");
     Ok((question, answers[0].claim))
+}
+
+/// A standing graph question of `principal` over `units`; it learns from
+/// `binding` when one is given.
+fn fixture_question(
+    vault: &Vault,
+    principal: EntityId,
+    units: Vec<EntityId>,
+    binding: Option<crate::llm::decision::questions::OutcomeBinding>,
+) -> Result<EntityId> {
+    use crate::llm::decision::questions::{
+        QuestionActivation, QuestionDefinition, RefreshPolicy, create_question,
+    };
+    use crate::llm::decision::{
+        AnswerContract, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion, DecisionRung,
+    };
+    let record = create_question(
+        vault,
+        principal,
+        QuestionDefinition {
+            question: DecisionQuestion {
+                id: EntityId::now(),
+                version: 1,
+                text: "fixture question".into(),
+                class: DecisionClass::Judgment,
+                contract: AnswerContract::Noul,
+                accept_type: false,
+            },
+            adapter: "graph".into(),
+            units,
+            recipe: "unit".into(),
+            profile: "fixture".into(),
+            dial: DecisionDial {
+                first: DecisionRung::Rule,
+                ceiling: DecisionRung::Big,
+                band: DecisionBand::default(),
+            },
+            activation: QuestionActivation::Standing,
+            refresh: RefreshPolicy {
+                on_arrival: true,
+                every_seconds: None,
+            },
+            delivery: "now".into(),
+            learning: binding.is_some(),
+            binding,
+        },
+        1,
+    )?;
+    Ok(record.definition.question.id)
 }
 
 /// The change-log rows the claim door writes beside a body, which the wake
@@ -353,6 +394,13 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                 })?;
             }
             ConsolidationReader::GraphSignal => {
+                // The Dreamer reads its branch under the shipped policy's
+                // Dreamer read row.
+                put_policy_manifest_bytes(
+                    &vault,
+                    crate::gate::default_policy_manifest_id()?,
+                    &crate::gate::default_policy_manifest()?,
+                )?;
                 // The Dreamer opens the branch, as a consolidation pass does.
                 let conversation = test_id(0x49);
                 vault.put_entity(
@@ -369,6 +417,13 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                 })?;
             }
             ConsolidationReader::ExplicitPrior => {
+                // The Dreamer reads its branch under the shipped policy's
+                // Dreamer read row.
+                put_policy_manifest_bytes(
+                    &vault,
+                    crate::gate::default_policy_manifest_id()?,
+                    &crate::gate::default_policy_manifest()?,
+                )?;
                 let conversation = test_id(0x49);
                 vault.put_entity(
                     &conversation,
@@ -553,39 +608,7 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                 })?;
             }
             ConsolidationReader::AnswerPrediction => {
-                use crate::llm::decision::questions::calibration_pairs;
-                let (question, answer) = seed_question_answer(&vault, principal, subject, reader)?;
-                let pairs = |v: &Vault| {
-                    calibration_pairs(
-                        v,
-                        principal,
-                        question,
-                        crate::claim::CallerLocality::OnDevice,
-                    )
-                };
-                // The arrival road: a held answer lends the settled fact no label.
-                check_transition(&vault, answer, reader, |v, _| {
-                    let count = project_one(v, claim)?;
-                    assert_eq!(count, pairs(v)?.len(), "{reader:?}: reader output");
-                    match count {
-                        0 => Ok(false),
-                        1 => Ok(true),
-                        other => panic!("{reader:?}: unexpected projected labels: {other}"),
-                    }
-                })?;
-                // The read road: a label already projected reads back only
-                // while its answer is settled.
-                let initial = pairs(&vault)?;
-                assert_eq!(initial.len(), 1, "{reader:?}: reader output");
-                check_transition(&vault, answer, reader, |v, _| {
-                    let read = pairs(v)?;
-                    if read.is_empty() {
-                        Ok(false)
-                    } else {
-                        assert_eq!(read, initial, "{reader:?}: reader output");
-                        Ok(true)
-                    }
-                })?;
+                questions::answer_prediction(&vault, [principal, subject, claim], reader)?;
             }
             ConsolidationReader::WakeCount => {
                 log_claim_mutations(&vault, &[claim, control])?;
@@ -644,6 +667,54 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                         Err(error) => Err(error),
                     }
                 })?;
+            }
+            ConsolidationReader::ProviderPrior => reserved::provider_prior(&vault, reader)?,
+            ConsolidationReader::CriticOutcome => reserved::critic_outcome(reader)?,
+            ConsolidationReader::CriticReliability => reserved::critic_reliability(reader)?,
+            ConsolidationReader::ProviderConfidence => {
+                reserved::provider_confidence(&vault, claim, reader)?;
+            }
+            ConsolidationReader::PprCommunity => {
+                reserved::ppr_community(&vault, claim, control, reader)?;
+            }
+            ConsolidationReader::SkillReliabilityProjection => {
+                skill::reliability_projection(&vault, reader)?;
+            }
+            ConsolidationReader::SkillReliabilityPosterior => {
+                skill::reliability_posterior(&vault, reader)?;
+            }
+            ConsolidationReader::SkillHubPrior => skill::hub_prior(&vault, reader)?,
+            ConsolidationReader::SkillScanPrior => skill::scan_prior(&vault, reader)?,
+            ConsolidationReader::SkillOptimizeHubVouch => {
+                skill::optimize_hub_vouch(&vault, reader)?;
+            }
+            ConsolidationReader::SkillOptimizeCitations => {
+                skill::optimize_citations(&vault, reader)?;
+            }
+            ConsolidationReader::HubDefaultPresence => skill::hub_default_presence(&vault, reader)?,
+            ConsolidationReader::ActorSkillFit => {
+                identity::actor_skill_fit(&vault, subject, reader)?;
+            }
+            ConsolidationReader::EditCost => identity::edit_cost(&vault, subject, reader)?,
+            ConsolidationReader::PeerBinding => identity::peer_binding(&vault, principal, reader)?,
+            ConsolidationReader::ActorSubjectAnchor => {
+                identity::actor_subject_anchor(&vault, principal, subject, reader)?;
+            }
+            ConsolidationReader::DefaultFacet => identity::default_facet(&vault, reader)?,
+            ConsolidationReader::EdgeProvenance => identity::edge_provenance(reader)?,
+            ConsolidationReader::MachineHistory => history::machine_history(reader)?,
+            ConsolidationReader::EsignLedger => history::esign_ledger(reader)?,
+            ConsolidationReader::RepresentationSource => {
+                identity::representation_source(reader)?;
+            }
+            ConsolidationReader::GraphAnswer => {
+                questions::graph_answer(&vault, [principal, subject, claim, control], reader)?;
+            }
+            ConsolidationReader::StandingAnswerSource => {
+                questions::standing_answer_source(&vault, [principal, subject, claim], reader)?;
+            }
+            ConsolidationReader::QuestionRefreshSource => {
+                questions::question_refresh_source(&vault, [principal, subject, claim], reader)?;
             }
         }
     }
