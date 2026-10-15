@@ -2183,6 +2183,7 @@ mod foreign_owner_proof {
             1,
             b"owner",
         )?;
+        crate::test_util::bind_test_owner(vault, actor);
         vault.authenticate_owner(
             actor,
             &actor.to_hex(),
