@@ -429,7 +429,7 @@ fn a_cleared_decay_lands_on_a_held_machine_history() -> Result<()> {
         WriteActor::new(machine, EdgeActorClass::System),
         ClaimSource::Observed,
         WriteProvenance::new(Value::from("machine fact"))?,
-        ClaimApprovalStatus::Proposed,
+        ClaimApprovalStatus::Auto,
     );
     let candidate = ClaimCandidate::new(
         "profile.color",
@@ -442,10 +442,11 @@ fn a_cleared_decay_lands_on_a_held_machine_history() -> Result<()> {
         .batch()
         .claim_candidate(&target, candidate, &signed, test_time(10), 10)
         .commit()?;
-    vault.approve_machine_claim_as(target, WriteActor::new(owner, EdgeActorClass::Human))?;
     let pin = vault.resolved_machine_claim(target)?.handoff_digest;
     let carrier = EntityId::from_bytes(pin[..16].try_into().expect("content id"))?;
     // The owner then marks the predicate critical, so a decay waits for them.
+    // The claim is Auto: an Approved body takes no critical-confirm road, so
+    // its demotion pends at the floor whatever the history holds.
     rewrite_policy_manifest_entries(&mut policy, |entries| {
         for (key, value) in entries {
             if key.as_str() == Some(POLICY_RULES_KEY) {
@@ -500,7 +501,7 @@ fn a_cleared_decay_lands_on_a_held_machine_history() -> Result<()> {
         crate::claim::claim_demotion_rung(&live)?,
         Some(crate::claim::ClaimDemotionRung::Decayed)
     );
-    assert_eq!(live.approval, ClaimApprovalStatus::Approved);
+    assert_eq!(live.approval, ClaimApprovalStatus::Auto);
     assert!(
         matches!(
             vault.resolved_machine_claim(target),
@@ -528,6 +529,6 @@ fn a_cleared_decay_lands_on_a_held_machine_history() -> Result<()> {
         crate::claim::claim_demotion_rung(&view.current)?,
         Some(crate::claim::ClaimDemotionRung::Decayed)
     );
-    assert_eq!(view.current.approval, ClaimApprovalStatus::Approved);
+    assert_eq!(view.current.approval, ClaimApprovalStatus::Auto);
     Ok(())
 }
