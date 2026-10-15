@@ -187,6 +187,22 @@ impl Vault {
         })
     }
 
+    /// Gives a ref name its visible slot back when a Published re-drive made
+    /// its ref live again after a deletion retired the slot. A slot another
+    /// publication holds stays as it is. Callers hold the coordinator.
+    pub(super) fn restore_origin_visible_ref(
+        &self,
+        record: &OriginPublicationRecord,
+    ) -> Result<()> {
+        let key = visible_ref_key(&record.repo_id, &record.ref_name);
+        self.with_write_txn_grouped(|wtxn| {
+            if !VISIBLE_REF.contains(&self.store, wtxn, &key)? {
+                VISIBLE_REF.put(&self.store, wtxn, &key, &record.publication_id)?;
+            }
+            Ok(())
+        })
+    }
+
     /// Gives every Published row the CAS row T2 now keeps, once per vault.
     ///
     /// A vault written before Published rows kept their CAS row admitted a

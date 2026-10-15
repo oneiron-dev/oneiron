@@ -675,4 +675,41 @@ mod tests {
             "the open gave the older Published row its CAS row"
         );
     }
+
+    /// A deletion retires its name's visible slot; a Published re-drive that
+    /// makes the ref live again under the same publication advertises it
+    /// again.
+    #[test]
+    fn publication_redrive_after_a_deletion_restores_its_slot() {
+        let (_vault_dir, vault) = test_vault();
+        let (_repo_dir, root, base) = seeded_repo();
+        git(&root, &["update-ref", "-d", "refs/heads/main"]);
+        let wire = GitWire::new(&vault).expect("wire");
+        let repo = open_repo(&wire, &root, &base);
+        let repo_id = repo_id_of(&vault, &repo);
+        let create = request(&vault, &repo, repo_id, None, base.clone());
+        vault
+            .publish_origin_ref(&wire, create.clone())
+            .expect("publish the branch");
+        git(&root, &["update-ref", "-d", "refs/heads/main"]);
+        vault
+            .retire_origin_visible_ref(&wire, &repo, repo_id, &main_ref())
+            .expect("the deletion retires the slot");
+        assert!(
+            vault
+                .published_origin_refs(&wire, repo_id, &repo)
+                .expect("projection")
+                .is_empty()
+        );
+        vault
+            .publish_origin_ref(&wire, create)
+            .expect("the same publication re-drives");
+        assert_eq!(
+            vault
+                .published_origin_refs(&wire, repo_id, &repo)
+                .expect("projection"),
+            vec![(main_ref(), base)],
+            "the live re-driven ref is advertised again"
+        );
+    }
 }

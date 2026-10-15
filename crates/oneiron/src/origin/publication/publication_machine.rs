@@ -361,6 +361,7 @@ impl Vault {
             ));
         }
         if outcome.is_applied() {
+            self.restore_origin_visible_ref(&record)?;
             // Both a fresh advance and a replay can finish leaked cleanup.
             // Failure here keeps a safe root for census; it does not undo the
             // already-durable publication or reject a successful landing.
