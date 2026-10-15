@@ -41,7 +41,7 @@ impl Case {
         routine: impl FnOnce(&Vault) -> Result<()> + 'static,
         loosening: impl FnOnce(&Vault) -> Result<()> + 'static,
     ) -> Result<Self> {
-        let backups = tempfile::tempdir()?;
+        let backups = crate::test_support::restore_tempdir();
         let image = backups.path().join("backup");
         vault.snapshot_checkpoint(&image, 100)?;
         Ok(Self {
@@ -122,7 +122,7 @@ fn no_restore_loosens_a_decision_and_one_that_loosens_none_restores() {
 #[test]
 fn a_restore_inside_the_live_vaults_write_transaction_refuses_rather_than_waits() {
     let (dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
-    let backups = tempfile::tempdir().expect("backup dir");
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100).expect("backup");
     let (done, outcome) = std::sync::mpsc::channel();
@@ -220,7 +220,7 @@ fn a_vault_holding_more_claims_of_a_predicate_than_a_list_holds_restores() -> Re
         }
     }
     batch.commit()?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
     Vault::restore_checkpoint_keeping_authority(
