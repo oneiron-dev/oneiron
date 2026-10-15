@@ -69,7 +69,7 @@ impl AuthenticatedOwner {
 
     /// The actor for a pure read: this proof belongs to `vault`. Never for an
     /// act of owner authority, which takes its actor from
-    /// [`Self::revalidate_in_txn`] inside the acting transaction.
+    /// `revalidate_in_txn` inside the acting transaction.
     pub fn actor_for_read(&self, vault: &Vault) -> Result<EntityId> {
         self.check_vault(vault)?;
         Ok(self.actor)
@@ -123,7 +123,7 @@ impl AuthenticatedOwner {
         self.decision_id
     }
 
-    /// [`Self::revalidate_in_txn`] in its own read transaction, for a door that
+    /// `revalidate_in_txn` in its own read transaction, for a door that
     /// checks its owner before it opens its writer. A door never rebuilds a
     /// proof from its public fields instead: a proof another vault
     /// authenticated for the same PERSON id would pass that.
