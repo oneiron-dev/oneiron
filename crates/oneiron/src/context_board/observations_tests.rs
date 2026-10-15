@@ -211,13 +211,24 @@ fn a_session_read_set_keeps_every_row_past_the_old_cap() -> Result<()> {
     crate::test_util::authorize_readers(&vault, &["viewer"]);
     let scan = crate::scan_check::EngineScan::ReadSetRows;
     vault.set_scan_threshold(scan, 2)?;
+    let read = vault.scoped_read(ScopedReadActorKey::new("viewer").unwrap());
     let mut session = SessionReadSet::default();
+    // Served claims alone, as the server's claim path records them.
     for index in 0..4_097_u64 {
         let mut bytes = [0x7e; 16];
         bytes[8..].copy_from_slice(&index.to_be_bytes());
-        session.observe_lifecycle(crate::EntityId::from_bytes(bytes)?, ServedLifecycle::Active)?;
+        session.observe_lifecycle(
+            &read,
+            crate::EntityId::from_bytes(bytes)?,
+            ServedLifecycle::Active,
+        )?;
     }
-    let read = vault.scoped_read(ScopedReadActorKey::new("viewer").unwrap());
+    let lifecycle_only = vault.scan_checks()?;
+    assert_eq!(
+        lifecycle_only.len(),
+        1,
+        "the lifecycle path raised the check"
+    );
     let row = read
         .read(&[crate::claim::PointRead::id(claim)], None)?
         .single()

@@ -418,3 +418,50 @@ fn settlement_replay_without_issuer_proof_is_refused_for_unissued_and_voided_lin
     assert!(super::super::ask_record::verify_link_settlement(&group, &altered).is_err());
     Ok(())
 }
+
+/// A link bearer is a stranger to this vault, so its work stays bounded
+/// (rule 5 bounds a stranger, never an authenticated actor): on an ask past
+/// the link's word bound its word is refused before any word is read or the
+/// ask settles.
+#[test]
+fn a_bearer_word_on_an_ask_past_the_link_bound_is_refused_unread() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let friend = EntityId::from_bytes([0x46; 16])?;
+    super::super::tests::support::put_person(&vault, friend);
+    let mut question =
+        TaskAskQuestion::new(super::super::tests::support::consult_turn(&vault, 0x47));
+    question.options = [(TaskAskOptionId::new("a")?, "Yes".to_string())].into();
+    let mut spec = TaskAskSpec::shorthand(
+        Some(TaskAskTarget::People([friend].into())),
+        question,
+        Some(u64::MAX),
+        Default::default(),
+    );
+    spec.intent_key = "bounded-link".to_string();
+    spec.decide = None;
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let ask = memory.tasks_ask(&spec)?.handle;
+    let link = memory.tasks_ask_option_link(ask, friend)?;
+    // One row past the bound under the ask's About index.
+    vault.with_write_txn(|wtxn| {
+        for index in 0..=4_096_u32 {
+            let mut bytes = [0x48; 16];
+            bytes[12..].copy_from_slice(&index.to_be_bytes());
+            let word = EntityId::from_bytes(bytes)?;
+            let key =
+                crate::store::Store::encode_edge_key(&ask.group_ref, crate::EdgeKind::About, &word);
+            vault.store.edges_in.put(wtxn, &key, &[0_u8; 12])?;
+        }
+        Ok(())
+    })?;
+    let refused = vault
+        .answer_ask_option_link(&link.token, &TaskAskOptionId::new("a")?)
+        .expect_err("the bearer's word past the bound is refused");
+    assert!(
+        refused.to_string().contains("more words than a link"),
+        "{refused}"
+    );
+    Ok(())
+}

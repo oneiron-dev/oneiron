@@ -36,9 +36,16 @@ impl SessionReadSet {
         Ok(receipt)
     }
 
-    /// Record lifecycle metadata captured from an authorized, actually served row.
-    pub fn observe_lifecycle(&mut self, id: EntityId, state: ServedLifecycle) -> Result<()> {
+    /// Record lifecycle metadata captured from an authorized, actually served
+    /// row by `read`.
+    pub fn observe_lifecycle(
+        &mut self,
+        read: &ScopedRead<'_>,
+        id: EntityId,
+        state: ServedLifecycle,
+    ) -> Result<()> {
         self.served(id.to_hex(), state);
+        self.check_size(read.vault());
         Ok(())
     }
 

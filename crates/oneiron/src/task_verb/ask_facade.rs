@@ -36,16 +36,7 @@ impl Memory<'_> {
             if let Some(group) = ask_record::read_group(self.vault(), txn, group_ref)? {
                 return replay_receipt(group_ref, group, self.actor(), &digest);
             }
-            // Revocation and admission observe the SAME snapshot.
-            let holders = self.ask_holders_in_txn(txn, input)?;
-            let bound = self.ask_class_in_txn(txn, input.task_ref)?;
-            let context_class = bound.as_ref().map(|(_, class)| class.clone());
-            let effective = input.effective(
-                &holders.iter().copied().collect(),
-                now,
-                context_class.clone(),
-            )?;
-            self.ask_question_in(txn, &effective.what)?;
+            // An actor that may not ask is refused before any census runs.
             if super::rate_limit::task_actor_ceiling(
                 self.vault(),
                 txn,
@@ -59,6 +50,16 @@ impl Memory<'_> {
                     "Propose the ask through the authority surface.",
                 ));
             }
+            // Revocation and admission observe the SAME snapshot.
+            let holders = self.ask_holders_in_txn(txn, input)?;
+            let bound = self.ask_class_in_txn(txn, input.task_ref)?;
+            let context_class = bound.as_ref().map(|(_, class)| class.clone());
+            let effective = input.effective(
+                &holders.iter().copied().collect(),
+                now,
+                context_class.clone(),
+            )?;
+            self.ask_question_in(txn, &effective.what)?;
             // One ask counts once on the asker's ask window, whatever its
             // recipients; a replay returned above never counts again.
             super::rate_limit::record_task_ask(

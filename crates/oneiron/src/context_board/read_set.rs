@@ -167,7 +167,7 @@ impl SessionReadSet {
             return;
         };
         drop(txn);
-        self.rows.keys().for_each(|_| count.row());
+        count.rows(self.rows.len());
         count.finish(vault);
     }
 

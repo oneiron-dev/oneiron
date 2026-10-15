@@ -183,6 +183,13 @@ impl ScanCount {
         self.rows = self.rows.saturating_add(1);
     }
 
+    /// Counts `rows` rows read at once, for a scan that holds its rows.
+    pub(crate) fn rows(&mut self, rows: usize) {
+        self.rows = self
+            .rows
+            .saturating_add(u64::try_from(rows).unwrap_or(u64::MAX));
+    }
+
     /// Raises the scan's check when it read past its row, once per scope:
     /// the vault's next write keeps it. The scan has served either way.
     pub(crate) fn finish(self, vault: &Vault) {

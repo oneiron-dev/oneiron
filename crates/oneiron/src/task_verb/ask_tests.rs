@@ -3600,7 +3600,8 @@ fn a_room_thread_read_walks_only_its_members_tasks() -> Result<()> {
 /// census read every row they need, however many (rule 5). Main refused
 /// past 4,096 tasks or words and 100,000 thread tasks; here each scan's
 /// threshold row is lowered to 1, every read serves past it, and each scan
-/// raises the owner's check once.
+/// raises the owner's check once. Rows 3 and 4 share one census, read here
+/// through the ask's omitted task context.
 #[test]
 fn ask_and_thread_census_read_past_their_threshold_row() -> Result<()> {
     use crate::scan_check::EngineScan;
@@ -3637,7 +3638,7 @@ fn ask_and_thread_census_read_past_their_threshold_row() -> Result<()> {
     fixture.word(receipt.handle, 1, "no")?;
     let evidence = fixture
         .vault
-        .memory(fixture.owner, EdgeActorClass::Human)
+        .memory(agent, EdgeActorClass::Agent)
         .tasks_ask_evidence(receipt.handle)?;
     assert_eq!(evidence.len(), 2);
     let roots = std::collections::BTreeMap::from([(root, root)]);
