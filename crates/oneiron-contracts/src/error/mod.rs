@@ -285,6 +285,7 @@ pub enum ErrorKind {
     GitHttpRepositoryBusy,
     ReceivePackDoorRejected,
     ReceivePackLandingRefused,
+    OriginPublicationBeyondOwner,
     VaultCleanupRestoreNotArchived,
     VaultCleanupArchiveMarkerUndecodable,
     VaultCleanupProposalNotFound,

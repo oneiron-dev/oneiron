@@ -98,7 +98,9 @@ pub use self::evidence::{ObservedRef, PackStats, ReceivePackOutcome, RefUpdate};
 pub(super) use self::evidence::{RECEIVE_PACK_ADMISSION_PREDICATE, RECEIVE_PACK_OUTCOME_PREDICATE};
 pub use self::hooks::DoorHooksDir;
 pub use self::intent::{ReceivePackRefResult, ReceivePackRefStatus};
-pub use self::landing::{ReceivePackAttribution, ReceivePackLanding, refs_already_applied};
+pub use self::landing::{
+    ReceivePackAttribution, ReceivePackCertificate, ReceivePackLanding, refs_already_applied,
+};
 pub use self::maintain::{
     SERVED_REPOSITORY_GC_TIMEOUT, ServedRepositoryMaintenance, maintain_served_repositories,
 };
@@ -133,6 +135,8 @@ mod landing_tests;
 mod maintain_tests;
 #[cfg(test)]
 mod push_cert_tests;
+#[cfg(test)]
+mod recreate_tests;
 #[cfg(test)]
 mod scan_cap_tests;
 #[cfg(test)]
