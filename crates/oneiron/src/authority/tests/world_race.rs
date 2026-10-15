@@ -5,6 +5,7 @@ use super::super::install_fold::fold_authority_log_with_machine_standing;
 use super::super::slip_vault::next_entry;
 use super::history_transfer::{re_root_entry, store};
 use super::machine_identity::{host, request_for};
+use super::support::RosterHead;
 use super::support::{
     authority_key_from_ed, cosign_ed, device, ed_key, genesis_entry, sign_ed, unsigned_entry,
 };
@@ -142,8 +143,8 @@ fn a_machine_that_loses_standing_never_widens_a_world() {
     // An install that does not count the laptop or that machine keeps the
     // narrowing and never takes the widening.
     let entries = stored_entries(&host.vault);
-    let fold = fold_authority_log_with_machine_standing(&entries, &|_, folded| {
-        ![laptop, c].contains(&folded.profile.machine)
+    let fold = fold_authority_log_with_machine_standing(&entries, &|machine, _| {
+        ![laptop, c].contains(&machine)
     });
     assert_eq!(fold.world_privacy(narrowed).read, EffectiveRead::MyMachines);
     assert_eq!(fold.world_privacy(widened).read, EffectiveRead::MyMachines);
@@ -258,7 +259,7 @@ fn a_later_revision_never_acknowledges_a_raced_widening() {
 
             if listed {
                 let fold = host.vault.authority_fold().unwrap();
-                let current = fold.machine(laptop).unwrap().profile.clone();
+                let current = fold.machine(laptop).unwrap().head().profile.clone();
                 let mut seen_world_edits = current.seen_world_edits.clone();
                 seen_world_edits.insert(authority_entry_hash(&widen).unwrap());
                 let profile = MachineProfile {
@@ -280,7 +281,7 @@ fn a_later_revision_never_acknowledges_a_raced_widening() {
                     .unwrap();
             }
             let fold = host.vault.authority_fold().unwrap();
-            assert_eq!(fold.machine(laptop).unwrap().profile.role, later);
+            assert_eq!(fold.machine(laptop).unwrap().head().profile.role, later);
             assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(laptop));
             assert!(!fold.world_readable_on(world, Destination::Unknown));
         }
@@ -339,7 +340,7 @@ fn a_crossed_row_still_bounds_its_signers_sequence() {
     );
     land(&host, std::slice::from_ref(&narrow));
     let fold = host.vault.authority_fold().unwrap();
-    let mark = fold.machine(laptop).unwrap().clone();
+    let mark = fold.machine(laptop).unwrap().head().clone();
     let unauthorised = sign_ed(
         unsigned_entry(
             fold.vault_id,
@@ -515,7 +516,11 @@ fn a_stale_machine_never_widens_a_world() {
         &first_seen,
         100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1,
     );
-    assert!(after.machine(stale).is_some_and(|folded| folded.stale));
+    assert!(
+        after
+            .machine(stale)
+            .is_some_and(|folded| folded.head().stale)
+    );
     assert_eq!(after.world_privacy(world).read, EffectiveRead::MyMachines);
 }
 
@@ -617,8 +622,12 @@ fn a_holder_going_stale_never_accepts_a_refused_edit() {
         &first_seen,
         100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1,
     );
-    assert!(after.machine(holder).is_some_and(|folded| folded.stale));
-    assert!(after.machine(other).is_some_and(FoldedMachine::is_mine));
+    assert!(
+        after
+            .machine(holder)
+            .is_some_and(|folded| folded.head().stale)
+    );
+    assert!(after.machine(other).is_some_and(RosterHead::mine));
 }
 
 /// A refused edit stays refused when a machine whose edit it would have
@@ -728,7 +737,7 @@ fn a_conflict_weakened_back_never_accepts_a_refused_edit() {
         &first_seen,
         100 + DEFAULT_STALE_ROSTER_WINDOW_SECS + 1,
     );
-    assert!(after.machine(b).is_some_and(|folded| folded.stale));
+    assert!(after.machine(b).is_some_and(|folded| folded.head().stale));
     // Here B's edits only narrow, so the world reads as the conflict again:
     // stricter than A alone, and readable nowhere.
     assert_eq!(
@@ -1042,7 +1051,7 @@ fn a_custodial_mark_acknowledges_no_widening() {
     for accepted in [&joining, &widen] {
         assert!(fold.valid_entries.contains(&hash(accepted)));
     }
-    let folded = fold.machine(machine).unwrap();
+    let folded = fold.machine(machine).unwrap().head();
     assert_eq!(folded.signer_class, SignerClass::Custodial);
     assert!(folded.profile.seen_world_edits.contains(&hash(&widen)));
     assert_eq!(fold.world_privacy(world).read, EffectiveRead::MyMachines);
@@ -1087,7 +1096,7 @@ fn a_custodial_mark_acknowledges_no_widening() {
         assert!(fold.valid_entries.contains(&hash(accepted)));
     }
     assert_eq!(
-        fold.machine(machine).unwrap().profile.role,
+        fold.machine(machine).unwrap().head().profile.role,
         MachineRole::Removed
     );
     assert_eq!(fold.world_privacy(world).read, EffectiveRead::MyMachines);
@@ -1127,7 +1136,7 @@ fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
             settings(ReadLocation::Everywhere),
         );
         let fold = host.vault.authority_fold().unwrap();
-        let current = fold.machine(laptop).unwrap().profile.clone();
+        let current = fold.machine(laptop).unwrap().head().profile.clone();
         let sibling = |seen_world_edits| {
             let profile = MachineProfile {
                 revision: current.revision + 1,
@@ -1179,12 +1188,13 @@ fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
                 .unwrap()
                 .machine(laptop)
                 .unwrap()
+                .head()
                 .conflicted
         );
         assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(laptop));
 
         let fold = host.vault.authority_fold().unwrap();
-        let current = fold.machine(laptop).unwrap().profile.clone();
+        let current = fold.machine(laptop).unwrap().head().profile.clone();
         let profile = AuthorityOp::MachineProfile(MachineProfile {
             role: MachineRole::Removed,
             revision: current.revision + 1,
@@ -1217,7 +1227,7 @@ fn a_removal_of_a_conflicted_mark_never_acknowledges_a_widening() {
         }
         let fold = host.vault.authority_fold().unwrap();
         assert_eq!(
-            fold.machine(laptop).unwrap().profile.role,
+            fold.machine(laptop).unwrap().head().profile.role,
             MachineRole::Removed
         );
         assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(laptop));
@@ -1266,7 +1276,7 @@ fn a_removal_keeps_its_race_over_a_later_mark_it_never_saw() {
         land(&host, std::slice::from_ref(&widen));
         if marked_again {
             let fold = host.vault.authority_fold().unwrap();
-            let current = fold.machine(laptop).unwrap().profile.clone();
+            let current = fold.machine(laptop).unwrap().head().profile.clone();
             let profile = MachineProfile {
                 role: yours,
                 revision: current.revision + 1,
@@ -1286,7 +1296,7 @@ fn a_removal_keeps_its_race_over_a_later_mark_it_never_saw() {
         let mut seq =
             host.vault.authority_fold().unwrap().append_sequences[&host.issuer.public_key()];
         let mut parents: Vec<_> = before.append_heads.iter().copied().collect();
-        let current = before.machine(laptop).unwrap().profile.clone();
+        let current = before.machine(laptop).unwrap().head().profile.clone();
         let seen = BTreeSet::from([authority_entry_hash(&widen).unwrap()]);
         let mut branch = Vec::new();
         for (revision, role) in (2..).zip(roles) {
@@ -1318,7 +1328,7 @@ fn a_removal_keeps_its_race_over_a_later_mark_it_never_saw() {
                     .contains(&authority_entry_hash(entry).unwrap())
             );
         }
-        assert_eq!(fold.machine(laptop).unwrap().profile.revision, 4);
+        assert_eq!(fold.machine(laptop).unwrap().head().profile.revision, 4);
         assert_eq!(read_of(&host, world), EffectiveRead::MyMachines);
         assert!(!fold.world_readable_on(world, Destination::Unknown));
     }
@@ -1344,7 +1354,7 @@ fn a_widening_never_exempts_a_demotion_its_mark_never_followed() {
     land(&host, std::slice::from_ref(&narrow));
     let fold = host.vault.authority_fold().unwrap();
     let mut seq = fold.append_sequences[&host.issuer.public_key()];
-    let current = fold.machine(laptop).unwrap().profile.clone();
+    let current = fold.machine(laptop).unwrap().head().profile.clone();
     let mut sign = |parents: Vec<AuthorityEntryHash>, revision, role| {
         seq += 1;
         let profile = MachineProfile {
@@ -1401,7 +1411,7 @@ fn a_widening_never_exempts_a_demotion_its_mark_never_followed() {
         .set_machine_role(&host.issuer, &host.owner, laptop, MachineRole::Removed)
         .unwrap();
     let fold = host.vault.authority_fold().unwrap();
-    let removal = fold.machine(laptop).unwrap();
+    let removal = fold.machine(laptop).unwrap().head();
     assert_eq!(removal.profile.role, MachineRole::Removed);
     assert!(
         removal

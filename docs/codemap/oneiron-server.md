@@ -264,10 +264,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/embedder_tests.rs` | test | s | — | — | Resolution rows for the `[embedder]` section |
 | `src/config/feedback.rs` | src | s | 1 struct · 1 fn · 4 crate-vis | FeedbackConfig | The `[feedback]` section: where the owner's feedback goes (OF-420) |
 | `src/config/import.rs` | src | s | 2 struct · 2 fn · 2 crate-vis | ImportConfig, ImportConfigOverride | The `[import]` section: whether a running `serve` imports the session logs queued for it (`oneiron import… |
+| `src/config/keystore.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 const · 4 crate-vis | KeystoreBackend, KeystoreConfig | The `[keystore]` section: where this install keeps its this-device-only key slots (world privacy P6b) |
 | `src/config/limits.rs` | src | s | 1 struct · 4 crate-vis | LimitsConfig | The `[limits]` section: the bounds on work a remote caller can start at this server |
 | `src/config/lookup.rs` | src | s | 11 crate-vis | — | Leaf config helpers: env lookups, value parsing, and secret redaction |
 | `src/config/merge.rs` | src | L | 1 struct · 6 fn · 2 crate-vis | EnvConfig | Layered merge: file, environment, and argv values into `ServeConfig` |
-| `src/config/mod.rs` | src | s | 9 mod · 13 re-export · 1 crate-vis | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
+| `src/config/mod.rs` | src | s | 9 mod · 14 re-export · 1 crate-vis | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
 | `src/config/models/compaction.rs` | src | s | 1 struct · 2 crate-vis | CompactionSettings | `[models.code_mode.compaction]`: each code-mode run's window compacts by itself (agent-runtime-v1 §d7) |
 | `src/config/models/levels.rs` | src | s | 2 struct · 2 fn · 1 const · 6 crate-vis | ModelRef, Rung | The three config levels and their expansion into per-role ladders |
 | `src/config/models/mod.rs` | src | m | 7 struct · 1 enum · 2 fn · 3 re-export · 2 crate-vis | BrokerConfig, ChatSettings, CodeCheckSettings, CodeModeSettings, DreamerSettings, ModelsConfig, RecallModelSettings, WorkflowSettings | `[models]`: which model serves each role, at three levels of detail |
@@ -316,7 +317,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/feedback_delivery/tests.rs` | test | s | — | — | — |
 | `src/handler/app_tier.rs` | src | s | 4 crate-vis | — | Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks |
 | `src/handler/app_tier_tests.rs` | test | m | — | — | — |
-| `src/handler/conn_state.rs` | src | s | 9 crate-vis | — | Per-connection budgets, quotas, and sync-mode binding |
+| `src/handler/conn_state.rs` | src | s | 10 crate-vis | — | Per-connection budgets, quotas, and sync-mode binding |
 | `src/handler/connection.rs` | src | m | 3 crate-vis | — | Upgrade route, hello bootstrap, and the single-owner connection event loop |
 | `src/handler/documents.rs` | src | m | 2 crate-vis | — | Per-entity selector admission and scope-filtered document delivery on the sync socket |
 | `src/handler/ephemeral.rs` | src | s | 4 crate-vis | — | Ephemeral presence lane: validation, hub budget, and canonical fan-out frames |
@@ -326,10 +327,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/message_stream_tests.rs` | test | s | — | — | Streaming text stays on the existing opaque, budgeted ephemeral hub lane |
 | `src/handler/mod.rs` | src | s | 2 crate-vis | — | WebSocket upgrade handler and connection lifecycle |
 | `src/handler/note_socket_tests.rs` | test | L | — | — | Real websocket NOTE commands: actor binding, durable pins, reviewed edits |
-| `src/handler/residence_socket_tests.rs` | test | L | — | — | A real enrol: root + thin index, one opened item, remote search and offline honesty |
+| `src/handler/residence_socket_tests.rs` | test | XL | — | — | A real enrol: root + thin index, one opened item, remote search and offline honesty |
 | `src/handler/tests.rs` | test | XL | — | — | — |
 | `src/handler/transport.rs` | src | m | 11 crate-vis | — | Guarded socket chokepoint with revocation consults on queue and flush |
-| `src/handler/window_sync.rs` | src | m | 5 crate-vis | — | WindowSync sub-tag dispatcher with selector and VV paths |
+| `src/handler/window_row_tests.rs` | test | m | — | — | `max_windows_per_connection` is a row, never a refusal (rule 5, OF-520): a socket past it is served, keeps a… |
+| `src/handler/window_sync.rs` | src | m | 6 crate-vis | — | WindowSync sub-tag dispatcher with selector and VV paths |
 | `src/http_listener.rs` | src | s | 2 crate-vis | — | The TCP accept loop the server and the embedder endpoint serve through |
 | `src/http_listener/tests.rs` | test | m | — | — | The listener's admission, end to end over real sockets (C4): headers that never finish are closed at the… |
 | `src/idempotency.rs` | src | m | 9 crate-vis | — | — |
@@ -373,7 +375,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/peer.rs` | src | s | 3 crate-vis | — | Kernel-verified local transport peer, not a public caller IP |
 | `src/managed/shed.rs` | src | s | 1 crate-vis | — | Mapping the engine's shed transaction to the managed ctl contract |
 | `src/managed/state_serve.rs` | src | L | 3 struct · 20 fn · 1 type · 1 const · 1 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
-| `src/managed/vault_gates.rs` | src | m | 3 fn · 3 const · 2 crate-vis | — | Managed vault open gates: credentials, the canary marker, and the DEK MAC |
+| `src/managed/vault_gates.rs` | src | m | 3 fn · 3 const · 3 crate-vis | — | Managed vault open gates: credentials, the canary marker, and the DEK MAC |
 | `src/mcp/actors.rs` | src | m | 5 struct · 3 enum · 18 fn · 7 crate-vis | McpBoardSnapshot, McpConnectorActorRecord, McpConnectorActorRegistrationError, McpConnectorActorResolutionError, McpConnectorActorRevokeStatus, McpConnectorScope, McpCredentialHashKey, McpResolvedActor | MCP connector actor types: credentials, scopes, records, and resolution |
 | `src/mcp/args.rs` | src | s | 3 struct · 1 enum | McpActorClass, McpActorMetadata, McpConsentMetadata, McpToolScope | MCP actor and consent metadata: the envelope every endpoint tool call carries |
 | `src/mcp/booking_inputs.rs` | src | s | 4 crate-vis | — | JSON schemas for the booking agent API's operation inputs (BK-08), merged into the OpenAPI components |
@@ -445,7 +447,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/owner/stamp.rs` | src | s | 5 crate-vis | — | UTC times for backup file names and reports, with no date library: `20261008T123456.789Z` in file names, RFC… |
 | `src/projection.rs` | src | m | 1 struct · 1 enum · 7 fn | InvalidView, View | — |
 | `src/projection/tests.rs` | test | s | — | — | — |
-| `src/protocol.rs` | src | m | 27 crate-vis | — | Custom Oneiron sync protocol — server-side extensions |
+| `src/protocol.rs` | src | m | 29 crate-vis | — | Custom Oneiron sync protocol — server-side extensions |
 | `src/runtime/config.rs` | src | s | 1 struct · 7 fn · 1 crate-vis | RuntimeConfig | Resolved runtime config including the 163-line resolution impl |
 | `src/runtime/defaults.rs` | src | m | 5 struct · 11 fn · 6 crate-vis | RuntimeConfigOverride, RuntimeRoleDefaultOverrides, RuntimeRoleDefaults, RuntimeRoleTarget, RuntimeRoleTargetOverride | Per-role default targets, explicitness tracking, and the full override-merge cluster |
 | `src/runtime/gpu.rs` | src | s | 4 struct · 1 enum · 12 fn · 2 const | GpuDerivationLease, GpuHealth, GpuLease, GpuRegistry, GpuRegistryError | Per-region single-writer GPU registry, suitable for a Durable Object owner |
@@ -486,7 +488,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_host/tests.rs` | test | m | — | — | Source-only proofs with a manually released backend |
 | `src/voice_host/tests/pass_attachment.rs` | test | m | — | — | The voice host attached to a real wake supervisor through the driver's generic pass-attachment seam (moved… |
 | `src/voice_host/tests/wire.rs` | test | s | — | — | — |
-| `src/wire_telemetry.rs` | src | m | 4 struct · 1 enum · 8 fn · 5 crate-vis | WireQuestion, WireQuestionKind, WireTelemetry, WireThresholds, WireWindowReceipt | RC42 observation-only wire counters |
+| `src/wire_telemetry.rs` | src | m | 6 struct · 2 enum · 12 fn · 6 crate-vis | LimitQuestions, LimitRow, WireLimitQuestion, WireQuestion, WireQuestionKind, WireTelemetry, WireThresholds, WireWindowReceipt | RC42 observation-only wire counters |
 | `src/wire_telemetry/tests.rs` | test | s | — | — | — |
 | `tests/inference_defaults.rs` | test | s | — | — | Owner-grade HTTP edit/read proof for resident inference policy rows |
 | `tests/inference_egress.rs` | test | s | — | — | Extraction default changes require a host gate at storage and dispatch |
