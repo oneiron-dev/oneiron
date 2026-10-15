@@ -81,7 +81,9 @@ fn habit(vault: &Vault, member: EntityId) -> EntityId {
 fn shared() -> (tempfile::TempDir, Vault, EntityId, SharedVaultCreation) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
-    let owner = person(&vault);
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
     let member = person(&vault);
     let authenticated = vault
         .authenticate_owner(

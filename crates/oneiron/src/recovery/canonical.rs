@@ -222,8 +222,8 @@ impl CanonicalSnapshot {
 /// below leaves that carrier out of the artifact or keeps only its shell, and
 /// the mark is what then carries the refusal in `suppressed_tasks`. An id is
 /// deleted here when the window or a pending marker holds its tombstone, or a
-/// global hard marker names it, as the capture reads them.
-#[cfg(feature = "sync")]
+/// global hard marker names it, as the capture reads them. A build without
+/// sync captures too, so it marks through the same writer.
 fn mark_deleted_carriers_first(
     vault: &Vault,
     window: &str,
@@ -256,11 +256,15 @@ fn mark_deleted_carriers_first(
         })
         .map(|row| Ok((id(row.id)?, row.blob.clone())))
         .collect::<Result<Vec<_>>>()?;
+    #[cfg(feature = "sync")]
     crate::sync::window::mark_removed_carriers_first(
         vault,
         crate::sync::window::CarrierRemoval::CanonicalCapture,
         &carriers,
-    )
+    )?;
+    #[cfg(not(feature = "sync"))]
+    crate::task_authority::mark_removed_carriers(vault, &carriers)?;
+    Ok(())
 }
 
 /// Captures a quiescent window plus every NOTE document and head receipt in its scope.
@@ -365,7 +369,6 @@ pub(crate) fn capture_canonical_window_within(
             value,
         });
     }
-    #[cfg(feature = "sync")]
     mark_deleted_carriers_first(vault, window, &snapshot)?;
     let txn = vault.store.env.read_txn()?;
     // Pending delete intent is Layer 1 even when a crash preceded CRDT publication.

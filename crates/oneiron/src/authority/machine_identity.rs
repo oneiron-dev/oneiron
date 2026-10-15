@@ -141,8 +141,8 @@ impl Vault {
         role: MachineRole,
     ) -> Result<FoldedMachine> {
         let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        let folded = self.enroll_machine_in_txn(&mut txn, issuer, owner.actor(), request, role)?;
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let folded = self.enroll_machine_in_txn(&mut txn, issuer, actor, request, role)?;
         txn.commit()?;
         Ok(folded)
     }
@@ -156,7 +156,7 @@ impl Vault {
         role: MachineRole,
     ) -> Result<FoldedMachine> {
         let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let owner_actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
         let current = fold
@@ -164,7 +164,7 @@ impl Vault {
             .filter(|folded| !folded.removed)
             .ok_or_else(invalid_authority)?;
         let profile = MachineProfile {
-            owner: owner.actor(),
+            owner: owner_actor,
             role,
             revision: current
                 .profile
