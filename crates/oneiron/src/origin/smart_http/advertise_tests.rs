@@ -1,10 +1,11 @@
 //! Advertisement gate and stock-client roundtrip tests, plus the LFS
-//! attach/detach landing tests.
+//! attach/detach landing tests and the room their LFS checks take.
 
 use super::tests::{
     CapturingSink, LANDING_LEARNED_AT, PublicationTestOrigin, advertise, advertised_refs,
     advertisement_headers, commit_file, fixture_attribution, git, landed_repo_id, landing_outcome,
     landing_time, pointer_file, pushed_outcome, ref_update, seeded_repo, served_repo, temp_vault,
+    try_advertise,
 };
 use super::*;
 
@@ -470,5 +471,155 @@ fn smart_http_advertisement_with_no_surviving_ref_still_carries_capabilities() {
     assert!(
         !text.contains("symref=HEAD:"),
         "an unresolved projection cannot leak a raw symbolic ref"
+    );
+}
+
+/// A host's room for LFS reads that records the rows it is asked for and
+/// holds each until its answer drops; told to, it lets every wait run out.
+#[derive(Default)]
+struct RecordingRoom {
+    asked: std::sync::Mutex<Vec<u64>>,
+    held: Arc<std::sync::atomic::AtomicUsize>,
+    waits_run_out: AtomicBool,
+}
+
+impl RecordingRoom {
+    fn asked(&self) -> Vec<u64> {
+        self.asked.lock().expect("asked rows").clone()
+    }
+}
+
+struct RecordedHold(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for RecordedHold {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+impl crate::origin::lfs::LfsReadRoom for RecordingRoom {
+    fn hold(&self, row_bytes: u64) -> Option<Box<dyn std::any::Any + Send>> {
+        self.asked.lock().expect("asked rows").push(row_bytes);
+        if self.waits_run_out.load(Ordering::SeqCst) {
+            return None;
+        }
+        self.held.fetch_add(1, Ordering::SeqCst);
+        Some(Box::new(RecordedHold(Arc::clone(&self.held))))
+    }
+}
+
+/// Review r12 (Astra R12-2, P1): an advertisement, a landing and a redrive
+/// each check that every LFS object a published ref needs is readable, and
+/// each check reads the object's whole manifest; none took room for it
+/// from the host, so a host holding its LFS reads to a room in memory had
+/// Git exchanges reading manifests past it. Each check now takes room for
+/// its manifest's stored row first and holds it through the check. A wait
+/// that runs out fails the exchange instead of hiding a ref that may be
+/// whole, and decides no publication.
+#[test]
+fn availability_checks_take_the_hosts_room_for_each_manifest_they_read() {
+    let (_vault_dir, vault) = temp_vault();
+    let bytes = b"asset bytes an advertised ref carries".to_vec();
+    let oid = LfsOid::digest(&bytes);
+    let size = u64::try_from(bytes.len()).expect("length fits u64");
+    vault
+        .put_lfs_object(oid, &bytes, landing_time(), LANDING_LEARNED_AT)
+        .expect("the object the pointer names is stored before the push lands");
+    let row = vault
+        .lfs_manifest_row_bytes(oid)
+        .expect("read the manifest row")
+        .expect("a stored object");
+    let room = Arc::new(RecordingRoom::default());
+    vault.set_lfs_read_room(Arc::clone(&room) as Arc<dyn crate::origin::lfs::LfsReadRoom>);
+
+    let (_source, repo_dir, _first, _second) = served_repo(&vault);
+    let work = tempfile::tempdir().expect("work tree");
+    let served = repo_dir.to_str().expect("utf-8 repo path");
+    git(work.path(), &["clone", "--quiet", "--", served, "."]);
+    let assets = commit_file(work.path(), "assets/logo.bin", &pointer_file(oid, size));
+    git(
+        work.path(),
+        &["push", "--quiet", "origin", "HEAD:refs/heads/assets"],
+    );
+    let pointer = || LfsPushedPointer {
+        path: "assets/logo.bin".to_owned(),
+        oid,
+        size_bytes: size,
+    };
+    let outcome = pushed_outcome(
+        &repo_dir,
+        vec![ref_update("refs/heads/assets", None, Some(&assets))],
+        vec![pointer()],
+    );
+    let repo = outcome.pinned_repo_ref().expect("pinned repo ref");
+    vault
+        .apply_receive_pack_fixture(&repo, &outcome)
+        .expect("land the push");
+    let landed = room.asked();
+    assert!(!landed.is_empty(), "the landing's check took room");
+
+    let refs = advertised_refs(&advertise(&vault, "git-upload-pack").body);
+    assert!(
+        refs.iter().any(|(name, _)| name == "refs/heads/assets"),
+        "the ref whose object was checked is advertised"
+    );
+    let asked = room.asked();
+    assert!(
+        asked.len() > landed.len(),
+        "the advertisement's check took room"
+    );
+    assert!(
+        asked.iter().all(|asked| *asked == row),
+        "each took room by the manifest's stored row"
+    );
+    assert_eq!(
+        room.held.load(Ordering::SeqCst),
+        0,
+        "each check let its room go when it ended"
+    );
+
+    // The host's waits run out from here.
+    room.waits_run_out.store(true, Ordering::SeqCst);
+    let (served, _) = try_advertise(&vault, "git-upload-pack");
+    let error = served.expect_err("an advertisement that cannot check fails");
+    assert!(
+        error
+            .to_string()
+            .contains("no room to read an lfs manifest"),
+        "it fails for the wait: {error}"
+    );
+    let more = commit_file(work.path(), "assets/notes.txt", "more\n");
+    git(
+        work.path(),
+        &["push", "--quiet", "origin", "HEAD:refs/heads/more"],
+    );
+    let outcome = pushed_outcome(
+        &repo_dir,
+        vec![ref_update("refs/heads/more", None, Some(&more))],
+        vec![pointer()],
+    );
+    let refused = vault
+        .apply_receive_pack_fixture(&repo, &outcome)
+        .expect_err("a landing that cannot check fails");
+    assert!(
+        matches!(
+            refused,
+            Error::Code(crate::error::CodeError::LfsReadRoomWaitedOut)
+        ),
+        "it fails for the wait: {refused}"
+    );
+    let repo_id = landed_repo_id(&vault, &repo, &repo_dir);
+    let statuses = vault
+        .origin_publication_rows(Some(repo_id))
+        .expect("publication rows")
+        .into_iter()
+        .filter(|row| row.ref_name.as_str() == "refs/heads/more")
+        .map(|row| row.status)
+        .collect::<Vec<_>>();
+    assert!(
+        statuses
+            .iter()
+            .all(|status| *status == OriginPublicationStatus::Prepared),
+        "the wait decided no publication: {statuses:?}"
     );
 }

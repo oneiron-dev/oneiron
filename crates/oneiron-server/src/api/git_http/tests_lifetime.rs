@@ -30,8 +30,8 @@ struct Origin {
     addr: SocketAddr,
     server: Arc<SyncServer>,
     headers: HeaderMap,
-    /// The token and binding stock git presents, as `-c` arguments.
-    git_auth: [String; 2],
+    /// The credential's recipe, which [`Origin::git_auth`] binds anew.
+    token: String,
     oid: String,
     source: tempfile::TempDir,
     _vault_dir: tempfile::TempDir,
@@ -72,23 +72,7 @@ async fn origin(limits: LimitsConfig) -> Origin {
         oneiron::EntityId::now().to_hex()
     );
     let server = Arc::new(SyncServer::new(Arc::clone(&vault), config).expect("server"));
-    let request = axum::http::Request::builder()
-        .header(AUTHORIZATION, token)
-        .body(Body::empty())
-        .unwrap();
-    let headers = crate::test_credentials::bind_request(&server, request)
-        .headers()
-        .clone();
-    let git_auth = [
-        format!(
-            "http.extraHeader=Authorization: {}",
-            headers[AUTHORIZATION].to_str().unwrap()
-        ),
-        format!(
-            "http.extraHeader=X-Oneiron-Binding: {}",
-            headers["x-oneiron-binding"].to_str().unwrap()
-        ),
-    ];
+    let headers = bound_headers(&server, &token);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("listener");
@@ -122,11 +106,41 @@ async fn origin(limits: LimitsConfig) -> Origin {
         addr,
         server,
         headers,
-        git_auth,
+        token,
         oid,
         source,
         _vault_dir: vault_dir,
         _serving: serving,
+    }
+}
+
+/// The credential `token` names, with a binding signed now.
+fn bound_headers(server: &SyncServer, token: &str) -> HeaderMap {
+    let request = axum::http::Request::builder()
+        .header(AUTHORIZATION, token)
+        .body(Body::empty())
+        .unwrap();
+    crate::test_credentials::bind_request(server, request)
+        .headers()
+        .clone()
+}
+
+impl Origin {
+    /// The token and a binding signed now, as stock git's `-c` arguments. A
+    /// binding is fresh for a minute, and a burst on a loaded host outlasts
+    /// one signed when it began.
+    fn git_auth(&self) -> [String; 2] {
+        let headers = bound_headers(&self.server, &self.token);
+        [
+            format!(
+                "http.extraHeader=Authorization: {}",
+                headers[AUTHORIZATION].to_str().unwrap()
+            ),
+            format!(
+                "http.extraHeader=X-Oneiron-Binding: {}",
+                headers["x-oneiron-binding"].to_str().unwrap()
+            ),
+        ]
     }
 }
 
@@ -263,7 +277,7 @@ fn push_change(
 ) -> tokio::task::JoinHandle<String> {
     let url = format!("http://{}/git/demo.git", origin.addr);
     let source = origin.source.path().to_owned();
-    let [token, binding] = origin.git_auth.clone();
+    let [token, binding] = origin.git_auth();
     let target = format!("HEAD:refs/heads/{branch}");
     tokio::task::spawn_blocking(move || {
         std::fs::write(source.join("README.md"), format!("{text}\n")).expect("readme");
@@ -314,7 +328,7 @@ async fn a_stalled_push_is_ended_and_the_next_push_waits_its_turn_behind_it() {
         .await
         .expect("the next push gets the repository once the stalled one ends")
         .unwrap();
-    let [token, binding] = origin.git_auth.clone();
+    let [token, binding] = origin.git_auth();
     let url = format!("http://{}/git/demo.git", origin.addr);
     let source = origin.source.path().to_owned();
     let refs = tokio::task::spawn_blocking(move || {
@@ -382,13 +396,27 @@ async fn past_the_bound_an_exchange_waits_for_a_stalled_one_to_free_its_permit()
 /// of 1,024, exchanges well inside the 2,048 row could run the process out
 /// of descriptors. The git and LFS bounds are now held to the descriptors
 /// the sockets leave; past them an exchange waits its turn, as past the row.
+///
+/// Review r12 (the Engine, beside Astra R12-3): counted at their peak, the
+/// 1,024 descriptors a fresh login's soft limit holds leave room for 8
+/// exchanges. Serving raises the soft limit to the hard one, at most 65,536,
+/// and the bounds follow the limit it then holds: the sockets here take all
+/// but one exchange's room of the raised one.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn past_the_descriptors_the_sockets_leave_an_exchange_waits_for_a_stalled_one() {
     use crate::api::transfer::{GIT_DESCRIPTORS, OWN_DESCRIPTORS};
+    let mut held = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: `getrlimit` writes the struct on the stack and nothing else.
+    let read = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut held) };
+    assert_eq!(read, 0, "the open-file limit reads");
+    let raised = held.rlim_max.min(65_536);
     // The sockets take all but the room of one exchange, half of what is
     // left being git's.
-    let open_files = crate::machine::open_file_limit().expect("an open-file limit");
-    let sockets = open_files
+    let sockets = raised
         .checked_sub(OWN_DESCRIPTORS + 2 * GIT_DESCRIPTORS)
         .expect("room for the process's own descriptors");
     let limits = LimitsConfig {
@@ -397,7 +425,90 @@ async fn past_the_descriptors_the_sockets_leave_an_exchange_waits_for_a_stalled_
         ..LimitsConfig::default()
     };
     assert!(limits.git_exchanges > 1, "the row alone would admit both");
-    a_stalled_exchange_holds_the_next_one_back(origin(limits).await).await;
+    let origin = origin(limits).await;
+    assert_eq!(
+        crate::machine::open_file_limit(),
+        Some(raised),
+        "serving raised the soft limit"
+    );
+    a_stalled_exchange_holds_the_next_one_back(origin).await;
+}
+
+/// Review r12 (Astra R12-2, P1): an advertisement checks that each LFS
+/// object its published refs need is readable, reading the object's whole
+/// manifest, and that read took no room on the LFS reads line: past any
+/// number of downloads holding the line, every advertisement could hold a
+/// manifest more. The check now waits for its manifest's room on the line,
+/// as a download does, and the ref is advertised once it has it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_advertisement_checks_an_lfs_object_its_ref_needs_with_room_on_the_reads_line() {
+    let origin = origin(limits(4, 30_000)).await;
+    let asset = b"an asset the pushed branch carries".to_vec();
+    let oid = oneiron::origin::lfs::LfsOid::digest(&asset);
+    let at = oneiron::TimeRange {
+        start: 1_700_000_000,
+        end: 1_700_000_000,
+    };
+    origin
+        .server
+        .vault()
+        .put_lfs_object(oid, &asset, at, at.start)
+        .expect("the object the pointer names is stored before the push");
+    let pointer = format!(
+        "version https://git-lfs.github.com/spec/v1\noid sha256:{}\nsize {}\n",
+        oid.to_hex(),
+        asset.len()
+    );
+    let url = format!("http://{}/git/demo.git", origin.addr);
+    let source = origin.source.path().to_owned();
+    let [token, binding] = origin.git_auth();
+    tokio::task::spawn_blocking(move || {
+        std::fs::write(source.join("logo.bin"), pointer).expect("pointer");
+        stock_git(&source, &["add", "logo.bin"]);
+        commit(&source, "carry an asset");
+        stock_git(
+            &source,
+            &[
+                "-c",
+                &token,
+                "-c",
+                &binding,
+                "push",
+                &url,
+                "HEAD:refs/heads/assets",
+            ],
+        );
+    })
+    .await
+    .unwrap();
+
+    // Downloads hold the whole reads line.
+    let transfers = &origin.server.transfers;
+    let reads = transfers.lfs_reads();
+    let held = reads
+        .reserve(reads.total(), PATIENCE, &transfers.questions)
+        .await
+        .expect("the whole reads line");
+    let advertised = tokio::spawn(advertisement_to(origin.addr, origin.headers.clone()));
+    let started = std::time::Instant::now();
+    while reads.waiting() == 0 {
+        assert!(
+            !advertised.is_finished(),
+            "the advertisement was answered without room to check the object"
+        );
+        assert!(started.elapsed() < PATIENCE, "the check waits on the line");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    drop(held);
+    let (status, body) = tokio::time::timeout(PATIENCE, advertised)
+        .await
+        .expect("the advertisement is answered once its check has room")
+        .unwrap();
+    assert_eq!(status, 200);
+    assert!(
+        String::from_utf8_lossy(&body).contains("refs/heads/assets"),
+        "the ref whose object was checked is advertised"
+    );
 }
 
 /// A fetch that stalls holds the only exchange its bound allows: the next
@@ -488,7 +599,7 @@ async fn a_burst_of_two_hundred_callers_on_one_credential_all_complete() {
         .enumerate()
         .map(|(n, commit)| {
             let source = origin.source.path().to_owned();
-            let [token, binding] = origin.git_auth.clone();
+            let [token, binding] = origin.git_auth();
             let url = url.clone();
             let target = format!("{commit}:refs/heads/burst-{n}");
             tokio::task::spawn_blocking(move || {
@@ -514,7 +625,7 @@ async fn a_burst_of_two_hundred_callers_on_one_credential_all_complete() {
             .expect("every push completes")
             .expect("every push to the one repository lands");
     }
-    let [token, binding] = origin.git_auth.clone();
+    let [token, binding] = origin.git_auth();
     let source = origin.source.path().to_owned();
     let refs = tokio::task::spawn_blocking(move || {
         stock_git(&source, &["-c", &token, "-c", &binding, "ls-remote", &url])

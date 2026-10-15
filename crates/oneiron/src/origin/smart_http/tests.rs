@@ -315,6 +315,16 @@ pub(super) fn served_repo(vault: &Vault) -> (tempfile::TempDir, PathBuf, GitOid,
 
 /// Serves one ref advertisement through the real `git http-backend`.
 pub(super) fn advertise(vault: &Arc<Vault>, service: &str) -> CapturingSink {
+    let (served, sink) = try_advertise(vault, service);
+    served.expect("serve the advertisement");
+    sink
+}
+
+/// [`advertise`], answering how the exchange ended beside what it sent.
+pub(super) fn try_advertise(
+    vault: &Arc<Vault>,
+    service: &str,
+) -> (Result<ServeReport>, CapturingSink) {
     let request = ServeRequest {
         method: "GET".to_owned(),
         path_info: "/demo.git/info/refs".to_owned(),
@@ -330,16 +340,15 @@ pub(super) fn advertise(vault: &Arc<Vault>, service: &str) -> CapturingSink {
     };
     let mut body = io::empty();
     let mut sink = CapturingSink::default();
-    serve(
+    let served = serve(
         vault,
         "demo",
         &request,
         DoorSeam::Noop,
         &mut body,
         &mut sink,
-    )
-    .expect("serve the advertisement");
-    sink
+    );
+    (served, sink)
 }
 
 /// The `(name, oid)` pairs one advertisement body carries.
