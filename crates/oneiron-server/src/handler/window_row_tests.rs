@@ -171,7 +171,12 @@ async fn listen(socket: &mut Socket, quiet: Duration, until: Option<(&WindowKey,
         loop {
             let message = match tokio::time::timeout(quiet, socket.next()).await {
                 Ok(Some(Ok(message))) => message,
-                Ok(None | Some(Err(_))) | Err(_) => return,
+                // The home ends a socket it refuses without a close frame (1006).
+                Ok(None | Some(Err(_))) => {
+                    heard.close = Some(1006);
+                    return;
+                }
+                Err(_) => return,
             };
             match message {
                 Message::Close(frame) => {
@@ -386,7 +391,7 @@ fn subscribe_owner_notes(row: usize) -> (tempfile::TempDir, SyncServer) {
     let notes = ["placeholder one", "placeholder two"].map(|text| {
         vault
             .create_note(
-                "notes",
+                "research",
                 text,
                 oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
             )
