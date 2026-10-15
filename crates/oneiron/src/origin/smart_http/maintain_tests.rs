@@ -19,7 +19,9 @@ use super::{
     DoorSeam, ServeRequest, ServedRepositoryMaintenance, maintain_served_repositories,
     serve_bounded,
 };
-use crate::git_wire::{GitOid, lock_repository, repository_hold_for_test};
+use crate::git_wire::{
+    GIT_WIRE_REPO_LOCK_FILE_NAME, GitOid, lock_repository, repository_hold_for_test,
+};
 use crate::{EntityId, Vault};
 
 fn packs(repo: &Path) -> usize {
@@ -210,14 +212,17 @@ fn git_with_input(repo: &Path, args: &[&str], input: &str) {
     assert!(child.wait().expect("git").success(), "git {args:?}");
 }
 
-/// Every lock file in `dir` and below.
+/// Every lock file of git's in `dir` and below: all but the coordinator's
+/// own, which stays for the repository's life.
 fn locks_in(dir: &Path) -> Vec<PathBuf> {
     let mut locks = Vec::new();
     for entry in std::fs::read_dir(dir).expect("read dir") {
         let path = entry.expect("entry").path();
         if path.is_dir() {
             locks.extend(locks_in(&path));
-        } else if path.extension().is_some_and(|ext| ext == "lock") {
+        } else if path.extension().is_some_and(|ext| ext == "lock")
+            && path.file_name() != Some(std::ffi::OsStr::new(GIT_WIRE_REPO_LOCK_FILE_NAME))
+        {
             locks.push(path);
         }
     }

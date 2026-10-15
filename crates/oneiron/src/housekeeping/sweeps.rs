@@ -56,13 +56,15 @@ impl Run {
 }
 
 /// Runs one sweep from `cursor`, the point an unfinished walk of the same
-/// sweep stopped at.
+/// sweep stopped at. `owner_asked` when the owner asked for this run rather
+/// than its schedule making it due.
 pub(super) fn run(
     vault: &Vault,
     sweep: HousekeepingSweep,
     now: u64,
     deadline: &Deadline,
     cursor: Option<&[u8]>,
+    owner_asked: bool,
 ) -> Result<Run> {
     let work = match sweep {
         HousekeepingSweep::SecretLeaseExpiry => {
@@ -120,7 +122,7 @@ pub(super) fn run(
             }
         }
         HousekeepingSweep::GateDecisionRetention => return gate_decisions(vault, deadline),
-        HousekeepingSweep::HardEraseSweep => SweepWork::HardErase(hard_erase(vault)?),
+        HousekeepingSweep::HardEraseSweep => SweepWork::HardErase(hard_erase(vault, owner_asked)?),
         HousekeepingSweep::PprCacheEviction => return ppr_cache(vault, now, deadline, cursor),
         HousekeepingSweep::EsignReminders
         | HousekeepingSweep::ConsultSettlement
@@ -261,13 +263,20 @@ fn ppr_cache(vault: &Vault, now: u64, deadline: &Deadline, cursor: Option<&[u8]>
     }
 }
 
-fn hard_erase(vault: &Vault) -> Result<HardEraseWork> {
-    let windows_unloaded = if super::schedule::erase_obligation_waiting(vault)? {
+/// The erasure sweep. A scheduled run compacts history only for a due
+/// obligation, and the owner's run compacts every window; either first
+/// unloads the windows no caller holds, so the compaction can reach them.
+fn hard_erase(vault: &Vault, owner_asked: bool) -> Result<HardEraseWork> {
+    let windows_unloaded = if owner_asked || super::schedule::erase_obligation_waiting(vault)? {
         unload_idle_windows(vault)
     } else {
         0
     };
-    let run = crate::sweep::run_hard_erase_sweep(vault)?;
+    let run = if owner_asked {
+        crate::sweep::run_hard_erase_sweep(vault)?
+    } else {
+        crate::sweep::run_scheduled_hard_erase_sweep(vault)?
+    };
     Ok(HardEraseWork {
         jobs_processed: run.jobs_processed,
         jobs_deferred: run.jobs_deferred,

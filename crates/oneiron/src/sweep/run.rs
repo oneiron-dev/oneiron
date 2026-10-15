@@ -115,9 +115,20 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-/// Executes one sweep pass (phase 1). The housekeeping pass schedules it:
-/// daily, hourly while an obligation waits.
+/// Executes one sweep pass the owner asked for (phase 1): every window's
+/// history is compacted past the erased ids, an obligation due or not.
 pub(crate) fn run_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
+    hard_erase_sweep(vault, true)
+}
+
+/// Executes one sweep pass no one asked for: the housekeeping pass's, daily
+/// and hourly while an obligation waits. It compacts only for a due
+/// obligation.
+pub(crate) fn run_scheduled_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
+    hard_erase_sweep(vault, false)
+}
+
+fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRun> {
     let now = vault.store.clock.now_recorded_at();
     let mut run = HardEraseSweepRun::default();
 
@@ -224,11 +235,11 @@ pub(crate) fn run_hard_erase_sweep(vault: &Vault) -> Result<HardEraseSweepRun> {
     }
 
     // ── 3. Compact the historical carriers ──────────────────────────────
-    // Only for a due obligation. A shallow snapshot drops history, which is
-    // an erase, so no scheduled run spends it without one (ARCH-0038
-    // carrier-1, ARCH-0073). A late re-put of an erased id never
-    // materializes; its bytes go with the next obligation's compaction.
-    let window_state = if due.is_empty() {
+    // A shallow snapshot drops history, which is an erase, so a run no one
+    // asked for spends it only for a due obligation (ARCH-0038 carrier-1,
+    // ARCH-0073); the owner's run compacts every window. A late re-put of an
+    // erased id never materializes; its bytes go with the next compaction.
+    let window_state = if !owner_asked && due.is_empty() {
         WindowSweepState::NoObligation
     } else {
         compact_all_windows(vault, &erased, &mut run, now)?
@@ -326,6 +337,7 @@ pub(super) enum WindowSweepState {
     /// `ErrorKind` name for the jobs' `last_error_code`.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     Failed(String),
-    /// No obligation was due, so no window was touched.
+    /// A run no one asked for found no obligation due, so no window was
+    /// touched.
     NoObligation,
 }

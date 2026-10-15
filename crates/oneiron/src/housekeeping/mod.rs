@@ -593,7 +593,9 @@ impl Vault {
                 continue;
             }
             ran_any = true;
-            rows[index] = Some(self.run_scheduled_sweep(sweep, state, every, &deadline));
+            let owner_asked = selection == Selection::All;
+            rows[index] =
+                Some(self.run_scheduled_sweep(sweep, state, every, &deadline, owner_asked));
         }
         handle.first_pass_done = true;
 
@@ -626,14 +628,18 @@ impl Vault {
     }
 
     /// Runs one sweep between its start marker and its finish row. The marker
-    /// is what tells the next pass that a run was interrupted.
+    /// is what tells the next pass that a run was interrupted. The run is the
+    /// owner's when this pass is, or when it carries an owner's request an
+    /// earlier pass left for later.
     fn run_scheduled_sweep(
         &self,
         sweep: HousekeepingSweep,
         state: SweepState,
         every: u64,
         deadline: &Deadline,
+        owner_asked: bool,
     ) -> SweepOutcome {
+        let owner_asked = owner_asked || state.owner_asked();
         let start = self.now_recorded_at();
         let running = state.started(start);
         if let Err(error) = schedule::write_state(self, sweep, &running) {
@@ -659,7 +665,14 @@ impl Vault {
                 Some(tests::Injected::Panic) => panic!("test: an injected sweep panic"),
                 _ => {}
             }
-            sweeps::run(self, sweep, start, deadline, running.cursor.as_deref())
+            sweeps::run(
+                self,
+                sweep,
+                start,
+                deadline,
+                running.cursor.as_deref(),
+                owner_asked,
+            )
         }));
         let end = self.now_recorded_at();
         let (outcome, finished) = match result {

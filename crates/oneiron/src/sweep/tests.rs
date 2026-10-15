@@ -115,7 +115,7 @@ fn sync_rows_contain(vault: &Vault, needle: &[u8]) -> bool {
 }
 
 /// Engine ruling on #1456 (ARCH-0038 carrier-1, ARCH-0073): a shallow
-/// snapshot drops history, which is an erase, so a run with no due
+/// snapshot drops history, which is an erase, so a scheduled run with no due
 /// obligation leaves every window as it was, its frontier, its root and the
 /// history it rests on byte for byte, even with an earlier erasure's marker
 /// standing.
@@ -151,7 +151,7 @@ fn a_run_with_no_due_obligation_leaves_every_window_as_it_was() {
     };
     let before = sync_rows(&vault);
 
-    let run = run_hard_erase_sweep(&vault).unwrap();
+    let run = run_scheduled_hard_erase_sweep(&vault).unwrap();
 
     assert_eq!(run.windows_compacted, 0);
     assert_eq!(sync_rows(&vault), before, "no window was rewritten");

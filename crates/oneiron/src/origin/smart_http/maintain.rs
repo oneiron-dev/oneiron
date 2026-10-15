@@ -27,7 +27,9 @@ use super::serve::repo_common_dir;
 use super::serve_cmd::path_arg;
 use crate::Vault;
 use crate::error::Result;
-use crate::git_wire::{GitWireProcessEnv, try_lock_repository_for_maintenance};
+use crate::git_wire::{
+    GIT_WIRE_REPO_LOCK_FILE_NAME, GitWireProcessEnv, try_lock_repository_for_maintenance,
+};
 
 /// The longest one repository's maintenance may run before it is killed.
 pub const SERVED_REPOSITORY_GC_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -236,7 +238,8 @@ fn run(
 
 /// Removes the lock files a killed run left behind: those under `dir` made
 /// since `since`. No one else can have made one meanwhile: the run held the
-/// repository's coordinator throughout, and every writer takes it.
+/// repository's coordinator throughout, and every writer takes it. The
+/// coordinator's own file is never one of them.
 fn remove_locks_since(dir: &Path, since: SystemTime) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -250,6 +253,7 @@ fn remove_locks_since(dir: &Path, since: SystemTime) {
             remove_locks_since(&path, since);
         } else if kind.is_file()
             && path.extension().is_some_and(|ext| ext == "lock")
+            && entry.file_name() != GIT_WIRE_REPO_LOCK_FILE_NAME
             && entry
                 .metadata()
                 .and_then(|meta| meta.modified())

@@ -110,7 +110,7 @@ mod compact;
 mod finalize;
 mod run;
 
-pub(crate) use self::run::run_hard_erase_sweep;
+pub(crate) use self::run::{run_hard_erase_sweep, run_scheduled_hard_erase_sweep};
 
 #[cfg(test)]
 mod tests;

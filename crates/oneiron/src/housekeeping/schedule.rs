@@ -130,6 +130,11 @@ impl SweepState {
             ..self
         }
     }
+
+    /// Whether it holds an owner's request no run has started on yet.
+    pub(super) const fn owner_asked(&self) -> bool {
+        self.requested_at.is_some()
+    }
 }
 
 fn retry_after(failures: u32, every: u64) -> u64 {
