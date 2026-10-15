@@ -73,7 +73,7 @@ impl Vault {
             || fold
                 .machines
                 .values()
-                .any(|folded| folded.profile.machine_key == public_key)
+                .any(|folded| folded.names_key(&public_key))
         {
             return Err(denied());
         }

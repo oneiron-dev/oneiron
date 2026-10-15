@@ -1,7 +1,8 @@
 //! World privacy orphan re-pick: a world whose read names no machine still
 //! the owner's is re-picked from another of the owner's machines, and never
 //! while a machine it names is still the owner's.
-use super::machine_identity::{encryption_key, host, request_for};
+use super::machine_identity::{host, own_encryption_key, request_for};
+use super::support::RosterHead;
 use super::support::ed_key;
 use super::world_floor::assert_no_vouch_widens;
 use super::world_privacy::{
@@ -183,9 +184,11 @@ fn a_stale_holders_world_is_re_picked_after_a_handoff() {
     let next = HostSlipIssuer::from_secret(b"stale holder successor root").unwrap();
     let handoff = host
         .vault
-        .re_root_authority(next.root_device(), host.issuer.public_key(), |bytes| {
-            Ok(host.issuer.sign_slip(bytes))
-        })
+        .re_root_authority(
+            next.root_device(crate::HostingPrivacyPosture::SelfHostLocal),
+            host.issuer.public_key(),
+            |bytes| Ok(host.issuer.sign_slip(bytes)),
+        )
         .unwrap();
     assert!(
         !handoff
@@ -207,7 +210,10 @@ fn a_stale_holders_world_is_re_picked_after_a_handoff() {
         .unwrap();
     let request = host
         .vault
-        .machine_enrolment_request(host.vault_id, encryption_key())
+        .machine_enrolment_request(
+            host.vault_id,
+            own_encryption_key(&host.vault, host.vault_id),
+        )
         .unwrap();
     host.vault
         .enroll_machine(
@@ -234,8 +240,8 @@ fn a_stale_holders_world_is_re_picked_after_a_handoff() {
         crate::unix_seconds_now() + DEFAULT_STALE_ROSTER_WINDOW_SECS + 60,
     );
     let fold = host.vault.authority_fold().unwrap();
-    assert!(fold.machine(old).is_some_and(|folded| folded.stale));
-    assert!(fold.machine(here).is_some_and(FoldedMachine::is_mine));
+    assert!(fold.machine(old).is_some_and(|folded| folded.head().stale));
+    assert!(fold.machine(here).is_some_and(RosterHead::mine));
     assert!(!fold.world_readable_on(world, Destination::Machine(old)));
     assert_eq!(fold.world_edit_standing(here, world), None);
     assert!(repick().is_err());
@@ -296,7 +302,7 @@ fn a_world_orphaned_by_a_removal_that_arrived_late_is_re_picked() {
         AuthorityOp::MachineProfile(MachineProfile {
             role: MachineRole::Removed,
             revision: 2,
-            ..before.machine(holder).unwrap().profile.clone()
+            ..before.machine(holder).unwrap().head().profile.clone()
         }),
     );
     let node = EntityId::now();
@@ -323,7 +329,10 @@ fn a_world_orphaned_by_a_removal_that_arrived_late_is_re_picked() {
         fold.valid_entries
             .contains(&authority_entry_hash(&removal).unwrap())
     );
-    assert!(fold.machine(holder).is_some_and(|folded| folded.removed));
+    assert!(
+        fold.machine(holder)
+            .is_some_and(|folded| folded.head().removed)
+    );
     assert_eq!(
         fold.world_edit_standing(here, world),
         Some(WorldEditStanding::RepicksOrphan)

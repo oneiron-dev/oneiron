@@ -70,7 +70,9 @@ fn stale_roster_approval_deadlines(
                 return None;
             }
             let hash = authority_entry_hash(entry).ok()?;
-            if !fold.valid_entries.contains(&hash) {
+            // An anchor's mark rests on no roster key, even one a roster
+            // enrolled under the anchor's public key and then revoked.
+            if !fold.valid_entries.contains(&hash) || fold.anchor_entries.contains(&hash) {
                 return None;
             }
             let seen = first_seen.get(&hash)?;
@@ -169,18 +171,31 @@ pub(super) fn apply_stale_roster_window(
     }
     // A machine stands on the revision that won. Once that revision is
     // stale it is not live here, until a key still on the roster signs the
-    // same standing again.
-    for folded in fold.machines.values_mut() {
-        if !expired.contains(&folded.entry) {
-            continue;
-        }
-        let reissued = entries.iter().any(|entry| {
-            matches!(&entry.op, AuthorityOp::MachineProfile(profile) if *profile == folded.profile)
+    // same standing again: a roster entry, never an anchor's copy of it, and
+    // for the trusted chain only a mark it accepts (Sol code-R2 S2-F1). An
+    // anchor's own chain rests on no roster key, so it never goes stale.
+    let renewed = |revision: &MachineRevision, trusted: bool| {
+        entries.iter().any(|entry| {
+            matches!(&entry.op, AuthorityOp::MachineProfile(profile) if *profile == revision.profile)
                 && authority_entry_hash(entry).is_ok_and(|hash| {
-                    fold.valid_entries.contains(&hash) && !expired.contains(&hash)
+                    fold.valid_entries.contains(&hash)
+                        && !expired.contains(&hash)
+                        && !fold.anchor_entries.contains(&hash)
+                        && (!trusted || fold.accepted_roster_marks.contains(&hash))
                 })
-        });
-        folded.stale = !reissued;
+        })
+    };
+    for folded in fold.machines.values_mut() {
+        for (revision, trusted) in [
+            (folded.roster.as_mut(), false),
+            (folded.roster_trusted.as_mut(), true),
+        ] {
+            if let Some(revision) = revision
+                && expired.contains(&revision.entry)
+            {
+                revision.stale = !renewed(revision, trusted);
+            }
+        }
     }
     fold.critical_write_confirms
         .retain(|_, confirm| !expired.contains(&confirm.authority_entry_hash));
@@ -190,4 +205,40 @@ pub(super) fn apply_stale_roster_window(
             .push(AuthorityFoldIssue::StaleRosterApproval(hash));
     }
     fold
+}
+
+/// The valid roster marks a key P1 accepts signed, judged as the trusted chain
+/// judges them (`ClaimIndex::accepted_roster`): each heads its machine's roster
+/// chain in its own fold state, signed by a key owner-held there, and on a
+/// hosted fold that key stays outside the host's custody on the merged history.
+/// Owned marks and node profiles alike; an anchor's mark heads no roster chain.
+/// Only these renew a stale trusted roster revision (Sol code-R2 S2-F1,
+/// code-R3 S3-F2, code-R4 S4-F1).
+pub(super) fn accepted_roster_marks(
+    merged: &FoldState,
+    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    valid: &BTreeSet<AuthorityEntryHash>,
+) -> BTreeSet<AuthorityEntryHash> {
+    valid
+        .iter()
+        .filter(|hash| {
+            let Some(AuthorityOp::MachineProfile(profile)) =
+                entries.get(*hash).map(|entry| &entry.op)
+            else {
+                return false;
+            };
+            states
+                .get(*hash)
+                .and_then(|own| own.machines.get(&profile.machine))
+                .and_then(|chains| chains.get(&MachineAdmitter::Roster))
+                .is_some_and(|chain| {
+                    chain.head.entry == **hash
+                        && chain.head.signer_class == SignerClass::OwnerHeld
+                        && !(merged.hosted
+                            && super::machine_profile::in_host_custody(merged, &chain.head.signer))
+                })
+        })
+        .copied()
+        .collect()
 }

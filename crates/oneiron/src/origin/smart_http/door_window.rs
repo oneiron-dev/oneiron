@@ -135,7 +135,18 @@ pub(super) fn serve_door_window(
                 // backend has moved no ref. A push whose names the landing
                 // could not journal is refused whole; nothing about a legal
                 // batch changes.
-                let unlandable = unlandable_ref_reasons(&request.ref_updates);
+                let pointers = lfs_pushed_pointers(&blobs[..tip_blobs]);
+                let mut unlandable = unlandable_ref_reasons(&request.ref_updates);
+                if unlandable.is_empty() {
+                    // The same rule for a move a publication already made:
+                    // a push needing more than that publication certified
+                    // could never be certified once the backend moved it.
+                    unlandable = vault
+                        .receive_pack_owner_shortfalls(repo, &request.ref_updates, &pointers)
+                        .unwrap_or_else(|_| {
+                            vec!["receive-pack input could not be verified".to_owned()]
+                        });
+                }
                 let verdict = if unlandable.is_empty() {
                     match context.seam {
                         DoorSeam::Noop => DoorWindowVerdict::Rejected {
@@ -154,7 +165,7 @@ pub(super) fn serve_door_window(
                 };
                 (
                     request.ref_updates,
-                    lfs_pushed_pointers(&blobs[..tip_blobs]),
+                    pointers,
                     request.quarantine_path,
                     verdict,
                 )

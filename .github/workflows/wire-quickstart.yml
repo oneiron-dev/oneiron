@@ -68,7 +68,9 @@ jobs:
     # dir (no rust-cache action). Bun, Node and Python stay version-pinned
     # through their setup actions, which populate the runner's own tool
     # cache (_work/_tool) on first use. Same pause/draft guard as ci.yml.
-    runs-on: [self-hosted, macos, arm64]
+    # A fork PR runs on GitHub's ephemeral macos-latest instead: PR code never
+    # reaches a persistent self-hosted runner from outside the repo (F32).
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["macos-latest"]' || '["self-hosted","macos","arm64"]') }}
     timeout-minutes: 30
     if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     defaults:
