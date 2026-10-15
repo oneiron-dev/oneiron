@@ -76,7 +76,12 @@ pub(crate) fn deindex_entity(
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
     crate::dreamer_runner::authority::guard_actor_delete(id)?;
-    crate::ports::invalidate_source_in_txn(store, wtxn, id)?;
+    crate::ports::invalidate_source_in_txn(
+        store,
+        wtxn,
+        id,
+        crate::ports::DependentWalkDoor::Purge,
+    )?;
     crate::ports::keep_deleted_worlds_in_txn(store, wtxn, id)?;
     store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
     crate::agent_def::remove_birth_custody_in_txn(store, wtxn, id)?;

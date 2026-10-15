@@ -611,6 +611,14 @@ impl Vault {
         while vault.collect_lfs_garbage(32)? != 0 {}
         // An erase or sweep interrupted after its commit resumes here.
         vault.finish_gate_decision_retirements_after_commit();
+        // So does a dependent walk an erase or a changed source marked. Reads
+        // honour a walk that fails here until a later pass finishes it.
+        if let Err(error) = vault.finish_dependent_walks() {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a dependent walk did not finish on open; the next pass resumes it"
+            );
+        }
         vault.recover_message_streams().map_err(|error| {
             crate::error::Error::Record(crate::error::RecordError::MessageStreamRecoveryFailed(
                 error.to_string(),
