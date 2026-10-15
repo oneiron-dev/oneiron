@@ -1199,6 +1199,76 @@ async fn a_chunk_exchange_waits_while_every_transfer_permit_is_held() {
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
+/// Review r5 (Sol R5-3, P1): a chunk exchange and a verify read their
+/// whole body before they took their place in line, so each request waiting
+/// past the transfer row held up to a frame of its body. Each now waits on
+/// its headers and reads its body at its turn.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_waiting_for_a_transfer_permit_has_read_none_of_its_body() {
+    use crate::wire_telemetry::LimitRow;
+    let chunk_reader = format!(
+        "{}scope=core:read;principal_ref={}",
+        crate::test_credentials::RECIPE_PREFIX,
+        oneiron::EntityId::now().to_hex()
+    );
+    let oid = LfsOid::digest(b"never stored").to_hex();
+    let verify = serde_json::to_vec(&json!({"oid": oid, "size": 12})).expect("verify body");
+    for (path, token, payload, answer) in [
+        (
+            format!("/git/{REPO}/info/lfs/chunks"),
+            chunk_reader,
+            b"not a chunk request".to_vec(),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            format!("{}/verify", object_uri(&oid)),
+            writer_token(),
+            verify,
+            StatusCode::OK,
+        ),
+    ] {
+        let config = SyncServerConfig {
+            limits: crate::config::LimitsConfig {
+                lfs_transfers: 1,
+                ..Default::default()
+            },
+            ..secret_config()
+        };
+        let (_dir, server) = test_server(config);
+        let held = hold_upload(&server, &writer_token(), 4_096).await;
+        // The body is sent only when this test says so.
+        let (send, sent) = tokio::sync::oneshot::channel::<Vec<u8>>();
+        let body = Body::from_stream(futures_util::stream::once(async move {
+            Ok::<_, std::io::Error>(axum::body::Bytes::from(sent.await.unwrap_or_default()))
+        }));
+        let waiting = {
+            let server = Arc::clone(&server);
+            let request = request("POST", &path, Some(&token), body);
+            tokio::spawn(async move { route(&server, request).await.0 })
+        };
+        // Its wait crosses the transfer row: it is in line, none of its body
+        // read.
+        let deadline = std::time::Instant::now() + PATIENCE;
+        while !asked(&server, LimitRow::LfsTransfers) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{path}: the request waits its turn before its body arrives"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        // At its turn it reads its body and answers.
+        held.abort();
+        let _ = held.await;
+        send.send(payload).expect("the request is still in line");
+        let status = tokio::time::timeout(PATIENCE, waiting)
+            .await
+            .expect("the request has its turn")
+            .expect("request task");
+        assert_eq!(status, answer, "{path}");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_upload_past_the_quota_lands_and_the_quota_row_asks() {
     let config = SyncServerConfig {

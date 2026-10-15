@@ -309,6 +309,55 @@ fn bodies_wait_for_their_budget_before_they_are_read() {
 /// holds to its own, and the profile it runs with, which decides the vault's
 /// evidence floors (review P3). Every answer also names the device and runtime
 /// that computed it, which the vault marks its vectors with (ARCH-0036).
+/// Review r5 (Sol R5-2, Astra R5-2): freed bytes went to the one waiting
+/// body before its task ran again, but the budget still counted it as
+/// waiting, so the next request to wait, after the line had run empty,
+/// crossed the row and did not ask.
+#[tokio::test]
+async fn a_wait_after_the_line_ran_empty_crosses_the_body_row_again() {
+    use futures_util::FutureExt;
+    // One window holds every crossing below.
+    let into_minute = oneiron_vault_contract::now_ts() % 60;
+    if into_minute > 50 {
+        tokio::time::sleep(Duration::from_secs(61 - into_minute)).await;
+    }
+    let wait = Duration::from_secs(60);
+    let questions = Arc::new(LimitQuestions::default());
+    let budget = Arc::new(BodyBudget::new(LARGE_BODIES_BYTES));
+    let crossings = || {
+        questions
+            .latest(LimitRow::EmbedderBodyBytes)
+            .map_or(0, |question| question.crossings)
+    };
+    let first = budget.reserve(MAX_BODY_BYTES, wait, &questions).await;
+    let second = budget.reserve(MAX_BODY_BYTES, wait, &questions).await;
+    assert!(first.is_some() && second.is_some(), "two bodies fit");
+    let waiter = tokio::spawn({
+        let budget = Arc::clone(&budget);
+        let questions = Arc::clone(&questions);
+        async move {
+            budget
+                .reserve(MAX_BODY_BYTES, wait, &questions)
+                .await
+                .is_some()
+        }
+    });
+    while budget.waiting() == 0 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(crossings(), 1);
+
+    // The freed bytes go to the waiter, whose task runs again only when
+    // this one, on the same thread, yields. Nobody waits now.
+    drop(first);
+    let next = budget
+        .reserve(MAX_BODY_BYTES, wait, &questions)
+        .now_or_never();
+    assert!(next.is_none(), "no bytes are free for it");
+    assert_eq!(crossings(), 2, "a wait after the line ran empty crosses");
+    assert!(waiter.await.expect("waiter"), "the waiter has its bytes");
+}
+
 #[test]
 fn every_row_and_answer_names_the_model_loaded() {
     let (addr, _runtime) = on_loopback(router(synthetic(), vec!["shared".to_owned()], None));
