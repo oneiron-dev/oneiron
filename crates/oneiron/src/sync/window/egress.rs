@@ -424,7 +424,8 @@ pub(crate) fn export_history_free_window_snapshot(doc: &LoroDoc) -> Result<Vec<u
 }
 
 /// Scrubs the live state and persists it: a pinned window keeps only the history
-/// [`super::history_free::HistoryCheck`] ships, every other window all it holds.
+/// [`super::history_free::HistoryCheck`] ships where a root allows it, every other window all
+/// it holds.
 pub(in crate::sync) fn export_scrubbed_window_snapshot(
     vault: &Vault,
     key: &WindowKey,
@@ -436,8 +437,8 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     scrub_redacted_attribution_carriers(vault, key, doc)?;
     scrub_withdrawn_delete_carriers(vault, key, doc)?;
     if history_free_window_required(vault, key)? {
-        let check = super::history_free::HistoryCheck::read(vault, doc)?;
-        super::history_free::history_free_snapshot(doc, Some(&check), None)
+        let check = super::history_free::HistoryCheck::read(vault, key, doc)?;
+        super::history_free::persisted_history_free_snapshot(doc, &check)
     } else {
         // A shallow doc's snapshot keeps its own root.
         export_snapshot(doc)

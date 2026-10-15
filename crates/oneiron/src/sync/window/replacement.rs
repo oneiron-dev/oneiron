@@ -13,8 +13,11 @@
 //!    new operation of the candidate, unless the peer changed the key concurrently and that
 //!    change wins Loro's order or cannot be ordered, which is a conflict;
 //! 2. every tombstone this vault holds as a hard delete (`dt:`) that the candidate lacks;
-//! 3. every pending tombstone (`pt:`), left in place for the next open;
-//! 4. pending mirrors, then the reverse and forward rematerializations, as a window open runs.
+//! 3. every queued send the old window could not apply that the candidate can, as itself;
+//! 4. delete wins: a carried write of a body the candidate hard-deleted, or of an edge naming
+//!    one, comes back out as a conflict;
+//! 5. every pending tombstone (`pt:`), left in place for the next open;
+//! 6. pending mirrors, then the reverse and forward rematerializations, as a window open runs.
 //!
 //! Below the old window's own shallow root no operation is left to read. There a key carries
 //! over when the candidate's value came from a peer whose every operation the old window holds
@@ -94,14 +97,17 @@ pub fn prepare_replacement(
 
     // A local write whose `u:w:` row never landed lives only in the outbound queue: bring every
     // queued send into the old window first, so it carries over like any other unseen write. A
-    // row that does not apply stays queued.
+    // row that does not apply there is offered to the candidate below.
     let mut carried = Vec::new();
+    let mut unapplied = Vec::new();
     for (seq, update) in crate::sync::queue::queued_window_updates(vault, key.as_str())? {
         if old
             .import(&update)
             .is_ok_and(|status| status.pending.is_none())
         {
             carried.push(seq);
+        } else {
+            unapplied.push((seq, update));
         }
     }
     // What carries over is the old window's live state: take off it first what no export may
@@ -110,8 +116,23 @@ pub fn prepare_replacement(
     scrub_local_claim_carriers(vault, key, old)?;
     scrub_redacted_attribution_carriers(vault, key, old)?;
     scrub_withdrawn_delete_carriers(vault, key, old)?;
-    let conflicts = carry_over_unseen_writes(old, &candidate)?;
+    let (mut conflicts, mut written) = carry_over_unseen_writes(old, &candidate)?;
     carry_over_hard_deletes(vault, old, &candidate)?;
+    // A queued send the old window could not apply may build on history only the peer kept:
+    // the candidate takes it as the operation it is. One neither takes stays queued.
+    let before = candidate.oplog_vv();
+    for (seq, update) in &unapplied {
+        if candidate
+            .fork()
+            .import(update)
+            .is_ok_and(|status| status.pending.is_none())
+        {
+            candidate.import(update).map_err(|_| rejected())?;
+            carried.push(*seq);
+        }
+    }
+    written.extend(newest_ops(&candidate, &before, &candidate.oplog_vv())?.into_keys());
+    conflicts.extend(delete_wins(&candidate, &written)?);
     let pending: Vec<_> = {
         let rtxn = vault.store.env.read_txn()?;
         PENDING_TOMBSTONE
@@ -162,10 +183,10 @@ pub struct PreparedReplacement {
     pub conflicts: Vec<ReplacementConflict>,
 }
 
-/// A key this vault and the peer both changed, each unseen by the other, where the peer's change
-/// wins Loro's order or its order cannot be read (it lies below either side's shallow root). The
-/// replacement keeps the peer's value; `held` is the one this vault had, `None` where it had the
-/// key removed.
+/// A key this vault changed that the replacement does not carry: the peer changed it too, unseen
+/// by this vault, and this vault's change does not provably win Loro's order; or the peer
+/// hard-deleted the entity it names. The replacement keeps the peer's state; `held` is the value
+/// this vault had, `None` where it had the key removed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReplacementConflict {
     /// The root map, such as `entities`.
@@ -176,15 +197,17 @@ pub struct ReplacementConflict {
 
 /// Writes into `candidate` the old window's value of every root-map key this vault wrote and the
 /// peer never saw: every key whose held value is that of the newest operation of `old` past the
-/// candidate's version, unless the peer changed the key too and that change wins, and, below the
-/// old window's own shallow root where no operation is left to read, every key whose candidate
-/// value came from an operation `old` saw while `old`'s value may have come from one the peer did
-/// not. A key both sides changed, each unseen by the other, that this vault's change does not
-/// provably win keeps the peer's value and is returned as a conflict.
+/// candidate's version, where that operation provably wins over anything the peer wrote to the
+/// key unseen by this vault, and, below the old window's own shallow root where no operation is
+/// left to read, every key whose candidate value came from an operation `old` saw while `old`'s
+/// value may have come from one the peer did not. A key this vault changed whose win cannot be
+/// proved keeps the peer's value and is returned as a conflict.
+///
+/// Returns the conflicts and every key it wrote.
 fn carry_over_unseen_writes(
     old: &LoroDoc,
     candidate: &LoroDoc,
-) -> Result<Vec<ReplacementConflict>> {
+) -> Result<(Vec<ReplacementConflict>, BTreeSet<(String, String)>)> {
     old.commit();
     let old_vv = old.oplog_vv();
     let seen = candidate.oplog_vv();
@@ -193,27 +216,31 @@ fn carry_over_unseen_writes(
     from.merge(&old.shallow_since_vv().to_vv());
     let unseen = newest_ops(old, &from, &old_vv)?;
     // The peer's operations this vault never saw, as far as the candidate's root keeps them.
-    let mut theirs_from = shared.clone();
+    let mut theirs_from = shared;
     theirs_from.merge(&candidate.shallow_since_vv().to_vv());
     let theirs = newest_ops(candidate, &theirs_from, &seen)?;
-    // `old` as of what both sides hold, raised to its own root where that is later: the state
-    // the peer's value is compared with when the peer's writer has operations this vault lacks.
-    let mut common = shared;
-    common.merge(&super::history_free::root_state(
-        &old.shallow_since_vv().to_vv(),
-        &old.shallow_since_frontiers(),
-    ));
-    let at_common = old.fork();
-    let at_common = at_common
-        .checkout(&old.vv_to_frontiers(&common))
-        .is_ok()
-        .then_some(at_common);
+    // Below the candidate's root its operations are gone: what this vault lacks there may have
+    // changed any key, and is ordered before the root's own operation.
+    let below_root = super::history_free::root_state(
+        &candidate.shallow_since_vv().to_vv(),
+        &candidate.shallow_since_frontiers(),
+    );
+    let root_lamport = candidate
+        .shallow_since_frontiers()
+        .iter()
+        .filter_map(|id| {
+            let change = candidate.get_change(id)?;
+            u32::try_from(id.counter - change.id.counter)
+                .ok()
+                .map(|offset| change.lamport + offset)
+        })
+        .max();
     let mut conflicts = Vec::new();
     // A key carries over only when the value it holds is that unseen operation's: an unseen
     // operation that lost to one the peer saw leaves the peer's newer value in place. When the
-    // peer changed the key too, unseen by this vault, Loro's order decides as a merge would; a
-    // change of the peer's whose order cannot be read keeps its value, and this vault's comes
-    // back as a conflict.
+    // peer may have changed the key too, unseen by this vault, the write carries only where it
+    // provably wins Loro's order, as a merge would decide; otherwise the peer's value stands and
+    // this vault's comes back as a conflict.
     let mut touched = BTreeSet::new();
     for ((name, key), (lamport, peer, value)) in &unseen {
         let held = old.get_map(name.as_str());
@@ -233,16 +260,13 @@ fn carry_over_unseen_writes(
             (Some((their_lamport, their_peer, _)), _) => {
                 (*lamport, *peer) > (*their_lamport, *their_peer)
             }
-            // The peer never wrote the key, or this vault holds every operation of the writer
-            // whose value the peer holds: that value is one this vault's write already beat.
+            // The peer never wrote the key.
             (None, None) => true,
-            (None, Some(writer)) if holds_all_of(&old_vv, &seen, writer) => true,
-            // Else the peer's value is unchanged since what both sides hold, or unordered.
-            (None, Some(_)) => at_common.as_ref().is_some_and(|at| {
-                let before = at.get_map(name.as_str());
-                !values_differ(before.get(key), offered.get(key))
-                    && before.get_last_editor(key) == offered.get_last_editor(key)
-            }),
+            // Every operation of the writer this vault lacks is past the candidate's root, and
+            // none of those touched the key: the peer's value is one this vault's write beat.
+            (None, Some(writer)) if holds_all_of(&old_vv, &below_root, writer) => true,
+            // The write is ordered after the candidate's root, so after anything below it.
+            (None, Some(_)) => root_lamport.is_some_and(|root| *lamport >= root),
         };
         if ours_wins {
             touched.insert((name.clone(), key.clone()));
@@ -294,40 +318,75 @@ fn carry_over_unseen_writes(
             }
         }
     }
-    for (name, key) in touched {
+    for (name, key) in &touched {
         let target = candidate.get_map(name.as_str());
-        match old.get_map(name.as_str()).get(&key) {
+        match old.get_map(name.as_str()).get(key) {
             Some(ValueOrContainer::Value(value)) => {
-                if target.get(&key).is_none_or(|current| match current {
+                if target.get(key).is_none_or(|current| match current {
                     ValueOrContainer::Value(current) => current != value,
                     ValueOrContainer::Container(_) => true,
                 }) {
-                    target.insert(&key, value).map_err(|e| {
+                    target.insert(key, value).map_err(|e| {
                         Error::sync_engine(crate::error::SyncEngineContext::LoroMapInsert, e)
                     })?;
                 }
             }
             Some(ValueOrContainer::Container(_)) => return Err(rejected()),
             None => {
-                if target.get(&key).is_some() {
-                    map_delete(&target, &key)?;
+                if target.get(key).is_some() {
+                    map_delete(&target, key)?;
                 }
             }
+        }
+    }
+    candidate.commit();
+    Ok((conflicts, touched))
+}
+
+/// Delete wins over what this vault wrote into `candidate`: a `written` key holding the body of
+/// an entity the candidate hard-deleted, or an edge naming one, is taken back out and returned as
+/// a conflict with the value it held, so no carried write re-authors an erased body.
+fn delete_wins(
+    candidate: &LoroDoc,
+    written: &BTreeSet<(String, String)>,
+) -> Result<Vec<ReplacementConflict>> {
+    let tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));
+    let hard = |id: &EntityId| {
+        tombstones
+            .values_for(id)
+            .iter()
+            .any(|value| crate::deletion::decode_tombstone_value(value).is_hard())
+    };
+    let mut conflicts = Vec::new();
+    for (name, key) in written {
+        let erased = match name.as_str() {
+            "entities" => EntityId::from_hex(key).is_ok_and(|id| hard(&id)),
+            "edges" => crate::sync::bridge::parse_edge_key(key)
+                .is_some_and(|(source, _, target)| hard(&source) || hard(&target)),
+            _ => false,
+        };
+        let map = candidate.get_map(name.as_str());
+        if erased && let Some(ValueOrContainer::Value(held)) = map.get(key) {
+            map_delete(&map, key)?;
+            conflicts.push(ReplacementConflict {
+                map: name.clone(),
+                key: key.clone(),
+                held: Some(held),
+            });
         }
     }
     candidate.commit();
     Ok(conflicts)
 }
 
+/// Per root-map key (map, key): the newest operation's Lamport and peer, and the value it wrote
+/// (`None` for a removal).
+type NewestOps = BTreeMap<(String, String), (u32, loro::PeerID, Option<LoroValue>)>;
+
 /// The newest operation of `doc` between `from` and `to` on each root-map key, by Loro's own
 /// order (Lamport, then peer), with the value it wrote (`None` for a removal).
-fn newest_ops(
-    doc: &LoroDoc,
-    from: &VersionVector,
-    to: &VersionVector,
-) -> Result<BTreeMap<(String, String), (u32, loro::PeerID, Option<LoroValue>)>> {
-    let mut newest: BTreeMap<(String, String), (u32, loro::PeerID, Option<LoroValue>)> =
-        BTreeMap::new();
+fn newest_ops(doc: &LoroDoc, from: &VersionVector, to: &VersionVector) -> Result<NewestOps> {
+    let mut newest = NewestOps::new();
     for change in doc
         .export_json_updates_without_peer_compression(from, to)
         .changes

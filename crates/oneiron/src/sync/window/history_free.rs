@@ -23,7 +23,8 @@ use loro::{ContainerID, ContainerType, ExportMode, Frontiers, LoroDoc, LoroValue
 
 use super::super::local_claims::claim_sync_allowed;
 use super::super::loro_support::{
-    export_snapshot, export_updates_since, map_for_each_tombstone_value, map_for_each_value_bytes,
+    TombstoneIndex, export_snapshot, export_updates_since, map_for_each_tombstone_value,
+    map_for_each_value_bytes,
 };
 use super::super::types::WindowKey;
 use super::egress::{
@@ -74,11 +75,15 @@ pub(crate) struct HistoryCheck {
     redacted: BTreeSet<(EntityId, [u8; 32])>,
     /// Entities whose CRDT tombstone is soft while this vault holds them deleted.
     erased: BTreeSet<EntityId>,
+    /// The exact header-only shells of user-deleted world claims the window keeps beside their
+    /// world witness, as the egress claim scrub proves them: carriers no claim door decodes, yet
+    /// the live state of the window.
+    retained_shells: BTreeSet<(EntityId, Vec<u8>)>,
 }
 
 impl HistoryCheck {
     /// Reads the facts the check needs, before any write transaction opens.
-    pub(crate) fn read(vault: &Vault, doc: &LoroDoc) -> Result<Self> {
+    pub(crate) fn read(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<Self> {
         let rtxn = vault.store.env.read_txn()?;
         let mut redacted = crate::identity_topology::redacted_keys_in_txn(&vault.store, &rtxn)?;
         map_for_each_value_bytes(&doc.get_map("entities"), |_, blob| {
@@ -101,7 +106,39 @@ impl HistoryCheck {
                 erased.insert(id);
             }
         }
-        Ok(Self { redacted, erased })
+        let mut retained_shells = BTreeSet::new();
+        if key.world().is_some() {
+            let mut shells = Vec::new();
+            map_for_each_value_bytes(&doc.get_map("entities"), |raw_key, blob| {
+                if let Some(blob) = blob
+                    && blob.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
+                    && let Ok(id) = EntityId::from_hex(raw_key)
+                    && id.to_hex() == raw_key
+                {
+                    shells.push((id, blob.to_vec()));
+                }
+            });
+            let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
+            for (id, blob) in shells {
+                if crate::sync::types::retained_world_shell_belongs_to_window(
+                    vault,
+                    &rtxn,
+                    doc,
+                    &tombstones,
+                    &id,
+                    &blob,
+                    key,
+                    false,
+                )? {
+                    retained_shells.insert((id, blob));
+                }
+            }
+        }
+        Ok(Self {
+            redacted,
+            erased,
+            retained_shells,
+        })
     }
 
     /// Whether every operation of `doc` past `from` may ship as ordinary history.
@@ -206,7 +243,9 @@ impl HistoryCheck {
     fn withheld_body(&self, key: &str, blob: &[u8]) -> bool {
         is_unsyncable_secret_custody(blob)
             || is_delegated_channel_identity_carrier(blob)
-            || !claim_sync_allowed(blob)
+            || (!claim_sync_allowed(blob)
+                && !EntityId::from_hex(key)
+                    .is_ok_and(|id| self.retained_shells.contains(&(id, blob.to_vec()))))
             || EntityId::from_hex(key)
                 .is_ok_and(|id| crate::origin::lfs::is_lfs_chunk_blob(&id, blob))
             || crate::identity_topology::attribution_carrier_key(blob)
@@ -261,6 +300,22 @@ pub(crate) fn history_free_snapshot(
     Err(root_unavailable())
 }
 
+/// The history-free snapshot a pinned window is persisted as: [`history_free_snapshot`] when a
+/// root passes `check`, else the snapshot rooted at its newest operation, as before the check
+/// existed. Persistence never fails for want of a clean root; no export ships the stored root
+/// without checking it again.
+pub(crate) fn persisted_history_free_snapshot(
+    doc: &LoroDoc,
+    check: &HistoryCheck,
+) -> Result<Vec<u8>> {
+    match history_free_snapshot(doc, Some(check), None) {
+        Err(Error::Sync(SyncError::SyncProtocolError {
+            context: SyncProtocolValidation::HistoryFreeRootUnavailable,
+        })) => newest_rooted_snapshot(doc).map(|(bytes, _, _)| bytes),
+        other => other,
+    }
+}
+
 fn root_unavailable() -> Error {
     Error::Sync(SyncError::SyncProtocolError {
         context: SyncProtocolValidation::HistoryFreeRootUnavailable,
@@ -284,19 +339,28 @@ fn newest_rooted_snapshot(doc: &LoroDoc) -> Result<(Vec<u8>, VersionVector, Fron
 }
 
 /// The replacement an empty receiver gets of a window whose history inserted something a
-/// device-only world keeps: rooted at the newest operation, as long as neither that root nor
-/// what the snapshot retains past it carries such an insert, or anything `check` holds back, and
-/// the root is not before `baseline`.
+/// device-only world keeps: rooted at the newest operation, as long as neither the state at that
+/// root nor what the snapshot retains past it carries such a row, or anything `check` holds
+/// back, and the root is not before `baseline`.
 fn device_only_history_snapshot(
     vault: &Vault,
+    key: &WindowKey,
     doc: &LoroDoc,
     check: Option<&HistoryCheck>,
     baseline: Option<&VersionVector>,
 ) -> Result<Vec<u8>> {
     let (bytes, start, frontiers) = newest_rooted_snapshot(doc)?;
+    let root_kept = if frontiers.is_empty() {
+        false
+    } else {
+        let at_root = doc.fork();
+        at_root.checkout(&frontiers).is_err()
+            || super::device_only::window_withheld(vault, key, &at_root)?
+    };
     let clean = baseline.is_none_or(|floor| root_state(&start, &frontiers).includes_vv(floor))
         && check
             .is_none_or(|check| check.root_ships(doc, &frontiers) && check.ships_past(doc, &start))
+        && !root_kept
         && !super::device_only::delta_carries_device_only(vault, doc, &start)?;
     if clean {
         Ok(bytes)
@@ -359,7 +423,7 @@ pub fn export_window_since(
         device_only_history,
     } = scrub_for_export(vault, key, doc, &remote)?;
     if device_only_history {
-        return device_only_history_snapshot(vault, doc, check.as_ref(), baseline)
+        return device_only_history_snapshot(vault, key, doc, check.as_ref(), baseline)
             .map(WindowExport::Replacement);
     }
     let holds_floor = remote.includes_vv(&doc.shallow_since_vv().to_vv())
@@ -402,7 +466,7 @@ pub fn export_window_replacement(
         device_only_history,
     } = scrub_for_export(vault, key, doc, &nothing)?;
     if device_only_history {
-        return device_only_history_snapshot(vault, doc, check.as_ref(), baseline).map(Some);
+        return device_only_history_snapshot(vault, key, doc, check.as_ref(), baseline).map(Some);
     }
     history_free_snapshot(doc, check.as_ref(), baseline).map(Some)
 }
@@ -433,7 +497,7 @@ fn scrub_for_export(
         || withdrawn_scrubbed
         || history_free_window_required(vault, key)?
     {
-        Some(HistoryCheck::read(vault, doc)?)
+        Some(HistoryCheck::read(vault, key, doc)?)
     } else {
         None
     };

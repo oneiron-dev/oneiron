@@ -329,6 +329,23 @@ pub(crate) enum ProtocolError {
     ReplacementUnsupported,
 }
 
+impl ProtocolError {
+    /// The error's closed name, for a log line: never the text it carries.
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            Self::RpcVersionMismatch => "rpc_version_mismatch",
+            Self::RpcNoPrincipal => "rpc_no_principal",
+            Self::InvalidPayload(reason) => reason,
+            Self::UnknownTag(_) => "unknown_tag",
+            Self::FrameTooLarge { .. } => "frame_too_large",
+            Self::LoroImport(_) => "loro_import_failed",
+            Self::VvDecode(_) => "version_vector_decode_failed",
+            Self::Persistence(_) => "sync_persistence_failed",
+            Self::ReplacementUnsupported => "replacement_unsupported",
+        }
+    }
+}
+
 /// WebSocket close codes per ARCH-023 section 3.5.
 ///
 /// The `dead_code`-allowed constants are contract constants: no close frame

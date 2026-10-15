@@ -510,6 +510,223 @@ fn a_peer_behind_a_history_free_window_comes_level_without_what_it_withholds() {
     }
 }
 
+/// S1 done-means for a value the check must let through: a world window keeps a user-deleted
+/// claim as its exact header-only shell beside its world witness, a carrier no claim door
+/// decodes. Pinned for an unrelated reason, the window must still bring a peer behind it level,
+/// shell and witness included, and the claim's deleted body must reach the peer nowhere.
+#[test]
+fn a_pinned_world_window_keeping_a_deleted_claim_shell_still_serves_a_peer_behind_it() {
+    let (_dir, vault) = test_vault();
+    let world = EntityId::now();
+    let person = EntityId::now();
+    let claim = EntityId::now();
+    let key = WindowKey::for_world(1_771_027_200, world);
+    let at = key.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault
+        .put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            occurred,
+            at,
+            b"world",
+        )
+        .unwrap();
+    vault
+        .put_entity(&person, ENTITY_TYPE_PERSON, occurred, at, b"person")
+        .unwrap();
+    let mut body = ClaimBody::new(
+        "test.retained_shell",
+        ClaimSubject::Entity(person),
+        rmpv::Value::from("placeholder deleted body"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(world);
+    vault.put_claim(&claim, &body, occurred, at).unwrap();
+    vault
+        .batch()
+        .edge(&claim, crate::EdgeKind::About, &person, 1.0)
+        .commit()
+        .unwrap();
+    let manager = Arc::new(crate::sync::WindowManager::new(
+        vault.clone(),
+        Arc::new(Materializer::new()),
+        "test",
+    ));
+    let window = manager.open_window(&key).unwrap();
+    let mut peer = LoroDoc::new();
+    peer.import(&window.doc.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    vault
+        .delete_entity_with_reason(&claim, crate::DeleteReason::UserDelete)
+        .unwrap();
+    crate::sync::window::require_history_free_window(&vault, &key).unwrap();
+    write_row(&window.doc, at + 1, b"row after the delete");
+
+    let marker = b"placeholder deleted body";
+    let mut received = Vec::new();
+    for _ in 0..5 {
+        if peer.oplog_vv() == window.doc.oplog_vv() {
+            break;
+        }
+        match export_window_since(&vault, &key, &window.doc, &peer.oplog_vv().encode(), None)
+            .expect("a pinned window keeping a retained shell is served")
+        {
+            WindowExport::Update(update) => {
+                let status = peer.import(&update).unwrap();
+                assert!(status.pending.is_none(), "an update the peer cannot apply");
+                received.push(update);
+            }
+            WindowExport::Replacement(snapshot) => {
+                peer = LoroDoc::from_snapshot(&snapshot).unwrap();
+                received.push(snapshot);
+            }
+        }
+    }
+    assert_eq!(
+        peer.oplog_vv(),
+        window.doc.oplog_vv(),
+        "the peer never came level"
+    );
+    assert_eq!(
+        map_get_bytes(&peer.get_map("entities"), &claim.to_hex()).map(|shell| shell.len()),
+        Some(crate::batch::ENTITY_METADATA_HEADER_LEN),
+        "the peer lacks the retained shell"
+    );
+    assert!(
+        peer.get_map("retained_claim_worlds")
+            .get(&claim.to_hex())
+            .is_some(),
+        "the peer lacks the shell's world witness"
+    );
+    assert!(
+        !received
+            .iter()
+            .any(|bytes| bytes.windows(marker.len()).any(|window| window == marker)),
+        "the deleted claim's body reached the peer"
+    );
+}
+
+/// S1 done-means for the device-only flag: a row a device-only world keeps that a window once
+/// held, then removed on one of two concurrent branches, stays in the state at the root Loro cuts
+/// a snapshot of that window at. Neither the export door nor the last send may let that root out.
+#[test]
+fn a_device_only_row_rides_in_no_snapshot_root() {
+    let (_dir, vault) = test_vault();
+    let at = vault.store.clock.now_recorded_at();
+    let world = EntityId::now();
+    let marker = b"placeholder private world";
+    vault
+        .put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            TimeRange { start: at, end: at },
+            at,
+            marker,
+        )
+        .unwrap();
+    let key = WindowKey::from_timestamp(at);
+    let doc = create_window_doc("source", &key);
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &world.to_hex(),
+        &vault.get_raw(&world).unwrap().unwrap(),
+    )
+    .unwrap();
+    doc.commit();
+    let public = write_row(&doc, at, b"public row");
+    let branch = doc.fork();
+    crate::sync::loro_support::map_delete(&branch.get_map("entities"), &world.to_hex()).unwrap();
+    branch.commit();
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &public,
+        &blob(ENTITY_TYPE_TURN, at + 1, b"public row, edited"),
+    )
+    .unwrap();
+    doc.commit();
+    doc.import(&branch.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    assert_eq!(doc.oplog_frontiers().len(), 2, "fixture: two heads");
+    vault
+        .keep_world_on_this_machine_for_test(world, true)
+        .unwrap();
+    let carries = |bytes: &[u8]| bytes.windows(marker.len()).any(|window| window == marker);
+
+    match export_window_since(&vault, &key, &doc, &VersionVector::default().encode(), None) {
+        Ok(export) => assert!(
+            !carries(&export.into_bytes()),
+            "the export door let the row out in a snapshot root"
+        ),
+        Err(crate::error::Error::Sync(crate::error::SyncError::SyncProtocolError {
+            context: crate::error::SyncProtocolValidation::HistoryFreeRootUnavailable,
+        })) => {}
+        Err(other) => panic!("not the typed refusal: {:?}", other.kind()),
+    }
+    let cut = doc
+        .export(ExportMode::shallow_snapshot(&doc.oplog_frontiers()))
+        .unwrap();
+    assert!(
+        carries(&cut),
+        "fixture: Loro roots the snapshot before the removal"
+    );
+    let manager = Arc::new(crate::sync::WindowManager::new(
+        vault.clone(),
+        Arc::new(Materializer::new()),
+        "test",
+    ));
+    assert_eq!(
+        super::device_only::raw_update_verdict(&manager, key.as_str(), &cut),
+        super::device_only::UpdateVerdict::Withheld,
+        "the last send let the row out in a snapshot root"
+    );
+}
+
+/// A pinned window whose two heads leave no root the check passes (a NOTE proposal rewritten in
+/// place on one branch) still persists, and the state it persists reloads; only an export to a
+/// peer behind it is refused, typed.
+#[test]
+fn a_pinned_window_with_no_clean_root_still_persists() {
+    let (_dir, vault) = test_vault();
+    let at = vault.store.clock.now_recorded_at();
+    let key = WindowKey::from_timestamp(at);
+    let doc = create_window_doc("source", &key);
+    let prefix_row = write_row(&doc, at, b"shared prefix");
+    let peer = LoroDoc::new();
+    peer.import(&doc.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    let proposals = doc.get_map("note_proposals");
+    let proposal = EntityId::now().to_hex();
+    map_insert_bytes(&proposals, &proposal, b"placeholder private explainer").unwrap();
+    doc.commit();
+    write_row(&doc, at + 1, b"common row");
+    let branch = doc.fork();
+    map_insert_bytes(&branch.get_map("note_proposals"), &proposal, b"redacted").unwrap();
+    branch.commit();
+    write_row(&doc, at + 2, b"concurrent row");
+    doc.import(&branch.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    assert_eq!(doc.oplog_frontiers().len(), 2, "fixture: two heads");
+    crate::sync::window::require_history_free_window(&vault, &key).unwrap();
+
+    let persisted = super::egress::export_scrubbed_window_snapshot(&vault, &key, &doc)
+        .expect("a pinned window persists without a clean root");
+    let reloaded = LoroDoc::from_snapshot(&persisted).unwrap();
+    assert_eq!(reloaded.oplog_vv(), doc.oplog_vv());
+    assert!(map_get_bytes(&reloaded.get_map("entities"), &prefix_row).is_some());
+    assert!(matches!(
+        export_window_since(&vault, &key, &doc, &peer.oplog_vv().encode(), None),
+        Err(crate::error::Error::Sync(
+            crate::error::SyncError::SyncProtocolError {
+                context: crate::error::SyncProtocolValidation::HistoryFreeRootUnavailable,
+            }
+        ))
+    ));
+}
+
 /// What the receiving vault did that the hub never saw.
 #[derive(Clone, Copy, Debug)]
 enum LocalWork {
@@ -530,6 +747,16 @@ enum LocalWork {
     /// The same, with the hub's edit past the replacement's root and the receiver's edit later
     /// in Loro's order: it ends where an ordinary merge would.
     ConcurrentOrdered,
+    /// An unsent edit of a row the hub changed and then wrote back byte for byte, later in
+    /// Loro's order, below the replacement's root: the value and writer the receiver last saw
+    /// are back, but the hub's write is newer, so its value stands and the edit is named.
+    ChangeAndRevert,
+    /// An unsent edit of a row the hub wrote long ago, ordered after everything the
+    /// replacement's root holds: it ends where an ordinary merge would.
+    EditAfterRoot,
+    /// The same edit, of a row the hub then hard-deleted: delete wins, so the body stays out and
+    /// the edit is named.
+    HardDeletedByHub,
 }
 
 /// S2 done-means: a receiver that shares the hub's prefix and then did `LocalWork` installs the
@@ -546,6 +773,9 @@ fn a_replacement_keeps_every_write_the_hub_never_saw() {
         LocalWork::LostToHub,
         LocalWork::Concurrent,
         LocalWork::ConcurrentOrdered,
+        LocalWork::ChangeAndRevert,
+        LocalWork::EditAfterRoot,
+        LocalWork::HardDeletedByHub,
     ] {
         let (_dir, vault) = test_vault();
         let at = vault.store.clock.now_recorded_at();
@@ -566,6 +796,7 @@ fn a_replacement_keeps_every_write_the_hub_never_saw() {
         let mut local = Vec::new();
         let mut contested = None;
         let mut newest = None;
+        let mut erased = None;
         match work {
             LocalWork::PastRoot | LocalWork::BelowRoot | LocalWork::ConcurrentOrdered => {
                 for n in 0..3 {
@@ -607,6 +838,64 @@ fn a_replacement_keeps_every_write_the_hub_never_saw() {
                     newest = Some(ours);
                 }
             }
+            LocalWork::ChangeAndRevert => {
+                let base = map_get_bytes(&hub.get_map("entities"), &shared).unwrap();
+                let ours = blob(ENTITY_TYPE_TURN, at + 4, b"receiver edit");
+                map_insert_bytes(&receiver.doc.get_map("entities"), &shared, &ours).unwrap();
+                receiver.doc.commit();
+                let temporary = blob(ENTITY_TYPE_TURN, at + 3, b"hub temporary edit");
+                map_insert_bytes(&hub.get_map("entities"), &shared, &temporary).unwrap();
+                hub.commit();
+                map_insert_bytes(&hub.get_map("entities"), &shared, &base).unwrap();
+                hub.commit();
+                write_row(&hub, at + 5, b"hub row after the revert");
+                let merged = hub.fork();
+                merged
+                    .import(&receiver.doc.export(ExportMode::all_updates()).unwrap())
+                    .unwrap();
+                assert_eq!(
+                    map_get_bytes(&merged.get_map("entities"), &shared),
+                    Some(base.clone()),
+                    "fixture: an ordinary merge keeps the hub's write-back"
+                );
+                contested = Some((base, ours));
+            }
+            LocalWork::HardDeletedByHub => {
+                for n in 0..4 {
+                    write_row(&receiver.doc, at + 10 + n, b"receiver row");
+                }
+                let ours = blob(ENTITY_TYPE_TURN, at + 4, b"receiver edit");
+                map_insert_bytes(&receiver.doc.get_map("entities"), &shared, &ours).unwrap();
+                receiver.doc.commit();
+                let tombstone = crate::deletion::TombstoneValueV2 {
+                    reason: crate::deletion::TombstoneReason::UserHardDelete,
+                    deleted_at: at + 5,
+                    request_id: [0x42; 16],
+                }
+                .encode();
+                map_insert_bytes(&hub.get_map("tombstones"), &shared, &tombstone).unwrap();
+                crate::sync::loro_support::map_delete(&hub.get_map("entities"), &shared).unwrap();
+                hub.commit();
+                erased = Some(ours);
+            }
+            LocalWork::EditAfterRoot => {
+                for n in 0..4 {
+                    write_row(&receiver.doc, at + 10 + n, b"receiver row");
+                }
+                let ours = blob(ENTITY_TYPE_TURN, at + 4, b"receiver edit");
+                map_insert_bytes(&receiver.doc.get_map("entities"), &shared, &ours).unwrap();
+                receiver.doc.commit();
+                let merged = hub.fork();
+                merged
+                    .import(&receiver.doc.export(ExportMode::all_updates()).unwrap())
+                    .unwrap();
+                assert_eq!(
+                    map_get_bytes(&merged.get_map("entities"), &shared),
+                    Some(ours.clone()),
+                    "fixture: an ordinary merge keeps the receiver's edit"
+                );
+                newest = Some(ours);
+            }
             LocalWork::Conflict | LocalWork::Concurrent => {
                 let theirs = blob(ENTITY_TYPE_TURN, at + 3, b"hub edit");
                 map_insert_bytes(&hub.get_map("entities"), &shared, &theirs).unwrap();
@@ -647,6 +936,9 @@ fn a_replacement_keeps_every_write_the_hub_never_saw() {
                 | LocalWork::LostToHub
                 | LocalWork::Concurrent
                 | LocalWork::ConcurrentOrdered
+                | LocalWork::ChangeAndRevert
+                | LocalWork::EditAfterRoot
+                | LocalWork::HardDeletedByHub
         ) {
             receiver.doc.fork()
         } else {
@@ -679,7 +971,8 @@ fn a_replacement_keeps_every_write_the_hub_never_saw() {
         )
         .unwrap();
         let entities = prepared.doc.get_map("entities");
-        for row in hub_rows.iter().chain([&shared]) {
+        let kept = (erased.is_none()).then_some(&shared);
+        for row in hub_rows.iter().chain(kept) {
             assert!(
                 entities.get(row).is_some(),
                 "{work:?}: a hub row is missing"
@@ -693,6 +986,21 @@ fn a_replacement_keeps_every_write_the_hub_never_saw() {
             assert!(
                 vault.get_raw(id).unwrap().is_some(),
                 "{work:?}: an unsent local row left LMDB"
+            );
+        }
+        if let Some(ours) = erased {
+            assert!(
+                entities.get(&shared).is_none(),
+                "{work:?}: a carried write put a hard-deleted body back"
+            );
+            assert_eq!(
+                prepared.conflicts,
+                vec![ReplacementConflict {
+                    map: "entities".to_owned(),
+                    key: shared.clone(),
+                    held: Some(LoroValue::Binary(ours.into())),
+                }],
+                "{work:?}: the edit delete beat is not named"
             );
         }
         match contested {
@@ -716,6 +1024,7 @@ fn a_replacement_keeps_every_write_the_hub_never_saw() {
                 );
                 assert!(prepared.conflicts.is_empty(), "{work:?}");
             }
+            None if erased.is_some() => {}
             None => assert!(
                 prepared.conflicts.is_empty(),
                 "{work:?}: {:?}",

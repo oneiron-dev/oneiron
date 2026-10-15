@@ -523,7 +523,11 @@ async fn handle_connection(
                     break;
                 }
                 if let Err(error) = server.vault().resume_from_slim_on_inbound() {
-                    tracing::warn!(conn_id, %error, "failed to resume vault for inbound frame");
+                    tracing::warn!(
+                        conn_id,
+                        kind = ?error.kind(),
+                        "failed to resume vault for inbound frame"
+                    );
                     break;
                 }
                 if !matches!(&msg, SyncMessage::Rpc(_) | SyncMessage::Sub(_)) {
@@ -590,10 +594,14 @@ async fn handle_connection(
                             tracing::warn!(conn_id, tag, "unknown tag — closing");
                             break;
                         }
-                        ProtocolError::VvDecode(msg) => {
+                        ProtocolError::VvDecode(_) => {
                             // Fail-closed: a malformed VV is a protocol
                             // violation, never answered with a full export.
-                            tracing::warn!(conn_id, error = %msg, "version vector decode failure — closing");
+                            tracing::warn!(
+                                conn_id,
+                                reason = "version_vector_decode_failed",
+                                "version vector decode failure — closing"
+                            );
                             break;
                         }
                         ProtocolError::FrameTooLarge { size, max } => {
@@ -628,7 +636,7 @@ async fn handle_connection(
                 break;
             }
             Err(e) => {
-                tracing::warn!(conn_id, error = %e, "protocol parse error");
+                tracing::warn!(conn_id, kind = e.kind(), "protocol parse error");
                 break;
             }
         }
