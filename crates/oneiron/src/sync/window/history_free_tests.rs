@@ -1132,39 +1132,120 @@ fn a_replacement_never_softens_the_hubs_hard_delete() {
         prepared.conflicts.contains(&ReplacementConflict {
             map: "tombstones".to_owned(),
             key: shared.clone(),
-            held: Some(LoroValue::Binary(soft.into())),
+            held: Some(LoroValue::Binary(soft.to_vec().into())),
         }),
         "the soft delete it could not keep is not named: {:?}",
         prepared.conflicts
     );
 }
 
-/// Bug repro (SOL-S3-003, ASTRA-S3-007): a queued send the old window could not apply, which the
-/// candidate took in, lost Loro's order to the hub's concurrent edit of the same row, and its
-/// queue row was retired with no conflict. Done-means: the value it wrote comes back as one.
+/// Bug repro (SOL-S3-003, ASTRA-S3-007, ASTRA-S4-001): a queued send whose write lost Loro's order
+/// to the hub's concurrent edit of the same row was retired with no conflict, whether the
+/// candidate took it in (the old window could not apply it) or the old window did. Done-means: the
+/// value it wrote comes back as a conflict either way.
 #[test]
-fn a_queued_send_the_candidate_overrides_comes_back_as_a_conflict() {
+fn a_queued_send_the_hub_overrides_comes_back_as_a_conflict() {
+    for applies_to_old in [false, true] {
+        let (_dir, vault) = test_vault();
+        let at = vault.store.clock.now_recorded_at();
+        let key = WindowKey::from_timestamp(at);
+        let (hub, shared, receiver) = shared_hub(&vault, at, &key);
+        if !applies_to_old {
+            // History the receiver's window never took in, which the queued send builds on.
+            write_row(&hub, at + 1, b"hub row the receiver lacks");
+        }
+        let built_on = hub.oplog_frontiers();
+        let author = hub.fork();
+        let queued = blob(ENTITY_TYPE_TURN, at + 2, b"queued receiver edit");
+        map_insert_bytes(&author.get_map("entities"), &shared, &queued).unwrap();
+        author.commit();
+        let update = author.export(ExportMode::updates(&hub.oplog_vv())).unwrap();
+        crate::sync::queue::SyncQueue::new(Arc::clone(&vault))
+            .unwrap()
+            .push(key.as_str(), &update)
+            .unwrap();
+        for n in 0..2 {
+            let theirs = blob(ENTITY_TYPE_TURN, at + 3 + n, b"hub edit");
+            map_insert_bytes(&hub.get_map("entities"), &shared, &theirs).unwrap();
+            hub.commit();
+        }
+        if applies_to_old {
+            receiver
+                .doc
+                .import(&hub.export(ExportMode::all_updates()).unwrap())
+                .unwrap();
+        }
+        let old = receiver.doc.fork();
+        drop(receiver);
+        assert_eq!(
+            old.fork()
+                .import(&update)
+                .is_ok_and(|status| status.pending.is_none()),
+            applies_to_old,
+            "fixture: where the queued send applies"
+        );
+        let root = if applies_to_old {
+            hub.oplog_frontiers()
+        } else {
+            built_on
+        };
+
+        let prepared = install(&vault, &key, &old, &hub, &root);
+        assert_ne!(
+            map_get_bytes(&prepared.doc.get_map("entities"), &shared),
+            Some(queued.clone()),
+            "fixture: the hub's later edit wins Loro's order"
+        );
+        assert!(
+            prepared.conflicts.contains(&ReplacementConflict {
+                map: "entities".to_owned(),
+                key: shared.clone(),
+                held: Some(LoroValue::Binary(queued.into())),
+            }),
+            "applies to the old window: {applies_to_old}: the queued edit it could not keep is \
+             not named: {:?}",
+            prepared.conflicts
+        );
+    }
+}
+
+/// Bug repro (ASTRA-S4-002): this vault's own hard delete of a row, carried into the candidate,
+/// was softened by a queued soft delete the candidate took in later in Loro's order, since only
+/// the hub's hard deletes were guarded. Done-means: no hard delete this vault holds softens
+/// either, and the soft delete comes back as a conflict.
+#[test]
+fn a_queued_send_never_softens_this_vaults_hard_delete() {
     let (_dir, vault) = test_vault();
     let at = vault.store.clock.now_recorded_at();
     let key = WindowKey::from_timestamp(at);
     let (hub, shared, receiver) = shared_hub(&vault, at, &key);
+    let tombstone = |reason| {
+        crate::deletion::TombstoneValueV2 {
+            reason,
+            deleted_at: at + 5,
+            request_id: [0x42; 16],
+        }
+        .encode()
+    };
     // History the receiver's window never took in, which the queued send builds on.
     write_row(&hub, at + 1, b"hub row the receiver lacks");
     let root = hub.oplog_frontiers();
     let author = hub.fork();
-    let queued = blob(ENTITY_TYPE_TURN, at + 2, b"queued receiver edit");
-    map_insert_bytes(&author.get_map("entities"), &shared, &queued).unwrap();
+    for n in 0..8 {
+        write_row(&author, at + 10 + n, b"queued row");
+    }
+    let soft = tombstone(crate::deletion::TombstoneReason::UserDelete);
+    map_insert_bytes(&author.get_map("tombstones"), &shared, &soft).unwrap();
     author.commit();
     let update = author.export(ExportMode::updates(&hub.oplog_vv())).unwrap();
     crate::sync::queue::SyncQueue::new(Arc::clone(&vault))
         .unwrap()
         .push(key.as_str(), &update)
         .unwrap();
-    for n in 0..2 {
-        let theirs = blob(ENTITY_TYPE_TURN, at + 3 + n, b"hub edit");
-        map_insert_bytes(&hub.get_map("entities"), &shared, &theirs).unwrap();
-        hub.commit();
-    }
+    let hard = tombstone(crate::deletion::TombstoneReason::UserHardDelete);
+    map_insert_bytes(&receiver.doc.get_map("tombstones"), &shared, &hard).unwrap();
+    crate::sync::loro_support::map_delete(&receiver.doc.get_map("entities"), &shared).unwrap();
+    receiver.doc.commit();
     let old = receiver.doc.fork();
     drop(receiver);
     assert!(
@@ -1175,18 +1256,19 @@ fn a_queued_send_the_candidate_overrides_comes_back_as_a_conflict() {
     );
 
     let prepared = install(&vault, &key, &old, &hub, &root);
-    assert_ne!(
-        map_get_bytes(&prepared.doc.get_map("entities"), &shared),
-        Some(queued.clone()),
-        "fixture: the hub's later edit wins Loro's order"
+    let held = map_get_bytes(&prepared.doc.get_map("tombstones"), &shared)
+        .expect("this vault's tombstone is gone");
+    assert!(
+        crate::deletion::decode_tombstone_value(&held).is_hard(),
+        "this vault's hard delete was softened"
     );
     assert!(
         prepared.conflicts.contains(&ReplacementConflict {
-            map: "entities".to_owned(),
+            map: "tombstones".to_owned(),
             key: shared.clone(),
-            held: Some(LoroValue::Binary(queued.into())),
+            held: Some(LoroValue::Binary(soft.to_vec().into())),
         }),
-        "the queued edit it could not keep is not named: {:?}",
+        "the soft delete it could not keep is not named: {:?}",
         prepared.conflicts
     );
 }
@@ -1229,4 +1311,62 @@ fn a_pending_mirror_never_overwrites_the_hubs_newer_edit() {
         Some(newer),
         "a pending mirror put a superseded value back"
     );
+}
+
+/// Bug repro (ASTRA-S4-006): a replacement refused after its pending-mirror replay had already
+/// cleared the mirror's marker, while the write it replayed went only into the copy the refusal
+/// threw away, so no later open replayed it. Done-means: a refused replacement leaves the marker,
+/// and an installed one clears it.
+#[test]
+fn a_refused_replacement_keeps_its_pending_mirror() {
+    for refused in [false, true] {
+        let (_dir, vault) = test_vault();
+        let at = vault.store.clock.now_recorded_at();
+        let key = WindowKey::from_timestamp(at);
+        let id = EntityId::now();
+        vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_TURN,
+                TimeRange { start: at, end: at },
+                at,
+                b"unsent local edit",
+            )
+            .unwrap();
+        let hub = create_window_doc("hub", &key);
+        write_row(&hub, at, b"hub row");
+        let old = create_window_doc("receiver", &key);
+        old.import(&hub.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        if refused {
+            // An operation no carry-over reads, which refuses the replacement after the replay.
+            old.get_list("unreadable").push(1).unwrap();
+            old.commit();
+        }
+        let marker = format!("pm:{key}:{}", id.to_hex());
+        vault.sync_state_put(&marker, &[1]).unwrap();
+        let snapshot = hub
+            .export(ExportMode::shallow_snapshot(&hub.oplog_frontiers()))
+            .unwrap();
+
+        let prepared = prepare_replacement(
+            &vault,
+            &Materializer::new(),
+            &key,
+            &old,
+            &snapshot,
+            &std::collections::HashMap::new(),
+        );
+        assert_eq!(
+            prepared.is_err(),
+            refused,
+            "fixture: {:?}",
+            prepared.as_ref().err()
+        );
+        assert_eq!(
+            vault.sync_state_get(&marker).unwrap().is_some(),
+            refused,
+            "refused: {refused}: the pending mirror's marker"
+        );
+    }
 }

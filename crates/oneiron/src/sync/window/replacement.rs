@@ -13,9 +13,9 @@
 //!    value again, as a new operation of the candidate, unless the peer changed the key
 //!    concurrently and that change wins Loro's order or cannot be ordered, which is a conflict;
 //! 2. every tombstone this vault holds as a hard delete (`dt:`) that the candidate lacks; no hard
-//!    delete the candidate holds is softened or removed;
+//!    delete the candidate holds, or takes from this vault, is softened or removed;
 //! 3. every queued send the old window could not apply that the candidate can, as itself; a value
-//!    it writes that the candidate does not keep is a conflict;
+//!    any queued send writes that the window it applied to does not keep is a conflict;
 //! 4. delete wins: a carried write of a body the candidate hard-deleted, or of an edge naming
 //!    one, comes back out as a conflict;
 //! 5. every pending tombstone (`pt:`), left in place for the next open;
@@ -29,7 +29,9 @@
 //!
 //! The candidate, its version and its history-free state are persisted in one transaction that
 //! also retires the old window's pending updates and the queued sends it took in, whose effects
-//! step 1 carried over. The caller attaches observers last.
+//! step 1 carried over, and clears the pending mirrors step 1 replayed. Preparation refused
+//! before that transaction leaves every mirror marker in place. The caller attaches observers
+//! last.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -41,13 +43,14 @@ use super::super::loro_support::{
 };
 use super::super::types::WindowKey;
 use super::egress::{
-    export_scrubbed_window_snapshot, scrub_local_claim_carriers, scrub_local_only_carriers,
-    scrub_redacted_attribution_carriers, scrub_withdrawn_delete_carriers,
+    export_scrubbed_window_snapshot, replay_pending_mirrors_kept, scrub_local_claim_carriers,
+    scrub_local_only_carriers, scrub_redacted_attribution_carriers,
+    scrub_withdrawn_delete_carriers,
 };
 use super::tombstones::apply_tombstone_to_indexed_window_doc;
 use super::{
-    forward_rematerialize, persist_window_doc_in_txn, replay_pending_mirrors,
-    reverse_rematerialize, write_window_svf_in_txn,
+    forward_rematerialize, persist_window_doc_in_txn, reverse_rematerialize,
+    write_window_svf_in_txn,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -55,7 +58,7 @@ use crate::error::{Error, Result, SyncError, SyncProtocolValidation};
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::sync::bridge::Materializer;
 use crate::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
-use crate::sync::window_rows::{PENDING_TOMBSTONE, WINDOW_UPDATE};
+use crate::sync::window_rows::{OFF_RECORD_PROMOTE_PICKUP, PENDING_TOMBSTONE, WINDOW_UPDATE};
 
 /// The permanent local hard-delete marker (`dt:{entity_hex}`), value = the exact tombstone
 /// bytes. Owned by `deletion::tombstone`; bound here for this module's one read, as the
@@ -106,11 +109,16 @@ pub fn prepare_replacement(
     // row that does not apply there is offered to the candidate below.
     let mut carried = Vec::new();
     let mut unapplied = Vec::new();
+    let mut lost = Vec::new();
     for (seq, update) in crate::sync::queue::queued_window_updates(vault, key.as_str())? {
+        let at = old.oplog_vv();
         if old
             .import(&update)
             .is_ok_and(|status| status.pending.is_none())
         {
+            // A value it writes that the old window already orders below another write never
+            // becomes the old window's value, so the carry-over never sees it: name it here.
+            lost.extend(lost_writes(old, &at)?);
             carried.push(seq);
         } else {
             unapplied.push((seq, update));
@@ -124,13 +132,15 @@ pub fn prepare_replacement(
     scrub_withdrawn_delete_carriers(vault, key, old)?;
     // A pending mirror is this vault's own write that a crash kept off the window: it goes into
     // the old window, so the carry-over judges it like any other unseen write and never puts it
-    // over a value the peer provably superseded.
-    replay_pending_mirrors(vault, old, key)?;
+    // over a value the peer provably superseded. Its marker clears with the install below.
+    let mirrored = replay_pending_mirrors_kept(vault, old, key)?;
     // Delete semantics never weaken: no carried write or queued send may soften or remove a hard
-    // delete the replacement holds.
-    let hard = hard_tombstones(&candidate);
+    // delete the replacement holds, nor one of this vault's own once it is carried over.
+    let mut hard = hard_tombstones(&candidate);
     let (mut conflicts, mut written) = carry_over_unseen_writes(old, &candidate)?;
+    conflicts.extend(lost);
     carry_over_hard_deletes(vault, old, &candidate)?;
+    hard.extend(hard_tombstones(&candidate));
     // A queued send the old window could not apply may build on history only the peer kept:
     // the candidate takes it as the operation it is. One neither takes stays queued, and a value
     // it writes that the candidate does not keep comes back as a conflict.
@@ -182,6 +192,9 @@ pub fn prepare_replacement(
             WINDOW_UPDATE.delete(&vault.store, wtxn, update)?;
         }
         crate::sync::queue::retire_queued_in_txn(vault, wtxn, &carried)?;
+        for marker in &mirrored {
+            OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker)?;
+        }
         write_window_svf_in_txn(vault, wtxn, key)
     })?;
     Ok(PreparedReplacement {

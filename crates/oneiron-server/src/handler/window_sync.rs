@@ -312,49 +312,49 @@ pub(super) async fn handle_window_sync(
             let imported = doc
                 .import_with(update, &origin)
                 .map_err(|e| ProtocolError::LoroImport(format!("{e}")))?;
-            // An update that adds no operation, such as a catch-up reply to a vector this home
-            // already covers, has nothing to keep or relay. Relaying it would wake every socket
-            // that is not pushed the window, and their catch-ups would wake each other in turn.
-            if imported.pending.is_some() || doc.oplog_vv() != before {
-                // Durability BEFORE fan-out (ARCH-0023b Observer A duty: "MUST
-                // persist synchronously"). `subscribe_local_update` does not fire
-                // for imports, so the imported update bytes are appended to
-                // sync_state (u:w:*) explicitly. A persistence failure closes the
-                // connection without broadcasting: the server must never relay an
-                // update — tombstones included — that it cannot replay after a
-                // restart.
-                let persist_result = server.persist_imported_update(&key, update);
-                if let Err(e) = persist_result {
-                    // The cached doc already imported this update (import runs
-                    // before the durable append), so it now holds state a restart
-                    // would lose. Left cached, a later VV_REQUEST would serve the
-                    // unpersisted update, the origin client would VV-confirm and
-                    // clear its local queue, and the next server restart would
-                    // drop the update — tombstones included — fleet-wide. Evict
-                    // the window so the next access reloads from durable
-                    // d:w:/u:w: state. Known residual: connections already
-                    // holding a reference-clone of the evicted doc can still
-                    // export it until their next fetch (generation/poison flag =
-                    // follow-up).
-                    server.evict_window(&key).await;
-                    return Err(ProtocolError::Persistence(format!(
-                        "update persist failed: {e}"
-                    )));
-                }
+            // Durability BEFORE fan-out (ARCH-0023b Observer A duty: "MUST
+            // persist synchronously"). `subscribe_local_update` does not fire
+            // for imports, so the imported update bytes are appended to
+            // sync_state (u:w:*) explicitly. A persistence failure closes the
+            // connection without broadcasting: the server must never relay an
+            // update — tombstones included — that it cannot replay after a
+            // restart.
+            let persist_result = server.persist_imported_update(&key, update);
+            if let Err(e) = persist_result {
+                // The cached doc already imported this update (import runs
+                // before the durable append), so it now holds state a restart
+                // would lose. Left cached, a later VV_REQUEST would serve the
+                // unpersisted update, the origin client would VV-confirm and
+                // clear its local queue, and the next server restart would
+                // drop the update — tombstones included — fleet-wide. Evict
+                // the window so the next access reloads from durable
+                // d:w:/u:w: state. Known residual: connections already
+                // holding a reference-clone of the evicted doc can still
+                // export it until their next fetch (generation/poison flag =
+                // follow-up).
+                server.evict_window(&key).await;
+                return Err(ProtocolError::Persistence(format!(
+                    "update persist failed: {e}"
+                )));
+            }
 
-                // A world flagged device-only on this server stays here, even as
-                // another device's relayed update.
-                if !crate::server::withheld_from_peers(&server.reassert_manager, window_key, update)
-                {
-                    let broadcast_msg =
-                        protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, update)
-                            .into_result()
-                            .map_err(|e| {
-                                ProtocolError::InvalidPayload(protocol::transport_err_msg(e))
-                            })?;
-                    let _ =
-                        crate::broadcast::broadcast(&server.broadcast_tx, conn_id, broadcast_msg);
-                }
+            // A world flagged device-only on this server stays here, even as
+            // another device's relayed update. An update that adds no operation, such as a
+            // catch-up reply to a vector this home already covers, has nothing to relay: relayed,
+            // it would wake every socket that is not pushed the window, and their catch-ups would
+            // wake each other in turn. It is still appended above, since another handler may hold
+            // the same operations in memory before its own append lands, and the acknowledgment
+            // below must name durable bytes.
+            if (imported.pending.is_some() || doc.oplog_vv() != before)
+                && !crate::server::withheld_from_peers(&server.reassert_manager, window_key, update)
+            {
+                let broadcast_msg =
+                    protocol::encode_window_sync(window_key, window_sub_tags::UPDATE, update)
+                        .into_result()
+                        .map_err(|e| {
+                            ProtocolError::InvalidPayload(protocol::transport_err_msg(e))
+                        })?;
+                let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, broadcast_msg);
             }
             if let Some(seq) = residence_seq {
                 let mut ack = seq.to_be_bytes().to_vec();
