@@ -14,6 +14,8 @@ struct VerifiedRestriction {
     vault_id: AuthorityVaultId,
     entry_hash: AuthorityEntryHash,
     kind: Restriction,
+    /// The rows its proven branch folded through an owner anchor's branch.
+    routed: BTreeSet<AuthorityEntryHash>,
 }
 
 #[derive(Clone, Debug)]
@@ -27,11 +29,13 @@ enum Restriction {
     /// A verified `SlipConsume`: every id its proven branch had burnt, the
     /// single-use ancestors it spent among them.
     SlipBurn(BTreeSet<[u8; 32]>),
-    /// A verified machine removal: the machine's chains on the removal's own
-    /// branch, whose head is the terminal revision.
+    /// A verified machine removal: the removing admitter's chain on the
+    /// removal's own branch, whose head is the terminal revision. Only the
+    /// removal itself travels: nothing else that branch held.
     MachineRemoval {
         machine: EntityId,
-        chains: BTreeMap<MachineAdmitter, MachineChain>,
+        admitter: MachineAdmitter,
+        chain: Box<MachineChain>,
     },
 }
 
@@ -64,8 +68,12 @@ impl RevokeFacts {
                 Restriction::SlipBurn(burnt) => {
                     state.slips.consumed.extend(burnt.iter().copied());
                 }
-                Restriction::MachineRemoval { machine, chains } => {
-                    super::machine_profile::merge_machine_chains(state, *machine, chains);
+                Restriction::MachineRemoval {
+                    machine,
+                    admitter,
+                    chain,
+                } => {
+                    super::machine_profile::merge_machine_chain(state, *machine, *admitter, chain);
                 }
             }
         }
@@ -144,12 +152,37 @@ pub(super) fn derive_revoke_facts(
                 epoch: *epoch,
             },
             AuthorityOp::MachineProfile(profile) => {
-                let Some(chains) = state.machines.get(&profile.machine) else {
+                let Some((admitter, chain)) = state
+                    .machines
+                    .get(&profile.machine)
+                    .into_iter()
+                    .flatten()
+                    .find(|(_, chain)| chain.head.entry == *hash)
+                else {
                     continue;
                 };
                 Restriction::MachineRemoval {
                     machine: profile.machine,
-                    chains: chains.clone(),
+                    admitter: *admitter,
+                    chain: Box::new(MachineChain {
+                        head: chain.head.clone(),
+                        owner_held: chain.owner_held.clone().filter(|held| held.entry == *hash),
+                        owner_held_removals: chain
+                            .owner_held_removals
+                            .iter()
+                            .filter(|(_, removal)| removal.entry == *hash)
+                            .map(|(signer, removal)| (signer.clone(), removal.clone()))
+                            .collect(),
+                        // The removal's own revision, past its floor here
+                        // still: the proof never erases that mark (Astra
+                        // #1430b).
+                        revisions: chain
+                            .revisions
+                            .iter()
+                            .filter(|(revision, _)| *revision == hash)
+                            .map(|(revision, held)| (*revision, std::sync::Arc::clone(held)))
+                            .collect(),
+                    }),
                 }
             }
             _ => continue,
@@ -160,6 +193,7 @@ pub(super) fn derive_revoke_facts(
                 vault_id: state.vault_id,
                 entry_hash: *hash,
                 kind,
+                routed: state.anchor_entries,
             },
         );
     }
@@ -203,6 +237,7 @@ impl RevokeFacts {
                     vault_id: state.vault_id,
                     entry_hash: *hash,
                     kind,
+                    routed: state.anchor_entries,
                 },
             );
         }
@@ -212,7 +247,8 @@ impl RevokeFacts {
 impl RevokeFacts {
     /// Forgets every restriction that stands on a key a handoff retired: the
     /// old root revokes no actor and withdraws no slip the new root bound or
-    /// minted, whatever its own old branch says.
+    /// minted, whatever its own old branch says. A row the proof took through
+    /// an owner anchor's branch rests on that anchor (Wonder W3-F1).
     pub(super) fn forget_retired(
         &mut self,
         retirements: &super::retired_signers::Retirements,
@@ -220,7 +256,7 @@ impl RevokeFacts {
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     ) {
         self.by_hash
-            .retain(|hash, _| !retirements.excludes(hash, entries, ancestors));
+            .retain(|hash, fact| !retirements.excludes(hash, entries, ancestors, &fact.routed));
     }
 
     /// Forgets every restriction proved through a handoff that did not take
