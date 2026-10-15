@@ -338,7 +338,8 @@ fn a_claim_rewritten_to_another_artifact_keeps_both_holders() -> Result<()> {
     rewritten.scope_facet = stamped.scope_facet;
     put_claim(&replica, &claim, &rewritten, 31)?;
 
-    replica.delete_entity_with_reason(&first, DeleteReason::UserHardDelete)?;
+    // A plain delete; a hard erase takes every holder's reference with the bytes (ARCH-0005a).
+    replica.delete_entity_with_reason(&first, DeleteReason::UserDelete)?;
     assert!(
         stored(&replica, &asset)?,
         "deleting one holder took the bytes another live artifact holds"

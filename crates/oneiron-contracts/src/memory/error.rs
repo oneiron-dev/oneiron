@@ -291,6 +291,12 @@ impl From<Error> for MemoryError {
                 message,
                 &["Verify the identifier and retry."],
             ),
+            // Not NOT_FOUND: a retry reads the same answer (ARCH-0005a).
+            ErrorKind::BlobVersionErased => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &["A hard erase took this version's bytes; read another version."],
+            ),
             // FORBIDDEN like the gate family beside it, but with its OWN
             // remedies: the generic arm points at pending consents and at
             // resubmitting as proposed, and both are exactly what this error

@@ -2347,3 +2347,84 @@ async fn member_grant_scope_must_admit_the_exact_code_or_blob_export() {
         StatusCode::NOT_MODIFIED
     );
 }
+
+/// Done-means (ARCH-0005a): two artifacts share one blob, and a hard erase of one takes the bytes
+/// and every reference to them. The other's published version then reads as erased on the lane
+/// door: never its old bytes, and never NOT_FOUND, which a client would retry.
+#[tokio::test]
+async fn local_blob_artifact_route_reads_an_erased_reference_as_erased() {
+    let (_dir, server) = test_server();
+    let at = |t: u64| oneiron::TimeRange { start: t, end: t };
+    let actor_id = oneiron::EntityId::now();
+    server
+        .vault
+        .put_entity(
+            &actor_id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            at(10),
+            10,
+            b"uploader",
+        )
+        .expect("create blob uploader");
+    let actor = oneiron::WriteActor::new(actor_id, oneiron::EdgeActorClass::Human);
+    let mut artifacts = Vec::new();
+    for learned in [10, 12] {
+        let artifact_id = oneiron::EntityId::now();
+        server
+            .vault
+            .put_blob_artifact(
+                &artifact_id,
+                &oneiron::blob_artifact::BlobArtifactBody::new("report.pdf", "application/pdf"),
+                at(learned),
+                learned,
+            )
+            .expect("create blob artifact");
+        server
+            .vault
+            .append_blob_artifact_version(
+                &artifact_id,
+                b"%PDF-1.7\nshared version",
+                &oneiron::blob_artifact::BlobVersionProvenance::UserUpload,
+                actor,
+                at(learned + 1),
+                learned + 1,
+            )
+            .expect("append shared blob version");
+        artifacts.push(artifact_id);
+    }
+    let (erased, kept) = (artifacts[0], artifacts[1]);
+    server
+        .vault
+        .publish_blob_artifact_pointer_with_tier(
+            &kept,
+            oneiron::ArtifactPointerChannel::Published,
+            1,
+            oneiron::artifact_hosting::ArtifactServeTier::Public,
+        )
+        .expect("pin published blob version");
+    let route = format!("/a/{}/_s/c/published/report.pdf", kept.to_hex());
+    let request = || {
+        Request::builder()
+            .uri(&route)
+            .body(Body::empty())
+            .expect("published blob request")
+    };
+    let (status, _, _) = route_bytes(server.clone(), request()).await;
+    assert_eq!(status, StatusCode::OK);
+
+    server
+        .vault
+        .delete_entity_with_reason(&erased, oneiron::DeleteReason::GdprDelete)
+        .expect("hard erase the other artifact");
+
+    let (status, _, body) = route_bytes(server.clone(), request()).await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "the erased reference did not read as erased"
+    );
+    assert!(
+        String::from_utf8_lossy(&body).contains("blob_version_erased"),
+        "the erased reference did not name its state"
+    );
+}

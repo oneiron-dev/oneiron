@@ -42,8 +42,13 @@ const CLAIMED_HASH: SideTable<(EntityId, ContentHash), (), Raw> =
 /// a release fence is ever lifted.
 const RELEASE_FENCE: &[u8] = b"blob_artifact:release";
 
+/// The value of a fence a hard erase planted on a carrier it scrubbed: a reference it took, or a
+/// text derived from the bytes it took. It is never lifted. Like a release fence, the export door
+/// drops its carrier with an ordinary delete (`super::erase`).
+const ERASE_FENCE: &[u8] = b"blob_artifact:erase";
+
 /// The artifact and content hash `body` names, when it is a `blob.version` claim.
-fn version_claim_reference(body: &ClaimBody) -> Option<(EntityId, ContentHash)> {
+pub(super) fn version_claim_reference(body: &ClaimBody) -> Option<(EntityId, ContentHash)> {
     if body.predicate != BLOB_VERSION_CLAIM_PREDICATE {
         return None;
     }
@@ -69,15 +74,20 @@ fn version_claim_reference(body: &ClaimBody) -> Option<(EntityId, ContentHash)> 
 /// A claim naming an artifact this vault already deleted records nothing: the delete ran without
 /// its hash, so the bytes are released now unless something live holds them. A claim naming a
 /// live artifact lifts a fence an earlier release left on its bytes, so the export door keeps
-/// their carrier and the next rematerialization takes them back.
+/// their carrier and the next rematerialization takes them back. A claim a hard erase took
+/// records nothing and lifts nothing, whoever puts it again.
 pub(crate) fn record_version_claim(
     store: &Store,
     txn: &mut RwTxn<'_>,
+    claim: &EntityId,
     body: &ClaimBody,
 ) -> Result<()> {
     let Some((artifact, hash)) = version_claim_reference(body) else {
         return Ok(());
     };
+    if super::erase::reference_erased(store, txn, claim)? {
+        return Ok(());
+    }
     let deleted_here = {
         let raw = store.entities.get(txn, artifact.as_bytes())?;
         crate::deletion::row_deletion_marked(store, txn, &artifact, raw.as_deref())?
@@ -136,6 +146,66 @@ pub(crate) fn claimed_hash_rows_exist(
         .next()
         .transpose()?
         .is_some())
+}
+
+/// Every artifact a hold row names for the bytes under `hash`, live or not: its `asset_ref` rows
+/// and the pairs its version claims recorded. Never an id in `except`.
+pub(super) fn holders(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    hash: &ContentHash,
+    except: &[EntityId],
+) -> Result<Vec<EntityId>> {
+    let mut found = Vec::new();
+    for row in super::store_keys::ASSET_REF.iter_from(store, txn, hash)? {
+        let ((_, holder), ()) = row?;
+        found.push(holder);
+    }
+    for row in VERSION_CLAIM.iter_from(store, txn, hash)? {
+        let ((_, holder), ()) = row?;
+        found.push(holder);
+    }
+    found.retain(|holder| !except.contains(holder));
+    found.sort_unstable();
+    found.dedup();
+    Ok(found)
+}
+
+/// The artifacts whose hold keeps the bytes under `hash` past a plain delete: an `asset_ref` row,
+/// or a live artifact's version claim. Never an id in `except`.
+pub(super) fn live_holders(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    hash: &ContentHash,
+    except: &[EntityId],
+) -> Result<Vec<EntityId>> {
+    let mut found = Vec::new();
+    for row in super::store_keys::ASSET_REF.iter_from(store, txn, hash)? {
+        let ((_, holder), ()) = row?;
+        found.push(holder);
+    }
+    for row in VERSION_CLAIM.iter_from(store, txn, hash)? {
+        let ((_, holder), ()) = row?;
+        if artifact_is_live(store, txn, &holder)? {
+            found.push(holder);
+        }
+    }
+    found.retain(|holder| !except.contains(holder));
+    found.sort_unstable();
+    found.dedup();
+    Ok(found)
+}
+
+/// Drops the pair a version claim recorded for `artifact` and `hash`.
+pub(super) fn forget_hold(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    hash: &ContentHash,
+    artifact: &EntityId,
+) -> Result<()> {
+    VERSION_CLAIM.delete(store, txn, &(*hash, *artifact))?;
+    CLAIMED_HASH.delete(store, txn, &(*artifact, *hash))?;
+    Ok(())
 }
 
 /// Whether an artifact live here, other than `except`, holds the bytes under `hash`.
@@ -209,15 +279,38 @@ pub(crate) fn readmit_held_asset_in_txn(
 
 /// Whether only a release fences `asset`: its fence holds the release value and no hard-delete
 /// marker stands beside it.
-pub(crate) fn release_fenced_only(
-    store: &Store,
-    txn: &RoTxn<'_>,
-    asset: &EntityId,
-) -> Result<bool> {
+fn release_fenced_only(store: &Store, txn: &RoTxn<'_>, asset: &EntityId) -> Result<bool> {
     let key = HexId(*asset);
     Ok(crate::deletion::ROW_DELETION_FENCE
         .get(store, txn, &key)?
         .is_some_and(|value| value == RELEASE_FENCE)
+        && !crate::deletion::HARD_DELETE_MARKER.contains(store, txn, &key)?)
+}
+
+/// Marks a carrier a hard erase just scrubbed (`super::erase`) with the erase's fence, when the
+/// scrub planted the fence it holds. A fence it held before the erase stays as it was.
+pub(crate) fn fence_erased_carrier(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    carrier: &EntityId,
+    fenced_before: bool,
+) -> Result<()> {
+    if fenced_before {
+        return Ok(());
+    }
+    crate::deletion::ROW_DELETION_FENCE.put(store, txn, &HexId(*carrier), &ERASE_FENCE.to_vec())
+}
+
+/// Whether the export door drops `id`'s carrier with an ordinary delete, without pinning its
+/// window history-free: a release or a hard erase fenced it, and no hard-delete marker stands
+/// beside the fence. Nobody withdrew a delete there; the old set operation stays in Loro history
+/// until the sweep's shallow compaction, as for any deleted row.
+#[cfg(feature = "sync")]
+pub(crate) fn fenced_without_pin(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    let key = HexId(*id);
+    Ok(crate::deletion::ROW_DELETION_FENCE
+        .get(store, txn, &key)?
+        .is_some_and(|value| value == RELEASE_FENCE || value == ERASE_FENCE)
         && !crate::deletion::HARD_DELETE_MARKER.contains(store, txn, &key)?)
 }
 

@@ -159,6 +159,20 @@ impl Vault {
             return Ok(DeleteEntityOutcome::missing());
         }
         let mut affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
+        let mut scope = RedactionScope::entity(id);
+        if reason.active_store_hard_purge_v1() {
+            // ARCH-0005a: HardErase pierces refcounting, headerless leg (an artifact's
+            // replicated version claims can outlive its row).
+            let pierced = self.cascade_hard_erase_to_blob_references_in_txn(
+                &mut wtxn,
+                id,
+                &tombstone.encode(),
+            )?;
+            affected.extend(pierced.changed);
+            scope
+                .entity_ids
+                .extend(pierced.carriers.iter().map(EntityId::to_hex));
+        }
         let (existed, citing) =
             self.purge_entity_active_store_in_txn(&mut wtxn, id, Some(&tombstone.request_id))?;
         affected.extend(citing);
@@ -218,7 +232,7 @@ impl Vault {
                 actor_principal: gate.as_ref().map(|gate| gate.actor_principal()),
                 room_authority: gate.as_ref().and_then(|gate| gate.room_authority()),
                 request_id: request_uuid.to_string(),
-                scope: RedactionScope::entity(id),
+                scope,
                 reason,
                 requested_at,
                 soft_complete_at: hard_purge_complete_at,

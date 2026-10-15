@@ -51,6 +51,8 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         | ErrorKind::AgentDefinitionNotFound
         | ErrorKind::AgentDefinitionDisabled => ApiError::bad_request(error.to_string(), None),
         ErrorKind::EntityNotFound | ErrorKind::EdgeNotFound => ApiError::not_found("entity", None),
+        // An erased version is not a missing one: a retry reads the same answer (ARCH-0005a).
+        ErrorKind::BlobVersionErased => ApiError::invalid_state(Some("blob_version_erased")),
         ErrorKind::HeadAdvanceOffTrunk => ApiError::invalid_state(Some("head_advance_off_trunk")),
         ErrorKind::DagParentOutsideConversation => {
             ApiError::invalid_state(Some("dag_parent_outside_conversation"))

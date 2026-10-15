@@ -1,11 +1,13 @@
 //! H125: a deleted blob artifact's version bytes leave every replica, while any artifact that
-//! still holds the same bytes keeps them.
+//! still holds the same bytes keeps them through a plain delete. A hard erase takes the bytes and
+//! every reference to them off every replica (ARCH-0005a: HardErase pierces refcounting).
 
 #![allow(clippy::unwrap_used)]
 
 use loro::{ExportMode, LoroDoc, VersionVector};
 use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use oneiron::edge::EdgeActorClass;
+use oneiron::error::{ArtifactError, Error};
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window;
@@ -17,6 +19,7 @@ use crate::sync_harness::{
 
 const UNIQUE: &[u8] = b"H125 bytes only the deleted artifact held";
 const SHARED: &[u8] = b"H125 bytes two artifacts hold";
+const PIERCED: &[u8] = b"ARCH-0005a bytes a hard erase takes from two artifacts";
 
 /// A local artifact on `node` holding `versions` in order, mirrored into its window.
 fn upload(node: &mut TestNode, at: u64, versions: &[&[u8]]) -> EntityId {
@@ -51,10 +54,10 @@ fn upload(node: &mut TestNode, at: u64, versions: &[&[u8]]) -> EntityId {
     artifact
 }
 
-fn delete_artifact(node: &mut TestNode, artifact: &EntityId) {
+fn delete_artifact(node: &mut TestNode, artifact: &EntityId, reason: DeleteReason) {
     node.close_window(WINDOW);
     node.vault
-        .delete_entity_with_reason(artifact, DeleteReason::UserHardDelete)
+        .delete_entity_with_reason(artifact, reason)
         .unwrap();
     node.recover(WINDOW);
 }
@@ -102,6 +105,13 @@ fn holds(node: &TestNode, asset: &EntityId) -> bool {
     node.vault.get_raw(asset).unwrap().is_some()
 }
 
+fn has_body(node: &TestNode, id: &EntityId) -> bool {
+    node.vault
+        .get_raw(id)
+        .unwrap()
+        .is_some_and(|raw| raw.len() > 25)
+}
+
 fn carries(node: &TestNode, asset: &EntityId) -> bool {
     node.doc(WINDOW)
         .get_map("entities")
@@ -110,7 +120,7 @@ fn carries(node: &TestNode, asset: &EntityId) -> bool {
 }
 
 /// Bug repro (H125) and done-means: B holds A's artifact as a replica, with no version chain of
-/// its own. Deleting the artifact on A must take the bytes only it held off B as well, and no
+/// its own. A plain delete of the artifact on A must take the bytes only it held off B as well, and no
 /// stale carrier may bring them back, whether a rematerialization reads it from the window or a
 /// lagging peer puts it back; bytes another live artifact holds stay on both vaults until that
 /// artifact goes too. Uploading the same bytes again afterwards still reaches B.
@@ -131,7 +141,7 @@ fn a_deleted_artifact_takes_its_version_bytes_off_every_replica() {
     let own = upload(&mut b, T0 + 10, &[SHARED]);
     exchange(&a, &b, WINDOW);
 
-    delete_artifact(&mut a, &deleted);
+    delete_artifact(&mut a, &deleted, DeleteReason::UserDelete);
     exchange(&a, &b, WINDOW);
     for node in [&a, &b] {
         assert!(
@@ -222,7 +232,7 @@ fn a_deleted_artifact_takes_its_version_bytes_off_every_replica() {
     // The last artifact holding the shared bytes goes on B while its window is closed, so B
     // persists and reloads the window: they leave both vaults, and A, which never saw B's
     // reload, still catches up through B's export door.
-    delete_artifact(&mut b, &own);
+    delete_artifact(&mut b, &own, DeleteReason::UserHardDelete);
     sync_through_doors(&a, &b);
     assert!(!holds(&a, &shared) && !holds(&b, &shared));
 
@@ -234,4 +244,97 @@ fn a_deleted_artifact_takes_its_version_bytes_off_every_replica() {
         holds(&b, &unique),
         "a re-upload of deleted bytes reaches the replica"
     );
+}
+
+/// Done-means (ARCH-0005a, ARCH-0038 carrier 13): A and B each hold an artifact with the same
+/// bytes. A hard erase of A's artifact takes the bytes and every reference to them off both
+/// vaults, B's through the erase's tombstone, and B's version reads as erased. A lagging peer that
+/// never saw the erase sends B's reference and the bytes again: neither vault takes them back, and
+/// the export doors drop both carriers without pinning a window, so the vaults still converge.
+#[test]
+fn a_hard_erase_takes_shared_bytes_and_every_reference_off_every_replica() {
+    let (mut a, mut b) = vault_pair();
+    let erased = upload(&mut a, T0, &[PIERCED]);
+    let other = upload(&mut b, T0 + 10, &[PIERCED]);
+    exchange(&a, &b, WINDOW);
+    let asset = asset_of(&a.vault, PIERCED).expect("A stores the shared bytes");
+    let reference = b
+        .vault
+        .blob_artifact_head(&other)
+        .unwrap()
+        .expect("B's artifact has a head")
+        .claim_id;
+    assert!(holds(&a, &asset) && holds(&b, &asset));
+    assert!(has_body(&a, &reference), "B's reference reaches A");
+    let entities = a.doc(WINDOW).get_map("entities");
+    let stale = [asset, reference].map(|id| {
+        let raw = map_get_bytes(&entities, &id.to_hex()).expect("A's window carries it");
+        (id, raw)
+    });
+
+    delete_artifact(&mut a, &erased, DeleteReason::GdprDelete);
+    exchange(&a, &b, WINDOW);
+    for node in [&a, &b] {
+        assert!(
+            !holds(node, &asset),
+            "{}: the shared bytes outlived the hard erase",
+            node.name
+        );
+        assert!(
+            !has_body(node, &reference),
+            "{}: B's reference to the erased bytes kept its body",
+            node.name
+        );
+    }
+    let erased_read = |node: &TestNode| {
+        matches!(
+            node.vault.read_blob_artifact_version(&other, 1),
+            Err(Error::Artifact(ArtifactError::BlobVersionErased))
+        )
+    };
+    assert!(erased_read(&b), "B's version did not read as erased");
+
+    // A lagging peer that never saw the erase sends the reference and the bytes again.
+    let lagging = LoroDoc::new();
+    lagging.set_peer_id(3).unwrap();
+    lagging
+        .import(&b.doc(WINDOW).export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    for (id, raw) in &stale {
+        map_insert_bytes(&lagging.get_map("entities"), &id.to_hex(), raw);
+    }
+    lagging.commit();
+    let behind = b.doc(WINDOW).oplog_vv();
+    b.doc(WINDOW)
+        .import(&lagging.export(ExportMode::updates(&behind)).unwrap())
+        .unwrap();
+    exchange(&a, &b, WINDOW);
+    for node in [&a, &b] {
+        assert!(
+            !holds(node, &asset),
+            "{}: a re-sent reference brought the erased bytes back",
+            node.name
+        );
+        assert!(
+            !has_body(node, &reference),
+            "{}: the re-sent reference",
+            node.name
+        );
+    }
+    assert!(
+        erased_read(&b),
+        "B's version read as intact after the re-send"
+    );
+
+    // The export doors take both carriers out, and a peer one change behind still catches up.
+    sync_through_doors(&a, &b);
+    for node in [&a, &b] {
+        for (id, _) in &stale {
+            assert!(
+                !carries(node, id),
+                "{}: the window still carries an erased carrier",
+                node.name
+            );
+        }
+    }
 }

@@ -23,6 +23,12 @@ pub enum ArtifactError {
     /// structural validation. Nothing was written.
     #[error("invalid BLOB artifact body: {0}")]
     InvalidBlobArtifactBody(&'static str),
+    /// A hard erase took this blob artifact version's bytes and every reference
+    /// to them (ARCH-0005a: HardErase pierces refcounting). The version stays in
+    /// its artifact's chain as an erased reference; its bytes and record never
+    /// come back, so a retry reads the same answer.
+    #[error("blob artifact version was erased")]
+    BlobVersionErased,
     /// A Git-LFS object did not match what the client declared about it: a
     /// malformed object id, or a body whose SHA-256 or length disagrees with
     /// the declared oid/size. Nothing was written.
@@ -173,6 +179,7 @@ impl ArtifactError {
         match self {
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
             Self::InvalidBlobArtifactBody(_) => ErrorKind::InvalidBlobArtifactBody,
+            Self::BlobVersionErased => ErrorKind::BlobVersionErased,
             Self::InvalidLfsObject(_) => ErrorKind::InvalidLfsObject,
             Self::InvalidAnchor(_) => ErrorKind::InvalidAnchor,
             Self::AnnotationThreadNotFound => ErrorKind::AnnotationThreadNotFound,

@@ -189,6 +189,10 @@ impl Vault {
         // the shell edges with it, in the caller's transaction.
         let (cascaded_shells, mut changed_documents) =
             self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id)?;
+        // ARCH-0005a on the RECEIVING side: this replica's own references to the erased
+        // artifact's bytes go with them, before the purge drops the claim pairs that find them.
+        let pierced = self.cascade_hard_erase_to_blob_references_in_txn(wtxn, id, &marker_value)?;
+        changed_documents.extend(pierced.changed);
         let (_existed, citing) =
             self.purge_entity_active_store_in_txn(wtxn, id, decoded.request_id.as_ref())?;
         changed_documents.extend(citing);
@@ -228,6 +232,9 @@ impl Vault {
         scope
             .entity_ids
             .extend(cascaded_shells.iter().map(EntityId::to_hex));
+        scope
+            .entity_ids
+            .extend(pierced.carriers.iter().map(EntityId::to_hex));
         let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
             wtxn,
             &receipt_id,

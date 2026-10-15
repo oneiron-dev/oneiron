@@ -565,6 +565,7 @@ impl Vault {
         if record.version != version {
             return Err(Error::CorruptedIndex("blob artifact version record"));
         }
+        require_unerased(&self.store, rtxn, &record)?;
         let claim = self
             .get_claim_in_txn(rtxn, &record.claim_id)?
             .ok_or(Error::CorruptedIndex("blob artifact version claim"))?;
@@ -605,6 +606,7 @@ impl Vault {
         let Some(record) = VERSIONS.get(&self.store, rtxn, &(*artifact_id, version))? else {
             return Ok(None);
         };
+        require_unerased(&self.store, rtxn, &record)?;
         read_blob_asset_in_txn(self, rtxn, &record.content_hash).map(Some)
     }
 }
@@ -695,6 +697,15 @@ pub(crate) fn read_blob_artifact_head_in_txn(
     artifact_id: &EntityId,
 ) -> Result<Option<BlobArtifactVersion>> {
     HEAD.get(store, rtxn, artifact_id)
+}
+
+/// Refuses a version a hard erase took with its bytes (`super::erase`): it reads as erased, the
+/// same answer on every retry.
+fn require_unerased(store: &Store, rtxn: &RoTxn<'_>, record: &BlobArtifactVersion) -> Result<()> {
+    if super::erase::reference_erased(store, rtxn, &record.claim_id)? {
+        return Err(Error::Artifact(ArtifactError::BlobVersionErased));
+    }
+    Ok(())
 }
 
 fn read_blob_asset_in_txn(
