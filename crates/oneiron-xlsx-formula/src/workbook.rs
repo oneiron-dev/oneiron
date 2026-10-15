@@ -340,6 +340,7 @@ impl Formulas {
             .map(|name| name.name.to_lowercase())
             .collect();
         for (formula, defined) in cells.chain(names) {
+            let inspection = crate::context::inspect_formula(formula)?;
             if let Some(name) = crate::links::workbook_qualified_names(formula)
                 .into_iter()
                 .find(|name| sheet_level.contains(&name.to_lowercase()))
@@ -348,7 +349,6 @@ impl Formulas {
                     "workbook-qualified name with a sheet-level definition ([0]!{name})"
                 )));
             }
-            let inspection = crate::context::inspect_formula(formula)?;
             if let Some(need) = inspection.host_context {
                 return Err(unsupported(format!("formula needs host context: {need}")));
             }

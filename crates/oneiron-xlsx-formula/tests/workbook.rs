@@ -849,6 +849,28 @@ fn a_formula_too_long_to_parse_safely_is_classified_without_deep_recursion() {
 }
 
 #[test]
+fn a_reference_repeating_the_workbook_qualifier_falls_back_without_deep_recursion() {
+    // The parser at 0.9.3-oneiron.12 reads `[0]` off a reference and parses
+    // the rest again, once for each `[0]`: 10,000 of them, one token in 30 KB,
+    // within the byte and token bounds, overflowed the stack (an abort)
+    // wherever a cell or a defined name was admitted or routed.
+    let formula = format!("{}Input!A1", "[0]".repeat(10_000));
+    let reason = "reference repeating the workbook qualifier [0]";
+    let cell = fixture(
+        "",
+        &format!(r#"<c r="A1"><f>{formula}</f><v>0</v></c>"#),
+        false,
+    );
+    assert_eq!(fallback(&cell), reason);
+    let named = with_names(
+        &fixture("", r#"<c r="A1"><f>Far</f><v>0</v></c>"#, false),
+        &format!(r#"<definedName name="Far">{formula}</definedName>"#),
+    );
+    assert_eq!(fallback(&named), reason);
+    assert!(!route_workbook([], [], [formula.as_str()], limits().xml).is_in_process());
+}
+
+#[test]
 fn a_long_local_formula_with_structured_references_stays_editable_beside_a_link() {
     // C12 (Sol r1): a local formula over the parser's token bound that holds a
     // `[` (a structured reference) failed closed as an external link, so the
