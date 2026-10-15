@@ -775,8 +775,21 @@ fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
     vault
         .sync_state_put("u:w:2026-030:00000001", b"prefix-adjacent-update")
         .unwrap();
-    let dt_key = format!("dt:{}", EntityId::now().to_hex());
-    vault.sync_state_put(&dt_key, &[2u8; 26]).unwrap();
+    // A hard-delete marker is the delete doors' alone (the generic door refuses it).
+    let dt_id = EntityId::now();
+    let dt_key = format!("dt:{}", dt_id.to_hex());
+    {
+        let mut wtxn = vault.store.env.write_txn().unwrap();
+        crate::deletion::HARD_DELETE_MARKER
+            .put(
+                &vault.store,
+                &mut wtxn,
+                &crate::side_table::HexId(dt_id),
+                &[2u8; 26].to_vec(),
+            )
+            .unwrap();
+        wtxn.commit().unwrap();
+    }
     // sync_queue families (`q:{seq:8BE}` update row, `d:{seq:8BE}`
     // delete-bearing sidecar, `h:{seq:8BE}` hard-erase sweep job):
     let q_key = [b'q', b':', 0, 0, 0, 0, 0, 0, 0, 1];
