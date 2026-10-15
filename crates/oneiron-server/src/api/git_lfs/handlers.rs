@@ -9,6 +9,7 @@ use super::wire::{
     LfsAction, LfsBatchObject, LfsBatchOperation, LfsBatchRequest, LfsBatchResponse,
     LfsBatchResponseObject, LfsObjectError, LfsUploadResponse, LfsVerifyRequest, LfsVerifyResponse,
 };
+use crate::api::Transfers;
 use crate::error::ApiError;
 use crate::error::EnvelopedApiError;
 use crate::server::SyncServer;
@@ -203,7 +204,7 @@ pub(crate) async fn lfs_upload(
             page,
             reservation,
             installs: server.transfers.lfs_installs(),
-            principal: auth.principal_ref().unwrap_or_default().to_owned(),
+            wait: server.transfers.wait,
             questions: Arc::clone(&server.transfers.questions),
             now: now_secs()?,
             idle: server.transfers.idle,
@@ -249,14 +250,23 @@ pub(crate) async fn lfs_download(
     // without ever buffering the object. The stream verifies each chunk again;
     // a deletion/corruption racing preflight terminates the HTTP body with error.
     //
-    // One permit covers the preflight and the stream: each worker holds it in
-    // turn, so a client that hangs up mid-preflight frees nothing early.
+    // Its room in memory, then one permit, cover the preflight and the
+    // stream: each worker holds them in turn, so a client that hangs up
+    // mid-preflight frees nothing early.
+    let room = Transfers::read_room(&server.vault, oid)
+        .map_err(|error| lfs_engine_error("lfs object lookup failed", &error))?;
+    let Some(room) = server.transfers.lfs_read_room(room).await else {
+        return Ok(lfs_waited_out());
+    };
     let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()).await else {
         return Ok(lfs_waited_out());
     };
     let vault = Arc::clone(&server.vault);
-    let (verified, permit) = crate::api::transfer::spawn_worker(move || {
-        (vault.verify_lfs_object(oid, record.size_bytes), permit)
+    let (verified, hold) = crate::api::transfer::spawn_worker(move || {
+        (
+            vault.verify_lfs_object(oid, record.size_bytes),
+            (room, permit),
+        )
     })
     .await
     .map_err(|_| ApiError::internal_server_error("lfs verify worker failed"))?;
@@ -264,13 +274,9 @@ pub(crate) async fn lfs_download(
     if !verified {
         return Err(ApiError::not_found("lfs object", Some(&oid.to_hex())).into());
     }
-    let mut response = super::streaming::download(
-        Arc::clone(&server.vault),
-        oid,
-        permit,
-        server.transfers.idle,
-    )
-    .into_response();
+    let mut response =
+        super::streaming::download(Arc::clone(&server.vault), oid, hold, server.transfers.idle)
+            .into_response();
     response.headers_mut().insert(
         CONTENT_TYPE,
         LFS_OBJECT_MEDIA_TYPE.parse().expect("static media type"),
@@ -293,7 +299,16 @@ pub(crate) async fn lfs_verify(
 ) -> Result<Response, EnvelopedApiError> {
     let auth = authorize(&headers, &server, LfsAccess::Write).map_err(EnvelopedApiError::from)?;
     // It waits on its headers and reads its body at its turn, so a request
-    // in line holds none of it.
+    // in line holds none of it. Its room in memory is its route's object's,
+    // the only one it may read.
+    let room = match LfsOid::parse_hex(&route_oid) {
+        Ok(oid) => Transfers::read_room(&server.vault, oid)
+            .map_err(|error| lfs_engine_error("lfs object lookup failed", &error))?,
+        Err(_) => 0,
+    };
+    let Some(room) = server.transfers.lfs_read_room(room).await else {
+        return Ok(lfs_waited_out());
+    };
     let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()).await else {
         return Ok(lfs_waited_out());
     };
@@ -314,7 +329,7 @@ pub(crate) async fn lfs_verify(
     let vault = Arc::clone(&server.vault);
     let size = request.size;
     let ok = crate::api::transfer::spawn_worker(move || {
-        let _permit = permit;
+        let _hold = (room, permit);
         vault.verify_lfs_object(oid, size)
     })
     .await

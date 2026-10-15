@@ -39,14 +39,17 @@ pub struct LimitsConfig {
     /// LFS uploads and downloads at once, each one blocking worker. Past it,
     /// transfers queue.
     pub lfs_transfers: usize,
-    /// Bytes LFS transfers may hold in memory at once, half for chunk
-    /// exchanges and half for installing uploads. An exchange reads its
-    /// request and builds its reply whole, so it takes its room before it
-    /// reads a byte and keeps it until its reply is delivered; an upload
-    /// takes its room once its body is spooled, for the object or segment
-    /// its install reads whole, and keeps it until it is stored. Past either
-    /// half, work queues. A memory bound sized from the machine (an eighth
-    /// of its memory), not a count; each half holds at least one transfer.
+    /// Bytes LFS transfers may hold in memory at once: half for reads (chunk
+    /// exchanges, downloads and verifies), half for installing uploads. An
+    /// exchange reads its request and builds its reply whole, so it takes a
+    /// fixed room before it reads a byte; a download or a verify takes room
+    /// for its object's manifest before it reads it; each keeps its room
+    /// until its last byte is handed on. An upload takes room by its size
+    /// once its body is spooled, for its install's credential scan and
+    /// manifest, and keeps it until it is stored. Past either half, work
+    /// queues, and work larger than its half waits to run alone. A memory
+    /// bound sized from the machine (an eighth of its memory), not a count;
+    /// each half holds at least one chunk exchange.
     pub lfs_memory_bytes: u64,
     /// Requests `embedder serve` holds at once, reading their bodies, waiting
     /// for the model or embedding. Past it, requests queue. The model itself
@@ -189,11 +192,11 @@ impl LimitsConfig {
             }
         }
         // A byte row is a claim on the machine: one too small for a single
-        // transfer would be held to one anyway, past what it says.
+        // chunk exchange would be held to one anyway, past what it says.
         let least = 2 * crate::api::LFS_MEMORY_ROOM;
         if self.lfs_memory_bytes < least {
             anyhow::bail!(
-                "limits.lfs_memory_bytes must be at least {least}: room for one LFS transfer in each half"
+                "limits.lfs_memory_bytes must be at least {least}: room for one LFS chunk exchange in each half"
             );
         }
         Ok(())

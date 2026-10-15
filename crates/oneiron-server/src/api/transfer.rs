@@ -21,6 +21,7 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
 use crate::admission::{Admission, Permit, WaitTimedOut};
+use crate::byte_line::{ByteLine, HeldBytes};
 use crate::config::LimitsConfig;
 use crate::machine::DiskFloor;
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
@@ -28,13 +29,43 @@ use crate::wire_telemetry::{LimitQuestions, LimitRow};
 /// The largest page LMDB writes in (`MAX_PAGESIZE`).
 const LARGEST_PAGE: u64 = 32 * 1024;
 
-/// The most one LFS transfer holds in memory at once: six times the 8 MiB
-/// it reads whole. A chunk exchange's frame is read and decoded, and its
-/// reply built from the chunks, encoded and sent; an upload's install reads
-/// its object (or, past 8 MiB, an edge-split segment) whole for the
-/// credential scan, as bytes and as text (up to three bytes a byte), with
-/// room for the buffers' growth.
-pub(crate) const LFS_MEMORY_ROOM: u64 = 6 * oneiron::sync::chunks::MAX_CHUNK_SYNC_FRAME as u64;
+/// The room in memory one chunk exchange takes past its request's decoded
+/// selector, and the least either half of the memory row holds: sixteen
+/// times the 8 MiB frame it reads whole. Its frame and its decoded request;
+/// its manifest's row (within a frame, or it is not read) as read and as the
+/// two window docs its selector is judged in hold it, twice each; and its
+/// reply, the manifest read again (as stored, decoded and encoded), the
+/// chunks it carries and its encoding. Its selector is decoded, and gone,
+/// before the manifest is read ([`Transfers::exchange_room`]).
+pub(crate) const LFS_MEMORY_ROOM: u64 = 16 * FRAME;
+
+/// The frame a chunk exchange reads whole.
+const FRAME: u64 = oneiron::sync::chunks::MAX_CHUNK_SYNC_FRAME as u64;
+
+/// The most a structured body holds decoded, for each byte it takes on the
+/// wire, rounded up from what was measured: an LFS install's peak resident
+/// bytes past those before it, over its 8 MiB body, with its credential scan
+/// on (jobs `measure-1`, `measure-2` and `measure-5`, on the fleet). Random
+/// bytes held 5 a byte and JSON at most 70. MessagePack of one value a byte,
+/// nested in one-element arrays or maps, held the most, levelling off with
+/// depth at about 180 a byte (112 at depth 2, 163 at 8, 178 at 64; the scan
+/// refuses deeper nesting). A chunk request's selector is decoded into the
+/// same tree of values, which holds less than a scan does.
+pub(super) const DECODED_PER_BYTE: u64 = 256;
+
+/// What a download or a verify holds beside its manifest: a chunk as stored
+/// and as read, the pieces on their way to the client, and a verify's body,
+/// counted generously.
+const READ_ROOM: u64 = 1024 * 1024;
+
+/// Copies of its manifest's row a download or verify holds at once: the row
+/// as read, its body, its references decoded, and their encoding as its id is
+/// checked, counted generously.
+const MANIFEST_COPIES: u64 = 4;
+
+/// A pair of a read's room in memory and its transfer permit, taken in that
+/// order and held together until the read's last byte is handed on.
+pub(super) type ReadHold = (HeldBytes, Permit);
 
 /// Descriptors the process keeps whatever its transfers do (the vault's
 /// files, the listener, the runtime's own), counted generously.
@@ -58,13 +89,16 @@ pub(crate) struct Transfers {
     pushes: Mutex<HashMap<PathBuf, Arc<Admission<String>>>>,
     /// One LFS upload or download worker each, keyed by principal.
     lfs: Admission<String>,
-    /// Room in memory for one LFS chunk exchange each ([`LFS_MEMORY_ROOM`]),
-    /// keyed by principal: half the memory row.
-    lfs_frames: Admission<String>,
-    /// Room in memory for one upload's install each, keyed by principal:
-    /// the other half. A worker takes it once its body is spooled, so it is
-    /// held only for server-side work, never while a client sends.
-    lfs_installs: Arc<Admission<String>>,
+    /// LFS reads' room in memory, half the memory row: a chunk exchange's
+    /// [`LFS_MEMORY_ROOM`], or what a download's or a verify's manifest
+    /// takes ([`Self::read_room`]). A read takes it before its transfer
+    /// permit (the lock order [`crate::byte_line`] names).
+    lfs_reads: ByteLine,
+    /// Uploads' room in memory to install, the other half (by
+    /// `git_lfs::streaming::install_room`). A worker takes it once its body
+    /// is spooled, holding its transfer permit, so it is held only for
+    /// server-side work, never while a client sends.
+    lfs_installs: Arc<ByteLine>,
     /// Bytes past which LFS storage asks whether everything is okay.
     lfs_quota: u64,
     /// Bytes uploads in flight have reserved against `lfs_quota`.
@@ -92,6 +126,7 @@ impl Transfers {
         vault: &oneiron::Vault,
     ) -> Self {
         let wait = limits.queue_wait();
+        let half = usize::try_from(limits.lfs_memory_bytes / 2).unwrap_or(usize::MAX);
         let (git, lfs) = descriptor_bounds(limits, crate::machine::open_file_limit());
         if git < limits.git_exchanges || lfs < limits.lfs_transfers {
             tracing::warn!(
@@ -105,20 +140,8 @@ impl Transfers {
             git: Admission::new(LimitRow::GitExchanges, Arc::clone(&questions), git, wait),
             pushes: Mutex::default(),
             lfs: Admission::new(LimitRow::LfsTransfers, Arc::clone(&questions), lfs, wait),
-            lfs_frames: Admission::of_bytes(
-                LimitRow::LfsMemoryBytes,
-                Arc::clone(&questions),
-                limits.lfs_memory_bytes / 2,
-                LFS_MEMORY_ROOM,
-                wait,
-            ),
-            lfs_installs: Arc::new(Admission::of_bytes(
-                LimitRow::LfsMemoryBytes,
-                Arc::clone(&questions),
-                limits.lfs_memory_bytes / 2,
-                LFS_MEMORY_ROOM,
-                wait,
-            )),
+            lfs_reads: ByteLine::new(LimitRow::LfsMemoryBytes, half),
+            lfs_installs: Arc::new(ByteLine::new(LimitRow::LfsMemoryBytes, half)),
             lfs_quota: limits.lfs_quota_bytes,
             lfs_reserved: Arc::default(),
             disk: DiskFloor::new(
@@ -201,33 +224,53 @@ impl Transfers {
             .await
     }
 
-    /// Room in memory for one LFS chunk exchange, keyed as
-    /// [`Self::admit_git`] is. Take it before the exchange's transfer
-    /// permit, so an exchange waiting for room holds no permit an upload
-    /// could use.
-    pub(super) async fn admit_lfs_frames(
-        &self,
-        principal: Option<&str>,
-    ) -> Result<Permit, WaitTimedOut> {
-        self.lfs_frames
-            .admit(principal.unwrap_or_default().to_owned())
+    /// Room in memory for one LFS read of `bytes`, at its turn: reads wait
+    /// in arrival order, each up to the queue deadline, and one larger than
+    /// the half waits to run alone. Take it before the read's transfer
+    /// permit, so a read waiting for room holds no permit an upload could
+    /// use. `None` when the wait ran out.
+    pub(super) async fn lfs_read_room(&self, bytes: u64) -> Option<HeldBytes> {
+        let bytes = usize::try_from(bytes).unwrap_or(usize::MAX);
+        self.lfs_reads
+            .reserve_alone(bytes, self.wait, &self.questions)
             .await
     }
 
-    /// The pool an upload's worker takes its install room from, once its
-    /// body is spooled. Uploads and chunk exchanges take their rooms from
-    /// different halves, so an upload holding its transfer permit while it
-    /// waits never waits on an exchange that waits for a transfer permit.
-    pub(super) fn lfs_installs(&self) -> Arc<Admission<String>> {
+    /// The room a chunk exchange whose request declares `declared` bytes
+    /// takes: [`LFS_MEMORY_ROOM`], and its request decoded, by the bytes it
+    /// may read ([`DECODED_PER_BYTE`] each, a frame's when it declares no
+    /// length). It reads no more than it declared.
+    pub(super) fn exchange_room(declared: Option<u64>) -> u64 {
+        let request = declared.map_or(FRAME, |declared| declared.min(FRAME));
+        LFS_MEMORY_ROOM.saturating_add(request.saturating_mul(DECODED_PER_BYTE))
+    }
+
+    /// The room a download or a verify of `oid` takes: its manifest's row,
+    /// read in place, as many times as it is copied at once, and the chunk
+    /// and pieces beside it. Only the room beside it when no live object has
+    /// the id.
+    pub(super) fn read_room(
+        vault: &oneiron::Vault,
+        oid: oneiron::origin::lfs::LfsOid,
+    ) -> oneiron::Result<u64> {
+        let row = vault.lfs_manifest_row_bytes(oid)?.unwrap_or(0);
+        Ok(row
+            .saturating_mul(MANIFEST_COPIES)
+            .saturating_add(READ_ROOM))
+    }
+
+    /// The line an upload's worker takes its install room on, once its body
+    /// is spooled. Reads and installs take their room on different halves,
+    /// so an upload holding its transfer permit while it waits never waits
+    /// on a read that waits for a transfer permit.
+    pub(super) fn lfs_installs(&self) -> Arc<ByteLine> {
         Arc::clone(&self.lfs_installs)
     }
 
-    /// Holds one upload's install room, as an install in progress would.
+    /// The line LFS reads take their room on.
     #[cfg(test)]
-    pub(crate) fn hold_install_room(&self) -> Permit {
-        self.lfs_installs
-            .admit_blocking(String::new())
-            .expect("install room")
+    pub(crate) fn lfs_reads(&self) -> &ByteLine {
+        &self.lfs_reads
     }
 
     /// Reserves `bytes` of the LFS quota for one upload, judged against what

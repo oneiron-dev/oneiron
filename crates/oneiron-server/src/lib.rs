@@ -26,6 +26,7 @@ pub mod ai_host;
 mod api;
 mod auth;
 mod broadcast;
+mod byte_line;
 pub mod cli;
 pub mod commands;
 pub mod config;

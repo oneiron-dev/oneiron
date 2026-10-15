@@ -31,7 +31,7 @@ pub use self::store::{
     VAULT_LFS_REPO_ID_DOMAIN, VAULT_LFS_SCHEMA_VERSION, VaultLfsObject, check_lfs_expectation,
     lfs_repo_id,
 };
-pub use self::upload::LFS_DEFAULT_OBJECT_CAP;
+pub use self::upload::{LFS_DEFAULT_OBJECT_CAP, LFS_WHOLE_SCAN_MAX};
 pub(crate) use chunks::random_lfs_chunk_seed;
 pub(crate) use lifecycle::{
     delete_lfs_lifecycle_in_txn, guard_lfs_asset_put, reject_direct_lfs_chunk_delete,

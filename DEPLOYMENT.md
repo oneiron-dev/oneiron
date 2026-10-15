@@ -111,7 +111,7 @@ header_read_timeout_ms = 30000    # headers must arrive within it; also idle kee
 body_idle_timeout_ms = 60000      # a request body may pause this long between pieces
 git_exchanges = 2048              # git smart-HTTP exchanges at once (one child each); past it they queue
 lfs_transfers = 2048              # LFS uploads, downloads and verifies at once; past it they queue
-lfs_memory_bytes = 2147483648     # bytes LFS transfers hold in memory: half chunk exchanges, half installs (default: an eighth of memory)
+lfs_memory_bytes = 2147483648     # bytes LFS transfers hold in memory: half reads, half installs (default: an eighth of memory)
 embedder_requests = 2048          # requests `embedder serve` holds at once; past it they queue
 embedder_answer_bytes = 268435456 # bytes `embedder serve`'s answers hold until delivered; past it they queue
 lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; past it the row asks
@@ -129,10 +129,16 @@ descriptors each (a child's pipes while it starts, and a push's lock), and
 the other half LFS transfers at one each, so a 1,024-descriptor limit runs 14
 git exchanges at once and queues the rest; a log line
 (`transfer_descriptor_room`) says so at start. LFS transfers hold memory
-within `lfs_memory_bytes`: a chunk exchange takes 48 MiB of one half before it
-reads its request, and an upload 48 MiB of the other once its body is spooled,
-for the install's credential scan; past either half they queue. A smaller row
-than one transfer in each half (96 MiB) is a config error. A connection from off this device that has not yet authenticated
+within `lfs_memory_bytes`. Reads take room on one half before they take a
+transfer permit: a chunk exchange 128 MiB, and 256 bytes for each byte its
+request declares, which it decodes; a download or a verify four times its
+manifest's stored row, and 1 MiB, for as long as it streams. An upload takes
+room on the other half once its body is spooled: 256 bytes for each byte of
+an object of up to 8 MiB, which the install's credential scan decodes whole (a
+larger object's chunks are decoded one at a time), and 256 bytes for each
+32 KiB for its manifest. Past either half work queues, and work larger than
+its half waits to run alone; nothing is refused for its size. A smaller row
+than one chunk exchange in each half (256 MiB) is a config error. A connection from off this device that has not yet authenticated
 counts toward its address's `max_unauthenticated_connections_per_peer` (never
 more than half of `max_connections`, so one address cannot fill the floor), and
 one past that share is shed with a 503; it leaves the share as soon as a

@@ -41,12 +41,6 @@ pub(crate) struct Admission<K> {
 struct Pool<K> {
     queue: Mutex<Queue<K>>,
     bound: usize,
-    /// What one permit stands for in the row's own unit: 1 for a count,
-    /// the room each piece of work takes for a byte row.
-    unit: u64,
-    /// The row's bound as its question names it: the count, or the bytes
-    /// the row was set to.
-    ceiling: u64,
     wait: Duration,
     /// The row this bound is, and where its crossing is asked; `None` for a
     /// turn that is exclusive by nature rather than a threshold.
@@ -94,36 +88,16 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
         bound: usize,
         wait: Duration,
     ) -> Self {
-        Self::build(Some((row, questions)), bound, 1, bound.max(1) as u64, wait)
-    }
-
-    /// A pool for work that takes `each` bytes of a `bytes` row: as many
-    /// permits as fit. Its crossing asks in bytes. The config holds a byte
-    /// row to at least one piece of work's room, so it is never widened.
-    pub(crate) fn of_bytes(
-        row: LimitRow,
-        questions: Arc<LimitQuestions>,
-        bytes: u64,
-        each: u64,
-        wait: Duration,
-    ) -> Self {
-        let bound = usize::try_from(bytes / each.max(1)).unwrap_or(usize::MAX);
-        Self::build(Some((row, questions)), bound, each.max(1), bytes, wait)
+        Self::build(Some((row, questions)), bound, wait)
     }
 
     /// One turn at a time: an exclusive resource's queue, which is not a
     /// threshold and asks no question when it is busy.
     pub(crate) fn exclusive(wait: Duration) -> Self {
-        Self::build(None, 1, 1, 1, wait)
+        Self::build(None, 1, wait)
     }
 
-    fn build(
-        row: Option<(LimitRow, Arc<LimitQuestions>)>,
-        bound: usize,
-        unit: u64,
-        ceiling: u64,
-        wait: Duration,
-    ) -> Self {
+    fn build(row: Option<(LimitRow, Arc<LimitQuestions>)>, bound: usize, wait: Duration) -> Self {
         Self {
             pool: Arc::new(Pool {
                 queue: Mutex::new(Queue {
@@ -134,8 +108,6 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
                     asked: false,
                 }),
                 bound: bound.max(1),
-                unit,
-                ceiling,
                 wait,
                 row,
             }),
@@ -177,12 +149,6 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
             let _ = tokio::time::timeout(wait, waiter.granted()).await;
             place.settle().ok_or(WaitTimedOut)
         }
-    }
-
-    /// [`Self::admit`] from a thread that may block: a transfer's own
-    /// worker.
-    pub(crate) fn admit_blocking(&self, key: K) -> Result<Permit, WaitTimedOut> {
-        self.wait_blocking(Some(key))
     }
 
     /// A permit for the host's own work, given only when no caller waits.
@@ -240,11 +206,7 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
         let observed = queue.held + queue.waiters();
         drop(queue);
         if first && let Some((row, questions)) = &self.pool.row {
-            questions.ask(
-                *row,
-                self.pool.ceiling,
-                (observed as u64).saturating_mul(self.pool.unit),
-            );
+            questions.ask(*row, self.pool.bound as u64, observed as u64);
         }
         Entry::Queued(Place {
             pool: Arc::clone(&self.pool),

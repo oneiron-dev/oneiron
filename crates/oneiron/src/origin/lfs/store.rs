@@ -219,6 +219,23 @@ impl Vault {
             })
     }
 
+    /// Bytes the stored row of a live object's manifest takes, read in
+    /// place without copying it: a read of the object copies, decodes and
+    /// holds its manifest before its first byte, so a server counts this
+    /// before the read starts. `None` when no live object has the id.
+    pub fn lfs_manifest_row_bytes(&self, oid: LfsOid) -> Result<Option<u64>> {
+        use crate::store::ManifestDbs as _;
+        let Some(object) = self.lfs_object(oid)? else {
+            return Ok(None);
+        };
+        let txn = self.store.env.read_txn()?;
+        Ok(self
+            .store
+            .entities()
+            .get(&txn, object.asset_id.as_bytes())?
+            .map(|row| row.len() as u64))
+    }
+
     /// Whether a live object has this exact declared size.
     pub fn has_lfs_object(&self, oid: LfsOid, size: u64) -> Result<bool> {
         Ok(self.lfs_object(oid)?.is_some_and(|o| o.size_bytes == size))

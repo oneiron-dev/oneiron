@@ -1,14 +1,17 @@
 //! Async HTTP bodies bridged to blocking vault IO with bounded backpressure.
 
 use super::support::lfs_engine_error;
-use crate::admission::{Admission, Permit};
-use crate::api::transfer::{self, BodyReader, Reservation};
+use crate::admission::Permit;
+use crate::api::transfer::{self, BodyReader, DECODED_PER_BYTE, ReadHold, Reservation};
+use crate::byte_line::{ByteLine, HeldBytes};
 use crate::error::ApiError;
 use crate::machine::{DiskClaim, DiskFloor};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 use axum::body::{Body, Bytes};
 use futures_util::stream;
-use oneiron::origin::lfs::{LFS_CHUNK_MAX, LFS_CHUNK_MIN, LfsOid, LfsPutOutcome};
+use oneiron::origin::lfs::{
+    LFS_CHUNK_MAX, LFS_CHUNK_MIN, LFS_WHOLE_SCAN_MAX, LfsOid, LfsPutOutcome,
+};
 use oneiron::{TimeRange, Vault};
 use std::io::{self, Read, Write};
 use std::sync::Arc;
@@ -48,6 +51,44 @@ const CHUNK_ROWS: u64 = 4 * 1024;
 /// What one stored object takes on the disk whatever its size.
 const OBJECT_ROOM: u64 = 64 * 1024;
 
+/// The room in memory an install of a `bytes` object takes, from the end of
+/// its body until it is stored. Up to the engine's whole-object bound
+/// ([`LFS_WHOLE_SCAN_MAX`]) the object is held whole and its credential scan
+/// decodes it as one structured body, `DECODED_PER_BYTE` bytes a byte at
+/// most; above it each chunk is decoded alone and the stream's seam holds
+/// what an edge splits, up to the same bound, as bytes and as text
+/// ([`SEAM_ROOM`]). Its manifest takes [`CHUNK_META`] for each chunk it may
+/// have, and the install [`INSTALL_ROOM`] whatever its size.
+pub(super) fn install_room(bytes: u64) -> u64 {
+    let chunk = LFS_CHUNK_MAX as u64;
+    let decoded = if bytes <= LFS_WHOLE_SCAN_MAX {
+        bytes.saturating_mul(DECODED_PER_BYTE)
+    } else {
+        SEAM_ROOM.saturating_add(chunk.saturating_mul(DECODED_PER_BYTE))
+    };
+    let chunks = (bytes / LFS_CHUNK_MIN as u64).saturating_add(1);
+    decoded
+        .saturating_add(chunks.saturating_mul(CHUNK_META))
+        .saturating_add(INSTALL_ROOM)
+}
+
+/// What the seam of an object read in chunks holds: a segment of up to the
+/// whole-object bound, as bytes and as text (up to three bytes a byte), with
+/// room for the buffers' growth.
+const SEAM_ROOM: u64 = 6 * LFS_WHOLE_SCAN_MAX;
+
+/// What one chunk adds to an install: its reference as the manifest is built
+/// (a vector that grows by doubling), the manifest's encoding and the copy
+/// its id is hashed from, and its place in the set of chunks stored so far,
+/// counted generously.
+const CHUNK_META: u64 = 256;
+
+/// What an install holds whatever its object's size: its read and chunking
+/// buffers, a chunk as read and as written, and the transaction's pages
+/// (0.2 MiB for a 1 KiB object, measured as `DECODED_PER_BYTE` was), counted
+/// generously.
+const INSTALL_ROOM: u64 = 4 * 1024 * 1024;
+
 /// One upload's terms, fixed before its worker starts.
 pub(super) struct UploadTerms {
     pub(super) oid: LfsOid,
@@ -59,10 +100,10 @@ pub(super) struct UploadTerms {
     pub(super) page: u64,
     /// Its room in the LFS quota, grown at its end to what it came to.
     pub(super) reservation: Reservation,
-    /// Where it takes its room in memory once its body is spooled, and the
-    /// principal whose turn that is.
-    pub(super) installs: Arc<Admission<String>>,
-    pub(super) principal: String,
+    /// Where it takes its room in memory once its body is spooled
+    /// ([`install_room`]), waiting up to `wait`.
+    pub(super) installs: Arc<ByteLine>,
+    pub(super) wait: Duration,
     pub(super) questions: Arc<LimitQuestions>,
     pub(super) now: u64,
     pub(super) idle: Duration,
@@ -93,7 +134,7 @@ pub(super) async fn upload(
         page,
         reservation,
         installs,
-        principal,
+        wait,
         questions,
         now,
         idle,
@@ -111,7 +152,8 @@ pub(super) async fn upload(
         declared,
         floored: Arc::clone(&floored),
         installs,
-        principal,
+        wait,
+        runtime: Handle::current(),
         installing: None,
         waited: Arc::clone(&waited),
         size_row,
@@ -172,10 +214,13 @@ struct FloorReader {
     reservation: Reservation,
     declared: Option<u64>,
     floored: Arc<AtomicBool>,
-    installs: Arc<Admission<String>>,
-    principal: String,
+    installs: Arc<ByteLine>,
+    wait: Duration,
+    /// The runtime the wait for the install's room runs on, from the
+    /// upload's worker.
+    runtime: Handle,
     /// The install's room, once the body has ended.
-    installing: Option<Permit>,
+    installing: Option<HeldBytes>,
     waited: Arc<AtomicBool>,
     size_row: u64,
     questions: Arc<LimitQuestions>,
@@ -231,9 +276,14 @@ impl Read for FloorReader {
         }
         // The body is whole: what remains is the install, which no client
         // holds up, so the wait for its room is a wait on the server's own
-        // work.
+        // work. One larger than the whole line waits to install alone.
         if count == 0 && self.installing.is_none() {
-            let Ok(room) = self.installs.admit_blocking(self.principal.clone()) else {
+            let room = usize::try_from(install_room(self.read)).unwrap_or(usize::MAX);
+            let Some(room) = self.runtime.block_on(self.installs.reserve_alone(
+                room,
+                self.wait,
+                &self.questions,
+            )) else {
                 self.waited.store(true, Ordering::SeqCst);
                 return Err(io::Error::other("the upload waited past its deadline"));
             };
@@ -276,15 +326,15 @@ impl Write for ChannelWriter {
     }
 }
 
-/// Streams one stored object out. The worker holds `permit` until it has
+/// Streams one stored object out. The worker holds `hold` until it has
 /// written the last byte or its client stopped reading.
-pub(super) fn download(vault: Arc<Vault>, oid: LfsOid, permit: Permit, idle: Duration) -> Body {
+pub(super) fn download(vault: Arc<Vault>, oid: LfsOid, hold: ReadHold, idle: Duration) -> Body {
     let (sender, receiver) = mpsc::channel(2);
     let reader = Arc::clone(&vault);
     let runtime = Handle::current();
     // Detached: the worker answers nobody; it ends with the stream.
     drop(transfer::spawn_worker(move || {
-        let _permit = permit;
+        let _hold = hold;
         let mut writer = ChannelWriter {
             chunks: sender,
             runtime,

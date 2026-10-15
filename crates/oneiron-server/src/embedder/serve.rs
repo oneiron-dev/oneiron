@@ -69,11 +69,12 @@ use super::local::evidence::RunProfile;
 use super::local::model_manager::ModelManager;
 use super::local::{Embedded, LocalEmbedder, Priority, Side};
 use crate::admission::{Admission, Permit};
+use crate::byte_line::{ByteLine, HeldBytes};
 use crate::config::{EmbedderConfig, EmbedderProvider};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
 mod budget;
-use budget::{BodyBudget, BodyBytes, Fixed, answer_bytes, encoding_bytes};
+use budget::{Fixed, answer_bytes, encoding_bytes};
 
 /// Inputs one request may carry, as OpenAI caps them.
 const MAX_INPUTS: usize = 2_048;
@@ -234,10 +235,10 @@ struct Served {
     bulk: Arc<tokio::sync::Semaphore>,
     queries: Arc<tokio::sync::Semaphore>,
     /// The bytes request bodies may hold, by size ([`SMALL_BODY_BYTES`]).
-    small_bodies: BodyBudget,
-    large_bodies: BodyBudget,
+    small_bodies: ByteLine,
+    large_bodies: ByteLine,
     /// Room answers hold until they are delivered (`embedder_answer_bytes`).
-    answers: BodyBudget,
+    answers: ByteLine,
     /// Where crossed rows ask, the listener's descriptor floor's too. No
     /// vault keeps them here; each is logged.
     questions: Arc<LimitQuestions>,
@@ -282,9 +283,9 @@ impl Served {
             ),
             bulk: Arc::new(tokio::sync::Semaphore::new(BULK_REQUESTS)),
             queries: Arc::new(tokio::sync::Semaphore::new(QUERY_REQUESTS)),
-            small_bodies: BodyBudget::new(SMALL_BODIES_BYTES),
-            large_bodies: BodyBudget::new(LARGE_BODIES_BYTES),
-            answers: BodyBudget::answers(answers),
+            small_bodies: ByteLine::new(LimitRow::EmbedderBodyBytes, SMALL_BODIES_BYTES),
+            large_bodies: ByteLine::new(LimitRow::EmbedderBodyBytes, LARGE_BODIES_BYTES),
+            answers: ByteLine::new(LimitRow::EmbedderAnswerBytes, answers),
             questions,
             wait,
             idle: Duration::from_millis(limits.transfer_idle_timeout_ms),
@@ -452,7 +453,7 @@ struct Usage {
 async fn read_body(
     served: &Served,
     request: Request,
-) -> Result<(BodyBytes, axum::body::Bytes), Response> {
+) -> Result<(HeldBytes, axum::body::Bytes), Response> {
     let declared = request
         .headers()
         .get(header::CONTENT_LENGTH)
@@ -728,7 +729,7 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
 /// `embedder_requests` and the answer's room in `embedder_answer_bytes`
 /// until the last piece is handed on, the client goes away, or the client
 /// reads nothing for `idle`.
-fn answer_body(answer: Vec<u8>, held: (Permit, BodyBytes), idle: Duration) -> axum::body::Body {
+fn answer_body(answer: Vec<u8>, held: (Permit, HeldBytes), idle: Duration) -> axum::body::Body {
     let (pieces, receiver) = tokio::sync::mpsc::channel::<axum::body::Bytes>(2);
     tokio::spawn(async move {
         let _held = held;
