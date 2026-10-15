@@ -893,6 +893,29 @@ fn ask_decided_despite_an_uncounted_word_binds_its_outcome() -> Result<()> {
     Ok(())
 }
 
+// H328: one ask counts once on the asker's own ask window, whatever its
+// recipients; its replay never counts again. It counts beside the create
+// window, never in it: the fan-out gate refuses on the create count, and an
+// actor's own asks must not spend its fan-out slots.
+#[test]
+fn an_ask_counts_once_on_the_askers_own_window() -> Result<()> {
+    let fixture = RuledAskFixture::new(2)?;
+    let spec = fixture.spec();
+    let handle = fixture.ask(&spec)?;
+    assert_eq!(fixture.ask(&spec)?, handle);
+    assert_eq!(
+        fixture.vault.task_ask_count_for_test(fixture.owner, 60)?,
+        1,
+        "H328: an ask was not counted on the asker's window"
+    );
+    assert_eq!(
+        fixture.vault.task_create_count(fixture.owner, 60)?,
+        0,
+        "an ask spent a create slot the fan-out gate refuses on"
+    );
+    Ok(())
+}
+
 // H331: a collection whose only reply lacks a required source is not a
 // completed collection; the same reply citing the source still is.
 #[test]

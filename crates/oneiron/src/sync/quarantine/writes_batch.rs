@@ -207,27 +207,36 @@ impl TerminalRejectionBatch {
             return Ok(());
         }
         let quarantined_at = vault.store.clock.now_recorded_at();
-        vault.with_write_txn_grouped(|wtxn| {
-            for row in &self.rows {
-                record_in_txn(
-                    vault,
-                    wtxn,
-                    &QuarantineRecord {
-                        window_key: self.window_key.clone(),
-                        container: row.container,
-                        crdt_key_hash: row.crdt_key_hash,
-                        crdt_key_len: row.crdt_key_len,
-                        reason_code: row.reason_code.clone(),
-                        payload_hash: row.payload_hash,
-                        quarantined_at,
-                    },
-                )?;
-            }
-            if self.over_cap > 0 {
-                bump_batch_drop_counter_in_txn(vault, wtxn, self.over_cap)?;
-            }
-            Ok(())
-        })
+        vault.with_write_txn_grouped(|wtxn| self.commit_in_txn(vault, wtxn, quarantined_at))
+    }
+
+    /// [`Self::commit`] inside the caller's write transaction, for a pass
+    /// whose rejections commit with the state it writes.
+    pub(crate) fn commit_in_txn(
+        &self,
+        vault: &Vault,
+        wtxn: &mut heed::RwTxn<'_>,
+        quarantined_at: u64,
+    ) -> Result<()> {
+        for row in &self.rows {
+            record_in_txn(
+                vault,
+                wtxn,
+                &QuarantineRecord {
+                    window_key: self.window_key.clone(),
+                    container: row.container,
+                    crdt_key_hash: row.crdt_key_hash,
+                    crdt_key_len: row.crdt_key_len,
+                    reason_code: row.reason_code.clone(),
+                    payload_hash: row.payload_hash,
+                    quarantined_at,
+                },
+            )?;
+        }
+        if self.over_cap > 0 {
+            bump_batch_drop_counter_in_txn(vault, wtxn, self.over_cap)?;
+        }
+        Ok(())
     }
 }
 
