@@ -44,6 +44,26 @@ pub(crate) const ARTIFACT_CONTENT_SECURITY_POLICY: &str = concat!(
     "frame-ancestors 'none'"
 );
 
+/// A code bundle runs its own scripts on the daemon's origin, so its document
+/// is sandboxed into an opaque origin: it cannot read the API, another
+/// artifact or their storage through a frame or a window it opens, and it may
+/// neither frame, open popups nor submit forms. Its own relative scripts,
+/// styles and images still load ('self' matches the response URL).
+pub(crate) const CODE_ARTIFACT_CONTENT_SECURITY_POLICY: &str = concat!(
+    "default-src 'self'; ",
+    "script-src 'self'; ",
+    "style-src 'self'; ",
+    "img-src 'self' data: blob:; ",
+    "font-src 'self' data:; ",
+    "connect-src 'none'; ",
+    "object-src 'none'; ",
+    "base-uri 'none'; ",
+    "form-action 'none'; ",
+    "frame-ancestors 'none'; ",
+    "frame-src 'none'; ",
+    "sandbox allow-scripts"
+);
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ArtifactServeQuery {
@@ -141,6 +161,11 @@ pub(crate) fn artifact_file_response(
     } else {
         "private, no-store"
     };
+    let content_security_policy = if file.media_type.is_some() {
+        ARTIFACT_CONTENT_SECURITY_POLICY
+    } else {
+        CODE_ARTIFACT_CONTENT_SECURITY_POLICY
+    };
     let (content_type, attachment) = match file.media_type.as_deref() {
         Some(media_type) => match passive_blob_media_type(media_type) {
             Some(safe_type) => (HeaderValue::from_static(safe_type), false),
@@ -179,7 +204,7 @@ pub(crate) fn artifact_file_response(
         }
         headers.insert(
             CONTENT_SECURITY_POLICY,
-            HeaderValue::from_static(ARTIFACT_CONTENT_SECURITY_POLICY),
+            HeaderValue::from_static(content_security_policy),
         );
         headers.insert(
             ETAG,
@@ -200,7 +225,7 @@ pub(crate) fn artifact_file_response(
     }
     headers.insert(
         CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(ARTIFACT_CONTENT_SECURITY_POLICY),
+        HeaderValue::from_static(content_security_policy),
     );
     headers.insert(
         ETAG,

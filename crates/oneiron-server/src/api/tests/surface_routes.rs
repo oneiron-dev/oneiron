@@ -2348,3 +2348,136 @@ async fn member_grant_scope_must_admit_the_exact_code_or_blob_export() {
         StatusCode::NOT_MODIFIED
     );
 }
+
+/// F02 (H103): a code bundle's documents run scripts on the daemon's origin,
+/// so every code response (200 and 304) is sandboxed into an opaque origin
+/// with no frames, popups or forms. A passive blob keeps its inline
+/// presentation: a sandbox would stop the browser's PDF viewer.
+#[tokio::test]
+async fn code_artifact_documents_lose_the_daemon_origin_and_passive_blobs_stay_inline() {
+    let (_dir, server) = test_server();
+    let repo = create_artifact_repo(b"<script src=\"app.js\"></script>\n");
+    let snapshot = ingest_artifact_snapshot(&server, repo.path(), "site", 10);
+    server
+        .vault
+        .publish_artifact_pointer_with_tier(
+            "site",
+            oneiron::ArtifactPointerChannel::Published,
+            &snapshot.snapshot.fork_hash,
+            oneiron::artifact_hosting::ArtifactServeTier::Public,
+        )
+        .expect("publish code artifact");
+    let csp = |headers: &HeaderMap| {
+        headers
+            .get(CONTENT_SECURITY_POLICY)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let sandboxed = |policy: &str| {
+        let directives: Vec<&str> = policy.split(';').map(str::trim).collect();
+        directives.contains(&"sandbox allow-scripts")
+            && directives.contains(&"frame-src 'none'")
+            && !policy.contains("allow-same-origin")
+            && !policy.contains("allow-popups")
+            && !policy.contains("allow-top-navigation")
+            && !policy.contains("allow-forms")
+    };
+    let fork_uri = format!(
+        "/a/site/_s/f/{}/index.html",
+        oneiron::artifact_hex(&snapshot.snapshot.fork_hash)
+    );
+    let mut etag = None;
+    for path in [
+        "/a/site/_s/c/published/",
+        "/a/site/_s/c/published/app.js",
+        fork_uri.as_str(),
+    ] {
+        let (status, headers, _) = route_bytes(
+            server.clone(),
+            Request::builder()
+                .uri(path)
+                .body(Body::empty())
+                .expect("code artifact request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert!(sandboxed(&csp(&headers)), "{path}: {}", csp(&headers));
+        etag.get_or_insert(headers.get(ETAG).cloned().expect("code ETag"));
+    }
+    let (status, headers, _) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri("/a/site/_s/c/published/")
+            .header(IF_NONE_MATCH, etag.expect("code ETag"))
+            .body(Body::empty())
+            .expect("revalidation request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+    assert!(sandboxed(&csp(&headers)), "304: {}", csp(&headers));
+
+    let blob_id = oneiron::EntityId::now();
+    server
+        .vault
+        .put_blob_artifact(
+            &blob_id,
+            &oneiron::blob_artifact::BlobArtifactBody::new("report.pdf", "application/pdf"),
+            oneiron::TimeRange { start: 10, end: 10 },
+            10,
+        )
+        .expect("create blob artifact");
+    let uploader = oneiron::EntityId::now();
+    server
+        .vault
+        .put_entity(
+            &uploader,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 10, end: 10 },
+            10,
+            b"uploader",
+        )
+        .expect("create uploader");
+    let version = server
+        .vault
+        .append_blob_artifact_version(
+            &blob_id,
+            b"%PDF-1.7\nreport",
+            &oneiron::blob_artifact::BlobVersionProvenance::UserUpload,
+            oneiron::WriteActor::new(uploader, oneiron::EdgeActorClass::Human),
+            oneiron::TimeRange { start: 11, end: 11 },
+            11,
+        )
+        .expect("append blob version");
+    server
+        .vault
+        .publish_blob_artifact_pointer_with_tier(
+            &blob_id,
+            oneiron::ArtifactPointerChannel::Published,
+            version.version,
+            oneiron::artifact_hosting::ArtifactServeTier::Public,
+        )
+        .expect("publish blob");
+    let (status, headers, body) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!("/a/{}/_s/c/published/report.pdf", blob_id.to_hex()))
+            .body(Body::empty())
+            .expect("blob request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_ref(), b"%PDF-1.7\nreport");
+    assert_eq!(
+        headers
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("application/pdf")
+    );
+    assert!(headers.get(CONTENT_DISPOSITION).is_none());
+    assert!(
+        csp(&headers).contains("connect-src 'none'") && !csp(&headers).contains("sandbox"),
+        "{}",
+        csp(&headers)
+    );
+}

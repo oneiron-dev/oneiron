@@ -8,6 +8,7 @@
 mod agent_credentials;
 mod ai_serve;
 mod api_cli;
+mod artifact_origin_browser;
 mod booking_agent_api;
 // The broker runs as a second user through a user namespace: Linux only.
 #[cfg(target_os = "linux")]
