@@ -432,6 +432,100 @@ fn subscribe_owner_notes(row: usize) -> (tempfile::TempDir, SyncServer) {
     (dir, server)
 }
 
+/// Bug repro (rule 5): the home refused a socket's selector document subscription past the row.
+/// Done-means: every one is served.
+#[tokio::test]
+async fn a_selector_document_subscription_past_the_row_is_served() {
+    let _ = subscribe_selector_documents(1);
+}
+
+/// A selector socket subscribed to two documents under one facet on a home whose row is `row`,
+/// each served.
+fn subscribe_selector_documents(row: usize) -> (tempfile::TempDir, SyncServer) {
+    use super::{conn_state::ConnState, documents::handle_document};
+    use oneiron::{TimeRange, registry};
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    let facet = EntityId::now();
+    vault
+        .put_entity(
+            &facet,
+            registry::ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"placeholder facet",
+        )
+        .unwrap();
+    let ids = [b"placeholder one", b"placeholder two"].map(|body| {
+        let id = EntityId::now();
+        vault
+            .put_entity(
+                &id,
+                registry::ENTITY_TYPE_TURN,
+                TimeRange { start: 1, end: 1 },
+                1,
+                body,
+            )
+            .unwrap();
+        vault
+            .put_edge(&id, oneiron::EdgeKind::FacetOf, &facet, 1.0)
+            .unwrap();
+        id
+    });
+    let member = EntityId::now();
+    let grant_id = EntityId::now();
+    let grant = oneiron::federation::FederationGrant::new(
+        oneiron::FederationGrantScope::vault(7),
+        member,
+        oneiron::federation::FederationGrantRole::Member,
+        oneiron::federation::FederationGrantPreset::Member,
+    );
+    oneiron::sync::put_selector_test_federation_grant(&vault, &grant_id, &grant, 1).unwrap();
+    let selector = oneiron::sync::SyncSelector::new(
+        grant_id,
+        member,
+        oneiron::sync::SyncSelectorWorld::All,
+        vec![facet],
+        vec![oneiron::federation::SelectorRange::Core],
+    );
+    let server = SyncServer::new(
+        vault,
+        SyncServerConfig {
+            auth_secret: Some(SECRET.into()),
+            max_windows_per_connection: row,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut state = ConnState::new(transport::PROTOCOL_VERSION);
+    state.bound_auth = Some(crate::test_credentials::authenticate(
+        &server,
+        &format!(
+            "scope=core:read,core:write;principal_ref={}",
+            member.to_hex()
+        ),
+    ));
+    let (direct, mut replies) = tokio::sync::mpsc::unbounded_channel();
+    let request =
+        oneiron::sync::encode_selector_vv_request(&selector, &VersionVector::new().encode())
+            .unwrap();
+    for id in ids {
+        handle_document(
+            &server,
+            1,
+            id,
+            document_sub_tags::REQUEST,
+            &request,
+            &direct,
+            &mut state,
+        )
+        .unwrap_or_else(|error| panic!("a document subscription was refused: {error}"));
+        assert!(replies.try_recv().is_ok(), "the document was not served");
+    }
+    assert_eq!(state.documents.len(), 2);
+    (dir, server)
+}
+
 /// Bug repro: a frame naming no exchange, or a residence update for a window its socket never
 /// promoted, created the window it named before it was answered. Done-means: neither creates
 /// one, and an unknown sub-tag still closes nothing.
@@ -576,8 +670,9 @@ async fn crossing_the_row_asks_its_question_once() {
         .await
         .unwrap();
     }
-    let (_dir, notes) = subscribe_owner_notes(1);
-    for server in [home.server.as_ref(), &notes] {
+    let (_notes_dir, notes) = subscribe_owner_notes(1);
+    let (_documents_dir, documents) = subscribe_selector_documents(1);
+    for server in [home.server.as_ref(), &notes, &documents] {
         let questions = server.wire_telemetry.limit_questions();
         let question = questions
             .latest(LimitRow::WindowsPerConnection)
