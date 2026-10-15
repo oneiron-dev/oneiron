@@ -40,7 +40,7 @@ thread_local! {
 mod tests;
 
 #[cfg(test)]
-use self::{cache_store::*, policy::*, query::*, walk::*};
+use self::{cache_store::*, query::*, walk::*};
 #[cfg(test)]
 use crate::config::VaultConfig;
 #[cfg(test)]
