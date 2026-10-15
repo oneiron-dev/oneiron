@@ -481,7 +481,7 @@ fn recoverable_reply_respects_encoded_wire_limit_without_losing_bytes() {
     let source = (0..2048)
         .map(|i| [227_u8, 129, 130][i % 3])
         .collect::<Vec<_>>();
-    let path = "/mnt/outputs/.oneiron-context-ref/0/hash:2048/chunk/0";
+    let path = "/mnt/outputs/.oneiron-context-ref/0/hash/2048/chunk/0";
     let mut restored = Vec::new();
     while restored.len() < source.len() {
         let end = restored

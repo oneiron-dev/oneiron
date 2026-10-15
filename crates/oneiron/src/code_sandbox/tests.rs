@@ -17,7 +17,7 @@ fn code_sandbox_virtual_path_contract_keeps_guest_on_mnt_paths() -> Result<()> {
     assert_eq!(workspace.mount(), SandboxMount::Workspace);
     assert_eq!(workspace.relative_path(), "src/main.rs");
     assert_eq!(
-        mounts.resolve_host_path(&workspace),
+        mounts.resolve_host_path(&workspace)?,
         dir.path().join("host-workspace/src/main.rs")
     );
     assert_eq!(
@@ -55,6 +55,46 @@ fn code_sandbox_virtual_path_contract_keeps_guest_on_mnt_paths() -> Result<()> {
             "invalid path should reject: {invalid}"
         );
     }
+    Ok(())
+}
+
+/// F40 (H79): on a Windows host `Path::join` drops the mount root when the
+/// child carries a drive prefix, so the guest grammar refuses every form that
+/// can name another root or file on any host OS, and the resolver stays inside
+/// the mount.
+#[test]
+fn code_sandbox_virtual_path_refuses_windows_root_escape_forms() -> Result<()> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mounts = host_mounts(dir.path());
+    for (form, escape) in [
+        ("drive absolute", "/mnt/workspace/C:/Windows/win.ini"),
+        ("drive relative", "/mnt/workspace/C:foo"),
+        ("bare drive", "/mnt/workspace/c:"),
+        ("stream", "/mnt/workspace/src/notes.txt:hidden"),
+        ("unc", "/mnt/workspace//server/share/file"),
+        ("unc root", "//server/share/file"),
+        ("verbatim", "/mnt/workspace/\\\\?\\C:\\Windows\\win.ini"),
+        ("backslash", "/mnt/workspace/src\\..\\..\\secret"),
+        ("parent", "/mnt/workspace/src/../../secret"),
+    ] {
+        assert!(
+            matches!(
+                SandboxVirtualPath::try_new(escape),
+                Err(crate::Error::InvalidClaimBody(_))
+            ),
+            "{form} path must be refused: {escape}"
+        );
+    }
+
+    let inside = SandboxVirtualPath::try_new("/mnt/workspace/src/lib.rs")?;
+    let resolved = mounts.resolve_host_path(&inside)?;
+    assert_eq!(resolved, dir.path().join("host-workspace/src/lib.rs"));
+    assert!(resolved.starts_with(dir.path().join("host-workspace")));
+    let root = SandboxVirtualPath::try_new("/mnt/workspace")?;
+    assert_eq!(
+        mounts.resolve_host_path(&root)?,
+        dir.path().join("host-workspace")
+    );
     Ok(())
 }
 

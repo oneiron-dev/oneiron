@@ -2,7 +2,7 @@
 
 use std::{
     fmt,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use crate::{Error, Result};
@@ -73,8 +73,8 @@ impl SandboxVirtualPath {
     /// # Errors
     ///
     /// Returns [`Error::InvalidClaimBody`] when the path is not absolute under
-    /// `/mnt`, targets an unknown mount, or contains empty / `.` / `..`
-    /// components.
+    /// `/mnt`, targets an unknown mount, contains empty / `.` / `..`
+    /// components, or carries a NUL byte, a backslash or a colon.
     pub fn try_new(path: impl AsRef<str>) -> Result<Self> {
         let path = path.as_ref();
         if !path.starts_with('/') {
@@ -113,6 +113,14 @@ impl SandboxVirtualPath {
         if components.iter().any(|component| component.contains('\\')) {
             return Err(Error::InvalidClaimBody(
                 "sandbox virtual path contains host path separator",
+            ));
+        }
+        // A colon starts a Windows drive prefix (`C:/x`, `C:x`) that makes
+        // `Path::join` drop the mount root, or names an alternate data stream.
+        // Refused on every host so the guest ABI is the same everywhere.
+        if components.iter().any(|component| component.contains(':')) {
+            return Err(Error::InvalidClaimBody(
+                "sandbox virtual path contains drive or stream separator",
             ));
         }
 
@@ -188,8 +196,13 @@ impl SandboxMountTable {
     }
 
     /// Resolves a validated virtual path to its host path for host-side IO.
-    #[must_use]
-    pub fn resolve_host_path(&self, path: &SandboxVirtualPath) -> PathBuf {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidClaimBody`] when the host reads any component of
+    /// the relative path as something other than a plain name (a root, a
+    /// prefix or a dot component), so the result never leaves the mount root.
+    pub fn resolve_host_path(&self, path: &SandboxVirtualPath) -> Result<PathBuf> {
         let root = match path.mount() {
             SandboxMount::Workspace => &self.workspace,
             SandboxMount::Uploads => &self.uploads,
@@ -197,9 +210,18 @@ impl SandboxMountTable {
             SandboxMount::Skills => &self.skills,
         };
         if path.relative_path().is_empty() {
-            return root.clone();
+            return Ok(root.clone());
         }
-        root.join(Path::new(path.relative_path()))
+        let relative = Path::new(path.relative_path());
+        if !relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+        {
+            return Err(Error::InvalidClaimBody(
+                "sandbox virtual path escapes its mount root",
+            ));
+        }
+        Ok(root.join(relative))
     }
 }
 

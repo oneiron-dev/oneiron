@@ -42,7 +42,8 @@ pub fn prepare_overlay_handle(
 
     ensure_private_scratch_root(root, backend)?;
 
-    let base_root = mounts.resolve_host_path(&SandboxVirtualPath::try_new(SANDBOX_WORKSPACE_ROOT)?);
+    let base_root =
+        mounts.resolve_host_path(&SandboxVirtualPath::try_new(SANDBOX_WORKSPACE_ROOT)?)?;
     let vm_id = EntityId::now().to_hex();
     let (vm_root, scratch) = super::scratch::provision(root, &vm_id, backend)?;
     let overlay_upper = vm_root.join("upper");

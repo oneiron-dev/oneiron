@@ -72,7 +72,7 @@ impl FakeSandboxAdapter {
 
 impl SandboxBoundaryAdapter for FakeSandboxAdapter {
     fn read_file(&self, call: SandboxReadFile) -> Result<SandboxFileRead> {
-        let _host_path = self.mounts.resolve_host_path(&call.path);
+        let _host_path = self.mounts.resolve_host_path(&call.path)?;
         let bytes = self
             .files
             .get(&call.path)

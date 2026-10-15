@@ -146,7 +146,7 @@ pub(super) fn recoverable_output_path(
     source: crate::compaction::output::OutputRef,
 ) -> String {
     format!(
-        "/mnt/outputs/.oneiron-context-ref/{seq}/{}:{}",
+        "/mnt/outputs/.oneiron-context-ref/{seq}/{}/{}",
         crate::entity_id::bytes_to_hex_lower(&source.hash),
         source.byte_len,
     )
