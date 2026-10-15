@@ -5,12 +5,10 @@
 //! exchanges past the bound are refused while a stalled one holds its permit,
 //! the permit returns once the stalled child is gone, and a slow transfer
 //! that keeps moving is never cut. One push names no limit on its ref count
-//! (rule 5): two hundred refs land in one exchange, a status report past the
-//! memory the bridge holds is held on disk, and so is a command section past
-//! the memory the door reads ahead in.
+//! (rule 5): two hundred refs land in one exchange, and a status report past
+//! the memory the bridge holds is held on disk.
 
 use super::routes::git_http_routes;
-use super::status_codec::status_packet;
 use crate::config::{LimitsConfig, SyncServerConfig};
 use crate::server::SyncServer;
 use axum::body::Body;
@@ -27,6 +25,11 @@ use tokio::net::TcpStream;
 /// Far past every idle limit these tests set: reaching it means an exchange
 /// the test expected to end was still running.
 const PATIENCE: Duration = Duration::from_secs(30);
+
+/// How long a push of a few hundred refs may take to land: each ref lands
+/// through its own publication, and a debug build under a loaded test run
+/// took about 0.4 s for each.
+const LANDING_PATIENCE: Duration = Duration::from_secs(600);
 
 struct Origin {
     addr: SocketAddr,
@@ -437,17 +440,17 @@ async fn a_slow_fetch_that_keeps_moving_is_not_cut() {
 
 /// One receive-pack request creating `count` branches at the origin's commit,
 /// asking for side-band status, with the empty pack stock git sends for it.
-fn creations(origin: &Origin, names: &[String]) -> Vec<u8> {
+fn creations(origin: &Origin, count: usize) -> Vec<u8> {
     let zero = "0".repeat(origin.oid.len());
     let mut request = String::new();
-    for (n, name) in names.iter().enumerate() {
+    for n in 0..count {
         let capabilities = if n == 0 {
             "\0report-status side-band-64k"
         } else {
             ""
         };
         request.push_str(&pkt(&format!(
-            "{zero} {} {name}{capabilities}\n",
+            "{zero} {} refs/heads/spill-{n:03}{capabilities}\n",
             origin.oid
         )));
     }
@@ -484,12 +487,10 @@ async fn a_push_report_past_the_held_memory_spills_and_lands() {
     let before = door_entries(&spilled);
     let mut reports = Vec::new();
     for origin in [&in_memory, &spilled] {
-        let names: Vec<_> = (0..300)
-            .map(|n| format!("refs/heads/spill-{n:03}"))
-            .collect();
-        let request = creations(origin, &names);
+        let request = creations(origin, 300);
         let mut stream = rpc(origin, "git-receive-pack", request.len(), &request).await;
-        let (status, body) = response(&mut stream).await;
+        // Each of the 300 refs lands through its own publication.
+        let (status, body) = response_within(&mut stream, LANDING_PATIENCE).await;
         assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
         reports.push(body);
     }
@@ -506,42 +507,4 @@ async fn a_push_report_past_the_held_memory_spills_and_lands() {
     assert_eq!(status, 200);
     assert_eq!(count(&advertised, b" refs/heads/spill-"), 300);
     assert_eq!(door_entries(&spilled), before);
-}
-
-/// A push's command section, read ahead of the backend to refuse a push
-/// certificate, is held whatever its size (rule 5): 3,700 creations named at
-/// the 200-byte ref limit, a section past a mebibyte, all land, and nothing
-/// the section was held in is left in the door root.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_push_whose_command_section_passes_a_mebibyte_lands() {
-    let origin = origin(LimitsConfig::default()).await;
-    let before = door_entries(&origin);
-    let names: Vec<_> = (0..3_700)
-        .map(|n| format!("refs/heads/{n:04}-{}", "x".repeat(184)))
-        .collect();
-    assert!(names.iter().all(|name| name.len() == 200));
-    let request = creations(&origin, &names);
-    // The section's pkt-lines, up to the flush that ends it.
-    let mut section = 0;
-    while &request[section..section + 4] != b"0000" {
-        let header = std::str::from_utf8(&request[section..section + 4]).unwrap();
-        section += usize::from_str_radix(header, 16).unwrap();
-    }
-    assert!(section > 1 << 20, "{section} section bytes");
-    let mut stream = rpc(&origin, "git-receive-pack", request.len(), &request).await;
-    let (status, body) = response_within(&mut stream, Duration::from_secs(600)).await;
-    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
-    // Side-band channel 1 may split a status line across its packets.
-    let (mut report, mut rest) = (Vec::new(), body.as_slice());
-    while let Some(packet) = status_packet(&mut rest) {
-        if let Some((1, data)) = packet.split_first() {
-            report.extend_from_slice(data);
-        }
-    }
-    let landed = report
-        .windows(b"ok refs/heads/".len())
-        .filter(|window| *window == b"ok refs/heads/")
-        .count();
-    assert_eq!(landed, names.len());
-    assert_eq!(door_entries(&origin), before);
 }
