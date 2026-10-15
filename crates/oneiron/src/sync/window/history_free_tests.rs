@@ -733,6 +733,83 @@ fn a_pinned_window_with_no_clean_root_still_persists() {
     ));
 }
 
+/// S1 at the floor itself (Bugbot, #1463): a pinned window persists rooted at its newest
+/// operation, and a peer current just before that operation holds exactly the reloaded window's
+/// shallow start, a vector that leaves the root's own operation out. The export door must bring
+/// that peer to the window's state, by updates that carry the root's operation or by a
+/// replacement. A shallow snapshot keeps its root's own operation in its history, so the door's
+/// update from the start carries it.
+#[test]
+fn a_peer_at_a_reloaded_windows_shallow_start_comes_level() {
+    let (_dir, vault) = test_vault();
+    let at = vault.store.clock.now_recorded_at();
+    let key = WindowKey::from_timestamp(at);
+    let doc = create_window_doc("source", &key);
+    let row = write_row(&doc, at, b"shared row");
+    let erased = EntityId::now();
+    vault
+        .put_entity(
+            &erased,
+            ENTITY_TYPE_TURN,
+            TimeRange { start: at, end: at },
+            at,
+            b"placeholder erased body",
+        )
+        .unwrap();
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &erased.to_hex(),
+        &vault.get_raw(&erased).unwrap().unwrap(),
+    )
+    .unwrap();
+    doc.commit();
+    vault
+        .delete_entity_with_reason(&erased, crate::DeleteReason::GdprDelete)
+        .unwrap();
+    let persisted = super::egress::export_scrubbed_window_snapshot(&vault, &key, &doc).unwrap();
+    let reloaded = LoroDoc::from_snapshot(&persisted).unwrap();
+    assert!(
+        history_free_window_required(&vault, &key).unwrap() && reloaded.is_shallow(),
+        "fixture: the pinned window persisted shallow"
+    );
+    let start = reloaded.shallow_since_vv().to_vv();
+    let mut peer = LoroDoc::new();
+    peer.import(&doc.export(ExportMode::updates_till(&start)).unwrap())
+        .unwrap();
+    assert_eq!(peer.oplog_vv(), start, "fixture: the peer holds the start");
+
+    for _ in 0..5 {
+        if peer.oplog_vv() == reloaded.oplog_vv() {
+            break;
+        }
+        match export_window_since(&vault, &key, &reloaded, &peer.oplog_vv().encode(), None).unwrap()
+        {
+            WindowExport::Update(update) => {
+                let status = peer.import(&update).unwrap();
+                assert!(status.pending.is_none(), "an update the peer cannot apply");
+            }
+            WindowExport::Replacement(snapshot) => {
+                peer = LoroDoc::from_snapshot(&snapshot).unwrap();
+            }
+        }
+    }
+    assert_eq!(
+        peer.oplog_vv(),
+        reloaded.oplog_vv(),
+        "the peer never came level"
+    );
+    assert_eq!(
+        crate::sync::loro_support::replicated_deep_value(&peer),
+        crate::sync::loro_support::replicated_deep_value(&reloaded),
+        "the peer's state is not the window's"
+    );
+    assert!(map_get_bytes(&peer.get_map("entities"), &row).is_some());
+    assert!(
+        peer.get_map("entities").get(&erased.to_hex()).is_none(),
+        "the erased row is back on the peer"
+    );
+}
+
 /// What the receiving vault did that the hub never saw.
 #[derive(Clone, Copy, Debug)]
 enum LocalWork {
