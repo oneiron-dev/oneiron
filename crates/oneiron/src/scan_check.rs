@@ -68,11 +68,33 @@ pub enum EngineScan {
     MachineRows,
     /// The access grants a companion persona list walks.
     AccessGrantRows,
+    /// One seed's inbound mentions a specificity weight counts.
+    MentionRows,
+    /// The PPR cache's dependency rows a replaced or dead entry's walk reads.
+    PprCacheDepRows,
+    /// The sync rematerialization markers and quarantine rows a pack's
+    /// exclusion index reads.
+    PackQuarantineRows,
+    /// The legacy lexical-hint claims a target's hint lookup walks.
+    LexicalHintRows,
+    /// The graduation answer log a gate receipt query projects.
+    AnswerReceiptRows,
+    /// The proposal artifacts a substitution-mining pass indexes.
+    MinerArtifactRows,
+    /// The synced edge map's entries an unseated child's parent arbitration
+    /// walks.
+    ChildOfMapEntries,
+    /// The long-interval index a temporal window's spanner scan reads.
+    TemporalSpannerRows,
+    /// The timeline rows an occurred-range query reads, both halves.
+    OccurredRangeRows,
+    /// The retrieval run ledger a blend-weight tuning pass walks.
+    BlendTuningRuns,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 23] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -86,6 +108,16 @@ impl EngineScan {
         Self::ScopedEdgeRows,
         Self::MachineRows,
         Self::AccessGrantRows,
+        Self::MentionRows,
+        Self::PprCacheDepRows,
+        Self::PackQuarantineRows,
+        Self::LexicalHintRows,
+        Self::AnswerReceiptRows,
+        Self::MinerArtifactRows,
+        Self::ChildOfMapEntries,
+        Self::TemporalSpannerRows,
+        Self::OccurredRangeRows,
+        Self::BlendTuningRuns,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -113,6 +145,16 @@ impl EngineScan {
             Self::ScopedEdgeRows => "scoped_edge_rows",
             Self::MachineRows => "machine_rows",
             Self::AccessGrantRows => "access_grant_rows",
+            Self::MentionRows => "mention_rows",
+            Self::PprCacheDepRows => "ppr_cache_dep_rows",
+            Self::PackQuarantineRows => "pack_quarantine_rows",
+            Self::LexicalHintRows => "lexical_hint_rows",
+            Self::AnswerReceiptRows => "answer_receipt_rows",
+            Self::MinerArtifactRows => "miner_artifact_rows",
+            Self::ChildOfMapEntries => "child_of_map_entries",
+            Self::TemporalSpannerRows => "temporal_spanner_rows",
+            Self::OccurredRangeRows => "occurred_range_rows",
+            Self::BlendTuningRuns => "blend_tuning_runs",
         }
     }
 
@@ -131,6 +173,16 @@ impl EngineScan {
             Self::ScopedEdgeRows => 22,
             Self::MachineRows => 23,
             Self::AccessGrantRows => 24,
+            Self::MentionRows => 48,
+            Self::PprCacheDepRows => 49,
+            Self::PackQuarantineRows => 50,
+            Self::LexicalHintRows => 51,
+            Self::AnswerReceiptRows => 52,
+            Self::MinerArtifactRows => 53,
+            Self::ChildOfMapEntries => 54,
+            Self::TemporalSpannerRows => 55,
+            Self::OccurredRangeRows => 56,
+            Self::BlendTuningRuns => 57,
         }]
     }
 }

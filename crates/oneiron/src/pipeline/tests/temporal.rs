@@ -686,3 +686,80 @@ fn temporal_channel_stops_at_a_spent_stage() -> Result<()> {
     assert!(deadline.was_cut_short());
     Ok(())
 }
+
+/// Rule 5 (F13 H1, H3, H339): the spanner scan and the occurred-range scan
+/// read every row past their threshold rows, so the exact top-k is kept, and
+/// each raises one check however often it runs.
+#[test]
+fn temporal_scans_read_past_their_threshold_rows_and_check_once() -> Result<()> {
+    use super::super::channels::execute_temporal;
+    use super::super::types::{EntityMetadataCache, TemporalSearchConfig};
+    use crate::scan_check::EngineScan;
+
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let scans = [
+        EngineScan::TemporalSpannerRows,
+        EngineScan::OccurredRangeRows,
+    ];
+    for scan in scans {
+        vault.set_scan_threshold(scan, 2)?;
+    }
+    let anchor = crate::unix_seconds_now() - 30 * 86_400;
+    let row = |n: u32| {
+        let mut bytes = [0x5d; 16];
+        bytes[12..].copy_from_slice(&n.to_be_bytes());
+        EntityId::from_bytes(bytes).expect("row id")
+    };
+    // Three intervals spanning every window, and three points beside the
+    // anchor: three rows for each scan, one past its row.
+    let mut batch = vault.batch();
+    for n in 0..3 {
+        let span = TimeRange {
+            start: anchor - 30 * 86_400,
+            end: anchor + 30 * 86_400,
+        };
+        batch = batch.put(&row(n), 1, span, anchor - 60 * u64::from(n), b"payload");
+    }
+    for n in 3..6 {
+        let at = anchor + u64::from(n);
+        let point = TimeRange { start: at, end: at };
+        batch = batch.put(&row(n), 1, point, anchor, b"payload");
+    }
+    batch.commit()?;
+
+    let config = TemporalSearchConfig {
+        anchor_start: anchor,
+        anchor_end: anchor,
+        learned_start: None,
+        learned_end: None,
+        sigma_secs: 86_400,
+        anchor_mode: TemporalAnchorMode::Occurred,
+        adaptive: false,
+        limit: 1,
+        widened: None,
+        query_occurred_range: Some((anchor - 30 * 86_400, anchor + 30 * 86_400)),
+        effort_anchor: false,
+    };
+    for _ in 0..2 {
+        let rtxn = vault.store.env.read_txn()?;
+        let kept = execute_temporal(
+            &vault.store.read(),
+            &rtxn,
+            &config,
+            anchor,
+            &mut EntityMetadataCache::default(),
+            None,
+        )?;
+        assert!(!kept.is_empty(), "the window serves");
+    }
+    let checks = vault.scan_checks()?;
+    for scan in scans {
+        let raised = checks
+            .iter()
+            .filter(|check| check.scan == scan.code())
+            .count();
+        assert_eq!(raised, 1, "{} raised its check once", scan.code());
+    }
+    Ok(())
+}

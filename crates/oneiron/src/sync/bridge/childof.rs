@@ -10,6 +10,7 @@ use super::{format_edge_key, parse_edge_key};
 use crate::batch::{self, BatchOp};
 use crate::edge::{EdgeKind, decode_edge_value_for_kind};
 use crate::entity_id::EntityId;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::sync::loro_support::map_for_each_bytes;
@@ -159,8 +160,13 @@ pub(super) fn replayed_child_of_candidates(
         return Ok(Vec::new());
     }
 
+    // Every edge in the map is read, so each unseated child is arbitrated
+    // over all its live candidates: past the threshold row the walk raises
+    // one check and reads on.
+    let mut rows = ScanCount::start(&vault.store, rtxn, EngineScan::ChildOfMapEntries, &[])?;
     let mut keys = Vec::<String>::new();
     map_for_each_bytes(edges_map, |key, value| {
+        rows.row();
         let Some((child, EdgeKind::ChildOf, parent)) = parse_edge_key(key) else {
             return;
         };
@@ -173,6 +179,7 @@ pub(super) fn replayed_child_of_candidates(
         }
         keys.push(key.to_string());
     });
+    rows.finish(vault);
     // Neither walk has an order; the batch they feed must have one.
     displaced.sort_unstable();
     keys.sort_unstable();
