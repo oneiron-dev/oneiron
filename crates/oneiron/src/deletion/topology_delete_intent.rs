@@ -201,8 +201,11 @@ pub(super) fn reserve_topology_delete_in_txn(
 }
 
 /// Reserves `entity`, a carrier a hard erase pierced (ARCH-0005a), for that erase's own tombstone
-/// as Committed: the erase's transaction tore it. A different hard request this one does not
-/// subsume keeps the reservation, and its own tombstone stands for the carrier: `false`.
+/// as Committed: the erase's transaction tore it. A different hard request that is only Prepared
+/// has published nothing and may never publish, so this erase takes the reservation over; that
+/// request takes it back if it publishes. A different hard request that published, or completed,
+/// and that this one does not subsume keeps the reservation, and its own tombstone stands for the
+/// carrier: `false`.
 pub(super) fn reserve_pierced_carrier_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -213,9 +216,25 @@ pub(super) fn reserve_pierced_carrier_in_txn(
     if let Some(existing) = topology_delete_reservation_in_txn(store, txn, entity)?
         && existing.request_id != value.request_id
         && existing.reason.is_hard()
-        && !hard_request_subsumes(store, txn, entity, &existing, value)?
     {
-        return Ok(false);
+        if existing.phase == TopologyDeletePhase::Prepared {
+            TOPOLOGY_DELETE_INTENT.put(
+                store,
+                txn,
+                &HexId(*entity),
+                &TopologyDeleteIntent {
+                    phase: TopologyDeletePhase::Committed,
+                    request_id: value.request_id,
+                    reason: value.reason,
+                    deleted_at: value.deleted_at,
+                    window_ts,
+                },
+            )?;
+            return Ok(true);
+        }
+        if !hard_request_subsumes(store, txn, entity, &existing, value)? {
+            return Ok(false);
+        }
     }
     reserve_topology_delete_in_txn(
         store,

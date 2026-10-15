@@ -9,6 +9,8 @@ use crate::store::GateDecisionRecord;
 
 use super::super::erase::PiercedCarrier;
 use super::super::rendezvous::maybe_fail_first_txn_pending_tombstone;
+#[cfg(feature = "sync")]
+use super::super::tombstone::TOMBSTONE_VALUE_V2_LEN;
 use super::super::tombstone::{
     ARCHIVE_MARKER, DecodedTombstoneValue, PENDING_TOMBSTONE, PendingTombstoneKey, TombstoneReason,
     TombstoneValueV2, decode_tombstone_value,
@@ -16,6 +18,13 @@ use super::super::tombstone::{
 use super::super::topology_delete_intent::{
     clear_own_topology_delete_in_txn, reserve_pierced_carrier_in_txn,
 };
+
+/// The carriers a walk tombstoned inside a sync ingest transaction, which cannot publish there:
+/// [`Vault::publish_late_pierced_tombstones`] publishes them once it committed. Local, never
+/// replicated. Key: id16; value: `[learned_at:8 LE][tombstone value:25][window label]`.
+#[cfg(any(feature = "sync", test))]
+const LATE_PIERCED: crate::side_table::SideTable<EntityId, Vec<u8>, crate::side_table::Raw> =
+    crate::side_table::SideTable::new(&crate::side_table::BLOB_ARTIFACT_LATE_PIERCED);
 
 impl Vault {
     /// Archives a checked PERSON/SUMMARY in the cleanup decision transaction.
@@ -130,7 +139,7 @@ impl Vault {
     /// own request, in the transaction that pierced it: its reservation and `pt:` marker, as
     /// the erase's own destructive commit stages them. A carrier another hard request owns keeps
     /// that request's. Returns what it staged, for [`Self::publish_pierced_tombstones`].
-    pub(super) fn stage_pierced_tombstones_in_txn(
+    pub(in crate::deletion) fn stage_pierced_tombstones_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         tombstoned: Vec<PiercedCarrier>,
@@ -161,25 +170,125 @@ impl Vault {
     }
 
     /// Publishes the tombstones [`Self::stage_pierced_tombstones_in_txn`] staged, once their
-    /// transaction committed. A crash first leaves each `pt:` marker to the boot replay.
-    pub(super) fn publish_pierced_tombstones(
+    /// transaction committed: settled, as the erase's tear already committed, and one
+    /// publication per window. A crash first leaves each `pt:` marker to the window's replay.
+    pub(in crate::deletion) fn publish_pierced_tombstones(
         &self,
         staged: &[PiercedCarrier],
         value: &TombstoneValueV2,
     ) -> Result<()> {
+        let mut windows: std::collections::BTreeMap<&str, Vec<(EntityId, u64)>> =
+            std::collections::BTreeMap::new();
         for carrier in staged {
-            if self.write_crdt_tombstone(
-                &carrier.id,
-                carrier.learned_at,
-                &carrier.window_label,
-                value,
-                None,
-                None,
-            )? {
-                self.finish_published_topology_delete(&carrier.window_label, &carrier.id, value)?;
+            windows
+                .entry(carrier.window_label.as_str())
+                .or_default()
+                .push((carrier.id, carrier.learned_at));
+        }
+        for (window_label, carriers) in windows {
+            let published = self.write_settled_crdt_tombstones(window_label, &carriers, value)?;
+            if published.is_empty() {
+                continue;
             }
+            self.with_write_txn_grouped(|wtxn| {
+                for id in &published {
+                    self.finish_published_topology_delete_in_txn(wtxn, window_label, id, value)?;
+                }
+                Ok(())
+            })?;
         }
         Ok(())
+    }
+
+    /// Stages the tombstones of what a walk pierced inside a sync ingest transaction, as
+    /// [`Self::stage_pierced_tombstones_in_txn`] does, and keeps each for
+    /// [`Self::publish_late_pierced_tombstones`]: that transaction cannot publish.
+    #[cfg(any(feature = "sync", test))]
+    pub(in crate::deletion) fn stage_late_pierced_tombstones_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        tombstoned: Vec<PiercedCarrier>,
+        value: &TombstoneValueV2,
+    ) -> Result<()> {
+        for carrier in self.stage_pierced_tombstones_in_txn(wtxn, tombstoned, value)? {
+            let mut row = carrier.learned_at.to_le_bytes().to_vec();
+            row.extend_from_slice(&value.encode());
+            row.extend_from_slice(carrier.window_label.as_bytes());
+            LATE_PIERCED.put(&self.store, wtxn, &carrier.id, &row)?;
+        }
+        Ok(())
+    }
+
+    /// ARCH-0005a: publishes the tombstones a walk staged during sync ingest, grouped by window
+    /// and request, and forgets each. One whose `pt:` marker is gone was published by its
+    /// window's replay. The sync entry points call this once their ingest committed, and the
+    /// host's lifecycle tick calls it as a backstop; a crash first leaves the `pt:` markers to
+    /// each window's replay. Returns how many it published.
+    #[cfg(feature = "sync")]
+    pub fn publish_late_pierced_tombstones(&self) -> Result<usize> {
+        type Group = (String, [u8; TOMBSTONE_VALUE_V2_LEN]);
+        let mut groups: std::collections::BTreeMap<Group, Vec<PiercedCarrier>> =
+            std::collections::BTreeMap::new();
+        let mut gone = Vec::new();
+        {
+            let rtxn = self.store.env.read_txn()?;
+            for row in LATE_PIERCED.iter_from(&self.store, &rtxn, &[])? {
+                let (id, row) = row?;
+                let (Some(learned_at), Some(value), Ok(window_label)) = (
+                    row.get(..8)
+                        .and_then(|raw| raw.try_into().ok())
+                        .map(u64::from_le_bytes),
+                    row.get(8..8 + TOMBSTONE_VALUE_V2_LEN)
+                        .and_then(|raw| <[u8; TOMBSTONE_VALUE_V2_LEN]>::try_from(raw).ok()),
+                    std::str::from_utf8(row.get(8 + TOMBSTONE_VALUE_V2_LEN..).unwrap_or_default()),
+                ) else {
+                    return Err(Error::CorruptedIndex("late pierced tombstone"));
+                };
+                let key = PendingTombstoneKey {
+                    window: window_label.to_owned(),
+                    id,
+                };
+                if PENDING_TOMBSTONE
+                    .get_bytes(&self.store, &rtxn, &key)?
+                    .is_none_or(|raw| raw != value)
+                {
+                    gone.push(id);
+                    continue;
+                }
+                groups
+                    .entry((window_label.to_owned(), value))
+                    .or_default()
+                    .push(PiercedCarrier {
+                        id,
+                        learned_at,
+                        window_label: window_label.to_owned(),
+                    });
+            }
+        }
+        let mut published = 0;
+        for ((_, raw), carriers) in groups {
+            let decoded = decode_tombstone_value(&raw);
+            let (Some(reason), Some(request_id)) = (decoded.reason, decoded.request_id) else {
+                return Err(Error::CorruptedIndex("late pierced tombstone"));
+            };
+            let value = TombstoneValueV2 {
+                reason,
+                deleted_at: decoded.deleted_at,
+                request_id,
+            };
+            self.publish_pierced_tombstones(&carriers, &value)?;
+            published += carriers.len();
+            gone.extend(carriers.iter().map(|carrier| carrier.id));
+        }
+        if !gone.is_empty() {
+            self.with_write_txn_grouped(|wtxn| {
+                for id in &gone {
+                    LATE_PIERCED.delete(&self.store, wtxn, id)?;
+                }
+                Ok(())
+            })?;
+        }
+        Ok(published)
     }
 
     /// Retire this request's propagation marker and reservation together,
@@ -192,19 +301,29 @@ impl Vault {
         value: &TombstoneValueV2,
     ) -> Result<()> {
         self.with_write_txn_grouped(|wtxn| {
-            let key = PendingTombstoneKey {
-                window: window_label.to_owned(),
-                id: *id,
-            };
-            if PENDING_TOMBSTONE
-                .get_bytes(&self.store, wtxn, &key)?
-                .is_some_and(|raw| raw == value.encode())
-            {
-                PENDING_TOMBSTONE.delete(&self.store, wtxn, &key)?;
-            }
-            clear_own_topology_delete_in_txn(&self.store, wtxn, id, &value.request_id, false)?;
-            Ok(())
+            self.finish_published_topology_delete_in_txn(wtxn, window_label, id, value)
         })
+    }
+
+    fn finish_published_topology_delete_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        window_label: &str,
+        id: &EntityId,
+        value: &TombstoneValueV2,
+    ) -> Result<()> {
+        let key = PendingTombstoneKey {
+            window: window_label.to_owned(),
+            id: *id,
+        };
+        if PENDING_TOMBSTONE
+            .get_bytes(&self.store, wtxn, &key)?
+            .is_some_and(|raw| raw == value.encode())
+        {
+            PENDING_TOMBSTONE.delete(&self.store, wtxn, &key)?;
+        }
+        clear_own_topology_delete_in_txn(&self.store, wtxn, id, &value.request_id, false)?;
+        Ok(())
     }
 
     /// Writes the GLOBAL `ac:{entity_hex}` cleanup-archive marker in the

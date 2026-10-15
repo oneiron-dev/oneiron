@@ -707,6 +707,7 @@ impl SyncClient {
                     "persist live durable delta: {e}"
                 )));
             }
+            publish_late_pierced_tombstones(&self.vault);
             return Ok(());
         }
         // Remote imports never fire Observer A (local-only), so persist the
@@ -729,6 +730,7 @@ impl SyncClient {
                 "persist remote update: {e}"
             )));
         }
+        publish_late_pierced_tombstones(&self.vault);
         let _ = self.event_tx.send(SyncEvent::WindowUpdated {
             window_key: window_key.to_string(),
         });
@@ -979,5 +981,14 @@ fn map_delta_export_err(e: crate::error::Error) -> TransportError {
             TransportError::VersionVectorDecode
         }
         _ => TransportError::InvalidPayload("delta export failed"),
+    }
+}
+
+/// ARCH-0005a: a hard erase's walk this import ran tombstoned what it newly pierced, inside an
+/// ingest transaction that could not publish them; they publish now, outside every sync lock. A
+/// failure leaves them to the host's tick and each window's `pt:` replay.
+fn publish_late_pierced_tombstones(vault: &crate::Vault) {
+    if let Err(error) = vault.publish_late_pierced_tombstones() {
+        tracing::warn!(kind = ?error.kind(), "late pierced tombstone publication failed");
     }
 }

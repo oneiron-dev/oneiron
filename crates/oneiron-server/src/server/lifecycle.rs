@@ -255,16 +255,24 @@ impl SyncServer {
         }
 
         let live_versions = self.live_window_versions();
-        let result =
-            sync::drain_reassert_markers(&self.vault, SERVER_USER_ID, &self.reassert_manager)
-                .and_then(|report| {
-                    let window_updates = self.collect_live_window_updates(live_versions)?;
-                    Ok(ReassertDrainJobReport {
-                        report,
-                        skipped: false,
-                        window_updates,
-                    })
-                });
+        let result = sync::drain_reassert_markers(
+            &self.vault,
+            SERVER_USER_ID,
+            &self.reassert_manager,
+        )
+        .and_then(|report| {
+            // ARCH-0005a: the tombstones a hard erase's walk staged during sync ingest
+            // publish here too, so the window updates below carry them to peers.
+            if let Err(err) = self.vault.publish_late_pierced_tombstones() {
+                tracing::warn!(kind = ?err.kind(), "late pierced tombstone publication failed");
+            }
+            let window_updates = self.collect_live_window_updates(live_versions)?;
+            Ok(ReassertDrainJobReport {
+                report,
+                skipped: false,
+                window_updates,
+            })
+        });
 
         self.end_lifecycle_job(LifecycleJobKind::ReassertDrain)
             .await;

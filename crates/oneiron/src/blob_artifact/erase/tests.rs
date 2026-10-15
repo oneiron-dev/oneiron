@@ -10,6 +10,8 @@ use crate::temporal::TimeRange;
 use crate::test_util::{embedding_test_config, open_test_vault_with};
 use crate::write_envelope::WriteActor;
 
+mod late;
+
 const SHARED: &[u8] = b"bytes the erased artifact and another both hold";
 const OTHER_ONLY: &[u8] = b"bytes only the other artifact holds";
 const HARD_REASONS: [DeleteReason; 3] = [
@@ -278,7 +280,7 @@ fn the_delete_preview_tells_one_of_several_from_the_last_reference() -> Result<(
         .held_bytes()
         .iter()
         .filter(|held| held.is_last_reference())
-        .map(|held| held.asset())
+        .map(crate::deletion::DeleteHeldBytes::asset)
         .collect();
     assert_eq!(last, [only], "the last reference read as one of several");
 

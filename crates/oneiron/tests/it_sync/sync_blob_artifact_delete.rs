@@ -7,14 +7,17 @@
 use loro::{ExportMode, LoroDoc, VersionVector};
 use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use oneiron::edge::EdgeActorClass;
+use oneiron::edge::EdgeKind;
 use oneiron::error::{ArtifactError, Error};
-use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
+use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_PERSON};
+use oneiron::sync::bridge::{encode_edge_value_for_crdt, format_edge_key};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window;
 use oneiron::{DeleteReason, EntityId, Vault, WriteActor};
 
 use crate::sync_harness::{
-    T0, TestNode, WINDOW, exchange, map_get_bytes, map_insert_bytes, time_range, vault_pair,
+    T0, TestNode, WINDOW, exchange, make_entity_blob, map_get_bytes, map_insert_bytes, time_range,
+    vault_pair,
 };
 
 const UNIQUE: &[u8] = b"H125 bytes only the deleted artifact held";
@@ -400,4 +403,101 @@ fn a_hard_erase_reaches_a_replica_that_never_saw_the_erased_artifact() {
         b.vault.get_raw(&erased).unwrap().is_none(),
         "A's artifact reached B"
     );
+}
+
+/// Bug repro (#1465 R2, Engine ruling (b); Sol F4, Astra F2): a text derived from bytes a hard
+/// erase took that reaches the erasing vault after the erase, with its DerivedFrom edge, goes
+/// there as the erase's walk takes every derived text it finds.
+#[test]
+fn a_derived_text_arriving_after_the_erase_goes_with_the_bytes() {
+    let (mut a, b) = vault_pair();
+    let erased = upload(&mut a, T0, &[PIERCED]);
+    let asset = asset_of(&a.vault, PIERCED).expect("A stores the bytes");
+    delete_artifact(&mut a, &erased, DeleteReason::GdprDelete);
+    let text = EntityId::now();
+    b.put_entity_in_window(
+        WINDOW,
+        &text,
+        &make_entity_blob(
+            ENTITY_TYPE_ASSET_TEXT,
+            T0 + 30,
+            b"words from the erased bytes",
+        ),
+    );
+    map_insert_bytes(
+        &b.doc(WINDOW).get_map("edges"),
+        &format_edge_key(&text, EdgeKind::DerivedFrom, &asset),
+        &encode_edge_value_for_crdt(EdgeKind::DerivedFrom, 1.0, T0 + 30, None, None).unwrap(),
+    );
+    b.doc(WINDOW).commit();
+    exchange(&a, &b, WINDOW);
+    assert!(
+        !has_body(&a, &text),
+        "a late text derived from the erased bytes kept its words"
+    );
+}
+
+/// Bug repro (#1465 R2, Astra F10; Engine ruling): a vault that erased an artifact before any
+/// reference to its bytes reached it learns the bytes from the reference that arrives later. It
+/// takes its own references to them then and tombstones them under the erase's request, so a
+/// third vault holding only another reference to the bytes learns of the erase too.
+#[test]
+fn a_late_reference_carries_the_erase_to_a_vault_holding_only_another_reference() {
+    let (mut a, mut b) = vault_pair();
+    let mut c = TestNode::new("node-c", 3);
+    c.open_window(WINDOW);
+    let erased = upload(&mut a, T0, &[]);
+    sync_through_doors(&a, &b);
+    // B appends the bytes to A's artifact; A erases it before B's version reaches it.
+    let person = EntityId::now();
+    b.vault
+        .put_entity(
+            &person,
+            ENTITY_TYPE_PERSON,
+            time_range(T0 + 5),
+            T0 + 5,
+            b"uploader",
+        )
+        .unwrap();
+    b.vault
+        .append_blob_artifact_version(
+            &erased,
+            PIERCED,
+            &BlobVersionProvenance::UserUpload,
+            WriteActor::new(person, EdgeActorClass::Human),
+            time_range(T0 + 6),
+            T0 + 6,
+        )
+        .unwrap();
+    b.recover(WINDOW);
+    upload(&mut a, T0 + 10, &[PIERCED]);
+    let theirs = upload(&mut c, T0 + 20, &[PIERCED]);
+    delete_artifact(&mut a, &erased, DeleteReason::GdprDelete);
+    sync_through_doors(&a, &b);
+    // The window's replay publishes what the late walk staged, as the host's tick would.
+    a.recover(WINDOW);
+    sync_through_doors(&a, &c);
+    assert!(
+        reads_erased(&c, &theirs, 1),
+        "a vault holding only another reference never learned of the erase"
+    );
+}
+
+/// Acceptance (#1465 R2, Engine ruling on Astra F12): the erased artifact's own version reads as
+/// any hard-deleted record's does, never as its bytes, and the bytes stay erased after a sync
+/// round with a peer that still holds them under another reference.
+#[test]
+fn the_erased_artifacts_own_version_stays_gone_beside_a_peer_holding_the_bytes() {
+    let (mut a, mut b) = vault_pair();
+    let erased = upload(&mut a, T0, &[PIERCED]);
+    let asset = asset_of(&a.vault, PIERCED).expect("A stores the bytes");
+    upload(&mut b, T0 + 10, &[PIERCED]);
+    delete_artifact(&mut a, &erased, DeleteReason::GdprDelete);
+    exchange(&a, &b, WINDOW);
+    a.recover(WINDOW);
+    assert!(
+        matches!(a.vault.read_blob_artifact_version(&erased, 1), Ok(None)),
+        "the erased artifact's own version read as something"
+    );
+    assert!(!holds(&a, &asset), "a peer brought the erased bytes back");
 }

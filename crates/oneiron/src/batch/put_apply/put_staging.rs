@@ -410,9 +410,11 @@ pub(super) fn validate_domain_carriers(
     if entity_type == crate::registry::ENTITY_TYPE_EVENT {
         crate::calendar::origin::validate_event_write(store, txn, id, data, replicated)?;
     }
-    // ARCH-0005a: bytes a hard erase took are never stored here again, under any id.
-    if entity_type == crate::registry::ENTITY_TYPE_ASSET
-        && crate::blob_artifact::bytes_erased(store, txn, data)?
+    // ARCH-0005a: bytes a hard erase took are never stored here again, under any id, and a
+    // carrier it scrubbed is never written again here.
+    if (entity_type == crate::registry::ENTITY_TYPE_ASSET
+        && crate::blob_artifact::bytes_erased(store, txn, data)?)
+        || (!replicated && crate::blob_artifact::erase_fenced(store, txn, &id)?)
     {
         return Err(crate::Error::Artifact(
             crate::error::ArtifactError::BlobContentErased,

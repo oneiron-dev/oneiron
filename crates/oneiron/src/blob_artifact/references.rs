@@ -325,6 +325,14 @@ pub(crate) fn fence_erased_carrier(
     crate::deletion::ROW_DELETION_FENCE.put(store, txn, &HexId(*carrier), &ERASE_FENCE.to_vec())
 }
 
+/// Whether a hard erase fenced `id`: a carrier it scrubbed, or one it refused at arrival. A local
+/// put there is no sanctioned recreation; it would write erased content back.
+pub(crate) fn erase_fenced(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    Ok(crate::deletion::ROW_DELETION_FENCE
+        .get(store, txn, &HexId(*id))?
+        .is_some_and(|value| value == ERASE_FENCE))
+}
+
 /// Whether the export door drops `id`'s carrier with an ordinary delete, without pinning its
 /// window history-free: a release or a hard erase fenced it, and no hard-delete marker stands
 /// beside the fence. Nobody withdrew a delete there; the old set operation stays in Loro history

@@ -214,6 +214,13 @@ pub(super) fn materialize_edges_from_delta(
                     if matches!(&tgt_ready, Ok(EndpointHydration::LocalOnly)) {
                         pending_companion_scrubs.push(CompanionCrdtScrub::new(tgt.to_hex(), tgt));
                     }
+                    // ARCH-0005a: a text derived from bytes a hard erase took goes on its
+                    // DerivedFrom edge, whenever it arrives: the erase's walk never saw it.
+                    if kind == EdgeKind::DerivedFrom
+                        && vault.scrub_text_derived_from_erased_in_txn(wtxn, &src, &tgt)?
+                    {
+                        continue;
+                    }
 
                     // ARCH-0055 reserved-kind gate: `merged_into` /
                     // `split_into` carry redirect-shell lifecycle meaning,

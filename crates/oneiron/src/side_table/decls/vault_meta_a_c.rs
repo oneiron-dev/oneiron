@@ -79,13 +79,17 @@ side_tables! {
     /// Version bytes a hard erase took, each valued with that erase's tombstone wire value: a
     /// later reference to them arrives erased, and they are never stored again. Key: bytes32.
     BLOB_ARTIFACT_ERASED_CONTENT: VaultMeta b"blob_artifact:erased_content:v1:" Raw;
-    /// `blob.version` claims a hard erase took with the bytes they name, each valued with that
-    /// erase's tombstone wire value. Key: id16 (claim).
+    /// `blob.version` claims a hard erase took with the bytes they name, and the ASSET carrying
+    /// those bytes, each valued with that erase's tombstone wire value. Key: id16 (claim or ASSET).
     BLOB_ARTIFACT_ERASED_REFERENCE: VaultMeta b"blob_artifact:erased_reference:v1:" Raw;
     /// Blob artifact head version. Key: id16.
     BLOB_ARTIFACT_HEAD: VaultMeta b"blob_artifact:head:v1:" Raw;
     /// Monotonic last version, retained after deletion. Key: id16; value: u64be.
     BLOB_ARTIFACT_HIGHWATER: VaultMeta b"blob_artifact:highwater:v1:" Raw;
+    /// The carriers a hard erase's walk tombstoned inside a sync ingest transaction, kept until
+    /// their tombstones publish. Local, never replicated. Key: id16; value: learned_at, the
+    /// tombstone value and the window label.
+    BLOB_ARTIFACT_LATE_PIERCED: VaultMeta b"blob_artifact:late_pierced:v1:" Raw;
     /// Edit proposal settlement ledger row. Key: id16 + hash32.
     EDIT_SETTLE_RECORD: VaultMeta b"blob_artifact:settlement:v1:" Raw;
     /// Blob artifact version record. Key: id16 + u64be.

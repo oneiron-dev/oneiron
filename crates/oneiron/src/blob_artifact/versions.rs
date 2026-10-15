@@ -558,6 +558,9 @@ impl Vault {
                 record.calc_engine = None;
                 record.export_name.clear();
                 record.export_media_type.clear();
+                if let super::BlobVersionProvenance::AgentRun { run_ref } = &mut record.provenance {
+                    run_ref.clear();
+                }
                 record.erased = true;
             }
         }

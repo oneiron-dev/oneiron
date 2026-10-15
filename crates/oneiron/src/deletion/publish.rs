@@ -308,6 +308,194 @@ impl Vault {
         Ok(true)
     }
 
+    /// Publishes, in `window_label`'s document, the tombstones of carriers a hard erase already
+    /// tore (ARCH-0005a): one commit, one snapshot and one persist for all of them. Settled: the
+    /// erase's own transaction committed the tear, after the erase passed its authority, holds
+    /// and other refusals, so none of them applies here, and a refusal now would only lose the
+    /// propagation. A carrier whose reservation another request holds is left to that request's
+    /// tombstone, and its own `pt:` marker is withdrawn. Returns the carriers published.
+    #[cfg(feature = "sync")]
+    pub(super) fn write_settled_crdt_tombstones(
+        &self,
+        window_label: &str,
+        carriers: &[(EntityId, u64)],
+        value: &TombstoneValueV2,
+    ) -> Result<Vec<EntityId>> {
+        use crate::sync::bridge::{
+            DELETION_TOMBSTONE_ORIGIN, with_deletion_tombstone_observer_a_suppressed,
+        };
+        use crate::sync::loro_support::doc_version_vector;
+        use crate::sync::schema::create_window_doc;
+        use crate::sync::types::WindowKey;
+        use crate::sync::window::{
+            apply_tombstone_to_window_doc, export_tombstone_commit_delta, load_window_from_state,
+            merge_persisted_state_into_doc,
+        };
+        use loro::CommitOptions;
+
+        if carriers.is_empty() {
+            return Ok(Vec::new());
+        }
+        let window_key = WindowKey::new(window_label);
+        let encoded = value.encode();
+
+        if let Some((window, materializer, manager)) = self.live_window(&window_key) {
+            // As the live path of `write_crdt_tombstone_impl`: merge outside the materializer
+            // lock, then resolve, open the publish txn and mutate the shared doc under it.
+            let merged_update_keys =
+                merge_persisted_state_into_doc(self, &window.doc, &window_key)?;
+            let (published, delete_update) = {
+                let _guard = materializer.lock();
+                let history_free = self.resolve_window_snapshot_mode(&window_key, &window.doc)?;
+                let (mut wtxn, published) =
+                    self.begin_settled_publish_txn(&window_key, carriers, value)?;
+                if published.is_empty() {
+                    wtxn.commit()?;
+                    return Ok(published);
+                }
+                let vv_before = window.doc.oplog_vv();
+                let (delete_update, snapshot, vv) =
+                    with_deletion_tombstone_observer_a_suppressed(|| -> Result<_> {
+                        for id in &published {
+                            apply_tombstone_to_window_doc(&window.doc, id, &encoded)?;
+                        }
+                        window
+                            .doc
+                            .commit_with(CommitOptions::new().origin(DELETION_TOMBSTONE_ORIGIN));
+                        let delete_update = export_tombstone_commit_delta(&window.doc, &vv_before)?;
+                        let snapshot =
+                            Self::export_window_snapshot_in_mode(&window.doc, history_free)?;
+                        let vv = doc_version_vector(&window.doc);
+                        Ok((delete_update, snapshot, vv))
+                    })?;
+                self.finish_crdt_tombstone_persist_in_txn(
+                    &mut wtxn,
+                    &window_key,
+                    TombstonePersistence {
+                        snapshot: &snapshot,
+                        version_vector: &vv,
+                        tombstone: value,
+                        delete_update: delete_update.as_ref(),
+                        scrubbed_update_keys: &merged_update_keys,
+                    },
+                )?;
+                wtxn.commit()?;
+                for id in &published {
+                    self.notify_tombstone_publication(id, &window_key, value);
+                }
+                (published, delete_update)
+            };
+            if let Some(update) = delete_update.as_ref() {
+                manager
+                    .outbound()
+                    .route_live(window_key.as_str(), update.as_bytes());
+            }
+            return Ok(published);
+        }
+
+        let merged_update_keys = self.sync_state_keys_with_prefix(&format!("u:w:{window_key}:"))?;
+        let doc = match load_window_from_state(self, "local", &window_key) {
+            Ok(doc) => doc,
+            Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
+                create_window_doc("local", &window_key)
+            }
+            Err(err) => return Err(err),
+        };
+        let history_free = self.resolve_window_snapshot_mode(&window_key, &doc)?;
+        let (mut wtxn, published) = self.begin_settled_publish_txn(&window_key, carriers, value)?;
+        if published.is_empty() {
+            wtxn.commit()?;
+            return Ok(published);
+        }
+        let vv_before = doc.oplog_vv();
+        for id in &published {
+            apply_tombstone_to_window_doc(&doc, id, &encoded)?;
+        }
+        doc.commit();
+        let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
+        let snapshot = Self::export_window_snapshot_in_mode(&doc, history_free)?;
+        let vv = doc_version_vector(&doc);
+        self.finish_crdt_tombstone_persist_in_txn(
+            &mut wtxn,
+            &window_key,
+            TombstonePersistence {
+                snapshot: &snapshot,
+                version_vector: &vv,
+                tombstone: value,
+                delete_update: delete_update.as_ref(),
+                scrubbed_update_keys: &merged_update_keys,
+            },
+        )?;
+        wtxn.commit()?;
+        for id in &published {
+            self.notify_tombstone_publication(id, &window_key, value);
+        }
+        Ok(published)
+    }
+
+    /// No CRDT in this build: nothing publishes, and each `pt:` marker stays for a sync-enabled
+    /// boot to replay.
+    #[cfg(not(feature = "sync"))]
+    #[allow(clippy::unnecessary_wraps)]
+    pub(super) fn write_settled_crdt_tombstones(
+        &self,
+        _window_label: &str,
+        _carriers: &[(EntityId, u64)],
+        _value: &TombstoneValueV2,
+    ) -> Result<Vec<EntityId>> {
+        Ok(Vec::new())
+    }
+
+    /// The publish transaction of [`Self::write_settled_crdt_tombstones`]: each carrier this
+    /// request may publish moves to Published and keeps its hard fence; any other withdraws
+    /// its own `pt:` marker and reservation.
+    #[cfg(feature = "sync")]
+    fn begin_settled_publish_txn(
+        &self,
+        window_key: &crate::sync::WindowKey,
+        carriers: &[(EntityId, u64)],
+        value: &TombstoneValueV2,
+    ) -> Result<(heed::RwTxn<'_>, Vec<EntityId>)> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let mut published = Vec::with_capacity(carriers.len());
+        for (id, window_ts) in carriers {
+            if !may_publish_topology_delete_in_txn(&self.store, &wtxn, id, value)? {
+                self.withdraw_own_pending_tombstone_in_txn(
+                    &mut wtxn,
+                    window_key.as_str(),
+                    id,
+                    value,
+                )?;
+                clear_own_topology_delete_in_txn(
+                    &self.store,
+                    &mut wtxn,
+                    id,
+                    &value.request_id,
+                    false,
+                )?;
+                continue;
+            }
+            reserve_topology_delete_in_txn(
+                &self.store,
+                &mut wtxn,
+                id,
+                value,
+                *window_ts,
+                TopologyDeletePhase::Published,
+            )?;
+            if value.reason.is_hard() {
+                super::tombstone::ROW_DELETION_FENCE.put(
+                    &self.store,
+                    &mut wtxn,
+                    &crate::side_table::HexId(*id),
+                    &Vec::new(),
+                )?;
+            }
+            published.push(*id);
+        }
+        Ok((wtxn, published))
+    }
+
     /// A separate local-read notice after the destructive LMDB transaction
     /// commits. Tombstone publication is too early for hard purge, and a soft
     /// scrub must notify even when later CRDT publication fails. The existing

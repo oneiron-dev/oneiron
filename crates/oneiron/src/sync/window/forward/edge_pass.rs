@@ -186,6 +186,22 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 }
             }
 
+            // ARCH-0005a: a text derived from bytes a hard erase took goes on its DerivedFrom
+            // edge, whenever it arrives: the erase's walk never saw it. BEFORE the tombstone and
+            // hard-delete gates, which would skip the edge and keep the text.
+            if kind == crate::edge::EdgeKind::DerivedFrom {
+                match vault.with_write_txn_grouped(|wtxn| {
+                    vault.scrub_text_derived_from_erased_in_txn(wtxn, &src, &tgt)
+                }) {
+                    Ok(false) => {}
+                    Ok(true) => return,
+                    Err(err) => {
+                        edge_error = Some(err);
+                        return;
+                    }
+                }
+            }
+
             // Never re-add an edge whose endpoint is tombstoned in the CRDT.
             // ANY-value, entity-canonical presence — a non-binary tombstone
             // gates too, and a case-shifted hex alias still names the id.

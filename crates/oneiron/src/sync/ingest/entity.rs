@@ -332,6 +332,16 @@ fn admit(
     }
     let delete_protected = id == crate::dreamer_runner::authority::dreamer_actor_id()?
         || crate::registry::is_delete_protected_engine_record(header.entity_type);
+    // ARCH-0005a: bytes a hard erase took here, and a late reference to them, never materialize,
+    // and teach which bytes the erase took even at an id a tombstone took: so BEFORE delete-wins.
+    if vault.refuse_erased_blob_arrival_in_txn(
+        wtxn,
+        &id,
+        header.entity_type,
+        &blob[ENTITY_METADATA_HEADER_LEN..],
+    )? {
+        return Ok(EntityStep::Skip);
+    }
     // H125: artifact version bytes fenced here when their last artifact went come back once an
     // artifact live here holds them again. A tombstone naming them still wins.
     if header.entity_type == ENTITY_TYPE_ASSET && !ctx.tombstones.contains(&id) {
@@ -343,16 +353,6 @@ fn admit(
         )?;
     }
     if !delete_protected && deleted_here(ctx, wtxn, &id) {
-        return Ok(EntityStep::Skip);
-    }
-    // ARCH-0005a: bytes a hard erase took here, and a late reference to them, never materialize;
-    // the late reference pierces the bytes it names here first.
-    if vault.refuse_erased_blob_arrival_in_txn(
-        wtxn,
-        &id,
-        header.entity_type,
-        &blob[ENTITY_METADATA_HEADER_LEN..],
-    )? {
         return Ok(EntityStep::Skip);
     }
     // NOTE replay may not discharge or outlive an unproven purge retry (the old native NOTE
