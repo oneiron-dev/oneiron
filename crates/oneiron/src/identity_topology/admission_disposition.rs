@@ -589,8 +589,7 @@ impl Vault {
                     ) {
                     continue;
                 }
-                let Some(actor) =
-                    super::effective_author_in_txn(&self.store, wtxn, event.event_id)?
+                let Some(actor) = super::admitted_author_in_txn(&self.store, wtxn, event.event_id)?
                 else {
                     continue;
                 };

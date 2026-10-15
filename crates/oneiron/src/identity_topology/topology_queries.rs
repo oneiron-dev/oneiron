@@ -58,7 +58,7 @@ impl Vault {
                 return Ok(ActiveMergeDeleteRole::Source);
             }
             survivor_role |= *id == *survivor;
-            actor |= super::effective_author_in_txn(&self.store, rtxn, event.event_id)?
+            actor |= super::admitted_author_in_txn(&self.store, rtxn, event.event_id)?
                 .is_some_and(|author| author.entity_ref() == *id);
         }
         Ok(if survivor_role {
