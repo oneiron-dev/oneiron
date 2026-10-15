@@ -718,10 +718,11 @@ fn a_handoff_signed_by_a_rotated_owner_key_lands_through_sync() {
 /// Bug repro (Bugbot, #1449): a genesis vouched for itself while every
 /// stored root was its key, so the root key's second genesis with a new
 /// nonce, from a client that initializes again or a replayed init, was
-/// stored at either door and the fold read two roots, conflicted. A genesis
-/// now vouches for itself only in a log that holds none: another waits
-/// typed, the same genesis again changes nothing, and the owner's rows still
-/// land.
+/// stored at the local door and the fold read two roots, conflicted. A
+/// genesis now vouches for itself only in a log that holds none: another
+/// waits typed. The replicated door already refused it as a foreign vault's
+/// root, since a genesis names its own vault. At both doors the same genesis
+/// again changes nothing, and the owner's rows still land.
 #[test]
 fn the_root_keys_second_genesis_waits_and_its_first_again_changes_nothing() {
     let at = TimeRange { start: 1, end: 1 };
@@ -749,8 +750,11 @@ fn the_root_keys_second_genesis_waits_and_its_first_again_changes_nothing() {
         let err = put(&second).unwrap_err();
         assert_eq!(
             err.kind(),
-            crate::error::ErrorKind::AuthorityLogSignerPending,
-            "replicated: {replicated}"
+            if replicated {
+                crate::error::ErrorKind::InvalidAuthorityLogBody
+            } else {
+                crate::error::ErrorKind::AuthorityLogSignerPending
+            }
         );
         put(&genesis).unwrap();
         for entry in confirm_chain(&genesis, 132, 2, |_| Vec::new()) {
