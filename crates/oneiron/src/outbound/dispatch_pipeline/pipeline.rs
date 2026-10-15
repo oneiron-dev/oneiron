@@ -159,6 +159,9 @@ impl OutboundDispatchPipeline {
             owner_proof,
             parked: None,
             suppression_receipt: None,
+            // A completed replay sends nothing, so it neither spends nor
+            // rechecks today's allowance.
+            admission_ceiling: None,
         })?;
         let result = crate::outbound::receipt_fields::dispatch_result_receipt(
             &request,
@@ -196,9 +199,12 @@ impl OutboundDispatchPipeline {
             &mut prepared.request,
             &window_decision,
         );
-        let admission = super::admission::AdmissionStage::evaluate(
+        let seat_ledger =
+            super::seat_policy::SeatLedgerCount::for_request(&prepared.request, verb_contract);
+        let mut admission = super::admission::AdmissionStage::evaluate(
             &prepared.request,
             verb_contract,
+            seat_ledger,
             window_resolution,
             window_decision,
         );
@@ -244,12 +250,23 @@ impl OutboundDispatchPipeline {
             verified_actor,
             owner_proof,
             parked,
+            admission_ceiling: seat_ledger.ceiling,
             suppression_receipt: crate::outbound::receipt_fields::suppression_receipt_for_dispatch(
                 &request,
                 &admission.window_decision,
                 &admission.window_resolution,
             ),
         })?;
+        // A cap reached under the admission writer lock is the seat's own
+        // hold. The receipt carries the count that lock read and the closed
+        // cap reason, not the Allow the earlier read produced.
+        if let Some(count) = verdict.ceiling_count {
+            admission.seat = super::seat_policy::evaluate_seat_policy(
+                &request,
+                verb_contract,
+                seat_ledger.held_at(verb_contract, count),
+            );
+        }
         let result = crate::outbound::receipt_fields::dispatch_result_receipt(
             &request,
             verb_contract,

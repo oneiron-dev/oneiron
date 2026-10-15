@@ -684,12 +684,20 @@ pub fn encode_surface_event_attempt_payload(
 }
 
 /// Decodes a durable attempt payload.
+///
+/// The attempt queue takes any kind from any caller, so a row need not have
+/// come through routing. Every surface event is foreign inbound, so the
+/// decoded event is stamped claims-not-instructions whatever its bytes say: a
+/// forged or replayed row never reaches a reader as the owner's instructions.
 pub fn decode_surface_event_attempt_payload(bytes: &[u8]) -> Result<SurfaceEventAttemptPayload> {
-    rmp_serde::from_slice(bytes).map_err(|_| {
+    let mut payload: SurfaceEventAttemptPayload = rmp_serde::from_slice(bytes).map_err(|_| {
         Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
             "surface event attempt payload",
         ))
-    })
+    })?;
+    payload.event.foreign_inbound = true;
+    payload.event.claims_not_instructions = true;
+    Ok(payload)
 }
 
 /// Longest provider correlation id carried into the queue verbatim.

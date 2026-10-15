@@ -600,7 +600,7 @@ enum Compared {
     /// A grant as it authorizes, without its last use.
     OutboundGrant(Box<StandingOutboundGrant>),
     /// An authority fact about a task.
-    TaskFact(TaskAuthorityFact),
+    TaskFact(Box<TaskAuthorityFact>),
     /// Who owns a task, whom it is assigned to, and its ask class.
     TaskBinding(crate::task_verb::TaskBinding),
     /// Any other TASK body: it binds no ask, so one replacing a task the
@@ -799,7 +799,7 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
             },
         ),
         Projection::Task => match crate::task_authority::decode_task_authority_fact_body(body) {
-            Ok(fact) => Compared::TaskFact(fact),
+            Ok(fact) => Compared::TaskFact(Box::new(fact)),
             Err(_) => crate::task_verb::task_binding(body)
                 .map_or(Compared::TaskUnbound, Compared::TaskBinding),
         },

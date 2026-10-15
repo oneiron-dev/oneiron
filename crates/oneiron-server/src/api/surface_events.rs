@@ -240,6 +240,7 @@ pub(crate) struct SurfaceEventSubmitRequest {
     #[schema(example = 1782357600_u64)]
     received_at: u64,
     /// Foreign/provider-authored inbound is claims, not owner instructions.
+    /// The engine stamps every routed event `true`; `false` is not honoured.
     #[schema(example = true)]
     foreign_inbound: bool,
 }
