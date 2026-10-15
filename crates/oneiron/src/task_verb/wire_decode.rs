@@ -63,6 +63,7 @@ pub(super) fn task_verb_body_in(
     Ok(Some(body))
 }
 
+#[cfg(test)]
 pub(super) fn task_entity_role(vault: &Vault, task_ref: EntityId) -> Result<Option<TaskRole>> {
     let rtxn = vault.store.env.read_txn()?;
     task_entity_role_in(vault, &rtxn, task_ref)

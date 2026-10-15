@@ -1134,7 +1134,12 @@ fn conflicting_connector_actor_id_rejects_schedule_without_task() -> crate::Resu
         0
     );
     assert_eq!(
-        usize::from(connector_actor_matches(&vault, connector_ref, "email")?),
+        usize::from(connector_actor_matches(
+            &vault,
+            &vault.store.env.read_txn()?,
+            connector_ref,
+            "email"
+        )?),
         0
     );
     Ok(())

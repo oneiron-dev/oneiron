@@ -51,7 +51,7 @@ pub use self::intent::{
 };
 
 pub(crate) use self::connector_task::{
-    connector_send_actor_in, connector_send_attempt_payload, put_connector_send_task_in_txn,
+    connector_send_attempt_payload, put_connector_send_task_in_txn,
 };
 pub(crate) use self::window_door::stored_delivery_window_policy_claims;
 

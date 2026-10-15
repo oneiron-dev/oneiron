@@ -37,8 +37,8 @@ use super::consts::{
 use super::consult_result::CancelTargetState;
 use super::presence_scan::{
     cancel_target_state, is_cancelable_attempt_state, is_running_attempt_state,
-    superseded_attempt_ids, task_owned_by, task_owned_in, task_presence_at, task_presence_for_id,
-    terminal_attempt_status,
+    superseded_attempt_ids, task_owned_by, task_owned_in, task_presence_at,
+    task_presence_for_dismissal, task_presence_for_id, terminal_attempt_status,
 };
 use super::rate_limit::{task_create_owner_in, task_verb_contract};
 use super::route_receipts::{
@@ -171,11 +171,13 @@ impl Memory<'_> {
         //
         // Direct by id, like a `describe` card: a failed row past the board
         // scan prefix must stay acknowledgeable.
-        let Some(intent) = task_presence_for_id(self.vault(), task_ref)? else {
+        let Some(intent) = task_presence_for_dismissal(self.vault(), task_ref)? else {
             return Err(MemoryError::from(Error::EntityNotFound));
         };
-        if task_owned_by(self.vault(), self.actor(), task_ref)? != Some(true) {
-            return Err(not_the_task_owner());
+        match task_owned_by(self.vault(), self.actor(), task_ref)? {
+            Some(true) => {}
+            Some(false) => return Err(not_the_task_owner()),
+            None => return Err(MemoryError::from(Error::EntityNotFound)),
         }
         if intent.status != TaskBoardStatus::Failed {
             return Ok(TaskUpdateReceipt {
