@@ -277,15 +277,28 @@ pub fn remove_held_directory(path: &Path, held: &File) -> Result<()> {
         }
     };
     still_named()?;
-    empty_directory(held.as_fd())?;
+    empty_directory(held.as_fd(), true)?;
     still_named()?;
     std::fs::remove_dir(path)?;
     Ok(())
 }
 
+#[cfg(test)]
+thread_local! {
+    static AFTER_ROOT_ENTRY_REMOVED: std::cell::RefCell<Option<Box<dyn FnMut(&std::ffi::CStr)>>> =
+        std::cell::RefCell::new(None);
+}
+
+/// Runs `callback` with each entry's name as this thread removes it from the
+/// root of a held directory, until the removal ends.
+#[cfg(test)]
+pub(crate) fn arm_after_root_entry_removed(callback: impl FnMut(&std::ffi::CStr) + 'static) {
+    AFTER_ROOT_ENTRY_REMOVED.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
 /// Removes every entry of `dir`, depth first. A link is removed, never
 /// followed.
-fn empty_directory(dir: BorrowedFd<'_>) -> std::io::Result<()> {
+fn empty_directory(dir: BorrowedFd<'_>, root: bool) -> std::io::Result<()> {
     let mut entries = Vec::new();
     for entry in Dir::read_from(dir)? {
         let entry = entry?;
@@ -308,12 +321,26 @@ fn empty_directory(dir: BorrowedFd<'_>) -> std::io::Result<()> {
                 OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
                 Mode::empty(),
             )?;
-            empty_directory(child.as_fd())?;
+            empty_directory(child.as_fd(), false)?;
             unlinkat(dir, name.as_c_str(), AtFlags::REMOVEDIR)?;
         } else {
             unlinkat(dir, name.as_c_str(), AtFlags::empty())?;
         }
+        #[cfg(test)]
+        if root {
+            AFTER_ROOT_ENTRY_REMOVED.with(|slot| {
+                if let Some(callback) = slot.borrow_mut().as_mut() {
+                    callback(name.as_c_str());
+                }
+            });
+        }
     }
+    #[cfg(test)]
+    if root {
+        AFTER_ROOT_ENTRY_REMOVED.with(|slot| slot.borrow_mut().take());
+    }
+    #[cfg(not(test))]
+    let _ = root;
     Ok(())
 }
 

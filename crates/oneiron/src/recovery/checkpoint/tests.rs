@@ -1907,3 +1907,50 @@ fn a_refused_restore_leaves_a_copy_another_owner_holds() {
         "the other owner's copy survives the refused restore"
     );
 }
+
+/// Review r2 (Sol F1): a refused restore's removal keeps the copy's writer
+/// lock linked until everything else in the copy is gone. An owner that opens
+/// the copy meanwhile meets the restore's own lease and is refused, never a
+/// fresh lock beside data still being removed.
+#[cfg(unix)]
+#[test]
+fn a_refused_restore_unlinks_the_writer_lock_last() {
+    let root = crate::test_support::restore_tempdir();
+    let vault = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let image = root.path().join("image");
+    vault.snapshot_checkpoint(&image, 100).expect("image");
+    let destination = root.path().join("copy");
+    let removed = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    crate::store::arm_after_root_entry_removed({
+        let (destination, removed) = (destination.clone(), removed.clone());
+        move |name| {
+            let name = name.to_string_lossy().into_owned();
+            if name != crate::store::VAULT_WRITER_LOCK_FILE {
+                let opened = Vault::open_owned(&destination, VaultConfig::device());
+                assert!(
+                    matches!(opened, Err(Error::ConcurrentWrite(_))),
+                    "after {name}: {:?}",
+                    opened.map(|_| ())
+                );
+            }
+            removed.borrow_mut().push(name);
+        }
+    });
+    arm_restore_failure(RestoreStep::SecondOpen);
+    let refused = Vault::restore_checkpoint(
+        &image,
+        &destination,
+        VaultConfig::device(),
+        RestoreReason::Restore,
+        120,
+    );
+    assert!(refused.is_err(), "{:?}", refused.map(|_| ()));
+    let removed = removed.borrow();
+    assert!(removed.iter().any(|name| name == "data.mdb"), "{removed:?}");
+    assert_eq!(
+        removed.last().map(String::as_str),
+        Some(crate::store::VAULT_WRITER_LOCK_FILE),
+        "{removed:?}"
+    );
+    assert!(std::fs::symlink_metadata(&destination).is_err());
+}
