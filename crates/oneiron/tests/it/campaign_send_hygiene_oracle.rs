@@ -451,7 +451,7 @@ fn unsubscribe_is_honored_before_handler_returns() -> Result<()> {
         "an unsubscribe is not a bounce"
     );
     assert!(
-        receipt.member_claim_ref.is_none(),
+        receipt.member_claim_refs.is_empty(),
         "an inbound signal naming no campaign supersedes no membership; the \
          campaign-independent suppression is what holds the send"
     );

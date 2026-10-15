@@ -400,13 +400,28 @@ impl StandingOptOutHead {
 /// Every standing `comm.opt_out` head for one party, on the caller's
 /// transaction. Channel-less and channel-scoped alike: the caller decides which
 /// apply, and no caller may be handed a filtered set that already dropped one.
+///
+/// A twin merge keeps each claim on its own subject, so the party's merged
+/// shells are read through as well: a STOP that landed on a shell before the
+/// merge still stands for the survivor (F06 H170). Split ancestry is read too;
+/// for a restriction the wider set is the safe one.
 pub(crate) fn standing_opt_out_heads_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     party_ref: EntityId,
 ) -> CommResult<Vec<StandingOptOutHead>> {
+    let mut subjects = crate::identity_redirect::inbound_redirect_shells_in_txn(
+        &vault.store,
+        rtxn,
+        &std::collections::BTreeSet::from([party_ref]),
+    )?;
+    subjects.insert(party_ref);
     let mut heads = Vec::new();
-    for claim_id in vault.claims_for_subject_in_txn(rtxn, &party_ref)? {
+    let claim_ids = subjects
+        .iter()
+        .map(|subject| vault.claims_for_subject_in_txn(rtxn, subject))
+        .collect::<crate::error::Result<Vec<_>>>()?;
+    for claim_id in claim_ids.into_iter().flatten() {
         let Some(body) = vault.get_claim_in_txn(rtxn, &claim_id)? else {
             continue;
         };

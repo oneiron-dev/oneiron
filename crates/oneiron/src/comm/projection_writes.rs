@@ -166,7 +166,12 @@ pub(super) fn put_projected_comm_claim_in_txn(
         }
         return Ok((id, false));
     }
-    put_comm_claim_with_id_in_txn(vault, wtxn, id, value, occurred_at)?;
+    // A STOP's opt-out is a restriction the engine derives from a recorded
+    // inbound event, so like the contact writer's projection it rides the
+    // engine-owned setting: the criticality ladder never refuses a restriction
+    // (F06 H160). Body validation and the source-trust check still run.
+    let restrictive = matches!(value, CommClaimValue::OptOut { .. });
+    put_comm_claim_with_id_in_txn_inner(vault, wtxn, id, value, occurred_at, restrictive)?;
     Ok((id, true))
 }
 

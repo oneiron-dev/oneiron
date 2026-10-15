@@ -51,6 +51,7 @@ pub(crate) use self::records::{
     validate_comm_record_body_bytes, validate_key_string as validate_comm_party_key,
 };
 
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use self::projector::ProjectorAction;
@@ -119,6 +120,14 @@ struct CommProjectorIndex {
     /// still bounds the decision instead of being folded too late, after an
     /// earlier retried join already minted standing membership.
     pending_thread_events: HashMap<PartyThreadKey, Vec<EntityId>>,
+    /// The last committed LMDB transaction id this pass accounts for: what
+    /// the next event's transaction observes when no other writer committed
+    /// since this pass last re-read a slot's candidates.
+    accounted_txn: Cell<Option<usize>>,
+    /// Peer boundary per membership slot as last re-read, kept while every
+    /// commit since is this pass's own, so n same-slot events re-read the
+    /// slot once rather than n times (F06 H228).
+    peer_boundaries: RefCell<HashMap<PartyThreadKey, Option<(u64, bool)>>>,
 }
 
 impl CommProjectorIndex {
@@ -241,6 +250,29 @@ impl CommProjectorIndex {
             .or_insert(boundary);
     }
 
+    /// Runs first inside each event's write transaction. A commit this pass
+    /// cannot account for (a peer pass, a replay, any other writer) may have
+    /// flipped a candidate, so the cached peer boundaries are dropped.
+    fn begin_event_txn(&self, vault: &Vault) {
+        let committed = vault.store.env.info().last_txn_id;
+        if self.accounted_txn.get() != Some(committed) {
+            self.peer_boundaries.borrow_mut().clear();
+        }
+        self.accounted_txn.set(Some(committed));
+    }
+
+    /// This event's transaction wrote, so its own commit, a write group of its
+    /// own, advances the committed id by exactly one.
+    fn expect_own_commit(&self) {
+        self.accounted_txn
+            .set(self.accounted_txn.get().and_then(|id| id.checked_add(1)));
+    }
+
+    /// An event failed after it may have written: the next event re-reads.
+    fn forget_accounted_txn(&self) {
+        self.accounted_txn.set(None);
+    }
+
     /// Latest membership boundary from snapshotted same-key join/leave events
     /// that a peer pass has already committed — including entries still AHEAD
     /// of this pass's cursor, which neither the snapshot nor `apply_committed`
@@ -258,6 +290,12 @@ impl CommProjectorIndex {
         key: &PartyThreadKey,
         source_event_id: EntityId,
     ) -> CommResult<Option<(u64, bool)>> {
+        // The slot's own earlier events in this pass fold through
+        // `apply_committed`, so a cached read stays exact while no other
+        // writer has committed (`begin_event_txn`).
+        if let Some(cached) = self.peer_boundaries.borrow().get(key) {
+            return Ok(*cached);
+        }
         let mut latest = None;
         let aliases = crate::thread_passport::thread_aliases_in_txn(vault, rtxn)?;
         let keys = equivalent_thread_keys(key, &aliases);
@@ -288,6 +326,9 @@ impl CommProjectorIndex {
                 latest = latest.max(Some((occurred_at, kind == CommEventKind::ThreadLeft)));
             }
         }
+        self.peer_boundaries
+            .borrow_mut()
+            .insert(key.clone(), latest);
         Ok(latest)
     }
 
