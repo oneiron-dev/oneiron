@@ -5634,7 +5634,7 @@ fn replay_tier_fork_scales_federated_confidence_once_and_audits_remote_value() {
 }
 
 #[test]
-fn selector_custody_locality_uses_the_export_read_snapshot() {
+fn selector_never_exports_a_custody_row() {
     use crate::secret_custody::{
         CustodyClass, SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord,
         SecretCustodyStatus,
@@ -5692,8 +5692,9 @@ fn selector_custody_locality_uses_the_export_read_snapshot() {
         .unwrap();
     let ids = import_ids(&update);
     assert!(ids.contains(&seed));
+    // C1: no credential leaves through a selector, portable or not.
     for (id, device_only) in secrets {
-        assert_eq!(ids.contains(&id), !device_only);
+        assert!(!ids.contains(&id), "device_only={device_only}");
     }
 }
 

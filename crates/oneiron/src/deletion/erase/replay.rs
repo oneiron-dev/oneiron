@@ -304,12 +304,17 @@ impl Vault {
             self.guard_active_merge_hard_delete_in_txn(txn, id)?;
         }
         self.store.guard_pack_map_carrier_delete_in_txn(txn, id)?;
-        if let Some(header) = self.read_entity_header_in_txn(txn, id)?
-            && crate::registry::is_delete_protected_engine_record(header.entity_type)
-        {
-            return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
-                header.entity_type,
-            )));
+        if let Some(header) = self.read_entity_header_in_txn(txn, id)? {
+            // A peer's tombstone proves no owner intent either: a credential
+            // leaves only through the local revoke door.
+            if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+                return Err(crate::secret_custody::reject_secret_custody_byte());
+            }
+            if crate::registry::is_delete_protected_engine_record(header.entity_type) {
+                return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+                    header.entity_type,
+                )));
+            }
         }
         Ok(())
     }
@@ -322,8 +327,9 @@ impl Vault {
     /// leaves the delete undecided.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(super) fn is_replayed_tombstone_refusal(error: &Error) -> bool {
-        use crate::error::{ArtifactError, SyncError};
+        use crate::error::{ArtifactError, SecretError, SyncError};
         use crate::identity_topology::IdentityTopologyRejection;
+        use crate::secret_custody::CUSTODY_SEAL_REASON;
         matches!(
             error,
             Error::Registry(
@@ -343,7 +349,7 @@ impl Vault {
                 "cleanup archives cannot be replayed as deletion intent"
             ) | Error::Record(crate::error::RecordError::InvalidTaskBody(
                 "task authority facts are immutable"
-            ))
+            )) | Error::Secret(SecretError::InvalidSecretCustodyBody(CUSTODY_SEAL_REASON))
         )
     }
 
