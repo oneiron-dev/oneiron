@@ -63,11 +63,13 @@ pub enum EngineScan {
     RoomPageRows,
     /// One room's history rows a liveness snapshot reads.
     RoomHistoryRows,
+    /// The TASK rows one board assembly reads.
+    TaskBoardRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -78,6 +80,7 @@ impl EngineScan {
         Self::ReadSetRows,
         Self::RoomPageRows,
         Self::RoomHistoryRows,
+        Self::TaskBoardRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -102,6 +105,7 @@ impl EngineScan {
             Self::ReadSetRows => "read_set_rows",
             Self::RoomPageRows => "room_page_rows",
             Self::RoomHistoryRows => "room_history_rows",
+            Self::TaskBoardRows => "task_board_rows",
         }
     }
 
@@ -117,6 +121,7 @@ impl EngineScan {
             Self::ReadSetRows => 35,
             Self::RoomPageRows => 36,
             Self::RoomHistoryRows => 37,
+            Self::TaskBoardRows => 38,
         }]
     }
 }

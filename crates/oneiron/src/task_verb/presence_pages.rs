@@ -117,15 +117,18 @@ where
 
 /// One page of up to `limit` TASKs a reader off this device may read
 /// (DEC-0005). The index is walked past the others on its own cursor,
-/// `index_after`, and a page is short only where the index ends.
+/// `index_after`, and a page is short only where the index ends. `read`
+/// counts every index row read.
 pub(super) fn device_admitted_task_page(
     vault: &Vault,
     index_after: &mut Option<EntityId>,
     limit: usize,
+    read: &mut usize,
 ) -> Result<Vec<EntityId>> {
     let mut page = Vec::new();
     loop {
         let rows = vault.entities_by_type_page(ENTITY_TYPE_TASK, index_after.as_ref(), limit)?;
+        *read += rows.len();
         let exhausted = rows.len() < limit;
         let Some(&last) = rows.last() else {
             return Ok(page);

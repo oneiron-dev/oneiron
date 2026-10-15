@@ -377,3 +377,47 @@ fn a_credential_bound_handle_describes_only_the_tasks_it_reads() {
         "a TASK the credential does not read has no card"
     );
 }
+
+/// H222 (F13, rule 5): no run of TASK rows hides a live task from the board.
+/// Main read a 4,096-row prefix, so as many unreadable rows ordered first hid
+/// every task after them; the board reads every row and, past the threshold
+/// row, raises the owner's check once.
+#[test]
+fn no_run_of_task_rows_hides_a_live_task_from_the_board() {
+    const AHEAD: u64 = 4_096;
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
+    let live = created_task_refs(&facade, 1)[0];
+    // Index rows with no TASK behind them, each ordered before the live one.
+    vault
+        .with_write_txn(|wtxn| {
+            for index in 0..AHEAD {
+                let mut bytes = [0_u8; 16];
+                bytes[1] = 0x10;
+                bytes[8..].copy_from_slice(&index.to_be_bytes());
+                let key = crate::store::Store::encode_type_key(
+                    ENTITY_TYPE_TASK,
+                    &EntityId::from_bytes(bytes)?,
+                );
+                vault.store.type_index.put(wtxn, &key, &[])?;
+            }
+            Ok(())
+        })
+        .expect("seed");
+    let scan = crate::scan_check::EngineScan::TaskBoardRows;
+    vault.set_scan_threshold(scan, 2).expect("lower the row");
+
+    let rows = facade.describe_rows().expect("the board");
+    assert!(rows.source_exhausted);
+    assert!(rows.intents.iter().any(|intent| intent.id == live.to_hex()));
+    facade.describe_rows().expect("the board again");
+    let checks = vault.scan_checks().expect("checks");
+    assert_eq!(
+        checks
+            .iter()
+            .filter(|check| check.scan == scan.code())
+            .count(),
+        1
+    );
+}
