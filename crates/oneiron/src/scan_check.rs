@@ -7,8 +7,8 @@
 //! question, never a refusal. Only machine floors (disk, memory) stop a scan.
 //!
 //! A scan counts in a `ScanCount`. A crossing waits with the vault, in
-//! memory, until the vault's next write has committed; that write's door
-//! then keeps it in a write of its own. The host's read of the checks sees
+//! memory, until the vault's next write: that write's door first keeps it in
+//! a write of its own, alone in its group. The host's read of the checks sees
 //! it either way. No scan ever opens a writer, so none can wait on a writer
 //! its caller holds, on any thread, and no check rides in a host's write.
 
@@ -226,10 +226,10 @@ impl PendingScanChecks {
 
 impl Vault {
     /// Keeps the crossings waiting with this vault, in a write of their own.
-    /// The write door calls it once a host write has committed, so the
-    /// thread holds no writer and the host's rows are durable whatever
-    /// happens here. A check leaves the waiting map only once the write that
-    /// keeps it commits; one that cannot be kept waits for the next write.
+    /// The write door calls it before a host write takes the writer, so the
+    /// thread holds no writer and no answer of that write yet. A check leaves
+    /// the waiting map only once the write that keeps it commits; one that
+    /// cannot be kept waits for the next write, which goes on regardless.
     pub(crate) fn keep_waiting_scan_checks(&self) {
         if active_write_txn_depth() > 0 {
             return;
@@ -267,7 +267,9 @@ impl Vault {
         if fresh.is_empty() {
             return Ok(Vec::new());
         }
-        self.store.group_write_as(Callback::Audited, None, |wtxn| {
+        // Alone in its group: no host's rows share its commit, so its
+        // failure fails no host's write.
+        self.store.group_write_as(Callback::Opaque, None, |wtxn| {
             let mut kept = Vec::new();
             for (key, check) in &fresh {
                 match CHECK.contains(&self.store, wtxn, key) {
@@ -316,7 +318,13 @@ impl Vault {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, mpsc};
+    use std::time::Duration;
+
     use super::*;
+
+    /// How long a write may wait before the test calls it a deadlock.
+    const DEADLOCK_BOUND: Duration = Duration::from_secs(20);
 
     /// A check kept before the door served every engine scan named its scope
     /// `repo_id`; it reads as the same check.
@@ -343,9 +351,9 @@ mod tests {
         assert_eq!((check.threshold, check.rows), (2, 3));
     }
 
-    /// A crossing never opens a writer: inside a write it is kept by that
-    /// write, outside one it waits, visible to the host, for the vault's
-    /// next write. Each scope is kept once however often it crosses.
+    /// A crossing never opens a writer: inside a write or outside one it
+    /// waits, visible to the host, for the vault's next write. Each scope is
+    /// kept once however often it crosses.
     #[test]
     fn a_crossing_waits_for_the_next_write_and_never_opens_one() {
         let dir = tempfile::tempdir().expect("vault dir");
@@ -366,13 +374,13 @@ mod tests {
                 Ok(())
             })
             .expect("a write that crossed a scan row commits");
-        assert!(vault.store.pending_scan_checks.waiting().is_empty());
+        assert_eq!(vault.store.pending_scan_checks.waiting().len(), 1);
         let txn = vault.store.env.read_txn().expect("read");
         cross(&txn, EngineScan::VisibleRefRows)
             .expect("count")
             .finish(&vault);
         drop(txn);
-        assert_eq!(vault.store.pending_scan_checks.waiting().len(), 1);
+        assert_eq!(vault.store.pending_scan_checks.waiting().len(), 2);
         assert_eq!(vault.scan_checks().expect("checks").len(), 2);
         vault.with_write_txn(|_| Ok(())).expect("a write");
         assert!(vault.store.pending_scan_checks.waiting().is_empty());
@@ -385,44 +393,11 @@ mod tests {
         );
     }
 
-    /// A waiting crossing leaves the map only once a write keeps it: a host
-    /// write that fails keeps nothing, and the check waits for the next.
+    /// A check that cannot be written never touches the host's write: its
+    /// own write is refused alone, the host's commits, and the check leaves
+    /// the waiting map only with a write that keeps it.
     #[test]
-    fn a_waiting_check_leaves_only_with_a_committed_write() {
-        let dir = tempfile::tempdir().expect("vault dir");
-        let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("open");
-        vault
-            .set_scan_threshold(EngineScan::PublicationRows, 1)
-            .expect("threshold");
-        let txn = vault.store.env.read_txn().expect("read");
-        let mut count =
-            ScanCount::start(&vault.store, &txn, EngineScan::PublicationRows, &[]).expect("count");
-        count.row();
-        count.row();
-        drop(txn);
-        count.finish(&vault);
-
-        let failed: Result<()> = vault.with_write_txn(|_| Err(crate::Error::InvalidKey));
-        assert!(failed.is_err());
-        assert_eq!(vault.store.pending_scan_checks.waiting().len(), 1);
-
-        vault.with_write_txn(|_| Ok(())).expect("a write");
-        assert!(vault.store.pending_scan_checks.waiting().is_empty());
-        let txn = vault.store.env.read_txn().expect("read");
-        assert_eq!(
-            CHECK
-                .iter_from(&vault.store, &txn, &[])
-                .expect("rows")
-                .count(),
-            1
-        );
-    }
-
-    /// A check that cannot be written never touches the host's write: that
-    /// write is durable before the check's own write is tried, and the check
-    /// waits for the next one.
-    #[test]
-    fn a_check_that_cannot_be_kept_never_fails_the_host_write() {
+    fn a_check_that_cannot_be_kept_waits_and_never_fails_the_host_write() {
         let dir = tempfile::tempdir().expect("vault dir");
         let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("open");
         vault
@@ -447,5 +422,63 @@ mod tests {
             9
         );
         assert_eq!(vault.store.pending_scan_checks.waiting().len(), 1);
+    }
+
+    /// A caller's callback may return a permit the next write's closure
+    /// takes. With a check waiting, that caller still gets its answer and
+    /// drops the permit: the check is kept before the caller's write, never
+    /// after it while the answer holds the permit and the next write holds
+    /// the writer.
+    #[test]
+    fn a_waiting_check_never_holds_a_returned_permit_against_the_next_write() {
+        let dir = tempfile::tempdir().expect("vault dir");
+        let vault = Arc::new(Vault::open(dir.path(), crate::VaultConfig::default()).expect("open"));
+        vault
+            .set_scan_threshold(EngineScan::PublicationRows, 1)
+            .expect("threshold");
+        let txn = vault.store.env.read_txn().expect("read");
+        let mut count =
+            ScanCount::start(&vault.store, &txn, EngineScan::PublicationRows, &[]).expect("count");
+        count.row();
+        count.row();
+        drop(txn);
+        count.finish(&vault);
+
+        let permit = Arc::new(Mutex::new(()));
+        let (holding, held) = mpsc::channel();
+        let (answer, holder) = mpsc::channel();
+        {
+            let (vault, permit) = (Arc::clone(&vault), Arc::clone(&permit));
+            std::thread::spawn(move || {
+                let returned = vault.try_with_write_txn(|_| {
+                    let guard = permit.lock().expect("permit");
+                    holding.send(()).expect("report the permit");
+                    // The next write queues before this one commits.
+                    while vault.store.group_commit.queued() == 0 {
+                        std::thread::yield_now();
+                    }
+                    Ok::<_, crate::Error>(guard)
+                });
+                let _ = answer.send(returned.map(drop));
+            });
+        }
+        held.recv_timeout(DEADLOCK_BOUND).expect("the callback ran");
+        let (answer, taker) = mpsc::channel();
+        {
+            let (vault, permit) = (Arc::clone(&vault), Arc::clone(&permit));
+            std::thread::spawn(move || {
+                let _ = answer.send(vault.with_write_txn_grouped(|_| {
+                    let _permit = permit.lock().expect("permit");
+                    Ok(())
+                }));
+            });
+        }
+        for (name, answer) in [("holder", holder), ("taker", taker)] {
+            answer
+                .recv_timeout(DEADLOCK_BOUND)
+                .unwrap_or_else(|_| panic!("the {name} deadlocked"))
+                .unwrap_or_else(|err| panic!("the {name} failed: {err}"));
+        }
+        assert_eq!(vault.scan_checks().expect("checks").len(), 1);
     }
 }
