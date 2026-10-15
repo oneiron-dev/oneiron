@@ -313,7 +313,9 @@ fn deleted_or_archived_owner_cannot_pick_or_refund_a_delivered_ask() -> Result<(
     for archived in [false, true] {
         let (_dir, vault) = open_test_vault_with(embedding_test_config());
         crate::test_util::provision_engine_machines(&vault);
-        let person = entity(0x66);
+        // The digest is the owner's: the judge whose asks it delivers is the
+        // vault's owner.
+        let person = vault.ensure_embedded_owner_actor().expect("embedded owner");
         let skill = entity(0x67);
         calibration_fixture(&vault, skill, &[person])?;
         let owner = calibration_owner(&vault, person)?;

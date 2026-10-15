@@ -134,13 +134,13 @@ fn decisions_for(
 
 /// Another live owner of the same vault: a co-owner of the vault shared
 /// under its embedded owner.
-fn second_owner(vault: &crate::Vault) -> Result<crate::consent::AuthenticatedOwner> {
+fn second_owner(vault: &crate::Vault) -> crate::consent::AuthenticatedOwner {
     let other = crate::test_util::co_owner_proof(vault);
     assert_ne!(
         Some(other.actor()),
         crate::vault::embedded_owner_actor_id().ok()
     );
-    Ok(other)
+    other
 }
 
 #[test]
@@ -150,7 +150,7 @@ fn a_batch_carries_one_decision_whichever_owner_comes_first() -> Result<()> {
     // Approved, then declined or approved again by either owner: refused,
     // and the approval stands.
     let (_dir, vault, owner, batch) = fixture()?;
-    let other = second_owner(&vault)?;
+    let other = second_owner(&vault);
     let approved = vault.approve_imported_claim_batch(&owner, &batch)?;
     for decider in [&owner, &other] {
         assert!(spent(
@@ -175,7 +175,7 @@ fn a_batch_carries_one_decision_whichever_owner_comes_first() -> Result<()> {
     // one call, as approve_once then admit, or unconsented: refused, and
     // nothing is admitted.
     let (_dir, vault, owner, batch) = fixture()?;
-    let other = second_owner(&vault)?;
+    let other = second_owner(&vault);
     let denied = vault.decline_imported_claim_batch(&owner, &batch)?;
     assert_eq!(denied.gate_outcome(), "denied");
     for decider in [&owner, &other] {

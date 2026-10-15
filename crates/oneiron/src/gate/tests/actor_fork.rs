@@ -726,10 +726,12 @@ fn admitted_wrapper_charges_budget_and_denies_exhausted_key() -> Result<()> {
 #[test]
 fn a_held_effect_keeps_its_approve_once() -> Result<()> {
     let (_tmp, vault) = temp_vault();
+    let actor = test_id(0xE0);
+    vault.put_entity(&actor, ENTITY_TYPE_PERSON, test_time(1), 1, b"owner")?;
     let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner =
         vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())?;
-    let actor_ref = owner_id.to_hex();
+    let actor_ref = actor.to_hex();
     let policy_data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
         &actor_ref,
         "external:send",
@@ -770,10 +772,12 @@ fn approve_once_not_atomic_is_closed_for_production_and_public_evaluation() -> R
     const EFFECT_RAN_KEY: &[u8] = b"test.approve_once.production_effect";
 
     let (_tmp, vault) = temp_vault();
+    let actor = test_id(0xE0);
+    vault.put_entity(&actor, ENTITY_TYPE_PERSON, test_time(1), 1, b"owner")?;
     let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner =
         vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())?;
-    let actor_ref = owner_id.to_hex();
+    let actor_ref = actor.to_hex();
     let policy_data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
         &actor_ref,
         "external:send",

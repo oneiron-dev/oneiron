@@ -1909,7 +1909,14 @@ fn merged_holder_cannot_land_pending_widen_and_proposal_remains_open() {
     use crate::identity_topology::{
         IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
     };
-    let (_dir, vault, owner) = owner_vault();
+    // Sharing resolves the default policy manifest, which `owner_vault`'s
+    // legacy opener clears.
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), embedding_test_config()).unwrap();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
+    let owner = vault
+        .authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())
+        .unwrap();
     let agent = entity(0x81);
     vault
         .put_entity(&agent, ENTITY_TYPE_PERSON, at(1), 1, b"person")
