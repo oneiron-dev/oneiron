@@ -6,18 +6,17 @@
 //! reads on: the check is evidence for the host's "is everything okay"
 //! question, never a refusal. Only machine floors (disk, memory) stop a scan.
 //!
-//! A scan counts in a [`ScanCount`] and raises its check after its read
-//! transaction has closed ([`ScanCount::finish`]), or in the write
-//! transaction it ran in ([`ScanCount::finish_in`]). A scan that runs inside
-//! a transaction its caller opened, which may be a write, leaves a crossing
-//! with the store ([`ScanCount::defer`]); the next count finished where no
+//! A scan counts in a `ScanCount` and raises its check after its read
+//! transaction has closed (`ScanCount::finish`). A scan that runs inside a
+//! transaction its caller opened, which may be a write, leaves a crossing
+//! with the store (`ScanCount::defer`); the next count finished where no
 //! write is held, or the host's read of the checks, keeps it. No scan opens a
 //! writer while one is held.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use heed::{RoTxn, RwTxn};
+use heed::RoTxn;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -221,22 +220,6 @@ impl ScanCount {
         store
             .pending_scan_checks()
             .park((self.scan.tag(), self.scope), check);
-    }
-
-    /// [`Self::finish`] for a scan that ran in the write transaction `txn`:
-    /// the check is kept with that transaction's other rows.
-    pub(crate) fn finish_in(self, store: &impl ManifestDbs, txn: &mut RwTxn<'_>) -> Result<()> {
-        if self.rows <= self.threshold {
-            return Ok(());
-        }
-        let key = (self.scan.tag(), self.scope.clone());
-        if CHECK.contains(store, txn, &key)? {
-            return Ok(());
-        }
-        let check = self.check();
-        CHECK.put(store, txn, &key, &check)?;
-        warn(&check);
-        Ok(())
     }
 
     fn check(&self) -> ScanCheck {
