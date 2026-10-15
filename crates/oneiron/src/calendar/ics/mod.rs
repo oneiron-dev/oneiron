@@ -44,7 +44,7 @@ pub use self::emit::{
 pub use self::parse::{ParsedCalendarProperties, ParsedIcsFeed, ParsedVEvent, parse_ics_feed};
 
 pub(crate) use self::emit::emit_imip_ics_with_organizer_zones;
-pub(crate) use self::parse::invite_organizer;
+pub(crate) use self::parse::invite_identity;
 
 // Lets the moved bodies keep their `super::...` paths verbatim.
 pub(super) use super::{invite, tz};

@@ -92,10 +92,37 @@ pub fn parse_ics_feed(input: &[u8]) -> Result<ParsedIcsFeed, CalendarError> {
     Ok(ParsedIcsFeed { events })
 }
 
-/// Extracts one invitation's actual organizer using the existing ICS parser.
-pub(crate) fn invite_organizer(input: &[u8]) -> Result<String, CalendarError> {
+/// What one invitation's ICS actually says about itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InviteIcsIdentity {
+    /// The VCALENDAR `METHOD`, as written.
+    pub(crate) method: String,
+    /// The single VEVENT's UID, unescaped.
+    pub(crate) uid: String,
+    /// The single VEVENT's SEQUENCE (absent reads as 0).
+    pub(crate) sequence: u32,
+    /// The ORGANIZER address without its `mailto:` scheme.
+    pub(crate) organizer: String,
+}
+
+/// Extracts one invitation's actual identity using the existing ICS parser.
+pub(crate) fn invite_identity(input: &[u8]) -> Result<InviteIcsIdentity, CalendarError> {
     let text = std::str::from_utf8(input).map_err(|_| ics_parse("invite is not UTF-8"))?;
     let calendar = icalendar::parser::read_calendar(text).map_err(|message| ics_parse(&message))?;
+    let mut methods = calendar
+        .properties
+        .iter()
+        .filter(|prop| prop.name.as_str() == "METHOD");
+    let method = methods
+        .next()
+        .ok_or_else(|| ics_parse("invite has no METHOD"))?
+        .val
+        .as_str()
+        .trim()
+        .to_owned();
+    if methods.next().is_some() {
+        return Err(ics_parse("invite has competing METHODs"));
+    }
     let mut events = calendar
         .components
         .iter()
@@ -119,7 +146,12 @@ pub(crate) fn invite_organizer(input: &[u8]) -> Result<String, CalendarError> {
     if organizer.is_empty() {
         return Err(ics_parse("invite has an empty organizer"));
     }
-    Ok(organizer.to_owned())
+    Ok(InviteIcsIdentity {
+        method,
+        uid: required_uid(event)?,
+        sequence: vevent_sequence(event)?,
+        organizer: organizer.to_owned(),
+    })
 }
 
 /// Parses one VEVENT parser component into the calendar-owned row.
@@ -127,15 +159,7 @@ fn parse_vevent(
     component: &icalendar::parser::Component<'_>,
 ) -> Result<ParsedVEvent, CalendarError> {
     let uid = required_uid(component)?;
-    let sequence = match component.find_prop("SEQUENCE") {
-        None => 0,
-        Some(prop) => prop
-            .val
-            .as_str()
-            .trim()
-            .parse::<u32>()
-            .map_err(|_| ics_parse("VEVENT SEQUENCE is not an unsigned integer"))?,
-    };
+    let sequence = vevent_sequence(component)?;
     let starts_at_utc = optional_datetime_prop(component, "DTSTART")?;
     let ends_at_utc = optional_datetime_prop(component, "DTEND")?;
     let busy_transparency = CalendarBusyTransparency::from_ics_transp(
@@ -164,6 +188,19 @@ fn parse_vevent(
         description,
         cancelled,
     })
+}
+
+/// Reads the VEVENT SEQUENCE; an absent one is 0.
+fn vevent_sequence(component: &icalendar::parser::Component<'_>) -> Result<u32, CalendarError> {
+    match component.find_prop("SEQUENCE") {
+        None => Ok(0),
+        Some(prop) => prop
+            .val
+            .as_str()
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| ics_parse("VEVENT SEQUENCE is not an unsigned integer")),
+    }
 }
 
 /// Reads the required VEVENT UID, unescaped.

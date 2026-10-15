@@ -186,6 +186,17 @@ pub fn admit_calendar_invite(
     // --- emit/state validation -----------------------------------------
     let event_ref = resolve_invite_event(vault, &payload.uid)?
         .ok_or_else(|| refused("this invite UID names no EVENT in the vault"))?;
+    // The bytes that go out must be the invite the payload names: its UID
+    // picked the EVENT, its METHOD and SEQUENCE drive the passport move.
+    let ics = super::ics::invite_identity(&read_calendar_invite_ics(vault, payload)?)?;
+    if ics.uid != payload.uid
+        || ics.sequence != payload.sequence
+        || !ics.method.eq_ignore_ascii_case(payload.method.as_str())
+    {
+        return Err(refused(
+            "the ICS blob does not carry this invite's UID, SEQUENCE and METHOD",
+        ));
+    }
     let content_hash = ics_blob_content_hash(vault, &payload.ics_blob_ref)?;
     // The same admitted head the commit re-reads: a pending proposal never
     // sets the SEQUENCE an invite must advance.
@@ -222,7 +233,7 @@ pub fn admit_calendar_invite(
         change,
         next,
         hygiene,
-        organizer: super::ics::invite_organizer(&read_calendar_invite_ics(vault, payload)?)?,
+        organizer: ics.organizer,
         recipient: payload.recipient.clone(),
     })
 }
