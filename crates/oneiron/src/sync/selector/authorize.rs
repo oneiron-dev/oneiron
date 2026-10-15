@@ -68,15 +68,24 @@ pub(super) fn authorize_sync_selector_at(
 /// authority on its own.
 fn live_federation_grant(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
     let txn = vault.store.env.read_txn()?;
+    live_federation_grant_in(vault, &txn, id)
+}
+
+/// [`live_federation_grant`], read in `txn`.
+pub(super) fn live_federation_grant_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<u8>> {
     let raw = vault
-        .get_raw_in(&txn, id)?
+        .get_raw_in(txn, id)?
         .ok_or_else(|| selector_err(SelectorError::GrantNotFound))?;
     let header = EntityMetadataHeader::parse(&raw)
         .ok_or_else(|| selector_err(SelectorError::GrantHeader))?;
     if header.entity_type != ENTITY_TYPE_FEDERATION_GRANT {
         return Err(selector_err(SelectorError::GrantWrongType));
     }
-    if !crate::vault::live_entity_row_in_txn(&vault.store, &txn, id)?.is_live() {
+    if !crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live() {
         return Err(selector_err(SelectorError::GrantNotFound));
     }
     Ok(raw)
@@ -464,29 +473,17 @@ pub(super) fn filter_window_doc(
         scope_position,
     )?;
     let coreference = coreference_export_context(vault, &rtxn, source, selector)?;
-    let mut custody_ids = BTreeSet::new();
+    // Credentials never leave through a selector, whatever the carrier says.
+    let mut custody_withheld = BTreeSet::new();
     map_for_each_value_bytes(&source_entities, |key, blob| {
         if blob
             .and_then(EntityMetadataHeader::parse)
             .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
             && let Ok(id) = EntityId::from_hex(key)
         {
-            custody_ids.insert(id);
-        }
-    });
-    let mut custody_withheld = BTreeSet::new();
-    for id in custody_ids {
-        if vault.get_raw_in(&rtxn, &id)?.is_some_and(|raw| {
-            EntityMetadataHeader::parse(&raw).is_some_and(|h| {
-                h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
-                    && !crate::secret_custody::custody_sync_allowed(
-                        &raw[ENTITY_METADATA_HEADER_LEN..],
-                    )
-            })
-        }) {
             custody_withheld.insert(id);
         }
-    }
+    });
     // A delete a peer withdrew stays withheld, as at window egress.
     custody_withheld.extend(
         crate::sync::window::withdrawn_delete_carriers(vault, &rtxn, source)?

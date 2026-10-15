@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, HashSet};
 
 use super::bridge::{self, encode_edge_value_for_crdt, format_edge_key};
 use super::loro_support::{
-    map_contains_binary, map_delete, map_for_each_tombstone_value, map_for_each_value_bytes,
-    map_get_bytes, map_insert_bytes, tombstone_map_contains_id, tombstone_values_for_id,
+    TombstoneIndex, map_contains_binary, map_delete, map_for_each_tombstone_value,
+    map_for_each_value_bytes, map_get_bytes, map_insert_bytes,
 };
 use super::pack_sync;
 use super::quarantine::{self, QuarantineContainer};
@@ -69,6 +69,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
     super::egress::scrub_local_claim_carriers(vault, window_key, doc)?;
     super::egress::scrub_local_only_carriers(vault, window_key, doc)?;
     super::egress::scrub_redacted_attribution_carriers(vault, window_key, doc)?;
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     let redacted_authors = {
         let rtxn = vault.store.env.read_txn()?;
         crate::identity_topology::redacted_keys_in_txn(&vault.store, &rtxn)?
@@ -85,7 +86,14 @@ pub(in crate::sync) fn reverse_rematerialize_with(
             } else {
                 let txn = vault.store.env.read_txn()?;
                 super::types::retained_world_shell_belongs_to_window(
-                    vault, &txn, doc, &id, &raw, window_key, false,
+                    vault,
+                    &txn,
+                    doc,
+                    &tombstones,
+                    &id,
+                    &raw,
+                    window_key,
+                    false,
                 )?
             };
             if belongs || retained {
@@ -113,7 +121,6 @@ pub(in crate::sync) fn reverse_rematerialize_with(
 
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
-    let tombstones_map = doc.get_map("tombstones");
 
     let mut count = 0u32;
     let mut wrote_any = false;
@@ -128,7 +135,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
     // entity hex), and cannot suppress the carrier before reverse recovery
     // sees its type. Ordinary and out-of-window rows are untouched here and
     // retain the existing delete-wins handling in the main loop below.
-    map_for_each_tombstone_value(&tombstones_map, |key, tombstone| {
+    map_for_each_tombstone_value(tombstones.map(), |key, tombstone| {
         if let Ok(id) = EntityId::from_hex(key)
             && entities_in_range_set.contains(&id)
         {
@@ -224,12 +231,19 @@ pub(in crate::sync) fn reverse_rematerialize_with(
         let retained_shell = {
             let txn = vault.store.env.read_txn()?;
             super::types::retained_world_shell_belongs_to_window(
-                vault, &txn, doc, id, &raw, window_key, false,
+                vault,
+                &txn,
+                doc,
+                &tombstones,
+                id,
+                &raw,
+                window_key,
+                false,
             )?
         };
         // Excluded credentials and the local default manifest have no live
         // carrier or incident edge. Scrub history as well as the live map when
-        // a local dial narrows an existing portable credential.
+        // a carrier landed before the custody seal.
         if (!claim_sync_allowed(&raw) && !retained_shell)
             || is_unsyncable_secret_custody(&raw)
             || is_delegated_channel_identity_carrier(&raw)
@@ -249,8 +263,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
         // restore the carrier. Ordinary rows retain delete-wins semantics,
         // including non-binary values and case-shifted aliases.
         let protected_tombstone = protected_tombstones.contains(id);
-        if !protected_tombstone && tombstone_map_contains_id(&tombstones_map, id) && !retained_shell
-        {
+        if !protected_tombstone && tombstones.contains(id) && !retained_shell {
             continue;
         }
 
@@ -370,7 +383,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
             // purge-txn crash window must not re-enter the replicated edges
             // map. Plain containment = skip on this branch; reason-aware
             // (skip iff HARD) once tombstone v2 lands in M4-06.
-            if tombstone_map_contains_id(&tombstones_map, &edge.target)
+            if tombstones.contains(&edge.target)
                 || window_packing_excludes_entity(vault, &device_only, &edge.target)?
             {
                 continue;
@@ -403,7 +416,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
     // scanning every historic base row or inventing edge-only world windows.
     if window_key.world().is_some() {
         for target in &entities_in_range {
-            if tombstone_map_contains_id(&tombstones_map, target) {
+            if tombstones.contains(target) {
                 continue;
             }
             for edge in vault.edges_in(target)? {
@@ -466,12 +479,12 @@ pub(super) fn skip_companion_register_sync_mirror(raw: &[u8]) -> bool {
         )
 }
 
-/// Local-only diagnostics and credentials refused by the same-vault locality predicate.
+/// Local-only rows: diagnostics, and every credential (custody is sealed from
+/// sync whatever its class or dial).
 pub(super) fn is_unsyncable_secret_custody(raw: &[u8]) -> bool {
     EntityMetadataHeader::parse(raw).is_some_and(|header| {
         header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
-            || (header.entity_type == ENTITY_TYPE_SECRET_CUSTODY
-                && !crate::secret_custody::custody_sync_allowed(&raw[ENTITY_METADATA_HEADER_LEN..]))
+            || header.entity_type == ENTITY_TYPE_SECRET_CUSTODY
     })
 }
 
@@ -482,7 +495,7 @@ pub(super) fn is_unsyncable_secret_custody(raw: &[u8]) -> bool {
 pub(super) fn quarantine_outbound_protected_tombstones(
     vault: &Vault,
     window_key: &WindowKey,
-    tombstones_map: &LoroMap,
+    tombstones: &TombstoneIndex,
     id: &EntityId,
     raw: &[u8],
 ) -> Result<bool> {
@@ -495,7 +508,7 @@ pub(super) fn quarantine_outbound_protected_tombstones(
         return Ok(false);
     }
 
-    let tombstones = tombstone_values_for_id(tombstones_map, id);
+    let tombstones = tombstones.values_for(id);
     if tombstones.is_empty() {
         return Ok(false);
     }

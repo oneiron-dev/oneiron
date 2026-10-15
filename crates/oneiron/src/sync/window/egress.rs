@@ -4,8 +4,8 @@ use std::collections::HashSet;
 
 use super::bridge::{BRIDGE_ORIGIN, encode_edge_value_for_crdt, format_edge_key};
 use super::loro_support::{
-    export_snapshot, map_contains_binary, map_delete, map_for_each_tombstone_value,
-    map_for_each_value_bytes, map_get_bytes, map_insert_bytes, tombstone_map_contains_id,
+    TombstoneIndex, export_snapshot, map_contains_binary, map_delete, map_for_each_tombstone_value,
+    map_for_each_value_bytes, map_get_bytes, map_insert_bytes,
 };
 use super::pack_sync;
 use super::quarantine::{self, QuarantineContainer};
@@ -82,8 +82,8 @@ pub fn require_history_free_window(vault: &Vault, key: &WindowKey) -> Result<()>
 }
 
 /// Removes local-only diagnostic and secret-custody carriers from the window
-/// doc. Diagnostic observations never sync; secret custody follows its
-/// same-vault locality predicate. Neither refused body may ship in an update.
+/// doc. Diagnostic observations and secret custody never sync. Neither
+/// refused body may ship in an update.
 /// The write-side mirror (`reverse_rematerialize`) already refuses to
 /// insert one; this is the export-side backstop for a carrier that landed
 /// before the seal or arrived from a peer. Deleting the row does not erase its
@@ -105,7 +105,6 @@ pub(super) fn scrub_local_only_carriers(
     let edges_map = doc.get_map("edges");
     let mut custody_ids = HashSet::new();
     let mut malformed_key_carriers: Vec<String> = Vec::new();
-    let mut portable_ids = Vec::new();
     map_for_each_value_bytes(&entities_map, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
         let lfs_chunk = EntityId::from_hex(raw_key)
@@ -123,26 +122,11 @@ pub(super) fn scrub_local_only_carriers(
         }
         match EntityId::from_hex(raw_key) {
             Ok(id) if id.to_hex() == raw_key => {
-                if lfs_chunk
-                    || is_unsyncable_secret_custody(blob)
-                    || is_delegated_channel_identity_carrier(blob)
-                {
-                    custody_ids.insert(id);
-                } else {
-                    portable_ids.push(id);
-                }
+                custody_ids.insert(id);
             }
             _ => malformed_key_carriers.push(raw_key.to_owned()),
         }
     });
-    for id in portable_ids {
-        if vault
-            .get_raw_unsealed(&id)?
-            .is_some_and(|raw| is_unsyncable_secret_custody(&raw))
-        {
-            custody_ids.insert(id);
-        }
-    }
     // Pin before touching the live map. If storage fails, the carrier stays
     // visible to the next scrub instead of leaving unpinned private history.
     if !custody_ids.is_empty() || !malformed_key_carriers.is_empty() {
@@ -201,10 +185,18 @@ pub(super) fn scrub_local_claim_carriers(
     // erased body. A different-world or unproven shell remains withheld.
     let mut retained = Vec::new();
     if key.world().is_some() {
+        let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
         for id in &ids {
             if let Some(raw) = vault.store.entities.get(&rtxn, id.as_bytes())?
                 && crate::sync::types::retained_world_shell_belongs_to_window(
-                    vault, &rtxn, doc, id, &raw, key, false,
+                    vault,
+                    &rtxn,
+                    doc,
+                    &tombstones,
+                    id,
+                    &raw,
+                    key,
+                    false,
                 )?
             {
                 retained.push(*id);
@@ -316,23 +308,53 @@ pub(in crate::sync) fn withdrawn_delete_carriers(
 
 /// Scrubs every [`withdrawn_delete_carriers`] entry from the live document.
 /// The window is pinned history-free first, so neither the body nor the
-/// withdrawal's operations ship.
+/// withdrawal's operations ship. Returns whether it pinned.
+///
+/// A carrier only a blob-artifact release fences (H125) is dropped with an
+/// ordinary delete and does not pin: nobody withdrew a delete there, the bytes
+/// went because no live artifact holds them. Their old set operation stays in
+/// Loro history until the sweep's shallow compaction, as for any deleted row.
+/// A pin would answer every later version request with a snapshot rooted at
+/// this vault's newest operation, which a peer even one change behind cannot
+/// apply.
 pub(super) fn scrub_withdrawn_delete_carriers(
     vault: &Vault,
     key: &WindowKey,
     doc: &LoroDoc,
 ) -> Result<bool> {
-    let withdrawn = withdrawn_delete_carriers(vault, &vault.store.env.read_txn()?, doc)?;
+    let (withdrawn, pin) = {
+        let rtxn = vault.store.env.read_txn()?;
+        let withdrawn = withdrawn_delete_carriers(vault, &rtxn, doc)?;
+        let mut pin = false;
+        for (_, id) in &withdrawn {
+            if !crate::blob_artifact::release_fenced_only(&vault.store, &rtxn, id)? {
+                pin = true;
+                break;
+            }
+        }
+        (withdrawn, pin)
+    };
     if withdrawn.is_empty() {
         return Ok(false);
     }
-    require_history_free_window(vault, key)?;
+    if pin {
+        require_history_free_window(vault, key)?;
+    }
     let entities = doc.get_map("entities");
+    let carriers: Vec<_> = withdrawn
+        .iter()
+        .filter_map(|(raw_key, id)| map_get_bytes(&entities, raw_key).map(|carrier| (*id, carrier)))
+        .collect();
+    super::tombstones::mark_removed_carriers_first(
+        vault,
+        super::tombstones::CarrierRemoval::WithdrawnDeleteScrub,
+        &carriers,
+    )?;
     for (raw_key, _) in &withdrawn {
         map_delete(&entities, raw_key)?;
     }
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-    Ok(true)
+    Ok(pin)
 }
 
 /// Remove attribution carriers defeated by permanent author-redaction facts.
@@ -514,7 +536,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         crate::identity_topology::redacted_keys_in_txn(&vault.store, &rtxn)?
     };
     let entities_map = doc.get_map("entities");
-    let tombstones_map = doc.get_map("tombstones");
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     let edges_map = doc.get_map("edges");
     let device_only = {
         let rtxn = vault.store.env.read_txn()?;
@@ -588,8 +610,8 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
         // their carrier and quarantine the hostile tombstone; ordinary rows
         // retain the value-agnostic, entity-canonical delete-wins gate.
         let protected_tombstone =
-            quarantine_outbound_protected_tombstones(vault, window_key, &tombstones_map, id, &raw)?;
-        if !protected_tombstone && tombstone_map_contains_id(&tombstones_map, id) {
+            quarantine_outbound_protected_tombstones(vault, window_key, &tombstones, id, &raw)?;
+        if !protected_tombstone && tombstones.contains(id) {
             vault.with_write_txn_grouped(|wtxn| {
                 OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker_key)?;
                 Ok(())
@@ -637,7 +659,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 // tombstone decodes HARD) once tombstone v2 lands in M4-06.
                 if !super::types::edge_belongs_to_window(vault, id, &edge.target, window_key)?
                     || !local_claim_sync_allowed(vault, &edge.target)?
-                    || tombstone_map_contains_id(&tombstones_map, &edge.target)
+                    || tombstones.contains(&edge.target)
                     || window_packing_excludes_entity(vault, &device_only, &edge.target)?
                 {
                     continue;
@@ -691,7 +713,7 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             // the full mirror must not re-insert edges to deleted targets.
             if !super::types::edge_belongs_to_window(vault, id, &edge.target, window_key)?
                 || !local_claim_sync_allowed(vault, &edge.target)?
-                || tombstone_map_contains_id(&tombstones_map, &edge.target)
+                || tombstones.contains(&edge.target)
                 || window_packing_excludes_entity(vault, &device_only, &edge.target)?
             {
                 continue;

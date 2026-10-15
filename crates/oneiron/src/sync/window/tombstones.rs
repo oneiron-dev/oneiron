@@ -3,8 +3,8 @@
 use super::bridge::{self, BRIDGE_ORIGIN};
 use super::egress::export_scrubbed_window_snapshot;
 use super::loro_support::{
-    doc_version_vector, export_updates_from, import_doc, map_delete, map_for_each_bytes,
-    map_insert_bytes, tombstone_values_for_id,
+    TombstoneIndex, doc_version_vector, export_updates_from, import_doc, map_delete,
+    map_for_each_bytes, map_get_bytes, map_insert_bytes,
 };
 use super::schema::create_window_doc;
 use super::types::WindowKey;
@@ -38,21 +38,140 @@ use loro::{CommitOptions, LoroDoc};
 ///    deletes keep edge keys: the local shell keeps its live edges
 ///    (ARCH-0038 user_delete keeps the message shell).
 pub fn apply_tombstone_to_window_doc(doc: &LoroDoc, id: &EntityId, raw_value: &[u8]) -> Result<()> {
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
+    apply_tombstone_to_indexed_window_doc(doc, &tombstones, id, raw_value)
+}
+
+/// The entity carriers `ids` hold in `doc`, read before a local path removes
+/// them, so [`mark_removed_carriers_first`] can mark the task of an authority
+/// fact among them that this vault never admitted: removing its carrier
+/// before ingest saw it would otherwise read as a fact never made.
+pub(crate) fn entity_carriers(doc: &LoroDoc, ids: &[EntityId]) -> Vec<(EntityId, Vec<u8>)> {
+    let entities = doc.get_map("entities");
+    ids.iter()
+        .filter_map(|id| map_get_bytes(&entities, &id.to_hex()).map(|carrier| (*id, carrier)))
+        .collect()
+}
+
+/// Each local path that removes the window carrier of an id deleted here.
+/// Every one marks through [`mark_removed_carriers_first`], naming itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CarrierRemoval {
+    /// The boot replay of `pt:` markers.
+    PendingTombstoneReplay,
+    /// The `ra:` drain, live and transient.
+    ReassertDrain,
+    /// The egress scrub of a carrier whose tombstone a peer withdrew.
+    WithdrawnDeleteScrub,
+    /// The local delete's tombstone publication, live and transient.
+    LocalPublication,
+    /// The sweep's compaction of a hard-erased id's residue.
+    HardEraseSweep,
+    /// A canonical window capture, which leaves a deleted id's carrier out
+    /// of the artifact or keeps only its shell.
+    CanonicalCapture,
+}
+
+impl CarrierRemoval {
+    /// Every path, for the check that each marks before it removes.
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 6] = [
+        Self::PendingTombstoneReplay,
+        Self::ReassertDrain,
+        Self::WithdrawnDeleteScrub,
+        Self::LocalPublication,
+        Self::HardEraseSweep,
+        Self::CanonicalCapture,
+    ];
+}
+
+/// Marks the task of each carrier among `carriers` that holds an authority
+/// fact this vault never admitted, in a write transaction of its own,
+/// committed before `path` touches the document. The id is deleted here, so
+/// the fact can never be admitted: a removal that fails after the mark leaves
+/// the task reading as a refusal, never as a fact never made, and no observer
+/// or later persist can make the removal durable without its mark.
+pub(crate) fn mark_removed_carriers_first(
+    vault: &Vault,
+    #[cfg_attr(
+        not(test),
+        expect(unused_variables, reason = "names the path to a test seam")
+    )]
+    path: CarrierRemoval,
+    carriers: &[(EntityId, Vec<u8>)],
+) -> Result<()> {
+    if !carriers.is_empty() {
+        vault.with_write_txn_grouped(|wtxn| {
+            for (id, carrier) in carriers {
+                crate::task_authority::note_removed_carrier_in_txn(
+                    &vault.store,
+                    wtxn,
+                    id,
+                    carrier,
+                )?;
+            }
+            Ok(())
+        })?;
+    }
+    #[cfg(test)]
+    fail_after_carrier_mark(path)?;
+    Ok(())
+}
+
+#[cfg(test)]
+thread_local! {
+    static FAIL_AFTER_CARRIER_MARK: std::cell::Cell<Option<CarrierRemoval>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Arms a one-shot failure of `path` right after its carrier marks commit,
+/// before it touches the document.
+#[cfg(test)]
+pub(crate) fn arm_fail_after_carrier_mark(path: CarrierRemoval) {
+    FAIL_AFTER_CARRIER_MARK.with(|armed| armed.set(Some(path)));
+}
+
+/// Disarms [`arm_fail_after_carrier_mark`]: whether it was still armed,
+/// that is, whether its path never reached its mark.
+#[cfg(test)]
+pub(crate) fn disarm_fail_after_carrier_mark() -> bool {
+    FAIL_AFTER_CARRIER_MARK.with(|armed| armed.take().is_some())
+}
+
+#[cfg(test)]
+fn fail_after_carrier_mark(path: CarrierRemoval) -> Result<()> {
+    if FAIL_AFTER_CARRIER_MARK.with(|armed| armed.get() == Some(path)) {
+        FAIL_AFTER_CARRIER_MARK.with(|armed| armed.set(None));
+        return Err(crate::error::Error::InvariantViolation(
+            "test failure after a carrier mark",
+        ));
+    }
+    Ok(())
+}
+
+/// [`apply_tombstone_to_window_doc`] for a replay of many tombstones into one doc: `tombstones`
+/// indexes the doc's map once for the whole replay (H15), built after the replay's last import.
+pub(in crate::sync) fn apply_tombstone_to_indexed_window_doc(
+    doc: &LoroDoc,
+    tombstones: &TombstoneIndex,
+    id: &EntityId,
+    raw_value: &[u8],
+) -> Result<()> {
     let incoming = decode_tombstone_value(raw_value);
     let hex_id = id.to_hex();
 
-    let tombstones = doc.get_map("tombstones");
     // Tombstone-aware read across EVERY hex-casing alias of the id: a
     // PRESENT non-Binary value reads as the empty slice, which decodes HARD
     // (fail closed) — a garbage tombstone must block a soft downgrade
     // exactly like a hard binary one, and a crafted UPPERCASE-key hard
     // tombstone must block it exactly like the canonical lowercase one.
-    let existing_hard = tombstone_values_for_id(&tombstones, id)
+    let existing_hard = tombstones
+        .values_for(id)
         .iter()
         .any(|existing| decode_tombstone_value(existing).is_hard());
     let downgrade_blocked = existing_hard && !incoming.is_hard();
     if !downgrade_blocked {
-        map_insert_bytes(&tombstones, &hex_id, raw_value)?;
+        map_insert_bytes(tombstones.map(), &hex_id, raw_value)?;
     }
 
     crate::sync::note::deleted(doc, id)?;
@@ -191,8 +310,15 @@ pub fn replay_pending_tombstones(
         .any(|(_, value)| decode_tombstone_value(value).is_hard());
 
     let vv_before = doc.oplog_vv();
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
+    let ids: Vec<EntityId> = markers.iter().map(|(key, _)| key.id).collect();
+    mark_removed_carriers_first(
+        vault,
+        CarrierRemoval::PendingTombstoneReplay,
+        &entity_carriers(doc, &ids),
+    )?;
     for (key, value) in &markers {
-        apply_tombstone_to_window_doc(doc, &key.id, value)?;
+        apply_tombstone_to_indexed_window_doc(doc, &tombstones, &key.id, value)?;
     }
     // Bridge origin: local LMDB already reflects the delete (the marker was
     // written in the purge/scrub txn itself), so Observer B must not re-run

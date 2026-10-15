@@ -35,6 +35,15 @@
 //!   wire at all. Without both, a planted `refs/replace/<oid>` would make the
 //!   door's scan read benign substitute bytes while the original object is what
 //!   the push makes durable.
+//! - **No signed push.** `git receive-pack` writes a push certificate into the
+//!   object store as a blob before any hook runs, where no door window reads
+//!   it. The advertisement never offers `push-cert`, whatever the repository's
+//!   config says, and a request whose command section carries one is refused
+//!   before the backend reads a byte. That section, up to its first flush, is
+//!   the one part of a request body read ahead, under a fixed bound
+//!   (`ORIGIN_MAX_COMMAND_SECTION_BYTES`). A body the backend would inflate
+//!   (gzip, as JGit sends one) is inflated here instead, once, so the section
+//!   read is the one receive-pack reads; the backend gets it plain.
 //! - **Only journalable refs move.** The door window refuses a push whose
 //!   proposed names the landing could not journal — names outside the GitWire
 //!   ref grammar, a name proposed twice, or a batch larger than the GitWire
@@ -64,14 +73,16 @@
 //! matters — it READS that dial and mints nothing from it. It buffers no
 //! request or response body, caps no body and no rate (its caps are on the
 //! blob bytes one push hands the door to scan and the lines they split into),
-//! and expands no gix feature. `git_wire.rs` and `credential_door.rs` are
-//! consumed read-only; this module owns neither.
+//! and expands no gix feature; an exchange that moves no byte for its idle
+//! limit is ended, never one that is merely slow. `git_wire.rs` and
+//! `credential_door.rs` are consumed read-only; this module owns neither.
 
 mod advertise;
 mod cgi_finish;
 mod door;
 mod door_window;
 mod evidence;
+mod exchange_idle;
 mod hooks;
 mod intent;
 mod landing;
@@ -94,10 +105,12 @@ pub use self::landing::{ReceivePackAttribution, ReceivePackLanding, refs_already
 pub use self::paths::{
     DOOR_PRE_RECEIVE_HOOK_NAME, DOOR_WINDOW_TIMEOUT, ORIGIN_DOOR_ROOT_NAME, ORIGIN_MAX_REF_UPDATES,
     ORIGIN_MAX_REPO_NAME_BYTES, ORIGIN_REFUSED_REF_PREFIX, ORIGIN_REPO_DIR_SUFFIX,
-    ORIGIN_SERVING_ROOT_NAME, SERVE_BASE_ENV_KEYS, SERVE_REQUEST_ENV_KEYS, origin_repo_dir,
-    origin_serving_root, validate_repo_name,
+    ORIGIN_SERVING_ROOT_NAME, SERVE_BASE_ENV_KEYS, SERVE_IDLE_TIMEOUT, SERVE_REQUEST_ENV_KEYS,
+    origin_repo_dir, origin_serving_root, validate_repo_name,
 };
-pub use self::serve::{ServeReport, ServeSink, serve, serve_with_authority, serve_with_provenance};
+pub use self::serve::{
+    ServeReport, ServeSink, serve, serve_bounded, serve_with_authority, serve_with_provenance,
+};
 pub use self::serve_cmd::{ServeChild, ServeCommand, ServeRequest};
 
 #[cfg(test)]
@@ -109,11 +122,15 @@ mod door_serve_tests;
 #[cfg(test)]
 mod epoch_tests;
 #[cfg(test)]
+mod exchange_tests;
+#[cfg(test)]
 mod history_scan_tests;
 #[cfg(test)]
 mod intent_recovery_tests;
 #[cfg(test)]
 mod landing_tests;
+#[cfg(test)]
+mod push_cert_tests;
 #[cfg(test)]
 mod tests;
 

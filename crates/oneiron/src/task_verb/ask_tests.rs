@@ -720,7 +720,7 @@ fn consult_result_with_an_option_settles_its_member_task() -> Result<()> {
             option: Some(yes.clone()),
             evidence_refs: vec![fixture.question],
         },
-        completed_at: 1_001,
+        completed_at: 1_000,
     };
     fixture
         .vault
@@ -751,7 +751,7 @@ fn consult_result_replay_requires_the_stored_ask_option() -> Result<()> {
             option: Some(TaskAskOptionId::new("yes")?),
             evidence_refs: vec![fixture.question],
         },
-        completed_at: 1_001,
+        completed_at: 1_000,
     };
     let first = memory.land_consult_result(task, &input)?;
     assert!(!first.idempotent_replay);
@@ -809,7 +809,7 @@ fn consult_result_without_an_option_on_an_options_ask_is_refused_before_the_writ
             option: None,
             evidence_refs: vec![fixture.question],
         },
-        completed_at: 1_001,
+        completed_at: 1_000,
     };
     let refused = fixture
         .vault
@@ -890,6 +890,68 @@ fn ask_decided_despite_an_uncounted_word_binds_its_outcome() -> Result<()> {
         TaskAskDecision::Answer(TaskAskOptionId::new("yes")?)
     );
     assert!(result.settlement.outcome_answer_ref.is_some());
+    Ok(())
+}
+
+// H328: one ask counts once on the asker's own ask window, whatever its
+// recipients; its replay never counts again. It counts beside the create
+// window, never in it: the fan-out gate refuses on the create count, and an
+// actor's own asks must not spend its fan-out slots.
+#[test]
+fn an_ask_counts_once_on_the_askers_own_window() -> Result<()> {
+    let fixture = RuledAskFixture::new(2)?;
+    let spec = fixture.spec();
+    let handle = fixture.ask(&spec)?;
+    assert_eq!(fixture.ask(&spec)?, handle);
+    assert_eq!(
+        fixture.vault.task_ask_count_for_test(fixture.owner, 60)?,
+        1,
+        "H328: an ask was not counted on the asker's window"
+    );
+    assert_eq!(
+        fixture.vault.task_create_count(fixture.owner, 60)?,
+        0,
+        "an ask spent a create slot the fan-out gate refuses on"
+    );
+    Ok(())
+}
+
+// H331: a collection whose only reply lacks a required source is not a
+// completed collection; the same reply citing the source still is.
+#[test]
+fn a_collection_with_no_counted_word_is_not_collected() -> Result<()> {
+    let collect = |cite_source: bool| -> Result<_> {
+        let fixture = RuledAskFixture::new(1)?;
+        let mut spec = fixture.spec();
+        let mut class = fixture.policy(false);
+        class.required_sources = [fixture.question].into();
+        spec.class = Some(class);
+        spec.decide = None;
+        let handle = fixture.ask(&spec)?;
+        let sources = if cite_source {
+            [fixture.question].into()
+        } else {
+            Default::default()
+        };
+        fixture.word_with_sources(handle, 0, "yes", sources)?;
+        fixture.clock.set(1_101);
+        fixture.result(handle)
+    };
+    let uncounted = collect(false)?;
+    assert_eq!(
+        uncounted
+            .evidence
+            .iter()
+            .map(|entry| entry.reason)
+            .collect::<Vec<_>>(),
+        [TaskAskEvidenceReason::MissingSource]
+    );
+    assert_ne!(uncounted.decision, TaskAskDecision::Collected);
+    assert!(uncounted.fallback.is_some());
+
+    let counted = collect(true)?;
+    assert_eq!(counted.decision, TaskAskDecision::Collected);
+    assert_eq!(counted.fallback, None);
     Ok(())
 }
 
@@ -1175,6 +1237,28 @@ fn ask_human_no_dominates_companion_inform_yes_in_the_same_revision() -> Result<
             .count(),
         1
     );
+    Ok(())
+}
+
+/// F11 / H218: the ask door completed a member consult past its deadline
+/// before the expiry sweep ran. The late word still counts under the ask's
+/// cutoff; the overdue member consult stays open for the sweep.
+#[test]
+fn an_overdue_member_consult_is_left_for_the_sweep() -> Result<()> {
+    let fixture = RuledAskFixture::new(2)?;
+    let handle = fixture.ask(&fixture.all())?;
+    let on_time = fixture.word(handle, 0, "yes")?;
+    fixture.clock.set(1_101);
+    let late = fixture.word(handle, 1, "yes")?;
+    let member = |answer: &TaskAskAnswer| -> Result<_> {
+        Ok(
+            super::wire_decode::task_verb_body(&fixture.vault, answer.task_ref)?
+                .expect("member task"),
+        )
+    };
+    assert!(member(&on_time)?.terminal().is_some());
+    assert!(member(&late)?.terminal().is_none());
+    assert_eq!(fixture.result(handle)?.evidence.len(), 2);
     Ok(())
 }
 
@@ -3050,7 +3134,7 @@ fn a_restore_never_widens_a_task_ask_class_narrowed_since() -> Result<()> {
         .tasks_create(&TaskCreateSpec::new(spec(&class)?, None, None, Some(1_000)))?
         .task_ref
         .expect("task ref");
-    let backups = tempfile::tempdir().expect("backups");
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     fixture.vault.snapshot_checkpoint(&image, 100)?;
 

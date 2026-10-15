@@ -110,6 +110,8 @@ struct WorkflowFile {
 struct CodeModeFile {
     prompt_package: Option<PathBuf>,
     budget_units: Option<u64>,
+    max_runs: Option<usize>,
+    max_runs_per_credential: Option<usize>,
     #[serde(default)]
     compaction: compaction::CompactionFile,
     #[serde(default)]
@@ -230,6 +232,10 @@ pub struct CodeModeSettings {
     pub prompt_package: Option<PathBuf>,
     /// Process-lifetime meter for code mode's model calls.
     pub budget_units: u64,
+    /// `execute_code` runs at once, across every credential.
+    pub max_runs: usize,
+    /// `execute_code` runs at once under one registered credential.
+    pub max_runs_per_credential: usize,
     pub compaction: CompactionSettings,
     pub check: CodeCheckSettings,
 }
@@ -327,6 +333,7 @@ impl ModelsFile {
                 .unwrap_or(DEFAULT_STEP_RETRY_BACKOFF_SECS),
         };
         let raw_budget_units = self.raw_budget_units.unwrap_or(DEFAULT_RAW_BUDGET_UNITS);
+        let default_runs = crate::mcp::CodeRunLimits::default();
         let code_mode = CodeModeSettings {
             prompt_package: self.code_mode.prompt_package.map(|path| match base {
                 Some(base) if path.is_relative() => base.join(path),
@@ -336,6 +343,11 @@ impl ModelsFile {
                 .code_mode
                 .budget_units
                 .unwrap_or(DEFAULT_CODE_MODE_BUDGET_UNITS),
+            max_runs: self.code_mode.max_runs.unwrap_or(default_runs.total),
+            max_runs_per_credential: self
+                .code_mode
+                .max_runs_per_credential
+                .unwrap_or(default_runs.per_credential),
             compaction: self.code_mode.compaction.resolve()?,
             check: self.code_mode.check.resolve(base)?,
         };
@@ -356,6 +368,9 @@ impl ModelsFile {
         .contains(&0)
         {
             anyhow::bail!("models budget units must be greater than zero");
+        }
+        if code_mode.max_runs == 0 || code_mode.max_runs_per_credential == 0 {
+            anyhow::bail!("models.code_mode run limits must be at least 1");
         }
         // Every try of a step reserves one call's units, the same amount
         // whatever this config later becomes, so its retries can replay

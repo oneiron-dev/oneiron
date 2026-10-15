@@ -95,6 +95,7 @@ fn enter<'v>(vault: &'v Vault, session_ref: &str) -> Result<OffRecordSession<'v>
 #[test]
 fn a_vector_search_in_the_room_finds_base_rows_added_after_it_went_on_record() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let first = entity_id(0xB1);
     put_vector(&vault, first, [0.0, 1.0, 0.0, 0.0])?;
     let session = enter(&vault, "sess-room-hnsw")?;
@@ -104,7 +105,7 @@ fn a_vector_search_in_the_room_finds_base_rows_added_after_it_went_on_record() -
         &session,
         vec![room_put(staged), room_vector(staged, [0.8, 0.6, 0.0, 0.0])],
     )?;
-    session.flip_on_record()?;
+    session.flip_on_record_as(&proof)?;
     let later = entity_id(0xB3);
     put_vector(&vault, later, [1.0, 0.0, 0.0, 0.0])?;
 
@@ -132,6 +133,7 @@ fn a_vector_search_in_the_room_finds_base_rows_added_after_it_went_on_record() -
 #[test]
 fn on_record_a_run_over_a_room_that_staged_only_a_vector_keeps_no_base_run() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let row = entity_id(0xB4);
     put_vector(&vault, row, [0.0, 1.0, 0.0, 0.0])?;
     let session = enter(&vault, "sess-room-vector-only")?;
@@ -140,7 +142,7 @@ fn on_record_a_run_over_a_room_that_staged_only_a_vector_keeps_no_base_run() -> 
         &session,
         vec![room_vector(row, [1.0, 0.0, 0.0, 0.0])],
     )?;
-    session.flip_on_record()?;
+    session.flip_on_record_as(&proof)?;
     let base_runs = vault.retrieval_runs(64)?.len();
 
     let route = session.write_route()?;
@@ -397,6 +399,7 @@ fn a_vector_search_in_the_room_skips_a_staged_vector_with_no_row() -> Result<()>
 #[test]
 fn a_filtered_vector_search_in_the_room_widens_over_base_rows_added_on_record() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     put_vector(&vault, entity_id(0xBC), [1.0, 0.0, 0.0, 0.0])?;
     let session = enter(&vault, "sess-room-widening")?;
     let staged = entity_id(0xBD);
@@ -405,7 +408,7 @@ fn a_filtered_vector_search_in_the_room_widens_over_base_rows_added_on_record() 
         &session,
         vec![room_put(staged), room_vector(staged, [0.0, 1.0, 0.0, 0.0])],
     )?;
-    session.flip_on_record()?;
+    session.flip_on_record_as(&proof)?;
     put_vector(&vault, entity_id(0xBE), [0.96, 0.28, 0.0, 0.0])?;
     let wanted = entity_id(0xBF);
     put_vector(&vault, wanted, [0.8, 0.6, 0.0, 0.0])?;
@@ -437,6 +440,7 @@ fn a_filtered_vector_search_in_the_room_widens_over_base_rows_added_on_record() 
 #[test]
 fn a_text_search_in_the_room_reads_base_rows_indexed_after_it_went_on_record() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let first = entity_id(0xC1);
     put_text_and_vector(&vault, first, "unionneedle", [1.0, 0.0, 0.0, 0.0])?;
     let session = enter(&vault, "sess-room-bm25-count")?;
@@ -452,7 +456,7 @@ fn a_text_search_in_the_room_reads_base_rows_indexed_after_it_went_on_record() -
             },
         ],
     )?;
-    session.flip_on_record()?;
+    session.flip_on_record_as(&proof)?;
     let later = [entity_id(0xC3), entity_id(0xC4)];
     for id in later {
         put_text_and_vector(&vault, id, "unionneedle", [0.0, 1.0, 0.0, 0.0])?;
@@ -479,6 +483,7 @@ fn a_text_search_in_the_room_reads_base_rows_indexed_after_it_went_on_record() -
 #[test]
 fn a_text_search_in_the_room_finds_base_rows_indexed_after_it_cleared_base_text() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let cleared = entity_id(0xC5);
     put_text(&vault, cleared, "unionneedle")?;
     let session = enter(&vault, "sess-room-bm25-stats")?;
@@ -490,7 +495,7 @@ fn a_text_search_in_the_room_finds_base_rows_indexed_after_it_cleared_base_text(
             fields: Vec::new(),
         }],
     )?;
-    session.flip_on_record()?;
+    session.flip_on_record_as(&proof)?;
     let later = entity_id(0xC6);
     put_text(&vault, later, "unionneedle")?;
 
@@ -1729,6 +1734,7 @@ fn a_room_that_puts_a_rows_body_back_keeps_the_index_of_that_body() -> Result<()
 #[test]
 fn a_room_hides_the_text_of_a_row_base_indexed_after_its_totals() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let owner = vault
         .ensure_embedded_owner_actor()
         .expect("the vault's owner");
@@ -1766,7 +1772,7 @@ fn a_room_hides_the_text_of_a_row_base_indexed_after_its_totals() -> Result<()> 
         )
     };
     replace_with_vector(first)?;
-    session.flip_on_record()?;
+    session.flip_on_record_as(&proof)?;
     let later = entity_id(0xDE);
     base_claim(later, "hiddenlaterword")?;
     session.flip_off_record()?;

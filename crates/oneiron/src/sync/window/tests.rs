@@ -2813,6 +2813,15 @@ fn reverse_rematerialization_replaces_poisoned_authority_carrier_with_inverted_r
     let genesis = authority_genesis_fixture_for_window(0x71);
     let revoke = authority_revoke_fixture_for_window(&genesis, 0x71, 0x72, 0x73);
     let id = crate::authority::authority_log_entity_id(&revoke)?;
+    // The revocation's signer stands only once its genesis is stored (H72).
+    vault.put_authority_log_entry(
+        &genesis,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+    )?;
     vault.put_authority_log_entry(
         &revoke,
         TimeRange {
@@ -2889,6 +2898,15 @@ fn reverse_rematerialization_replaces_divergent_and_malformed_authority_bodies()
         ("malformed", b"not messagepack at all".to_vec()),
     ] {
         let (_dir, vault) = test_vault();
+        // The revocation's signer stands only once its genesis is stored (H72).
+        vault.put_authority_log_entry(
+            &genesis,
+            TimeRange {
+                start: learned_at,
+                end: learned_at,
+            },
+            learned_at,
+        )?;
         vault.put_authority_log_entry(
             &revoke,
             TimeRange {
@@ -3232,6 +3250,32 @@ fn forward_remat_aborts_on_corrupted_endpoint_header_instead_of_quarantining() -
 /// Builds a live custody record in the vault via the door and returns its raw
 /// stored bytes (header + body), mirrored exactly as `reverse_rematerialize`
 /// would read them back.
+#[test]
+fn forward_remat_quarantines_a_peer_tombstone_over_local_custody() -> Result<()> {
+    // C1 review: a peer that knows a credential's id files a tombstone for it.
+    // The replay refuses it as a remote rejection, keeps the credential, and
+    // the pass goes on.
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let (custody_id, raw) = seed_secret_custody(&vault, &window_key, "tombstoned", b"owner")?;
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::GdprDelete,
+        deleted_at: 10,
+        request_id: *EntityId::now().as_bytes(),
+    }
+    .encode();
+    let doc = create_window_doc("hostile", &window_key);
+    map_insert_bytes(&doc.get_map("tombstones"), &custody_id.to_hex(), &tombstone)?;
+    doc.commit();
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert_eq!(vault.get_raw_unsealed(&custody_id)?, Some(raw));
+    let quarantined = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(quarantined[0].1.container, QuarantineContainer::Tombstones);
+    assert_eq!(quarantined[0].1.reason_code, "InvalidSecretCustodyBody");
+    Ok(())
+}
+
 fn seed_secret_custody(
     vault: &Vault,
     window_key: &WindowKey,
@@ -3820,47 +3864,261 @@ fn diagnostic_carriers_never_leave_window_in_live_state_or_history() -> Result<(
     Ok(())
 }
 
+// A fast snapshot is a 22-byte header (magic, checksum, mode) and three
+// length-prefixed sections: oplog, latest state, root state.
+fn snapshot_sections(blob: &[u8]) -> [&[u8]; 3] {
+    let mut rest = &blob[22..];
+    [(); 3].map(|()| {
+        let (len, tail) = rest.split_at(4);
+        let len = usize::try_from(u32::from_le_bytes(len.try_into().unwrap())).unwrap();
+        let (section, tail) = tail.split_at(len);
+        rest = tail;
+        section
+    })
+}
+
+fn snapshot_with_sections(header_from: &[u8], sections: [&[u8]; 3]) -> Vec<u8> {
+    let mut out = header_from[..22].to_vec();
+    for section in sections {
+        out.extend_from_slice(&u32::try_from(section.len()).unwrap().to_le_bytes());
+        out.extend_from_slice(section);
+    }
+    let checksum = xxhash_rust::xxh32::xxh32(&out[20..], u32::from_le_bytes(*b"LORO"));
+    out[16..20].copy_from_slice(&checksum.to_le_bytes());
+    out
+}
+
+/// Where a spliced snapshot hides the carrier its encoded root holds.
+#[derive(Clone, Copy, Debug)]
+enum RootMask {
+    /// The root is the latest version, and the clean twin's root stands in
+    /// as the latest-state section.
+    Short,
+    /// Two unjoined branches of 129 ops each, on other keys, sit above the
+    /// root: Loro ships a latest-state section of its own, and a later export
+    /// at the doc's heads keeps the same root.
+    Long,
+    /// As `Long`, but the root op itself writes `masked` and a branch
+    /// overwrites it, so replay and checkout both resolve the key from ops.
+    Overwritten,
+    /// As `Long`, but a branch overwrites `masked`, and the root's table also
+    /// holds the clean twin's `entities` under an overlong spelling of its
+    /// key: Loro's state load takes that entry, its root-history load the
+    /// carrier's.
+    Aliased,
+    /// A full-history snapshot of clean ops and state with the carrier
+    /// twin's root section spliced in, so the decoded doc is not shallow.
+    Untrimmed,
+}
+
+/// The clean twin's snapshot with the carrier twin's root section spliced
+/// in: the root holds `carrier` under `masked`, while the ops and the
+/// latest-state section show clean values. The twins share peers and
+/// counters, so the root entry and the retained root op share an id.
+fn masked_root_snapshot(carrier: &[u8], shape: RootMask) -> Result<Vec<u8>> {
+    use RootMask::{Aliased, Long, Overwritten, Untrimmed};
+    let long = matches!(shape, Long | Overwritten | Aliased);
+    let shallow = |value: &[u8]| -> Result<Vec<u8>> {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(7).unwrap();
+        let mut writes = [("masked", value), ("ordinary", &b"ordinary"[..])];
+        if matches!(shape, Overwritten) {
+            writes.reverse();
+        }
+        for (key, value) in writes {
+            map_insert_bytes(&doc.get_map("entities"), key, value)?;
+            doc.commit();
+        }
+        let root = doc.oplog_frontiers();
+        let base = doc.oplog_vv();
+        let branches = if long {
+            vec![doc.fork(), doc.fork()]
+        } else {
+            Vec::new()
+        };
+        for (peer, branch) in (8..).zip(&branches) {
+            branch.set_peer_id(peer).unwrap();
+            if matches!(shape, Overwritten | Aliased) && peer == 8 {
+                map_insert_bytes(&branch.get_map("entities"), "masked", b"clean-tail")?;
+            }
+            for n in 0..129 {
+                let tail = format!("tail-{peer}-{n}");
+                map_insert_bytes(&branch.get_map("entities"), &tail, b"ordinary")?;
+            }
+            branch.commit();
+            let ops = branch.export(loro::ExportMode::updates(&base)).unwrap();
+            doc.import(&ops).unwrap();
+        }
+        Ok(doc
+            .export(loro::ExportMode::shallow_snapshot(&root))
+            .unwrap())
+    };
+    let (with_carrier, clean) = (shallow(carrier)?, shallow(b"clean")?);
+    let (root, twin) = (
+        snapshot_sections(&with_carrier)[2],
+        snapshot_sections(&clean),
+    );
+    if matches!(shape, Untrimmed) {
+        let full = LoroDoc::new();
+        full.set_peer_id(9).unwrap();
+        map_insert_bytes(&full.get_map("entities"), "ordinary", b"ordinary")?;
+        full.commit();
+        let full = full.export(loro::ExportMode::Snapshot).unwrap();
+        let [ops, latest, none] = snapshot_sections(&full);
+        assert!(none.is_empty());
+        return Ok(snapshot_with_sections(&full, [ops, latest, root]));
+    }
+    let aliased;
+    let root = if matches!(shape, Aliased) {
+        // A root container id is a mark byte, the name's LEB128 length (8)
+        // and the name. Spelled in two bytes, the length still decodes.
+        let key = loro::ContainerID::new_root("entities", loro::ContainerType::Map).to_bytes();
+        assert_eq!(key[1], 8);
+        let alias = [&[key[0], 0x88, 0x00][..], &key[2..]].concat();
+        let table = |section: &[u8]| {
+            let config = loro::kv_store::mem_store::MemKvConfig::new();
+            let mut table = loro::kv_store::MemKvStore::new(config);
+            table.import_all(section.to_vec().into()).unwrap();
+            table
+        };
+        let mut table_with_alias = table(root);
+        table_with_alias.set(&alias, table(twin[2]).get(&key).unwrap());
+        aliased = table_with_alias.export_all().to_vec();
+        &aliased[..]
+    } else {
+        root
+    };
+    // A short range ships no latest state, so the clean root stands in as one.
+    assert_eq!(twin[1] == b"E", !long);
+    let latest = if long { twin[1] } else { twin[2] };
+    Ok(snapshot_with_sections(&clean, [twin[0], latest, root]))
+}
+
 #[test]
-fn diagnostic_update_admission_is_side_effect_free_and_checks_hidden_history() -> Result<()> {
+fn local_only_update_admission_is_side_effect_free_and_checks_hidden_history() -> Result<()> {
+    // C1: a peer's custody carrier is refused like a diagnostic one, before
+    // the update is imported, persisted or relayed raw to another device.
     let key = WindowKey::new("2026-03");
     let doc = create_window_doc("receiver", &key);
     map_insert_bytes(&doc.get_map("entities"), "ordinary", b"previously accepted")?;
     doc.commit();
     let before = doc.oplog_vv();
+    let refused = |result: Result<()>| {
+        matches!(
+            result,
+            Err(Error::InvalidConfig(_)
+                | Error::Secret(crate::error::SecretError::InvalidSecretCustodyBody(_)))
+        )
+    };
     let diagnostic = make_entity_blob(crate::registry::ENTITY_TYPE_DIAGNOSTIC, 1, b"private");
-    for malformed_key in [false, true] {
+    let custody = make_entity_blob(ENTITY_TYPE_SECRET_CUSTODY, 1, b"placeholder custody body");
+    for (blob, malformed_key) in [
+        (&diagnostic, false),
+        (&diagnostic, true),
+        (&custody, false),
+        (&custody, true),
+    ] {
         let source = doc.fork();
         let id = EntityId::from_bytes([0x71; 16])?.to_hex();
         let raw_key = if malformed_key {
-            "malformed-diagnostic-id"
+            "malformed-local-only-id"
         } else {
             &id
         };
-        map_insert_bytes(&source.get_map("entities"), raw_key, &diagnostic)?;
+        map_insert_bytes(&source.get_map("entities"), raw_key, blob)?;
         source.commit();
         let live = source.export(loro::ExportMode::updates(&before)).unwrap();
-        assert!(matches!(
-            validate_window_update_locality(&doc, &live),
-            Err(Error::InvalidConfig(_))
-        ));
+        assert!(refused(validate_window_update_locality(&doc, &live)));
         let shallow = source
             .export(loro::ExportMode::shallow_snapshot(
                 &source.oplog_frontiers(),
             ))
             .unwrap();
-        assert!(matches!(
-            validate_window_update_locality(&doc, &shallow),
-            Err(Error::InvalidConfig(_))
-        ));
+        assert!(refused(validate_window_update_locality(&doc, &shallow)));
+        map_insert_bytes(&source.get_map("entities"), "after-carrier", b"ordinary")?;
+        source.commit();
+        let root = source.oplog_frontiers();
         map_delete(&source.get_map("entities"), raw_key)?;
         source.commit();
         let hidden = source.export(loro::ExportMode::updates(&before)).unwrap();
-        assert!(matches!(
-            validate_window_update_locality(&doc, &hidden),
-            Err(Error::InvalidConfig(_))
-        ));
+        assert!(refused(validate_window_update_locality(&doc, &hidden)));
+        // Rooted between the insert and the delete, a shallow snapshot keeps
+        // the carrier only in its root state.
+        let rooted = source
+            .export(loro::ExportMode::shallow_snapshot(&root))
+            .unwrap();
+        assert!(refused(validate_window_update_locality(&doc, &rooted)));
+        // So does a full snapshot, in its history.
+        let full = source.export(loro::ExportMode::Snapshot).unwrap();
+        assert!(refused(validate_window_update_locality(&doc, &full)));
         assert_eq!(doc.oplog_vv(), before);
         assert!(map_get_bytes(&doc.get_map("entities"), raw_key).is_none());
+    }
+    // A sender can also hide a carrier left in a snapshot's encoded root,
+    // which a later export reuses. Each shape first shows the premise: the
+    // imported view is clean, and a Loro path still surfaces the carrier.
+    let mut admitted = Vec::new();
+    for carrier in [&diagnostic, &custody] {
+        use RootMask::{Aliased, Long, Overwritten, Short, Untrimmed};
+        for shape in [Short, Long, Overwritten, Aliased, Untrimmed] {
+            let masked = masked_root_snapshot(carrier, shape)?;
+            let shown = LoroDoc::from_snapshot(&masked).unwrap();
+            // The state load takes the alias, the clean twin's root.
+            let clean: Option<&[u8]> = match shape {
+                Short | Long | Aliased => Some(b"clean"),
+                Overwritten => Some(b"clean-tail"),
+                Untrimmed => None,
+            };
+            let entities = shown.get_map("entities");
+            assert_eq!(map_get_bytes(&entities, "masked").as_deref(), clean);
+            let root_view = |blob: &[u8]| {
+                let [ops, _, root] = snapshot_sections(blob);
+                let view = snapshot_with_sections(blob, [ops, root, root]);
+                LoroDoc::from_snapshot(&view).unwrap()
+            };
+            let surfaced = match shape {
+                // A re-export at the doc's heads keeps the encoded root.
+                Short | Long | Overwritten => root_view(
+                    &shown
+                        .export(loro::ExportMode::shallow_snapshot(&shown.oplog_frontiers()))
+                        .unwrap(),
+                ),
+                // The root's state load reads the alias, but a checkout to
+                // the root reads the carrier from its history load.
+                Aliased => {
+                    let view = root_view(&masked);
+                    let alias = map_get_bytes(&view.get_map("entities"), "masked");
+                    assert_eq!(alias.as_deref(), Some(&b"clean"[..]));
+                    let [ops, _, root] = snapshot_sections(&masked);
+                    let replay = snapshot_with_sections(&masked, [ops, b"E", root]);
+                    let replayed = LoroDoc::from_snapshot(&replay).unwrap();
+                    replayed
+                        .checkout(&replayed.shallow_since_frontiers())
+                        .unwrap();
+                    replayed
+                }
+                // An ordinary snapshot export keeps the root and drops the
+                // latest state, so a reload replays from the carrier.
+                Untrimmed => {
+                    assert!(!shown.is_shallow());
+                    let full = shown.export(loro::ExportMode::Snapshot).unwrap();
+                    LoroDoc::from_snapshot(&full).unwrap()
+                }
+            };
+            assert_eq!(
+                map_get_bytes(&surfaced.get_map("entities"), "masked").as_ref(),
+                Some(carrier),
+                "Loro surfaces the carrier ({shape:?})"
+            );
+            if !refused(validate_window_update_locality(&doc, &masked)) {
+                admitted.push(shape);
+            }
+        }
+    }
+    assert!(admitted.is_empty(), "masked roots admitted: {admitted:?}");
+    // The long shapes, sent honestly, are admitted.
+    for shape in [RootMask::Long, RootMask::Overwritten] {
+        validate_window_update_locality(&doc, &masked_root_snapshot(b"clean", shape)?)?;
     }
     let ordinary = doc.fork();
     map_insert_bytes(&ordinary.get_map("entities"), "second", b"ordinary")?;
@@ -3873,6 +4131,8 @@ fn diagnostic_update_admission_is_side_effect_free_and_checks_hidden_history() -
         ))
         .unwrap();
     validate_window_update_locality(&doc, &snapshot)?;
+    let full = ordinary.export(loro::ExportMode::Snapshot).unwrap();
+    validate_window_update_locality(&doc, &full)?;
     let unrelated = LoroDoc::new();
     map_insert_bytes(&unrelated.get_map("entities"), "dependency", b"first")?;
     unrelated.commit();

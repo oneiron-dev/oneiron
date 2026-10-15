@@ -234,7 +234,7 @@ mod cb_a {
     fn arm_kill_matrix() -> KillMatrix {
         use oneiron::agent_dispatch::{
             AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget, AgentDispatcher,
-            DispatchAgent, KillOutcome,
+            DispatchAgent, KillOutcome, KillerLease,
         };
         use oneiron::{
             AttemptQueue, ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId,
@@ -310,6 +310,26 @@ mod cb_a {
                 .dispatch_default_base(None, None, None, 3)
                 .expect("dispatch non-spawner B"),
         );
+        // Each spawner kills only as the runtime holding its own lease.
+        let lease = |expected: oneiron::attempt_queue::AttemptId, worker: &str| {
+            let oneiron::attempt_queue::ClaimOutcome::Claimed(claimed) = AttemptQueue::new(&vault)
+                .claim(oneiron::attempt_queue::ClaimAttempt {
+                    lease_owner: worker.to_owned(),
+                    now: 3,
+                })
+                .expect("claim")
+            else {
+                panic!("expected a lease");
+            };
+            assert_eq!(claimed.id, expected);
+            KillerLease {
+                attempt: claimed.id,
+                lease_owner: worker.to_owned(),
+                attempt_count: claimed.attempt_count,
+            }
+        };
+        let spawner_lease = lease(spawner.attempt.id, "worker-a");
+        let non_spawner_lease = lease(non_spawner.attempt.id, "worker-b");
         let spawn = |target, now| {
             dispatched(
                 dispatcher
@@ -328,13 +348,13 @@ mod cb_a {
         let proposed_child = spawn(seeded("sys.creative"), 6);
 
         dispatcher
-            .kill_spawn(&system_child.attempt.id, &spawner.attempt.id, 7)
+            .kill_spawn(&system_child.attempt.id, &spawner_lease, 7)
             .expect("spawner kills system child");
         dispatcher
-            .kill_spawn(&custom_child.attempt.id, &spawner.attempt.id, 8)
+            .kill_spawn(&custom_child.attempt.id, &spawner_lease, 8)
             .expect("spawner kills custom child");
         let non_spawner_outcome = dispatcher
-            .kill_spawn(&proposed_child.attempt.id, &non_spawner.attempt.id, 9)
+            .kill_spawn(&proposed_child.attempt.id, &non_spawner_lease, 9)
             .expect("non-spawner kill proposes");
         let non_spawner_kill_proposals =
             usize::from(matches!(non_spawner_outcome, KillOutcome::Proposed(_)));
@@ -714,7 +734,8 @@ mod cb_a {
             task_verb::TaskCreateSpec, task_verb::TaskKind, task_verb::TaskTtl,
         };
 
-        let fixture = super::lead_fixture::LeadFixture::open();
+        // The engine's clock sits past every answer the panel run times.
+        let fixture = super::lead_fixture::LeadFixture::open_at(super::LEAD_NOW + 30);
         let vault = &fixture.vault;
         let (lead_ref, _) = vault
             .get_seeded_agent_definition_by_logical_id(super::TEAM_LEAD_LOGICAL_ID)
@@ -2281,8 +2302,16 @@ mod lead_fixture {
 
     impl LeadFixture {
         pub(crate) fn open() -> Self {
+            Self::open_with(VaultConfig::device())
+        }
+
+        /// The fixture on a vault whose engine clock is pinned at `now`.
+        pub(crate) fn open_at(now: u64) -> Self {
+            Self::open_with(crate::common::on_pinned_clock(VaultConfig::device(), now))
+        }
+
+        fn open_with(mut config: VaultConfig) -> Self {
             let dir = tempfile::tempdir().expect("temporary vault directory");
-            let mut config = VaultConfig::device();
             config.map_size = 32 * 1024 * 1024;
             config.dimensions = 4;
             config.embedding_model = None;

@@ -993,6 +993,8 @@ fn a_forked_owner_companion_does_not_poison_the_board() {
                     kind: crate::task_authority::TaskAuthorityFactKind::Owner,
                     actor_ref: intruder,
                     assigned_ref: None,
+                    actor_generation: None,
+                    assigned_generation: None,
                     occurred_at: 121,
                 },
             )
@@ -1198,7 +1200,7 @@ fn a_restore_goes_ahead_past_a_failure_acknowledged_since() {
             now: 121,
         })
         .expect("fail task");
-    let backups = tempfile::tempdir().expect("backups");
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 130).expect("backup");
 
@@ -1212,4 +1214,442 @@ fn a_restore_goes_ahead_past_a_failure_acknowledged_since() {
     )
     .expect("an acknowledgement does not block the restore");
     drop(restored);
+}
+
+/// Fails the one realization `tasks.create` queued, so its TASK renders FAILED.
+fn fail_the_realization(vault: &Vault, now: u64) {
+    let queue = AttemptQueue::new(vault);
+    let ClaimOutcome::Claimed(claimed) = queue
+        .claim_kind(
+            TASK_REALIZE_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: "worker".to_owned(),
+                now,
+            },
+        )
+        .expect("claim")
+    else {
+        panic!("created task must be claimable");
+    };
+    queue
+        .fail(FailAttempt {
+            id: claimed.id,
+            lease_owner: "worker".to_owned(),
+            attempt_count: claimed.attempt_count,
+            reason: "failed".to_owned(),
+            now: now + 1,
+        })
+        .expect("fail task");
+}
+
+/// F15 / H162: `tasks.update` dismissed any FAILED task by id. A verified
+/// actor that does not own the task hid its failure from every board, the
+/// owner's included. A dismissal is the task owner's: anyone else gets a
+/// typed refusal and the failure stays on the board.
+#[test]
+fn only_the_task_owner_dismisses_its_failure() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let owner = vault.memory(own, EdgeActorClass::Agent);
+    let task_ref = owner
+        .tasks_create(&spec(120))
+        .expect("create task")
+        .task_ref
+        .expect("task ref");
+    fail_the_realization(&vault, 120);
+    let stranger_ref = EntityId::from_bytes([0xE7; 16]).expect("stranger id");
+    put_person(&vault, stranger_ref);
+    let stranger = vault.memory(stranger_ref, EdgeActorClass::Agent);
+
+    let refused = stranger
+        .tasks_update(task_ref)
+        .expect_err("a stranger cannot dismiss another actor's failure");
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
+    assert!(!task_is_acked(&vault, task_ref).expect("ack state"));
+    let board = owner.describe_section().expect("the owner's board");
+    assert_eq!(board.rows.len(), 1);
+    assert_eq!(board.rows[0].status, TaskBoardStatus::Failed);
+
+    // A TASK no actor provably owns is nobody's to dismiss either.
+    let role_only = EntityId::from_bytes([0xB7; 16]).expect("task id");
+    vault
+        .put_entity(
+            &role_only,
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: 130,
+                end: 130,
+            },
+            130,
+            &crate::habit::task_body_for_test(TaskRole::Task),
+        )
+        .expect("put role-only task");
+    assert_eq!(
+        stranger
+            .tasks_update(role_only)
+            .expect_err("an unowned task is not dismissable")
+            .code,
+        MEMORY_CODE_FORBIDDEN
+    );
+
+    // The owner's own dismissal lands.
+    assert!(owner.tasks_update(task_ref).expect("owner ack").acked);
+    assert!(task_is_acked(&vault, task_ref).expect("ack state"));
+}
+
+/// F15 / H162, denial as absence: a handle bound to a read credential has no
+/// card for a TASK its credential does not read (`describe`), so it cannot
+/// dismiss that TASK's failure either, even as the TASK's owner. The refusal
+/// is the same NOT_FOUND an absent TASK gives.
+#[test]
+fn a_credential_dismisses_only_the_failures_it_reads() {
+    let (_dir, vault) = open_vault();
+    crate::test_support::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id().expect("policy id"),
+        &crate::gate::default_policy_manifest().expect("default policy"),
+    )
+    .expect("install the default policy");
+    let own = own_agent(&vault);
+    let (near, far) = (
+        EntityId::from_bytes([0x5D; 16]).expect("world id"),
+        EntityId::from_bytes([0x5E; 16]).expect("world id"),
+    );
+    let withheld = vault
+        .memory(own, EdgeActorClass::Agent)
+        .with_birth_position(crate::federation::record_scope::BirthPosition {
+            world: Some(far),
+            facet: None,
+        })
+        .tasks_create(&spec(120))
+        .expect("the agent creates a TASK")
+        .task_ref
+        .expect("the create mints a TASK");
+    fail_the_realization(&vault, 120);
+
+    let issuer = crate::test_support::test_host_issuer();
+    let mut claims = vault
+        .ensure_host_root_slip(&issuer)
+        .expect("host root")
+        .claims;
+    claims.slip_id = *blake3::hash(b"one world task dismisser").as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = own.to_hex();
+    claims.actor_class = Some("agent".into());
+    claims.scope = crate::federation::scope_codec::read_preset();
+    claims.scope.worlds = [near, crate::claim::base_world_id()]
+        .into_iter()
+        .map(crate::federation::ScopeId)
+        .collect();
+    let slip = vault.mint_capability_slip(&issuer, claims).expect("mint");
+    let tag = b"one-world-dismiss";
+    let proof = vault
+        .verify_capability_slip(
+            &issuer.public_key(),
+            &slip,
+            tag,
+            &issuer.binding_proof(&slip, tag).expect("binding proof"),
+        )
+        .expect("verify");
+    let bound = vault
+        .memory(own, EdgeActorClass::Agent)
+        .with_read_proof(&proof);
+
+    assert_eq!(
+        bound
+            .tasks_update(withheld)
+            .expect_err("a TASK the credential does not read is absent")
+            .code,
+        crate::memory::MEMORY_CODE_NOT_FOUND
+    );
+    assert!(!task_is_acked(&vault, withheld).expect("ack state"));
+    // The unbound owner still dismisses it.
+    assert!(
+        vault
+            .memory(own, EdgeActorClass::Agent)
+            .tasks_update(withheld)
+            .expect("owner ack")
+            .acked
+    );
+}
+
+/// A TASK body carrying only a `Task` role and `subkind`. It stores, since a
+/// TASK put needs only a role that decodes, but neither the typed reader nor
+/// the connector-send reader decodes it.
+fn undecodable_task_body(subkind: &str) -> Vec<u8> {
+    let value = Value::Map(vec![
+        (Value::from("role"), Value::from(TaskRole::Task.role_byte())),
+        (Value::from("subkind"), Value::from(subkind)),
+    ]);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &value).expect("encode task body");
+    bytes
+}
+
+fn put_task_body(vault: &Vault, task_ref: EntityId, body: &[u8]) {
+    let now = crate::unix_seconds_now() + 5;
+    vault
+        .put_entity(
+            &task_ref,
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+            body,
+        )
+        .expect("put task body");
+}
+
+/// The answer the dismissal's write transaction acts on.
+fn owned_in_txn(vault: &Vault, actor: EntityId, task_ref: EntityId) -> Option<bool> {
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    task_owned_in(vault, &rtxn, actor, task_ref)
+        .expect("a TASK body never makes ownership an error")
+}
+
+/// F15 (Bugbot on #1444): the ownership check decoded the TASK body before it
+/// read the Owner fact, so a body rewritten into a shape no reader decodes
+/// turned the owner's own dismissal and cancel into errors. The Owner fact
+/// decides first: the owner dismisses the failure and cancels directly. The
+/// status such a row folds up from its jobs never reads live work as failed,
+/// so dismissing a row whose job still runs stays a no-op.
+#[test]
+fn the_owner_dismisses_and_cancels_a_task_whose_body_no_longer_decodes() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    grant_cancel(&vault, own, 0xD6);
+    let owner = vault.memory(own, EdgeActorClass::Agent);
+    let create = || {
+        owner
+            .tasks_create(&spec(120))
+            .expect("create task")
+            .task_ref
+            .expect("task ref")
+    };
+    let queue = AttemptQueue::new(&vault);
+    for subkind in [
+        TASK_VERB_BODY_SUBKIND,
+        crate::outbound::CONNECTOR_SEND_TASK_SUBKIND,
+    ] {
+        let failed = create();
+        fail_the_realization(&vault, 120);
+        put_task_body(&vault, failed, &undecodable_task_body(subkind));
+        assert!(
+            owner.tasks_update(failed).expect("owner ack").acked,
+            "{subkind}"
+        );
+        assert!(task_is_acked(&vault, failed).expect("ack state"));
+
+        let queued = create();
+        put_task_body(&vault, queued, &undecodable_task_body(subkind));
+        let cancel = owner
+            .cancel(TaskCancelTarget::Task(queued))
+            .expect("owner cancel");
+        assert_eq!(cancel.approval, ClaimApprovalStatus::Auto, "{subkind}");
+        assert!(cancel.effected, "{subkind}");
+        let realizations = attempts_for(&vault, queued);
+        assert_eq!(realizations.len(), 1);
+        assert_eq!(realizations[0].state, AttemptState::Cancelled);
+
+        let running = create();
+        let ClaimOutcome::Claimed(_) = queue
+            .claim_kind(
+                TASK_REALIZE_ATTEMPT_KIND,
+                ClaimAttempt {
+                    lease_owner: "worker".to_owned(),
+                    now: 120,
+                },
+            )
+            .expect("claim")
+        else {
+            panic!("created task must be claimable");
+        };
+        put_task_body(&vault, running, &undecodable_task_body(subkind));
+        assert!(
+            !owner.tasks_update(running).expect("no-op").acked,
+            "{subkind}"
+        );
+        assert!(!task_is_acked(&vault, running).expect("ack state"));
+    }
+}
+
+/// F15 (Bugbot on #1444): for a TASK whose body no longer decodes, anyone the
+/// Owner fact does not name gets the answer an unowned TASK gives: a refused
+/// dismissal and a cancel that only proposes. Never a body-decode error, never
+/// a direct cancel. With no Owner fact at all, the TASK is nobody's.
+#[test]
+fn a_stranger_gets_the_proposal_answer_for_a_task_whose_body_no_longer_decodes() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let stranger_ref = EntityId::from_bytes([0xE7; 16]).expect("stranger id");
+    put_person(&vault, stranger_ref);
+    grant_cancel(&vault, own, 0xD6);
+    let owner = vault.memory(own, EdgeActorClass::Agent);
+    let stranger = vault.memory(stranger_ref, EdgeActorClass::Agent);
+    for (subkind, seed) in [
+        (TASK_VERB_BODY_SUBKIND, 0xB8),
+        (crate::outbound::CONNECTOR_SEND_TASK_SUBKIND, 0xB9),
+    ] {
+        let owned = owner
+            .tasks_create(&spec(120))
+            .expect("create task")
+            .task_ref
+            .expect("task ref");
+        put_task_body(&vault, owned, &undecodable_task_body(subkind));
+        let ownerless = EntityId::from_bytes([seed; 16]).expect("task id");
+        put_task_body(&vault, ownerless, &undecodable_task_body(subkind));
+
+        for (facade, task_ref) in [
+            (&stranger, owned),
+            (&stranger, ownerless),
+            (&owner, ownerless),
+        ] {
+            let refused = facade
+                .tasks_update(task_ref)
+                .expect_err("not the caller's failure to dismiss");
+            assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{subkind}");
+            let cancel = facade
+                .cancel(TaskCancelTarget::Task(task_ref))
+                .expect("a cancel proposal");
+            assert_eq!(cancel.approval, ClaimApprovalStatus::Proposed, "{subkind}");
+            assert!(!cancel.effected);
+        }
+        assert!(!task_is_acked(&vault, owned).expect("ack state"));
+        let realizations = attempts_for(&vault, owned);
+        assert_eq!(realizations.len(), 1);
+        assert_eq!(realizations[0].state, AttemptState::Queued);
+    }
+}
+
+/// F15 (Bugbot on #1444): the dismissal's check, cancel's check and the
+/// in-transaction re-check were two implementations that disagreed. Over every
+/// TASK body shape both entry points now act exactly as the in-transaction
+/// answer says. That answer is the Owner fact's, or else a validated
+/// connector send's actor: a raw connector-shaped put naming an actor, with no
+/// assignment to its connector, is not that actor's.
+#[test]
+fn both_entry_points_follow_the_in_transaction_ownership_answer() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let stranger_ref = EntityId::from_bytes([0xE7; 16]).expect("stranger id");
+    put_person(&vault, stranger_ref);
+    vault
+        .mint_standing_outbound_grant(
+            &EntityId::from_bytes([0xD3; 16]).expect("send grant id"),
+            &GrantMintIntent {
+                principal_ref: own.to_hex(),
+                origin_component_id: "tasks".to_owned(),
+                origin_action_id: "create".to_owned(),
+                origin_receipt_ref: None,
+                scope: GrantMintIntentScope::VerbClass {
+                    verb_class: "send".to_owned(),
+                },
+            },
+            1,
+        )
+        .expect("mint send grant");
+    grant_cancel(&vault, own, 0xD6);
+    let owner = vault.memory(own, EdgeActorClass::Agent);
+    let stranger = vault.memory(stranger_ref, EdgeActorClass::Agent);
+    let create = || {
+        owner
+            .tasks_create(&spec(120))
+            .expect("create task")
+            .task_ref
+            .expect("task ref")
+    };
+
+    let typed = create();
+    owner
+        .schedule_outbound(&OutboundDraftInput {
+            verb: "send".to_owned(),
+            channel: "email".to_owned(),
+            target: "x".to_owned(),
+            on_behalf_of: None,
+            content_ref: None,
+            idempotency_key: Some("k1".to_owned()),
+            dedupe_key: None,
+            trigger: "agent_immediate".to_owned(),
+            trigger_ref: "s1".to_owned(),
+            job_ref: None,
+            occurred_at: Some(120),
+        })
+        .expect("schedule send");
+    let connector = vault.connector_send_tasks().expect("connector tasks")[0].task_ref;
+    let role_only = EntityId::from_bytes([0xB1; 16]).expect("task id");
+    put_task_body(
+        &vault,
+        role_only,
+        &crate::habit::task_body_for_test(TaskRole::Task),
+    );
+    let unassigned_copy = EntityId::from_bytes([0xB2; 16]).expect("task id");
+    let connector_raw = vault
+        .get_raw(&connector)
+        .expect("read connector task")
+        .expect("connector task");
+    put_task_body(
+        &vault,
+        unassigned_copy,
+        &connector_raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    );
+    let undecodable_typed = create();
+    put_task_body(
+        &vault,
+        undecodable_typed,
+        &undecodable_task_body(TASK_VERB_BODY_SUBKIND),
+    );
+    let undecodable_connector = create();
+    put_task_body(
+        &vault,
+        undecodable_connector,
+        &undecodable_task_body(crate::outbound::CONNECTOR_SEND_TASK_SUBKIND),
+    );
+    let undecodable_ownerless = EntityId::from_bytes([0xB3; 16]).expect("task id");
+    put_task_body(
+        &vault,
+        undecodable_ownerless,
+        &undecodable_task_body(TASK_VERB_BODY_SUBKIND),
+    );
+
+    // (shape, TASK, the owner's answer); a stranger's is always `Some(false)`.
+    for (shape, task_ref, owner_answer) in [
+        ("typed", typed, true),
+        ("connector send", connector, true),
+        ("role-only", role_only, false),
+        ("unassigned connector-shaped copy", unassigned_copy, false),
+        ("undecodable typed", undecodable_typed, true),
+        ("undecodable connector send", undecodable_connector, true),
+        (
+            "undecodable with no Owner fact",
+            undecodable_ownerless,
+            false,
+        ),
+    ] {
+        for (caller, facade, expected) in [
+            (stranger_ref, &stranger, false),
+            (own, &owner, owner_answer),
+        ] {
+            assert_eq!(
+                owned_in_txn(&vault, caller, task_ref),
+                Some(expected),
+                "{shape}: in-transaction answer"
+            );
+            let dismissed = match facade.tasks_update(task_ref) {
+                Ok(_) => true,
+                Err(error) if error.code == MEMORY_CODE_FORBIDDEN => false,
+                Err(error) => panic!("{shape}: dismissal failed with {}", error.code),
+            };
+            assert_eq!(dismissed, expected, "{shape}: dismissal");
+            let cancel = facade
+                .cancel(TaskCancelTarget::Task(task_ref))
+                .unwrap_or_else(|error| panic!("{shape}: cancel failed with {}", error.code));
+            assert_eq!(
+                cancel.approval == ClaimApprovalStatus::Auto,
+                expected,
+                "{shape}: cancel"
+            );
+        }
+    }
 }

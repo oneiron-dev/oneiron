@@ -126,6 +126,7 @@ fn session_witness_receipt_carries_session_local_short_ids() {
 #[test]
 fn post_flip_session_witness_lands_in_base_under_a_fresh_shell() {
     let (_dir, vault) = open_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let (session, actor) = session_witness_fixture(&vault, "sess-witness-flip", 0x54);
     let facade = facade_for(&vault, actor);
 
@@ -143,7 +144,7 @@ fn post_flip_session_witness_lands_in_base_under_a_fresh_shell() {
         .expect("pre-flip witness");
     let overlay_shell = session.overlay_conversation_shell().expect("room shell");
 
-    session.flip_on_record().expect("flip on record");
+    session.flip_on_record_as(&proof).expect("flip on record");
     let receipt = facade
         .witness_into_session(
             &session,
@@ -190,9 +191,10 @@ fn post_flip_session_witness_lands_in_base_under_a_fresh_shell() {
 #[test]
 fn replay_owned_base_witness_race_is_an_exact_no_op() {
     let (_dir, vault) = open_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let (session, actor) = session_witness_fixture(&vault, "sess-replay-witness-race", 0x57);
     let facade = facade_for(&vault, actor);
-    session.flip_on_record().expect("flip on record");
+    session.flip_on_record_as(&proof).expect("flip on record");
     let route = session.write_route().expect("mint base route");
     let continuation = session
         .on_record_continuation_shell()
@@ -263,10 +265,11 @@ fn replay_owned_base_witness_race_is_an_exact_no_op() {
 #[test]
 fn a_stale_base_route_session_witness_commits_no_base_rows() {
     let (_dir, vault) = open_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let (session, actor) = session_witness_fixture(&vault, "sess-witness-stale-base", 0x56);
     let facade = facade_for(&vault, actor);
 
-    session.flip_on_record().expect("flip on record");
+    session.flip_on_record_as(&proof).expect("flip on record");
     let route = session.write_route().expect("mint base route");
     let continuation = session
         .on_record_continuation_shell()
@@ -319,76 +322,124 @@ fn a_stale_base_route_session_witness_commits_no_base_rows() {
 /// permit and waiting for the writer: ABBA, on one room, no timeout anywhere in
 /// the stack.
 ///
+/// The race runs in two phases. While the room holds still, a witness loop
+/// and a search loop run together and both must land. Then a third thread
+/// seals and rearms the room throughout; a call whose route a flip ended is
+/// refused, typed, and the flips must really happen, or the race is vacuous.
+/// Retrieval capture is on, so each search registers its run through the
+/// telemetry writer the order is about.
+///
 /// The whole race runs in a DETACHED driver thread and the test body waits on a
 /// channel. That is deliberate: a deadlock inside `thread::scope` would hang
 /// the suite (the implicit join blocks even while unwinding), so the watchdog
-/// has to sit outside the scope. A timeout here IS the deadlock.
+/// has to sit outside the scope.
 ///
-/// Progress is counted in calls, never in time. A search revalidates the route
-/// it minted, so while the flipper runs a loaded host can refuse every one of
-/// an arm's first rounds; each arm therefore runs its rounds, then on (to a
-/// bound) until both arms have landed a call.
+/// The watchdog counts calls, never time. Every witness, search and flip that
+/// returns, landed or refused, is progress; a deadlock is the race standing
+/// still. A loaded host, or a test process shared with heavy neighbours,
+/// slows every call to seconds but each still returns, so the test fails
+/// only once no call has returned for `STALL`. That stall IS the deadlock.
 #[test]
 fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
     const ROUNDS: usize = 40;
-    const MAX_ROUNDS: usize = 50 * ROUNDS;
+    const STALL: std::time::Duration = std::time::Duration::from_secs(90);
 
-    let (done_tx, done_rx) = std::sync::mpsc::channel::<(usize, usize, bool)>();
+    type Outcome = (
+        usize,
+        usize,
+        usize,
+        std::collections::BTreeSet<String>,
+        bool,
+    );
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<Outcome>();
+    let progress = std::sync::Arc::new(AtomicUsize::new(0));
+    let calls = std::sync::Arc::clone(&progress);
     std::thread::spawn(move || {
-        let (_dir, vault) = open_vault();
+        let returned = || {
+            calls.fetch_add(1, AtomicOrdering::Relaxed);
+        };
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config = VaultConfig {
+            retrieval_telemetry_capture: true,
+            ..VaultConfig::default()
+        };
+        let vault = crate::Vault::open(dir.path(), config).expect("open vault");
+        let proof = crate::test_util::embedded_owner_proof(&vault);
         let (session, actor) = session_witness_fixture(&vault, "sess-lock-order", 0x57);
         let facade = facade_for(&vault, actor);
         let overlay_shell = session
             .overlay_conversation_shell()
             .expect("allocate the room shell up front");
+        let witness = |round: usize| {
+            let landed = facade
+                .witness_into_session(
+                    &session,
+                    &WitnessTurn {
+                        conversation_ref: String::new(),
+                        turn_ref: None,
+                        messages: vec![witness_message(0, WitnessAuthor::User, "lockorderneedle")],
+                        occurred_at: 960 + round as u64,
+                    },
+                    None,
+                )
+                .is_ok();
+            returned();
+            landed
+        };
+        let search = || {
+            let result = session
+                .search_text("lockorderneedle", 4)
+                .map_err(|error| format!("{:?}", error.kind()));
+            returned();
+            result
+        };
 
         let witnessed = AtomicUsize::new(0);
         let searched = AtomicUsize::new(0);
-        let keep_going = |round: usize| {
-            round < ROUNDS
-                || (round < MAX_ROUNDS
-                    && (witnessed.load(AtomicOrdering::Relaxed) == 0
-                        || searched.load(AtomicOrdering::Relaxed) == 0))
-        };
         std::thread::scope(|scope| {
             scope.spawn(|| {
-                for round in (0..).take_while(|&round| keep_going(round)) {
-                    // Refusals are legitimate: the flipper may have sealed the
-                    // room under this route. Only a HANG is a failure.
-                    if facade
-                        .witness_into_session(
-                            &session,
-                            &WitnessTurn {
-                                conversation_ref: String::new(),
-                                turn_ref: None,
-                                messages: vec![witness_message(
-                                    0,
-                                    WitnessAuthor::User,
-                                    "lockorderneedle",
-                                )],
-                                occurred_at: 960 + round as u64,
-                            },
-                            None,
-                        )
-                        .is_ok()
-                    {
+                for round in 0..ROUNDS {
+                    if witness(round) {
                         witnessed.fetch_add(1, AtomicOrdering::Relaxed);
                     }
                 }
             });
             scope.spawn(|| {
-                for _ in (0..).take_while(|&round| keep_going(round)) {
-                    if session.search_text("lockorderneedle", 4).is_ok() {
+                for _ in 0..ROUNDS {
+                    if search().is_ok() {
                         searched.fetch_add(1, AtomicOrdering::Relaxed);
+                    }
+                }
+            });
+        });
+
+        let flips = AtomicUsize::new(0);
+        let search_refusals = std::sync::Mutex::new(std::collections::BTreeSet::new());
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for round in ROUNDS..2 * ROUNDS {
+                    // Refusals are legitimate: the flipper may have sealed the
+                    // room under this route. Only a HANG is a failure.
+                    let _ = witness(round);
+                }
+            });
+            scope.spawn(|| {
+                for _ in 0..ROUNDS {
+                    if let Err(kind) = search() {
+                        search_refusals.lock().expect("refusals").insert(kind);
                     }
                 }
             });
             scope.spawn(|| {
                 for _ in 0..ROUNDS {
-                    let _ = session.flip_on_record();
-                    let _ = session.flip_off_record();
+                    let flipped = session.flip_on_record_as(&proof).is_ok()
+                        && session.flip_off_record().is_ok();
+                    returned();
+                    if flipped {
+                        flips.fetch_add(1, AtomicOrdering::Relaxed);
+                    }
                 }
             });
         });
@@ -400,28 +451,46 @@ fn concurrent_room_witness_and_telemetry_never_invert_the_lock_order() {
             .send((
                 witnessed.load(AtomicOrdering::Relaxed),
                 searched.load(AtomicOrdering::Relaxed),
+                flips.load(AtomicOrdering::Relaxed),
+                search_refusals.into_inner().expect("refusals"),
                 shell_leaked,
             ))
             .ok();
     });
 
-    let (witnessed, searched, shell_leaked) = match done_rx
-        .recv_timeout(std::time::Duration::from_secs(90))
-    {
-        Ok(outcome) => outcome,
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            panic!(
-                "concurrent room witness + telemetry deadlocked (segment permit taken before the base writer)"
-            )
-        }
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            panic!("the concurrency driver thread panicked")
+    let mut seen = progress.load(AtomicOrdering::Relaxed);
+    let mut still_since = std::time::Instant::now();
+    let (witnessed, searched, flips, search_refusals, shell_leaked) = loop {
+        match done_rx.recv_timeout(std::time::Duration::from_secs(1)) {
+            Ok(outcome) => break outcome,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                let now = progress.load(AtomicOrdering::Relaxed);
+                if now != seen {
+                    seen = now;
+                    still_since = std::time::Instant::now();
+                } else if still_since.elapsed() >= STALL {
+                    panic!(
+                        "concurrent room witness + telemetry deadlocked: no call returned for \
+                         {STALL:?} after {seen} calls (segment permit taken before the base writer)"
+                    )
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("the concurrency driver thread panicked")
+            }
         }
     };
     assert!(
         witnessed > 0 && searched > 0,
-        "both writers must make real progress, not merely fail fast \
+        "while the room holds still both writers must make real progress \
          (witnessed {witnessed}, searched {searched})"
+    );
+    assert!(flips > 0, "the flipper never flipped: the race is vacuous");
+    assert!(
+        search_refusals
+            .iter()
+            .all(|kind| kind == "OffRecordOverlayLeaseClosed"),
+        "a search under the race is refused only for a route a flip ended: {search_refusals:?}"
     );
     assert!(
         !shell_leaked,
@@ -702,6 +771,7 @@ fn session_witness_turn_carries_the_mint_contract() {
 #[test]
 fn promoted_session_turn_lands_with_speaker_and_conversation_binding() {
     let (_dir, vault) = open_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let (session, actor) = session_witness_fixture(&vault, "sess-witness-promote-stamp", 0x5E);
     let facade = facade_for(&vault, actor);
 
@@ -726,7 +796,9 @@ fn promoted_session_turn_lands_with_speaker_and_conversation_binding() {
     .expect("turn id");
     let shell = session.overlay_conversation_shell().expect("room shell");
 
-    let outcome = session.promote_turn(&turn_id).expect("promote the turn");
+    let outcome = session
+        .promote_turn_as(&proof, &turn_id)
+        .expect("promote the turn");
     assert_eq!(
         outcome.replayed.len(),
         3,

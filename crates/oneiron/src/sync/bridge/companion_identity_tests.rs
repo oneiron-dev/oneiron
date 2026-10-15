@@ -119,7 +119,7 @@ fn merge_locally(install: &Vault, loser: EntityId, survivor: EntityId) {
 /// One peer row through the shared ingest ladder, as Observer B delivers it.
 fn deliver_blob(vault: &Vault, id: &EntityId, blob: &[u8]) -> Result<()> {
     let doc = LoroDoc::new();
-    let tombstones = doc.get_map("tombstones");
+    let tombstones = crate::sync::loro_support::TombstoneIndex::build(&doc.get_map("tombstones"));
     vault.with_write_txn(|wtxn| {
         let ctx = IngestCtx::new(
             vault,
@@ -194,7 +194,27 @@ fn replica_of(host: &Host) -> (tempfile::TempDir, Vault) {
             )
         })
         .collect();
-    replica.put_authority_log_entries(&entries).unwrap();
+    // The door judges each row against the rows staged before it (H72), so
+    // stage the log parents first, as sync and import do.
+    let mut staged = std::collections::BTreeSet::new();
+    let (mut rest, mut ordered) = (entries, Vec::new());
+    while !rest.is_empty() {
+        let (ready, waiting): (Vec<_>, Vec<_>) = rest.into_iter().partition(|(entry, ..)| {
+            entry
+                .parent_hashes
+                .iter()
+                .all(|parent| staged.contains(parent))
+        });
+        assert!(!ready.is_empty(), "the host's log names a missing parent");
+        staged.extend(
+            ready
+                .iter()
+                .map(|(entry, ..)| crate::authority::authority_entry_hash(entry).unwrap()),
+        );
+        ordered.extend(ready);
+        rest = waiting;
+    }
+    replica.put_authority_log_entries(&ordered).unwrap();
     assert_eq!(
         replica.authority_fold().unwrap().vault_id,
         Some(host.vault_id)
@@ -562,7 +582,7 @@ fn a_strangers_merge_is_no_lifecycle_receipt_or_census_shell() {
 /// image does not block it.
 #[test]
 fn a_restore_keeping_authority_keeps_own_merges_in_force() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
     let (loser, survivor) = (EntityId::now(), EntityId::now());
     merge_locally(&source, loser, survivor);
@@ -587,7 +607,7 @@ fn a_restore_keeping_authority_keeps_own_merges_in_force() {
 /// never trusts them.
 #[test]
 fn own_merges_survive_a_beside_restore_and_never_bind_a_stranger() {
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::test_support::restore_tempdir();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
     let (loser, survivor) = (EntityId::now(), EntityId::now());
     merge_locally(&source, loser, survivor);
@@ -644,7 +664,7 @@ fn a_restore_keeping_authority_redecides_edges_under_the_current_roster() {
         deliver_merge(&host.vault, &laptop, loser, survivor);
         assert_eq!(shell_edge(&host.vault, loser, survivor), then == yours);
         record_standing(&host);
-        let root = tempfile::tempdir().unwrap();
+        let root = crate::test_support::restore_tempdir();
         let image = root.path().join("image");
         host.vault.snapshot_checkpoint(&image, 100).unwrap();
         host.vault

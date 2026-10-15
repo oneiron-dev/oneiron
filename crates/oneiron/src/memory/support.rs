@@ -161,6 +161,18 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
         }
         MemoryError::from(err)
     })?;
+    if let Some(signer) = fold.authority_log_bound_signer() {
+        return Err(MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            format!(
+                "authority log at its bound for signer {}; owner verbs are suspended",
+                crate::authority::authority_signer_label(signer)
+            ),
+            &[
+                "The log holds more rows than one fold may read; no binding authorizes until it is back inside the bound.",
+            ],
+        ));
+    }
     if fold.vault_root_is_conflicted() {
         return Err(MemoryError::new(
             MEMORY_CODE_INVALID_STATE,
@@ -305,7 +317,9 @@ pub(super) fn decode_body_json(bytes: &[u8]) -> Option<serde_json::Value> {
     if !cursor.is_empty() {
         return None;
     }
-    Some(crate::batch::export::served_messagepack_json(value))
+    Some(crate::batch::export::served_stored_messagepack_json(
+        bytes, value,
+    ))
 }
 
 pub(crate) fn facade_provenance(verb: &str) -> Value {
@@ -478,6 +492,7 @@ impl<'v> Memory<'v> {
     /// narrows: every check the actor's reads already make still runs.
     pub fn for_room_turn(&self, room: EntityId) -> MemoryResult<super::RoomTurnHandle<'v>> {
         self.verified_actor_class()?;
+        self.require_room_in_facets(room)?;
         let ceiling = match self.room_turn_now()? {
             Some(now) if now.room == room => now,
             Some(_) => {

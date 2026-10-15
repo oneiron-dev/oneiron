@@ -8,9 +8,11 @@ use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 use super::backup::BackupConfig;
 use super::embedder::EmbedderConfig;
 use super::feedback::FeedbackConfig;
+use super::limits::LimitsConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
 use super::oneironer::OneironerConfig;
 use super::recall::RecallConfig;
+use super::trusted_proxy::TrustedProxy;
 use crate::runtime::RuntimeConfig;
 use crate::usage::UsageMode;
 
@@ -56,6 +58,10 @@ pub struct SyncServerConfig {
     /// Explicit CORS origins allowed to call the HTTP API. Empty is
     /// fail-closed: no cross-origin browser access is granted.
     pub allowed_origins: Vec<String>,
+    /// Reverse proxies whose `X-Forwarded-For` the server believes when it
+    /// keys a request by client address. Empty: every caller is keyed by its
+    /// own connection, whatever headers it sends.
+    pub trusted_proxies: Vec<TrustedProxy>,
     /// Numeric vault scope for root lease registration/revocation.
     /// Hosted deployments must set a distinct value per tenant/vault; `0`
     /// preserves the legacy local single-vault scope.
@@ -76,10 +82,14 @@ pub struct SyncServerConfig {
     pub max_ephemeral_snapshot_bytes: usize,
     /// Maximum entity blob size in bytes (M5/M6 bulk + materialization paths).
     pub max_entity_blob: usize,
-    /// Optional per-object LFS upload cap in bytes; unset imposes no limit.
-    pub max_lfs_object_bytes: Option<u64>,
+    /// Per-object LFS upload cap in bytes, `LFS_DEFAULT_OBJECT_CAP` unless
+    /// set. Always finite: an upload past it is refused mid-stream, and one
+    /// that declares a larger size is refused before it starts.
+    pub max_lfs_object_bytes: u64,
     /// Maximum decompressed BulkTransfer chunk in bytes (M5 Phase-3).
     pub max_bulk_decompressed: usize,
+    /// The bounds on work a remote caller can start: git and LFS transfers.
+    pub limits: LimitsConfig,
     /// Runtime mode and per-role model routing defaults. The single source of
     /// usage-mode truth: `runtime_usage_mode()` derives from `runtime.mode`.
     pub runtime: RuntimeConfig,
@@ -98,6 +108,7 @@ impl Default for SyncServerConfig {
             oauth_resource_indicator: None,
             allow_unauthenticated: false,
             allowed_origins: Vec::new(),
+            trusted_proxies: Vec::new(),
             lease_vault_id: 0,
             max_frame_size: 4 * 1024 * 1024,     // 4 MB
             max_update_payload: 2 * 1024 * 1024, // 2 MB
@@ -107,8 +118,9 @@ impl Default for SyncServerConfig {
             max_ephemeral_payload_bytes: 64 * 1024,   // 64 KB
             max_ephemeral_snapshot_bytes: 256 * 1024, // 256 KB
             max_entity_blob: 64 * 1024,               // 64 KB
-            max_lfs_object_bytes: None,
+            max_lfs_object_bytes: oneiron::origin::lfs::LFS_DEFAULT_OBJECT_CAP,
             max_bulk_decompressed: 8 * 1024 * 1024, // 8 MB
+            limits: LimitsConfig::default(),
             runtime: RuntimeConfig::default(),
         }
     }
@@ -159,6 +171,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
+            .field("trusted_proxies", &self.trusted_proxies)
             .field("lease_vault_id", &self.lease_vault_id)
             .field("max_frame_size", &self.max_frame_size)
             .field("max_update_payload", &self.max_update_payload)
@@ -179,6 +192,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("max_entity_blob", &self.max_entity_blob)
             .field("max_lfs_object_bytes", &self.max_lfs_object_bytes)
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
+            .field("limits", &self.limits)
             .field("runtime", &self.runtime)
             .finish()
     }
@@ -200,6 +214,7 @@ pub struct ServeConfig {
     pub oauth_resource_indicator: Option<String>,
     pub allow_unauthenticated: bool,
     pub allowed_origins: Vec<String>,
+    pub trusted_proxies: Vec<TrustedProxy>,
     pub lease_vault_id: u64,
     pub dimensions: usize,
     pub map_size: usize,
@@ -218,8 +233,10 @@ pub struct ServeConfig {
     pub max_ephemeral_payload_bytes: usize,
     pub max_ephemeral_snapshot_bytes: usize,
     pub max_entity_blob: usize,
-    /// Optional per-object LFS upload cap in bytes; unset imposes no limit.
-    pub max_lfs_object_bytes: Option<u64>,
+    /// Per-object LFS upload cap in bytes, `LFS_DEFAULT_OBJECT_CAP` unless
+    /// set. Always finite: an upload past it is refused mid-stream, and one
+    /// that declares a larger size is refused before it starts.
+    pub max_lfs_object_bytes: u64,
     pub max_bulk_decompressed: usize,
     pub runtime: RuntimeConfig,
     /// The `[embedder]` section, absent until some layer names a key in it.
@@ -235,6 +252,8 @@ pub struct ServeConfig {
     pub feedback: FeedbackConfig,
     /// The `[recall]` section: call mode's deadline.
     pub recall: RecallConfig,
+    /// The `[limits]` section: the bounds on work a remote caller can start.
+    pub limits: LimitsConfig,
     /// The `[import]` section: the queue a running `serve` imports session
     /// logs from, off unless set.
     pub import: super::ImportConfig,
@@ -267,6 +286,7 @@ impl Default for ServeConfig {
             oauth_resource_indicator: server.oauth_resource_indicator,
             allow_unauthenticated: server.allow_unauthenticated,
             allowed_origins: server.allowed_origins,
+            trusted_proxies: server.trusted_proxies,
             lease_vault_id: server.lease_vault_id,
             dimensions: vault.dimensions,
             map_size: vault.map_size,
@@ -293,6 +313,7 @@ impl Default for ServeConfig {
             backup: BackupConfig::default(),
             feedback: FeedbackConfig::default(),
             recall: RecallConfig::default(),
+            limits: LimitsConfig::default(),
             import: super::ImportConfig::default(),
             models: None,
             // Hosting is opt-in: an operator must name the posture AND supply
@@ -314,6 +335,7 @@ impl fmt::Debug for ServeConfig {
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
+            .field("trusted_proxies", &self.trusted_proxies)
             .field("lease_vault_id", &self.lease_vault_id)
             .field("dimensions", &self.dimensions)
             .field("map_size", &self.map_size)
@@ -352,6 +374,7 @@ impl fmt::Debug for ServeConfig {
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
             .field("recall", &self.recall)
+            .field("limits", &self.limits)
             .field("import", &self.import)
             .field("models", &self.models)
             .field("privacy_posture", &self.privacy_posture)
@@ -376,6 +399,7 @@ impl ServeConfig {
             oauth_resource_indicator: self.oauth_resource_indicator.clone(),
             allow_unauthenticated: self.allow_unauthenticated,
             allowed_origins: self.allowed_origins.clone(),
+            trusted_proxies: self.trusted_proxies.clone(),
             lease_vault_id: self.lease_vault_id,
             max_frame_size: self.max_frame_size,
             max_update_payload: self.max_update_payload,
@@ -387,6 +411,7 @@ impl ServeConfig {
             max_entity_blob: self.max_entity_blob,
             max_lfs_object_bytes: self.max_lfs_object_bytes,
             max_bulk_decompressed: self.max_bulk_decompressed,
+            limits: self.limits.clone(),
             runtime: self.runtime.clone(),
         };
         if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {

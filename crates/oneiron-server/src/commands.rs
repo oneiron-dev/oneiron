@@ -174,6 +174,7 @@ fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
             holder_ref: Some(owner.to_hex()),
             actor_class: Some("human".into()),
             org_ref: None,
+            write_facet: None,
         },
     )?;
     Ok(oneiron::authority::format_pairing_link(
@@ -478,6 +479,7 @@ fn mint_paired_credential(
             holder_ref: Some(principal.to_owned()),
             actor_class: Some(actor_class.to_owned()),
             org_ref: None,
+            write_facet: None,
         },
     )?;
     let key = SigningKey::generate(&mut rand_core::OsRng);
@@ -529,6 +531,7 @@ pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
         holder_ref: Some(args.principal_ref.clone()),
         actor_class: args.actor_class,
         org_ref: None,
+        write_facet: None,
     };
     let body = serde_json::to_vec(&json!({
         "scope": scope,
@@ -774,8 +777,16 @@ pub async fn revoke(args: RevokeArgs) -> anyhow::Result<()> {
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths = dicts.paths;
     ensure_existing_vault_for_revoke(&config.vault_path)?;
-    let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
-        .map_err(|e| anyhow::anyhow!("open vault {} failed: {e}", config.vault_path.display()))?;
+    let vault =
+        oneiron::Vault::open_owned(&config.vault_path, vault_config).map_err(|e| match e {
+            // The running server owns the vault and its leases: revoke there.
+            oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD) => anyhow::anyhow!(
+                "vault {} is open in a running server; revoke the lease through it with POST \
+             /api/lease/revoke, or stop the server and run revoke again",
+                config.vault_path.display()
+            ),
+            e => anyhow::anyhow!("open vault {} failed: {e}", config.vault_path.display()),
+        })?;
     let server = SyncServer::new(Arc::new(vault), config.sync_server_config())
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?;
 

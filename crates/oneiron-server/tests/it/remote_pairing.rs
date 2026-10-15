@@ -69,6 +69,7 @@ impl Fixture {
                     holder_ref: Some(holder.to_owned()),
                     actor_class: class.map(str::to_owned),
                     org_ref: None,
+                    write_facet: None,
                 },
             )
             .unwrap();
@@ -94,6 +95,7 @@ impl Fixture {
                     holder_ref: Some(self.person.clone()),
                     actor_class: Some("human".into()),
                     org_ref: None,
+                    write_facet: None,
                 },
             )
             .unwrap();
