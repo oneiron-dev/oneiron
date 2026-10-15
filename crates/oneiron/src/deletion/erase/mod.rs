@@ -78,6 +78,7 @@ pub(super) fn sweep_extras(captured: Option<&CapturedProvenanceDelete>) -> HardE
 
 mod active_store;
 mod blob_references;
+pub(in crate::deletion) use blob_references::PiercedCarrier;
 mod markers;
 mod provenance;
 mod redirect_shells;

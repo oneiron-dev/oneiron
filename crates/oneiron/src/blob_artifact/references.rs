@@ -17,7 +17,7 @@ use rmpv::Value;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{ArtifactError, Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
@@ -74,10 +74,12 @@ pub(super) fn version_claim_reference(body: &ClaimBody) -> Option<(EntityId, Con
 /// A claim naming an artifact this vault already deleted records nothing: the delete ran without
 /// its hash, so the bytes are released now unless something live holds them. A claim naming a
 /// live artifact lifts a fence an earlier release left on its bytes, so the export door keeps
-/// their carrier and the next rematerialization takes them back. A claim a hard erase took
-/// records nothing and lifts nothing, whoever puts it again. A claim naming bytes a hard erase
-/// took here, or naming an artifact hard-erased here before the claim arrived, arrives erased:
-/// it pierces the bytes it names (`super::erase::pierce_content_in_txn`).
+/// their carrier and the next rematerialization takes them back.
+///
+/// A late reference (`super::erase::LateReference`) is refused: a claim a hard erase took, a claim
+/// naming bytes a hard erase took here, and a claim naming an artifact whose hard erase was decided
+/// here. Replicated ingest pierces such a claim before it reaches this put
+/// (`Vault::refuse_erased_blob_arrival_in_txn`); every other door gets the refusal.
 pub(crate) fn record_version_claim(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -87,24 +89,20 @@ pub(crate) fn record_version_claim(
     let Some((artifact, hash)) = version_claim_reference(body) else {
         return Ok(());
     };
-    if super::erase::reference_erased(store, txn, claim)? {
-        return Ok(());
-    }
-    if let Some(erase) = super::erase::content_erased(store, txn, &hash)? {
-        return super::erase::pierce_content_in_txn(store, txn, &hash, &artifact, claim, &erase);
+    if super::erase::late_reference_in_txn(store, txn, claim, body)?.is_some() {
+        return Err(Error::Artifact(
+            if super::erase::reference_erased(store, txn, claim)? {
+                ArtifactError::BlobVersionErased
+            } else {
+                ArtifactError::BlobContentErased
+            },
+        ));
     }
     let deleted_here = {
         let raw = store.entities.get(txn, artifact.as_bytes())?;
         crate::deletion::row_deletion_marked(store, txn, &artifact, raw.as_deref())?
     };
     if deleted_here {
-        if let Some(erase) =
-            crate::deletion::HARD_DELETE_MARKER.get(store, txn, &HexId(artifact))?
-        {
-            return super::erase::pierce_content_in_txn(
-                store, txn, &hash, &artifact, claim, &erase,
-            );
-        }
         return super::lifecycle::release_bytes_of_deleted_artifact(store, txn, &artifact, &hash);
     }
     VERSION_CLAIM.put(store, txn, &(hash, artifact), &())?;

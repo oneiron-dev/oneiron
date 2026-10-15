@@ -5,7 +5,7 @@ use crate::blob_artifact::{BlobArtifactBody, BlobArtifactVersion, BlobVersionPro
 use crate::deletion::{DeleteEntityOptions, DeleteReason};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::{ArtifactError, Error};
-use crate::registry::{ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_PERSON};
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_PERSON};
 use crate::temporal::TimeRange;
 use crate::test_util::{embedding_test_config, open_test_vault_with};
 use crate::write_envelope::WriteActor;
@@ -153,6 +153,24 @@ fn a_hard_erase_takes_shared_bytes_and_every_reference_to_them() -> Result<()> {
             Some(OTHER_ONLY.to_vec()),
             "{reason:?}: the other artifact's unrelated version went too"
         );
+        // The erased version is the other artifact's head; its listing keeps it in place,
+        // marked erased and naming nothing of its bytes.
+        assert!(
+            erased(vault.blob_artifact_head(&fixture.other)),
+            "{reason:?}: the head door read an erased version as intact"
+        );
+        let listed = vault.blob_artifact_versions(&fixture.other)?;
+        let [kept, gone] = listed.as_slice() else {
+            panic!("{reason:?}: the listing lost a version");
+        };
+        assert!(!kept.erased && kept.export_name == "shared.bin");
+        assert!(
+            gone.erased
+                && gone.content_hash == [0; 32]
+                && gone.export_name.is_empty()
+                && gone.export_media_type.is_empty(),
+            "{reason:?}: the listing named an erased version's bytes"
+        );
         // Both artifacts' version claims naming the bytes, and the derived text, are scrubbed
         // to shells.
         let references = [fixture.shared.claim_id, fixture.erased_version.claim_id];
@@ -293,9 +311,9 @@ fn the_delete_preview_tells_one_of_several_from_the_last_reference() -> Result<(
     Ok(())
 }
 
-/// Done-means (ARCH-0005a): a reference the erase took, put again through the replicated door
-/// with the ASSET carrying its bytes, brings nothing back. The materialization gate refuses both,
-/// and the version still reads as erased.
+/// Done-means (ARCH-0005a): a reference the erase took, put again with the ASSET carrying its
+/// bytes, brings nothing back, through the replicated door or a local one, and so do the bytes
+/// under an id of the writer's choosing. The version still reads as erased.
 #[test]
 fn an_erased_reference_put_again_brings_no_bytes_back() -> Result<()> {
     let fixture = Shared::open()?;
@@ -324,9 +342,33 @@ fn an_erased_reference_put_again_brings_no_bytes_back() -> Result<()> {
             put.is_err(),
             "the replicated door took back an erased carrier"
         );
+        let local = vault
+            .batch()
+            .put(
+                id,
+                header.entity_type,
+                at(header.occurred_start),
+                header.learned_at,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+            .commit();
+        assert!(local.is_err(), "a local door took back an erased carrier");
     }
+    assert_eq!(
+        vault.get_raw(&claim)?.map(|raw| raw.len()),
+        Some(crate::batch::ENTITY_METADATA_HEADER_LEN),
+        "the erased reference got its body back"
+    );
+    let elsewhere = EntityId::now();
+    assert!(matches!(
+        vault
+            .batch()
+            .put(&elsewhere, ENTITY_TYPE_ASSET, at(30), 30, SHARED)
+            .commit(),
+        Err(Error::Artifact(ArtifactError::BlobContentErased))
+    ));
     assert!(
-        vault.get_raw(&asset)?.is_none(),
+        vault.get_raw(&asset)?.is_none() && vault.get_raw(&elsewhere)?.is_none(),
         "a re-sent reference brought the bytes back"
     );
     assert!(holds(vault, &fixture.shared.content_hash)?.is_empty());
@@ -334,29 +376,52 @@ fn an_erased_reference_put_again_brings_no_bytes_back() -> Result<()> {
     Ok(())
 }
 
-/// Copies each id's stored row to `target` through the replicated put door, one batch per row.
-/// Returns whether each put was taken.
+/// Copies each id's stored row to `target` as replicated ingest does, one transaction per row:
+/// the erase gate first, then the replicated put door. Returns whether each row was stored.
 fn replicate(source: &Vault, target: &Vault, ids: &[EntityId]) -> Result<Vec<bool>> {
     let mut taken = Vec::new();
     for id in ids {
         let raw = source.get_raw(id)?.expect("stored at the origin");
         let header = EntityMetadataHeader::parse(&raw).expect("stored header");
-        let put = target
-            .batch()
-            .put_replicated(
-                id,
-                header.entity_type,
-                TimeRange {
-                    start: header.occurred_start,
-                    end: header.occurred_end,
-                },
-                header.learned_at,
-                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-            )
-            .commit();
-        taken.push(put.is_ok());
+        let data = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+        let stored = target.with_write_txn_grouped(|txn| {
+            if target.refuse_erased_blob_arrival_in_txn(txn, id, header.entity_type, data)? {
+                return Ok(false);
+            }
+            target
+                .batch_in()
+                .put_replicated(
+                    id,
+                    header.entity_type,
+                    TimeRange {
+                        start: header.occurred_start,
+                        end: header.occurred_end,
+                    },
+                    header.learned_at,
+                    data,
+                )
+                .apply(txn)?;
+            Ok(true)
+        });
+        taken.push(stored.unwrap_or(false));
     }
     Ok(taken)
+}
+
+/// A hard tombstone wire value for `reason`, as a peer's erase publishes it.
+fn tombstone(reason: crate::deletion::TombstoneReason) -> Vec<u8> {
+    let mut value = vec![reason.wire_byte()];
+    value.extend_from_slice(&60_u64.to_le_bytes());
+    value.extend_from_slice(&[0xE5; 16]);
+    value
+}
+
+fn apply_tombstone(replica: &Vault, id: &EntityId, value: &[u8]) -> Result<()> {
+    replica.with_write_txn_grouped(|txn| {
+        replica
+            .apply_replayed_tombstone_in_txn(txn, id, value)
+            .map(|_| ())
+    })
 }
 
 /// Bug repro (Engine ruling on #1465, 10-15) and done-means: a replica learns which bytes an
@@ -371,16 +436,8 @@ fn a_replica_pierces_the_bytes_in_every_arrival_order() -> Result<()> {
     let asset = origin.asset()?;
     let hash = origin.shared.content_hash;
     let (erased_claim, other_claim) = (origin.erased_version.claim_id, origin.shared.claim_id);
-    let mut tombstone = vec![crate::deletion::TombstoneReason::GdprDelete.wire_byte()];
-    tombstone.extend_from_slice(&60_u64.to_le_bytes());
-    tombstone.extend_from_slice(&[0xE5; 16]);
-    let erase_on = |replica: &Vault| -> Result<()> {
-        replica.with_write_txn_grouped(|txn| {
-            replica
-                .apply_replayed_tombstone_in_txn(txn, &origin.erased, &tombstone)
-                .map(|_| ())
-        })
-    };
+    let tombstone = tombstone(crate::deletion::TombstoneReason::GdprDelete);
+    let erase_on = |replica: &Vault| apply_tombstone(replica, &origin.erased, &tombstone);
     let before = [
         origin.erased,
         origin.other,
@@ -442,6 +499,136 @@ fn a_replica_pierces_the_bytes_in_every_arrival_order() -> Result<()> {
             "order {n}: a re-sent reference took a hold"
         );
     }
+    Ok(())
+}
+
+/// Bug repro (#1465 R1, Sol and Astra): a hard erase of the ASSET itself takes every reference to
+/// its bytes, as an erase of an artifact holding them does. The erase's own marker hid the ASSET
+/// from the walk, which found nothing.
+#[test]
+fn a_hard_erase_of_the_bytes_themselves_takes_every_reference() -> Result<()> {
+    let fixture = Shared::open()?;
+    let vault = &fixture.vault;
+    vault.delete_entity_with_reason(&fixture.asset()?, DeleteReason::UserHardDelete)?;
+    for (artifact, version) in [(fixture.erased, 1), (fixture.other, 2)] {
+        assert!(
+            erased(vault.read_blob_artifact_version(&artifact, version)),
+            "a reference to the erased bytes did not read as erased"
+        );
+    }
+    assert!(holds(vault, &fixture.shared.content_hash)?.is_empty());
+    let actor = WriteActor::new(fixture.person, EdgeActorClass::Human);
+    assert!(matches!(
+        vault.append_blob_artifact_version(
+            &fixture.other,
+            SHARED,
+            &BlobVersionProvenance::UserUpload,
+            actor,
+            at(20),
+            20,
+        ),
+        Err(Error::Artifact(ArtifactError::BlobContentErased))
+    ));
+    Ok(())
+}
+
+/// A vault holding only the other artifact of [`Shared`]: `OTHER_ONLY` as v1, `SHARED` as v2.
+fn only_other() -> Result<(tempfile::TempDir, Vault, EntityId, BlobArtifactVersion)> {
+    let (dir, vault) = open_test_vault_with(embedding_test_config());
+    let person = EntityId::now();
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, at(10), 10, b"uploader")?;
+    let actor = WriteActor::new(person, EdgeActorClass::Human);
+    let other = EntityId::now();
+    vault.put_blob_artifact(
+        &other,
+        &BlobArtifactBody::new("shared.bin", "application/octet-stream"),
+        at(10),
+        10,
+    )?;
+    for (bytes, learned) in [(OTHER_ONLY, 12), (SHARED, 13)] {
+        vault.append_blob_artifact_version(
+            &other,
+            bytes,
+            &BlobVersionProvenance::UserUpload,
+            actor,
+            at(learned),
+            learned,
+        )?;
+    }
+    let shared = vault
+        .blob_artifact_version_metadata(&other, 2)?
+        .expect("the shared version");
+    Ok((dir, vault, other, shared))
+}
+
+/// Done-means (Engine ruling on #1465, 10-15): a replica that holds only the other artifact, and
+/// never saw the erased one, learns the erase from the tombstones the erasing vault publishes for
+/// the other artifact's reference and for the bytes. Applied in either order, beside the erased
+/// artifact's own tombstone, they leave the replica serving the other version as erased and
+/// holding no bytes.
+#[test]
+fn a_replica_holding_only_the_other_reference_pierces_it_in_both_orders() -> Result<()> {
+    let tombstone = tombstone(crate::deletion::TombstoneReason::GdprDelete);
+    let never_seen = EntityId::now();
+    for reference_first in [true, false] {
+        let (_dir, replica, other, shared) = only_other()?;
+        let asset = blob_artifact_asset_entity_id(&shared.content_hash)?;
+        let order = if reference_first {
+            [shared.claim_id, asset, never_seen]
+        } else {
+            [never_seen, asset, shared.claim_id]
+        };
+        for id in order {
+            apply_tombstone(&replica, &id, &tombstone)?;
+        }
+        assert!(
+            erased(replica.read_blob_artifact_version(&other, 2)),
+            "reference first {reference_first}: the other version did not read as erased"
+        );
+        assert!(
+            replica.get_raw(&asset)?.is_none(),
+            "reference first {reference_first}: the erased bytes stayed on the replica"
+        );
+        assert!(holds(&replica, &shared.content_hash)?.is_empty());
+        assert_eq!(
+            replica.read_blob_artifact_version(&other, 1)?,
+            Some(OTHER_ONLY.to_vec())
+        );
+    }
+    Ok(())
+}
+
+/// Bug repro (#1465 R1, Sol and Astra): a row of another kind at the id the erased bytes would
+/// take is not theirs. The erase neither tears it nor names it for the historical sweep.
+#[test]
+fn a_hard_erase_leaves_another_kind_at_the_bytes_id_alone() -> Result<()> {
+    let origin = Shared::open()?;
+    let asset = origin.asset()?;
+    let (_dir, replica) = open_test_vault_with(embedding_test_config());
+    replicate(
+        &origin.vault,
+        &replica,
+        &[origin.person, origin.erased, origin.erased_version.claim_id],
+    )?;
+    replica.put_entity(&asset, ENTITY_TYPE_PERSON, at(20), 20, b"someone else")?;
+    let outcome = replica.delete_entity_with_reason(&origin.erased, DeleteReason::GdprDelete)?;
+    assert_eq!(
+        replica.get_raw(&asset)?.map(|raw| raw[0]),
+        Some(ENTITY_TYPE_PERSON),
+        "the erase tore an unrelated row at the bytes' id"
+    );
+    let receipt = replica
+        .get_raw(&outcome.receipt_id.expect("a hard erase writes a receipt"))?
+        .expect("the receipt row");
+    let body: serde_json::Value =
+        rmp_serde::from_slice(&receipt[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+            .expect("decode receipt body");
+    assert!(
+        !body["scope"]["entity_ids"]
+            .to_string()
+            .contains(&asset.to_hex()),
+        "the erase named an unrelated row for the historical sweep"
+    );
     Ok(())
 }
 

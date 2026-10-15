@@ -191,8 +191,15 @@ impl Vault {
             self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id)?;
         // ARCH-0005a on the RECEIVING side: this replica's own references to the erased
         // artifact's bytes go with them, before the purge drops the claim pairs that find them.
-        let pierced = self.cascade_hard_erase_to_blob_references_in_txn(wtxn, id, &marker_value)?;
+        let pierced =
+            self.cascade_hard_erase_to_blob_references_in_txn(wtxn, id, &marker_value, false)?;
         changed_documents.extend(pierced.changed);
+        // A local erase whose first scrub committed before a crash kept what that scrub took.
+        let mut erased_blob_carriers =
+            crate::blob_artifact::take_erase_scope_in_txn(&self.store, wtxn, id)?;
+        erased_blob_carriers.extend(pierced.carriers);
+        erased_blob_carriers.sort_unstable();
+        erased_blob_carriers.dedup();
         let (_existed, citing) =
             self.purge_entity_active_store_in_txn(wtxn, id, decoded.request_id.as_ref())?;
         changed_documents.extend(citing);
@@ -234,7 +241,7 @@ impl Vault {
             .extend(cascaded_shells.iter().map(EntityId::to_hex));
         scope
             .entity_ids
-            .extend(pierced.carriers.iter().map(EntityId::to_hex));
+            .extend(erased_blob_carriers.iter().map(EntityId::to_hex));
         let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
             wtxn,
             &receipt_id,

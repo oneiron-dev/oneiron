@@ -345,6 +345,16 @@ fn admit(
     if !delete_protected && deleted_here(ctx, wtxn, &id) {
         return Ok(EntityStep::Skip);
     }
+    // ARCH-0005a: bytes a hard erase took here, and a late reference to them, never materialize;
+    // the late reference pierces the bytes it names here first.
+    if vault.refuse_erased_blob_arrival_in_txn(
+        wtxn,
+        &id,
+        header.entity_type,
+        &blob[ENTITY_METADATA_HEADER_LEN..],
+    )? {
+        return Ok(EntityStep::Skip);
+    }
     // NOTE replay may not discharge or outlive an unproven purge retry (the old native NOTE
     // lane's pending-delete fence).
     if header.entity_type == ENTITY_TYPE_NOTE

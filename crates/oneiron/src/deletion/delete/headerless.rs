@@ -160,6 +160,7 @@ impl Vault {
         }
         let mut affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
         let mut scope = RedactionScope::entity(id);
+        let mut pierced_carriers = Vec::new();
         if reason.active_store_hard_purge_v1() {
             // ARCH-0005a: HardErase pierces refcounting, headerless leg (an artifact's
             // replicated version claims can outlive its row).
@@ -167,15 +168,24 @@ impl Vault {
                 &mut wtxn,
                 id,
                 &tombstone.encode(),
+                true,
             )?;
             affected.extend(pierced.changed);
+            let mut carriers =
+                crate::blob_artifact::take_erase_scope_in_txn(&self.store, &mut wtxn, id)?;
+            carriers.extend(pierced.carriers);
+            carriers.sort_unstable();
+            carriers.dedup();
             scope
                 .entity_ids
-                .extend(pierced.carriers.iter().map(EntityId::to_hex));
+                .extend(carriers.iter().map(EntityId::to_hex));
+            pierced_carriers = pierced.tombstoned;
         }
         let (existed, citing) =
             self.purge_entity_active_store_in_txn(&mut wtxn, id, Some(&tombstone.request_id))?;
         affected.extend(citing);
+        let tombstoned =
+            self.stage_pierced_tombstones_in_txn(&mut wtxn, pierced_carriers, &tombstone)?;
         // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
         self.append_deletion_gate_decision_in_purge_txn(
@@ -213,6 +223,7 @@ impl Vault {
             if crdt_persisted {
                 self.finish_published_topology_delete(&window_label, id, &tombstone)?;
             }
+            self.publish_pierced_tombstones(&tombstoned, &tombstone)?;
             return Ok(DeleteEntityOutcome {
                 existed,
                 receipt_id: None,
@@ -248,6 +259,7 @@ impl Vault {
         if crdt_persisted {
             self.finish_published_topology_delete(&window_label, id, &tombstone)?;
         }
+        self.publish_pierced_tombstones(&tombstoned, &tombstone)?;
         Ok(DeleteEntityOutcome {
             existed,
             receipt_id: Some(receipt_id),

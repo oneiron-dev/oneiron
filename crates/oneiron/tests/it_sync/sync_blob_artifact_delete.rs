@@ -119,6 +119,20 @@ fn carries(node: &TestNode, asset: &EntityId) -> bool {
         .is_some()
 }
 
+fn tombstoned(node: &TestNode, id: &EntityId) -> bool {
+    node.doc(WINDOW)
+        .get_map("tombstones")
+        .get(&id.to_hex())
+        .is_some()
+}
+
+fn reads_erased(node: &TestNode, artifact: &EntityId, version: u64) -> bool {
+    matches!(
+        node.vault.read_blob_artifact_version(artifact, version),
+        Err(Error::Artifact(ArtifactError::BlobVersionErased))
+    )
+}
+
 /// Bug repro (H125) and done-means: B holds A's artifact as a replica, with no version chain of
 /// its own. A plain delete of the artifact on A must take the bytes only it held off B as well, and no
 /// stale carrier may bring them back, whether a rematerialization reads it from the window or a
@@ -248,9 +262,9 @@ fn a_deleted_artifact_takes_its_version_bytes_off_every_replica() {
 
 /// Done-means (ARCH-0005a, ARCH-0038 carrier 13): A and B each hold an artifact with the same
 /// bytes. A hard erase of A's artifact takes the bytes and every reference to them off both
-/// vaults, B's through the erase's tombstone, and B's version reads as erased. A lagging peer that
-/// never saw the erase sends B's reference and the bytes again: neither vault takes them back, and
-/// the export doors drop both carriers without pinning a window, so the vaults still converge.
+/// vaults, B's through the erase's tombstones, and B's version reads as erased. A lagging peer
+/// that never saw the erase sends B's reference and the bytes again: neither vault takes them
+/// back, the erase's tombstones still name both carriers, and the vaults still converge.
 #[test]
 fn a_hard_erase_takes_shared_bytes_and_every_reference_off_every_replica() {
     let (mut a, mut b) = vault_pair();
@@ -286,13 +300,10 @@ fn a_hard_erase_takes_shared_bytes_and_every_reference_off_every_replica() {
             node.name
         );
     }
-    let erased_read = |node: &TestNode| {
-        matches!(
-            node.vault.read_blob_artifact_version(&other, 1),
-            Err(Error::Artifact(ArtifactError::BlobVersionErased))
-        )
-    };
-    assert!(erased_read(&b), "B's version did not read as erased");
+    assert!(
+        reads_erased(&b, &other, 1),
+        "B's version did not read as erased"
+    );
 
     // A lagging peer that never saw the erase sends the reference and the bytes again.
     let lagging = LoroDoc::new();
@@ -322,19 +333,71 @@ fn a_hard_erase_takes_shared_bytes_and_every_reference_off_every_replica() {
         );
     }
     assert!(
-        erased_read(&b),
+        reads_erased(&b, &other, 1),
         "B's version read as intact after the re-send"
     );
 
-    // The export doors take both carriers out, and a peer one change behind still catches up.
+    // A peer one change behind still catches up, and each erased carrier the window still
+    // holds is one the erase's tombstone names, so every vault refuses it.
     sync_through_doors(&a, &b);
     for node in [&a, &b] {
         for (id, _) in &stale {
             assert!(
-                !carries(node, id),
-                "{}: the window still carries an erased carrier",
+                !carries(node, id) || tombstoned(node, id),
+                "{}: the window hands on an erased carrier no tombstone names",
                 node.name
             );
         }
     }
+}
+
+/// Done-means (Engine ruling on #1465, 10-15): B holds only its own artifact and never sees A's,
+/// which holds the same bytes. A learns B's reference, then hard-erases its own artifact. The
+/// erase tombstones B's reference and the bytes under its own request, so after sync B serves its
+/// version as erased and holds no bytes, though no carrier of A's artifact ever reached it.
+#[test]
+fn a_hard_erase_reaches_a_replica_that_never_saw_the_erased_artifact() {
+    let (mut a, mut b) = vault_pair();
+    let key = WindowKey::new(WINDOW);
+    let erased = upload(&mut a, T0, &[PIERCED]);
+    let other = upload(&mut b, T0 + 10, &[PIERCED]);
+    // One way only: A learns B's artifact, B learns nothing of A's.
+    let to_a = window::export_window_updates_since(
+        &b.vault,
+        &key,
+        b.doc(WINDOW),
+        &a.doc(WINDOW).oplog_vv().encode(),
+    )
+    .unwrap();
+    a.doc(WINDOW).import(&to_a).unwrap();
+    let reference = b
+        .vault
+        .blob_artifact_head(&other)
+        .unwrap()
+        .expect("B's artifact has a head")
+        .claim_id;
+    assert!(has_body(&a, &reference), "B's reference reaches A");
+    assert!(
+        b.vault.get_raw(&erased).unwrap().is_none(),
+        "A's artifact reached B before the erase"
+    );
+    let asset = asset_of(&b.vault, PIERCED).expect("B stores its bytes");
+
+    delete_artifact(&mut a, &erased, DeleteReason::GdprDelete);
+    for id in [reference, asset] {
+        assert!(
+            tombstoned(&a, &id),
+            "the erase published no tombstone for a carrier it pierced"
+        );
+    }
+    sync_through_doors(&a, &b);
+    assert!(
+        reads_erased(&b, &other, 1),
+        "B's version did not read as erased"
+    );
+    assert!(!holds(&b, &asset), "B kept the erased bytes");
+    assert!(
+        b.vault.get_raw(&erased).unwrap().is_none(),
+        "A's artifact reached B"
+    );
 }

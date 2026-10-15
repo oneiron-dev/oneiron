@@ -78,6 +78,10 @@ side_tables! {
     /// `blob.version` claims a hard erase took with the bytes they name, each valued with that
     /// erase's tombstone wire value. Key: id16 (claim).
     BLOB_ARTIFACT_ERASED_REFERENCE: VaultMeta b"blob_artifact:erased_reference:v1:" Raw;
+    /// The carriers a hard erase's first destructive transaction took with the bytes, kept for
+    /// the transaction that writes its receipt and sweep row. Key: id16 (the erased record);
+    /// value: the carriers' id16s.
+    BLOB_ARTIFACT_ERASE_SCOPE: VaultMeta b"blob_artifact:erase_scope:v1:" Raw;
     /// Blob artifact head version. Key: id16.
     BLOB_ARTIFACT_HEAD: VaultMeta b"blob_artifact:head:v1:" Raw;
     /// Monotonic last version, retained after deletion. Key: id16; value: u64be.

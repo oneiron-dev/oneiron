@@ -111,6 +111,26 @@ pub(crate) fn topology_delete_reservation_in_txn(
     TOPOLOGY_DELETE_INTENT.get(store, txn, &HexId(*entity))
 }
 
+/// The tombstone wire value of a hard delete of `entity` this vault published or began tearing
+/// and has not completed: it is decided, though its purge has not run yet.
+pub(crate) fn hard_delete_in_flight_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    entity: &EntityId,
+) -> Result<Option<Vec<u8>>> {
+    Ok(topology_delete_reservation_in_txn(store, txn, entity)?
+        .filter(|intent| intent.reason.is_hard() && intent.phase != TopologyDeletePhase::Prepared)
+        .map(|intent| {
+            TombstoneValueV2 {
+                reason: intent.reason,
+                deleted_at: intent.deleted_at,
+                request_id: intent.request_id,
+            }
+            .encode()
+            .to_vec()
+        }))
+}
+
 /// A hard request subsumes a different request's deletion of the same entity
 /// when the existing reservation already fences topology and the hard
 /// tombstone leaves it nothing to add: a soft deletion, which the hard
@@ -178,6 +198,34 @@ pub(super) fn reserve_topology_delete_in_txn(
             window_ts,
         },
     )
+}
+
+/// Reserves `entity`, a carrier a hard erase pierced (ARCH-0005a), for that erase's own tombstone
+/// as Committed: the erase's transaction tore it. A different hard request this one does not
+/// subsume keeps the reservation, and its own tombstone stands for the carrier: `false`.
+pub(super) fn reserve_pierced_carrier_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+    value: &TombstoneValueV2,
+    window_ts: u64,
+) -> Result<bool> {
+    if let Some(existing) = topology_delete_reservation_in_txn(store, txn, entity)?
+        && existing.request_id != value.request_id
+        && existing.reason.is_hard()
+        && !hard_request_subsumes(store, txn, entity, &existing, value)?
+    {
+        return Ok(false);
+    }
+    reserve_topology_delete_in_txn(
+        store,
+        txn,
+        entity,
+        value,
+        window_ts,
+        TopologyDeletePhase::Committed,
+    )?;
+    Ok(true)
 }
 
 /// Whether this request may publish: it owns the reservation, or it is a hard

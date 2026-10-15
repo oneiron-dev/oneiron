@@ -7,12 +7,15 @@ use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK}
 use crate::side_table::HexId;
 use crate::store::GateDecisionRecord;
 
+use super::super::erase::PiercedCarrier;
 use super::super::rendezvous::maybe_fail_first_txn_pending_tombstone;
 use super::super::tombstone::{
     ARCHIVE_MARKER, DecodedTombstoneValue, PENDING_TOMBSTONE, PendingTombstoneKey, TombstoneReason,
     TombstoneValueV2, decode_tombstone_value,
 };
-use super::super::topology_delete_intent::clear_own_topology_delete_in_txn;
+use super::super::topology_delete_intent::{
+    clear_own_topology_delete_in_txn, reserve_pierced_carrier_in_txn,
+};
 
 impl Vault {
     /// Archives a checked PERSON/SUMMARY in the cleanup decision transaction.
@@ -120,6 +123,62 @@ impl Vault {
         maybe_fail_first_txn_pending_tombstone()?;
         #[cfg(not(all(test, not(feature = "sync"))))]
         maybe_fail_first_txn_pending_tombstone();
+        Ok(())
+    }
+
+    /// Stages the tombstone of each carrier a hard erase pierced (ARCH-0005a) under the erase's
+    /// own request, in the transaction that pierced it: its reservation and `pt:` marker, as
+    /// the erase's own destructive commit stages them. A carrier another hard request owns keeps
+    /// that request's. Returns what it staged, for [`Self::publish_pierced_tombstones`].
+    pub(super) fn stage_pierced_tombstones_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        tombstoned: Vec<PiercedCarrier>,
+        value: &TombstoneValueV2,
+    ) -> Result<Vec<PiercedCarrier>> {
+        let mut staged = Vec::new();
+        for carrier in tombstoned {
+            if !reserve_pierced_carrier_in_txn(
+                &self.store,
+                wtxn,
+                &carrier.id,
+                value,
+                carrier.learned_at,
+            )? {
+                continue;
+            }
+            self.put_pending_tombstone_in_txn(wtxn, &carrier.window_label, &carrier.id, value)?;
+            if carrier.window_label.contains('@') {
+                self.store.sync_state.put(
+                    wtxn,
+                    &format!("m:dw:{}", carrier.id.to_hex()),
+                    carrier.window_label.as_bytes(),
+                )?;
+            }
+            staged.push(carrier);
+        }
+        Ok(staged)
+    }
+
+    /// Publishes the tombstones [`Self::stage_pierced_tombstones_in_txn`] staged, once their
+    /// transaction committed. A crash first leaves each `pt:` marker to the boot replay.
+    pub(super) fn publish_pierced_tombstones(
+        &self,
+        staged: &[PiercedCarrier],
+        value: &TombstoneValueV2,
+    ) -> Result<()> {
+        for carrier in staged {
+            if self.write_crdt_tombstone(
+                &carrier.id,
+                carrier.learned_at,
+                &carrier.window_label,
+                value,
+                None,
+                None,
+            )? {
+                self.finish_published_topology_delete(&carrier.window_label, &carrier.id, value)?;
+            }
+        }
         Ok(())
     }
 

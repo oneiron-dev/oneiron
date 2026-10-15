@@ -7,14 +7,20 @@
 //! with the erase's tombstone. Every hold on the bytes goes, so the artifact's own delete releases
 //! them, and each holder's fingerprint tree over them goes too. A version whose claim is an erased
 //! reference reads as erased, never as missing and never as its old bytes.
+//!
+//! The erasing vault tombstones each reference and the ASSET under the erase's own request, so a
+//! replica pierces the bytes from any one of them, even one that never saw the erased artifact. A
+//! reference arriving after the erase is pierced on arrival and never stored, and the bytes are
+//! never stored again under any id.
 
 use heed::{RoTxn, RwTxn};
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::claim::ClaimBody;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::side_table::{self, Raw, SideTable};
+use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
 
 use super::lifecycle::held_hashes;
@@ -37,6 +43,12 @@ const ERASED_REFERENCE: SideTable<EntityId, Vec<u8>, Raw> =
 /// them that arrives later arrives erased, and they are never stored here again. Key: bytes32.
 const ERASED_CONTENT: SideTable<ContentHash, Vec<u8>, Raw> =
     SideTable::new(&side_table::BLOB_ARTIFACT_ERASED_CONTENT);
+
+/// The carriers a hard erase's first destructive transaction took, kept for the transaction that
+/// writes its receipt and sweep row: that first scrub drops the rows a later walk finds them by.
+/// Key: id16 (the erased record); value: the carriers' id16s.
+const ERASE_SCOPE: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::BLOB_ARTIFACT_ERASE_SCOPE);
 
 /// One version-byte object an artifact holds, and the other artifacts holding it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,6 +178,28 @@ pub(crate) fn erase_holds_in_txn(
     Ok(reached)
 }
 
+/// The holding a `blob.version` claim names: a hard erase of the claim takes the bytes, as one of
+/// the artifact's would. A replica learns which bytes another vault's erase took from the
+/// tombstones it publishes for each reference it pierced. `None` for any other claim.
+pub(crate) fn claim_holding_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    body: &[u8],
+) -> Result<Option<Holding>> {
+    let Ok(body) = crate::claim::decode_claim_body(body, true) else {
+        return Ok(None);
+    };
+    let Some((_, hash)) = version_claim_reference(&body) else {
+        return Ok(None);
+    };
+    let asset = blob_artifact_asset_entity_id(&hash)?;
+    Ok(Some(Holding {
+        hash,
+        asset,
+        others: live_holders(store, txn, &hash, &[asset])?,
+    }))
+}
+
 /// The holding of a blob erased directly: `asset` is the stored ASSET of `body`, its own bytes,
 /// and every artifact holding them is another reference.
 pub(crate) fn asset_holding_in_txn(
@@ -185,30 +219,123 @@ pub(crate) fn asset_holding_in_txn(
     }))
 }
 
-/// Pierces the bytes under `hash` for a version claim of `artifact` that arrives after the hard
-/// erase that took them, or after `artifact`'s own hard erase: a replica learns which bytes an
-/// erased artifact held only from its claims, and one can arrive after the tombstone. The bytes
-/// are marked erased for good, every hold on them goes, `claim` and every reference here to them
-/// become erased references valued with `erase`, and the bytes are released.
-pub(crate) fn pierce_content_in_txn(
+/// A `blob.version` claim that arrives after the hard erase that took the bytes it names, or after
+/// a hard erase of its artifact was decided here: a replica learns which bytes an erased artifact
+/// held only from its claims, and one can arrive after the tombstone, or between an erase's
+/// publication and its purge.
+#[derive(Debug)]
+#[cfg_attr(not(any(feature = "sync", test)), allow(dead_code))]
+pub(crate) struct LateReference {
+    pub(crate) artifact: EntityId,
+    pub(crate) holding: Holding,
+    /// The erase's tombstone wire value.
+    pub(crate) erase: Vec<u8>,
+    /// Whether a walk here already took the bytes: only this reference is new.
+    pub(crate) pierced: bool,
+}
+
+/// The erase `claim` arrives after, when it is a late reference ([`LateReference`]).
+pub(crate) fn late_reference_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    claim: &EntityId,
+    body: &ClaimBody,
+) -> Result<Option<LateReference>> {
+    let Some((artifact, hash)) = version_claim_reference(body) else {
+        return Ok(None);
+    };
+    let (erase, pierced) = if let Some(erase) = ERASED_REFERENCE.get(store, txn, claim)? {
+        (erase, true)
+    } else if let Some(erase) = ERASED_CONTENT.get(store, txn, &hash)? {
+        (erase, true)
+    } else if let Some(erase) =
+        crate::deletion::HARD_DELETE_MARKER.get(store, txn, &HexId(artifact))?
+    {
+        (erase, false)
+    } else if let Some(erase) =
+        crate::deletion::hard_delete_in_flight_in_txn(store, txn, &artifact)?
+    {
+        (erase, false)
+    } else {
+        return Ok(None);
+    };
+    let asset = blob_artifact_asset_entity_id(&hash)?;
+    Ok(Some(LateReference {
+        artifact,
+        holding: Holding {
+            hash,
+            asset,
+            others: live_holders(store, txn, &hash, &[artifact, asset])?,
+        },
+        erase,
+        pierced,
+    }))
+}
+
+/// Whether a hard erase here took `body`'s bytes.
+pub(crate) fn bytes_erased(store: &Store, txn: &RoTxn<'_>, body: &[u8]) -> Result<bool> {
+    // Hash only once something was erased: every ASSET put asks.
+    if ERASED_CONTENT.iter_from(store, txn, &[])?.next().is_none() {
+        return Ok(false);
+    }
+    ERASED_CONTENT.contains(store, txn, blake3::hash(body).as_bytes())
+}
+
+/// Releases each of `holdings`' bytes nothing holds any more but `holder`, which a hard erase is
+/// taking: a no-op while `holder`'s own hold stands, which its delete then drops.
+pub(crate) fn release_erased_bytes_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
-    hash: &ContentHash,
-    artifact: &EntityId,
-    claim: &EntityId,
-    erase: &[u8],
+    holder: &EntityId,
+    holdings: &[Holding],
 ) -> Result<()> {
-    let holding = [Holding {
-        hash: *hash,
-        asset: blob_artifact_asset_entity_id(hash)?,
-        others: Vec::new(),
-    }];
-    let mut references = references_in_txn(store, wtxn, artifact, &holding)?;
-    references.push(*claim);
-    erase_holds_in_txn(store, wtxn, artifact, &holding, &references, erase)?;
-    ASSET_REF.delete(store, wtxn, &(*hash, *artifact))?;
-    forget_hold(store, wtxn, hash, artifact)?;
-    super::lifecycle::release_bytes_of_deleted_artifact(store, wtxn, artifact, hash)
+    for holding in holdings {
+        super::lifecycle::release_bytes_of_deleted_artifact(store, wtxn, holder, &holding.hash)?;
+    }
+    Ok(())
+}
+
+/// Keeps `carriers` for the transaction that writes `id`'s erase receipt and sweep row.
+pub(crate) fn record_erase_scope_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    carriers: &[EntityId],
+) -> Result<()> {
+    if carriers.is_empty() {
+        return Ok(());
+    }
+    let mut scope = take_erase_scope_in_txn(store, wtxn, id)?;
+    scope.extend(carriers);
+    scope.sort_unstable();
+    scope.dedup();
+    let raw: Vec<u8> = scope.iter().flat_map(EntityId::as_bytes).copied().collect();
+    ERASE_SCOPE.put(store, wtxn, id, &raw)
+}
+
+/// Takes the carriers [`record_erase_scope_in_txn`] kept for `id`.
+pub(crate) fn take_erase_scope_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let Some(raw) = ERASE_SCOPE.get(store, wtxn, id)? else {
+        return Ok(Vec::new());
+    };
+    ERASE_SCOPE.delete(store, wtxn, id)?;
+    let chunks = raw.chunks_exact(16);
+    if !chunks.remainder().is_empty() {
+        return Err(Error::CorruptedIndex("blob artifact erase scope"));
+    }
+    chunks
+        .map(|chunk| {
+            EntityId::from_bytes(
+                chunk
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("blob artifact erase scope"))?,
+            )
+        })
+        .collect()
 }
 
 /// The erase stamp of bytes a hard erase took here.
@@ -229,6 +356,9 @@ pub(crate) fn other_versions_in_txn(
     holdings: &[Holding],
 ) -> Result<Vec<(EntityId, EntityId, u64)>> {
     let mut found = std::collections::BTreeSet::new();
+    if holdings.is_empty() {
+        return Ok(Vec::new());
+    }
     for claim in crate::claim::claim_ids_for_predicate_bounded_in_txn(
         store,
         txn,

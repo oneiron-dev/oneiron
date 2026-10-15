@@ -110,6 +110,10 @@ pub struct BlobArtifactVersion {
     pub parent_version: Option<u64>,
     /// The selected base of an explicit fork; absent on ordinary head appends.
     pub fork_of_version: Option<u64>,
+    /// A hard erase took this version's bytes (ARCH-0005a). A listing shows it at its place in
+    /// the tree with no hash, name, media type or calculator stamp, and reading it answers
+    /// [`ArtifactError::BlobVersionErased`]. Never stored: the version's claim says it.
+    pub erased: bool,
 }
 
 pub const BLOB_ARTIFACT_VERSION_RECORD_KEYS: [&str; 12] = [
@@ -464,6 +468,7 @@ impl Vault {
             export_media_type: body.media_type,
             parent_version,
             fork_of_version: fork_parent,
+            erased: false,
         };
         let recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         crate::ports::ChangeLogStore::port_changelog_append(
@@ -490,16 +495,24 @@ impl Vault {
         Ok(record)
     }
 
+    /// The head version. A head a hard erase took reads as erased
+    /// ([`ArtifactError::BlobVersionErased`]).
     pub fn blob_artifact_head(
         &self,
         artifact_id: &EntityId,
     ) -> Result<Option<BlobArtifactVersion>> {
         let rtxn = self.store.env.read_txn()?;
-        read_blob_artifact_head_in_txn(&self.store, &rtxn, artifact_id)
+        let head = read_blob_artifact_head_in_txn(&self.store, &rtxn, artifact_id)?;
+        if let Some(record) = &head {
+            require_unerased(&self.store, &rtxn, record)?;
+        }
+        Ok(head)
     }
 
     /// Returns the full version tree in append order. Verifies contiguous
-    /// scalar versions, earlier existing parents, and the current head.
+    /// scalar versions, earlier existing parents, and the current head. A
+    /// version a hard erase took keeps its place, marked
+    /// [`BlobArtifactVersion::erased`] and stripped of what named its bytes.
     pub fn blob_artifact_versions(
         &self,
         artifact_id: &EntityId,
@@ -538,6 +551,15 @@ impl Vault {
             }
         } else if !versions.is_empty() {
             return Err(Error::CorruptedIndex("blob artifact version head"));
+        }
+        for record in &mut versions {
+            if super::erase::reference_erased(&self.store, &rtxn, &record.claim_id)? {
+                record.content_hash = [0; BLOB_ARTIFACT_CONTENT_HASH_LEN];
+                record.calc_engine = None;
+                record.export_name.clear();
+                record.export_media_type.clear();
+                record.erased = true;
+            }
         }
         Ok(versions)
     }
