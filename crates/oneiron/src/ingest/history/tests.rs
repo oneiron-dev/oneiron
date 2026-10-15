@@ -1236,10 +1236,12 @@ fn a_non_owner_persons_proof_imports_no_history() {
             1_700_000_000_000,
         )],
     );
+    let Err(refusal) = vault.import_history(&person, SOURCE, &conversation, IMPORTED_AT) else {
+        panic!("a non-owner imports nothing");
+    };
     assert!(
-        vault
-            .import_history(&person, SOURCE, &conversation, IMPORTED_AT)
-            .is_err()
+        format!("{refusal:?}").contains("not an owner of this vault"),
+        "{refusal:?}"
     );
     let report = vault
         .import_history(&owner, SOURCE, &conversation, IMPORTED_AT)

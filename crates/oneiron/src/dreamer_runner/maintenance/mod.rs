@@ -133,7 +133,9 @@ pub(crate) fn validate_owner_in_txn(
 
 /// [`validate_owner_in_txn`] on the person tier, for maintenance a person
 /// does on their own behalf: their own judge budget, a judge ask assigned to
-/// them, a digest delivered to them, a proposal addressed to them.
+/// them, a proposal or a representation review addressed to them. The shared
+/// proactivity digest is no such door: it reads every pending proposal and
+/// moves the vault's one delivery state.
 pub(crate) fn validate_person_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

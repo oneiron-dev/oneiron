@@ -308,7 +308,10 @@ pub(crate) fn apply_owner_policy_row_change_in_txn(
     change: &PolicyRowChange,
     now: u64,
 ) -> Result<()> {
-    owner.revalidate_person_in_txn(vault, txn)?;
+    let actor = owner.revalidate_person_in_txn(vault, txn)?;
+    // Only an owner switches the owner-policy plane on: a holder's grant names
+    // one row in one scope, never the vault-wide enable flag.
+    let may_enable = crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?;
     let (row_ref, scope) = target(change);
     validate_target(row_ref, scope)?;
     let id = default_policy_manifest_id()?;
@@ -446,7 +449,9 @@ pub(crate) fn apply_owner_policy_row_change_in_txn(
         if !matches!(entries[enabled_index].1, Value::Boolean(_)) {
             return Err(invalid("malformed owner policy enabled flag"));
         }
-        entries[enabled_index].1 = Value::Boolean(true);
+        if may_enable {
+            entries[enabled_index].1 = Value::Boolean(true);
+        }
     }
     let mut updated = Vec::new();
     rmpv::encode::write_value(&mut updated, &Value::Map(entries))

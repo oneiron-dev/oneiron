@@ -67,7 +67,12 @@ impl Vault {
             return Err(invalid());
         }
         let mut txn = self.store.env.write_txn()?;
-        let holder_actor = holder.revalidate_in_txn(self, &txn)?;
+        // Person tier, own holder check: the live administrative grant below
+        // names this holder.
+        let holder_actor = holder.revalidate_person_in_txn(self, &txn)?;
+        // A grant confers no earlier than the vault clock: a caller's event
+        // time can bring an expiry forward, never put it back.
+        let at = now.max(self.store.clock.now_recorded_at());
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         let mut grant_ref = None;
         for row in self
@@ -96,7 +101,7 @@ impl Vault {
                 && grant.scope == FederationGrantScope::vault(vault_id)
                 && grant.member_ref == holder_actor
                 && grant.is_admin()
-                && grant.confers_at(now)
+                && grant.confers_at(at)
                 && fold.pact_for_grant(&id).is_none_or(|pact| {
                     pact.status == crate::authority::FederationPactStatus::Active
                 })

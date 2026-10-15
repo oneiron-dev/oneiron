@@ -290,6 +290,9 @@ impl Vault {
         if fold.vault_root_is_conflicted() {
             return Err(invalid());
         }
+        // A grant confers no earlier than the vault clock: a caller's event
+        // time can bring an expiry forward, never put it back.
+        let now = now.max(self.store.clock.now_recorded_at());
         let mut holders = Vec::new();
         for row in self
             .store
@@ -522,8 +525,14 @@ impl Vault {
             return Err(invalid());
         }
         let mut txn = self.store.env.write_txn()?;
-        // Person tier, own holder check: the starter's named initiator role.
-        let starter_actor = starter.revalidate_person_in_txn(self, &txn)?;
+        // Person tier, own holder check: the starter's named initiator role. A
+        // host-selected setting replaces the stored policy that check reads,
+        // so only an owner's proof carries one.
+        let starter_actor = if matches!(selection, SettingChoice::Host(_)) {
+            starter.revalidate_in_txn(self, &txn)?
+        } else {
+            starter.revalidate_person_in_txn(self, &txn)?
+        };
         let creation = check_vault(self, &txn, vault_id)?;
         let base = self.act_policies_in_txn(&txn, &creation)?.effective(act)?;
         let policy = match selection {

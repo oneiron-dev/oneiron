@@ -33,16 +33,7 @@ fn fixture_with_config(
 ) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), config).unwrap();
-    let owner_id = entity(0x51);
-    vault
-        .put_entity(
-            &owner_id,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .unwrap();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault
         .authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())
         .unwrap();

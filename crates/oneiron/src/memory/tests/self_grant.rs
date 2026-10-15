@@ -263,7 +263,10 @@ struct ConflictFixture {
     bundle: ClaimConflictBundle,
 }
 fn conflict(vault: &crate::Vault) -> ConflictFixture {
-    let owner = put_person(vault, 0x61);
+    conflict_bound_to(vault, vault.ensure_embedded_owner_actor().unwrap())
+}
+/// [`conflict`] with `owner`, whoever it is, bound as the root's human.
+fn conflict_bound_to(vault: &crate::Vault, owner: EntityId) -> ConflictFixture {
     let author = put_person(vault, 0x62);
     let subject = put_person(vault, 0x63);
     root_vault_binding(vault, 0x64, owner, "human");
@@ -428,6 +431,26 @@ fn admin_power_is_named_delegation_not_a_person_or_position_claim() {
         .rule_claim_conflict(&proof, f.bundle.bundle_id, 200)
         .unwrap();
     assert!(vault.get_claim(&receipt.ruling_claim).unwrap().is_some());
+}
+
+/// F18 tier flip (Sol r1 P1-1): a human binding under the root is no
+/// ownership. A bound person who does not own the vault reads and rules no
+/// conflict without a named review grant.
+#[test]
+fn a_bound_human_who_owns_nothing_rules_no_conflict_without_a_grant() {
+    let (_dir, vault) = open_vault();
+    let bound = put_person(&vault, 0x61);
+    let f = conflict_bound_to(&vault, bound);
+    let reviewer = facade_for(&vault, bound);
+    let proof = owner_proof(&vault, bound);
+    assert!(reviewer.pending_claim_conflicts(&proof).unwrap().is_empty());
+    assert_eq!(
+        reviewer
+            .rule_claim_conflict(&proof, f.bundle.bundle_id, 200)
+            .unwrap_err()
+            .code,
+        MEMORY_CODE_FORBIDDEN
+    );
 }
 
 #[test]

@@ -398,19 +398,6 @@ impl Vault {
         Ok(())
     }
 
-    /// [`Self::recheck_owner`] on the person tier, for an act on the
-    /// person's own behalf (their own private session) that keeps no row to
-    /// recheck in.
-    ///
-    /// # Errors
-    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
-    /// when the proof no longer holds.
-    pub fn recheck_person(&self, owner: &AuthenticatedOwner) -> Result<()> {
-        let txn = self.store.env.read_txn()?;
-        owner.revalidate_person_in_txn(self, &txn)?;
-        Ok(())
-    }
-
     fn is_store_truth_human_actor(&self, actor: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
         let Some(raw) = self.store.port_entity_record(&rtxn, actor)? else {

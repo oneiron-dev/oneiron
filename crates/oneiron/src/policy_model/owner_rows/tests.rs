@@ -453,9 +453,21 @@ fn a_delegate_lands_a_policy_row_only_under_a_live_grant_naming_it() -> TestResu
     if vault.change_policy_row(&stranger, add.clone(), now).is_ok() {
         failures.push("a stranger landed on the delegate's grant");
     }
+    let plane_on = |vault: &Vault| -> bool {
+        let txn = vault.store.env.read_txn().unwrap();
+        crate::gate::resolve_policy_manifest(&vault.store, &txn)
+            .unwrap()
+            .owner_policy_enabled()
+    };
+    let plane_before = plane_on(&vault);
     match vault.change_policy_row(&delegate, add, now) {
         Ok(receipt) if receipt.author == delegate.actor().to_hex() => {}
         _ => failures.push("refused under a live grant naming the row"),
+    }
+    // Sol r1 P1-5: the grant names one row in one scope, never the vault-wide
+    // switch of the owner-policy plane.
+    if plane_on(&vault) != plane_before {
+        failures.push("a delegate's row switched the owner-policy plane");
     }
     vault.revoke_consent_grant(&owner, &exact.digest().to_hex())?;
     let edit = |text: &str| change(text, PolicyRowAction::Block, scope.clone(), false);
@@ -470,6 +482,8 @@ fn a_delegate_lands_a_policy_row_only_under_a_live_grant_naming_it() -> TestResu
         .is_err()
     {
         failures.push("refused the owner");
+    } else if !plane_on(&vault) {
+        failures.push("the owner's row left the owner-policy plane off");
     }
     assert!(failures.is_empty(), "{failures:#?}");
     Ok(())

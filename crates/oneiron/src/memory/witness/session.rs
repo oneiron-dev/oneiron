@@ -135,20 +135,33 @@ impl Memory<'_> {
                 &["Authenticate again as a live owner of this vault, then retry."],
             )
         };
-        if owner
-            .revalidate_person(self.vault)
-            .map_err(|error| refused(error.to_string()))?
-            != self.actor
-        {
+        // A room's member speaks there as themselves: the person tier, with
+        // the membership check below. A roomless stretch binds no person, so
+        // only its vault's owner speaks in it.
+        let room = session.room()?;
+        let revalidate = |txn: &heed::RoTxn<'_>| {
+            if room.is_some() {
+                owner.revalidate_person_in_txn(self.vault, txn)
+            } else {
+                owner.revalidate_in_txn(self.vault, txn)
+            }
+        };
+        let speaker = {
+            let txn = self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::Error::from)?;
+            revalidate(&txn).map_err(|error| refused(error.to_string()))?
+        };
+        if speaker != self.actor {
             return Err(refused(
                 "the owner proof names another actor than the witness".to_owned(),
             ));
         }
-        let room = session.room()?;
         let admit = |txn: &heed::RoTxn<'_>| -> MemoryResult<()> {
-            let actor = owner
-                .revalidate_person_in_txn(self.vault, txn)
-                .map_err(|error| refused(error.to_string()))?;
+            let actor = revalidate(txn).map_err(|error| refused(error.to_string()))?;
             match room {
                 Some(room) if !session.is_member_in_txn(txn, room, actor)? => {
                     Err(MemoryError::new(

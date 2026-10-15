@@ -43,7 +43,7 @@ fn a_non_owner_persons_proof_opens_no_owner_door() {
     let doors: [(
         &str,
         &dyn Fn(&AuthenticatedOwner) -> crate::error::Result<()>,
-    ); 3] = [
+    ); 4] = [
         ("consent: create_standing_grant", &|proof| {
             vault
                 .create_standing_grant(proof, action_bound("agent-a", "send", &["channel:email"]))
@@ -54,6 +54,11 @@ fn a_non_owner_persons_proof_opens_no_owner_door() {
         }),
         ("gate: grant_dreamer_weave", &|proof| {
             vault.grant_dreamer_weave(proof, now).map(drop)
+        }),
+        // Sol r1 P1-2: the shared digest reads every pending proposal and
+        // moves the vault's one delivery state.
+        ("dreamer maintenance: proactivity_digest", &|proof| {
+            vault.proactivity_digest(proof, now, None).map(drop)
         }),
     ];
     let mut failures = Vec::new();
@@ -139,4 +144,43 @@ fn every_person_tier_door_takes_a_non_owner_for_their_own_rows_only() {
         failures.push("the owner reads that they own nothing".to_owned());
     }
     assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// A roomless off-record stretch binds no person, so only the vault's owner
+/// speaks in it (Sol r1 P1-6): a non-owner's proof naming their own actor
+/// witnesses nothing there, and the owner's lands.
+#[test]
+fn a_non_owner_persons_proof_witnesses_nothing_into_a_roomless_stretch() {
+    use crate::memory::{MEMORY_CODE_FORBIDDEN, WitnessAuthor, WitnessMessage, WitnessTurn};
+    let (_dir, vault, owner, person) = owner_and_person();
+    let session = vault
+        .off_record_session_vault()
+        .enter(
+            "sess-roomless-tier",
+            crate::off_record::OffRecordBackendClass::Local,
+        )
+        .expect("a roomless stretch");
+    let turn = WitnessTurn {
+        conversation_ref: String::new(),
+        turn_ref: None,
+        messages: vec![WitnessMessage {
+            id: None,
+            author: WitnessAuthor::User,
+            message_type: "utterance".to_owned(),
+            content: "roomless fixture".to_owned(),
+            metadata: None,
+            is_visible: true,
+            order: 0,
+        }],
+        occurred_at: 1000,
+    };
+    let speak = |proof: &AuthenticatedOwner| {
+        let actor = proof.actor_for_read(&vault).expect("a live proof");
+        vault
+            .memory(actor, crate::edge::EdgeActorClass::Human)
+            .witness_into_session_as(proof, &session, &turn, None)
+    };
+    let refusal = speak(&person).expect_err("a non-owner spoke in a roomless stretch");
+    assert_eq!(refusal.code, MEMORY_CODE_FORBIDDEN, "{refusal:?}");
+    speak(&owner).expect("the owner speaks in their own stretch");
 }

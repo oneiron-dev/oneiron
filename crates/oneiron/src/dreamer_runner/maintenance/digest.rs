@@ -279,7 +279,7 @@ impl Vault {
         let authority = self.dreamer_authority()?.entity_ref();
         self.with_write_txn_grouped(|txn| {
             let recipient = owner
-                .map(|owner| super::validate_person_in_txn(self, txn, owner))
+                .map(|owner| super::validate_owner_in_txn(self, txn, owner))
                 .transpose()?;
             let cadence = load_cadence(self, &*txn)?;
             let presentation = load_presentation(self, &*txn)?;
