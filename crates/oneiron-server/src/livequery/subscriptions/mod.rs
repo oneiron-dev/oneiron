@@ -340,12 +340,13 @@ impl LiveQueries {
                 channel,
                 cursor,
                 origin,
-            } => self.open(
+            } => self.open_in_turn(
                 subscription_id,
                 scoped_view,
                 channel,
                 cursor.as_ref(),
                 origin,
+                None,
             ),
             SubRequest::Ack {
                 subscription_id,

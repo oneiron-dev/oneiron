@@ -85,7 +85,8 @@ fn queue_behind_one<H: Send>(
         release(first);
         waiters
             .into_iter()
-            .filter(|waiter| waiter.join().unwrap().is_err())
+            .map(|waiter| waiter.join().unwrap())
+            .filter(Result::is_err)
             .count()
     })
 }
