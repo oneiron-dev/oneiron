@@ -238,22 +238,41 @@ fn maintenance_that_gives_way_while_git_holds_a_lock_leaves_none_behind() {
     let (_vault_dir, vault) = temp_vault();
     let (source_dir, repo, _, _) = served_repo(&vault);
     past_its_threshold(&source_dir.path().canonicalize().expect("source"), &repo);
-    // gc packs the refs under packed-refs.lock; enough of them that it
-    // holds the lock across several of the maintenance's polls.
+    // gc packs the loose refs under packed-refs.lock, and enough of them
+    // that `pack-refs --auto` has work.
     git(&repo, &["config", "gc.packRefs", "true"]);
     let head = git(&repo, &["rev-parse", "refs/heads/main"]);
-    let refs: String = (0..50_000)
+    let refs: String = (0..100)
         .map(|n| format!("create refs/heads/load/{n} {head}\n"))
         .collect();
     git_with_input(&repo, &["update-ref", "--stdin"], &refs);
+    // packed-refs as a fifo no one writes to: once pack-refs holds the lock
+    // it opens the file to read it, and waits there until it is ended. The
+    // run gives way to a lock known to be held, on any host's speed.
+    let packed = repo.join("packed-refs");
+    if let Err(error) = std::fs::remove_file(&packed) {
+        assert_eq!(
+            error.kind(),
+            io::ErrorKind::NotFound,
+            "packed-refs: {error}"
+        );
+    }
+    let fifo = std::process::Command::new("mkfifo")
+        .arg(&packed)
+        .status()
+        .expect("mkfifo");
+    assert!(fifo.success(), "mkfifo");
     let lock = repo.join("packed-refs.lock");
     let gave_way = Cell::new(false);
+    // A git that never takes the lock fails the test in a minute, not at
+    // the maintenance's own timeout.
+    let deadline = Instant::now() + Duration::from_secs(60);
 
     let run = maintain_served_repositories(&vault, permit(), || {
         if lock.exists() {
             gave_way.set(true);
         }
-        gave_way.get()
+        gave_way.get() || Instant::now() >= deadline
     })
     .expect("maintain");
 
