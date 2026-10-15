@@ -150,7 +150,7 @@ impl AuthenticatedOwner {
         self.revalidate_in_txn(vault, &txn)
     }
 
-    /// [`Self::revalidate_person_in_txn`] in its own read transaction.
+    /// `revalidate_person_in_txn` in its own read transaction.
     pub fn revalidate_person(&self, vault: &Vault) -> Result<EntityId> {
         let txn = vault.store.env.read_txn()?;
         self.revalidate_person_in_txn(vault, &txn)
