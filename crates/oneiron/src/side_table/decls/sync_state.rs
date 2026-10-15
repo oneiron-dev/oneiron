@@ -25,8 +25,9 @@ side_tables! {
     /// Local sliding-window replay-ingest counter (start/count/raised, 17 bytes) per authority peer
     /// signer. Key: string.
     AUTHLOG_INGEST_COUNT: SyncState b"authlog:ingest_count:" Raw;
-    /// Device-local authority observation policy durations: stale-roster window, ingest window,
-    /// ingest check threshold (3x u64be). Key: ().
+    /// Device-local authority observation policy: stale-roster window, ingest window, ingest check
+    /// threshold, log signer bound, log headroom rows and handoffs (6x u64be; a 3x row reads with
+    /// the default bounds). Key: ().
     AUTHLOG_OBSERVATION_POLICY: SyncState b"authlog:observation_policy:duration_v1" Raw;
     /// Durable high-water mark (u64be) of a signer's highest observed authority-log sequence number.
     /// Key: string.

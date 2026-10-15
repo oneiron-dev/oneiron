@@ -753,6 +753,160 @@ fn a_window_holding_an_authority_row_over_a_planted_fence_snapshots_and_recovers
     Ok(())
 }
 
+/// Bug repro (review round 5, Astra F2): a replica refuses a row a key a
+/// handoff retired signs that arrives after the handoff, unless the row is
+/// in its line. The order put a handoff first among the rows ready, as a
+/// consent row, so a window holding an owner's row beside the other owner's
+/// handoff, both stored at the source, never recovered. A handoff now goes
+/// after every row beside it.
+#[cfg(feature = "sync")]
+#[test]
+fn a_window_with_a_row_beside_a_handoff_recovers() -> Result<()> {
+    let source = test_vault();
+    let owner = authority_test_key(67);
+    let genesis = authority_genesis_fixture(67);
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    let enroll = authority_enroll_fixture(vault_id, &genesis, &owner, 0x7a, 1);
+    let other = authority_test_key(0x7a);
+    let beside = authority_bind_owner_fixture(
+        vault_id,
+        &enroll,
+        &other,
+        EntityId::from_bytes_unchecked([0x7a; 16]),
+        1,
+    );
+    let successor = authority_key_from_signing(&authority_test_key(0x7b));
+    let mut handoff = authority_child_fixture(
+        vault_id,
+        &enroll,
+        &owner,
+        2,
+        3,
+        crate::authority::AuthorityOp::ReRoot {
+            new_device: authority_test_device(successor),
+        },
+    );
+    let other_key = authority_key_from_signing(&other);
+    handoff.cosigns.push(crate::authority::AuthoritySignature {
+        suite: other_key.suite(),
+        public_key: other_key,
+        signature: vec![0; 64],
+    });
+    let transcript = crate::authority::authority_transcript(&handoff)?;
+    handoff.signer.signature = owner.sign(&transcript).to_bytes().to_vec();
+    handoff.cosigns[0].signature = other.sign(&transcript).to_bytes().to_vec();
+    source.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let rows = [&genesis, &enroll, &beside, &handoff];
+    for entry in &rows[1..] {
+        source.put_authority_log_entry(entry, TimeRange { start: 2, end: 2 }, 2)?;
+    }
+    let fold = source.authority_fold()?;
+    assert!(
+        fold.valid_entries
+            .contains(&crate::authority::authority_entry_hash(&handoff)?),
+        "the handoff stands at the source: {:?}",
+        fold.issues
+    );
+
+    let window = crate::deletion::window_label_from_timestamp(2);
+    let doc = LoroDoc::new();
+    let ids = rows
+        .iter()
+        .map(|entry| crate::authority::authority_log_entity_id(entry))
+        .collect::<Result<Vec<_>>>()?;
+    for entity in &ids {
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &entity.to_hex(),
+            &source.get_raw_unsealed(entity)?.unwrap(),
+        )?;
+    }
+    doc.commit();
+    let snapshot = crate::recovery::capture_canonical_window(&source, &window, &doc)?;
+    let target = test_vault();
+    target.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let dir = tempfile::tempdir()?;
+    crate::recovery::recover_vault_window(
+        &target,
+        &Materializer::new(),
+        dir.path().join("manifest"),
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    for entity in &ids {
+        assert!(target.live_entity_row(entity)?.is_live());
+    }
+    Ok(())
+}
+
+/// H72 (the Engine's census): canonical-window recovery's preflight walked
+/// a window's rows in entity-id order, so a row could come before the
+/// enrollment in the same window that admits its signer. The door held it,
+/// and the preflight refused the whole recovery, with no retry. Authority
+/// rows now go first, parents first, as the forward pass lands them.
+#[cfg(feature = "sync")]
+#[test]
+fn a_window_whose_rows_sort_before_their_enrollments_recovers() -> Result<()> {
+    let source = test_vault();
+    let owner = authority_test_key(66);
+    let genesis = authority_genesis_fixture(66);
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    source.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let mut pairs = Vec::new();
+    for n in 1..=6_u8 {
+        let enroll = authority_enroll_fixture(vault_id, &genesis, &owner, 0x70 + n, u64::from(n));
+        let child = authority_bind_owner_fixture(
+            vault_id,
+            &enroll,
+            &authority_test_key(0x70 + n),
+            EntityId::from_bytes_unchecked([0x70 + n; 16]),
+            1,
+        );
+        pairs.push((enroll, child));
+    }
+    let at = TimeRange { start: 2, end: 2 };
+    let mut ids = Vec::new();
+    for (enroll, child) in &pairs {
+        source.put_authority_log_entries(&[(enroll.clone(), at, 2), (child.clone(), at, 2)])?;
+        let [enroll_id, child_id] = [enroll, child].map(crate::authority::authority_log_entity_id);
+        ids.push((enroll_id?, child_id?));
+    }
+    assert!(
+        ids.iter().any(|(enroll, child)| child < enroll),
+        "some row sorts before the enrollment that admits its signer"
+    );
+
+    let window = crate::deletion::window_label_from_timestamp(2);
+    let doc = LoroDoc::new();
+    let genesis_id = crate::authority::authority_log_entity_id(&genesis)?;
+    let all: Vec<_> = std::iter::once(genesis_id)
+        .chain(ids.iter().flat_map(|(enroll, child)| [*enroll, *child]))
+        .collect();
+    for entity in &all {
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &entity.to_hex(),
+            &source.get_raw_unsealed(entity)?.unwrap(),
+        )?;
+    }
+    doc.commit();
+    let snapshot = crate::recovery::capture_canonical_window(&source, &window, &doc)?;
+    let target = test_vault();
+    target.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let dir = tempfile::tempdir()?;
+    crate::recovery::recover_vault_window(
+        &target,
+        &Materializer::new(),
+        dir.path().join("manifest"),
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    for entity in &all {
+        assert!(target.live_entity_row(entity)?.is_live());
+    }
+    Ok(())
+}
+
 /// Bug repro (Astra access follow-ups finding 5): a peer's cleanup-archive
 /// tombstone for a live authority record is refused, and while it stays
 /// published in the record's snapshot-backed window the record still reads
@@ -1032,6 +1186,156 @@ fn rejected_authority_envelope_leaves_a_key_squatter_untouched() -> Result<()> {
             .contains(&target_id),
         "the rejected row must not have materialized either"
     );
+    Ok(())
+}
+
+/// H72 bug repro (W2-T3): a key this vault never enrolled signs rows naming
+/// the local vault id. The replicated door holds them as dependency-pending
+/// and never stores them, so the fold never sees them; a legitimate sibling
+/// still lands and the roster is unchanged.
+#[cfg(feature = "sync")]
+#[test]
+fn rows_signed_by_an_unenrolled_key_pend_and_are_never_stored() -> Result<()> {
+    let vault = test_vault();
+    let owner = authority_test_key(58);
+    let genesis = authority_genesis_fixture(58);
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let roster_before = vault.authority_fold()?.roster;
+    let doc = LoroDoc::new();
+    let tombstones = doc.get_map("tombstones");
+
+    let stranger = authority_test_key(59);
+    let mut parent = genesis.clone();
+    for seq in 1..=3 {
+        let junk = authority_enroll_fixture(vault_id, &parent, &stranger, 60 + seq as u8, seq);
+        let id = crate::authority::authority_log_entity_id(&junk)?;
+        let blob = authority_log_entity_blob(&junk, seq + 1)?;
+        let step =
+            vault.with_write_txn(|wtxn| ingest_peer_blob(&vault, wtxn, &tombstones, &id, &blob))?;
+        let EntityStep::Quarantine(refusal) = step else {
+            panic!("a row signed by an unenrolled key must be refused, got {step:?}");
+        };
+        assert_eq!(
+            refusal.retry,
+            crate::sync::ingest::RefusalRetry::DependencyPending
+        );
+        assert_eq!(
+            refusal.err.kind(),
+            crate::error::ErrorKind::AuthorityLogSignerPending
+        );
+        assert!(crate::sync::quarantine::remote_rejection_reason(&refusal.err).is_some());
+        assert!(
+            vault.get_raw(&id)?.is_none(),
+            "a pending row is never stored"
+        );
+        parent = junk;
+    }
+
+    let enroll = authority_enroll_fixture(vault_id, &genesis, &owner, 64, 1);
+    let enroll_id = crate::authority::authority_log_entity_id(&enroll)?;
+    let blob = authority_log_entity_blob(&enroll, 9)?;
+    vault.with_write_txn(|wtxn| {
+        assert!(
+            ingest_peer_blob(&vault, wtxn, &tombstones, &enroll_id, &blob)?
+                .written()
+                .is_some()
+        );
+        Ok(())
+    })?;
+    let fold = vault.authority_fold()?;
+    assert_eq!(vault.entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)?.len(), 2);
+    assert_eq!(fold.roster, roster_before);
+    assert!(
+        !fold
+            .roster
+            .contains_key(&authority_key_from_signing(&stranger))
+    );
+    Ok(())
+}
+
+/// H72 bug repro (review round 1): a key the owner enrolled as an agent has
+/// standing but no consent, so the fold applies no row it signs alone. Its
+/// revocations once landed past every bound and counted toward the fold's,
+/// so an agent could fail the owner's vault closed. The replicated door now
+/// holds a row no owner key signed as dependency-pending and never stores
+/// it; the owner's own row still lands.
+#[cfg(feature = "sync")]
+#[test]
+fn rows_an_enrolled_agent_signs_alone_pend_and_are_never_stored() -> Result<()> {
+    let vault = test_vault();
+    let owner = authority_test_key(58);
+    let genesis = authority_genesis_fixture(58);
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    let at = TimeRange { start: 1, end: 1 };
+    vault.put_authority_log_entry(&genesis, at, 1)?;
+    let agent = authority_test_key(59);
+    let agent_key = authority_key_from_signing(&agent);
+    let mut device = authority_test_device(agent_key.clone());
+    device.roles = crate::authority::ROLE_AGENT;
+    let enroll = authority_child_fixture(
+        vault_id,
+        &genesis,
+        &owner,
+        1,
+        59,
+        crate::authority::AuthorityOp::EnrollDevice { device },
+    );
+    vault.put_authority_log_entry(&enroll, at, 1)?;
+    assert!(vault.authority_fold()?.roster.contains_key(&agent_key));
+    let doc = LoroDoc::new();
+    let tombstones = doc.get_map("tombstones");
+
+    let mut parent = enroll.clone();
+    for seq in 1..=3 {
+        let junk = authority_child_fixture(
+            vault_id,
+            &parent,
+            &agent,
+            seq,
+            70 + seq,
+            crate::authority::AuthorityOp::RevokeDevice {
+                revoked_key: authority_key_from_signing(&owner),
+            },
+        );
+        let id = crate::authority::authority_log_entity_id(&junk)?;
+        let blob = authority_log_entity_blob(&junk, seq + 1)?;
+        let step =
+            vault.with_write_txn(|wtxn| ingest_peer_blob(&vault, wtxn, &tombstones, &id, &blob))?;
+        let EntityStep::Quarantine(refusal) = step else {
+            panic!("a row no owner key signed must be held, got {step:?}");
+        };
+        assert_eq!(
+            refusal.retry,
+            crate::sync::ingest::RefusalRetry::DependencyPending
+        );
+        assert_eq!(
+            refusal.err.kind(),
+            crate::error::ErrorKind::AuthorityLogSignerPending
+        );
+        assert!(vault.get_raw(&id)?.is_none(), "a held row is never stored");
+        parent = junk;
+    }
+
+    let owned = authority_child_fixture(
+        vault_id,
+        &enroll,
+        &owner,
+        2,
+        80,
+        crate::authority::AuthorityOp::SlipRevoke { slip_id: [7; 32] },
+    );
+    let owned_id = crate::authority::authority_log_entity_id(&owned)?;
+    let blob = authority_log_entity_blob(&owned, 9)?;
+    vault.with_write_txn(|wtxn| {
+        assert!(
+            ingest_peer_blob(&vault, wtxn, &tombstones, &owned_id, &blob)?
+                .written()
+                .is_some()
+        );
+        Ok(())
+    })?;
+    assert_eq!(vault.entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)?.len(), 3);
     Ok(())
 }
 

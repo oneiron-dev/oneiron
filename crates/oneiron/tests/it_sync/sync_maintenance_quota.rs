@@ -6,7 +6,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use loro::LoroDoc;
 use oneiron::registry::ENTITY_TYPE_EVENT;
 use oneiron::sync::bridge::{Materializer, register_observer_b};
-use oneiron::sync::quarantine::{QuarantineContainer, quarantined_records};
+use oneiron::sync::quarantine::{QuarantineContainer, pending_remat_windows, quarantined_records};
 use oneiron::sync::quota::{
     MaintenanceIngestQuotaConfig, maintenance_ingest_quota_snapshots,
     set_maintenance_ingest_quota_config,
@@ -17,7 +17,8 @@ use oneiron::sync::window::forward_rematerialize;
 use oneiron::{
     EntityId, TimeRange, Vault, VaultConfig, authority::AUTHORITY_LOG_SCHEMA_VERSION,
     authority::AuthorityAttestation, authority::AuthorityEntryHash, authority::AuthorityKey,
-    authority::AuthorityLogEntry, authority::AuthorityOp, authority::AuthoritySignature,
+    authority::AuthorityLogCheck, authority::AuthorityLogEntry,
+    authority::AuthorityObservationPolicy, authority::AuthorityOp, authority::AuthoritySignature,
     authority::AuthorityTier, authority::AuthorityVaultId,
     authority::DEFAULT_PENDING_WIDEN_DELAY_SECS, authority::DeviceAuthority, authority::ROLE_ADMIN,
     authority::ROLE_AGENT, authority::ROLE_OWNER, authority::authority_entry_hash,
@@ -162,7 +163,9 @@ fn enroll_entry(
             seq,
             vec![parent_hash],
             AuthorityOp::EnrollDevice {
-                device: device(authority_key_from_ed(new_key), ROLE_ADMIN | ROLE_AGENT),
+                // Agent-only: the vault door refuses any other client
+                // enrollment, so only this one gives its key standing.
+                device: device(authority_key_from_ed(new_key), ROLE_AGENT),
             },
             signer_key,
             LEARNED_AT + seq,
@@ -384,6 +387,381 @@ fn newly_enrolled_signer_entry_can_replay_before_enrollment() {
         before + 2
     );
     assert_eq!(invalid_authority_log_quarantine_count(&vault), 0);
+}
+
+/// H72 positive control (W2-T3): a row signed by a key whose enrollment has
+/// not arrived is held, never stored. Once the enrollment lands, the next
+/// forward pass replays the held row and it materializes.
+#[test]
+fn a_row_by_a_not_yet_enrolled_signer_lands_after_its_enrollment() {
+    let (_dir, vault) = test_vault();
+    let vault = Arc::new(vault);
+    let window_key = WindowKey::new(WINDOW);
+    let doc = create_window_doc("user", &window_key);
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+    let (owner_key, genesis, vault_id) = seed_local_genesis(&vault, 0x4c);
+    let new_key = SigningKey::from_bytes(&[0x6c; 32]);
+    let enroll = enroll_entry(
+        vault_id,
+        authority_entry_hash(&genesis).unwrap(),
+        &owner_key,
+        &new_key,
+        1,
+    );
+    let child = cosign_entry(
+        set_tier_floor_entry(
+            vault_id,
+            authority_entry_hash(&enroll).unwrap(),
+            &new_key,
+            1,
+        ),
+        &new_key,
+        &owner_key,
+    );
+    let stored = |id: &EntityId| {
+        vault
+            .entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
+            .unwrap()
+            .contains(id)
+    };
+
+    let child_id = insert_authority_entry(&doc, &child);
+    doc.commit();
+    assert!(
+        !stored(&child_id),
+        "a row whose signer is not enrolled is never stored"
+    );
+    assert_eq!(
+        entity_quarantine_reasons(&vault),
+        vec!["AuthorityLogSignerPending".to_owned()]
+    );
+
+    let enroll_id = insert_authority_entry(&doc, &enroll);
+    doc.commit();
+    assert!(stored(&enroll_id));
+    forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+    assert!(
+        stored(&child_id),
+        "the held row lands once its signer is enrolled"
+    );
+}
+
+/// H72: a peer frame that carries a whole valid log, keyed by entity id as
+/// the CRDT map holds it, lands every row, and folds as the same log
+/// delivered parents first, one row a frame, does. The owner enrolls four
+/// agents as siblings at sequences 1 to 4, which entity-id order shuffles,
+/// and binds each one on its enrollment at 5 to 8. One more row, by the
+/// second agent on the first agent's binding, revokes that binding: its
+/// signer stands only through a sibling enrollment.
+#[test]
+fn a_frame_carrying_a_whole_log_in_entity_id_order_lands_every_row() {
+    let (owner_key, genesis, vault_id) = genesis_entry(0x4f);
+    let root = authority_entry_hash(&genesis).unwrap();
+    let agents: Vec<_> = (1..=4_u8)
+        .map(|n| SigningKey::from_bytes(&[0x70 + n; 32]))
+        .collect();
+    let mut log = Vec::new();
+    for (n, agent) in (1_u8..).zip(&agents) {
+        let seq = u64::from(n);
+        let enroll = enroll_entry(vault_id, root, &owner_key, agent, seq);
+        let bind = AuthorityOp::BindActor {
+            authority_key: authority_key_from_ed(agent),
+            actor_ref: EntityId::from_bytes([0x60 + n; 16]).unwrap(),
+            actor_class: "system".into(),
+            epoch: 1,
+        };
+        log.push(cosign_entry(
+            unsigned_entry(
+                Some(vault_id),
+                4 + seq,
+                vec![authority_entry_hash(&enroll).unwrap()],
+                bind,
+                authority_key_from_ed(&owner_key),
+                LEARNED_AT + 4 + seq,
+            ),
+            &owner_key,
+            agent,
+        ));
+        log.push(enroll);
+    }
+    let across = cosign_entry(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![
+                authority_entry_hash(&log[0]).unwrap(),
+                authority_entry_hash(&log[3]).unwrap(),
+            ],
+            AuthorityOp::RevokeActor {
+                authority_key: authority_key_from_ed(&agents[0]),
+                epoch: 1,
+            },
+            authority_key_from_ed(&agents[1]),
+            LEARNED_AT + 9,
+        ),
+        &agents[1],
+        &owner_key,
+    );
+    log.push(across);
+
+    let receive = |frames: Vec<Vec<&AuthorityLogEntry>>| {
+        let (_dir, vault) = test_vault();
+        let vault = Arc::new(vault);
+        let window_key = WindowKey::new(WINDOW);
+        let doc = create_window_doc("user", &window_key);
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+        seed_local_genesis(&vault, 0x4f);
+        for frame in frames {
+            for entry in frame {
+                insert_authority_entry(&doc, entry);
+            }
+            doc.commit();
+        }
+        forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+        let stored = vault.entities_by_type(ENTITY_TYPE_AUTHORITY_LOG).unwrap();
+        (stored, vault.authority_fold().unwrap())
+    };
+    let mut parents_first: Vec<_> = log.iter().collect();
+    parents_first.sort_by_key(|entry| {
+        (
+            *entry.signer_key() != authority_key_from_ed(&owner_key),
+            entry.seq,
+        )
+    });
+    let (one_by_one, expected) = receive(parents_first.into_iter().map(|row| vec![row]).collect());
+    let (whole, fold) = receive(vec![log.iter().collect()]);
+
+    for entry in &log {
+        let id = oneiron::authority::authority_log_entity_id(entry).unwrap();
+        assert!(
+            one_by_one.contains(&id) && whole.contains(&id),
+            "a row never landed"
+        );
+    }
+    let rows: Vec<_> = log
+        .iter()
+        .map(|entry| {
+            let hash = authority_entry_hash(entry).unwrap();
+            let op = format!("{:?}", entry.op);
+            (
+                entry.seq,
+                op.split([' ', '(', '{']).next().unwrap_or("").to_owned(),
+                hash[0],
+                expected.valid_entries.contains(&hash),
+            )
+        })
+        .collect();
+    let issues: Vec<_> = expected
+        .issues
+        .iter()
+        .map(|issue| format!("{issue:?}").chars().take(24).collect::<String>())
+        .collect();
+    assert!(
+        rows.iter().all(|row| row.3),
+        "the parents-first delivery folds every row: {rows:?} {issues:?}"
+    );
+    assert_eq!(fold.valid_entries, expected.valid_entries);
+    assert_eq!(fold.roster, expected.roster);
+}
+
+fn set_signer_bound(vault: &Vault, log_signer_bound: u64) {
+    vault
+        .set_authority_observation_policy(AuthorityObservationPolicy {
+            log_signer_bound,
+            ..AuthorityObservationPolicy::default()
+        })
+        .unwrap();
+}
+
+/// The owner's admission of an admin, and three rows the admin signs alone,
+/// each on the one before.
+fn an_admin_and_three_rows(
+    owner_key: &SigningKey,
+    genesis: &AuthorityLogEntry,
+    vault_id: AuthorityVaultId,
+    seed: u8,
+) -> (AuthorityLogEntry, Vec<AuthorityLogEntry>) {
+    let admin = SigningKey::from_bytes(&[seed; 32]);
+    let admitted = sign_entry(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![authority_entry_hash(genesis).unwrap()],
+            AuthorityOp::EnrollDevice {
+                device: device(authority_key_from_ed(&admin), ROLE_ADMIN),
+            },
+            authority_key_from_ed(owner_key),
+            LEARNED_AT + 1,
+        ),
+        owner_key,
+    );
+    let mut parent = authority_entry_hash(&admitted).unwrap();
+    let rows = (1..=3)
+        .map(|seq| {
+            let row = set_tier_floor_entry(vault_id, parent, &admin, seq);
+            parent = authority_entry_hash(&row).unwrap();
+            row
+        })
+        .collect();
+    (admitted, rows)
+}
+
+fn stored(vault: &Vault, row: &AuthorityLogEntry) -> bool {
+    vault
+        .entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
+        .unwrap()
+        .contains(&oneiron::authority::authority_log_entity_id(row).unwrap())
+}
+
+/// H72, rule 5 (Engine check): a key no slip issuer vouches for, here an
+/// admin the owner admitted, stores up to the `authority_log_signer_bound`
+/// row. Its next row in the same frame waits: not stored, its typed refusal
+/// and its retry marker kept, and the log raises the
+/// `authority_log_signer_bound` check. The owner raises the row, and the
+/// next pass lands the held row with no re-send.
+#[test]
+fn a_row_past_its_signers_bound_waits_and_lands_once_the_owner_raises_it() {
+    let (_dir, vault) = test_vault();
+    let vault = Arc::new(vault);
+    let window_key = WindowKey::new(WINDOW);
+    let doc = create_window_doc("user", &window_key);
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+    let (owner_key, genesis, vault_id) = seed_local_genesis(&vault, 0x51);
+    set_signer_bound(&vault, 2);
+    let (admitted, rows) = an_admin_and_three_rows(&owner_key, &genesis, vault_id, 0x71);
+    let signer_checks = || {
+        vault
+            .authority_log_checks()
+            .unwrap()
+            .into_iter()
+            .filter(|check| check.kind == AuthorityLogCheck::SIGNER_BOUND)
+            .map(|check| (check.signer.is_some(), check.count, check.threshold))
+            .collect::<Vec<_>>()
+    };
+
+    insert_authority_entry(&doc, &admitted);
+    for row in &rows {
+        insert_authority_entry(&doc, row);
+    }
+    doc.commit();
+    forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+    assert!(stored(&vault, &admitted) && stored(&vault, &rows[0]) && stored(&vault, &rows[1]));
+    assert!(
+        !stored(&vault, &rows[2]),
+        "the row past its signer's bound waits"
+    );
+    assert!(
+        entity_quarantine_reasons(&vault).contains(&"AuthorityLogFull".to_owned()),
+        "{:?}",
+        entity_quarantine_reasons(&vault)
+    );
+    assert_eq!(
+        pending_remat_windows(&vault).unwrap(),
+        vec![WINDOW.to_owned()],
+        "the held row keeps its retry marker"
+    );
+    assert_eq!(signer_checks(), vec![(true, 2, 2)]);
+
+    set_signer_bound(&vault, 4);
+    forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+    assert!(
+        stored(&vault, &rows[2]),
+        "the held row lands with no re-send"
+    );
+    assert!(pending_remat_windows(&vault).unwrap().is_empty());
+    assert!(signer_checks().is_empty());
+}
+
+/// Bug repro (review round 6, Astra F2): the tombstone pass refuses a
+/// tombstone naming a held authority row as a protected carrier's, and that
+/// terminal refusal discharged the held row's retry marker too. Raising the
+/// bound then landed nothing until a full replay. The marker now outlives
+/// the refused tombstone.
+#[test]
+fn a_refused_tombstone_beside_a_held_row_leaves_its_retry_marker() {
+    let (_dir, vault) = test_vault();
+    let materializer = Materializer::new();
+    let window_key = WindowKey::new(WINDOW);
+    let doc = create_window_doc("user", &window_key);
+    let (owner_key, genesis, vault_id) = seed_local_genesis(&vault, 0x52);
+    set_signer_bound(&vault, 2);
+    let (admitted, rows) = an_admin_and_three_rows(&owner_key, &genesis, vault_id, 0x72);
+    insert_authority_entry(&doc, &admitted);
+    let ids: Vec<_> = rows
+        .iter()
+        .map(|row| insert_authority_entry(&doc, row))
+        .collect();
+    let mut tombstone = vec![1_u8];
+    tombstone.extend_from_slice(&LEARNED_AT.to_le_bytes());
+    tombstone.extend_from_slice(&[0xAB; 16]);
+    doc.get_map("tombstones")
+        .insert(ids[2].to_hex().as_str(), tombstone.as_slice())
+        .unwrap();
+    doc.commit();
+
+    forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+    assert!(!stored(&vault, &rows[2]));
+    assert_eq!(
+        pending_remat_windows(&vault).unwrap(),
+        vec![WINDOW.to_owned()],
+        "the refused tombstone left the held row's retry marker"
+    );
+    set_signer_bound(&vault, 4);
+    forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+    assert!(stored(&vault, &rows[2]));
+}
+
+/// Bug repro (review round 6, Astra F3): a held row that lands before its
+/// marker settles, here through observer B taking a later carrier of it
+/// once the owner raised the bound, left the marker for ever. Every later
+/// pass found the row stored byte for byte and wrote nothing, so the window
+/// stayed pending. The next pass now settles the marker.
+#[test]
+fn a_held_row_that_lands_before_its_marker_settles_clears_it_on_the_next_pass() {
+    let (_dir, vault) = test_vault();
+    let vault = Arc::new(vault);
+    let window_key = WindowKey::new(WINDOW);
+    let doc = create_window_doc("user", &window_key);
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
+    let (owner_key, genesis, vault_id) = seed_local_genesis(&vault, 0x53);
+    set_signer_bound(&vault, 2);
+    let (admitted, rows) = an_admin_and_three_rows(&owner_key, &genesis, vault_id, 0x73);
+    insert_authority_entry(&doc, &admitted);
+    for row in &rows {
+        insert_authority_entry(&doc, row);
+    }
+    doc.commit();
+    assert!(!stored(&vault, &rows[2]));
+    assert_eq!(
+        pending_remat_windows(&vault).unwrap(),
+        vec![WINDOW.to_owned()]
+    );
+
+    set_signer_bound(&vault, 4);
+    let later = authority_blob_with_times(&rows[2], LEARNED_AT, LEARNED_AT, LEARNED_AT + 1);
+    insert_authority_blob(
+        &doc,
+        oneiron::authority::authority_log_entity_id(&rows[2]).unwrap(),
+        &later,
+    );
+    doc.commit();
+    assert!(
+        stored(&vault, &rows[2]),
+        "observer B lands the later carrier"
+    );
+    assert_eq!(
+        pending_remat_windows(&vault).unwrap(),
+        vec![WINDOW.to_owned()]
+    );
+    forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
+    assert!(
+        pending_remat_windows(&vault).unwrap().is_empty(),
+        "the next pass settles the marker"
+    );
 }
 
 /// Invalid envelopes retain the existing occupant; valid retries displace it.

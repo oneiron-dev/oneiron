@@ -194,7 +194,27 @@ fn replica_of(host: &Host) -> (tempfile::TempDir, Vault) {
             )
         })
         .collect();
-    replica.put_authority_log_entries(&entries).unwrap();
+    // The door judges each row against the rows staged before it (H72), so
+    // stage the log parents first, as sync and import do.
+    let mut staged = std::collections::BTreeSet::new();
+    let (mut rest, mut ordered) = (entries, Vec::new());
+    while !rest.is_empty() {
+        let (ready, waiting): (Vec<_>, Vec<_>) = rest.into_iter().partition(|(entry, ..)| {
+            entry
+                .parent_hashes
+                .iter()
+                .all(|parent| staged.contains(parent))
+        });
+        assert!(!ready.is_empty(), "the host's log names a missing parent");
+        staged.extend(
+            ready
+                .iter()
+                .map(|(entry, ..)| crate::authority::authority_entry_hash(entry).unwrap()),
+        );
+        ordered.extend(ready);
+        rest = waiting;
+    }
+    replica.put_authority_log_entries(&ordered).unwrap();
     assert_eq!(
         replica.authority_fold().unwrap().vault_id,
         Some(host.vault_id)

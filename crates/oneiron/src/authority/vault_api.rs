@@ -56,7 +56,9 @@ impl Vault {
     /// Every id is derived from entry content (ONE-1604-D1), exactly as the
     /// single-entry door does. Encoding, validation, and derivation all happen
     /// BEFORE the write transaction opens, so a bad entry anywhere in the
-    /// batch stores nothing at all.
+    /// batch stores nothing at all. The rows stage parents first and each
+    /// signer's by sequence, in whatever order the caller gives them; the
+    /// ids come back in the caller's order.
     ///
     /// This is what makes a genesis owner-binding a single ceremony: a host
     /// composes `[genesis, bind]` and either both land or neither does. The
@@ -92,8 +94,11 @@ impl Vault {
         };
         // Rows of this batch, for an ancestry that runs through one.
         let mut batch = BTreeMap::new();
+        let mut staged = Vec::with_capacity(entries.len());
         for (entry, _, _) in entries {
-            batch.insert(authority_entry_hash(entry)?, entry.clone());
+            let hash = authority_entry_hash(entry)?;
+            batch.insert(hash, entry.clone());
+            staged.push((hash, entry));
         }
         for (entry, occurred, learned_at) in entries {
             if matches!(entry.op, AuthorityOp::RetiredCeiling { .. }) {
@@ -134,6 +139,14 @@ impl Vault {
         if ops.is_empty() {
             return Ok(ids);
         }
+        // The door judges each row against the rows staged before it (H72),
+        // so stage them parents first and each signer's by sequence,
+        // whatever order the caller gave.
+        let mut ops: Vec<_> = ops.into_iter().map(Some).collect();
+        let ops: Vec<_> = super::authority_stage_order(&staged)
+            .into_iter()
+            .filter_map(|index| ops[index].take())
+            .collect();
         apply_ops(
             &self.store,
             &self.config,
