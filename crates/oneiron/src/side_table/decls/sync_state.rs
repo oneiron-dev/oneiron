@@ -321,6 +321,10 @@ side_tables! {
     /// it is Pending and bound to it by the receipt's digest, so its confirmation holds every one
     /// of them again. Key: hex64.
     VAULT_IMPORT_STAMPS: SyncState b"vault_import_stamps:v1:" Raw;
+    /// A crossed `[limits]` row's question (OF-520) for one minute: the row's key and bound, what
+    /// it saw at its first crossing in the minute, and when it asked. Key: string (the row's key)
+    /// ":" u64 (decimal, zero-padded to 20 digits; window start).
+    WIRE_LIMIT_QUESTION: SyncState b"wire:limit-question:v1:" Named;
     /// A raised question recording that a wire call-volume window crossed its per-verb or per-actor
     /// threshold. Key: u64 ":" u64 (decimal, zero-padded to 20 digits; window start:end).
     RC42_WIRE_QUESTION: SyncState b"wire:question:v2:" Named;

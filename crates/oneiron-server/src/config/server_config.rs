@@ -26,10 +26,11 @@ use crate::usage::UsageMode;
 /// - `max_frame_size` — ENFORCED on the WebSocket frame size.
 /// - `max_messages_per_sec` — retained for configuration compatibility only.
 ///   RC42 counters ask typed questions and never refuse calls for rate.
-/// - `max_windows_per_connection` — ENFORCED as a generous per-connection
-///   distinct-window touch cap. The default is intentionally high enough for
-///   legitimate historical-window tombstone sync; it stops fabricated-key
-///   floods, not real history.
+/// - `max_windows_per_connection` — a row set far above fleet scale on what
+///   one socket keeps per window and per document. Past it a v13 socket
+///   forgets its least recently requested window subscription (the window's
+///   next change reaches the peer as `WINDOW_INVALIDATE`) and the row asks
+///   its OF-520 question once; no socket is refused for the count.
 /// - `max_ephemeral_payload_bytes` / `max_ephemeral_snapshot_bytes` —
 ///   ENFORCED before ephemeral hub mutation and before late-join snapshot
 ///   send. Oversized late-join snapshots are skipped, not connection-fatal.
@@ -71,7 +72,9 @@ pub struct SyncServerConfig {
     pub max_frame_size: usize,
     /// Maximum CRDT update payload in bytes (enforced on WindowSync UPDATE).
     pub max_update_payload: usize,
-    /// Maximum distinct valid windows one connection may touch.
+    /// Window subscriptions one v13 connection keeps before it forgets the least recently
+    /// requested, and the count past which a connection's windows or documents ask the row's
+    /// question. Never a refusal.
     pub max_windows_per_connection: usize,
     /// Maximum inbound protocol messages per connection per second.
     pub max_messages_per_sec: u32,
@@ -113,7 +116,7 @@ impl Default for SyncServerConfig {
             lease_vault_id: 0,
             max_frame_size: 4 * 1024 * 1024,     // 4 MB
             max_update_payload: 2 * 1024 * 1024, // 2 MB
-            max_windows_per_connection: 4096,
+            max_windows_per_connection: 65_536,
             max_messages_per_sec: 200,
             ephemeral_timeout_ms: 30_000,
             max_ephemeral_payload_bytes: 64 * 1024,   // 64 KB
