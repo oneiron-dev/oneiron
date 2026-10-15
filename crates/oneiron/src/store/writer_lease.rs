@@ -104,35 +104,19 @@ impl VaultWriterLease {
     /// Unix uses `flock`. Other targets refuse rather than claim exclusion
     /// without an OS locking primitive.
     pub fn acquire(vault_dir: &Path) -> Result<Self> {
-        let pid = std::process::id();
         #[cfg(unix)]
-        let directory = open_root_directory(vault_dir)?;
-        #[cfg(target_os = "linux")]
-        let lock_dir = {
-            use std::os::fd::AsRawFd;
-            PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd()))
-        };
-        #[cfg(not(target_os = "linux"))]
-        let lock_dir = vault_dir.to_path_buf();
-        let file = Self::lock_exclusive_nonblocking(&lock_dir)?;
-        #[cfg(unix)]
-        let writable = match &file {
-            Some(file) => Self::bind_lock_file(&directory, file)?,
-            None => false,
-        };
-        #[cfg(not(unix))]
-        let writable = false;
-        let lease = Self {
-            file,
-            pid,
-            #[cfg(unix)]
-            directory,
-        };
-        lease.validate_directory(vault_dir)?;
-        if let Some(file) = lease.file.as_ref().filter(|_| writable) {
-            Self::write_pid_line(file, pid)?;
+        {
+            Self::acquire_held(open_root_directory(vault_dir)?, vault_dir)
         }
-        Ok(lease)
+        #[cfg(not(unix))]
+        {
+            let _ = vault_dir;
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "vault writer leases require a supported OS locking primitive",
+            )
+            .into())
+        }
     }
 
     /// Refuses reuse when the pathname no longer names the leased directory.
@@ -184,21 +168,6 @@ impl VaultWriterLease {
         self.pid == std::process::id()
     }
 
-    #[cfg(unix)]
-    fn lock_exclusive_nonblocking(vault_dir: &Path) -> Result<Option<std::fs::File>> {
-        // `create(true)` + `truncate(false)`: the file is a rendezvous point,
-        // not state. Truncating before the lock is granted would let a REFUSED
-        // acquirer erase the live owner's diagnostics.
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(vault_dir.join(VAULT_WRITER_LOCK_FILE))?;
-        Self::lock_file(&file)?;
-        Ok(Some(file))
-    }
-
     /// [`Self::acquire`] on `directory`, a vault root this process already
     /// holds open: the lock file is opened through that descriptor, never
     /// following a link, so nothing is created, locked or written in a
@@ -218,12 +187,14 @@ impl VaultWriterLease {
             .map_err(std::io::Error::from)?,
         );
         Self::lock_file(&file)?;
-        let writable = Self::bind_lock_file(&directory, &file)?;
+        // A lease from here: a refusal below unlocks before it closes, so a
+        // child forked meanwhile never keeps the lock (review r4, Sol F1).
         let lease = Self {
             file: Some(file),
             pid,
             directory,
         };
+        let writable = lease.bind_lock_file()?;
         lease.validate_directory(vault_dir)?;
         if let Some(file) = lease.file.as_ref().filter(|_| writable) {
             Self::write_pid_line(file, pid)?;
@@ -231,7 +202,7 @@ impl VaultWriterLease {
         Ok(lease)
     }
 
-    /// Refuses `file`, just locked, unless `directory`'s lock name still
+    /// Refuses the file just locked unless the directory's lock name still
     /// holds that very file. A removal unlinks the lock last, under its own
     /// lease; a lock opened before that and granted after it is no one's,
     /// and another owner may already hold a fresh lock under the name
@@ -239,10 +210,17 @@ impl VaultWriterLease {
     /// regular file with no other link is the directory's alone, and one
     /// linked elsewhere is locked but never written (Sol F2).
     #[cfg(unix)]
-    fn bind_lock_file(directory: &std::fs::File, file: &std::fs::File) -> Result<bool> {
+    fn bind_lock_file(&self) -> Result<bool> {
         use rustix::fs::{AtFlags, FileType, fstat, statat};
+        let Some(file) = self.file.as_ref() else {
+            return Ok(false);
+        };
         let locked = fstat(file).map_err(std::io::Error::from)?;
-        let named = match statat(directory, VAULT_WRITER_LOCK_FILE, AtFlags::SYMLINK_NOFOLLOW) {
+        let named = match statat(
+            &self.directory,
+            VAULT_WRITER_LOCK_FILE,
+            AtFlags::SYMLINK_NOFOLLOW,
+        ) {
             Ok(named) => named,
             Err(rustix::io::Errno::NOENT) => {
                 return Err(Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD));
@@ -286,17 +264,9 @@ impl VaultWriterLease {
         Err(error.into())
     }
 
-    #[cfg(not(unix))]
-    fn lock_exclusive_nonblocking(_vault_dir: &Path) -> Result<Option<std::fs::File>> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "vault writer leases require a supported OS locking primitive",
-        )
-        .into())
-    }
-
     /// Records the owning PID for humans reading the directory. Diagnostics
     /// only: nothing reads this back to decide who owns the lease.
+    #[cfg(unix)]
     fn write_pid_line(mut file: &std::fs::File, pid: u32) -> Result<()> {
         use std::io::{Seek, SeekFrom, Write};
 
