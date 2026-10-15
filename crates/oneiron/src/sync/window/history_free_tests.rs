@@ -333,6 +333,18 @@ fn pinned(cause: PinCause) -> Pinned {
 /// An identity merge's author attribution whose author was then redacted, and its bytes from
 /// before the redaction.
 fn redacted_attribution(vault: &Vault, at: u64) -> (EntityId, Vec<u8>) {
+    let (event, carrier) = authored_attribution(vault, at);
+    vault
+        .with_write_txn(|txn| {
+            crate::identity_topology::redact_author_attribution_in_txn(vault, txn, event, at + 1)?;
+            Ok(())
+        })
+        .unwrap();
+    carrier
+}
+
+/// An identity merge this vault made, and its author attribution with the attribution's bytes.
+fn authored_attribution(vault: &Vault, at: u64) -> (EntityId, (EntityId, Vec<u8>)) {
     use crate::identity_topology::{
         IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite, IdentityTopologyOp, MergeOp,
         StoredIdentityOpAction, SurvivorshipPlan,
@@ -385,13 +397,7 @@ fn redacted_attribution(vault: &Vault, at: u64) -> (EntityId, Vec<u8>) {
         }
         found.expect("independent author carrier")
     };
-    vault
-        .with_write_txn(|txn| {
-            crate::identity_topology::redact_author_attribution_in_txn(vault, txn, event, at + 1)?;
-            Ok(())
-        })
-        .unwrap();
-    carrier
+    (event, carrier)
 }
 
 /// A secret custody record bound to this device, and its stored bytes.
@@ -1446,5 +1452,88 @@ fn a_value_a_newer_queued_send_puts_back_is_no_conflict() {
         }),
         "a kept value is named as a conflict: {:?}",
         prepared.conflicts
+    );
+}
+
+/// Bug repro (ASTRA-S7-001): the hub's replacement holds an author redaction this vault has not
+/// taken in, and deletes the attribution carrier this vault mirrored again unsent. The carry-over
+/// named the carrier a conflict; the reverse pass then backfilled this vault's carrier into the
+/// deleted key, which dropped the conflict, and the forward pass took the redaction in and
+/// scrubbed the carrier again, so the installed window held neither. Done-means: the redaction
+/// wins, and the value it took out is still named.
+#[test]
+fn a_carrier_the_forward_pass_scrubs_is_still_a_conflict() {
+    use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
+    let (_dir, vault) = test_vault();
+    let at = vault.store.clock.now_recorded_at();
+    let key = WindowKey::from_timestamp(at);
+    let (_, (carrier, bytes)) = authored_attribution(&vault, at);
+    let (target, core_digest) =
+        crate::identity_topology::attribution_carrier_key(&bytes).expect("fixture: a carrier");
+    let row = carrier.to_hex();
+    // The hub holds the carrier this vault sent; this vault took it out and mirrored it again.
+    let hub = create_window_doc("hub", &key);
+    map_insert_bytes(&hub.get_map("entities"), &row, &bytes).unwrap();
+    hub.commit();
+    let root = hub.oplog_frontiers();
+    let old = create_window_doc("receiver", &key);
+    old.import(&hub.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    crate::sync::loro_support::map_delete(&old.get_map("entities"), &row).unwrap();
+    old.commit();
+    map_insert_bytes(&old.get_map("entities"), &row, &bytes).unwrap();
+    old.commit();
+    // The hub took a redaction of the author in and scrubbed the carrier, later in Loro's order.
+    let redaction = StoredIdentityOpEvent {
+        seq: 60,
+        validated_at_write: false,
+        invalidated: false,
+        at: at + 1,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::AuthorRedaction {
+            target,
+            core_digest,
+        },
+    };
+    let redaction = blob(
+        crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+        at + 1,
+        &crate::identity_topology::encode_identity_topology_event_body(&redaction).unwrap(),
+    );
+    map_insert_bytes(
+        &hub.get_map("entities"),
+        &EntityId::now().to_hex(),
+        &redaction,
+    )
+    .unwrap();
+    hub.commit();
+    for n in 0..2 {
+        write_row(&hub, at + 2 + n, b"hub row");
+    }
+    crate::sync::loro_support::map_delete(&hub.get_map("entities"), &row).unwrap();
+    hub.commit();
+
+    let prepared = install(&vault, &key, &old, &hub, &root);
+    assert!(
+        map_get_bytes(&prepared.doc.get_map("entities"), &row).is_none()
+            && vault.get_raw(&carrier).unwrap().is_none(),
+        "fixture: the forward pass takes the redaction in and scrubs the carrier"
+    );
+    assert!(
+        prepared.conflicts.contains(&ReplacementConflict {
+            map: "entities".to_owned(),
+            key: row,
+            held: Some(LoroValue::Binary(bytes.into())),
+        }),
+        "a value the installed window lacks is not named: {:?}",
+        prepared
+            .conflicts
+            .iter()
+            .map(|conflict| &conflict.key)
+            .collect::<Vec<_>>()
     );
 }
