@@ -25951,9 +25951,17 @@
      "purpose": "Closed-shape constants, the small shared error constructors, and vault-path resolution for the serving and…",
      "surface": {
       "const": 11,
-      "crate-vis": 17,
+      "crate-vis": 19,
       "fn": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/origin/smart_http/push_cert_tests.rs",
+     "purpose": "Ticket 7: `git receive-pack` writes a push certificate into the object store as a blob before any hook runs…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -41051,7 +41059,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "origin": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41593,7 +41601,7 @@
    "over_bar": 39,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2519,
-   "test_files": 817
+   "test_files": 818
   },
   "oneiron-android": {
    "files": [
