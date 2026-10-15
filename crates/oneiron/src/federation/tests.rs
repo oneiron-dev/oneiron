@@ -2929,6 +2929,57 @@ fn a_late_parent_that_brings_a_terminal_entry_into_force_stamps_its_worlds() -> 
     Ok(())
 }
 
+/// H213 (review r2): a severed pact's worlds read as stale in the snapshot its
+/// Disconnect commits in, before any stamp lands. The stamp follows in a later
+/// transaction, or only at a retry when the sweep fails; retrieval reads the
+/// pact's end from its own snapshot's fold meanwhile.
+#[test]
+fn a_severed_pacts_world_reads_stale_before_its_stamp_lands() -> Result<()> {
+    let fixture = stale_fixture(0x33, 0x39);
+    let (_dir, vault) = open_test_vault_with(VaultConfig::device());
+    let world = foreign_world(0xF6);
+    let grant = entity(0x3B);
+    let connect = fixture.connect(
+        STALE_PACT_A,
+        STALE_NONCE_A,
+        grant,
+        1,
+        authority_entry_hash(&fixture.genesis)?,
+    );
+    let disconnect = fixture.sever(
+        FederationLifecycleKind::Disconnect,
+        STALE_PACT_A,
+        STALE_NONCE_A,
+        grant,
+        2,
+        authority_entry_hash(&connect)?,
+    );
+    store_authority(&vault, &[&fixture.genesis, &connect]);
+    register_foreign_world_for_pact(&vault, &STALE_PACT_A, world)?;
+    assert!(
+        read_stale_map(&vault)?.is_empty(),
+        "control: a live pact's world is not stale"
+    );
+
+    // The Disconnect commits in a caller-owned writer that no sweep follows:
+    // the state a failed or not-yet-run sweep leaves.
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault.put_authority_log_entries_in_txn(
+        &mut wtxn,
+        &[(disconnect, TimeRange { start: 3, end: 3 }, 3)],
+    )?;
+    wtxn.commit()?;
+    assert!(foreign_world_stale_stamp(&vault, world.entity_id())?.is_none());
+    assert_eq!(
+        read_stale_map(&vault)?
+            .get(&world.entity_id())
+            .map(|stale| stale.reason),
+        Some(FederationStaleReason::Disconnected),
+        "unscoped retrieval must drop the severed pact's world before its stamp"
+    );
+    Ok(())
+}
+
 /// ONE-1411 done-means 8 — malformed LOCAL rows are corruption, not rows to
 /// skip. Silently skipping any of these would un-stale a world whose pact is
 /// provably dead.
