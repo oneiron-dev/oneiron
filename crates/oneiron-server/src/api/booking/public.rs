@@ -317,6 +317,9 @@ async fn public_booking_response(mut response: Response) -> Response {
 }
 
 #[cfg(test)]
+#[path = "actor_budget_tests.rs"]
+mod actor_budget_tests;
+#[cfg(test)]
 #[path = "public_availability_tests.rs"]
 mod availability_tests;
 #[cfg(test)]
