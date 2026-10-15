@@ -107,16 +107,21 @@ impl SyncClient {
     pub(in crate::sync) fn try_generate_initial_sync(
         &self,
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
-        // v11 carries own-device windows and grant-backed entity documents
-        // on the same connection; authentication uses a paired capability.
+        // v13 carries own-device windows and grant-backed entity documents
+        // on the same connection, and window replacements (v14 adds both to
+        // residence); authentication uses a paired capability.
         // Device lease requests are retired (C07); the NOTE session bind
         // (HEAD) still rides along when configured.
         let mut messages = vec![if self.config.federation_peer.is_some() {
             transport::encode_protocol_hello()
         } else {
             match self.config.residence_mode {
-                SyncResidenceMode::Opened => transport::encode_residence_protocol_hello(),
-                SyncResidenceMode::All => transport::encode_chunk_full_window_protocol_hello(),
+                SyncResidenceMode::Opened => {
+                    transport::encode_replacement_residence_protocol_hello()
+                }
+                SyncResidenceMode::All => {
+                    transport::encode_replacement_full_window_protocol_hello()
+                }
             }
         }];
         if let Some(session) = &self.config.note_session {
@@ -403,7 +408,7 @@ impl SyncClient {
     /// for one window during initial sync: live doc when loaded; persisted
     /// `sv:w:` when `svf:w:` is fresh (no doc load — the fast-reconnect
     /// path); full manager open otherwise.
-    fn window_vv_for_initial_sync(&self, key: &WindowKey) -> Result<Vec<u8>> {
+    pub(super) fn window_vv_for_initial_sync(&self, key: &WindowKey) -> Result<Vec<u8>> {
         if let Some(window) = self.manager.window(key) {
             return Ok(doc_version_vector(&window.doc));
         }

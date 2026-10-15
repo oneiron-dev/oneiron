@@ -292,7 +292,11 @@ pub fn promotion_snapshot(
         }
         #[cfg(test)]
         promotion_hook::run(source);
-        let bytes = super::window::export_history_free_window_snapshot(source)?;
+        // The checked door, never the persisted root: a pinned window with no clean root is
+        // refused, typed.
+        let Some(bytes) = super::window::export_promotion_snapshot(vault, window, source)? else {
+            return Ok(None);
+        };
         if bytes.len() > MAX_PROMOTION_SNAPSHOT_BYTES {
             return Err(Error::sync_protocol(
                 SyncProtocolValidation::PromotionTooLarge,

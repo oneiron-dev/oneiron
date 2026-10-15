@@ -925,7 +925,8 @@ mod tests {
             &key,
             &loaded.doc,
             &loro::VersionVector::default().encode(),
-        )?;
+        )?
+        .into_bytes();
 
         let (_receiver_dir, receiver) =
             crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());

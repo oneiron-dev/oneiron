@@ -55,6 +55,47 @@ pub(crate) fn scrub_window_updates_in_txn(
     Ok(u32::try_from(doomed.len()).unwrap_or(u32::MAX))
 }
 
+/// Every queued send addressed to `window_key`, as `(seq, update bytes)`.
+pub(crate) fn queued_window_updates(
+    vault: &Vault,
+    window_key: &str,
+) -> Result<Vec<(u64, Vec<u8>)>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut queued = Vec::new();
+    for row in vault.store.sync_queue.prefix_iter(&rtxn, UPDATE_PREFIX)? {
+        let (key, value) = row?;
+        if let (Ok(seq), Ok((row_window, update))) =
+            (decode_update_key(&key), decode_update_value_parts(&value))
+            && row_window == window_key
+        {
+            queued.push((seq, update.to_vec()));
+        }
+    }
+    Ok(queued)
+}
+
+/// Retires the queued sends `seqs`, delete-bearing rows and their `d:` sidecars included, in the
+/// transaction that installs a window's replacement. Their operations depend on history the
+/// replacement does not hold, and the replacement carries their effects as its own operations,
+/// which sync by version vector like any other.
+pub(crate) fn retire_queued_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    seqs: &[u64],
+) -> Result<()> {
+    for seq in seqs {
+        vault
+            .store
+            .sync_queue
+            .delete(wtxn, &super::codec::encode_update_key(*seq))?;
+        vault
+            .store
+            .sync_queue
+            .delete(wtxn, &super::codec::encode_delete_bearing_key(*seq))?;
+    }
+    Ok(())
+}
+
 /// Receiver-side carrier-15 scrub (ONE-1165): on a remote HARD delete applied
 /// via live replay (Observer B) or recovery (forward_rematerialize), the
 /// receiver's own `q:` outbox may carry the now-deleted payload. Mirror the

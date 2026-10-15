@@ -44,6 +44,7 @@
 
 mod document_api;
 mod promotion;
+mod replacement;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};

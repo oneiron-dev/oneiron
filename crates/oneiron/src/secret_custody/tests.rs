@@ -861,7 +861,8 @@ fn no_custody_class_enters_leaves_or_lands_through_a_window() -> crate::Result<(
             &key,
             &doc,
             &loro::VersionVector::default().encode(),
-        )?;
+        )?
+        .into_bytes();
         let received = create_window_doc("receiver", &key);
         received.import(&bytes).unwrap();
         assert!(

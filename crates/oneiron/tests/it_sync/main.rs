@@ -23,6 +23,7 @@ mod sync_delete_propagation;
 mod sync_edge_kind_gating;
 mod sync_facet_of_admission_boundary;
 mod sync_maintenance_quota;
+mod sync_pinned_window_catchup;
 mod sync_quarantine;
 mod sync_receipt_replay;
 mod sync_remat_correctness;

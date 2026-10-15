@@ -679,7 +679,8 @@ fn sync_all_discovers_unopened_world_and_old_base_windows_between_independent_va
                 &doc.doc,
                 &VersionVector::default().encode(),
             )
-            .unwrap();
+            .unwrap()
+            .into_bytes();
             let frame =
                 transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &payload)
                     .into_result()
@@ -733,7 +734,8 @@ fn sync_all_discovers_unopened_world_and_old_base_windows_between_independent_va
                 &doc.doc,
                 &VersionVector::default().encode(),
             )
-            .unwrap();
+            .unwrap()
+            .into_bytes();
             let frame =
                 transport::encode_window_sync(next_key.as_str(), window_sub_tags::UPDATE, &payload)
                     .into_result()
@@ -887,7 +889,7 @@ fn sync_client_generate_initial_sync() {
     // It MUST be the first frame.
     assert_eq!(
         messages[0],
-        transport::encode_chunk_full_window_protocol_hello()
+        transport::encode_replacement_full_window_protocol_hello()
     );
 
     // Frame 1: root VV — Loro binary encoding, decodable, NOT JSON.
@@ -1124,6 +1126,148 @@ fn noop_echo_after_snapshot_subsumes_writes_no_uw_row() {
         Some(&[SVF_FRESH][..]),
         "the deduped echo must not flip svf stale"
     );
+}
+
+/// S1 on this device's two version-vector arms, and the rebase that answers them: a window this
+/// device pinned history-free answers a server vector behind what it may ship with a
+/// replacement request, never history. The server's replacement installs with the device's
+/// unsent rows kept, and the next exchange ships those rows, and not the scrubbed carrier, as
+/// history the server merges.
+#[test]
+fn device_vector_arms_rebase_a_pinned_window_on_the_server_and_keep_unsent_rows() {
+    for arm in [window_sub_tags::VV_REQUEST, window_sub_tags::VV_RESPONSE] {
+        let manager = test_manager();
+        let (mut client, _rx) = test_client(&manager);
+        let key = "2026-03";
+        let at = WindowKey::new(key).start_timestamp().unwrap() + 60;
+        let range = TimeRange { start: at, end: at };
+        let server_doc = server_window_doc();
+        let shared = EntityId::now().to_hex();
+        server_doc
+            .get_map("entities")
+            .insert(
+                &shared,
+                entity_blob(ENTITY_TYPE_TASK, range, at, b"shared").as_slice(),
+            )
+            .unwrap();
+        server_doc.commit();
+        let base = transport::encode_window_sync(
+            key,
+            window_sub_tags::UPDATE,
+            &server_doc.export(ExportMode::all_updates()).unwrap(),
+        );
+        assert!(client.handle_server_message(&base).unwrap().is_empty());
+
+        // The device writes two rows it never sends, and holds a carrier its export scrubs.
+        let unsent = [EntityId::now().to_hex(), EntityId::now().to_hex()];
+        let carrier = EntityId::now().to_hex();
+        {
+            let window = client.window(key).unwrap();
+            for (n, row) in unsent.iter().enumerate() {
+                window
+                    .doc
+                    .get_map("entities")
+                    .insert(
+                        row,
+                        entity_blob(ENTITY_TYPE_TASK, range, at + 1 + n as u64, b"unsent")
+                            .as_slice(),
+                    )
+                    .unwrap();
+                window.doc.commit();
+            }
+            let diagnostic =
+                entity_blob(crate::registry::ENTITY_TYPE_DIAGNOSTIC, range, at, b"diag");
+            window
+                .doc
+                .get_map("entities")
+                .insert(&carrier, diagnostic.as_slice())
+                .unwrap();
+            window.doc.commit();
+        }
+
+        let server_vv = server_doc.oplog_vv();
+        let frame = transport::encode_window_sync(key, arm, &server_vv.encode());
+        let responses = client.handle_server_message(&frame).unwrap();
+        let replies: Vec<_> = responses
+            .iter()
+            .map(|frame| transport::decode_window_sync(&frame[1..]).unwrap().1)
+            .collect();
+        assert_eq!(
+            replies,
+            vec![window_sub_tags::REPLACEMENT_REQUEST],
+            "arm {arm}"
+        );
+        assert!(
+            crate::sync::window::history_free_window_required(
+                manager.vault(),
+                &WindowKey::new(key)
+            )
+            .unwrap()
+        );
+
+        // The server answers with its window whole.
+        let snapshot = server_doc
+            .export(ExportMode::shallow_snapshot(&server_doc.oplog_frontiers()))
+            .unwrap();
+        let frame = transport::encode_window_sync(key, window_sub_tags::REPLACEMENT, &snapshot);
+        let responses = client.handle_server_message(&frame).unwrap();
+        let (_, tag, vv) = transport::decode_window_sync(&responses[0][1..]).unwrap();
+        assert_eq!(
+            tag,
+            window_sub_tags::VV_REQUEST,
+            "arm {arm}: a fresh exchange follows"
+        );
+        let device_vv = VersionVector::decode(vv).unwrap();
+        assert!(device_vv.includes_vv(&server_vv), "arm {arm}");
+        let window = client.window(key).unwrap();
+        for row in unsent.iter().chain([&shared]) {
+            assert!(
+                window.doc.get_map("entities").get(row).is_some(),
+                "arm {arm}: a row was lost"
+            );
+        }
+        assert!(
+            window.doc.get_map("entities").get(&carrier).is_none(),
+            "arm {arm}"
+        );
+        drop(window);
+
+        // Rebased, the device ships its rows as history the server merges.
+        let frame =
+            transport::encode_window_sync(key, window_sub_tags::VV_RESPONSE, &server_vv.encode());
+        let responses = client.handle_server_message(&frame).unwrap();
+        let (_, tag, delta) = transport::decode_window_sync(&responses[0][1..]).unwrap();
+        assert_eq!(
+            tag,
+            window_sub_tags::UPDATE,
+            "arm {arm}: the rebased device sends history"
+        );
+        let status = server_doc.import(delta).unwrap();
+        assert!(
+            status.pending.is_none(),
+            "arm {arm}: the server cannot apply the device's history"
+        );
+        assert_eq!(
+            server_doc.oplog_vv(),
+            client.window(key).unwrap().doc.oplog_vv(),
+            "arm {arm}"
+        );
+        for row in &unsent {
+            assert!(
+                server_doc.get_map("entities").get(row).is_some(),
+                "arm {arm}: a row never shipped"
+            );
+        }
+        let history =
+            server_doc.export_json_updates(&VersionVector::default(), &server_doc.oplog_vv());
+        assert!(
+            !history.changes.iter().flat_map(|change| &change.ops).any(|op| matches!(
+                &op.content,
+                loro::json::JsonOpContent::Map(loro::json::MapOp::Insert { key, .. }) if *key == carrier
+            )),
+            "arm {arm}: the scrubbed carrier shipped"
+        );
+    }
 }
 
 #[test]

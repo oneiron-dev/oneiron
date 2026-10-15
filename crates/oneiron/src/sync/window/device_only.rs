@@ -161,8 +161,18 @@ fn bytes_verdict(
         .import(update)
         .is_ok_and(|status| status.pending.is_none())
     {
-        // Its state, then every operation it holds (a shallow snapshot's
-        // state carries what its history no longer does).
+        // Its state, the state at its shallow root (encoded whole beside the
+        // operations past it), then every operation it holds (a shallow
+        // snapshot's state carries what its history no longer does).
+        if alone.is_shallow() {
+            let at_root = alone.fork();
+            if at_root.checkout(&alone.shallow_since_frontiers()).is_err() {
+                return Ok(UpdateVerdict::Uninspectable);
+            }
+            if carries_device_only(vault, flagged, key, &at_root)? {
+                return Ok(UpdateVerdict::Withheld);
+            }
+        }
         let history = alone.export_json_updates(&VersionVector::default(), &alone.oplog_vv());
         carries_device_only(vault, flagged, key, &alone)?
             || history_inserts_device_only(vault, flagged, &history)?

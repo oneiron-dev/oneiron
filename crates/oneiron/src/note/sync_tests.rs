@@ -936,9 +936,11 @@ mod program {
         fn send(source: &Vault, doc: &LoroDoc, key: &WindowKey) -> Vec<u8> {
             export_window_updates_since(source, key, doc, &VersionVector::default().encode())
                 .expect("export fixture window")
+                .into_bytes()
         }
         fn receive(peer: &Vault, bytes: &[u8], key: &WindowKey) -> LoroDoc {
-            let doc = LoroDoc::from_snapshot(bytes).expect("decode fixture window");
+            let doc = LoroDoc::new();
+            doc.import(bytes).expect("decode fixture window");
             forward_rematerialize(peer, &doc, &Materializer::new(), key)
                 .expect("materialize fixture window");
             doc
@@ -1144,7 +1146,8 @@ mod program {
                     crate::deletion::DeleteEntityOptions { purge: true },
                 )
                 .unwrap();
-            let scrubbed = LoroDoc::from_snapshot(&send(&source, &doc, &key)).unwrap();
+            let scrubbed = LoroDoc::new();
+            scrubbed.import(&send(&source, &doc, &key)).unwrap();
             assert_eq!(scrubbed.get_map("documents").len(), 1); // format tag only
             assert_eq!(scrubbed.get_map("document_heads").len(), 0);
             assert_eq!(scrubbed.get_map("note_proposals").len(), 0);
@@ -1230,7 +1233,8 @@ mod program {
                 .delete_entity_with_reason(&note, DeleteReason::UserDelete)
                 .unwrap();
             assert_erased(&source, note);
-            let exported = LoroDoc::from_snapshot(&send(&source, &doc, &key)).unwrap();
+            let exported = LoroDoc::new();
+            exported.import(&send(&source, &doc, &key)).unwrap();
             assert!(
                 exported
                     .get_map("document_heads")

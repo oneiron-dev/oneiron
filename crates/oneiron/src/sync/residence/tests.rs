@@ -218,3 +218,86 @@ fn a_promotion_snapshot_carries_no_row_its_walk_did_not_name() {
         "{rows:?} carried, {named:?} named"
     );
 }
+
+/// Bug repro (SOL-S3-008, ASTRA-S3-004): a pinned window with two heads, one of which took a
+/// diagnostic out, has no root its history check passes: Loro roots it before both heads, where
+/// the diagnostic still sits. Persisting the window falls back to that root; a promotion must
+/// never ship it.
+#[test]
+fn a_promotion_never_ships_a_root_the_history_check_refuses() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let actor = crate::test_util::entity(31);
+    let grant_id = crate::test_util::entity(32);
+    let (first, late) = (crate::test_util::entity(33), crate::test_util::entity(34));
+    let scope = FederationGrantScope::vault(7);
+    let grant = FederationGrant::new(
+        scope,
+        actor,
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    vault
+        .batch()
+        .put_replicated(
+            &grant_id,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode_federation_grant_body(&grant).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({"title":"A window row"})).unwrap();
+    for id in [first, late] {
+        vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &body,
+            )
+            .unwrap();
+    }
+    let window = WindowKey::new("1970-01");
+    let source = create_window_doc("source", &window);
+    let entities = source.get_map("entities");
+    map_insert_bytes(
+        &entities,
+        &first.to_hex(),
+        &vault.get_raw(&first).unwrap().unwrap(),
+    )
+    .unwrap();
+    let mut diagnostic = vec![crate::registry::ENTITY_TYPE_DIAGNOSTIC];
+    for _ in 0..3 {
+        diagnostic.extend_from_slice(&1u64.to_be_bytes());
+    }
+    diagnostic.extend_from_slice(b"placeholder diagnostic");
+    let carrier = crate::test_util::entity(35).to_hex();
+    map_insert_bytes(&entities, &carrier, &diagnostic).unwrap();
+    source.commit();
+    // One head takes the diagnostic out, as the export scrub does; the other adds a row.
+    let branch = source.fork();
+    crate::sync::loro_support::map_delete(&branch.get_map("entities"), &carrier).unwrap();
+    branch.commit();
+    crate::sync::window::require_history_free_window(&vault, &window).unwrap();
+    map_insert_bytes(
+        &entities,
+        &late.to_hex(),
+        &vault.get_raw(&late).unwrap().unwrap(),
+    )
+    .unwrap();
+    source.commit();
+    source
+        .import(&branch.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    assert_eq!(source.oplog_frontiers().len(), 2, "fixture: two heads");
+
+    let selector = SyncSelector::new(grant_id, actor, SyncSelectorWorld::All, vec![], vec![]);
+    let promoted = promotion_snapshot(&vault, &source, &window, scope, &selector, |_| Ok(true));
+    assert!(
+        !matches!(promoted, Ok(Some(_))),
+        "a promotion shipped a root that holds the diagnostic"
+    );
+}

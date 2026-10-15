@@ -10,8 +10,8 @@ pub(super) async fn handle(
     direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     state: &mut ConnState,
 ) -> Result<(), ProtocolError> {
-    if (state.protocol_version != protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION
-        && state.protocol_version != protocol::RESIDENCE_PROTOCOL_VERSION)
+    if (!protocol::is_owner_window_version(state.protocol_version)
+        && !protocol::is_residence_version(state.protocol_version))
         || state.window_sync_mode == WindowSyncMode::Selector
     {
         return Err(ProtocolError::InvalidPayload(

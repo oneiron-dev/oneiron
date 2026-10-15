@@ -12,7 +12,8 @@ use oneiron::sync::window;
 use oneiron::{DeleteReason, EntityId, Vault, WriteActor};
 
 use crate::sync_harness::{
-    T0, TestNode, WINDOW, exchange, map_get_bytes, map_insert_bytes, time_range, vault_pair,
+    T0, TestNode, WINDOW, exchange, map_get_bytes, map_insert_bytes, sync_through_doors,
+    time_range, vault_pair,
 };
 
 const UNIQUE: &[u8] = b"H125 bytes only the deleted artifact held";
@@ -57,32 +58,6 @@ fn delete_artifact(node: &mut TestNode, artifact: &EntityId) {
         .delete_entity_with_reason(artifact, DeleteReason::UserHardDelete)
         .unwrap();
     node.recover(WINDOW);
-}
-
-/// Brings both windows level the way a sync connection does: each side answers the other's
-/// version vector through the window export door, and the other imports that reply. Panics if
-/// either side is still behind after five rounds, the bound past which ARCH-0023b re-bootstraps.
-fn sync_through_doors(a: &TestNode, b: &TestNode) {
-    let key = WindowKey::new(WINDOW);
-    for _ in 0..5 {
-        let (vv_a, vv_b) = (a.doc(WINDOW).oplog_vv(), b.doc(WINDOW).oplog_vv());
-        if vv_a == vv_b {
-            return;
-        }
-        let to_b =
-            window::export_window_updates_since(&a.vault, &key, a.doc(WINDOW), &vv_b.encode())
-                .unwrap();
-        b.doc(WINDOW).import(&to_b).unwrap();
-        let to_a =
-            window::export_window_updates_since(&b.vault, &key, b.doc(WINDOW), &vv_a.encode())
-                .unwrap();
-        a.doc(WINDOW).import(&to_a).unwrap();
-    }
-    assert_eq!(
-        a.doc(WINDOW).oplog_vv(),
-        b.doc(WINDOW).oplog_vv(),
-        "a peer behind the other's window never caught up through its export door"
-    );
 }
 
 /// The ASSET row whose body is exactly `bytes`.
@@ -223,12 +198,12 @@ fn a_deleted_artifact_takes_its_version_bytes_off_every_replica() {
     // persists and reloads the window: they leave both vaults, and A, which never saw B's
     // reload, still catches up through B's export door.
     delete_artifact(&mut b, &own);
-    sync_through_doors(&a, &b);
+    sync_through_doors(&a, &mut b);
     assert!(!holds(&a, &shared) && !holds(&b, &shared));
 
     // Positive control: the same bytes uploaded again are a new reference, and they sync.
     upload(&mut a, T0 + 20, &[UNIQUE]);
-    sync_through_doors(&a, &b);
+    sync_through_doors(&a, &mut b);
     assert!(holds(&a, &unique));
     assert!(
         holds(&b, &unique),

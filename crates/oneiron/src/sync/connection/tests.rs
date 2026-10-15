@@ -172,6 +172,16 @@ impl FakeServer {
                         .into_result()
                         .unwrap(),
                     ],
+                    // An unpinned home answers with its whole window, history included.
+                    window_sub_tags::REPLACEMENT_REQUEST => vec![
+                        transport::encode_window_sync(
+                            &key,
+                            window_sub_tags::REPLACEMENT,
+                            &doc.export(ExportMode::Snapshot).unwrap(),
+                        )
+                        .into_result()
+                        .unwrap(),
+                    ],
                     other => panic!("unexpected sub tag {other}"),
                 }
             }
