@@ -132,6 +132,8 @@ mod landing_tests;
 #[cfg(test)]
 mod push_cert_tests;
 #[cfg(test)]
+mod scan_cap_tests;
+#[cfg(test)]
 mod tests;
 
 // The flat smart_http.rs module used to provide these names to the sibling
