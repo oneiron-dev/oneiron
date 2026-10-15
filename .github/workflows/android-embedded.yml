@@ -15,7 +15,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   android:
-    runs-on: [self-hosted, macos, arm64]
+    # A fork PR runs on GitHub's ephemeral macos-latest instead: PR code never
+    # reaches a persistent self-hosted runner from outside the repo (F32).
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["macos-latest"]' || '["self-hosted","macos","arm64"]') }}
     timeout-minutes: 45
     if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     steps:

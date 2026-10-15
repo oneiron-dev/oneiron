@@ -37,7 +37,9 @@ jobs:
     # Needs a full Xcode (Swift Package Manager's manifest link step fails on
     # Command Line Tools alone), so it asks for the `xcode` capability label
     # rather than any macOS runner; both Macs carry it today.
-    runs-on: [self-hosted, macos, arm64, xcode]
+    # A fork PR runs on GitHub's ephemeral macos-latest instead: PR code never
+    # reaches a persistent self-hosted runner from outside the repo (F32).
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["macos-latest"]' || '["self-hosted","macos","arm64","xcode"]') }}
     timeout-minutes: 30
     if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     steps:

@@ -23,7 +23,10 @@ name: CI
 # CI_PAUSED=true skips every job.
 #
 # Runners: our own machines. `changes`, `Checks` and both scoped test jobs run on Linux; the Macs
-# take the dispatch-only macOS recipe, cache proof and mutation audit. Each runner keeps its
+# take the dispatch-only macOS recipe, cache proof and mutation audit. A fork PR never reaches our machines: its
+# `changes`, `Checks` and scoped test jobs run on GitHub's ephemeral ubuntu-latest instead (F32), so the required
+# contexts still run rather than report a skip as success. A fork PR whose workflow edit asks for our runners anyway
+# is refused by each runner's job-started hook (scripts/ci/runner-job-started.sh) before its first step. Each runner keeps its
 # persistent CARGO_TARGET_DIR and CARGO_INCREMENTAL=0; sccache also stores compiler results in
 # GitHub's cross-run cache. PR scoped Cargo steps unset CARGO_INCREMENTAL and select
 # incremental dev/test profiles; main, nightly, and dispatch remain non-incremental.
@@ -57,7 +60,7 @@ concurrency:
 jobs:
   changes:
     name: Detect changed paths
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["ubuntu-latest"]' || '["self-hosted","linux","x64"]') }}
     timeout-minutes: 10
     if: vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     outputs:
@@ -90,7 +93,7 @@ jobs:
 
   checks:
     name: Checks
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["ubuntu-latest"]' || '["self-hosted","linux","x64"]') }}
     timeout-minutes: 60
     needs: changes
     if: >-
@@ -217,7 +220,7 @@ jobs:
 
   test-linux:
     name: Test
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["ubuntu-latest"]' || '["self-hosted","linux","x64"]') }}
     timeout-minutes: 90
     needs: changes
     if: >-
@@ -267,7 +270,7 @@ jobs:
         run: sccache --show-stats
   test-linux-featureless:
     name: Test (featureless)
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["ubuntu-latest"]' || '["self-hosted","linux","x64"]') }}
     timeout-minutes: 90
     needs: changes
     if: >-
