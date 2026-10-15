@@ -396,27 +396,14 @@ async fn past_the_bound_an_exchange_waits_for_a_stalled_one_to_free_its_permit()
 /// of 1,024, exchanges well inside the 2,048 row could run the process out
 /// of descriptors. The git and LFS bounds are now held to the descriptors
 /// the sockets leave; past them an exchange waits its turn, as past the row.
-///
-/// Review r12 (the Engine, beside Astra R12-3): counted at their peak, the
-/// 1,024 descriptors a fresh login's soft limit holds leave room for 8
-/// exchanges. Serving raises the soft limit to the hard one, at most 65,536,
-/// and the bounds follow the limit it then holds: the sockets here take all
-/// but one exchange's room of the raised one.
-#[cfg(unix)]
+/// The sockets are sized from the limit serving holds once it has raised it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn past_the_descriptors_the_sockets_leave_an_exchange_waits_for_a_stalled_one() {
     use crate::api::transfer::{GIT_DESCRIPTORS, OWN_DESCRIPTORS};
-    let mut held = libc::rlimit {
-        rlim_cur: 0,
-        rlim_max: 0,
-    };
-    // SAFETY: `getrlimit` writes the struct on the stack and nothing else.
-    let read = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut held) };
-    assert_eq!(read, 0, "the open-file limit reads");
-    let raised = held.rlim_max.min(65_536);
     // The sockets take all but the room of one exchange, half of what is
     // left being git's.
-    let sockets = raised
+    let open_files = crate::machine::raise_open_file_limit().expect("an open-file limit");
+    let sockets = open_files
         .checked_sub(OWN_DESCRIPTORS + 2 * GIT_DESCRIPTORS)
         .expect("room for the process's own descriptors");
     let limits = LimitsConfig {
@@ -425,24 +412,44 @@ async fn past_the_descriptors_the_sockets_leave_an_exchange_waits_for_a_stalled_
         ..LimitsConfig::default()
     };
     assert!(limits.git_exchanges > 1, "the row alone would admit both");
-    let origin = origin(limits).await;
-    assert_eq!(
-        crate::machine::open_file_limit(),
-        Some(raised),
-        "serving raised the soft limit"
-    );
-    a_stalled_exchange_holds_the_next_one_back(origin).await;
+    a_stalled_exchange_holds_the_next_one_back(origin(limits).await).await;
 }
 
-/// Review r12 (Astra R12-2, P1): an advertisement checks that each LFS
-/// object its published refs need is readable, reading the object's whole
-/// manifest, and that read took no room on the LFS reads line: past any
-/// number of downloads holding the line, every advertisement could hold a
-/// manifest more. The check now waits for its manifest's room on the line,
-/// as a download does, and the ref is advertised once it has it.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn an_advertisement_checks_an_lfs_object_its_ref_needs_with_room_on_the_reads_line() {
-    let origin = origin(limits(4, 30_000)).await;
+/// Review r12 (the Engine, beside Astra R12-3): counted at their peak, the
+/// 1,024 descriptors a fresh login's soft limit holds leave room for 8 git
+/// exchanges. Serving raises the soft limit to the hard one, at most 65,536,
+/// and never lowers it. A process that starts at or above that, or a
+/// platform that refuses the raise, keeps the limit it has.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn serving_raises_its_soft_open_file_limit_to_the_hard_one_at_most_65_536() {
+    let mut held = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: `getrlimit` writes the struct on the stack and nothing else.
+    let read = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut held) };
+    assert_eq!(read, 0, "the open-file limit reads");
+    let before = crate::machine::open_file_limit().expect("an open-file limit");
+    let vault_dir = tempfile::tempdir().expect("vault");
+    let vault = Arc::new(
+        oneiron::Vault::open(vault_dir.path(), oneiron::VaultConfig::default())
+            .expect("open vault"),
+    );
+    let _server = SyncServer::new(vault, SyncServerConfig::default()).expect("server");
+    let after = crate::machine::open_file_limit().expect("an open-file limit");
+    let wanted = held.rlim_max.min(65_536);
+    if cfg!(target_os = "linux") {
+        assert_eq!(after, before.max(wanted), "serving raised the soft limit");
+    } else {
+        assert!(after >= before, "serving never lowers the soft limit");
+    }
+}
+
+/// Stores an object, then pushes a commit carrying its LFS pointer to
+/// `branch` with stock git, answering whether the push succeeded and what
+/// git said.
+async fn push_an_lfs_pointer(origin: &Origin, branch: &str) -> (bool, String) {
     let asset = b"an asset the pushed branch carries".to_vec();
     let oid = oneiron::origin::lfs::LfsOid::digest(&asset);
     let at = oneiron::TimeRange {
@@ -462,27 +469,59 @@ async fn an_advertisement_checks_an_lfs_object_its_ref_needs_with_room_on_the_re
     let url = format!("http://{}/git/demo.git", origin.addr);
     let source = origin.source.path().to_owned();
     let [token, binding] = origin.git_auth();
+    let target = format!("HEAD:refs/heads/{branch}");
     tokio::task::spawn_blocking(move || {
         std::fs::write(source.join("logo.bin"), pointer).expect("pointer");
         stock_git(&source, &["add", "logo.bin"]);
         commit(&source, "carry an asset");
-        stock_git(
-            &source,
-            &[
-                "-c",
-                &token,
-                "-c",
-                &binding,
-                "push",
-                &url,
-                "HEAD:refs/heads/assets",
-            ],
-        );
+        let pushed = std::process::Command::new("git")
+            .current_dir(&source)
+            .args(["-c", &token, "-c", &binding, "push", &url, &target])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .expect("stock Git starts");
+        let said = String::from_utf8_lossy(&pushed.stderr).into_owned();
+        (pushed.status.success(), said)
     })
     .await
-    .unwrap();
+    .unwrap()
+}
 
-    // Downloads hold the whole reads line.
+/// Waits until something waits on `line`, failing if `answered` finished
+/// first.
+async fn until_waiting_on(
+    line: &crate::byte_line::ByteLine,
+    answered: &tokio::task::JoinHandle<(u16, Vec<u8>)>,
+) {
+    let started = std::time::Instant::now();
+    while line.waiting() == 0 {
+        assert!(
+            !answered.is_finished(),
+            "the advertisement was answered without room to check the object"
+        );
+        assert!(started.elapsed() < PATIENCE, "the check waits on the line");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// Review r12 (Astra R12-2, P1): an advertisement checks that each LFS
+/// object its published refs need is readable, reading the object's whole
+/// manifest, and that read took no room on the LFS reads line: past any
+/// number of downloads holding the line, every advertisement could hold a
+/// manifest more. The check now waits for its manifest's room on the line,
+/// as a download does, and the ref is advertised once it has it.
+///
+/// Review r12 narrow (Astra R12n-3, P1): that wait is the server's own work,
+/// and the exchange's idle limit counted it, so a wait longer than the
+/// limit (1 s here) ended the advertisement though its room came within
+/// the queue deadline. The idle clock holds still while it waits.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_advertisement_checks_an_lfs_object_its_ref_needs_with_room_on_the_reads_line() {
+    let origin = origin(limits(4, 1_000)).await;
+    let (pushed, said) = push_an_lfs_pointer(&origin, "assets").await;
+    assert!(pushed, "the push lands: {said}");
+
+    // Downloads hold the whole reads line, past the idle limit.
     let transfers = &origin.server.transfers;
     let reads = transfers.lfs_reads();
     let held = reads
@@ -490,15 +529,8 @@ async fn an_advertisement_checks_an_lfs_object_its_ref_needs_with_room_on_the_re
         .await
         .expect("the whole reads line");
     let advertised = tokio::spawn(advertisement_to(origin.addr, origin.headers.clone()));
-    let started = std::time::Instant::now();
-    while reads.waiting() == 0 {
-        assert!(
-            !advertised.is_finished(),
-            "the advertisement was answered without room to check the object"
-        );
-        assert!(started.elapsed() < PATIENCE, "the check waits on the line");
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    until_waiting_on(reads, &advertised).await;
+    tokio::time::sleep(Duration::from_millis(2_500)).await;
     drop(held);
     let (status, body) = tokio::time::timeout(PATIENCE, advertised)
         .await
@@ -508,6 +540,37 @@ async fn an_advertisement_checks_an_lfs_object_its_ref_needs_with_room_on_the_re
     assert!(
         String::from_utf8_lossy(&body).contains("refs/heads/assets"),
         "the ref whose object was checked is advertised"
+    );
+}
+
+/// Review r12 narrow (Astra R12n-2, P1): a push whose landing waited past
+/// the queue deadline for room to check its LFS object was answered as if
+/// the landing had run its course, the error swallowed, and recovery went
+/// on to wait as long again for each pending ref. The push is now told to
+/// retry (503); its ref stays Pending, and the next exchange that finds
+/// the repository free publishes it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_push_whose_lfs_check_waits_past_its_deadline_is_told_to_retry_and_lands_later() {
+    let origin = origin(LimitsConfig {
+        queue_wait_timeout_ms: 1_000,
+        ..limits(4, 30_000)
+    })
+    .await;
+    let transfers = &origin.server.transfers;
+    let reads = transfers.lfs_reads();
+    let held = reads
+        .reserve(reads.total(), PATIENCE, &transfers.questions)
+        .await
+        .expect("the whole reads line");
+    let (pushed, said) = push_an_lfs_pointer(&origin, "assets").await;
+    assert!(!pushed, "the push is not told it landed: {said}");
+    assert!(said.contains("503"), "it is told to retry: {said}");
+    drop(held);
+    let (status, body) = advertisement(&origin).await;
+    assert_eq!(status, 200);
+    assert!(
+        String::from_utf8_lossy(&body).contains("refs/heads/assets"),
+        "the next exchange publishes the pending ref"
     );
 }
 

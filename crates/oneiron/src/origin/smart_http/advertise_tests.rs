@@ -2,10 +2,10 @@
 //! attach/detach landing tests and the room their LFS checks take.
 
 use super::tests::{
-    CapturingSink, LANDING_LEARNED_AT, PublicationTestOrigin, advertise, advertised_refs,
-    advertisement_headers, commit_file, fixture_attribution, git, landed_repo_id, landing_outcome,
-    landing_time, pointer_file, pushed_outcome, ref_update, seeded_repo, served_repo, temp_vault,
-    try_advertise,
+    CapturingSink, LANDING_LEARNED_AT, PublicationTestOrigin, RecordingRoom, advertise,
+    advertised_refs, advertisement_headers, commit_file, fixture_attribution, git, landed_repo_id,
+    landing_outcome, landing_time, pointer_file, pushed_outcome, ref_update, seeded_repo,
+    served_repo, temp_vault, try_advertise,
 };
 use super::*;
 
@@ -472,40 +472,6 @@ fn smart_http_advertisement_with_no_surviving_ref_still_carries_capabilities() {
         !text.contains("symref=HEAD:"),
         "an unresolved projection cannot leak a raw symbolic ref"
     );
-}
-
-/// A host's room for LFS reads that records the rows it is asked for and
-/// holds each until its answer drops; told to, it lets every wait run out.
-#[derive(Default)]
-struct RecordingRoom {
-    asked: std::sync::Mutex<Vec<u64>>,
-    held: Arc<std::sync::atomic::AtomicUsize>,
-    waits_run_out: AtomicBool,
-}
-
-impl RecordingRoom {
-    fn asked(&self) -> Vec<u64> {
-        self.asked.lock().expect("asked rows").clone()
-    }
-}
-
-struct RecordedHold(Arc<std::sync::atomic::AtomicUsize>);
-
-impl Drop for RecordedHold {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
-impl crate::origin::lfs::LfsReadRoom for RecordingRoom {
-    fn hold(&self, row_bytes: u64) -> Option<Box<dyn std::any::Any + Send>> {
-        self.asked.lock().expect("asked rows").push(row_bytes);
-        if self.waits_run_out.load(Ordering::SeqCst) {
-            return None;
-        }
-        self.held.fetch_add(1, Ordering::SeqCst);
-        Some(Box::new(RecordedHold(Arc::clone(&self.held))))
-    }
 }
 
 /// Review r12 (Astra R12-2, P1): an advertisement, a landing and a redrive
