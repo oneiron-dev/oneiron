@@ -346,6 +346,13 @@ fn admit(
         )?;
     }
     if !delete_protected && deleted_here(ctx, wtxn, &id) {
+        crate::task_authority::note_suppressed_fact_in_txn(
+            &vault.store,
+            wtxn,
+            &id,
+            header.entity_type,
+            &blob[ENTITY_METADATA_HEADER_LEN..],
+        )?;
         return Ok(EntityStep::Skip);
     }
     // NOTE replay may not discharge or outlive an unproven purge retry (the old native NOTE
