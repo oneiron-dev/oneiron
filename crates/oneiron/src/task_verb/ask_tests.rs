@@ -2968,9 +2968,26 @@ fn a_grant_the_guest_stamped_is_no_consent_and_the_owners_record_is() -> Result<
             .vault
             .put_standing_grant_unchecked_for_test(&guests_own, bound.clone())?,
     };
+    let row = fixture
+        .vault
+        .consent_grant(&guest.disclosure_grant_ref)?
+        .expect("the guest-stamped row");
+    assert!(row.is_active() && row.owner_stamp.actor == person);
     let mut spec = fixture.spec();
-    spec.who = Some(TaskAskTarget::Guests([(person, guest)].into()));
     spec.what.class_key = Some("meeting".into());
+    let txn = fixture.vault.store.env.read_txn()?;
+    let native = super::ask_guest::check_disclosure(
+        &fixture.vault,
+        &txn,
+        person,
+        fixture.owner,
+        &guest,
+        &spec,
+    )
+    .expect_err("a guest's own stamp is no consent");
+    assert_eq!(native.kind(), crate::ErrorKind::ConsentGuestNotRecorded);
+    drop(txn);
+    spec.who = Some(TaskAskTarget::Guests([(person, guest)].into()));
     let refused = fixture
         .vault
         .memory(fixture.owner, EdgeActorClass::Human)
