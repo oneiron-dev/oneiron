@@ -25,3 +25,6 @@ pub use self::wire::{
 // through `use super::*`: its own private crate/std import header, and every
 // crate-internal item the tests name bare. After the directory split the seam
 // re-imports both so `tests.rs` resolves exactly as it did before.
+
+#[cfg(test)]
+mod tests;

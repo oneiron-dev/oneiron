@@ -117,7 +117,14 @@ impl Vault {
         let now = crate::unix_seconds_now();
         let mut ids = Vec::new();
         let mut ops = Vec::new();
-        for (hash, bytes, _) in decoded {
+        // The store door judges each row against the rows already staged
+        // (H72), so stage each after its parents, its consent and its
+        // signer's lower sequences, whatever order the caller gave.
+        let stored = merged
+            .iter()
+            .filter(|(hash, _)| resident.contains(*hash))
+            .map(|(_, (_, entry))| entry);
+        for (hash, bytes, _) in super::import_order::import_order(stored, &resident, decoded) {
             let id = authority_log_entity_id_from_hash(&hash)?;
             ids.push(id);
             ops.push(BatchOp::Put {
@@ -284,16 +291,11 @@ impl Vault {
         if self.privacy_posture() != crate::HostingPrivacyPosture::Hosted {
             return Err(invalid_authority());
         }
-        self.authenticate_owner(
-            owner.actor(),
-            owner.principal_ref(),
-            true,
-            owner.decision_id(),
-        )?;
+        let actor = owner.revalidate(self)?;
         let txn = self.store.env.read_txn()?;
         self.verify_owner_write_actor_in_txn(
             &txn,
-            &crate::WriteActor::new(owner.actor(), crate::EdgeActorClass::Human),
+            &crate::WriteActor::new(actor, crate::EdgeActorClass::Human),
         )?;
         drop(txn);
         self.re_root_authority(new_device, signer_key, signer)

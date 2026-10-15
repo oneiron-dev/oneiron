@@ -79,6 +79,8 @@ mod dreamer;
 pub use self::dreamer::dreamer_grant;
 mod embedder_serve;
 pub use self::embedder_serve::embedder_serve;
+mod maintain;
+pub use maintain::maintain;
 mod owner;
 pub use owner::{
     backup, doctor, export, import, recover_clock, recover_window, restore, runs, secret_scan,
@@ -174,6 +176,7 @@ fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
             holder_ref: Some(owner.to_hex()),
             actor_class: Some("human".into()),
             org_ref: None,
+            write_facet: None,
         },
     )?;
     Ok(oneiron::authority::format_pairing_link(
@@ -478,6 +481,7 @@ fn mint_paired_credential(
             holder_ref: Some(principal.to_owned()),
             actor_class: Some(actor_class.to_owned()),
             org_ref: None,
+            write_facet: None,
         },
     )?;
     let key = SigningKey::generate(&mut rand_core::OsRng);
@@ -529,6 +533,7 @@ pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
         holder_ref: Some(args.principal_ref.clone()),
         actor_class: args.actor_class,
         org_ref: None,
+        write_facet: None,
     };
     let body = serde_json::to_vec(&json!({
         "scope": scope,

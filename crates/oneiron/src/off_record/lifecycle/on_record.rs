@@ -1,11 +1,12 @@
-//! A room on record (ARCH-0052 D5). The vault's owner, in the room, may put
-//! its stretch on record ("from here on"): later turns land in this vault,
-//! which is theirs. The saving stays bound to them. Every landing checks
-//! again, in its own transaction, that they own this vault on a live proof
-//! and are still in the room, in the membership they saved in; checking only
-//! who speaks would keep saving for someone who has left. Once they no longer
-//! hold, saving stops: the stretch goes back off record and the room hears
-//! `saving_stopped`. Joining the room again does not restart it.
+//! A stretch on record (ARCH-0052 D5). The vault's owner, alone or in the
+//! room, may put its stretch on record ("from here on"): later turns land in
+//! this vault, which is theirs. The saving stays bound to them. Every landing
+//! checks again, in its own transaction, that they own this vault on a live
+//! proof and, in a room, are still in it, in the membership they saved in;
+//! checking only who speaks would keep saving for someone who has left or
+//! whose proof was revoked. Once they no longer hold, saving stops: the
+//! stretch goes back off record and the room hears `saving_stopped`. Joining
+//! the room again does not restart it.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -19,35 +20,39 @@ use super::room::{Hearing, is_member_in_txn, post_notice};
 use super::session::OffRecordSession;
 use super::types::{OffRecordMode, OffRecordNoticeAct};
 
-/// The person whose "from here on" put a room's stretch on record. Their
-/// vault takes everyone's later turns, so each landing checks them again,
-/// in its own transaction; checking only who speaks would keep saving for
-/// someone who has left.
+/// The person whose "from here on" put a stretch on record. Their vault
+/// takes the later turns (everyone's, in a room), so each landing checks them
+/// again, in its own transaction; checking only who speaks would keep saving
+/// for someone who has left, or whose proof no longer holds.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct OnRecordSaver {
-    room: EntityId,
-    /// Where the join that opened the membership they put the room on record
-    /// in sits in the room's ledger. The saving is bound to that membership.
-    joined: u64,
+    /// The room and where the join that opened the membership they put it on
+    /// record in sits in its ledger: the saving is bound to that membership.
+    /// `None` for a stretch alone.
+    seat: Option<(EntityId, u64)>,
     owner: crate::consent::AuthenticatedOwner,
+    /// The owner's actor, as the flip's revalidation returned it.
+    actor: EntityId,
 }
 
 impl OnRecordSaver {
     /// Whether, in `txn`, the saver still owns this vault on a live proof
-    /// and is still in the room in the membership they saved in. Leaving
-    /// ends the saving for good: joining again does not bring it back.
+    /// and, in a room, is still in it in the membership they saved in.
+    /// Leaving ends the saving for good: joining again does not bring it back.
     pub(crate) fn holds_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
         match self.owner.revalidate_as_vault_owner_in_txn(vault, txn) {
-            Ok(()) => Ok(is_member_in_txn(vault, txn, self.room, self.owner.actor())?
-                && vault.current_join_in_txn(txn, self.room, self.owner.actor())?
-                    == Some(self.joined)),
+            Ok(actor) => match self.seat {
+                None => Ok(true),
+                Some((room, joined)) => Ok(is_member_in_txn(vault, txn, room, actor)?
+                    && vault.current_join_in_txn(txn, room, actor)? == Some(joined)),
+            },
             Err(Error::Gate(_)) => Ok(false),
             Err(error) => Err(error),
         }
     }
 }
 
-/// A landing's check of the saver of a room on record. The landing runs it
+/// A landing's check of the saver of a stretch on record. The landing runs it
 /// in its write transaction, and one that finds the saver no longer holds
 /// is refused. Once the check drops, after that transaction, the saving
 /// stops: stopping takes the session state lock, which is never taken under
@@ -77,14 +82,14 @@ impl Drop for SaverCheck<'_, '_> {
         if self.lapsed.load(Ordering::Relaxed)
             && let Err(error) = self.session.stop_saving(&self.saver)
         {
-            tracing::warn!(error = %error, "a room on record lost its saver; the stop is deferred");
+            tracing::warn!(error = %error, "on record, the saver lapsed; the stop is deferred");
         }
     }
 }
 
 /// A base write's first step in its transaction: a run's write comes from a
-/// participant still in the room, in a room on record its saver still
-/// holds, and the route it was taken on still stands.
+/// participant still in the room, on record its saver still holds, and the
+/// route it was taken on still stands.
 pub(super) struct Landing<'r, 's, 'vault> {
     pub(super) route: &'r SessionWriteRoute,
     session: &'s OffRecordSession<'vault>,
@@ -111,31 +116,36 @@ impl Landing<'_, '_, '_> {
 
 impl<'vault> OffRecordSession<'vault> {
     /// Flips the stretch on record for the owner: later turns are saved as
-    /// they land, and the room hears a `saving_from_here` notice. In a room
-    /// the owner must be on the roster and own this vault, since the flip
-    /// saves everyone's later turns into it. The saving stays bound to them:
-    /// every later landing checks again that they own this vault on a live
-    /// proof and are still in the room, in the membership they flipped in.
-    /// Once they are not, saving stops, and only a new flip starts it again.
+    /// they land, and the room hears a `saving_from_here` notice. The owner
+    /// must own this vault, and in a room be on the roster, since the flip
+    /// saves the later turns (everyone's, in a room) into it. The proof is
+    /// checked again under the stretch's lock, as the flip is published. The
+    /// saving stays bound to them: every later landing checks again that they
+    /// own this vault on a live proof and, in a room, are still in it, in the
+    /// membership they flipped in. Once they are not, saving stops, and only
+    /// a new flip starts it again.
+    ///
+    /// Alone or in a room, there is no flip on record without the proof
+    /// (H203):
+    ///
+    /// ```compile_fail
+    /// fn flip(session: &oneiron::off_record::OffRecordSession<'_>) {
+    ///     let _ = session.flip_on_record();
+    /// }
+    /// ```
     pub fn flip_on_record_as(&self, owner: &crate::consent::AuthenticatedOwner) -> Result<()> {
         let in_room = self.room()?.is_some();
-        {
-            let txn = self.vault.store.env.read_txn()?;
-            if in_room {
-                owner.revalidate_as_vault_owner_in_txn(self.vault, &txn)?;
-            } else {
-                owner.revalidate_in_txn(self.vault, &txn)?;
-            }
-        }
-        let room = if in_room {
-            let room = self.require_in_room(owner.actor())?;
+        let actor = owner
+            .revalidate_as_vault_owner_in_txn(self.vault, &self.vault.store.env.read_txn()?)?;
+        let seat = if in_room {
+            let room = self.require_in_room(actor)?;
             let joined = self
                 .vault
-                .current_join_in_txn(&self.vault.store.env.read_txn()?, room, owner.actor())?
+                .current_join_in_txn(&self.vault.store.env.read_txn()?, room, actor)?
                 .ok_or_else(|| {
                     Error::OffRecord(OffRecordError::OffRecordNotInRoom {
                         session_ref: self.session_ref.clone(),
-                        actor_ref: owner.actor().to_hex(),
+                        actor_ref: actor.to_hex(),
                     })
                 })?;
             Some((room, joined))
@@ -149,6 +159,10 @@ impl<'vault> OffRecordSession<'vault> {
         // land on the stretch the owner acted on, never on one that took its
         // name since, and a closing stretch is refused before either.
         let mut state = session_entry_state(&self.entry)?;
+        // Checked again as the flip is published: a proof revoked while this
+        // flip waited for the lock puts nothing on record. A revocation after
+        // this is the next landing's to find.
+        owner.revalidate_as_vault_owner_in_txn(self.vault, &self.vault.store.env.read_txn()?)?;
         let was = state.record.mode;
         super::vault_api::set_entry_mode(
             &self.entry,
@@ -158,16 +172,16 @@ impl<'vault> OffRecordSession<'vault> {
         )?;
         // A room already on record hears nothing new, and keeps its saver.
         if was != OffRecordMode::OnRecord {
-            state.saver = room.map(|(room, joined)| OnRecordSaver {
-                room,
-                joined,
+            state.saver = Some(OnRecordSaver {
+                seat,
                 owner: owner.clone(),
+                actor,
             });
             let hearing = Hearing::now(self.vault, state.record.room);
             post_notice(
                 &mut state,
                 OffRecordNoticeAct::SavingFromHere,
-                owner.actor(),
+                actor,
                 hearing,
             );
             self.entry.publish_state(&state);
@@ -175,8 +189,8 @@ impl<'vault> OffRecordSession<'vault> {
         Ok(())
     }
 
-    /// The route a write lands by now and, while a room is on record, the
-    /// saver its landing transaction checks again. A saver who no longer
+    /// The route a write lands by now and, while the stretch is on record,
+    /// the saver its landing transaction checks again. A saver who no longer
     /// holds stops the saving here first, so the write stays off record.
     pub(crate) fn landing_route(
         &self,
@@ -187,24 +201,29 @@ impl<'vault> OffRecordSession<'vault> {
     }
 
     /// The check a write on `route`, a route taken earlier, runs in its
-    /// transaction while this stretch's room is on record; `None` otherwise.
-    /// The saver is the one `route` lands under: it is read with `route`
-    /// checked, under one lock, so saving that stopped since refuses here
-    /// rather than reading as no saver at all. Only the saver's door puts a
-    /// room on record, so a room's base route with no saver refuses too.
+    /// transaction while this stretch is on record; `None` otherwise. The
+    /// saver is the one `route` lands under: it is read with `route` checked,
+    /// under one lock, so saving that stopped since refuses here rather than
+    /// reading as no saver at all. Only the saver's door puts a stretch on
+    /// record, so a base route with no saver refuses too.
     pub(crate) fn saver_check_for(
         &self,
         route: &SessionWriteRoute,
     ) -> Result<Option<SaverCheck<'_, 'vault>>> {
         let state = session_entry_state(&self.entry)?;
         route.revalidate()?;
-        if route.target() != RouteTarget::Base || state.record.room.is_none() {
+        if route.target() != RouteTarget::Base {
             return Ok(None);
         }
-        let saver = state
-            .saver
-            .clone()
-            .ok_or(Error::InvariantViolation("a room on record has no saver"))?;
+        // A closed stretch saves nothing more, whoever still holds a route.
+        if state.record.closing || state.gone {
+            return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
+                session_ref: self.session_ref.clone(),
+            }));
+        }
+        let saver = state.saver.clone().ok_or(Error::InvariantViolation(
+            "a stretch on record has no saver",
+        ))?;
         drop(state);
         Ok(Some(self.check_saver(saver)))
     }
@@ -230,7 +249,7 @@ impl<'vault> OffRecordSession<'vault> {
         }
     }
 
-    /// The saver of this stretch's room while it is on record, read before
+    /// The saver of this stretch while it is on record, read before
     /// a landing's write transaction (the state lock is never taken inside
     /// one).
     fn on_record_saver(&self) -> Result<Option<OnRecordSaver>> {
@@ -264,15 +283,15 @@ impl<'vault> OffRecordSession<'vault> {
         post_notice(
             &mut state,
             OffRecordNoticeAct::SavingStopped,
-            saver.owner.actor(),
+            saver.actor,
             hearing,
         );
         self.entry.publish_state(&state);
         Ok(())
     }
 
-    /// Stops the saving when this stretch's room is on record and its saver
-    /// no longer holds in a fresh snapshot.
+    /// Stops the saving when this stretch is on record and its saver no
+    /// longer holds in a fresh snapshot.
     pub(super) fn lapse_saver(&self) -> Result<()> {
         let Some(saver) = self.on_record_saver()? else {
             return Ok(());
@@ -285,7 +304,8 @@ impl<'vault> OffRecordSession<'vault> {
 
     /// One write transaction for this stretch, in which `check` runs before
     /// `write`: a run's handle writes only while its participant is in the
-    /// room, and a room on record writes into base only while its saver holds.
+    /// room, and a stretch on record writes into base only while its saver
+    /// holds.
     pub(crate) fn with_saver_write_txn<T>(
         &self,
         check: Option<SaverCheck<'_, '_>>,
@@ -317,7 +337,7 @@ impl<'vault> OffRecordSession<'vault> {
     fn saving_stopped(&self, saver: &OnRecordSaver) -> Error {
         Error::OffRecord(OffRecordError::OffRecordSavingStopped {
             session_ref: self.session_ref.clone(),
-            saver_ref: saver.owner.actor().to_hex(),
+            saver_ref: saver.actor.to_hex(),
         })
     }
 }

@@ -9,7 +9,7 @@ mod rebuild;
 mod restore_class;
 mod tiers;
 use crate::side_table::{self, Named, SideTable};
-use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody};
+use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody, MadeDestination};
 use crate::{EntityId, Error, Result, Vault, VaultConfig};
 use heed::types::Bytes;
 use serde::{Deserialize, Serialize};
@@ -94,8 +94,13 @@ enum Source<'a> {
     /// A vault open in this process, read through its own handle.
     Open(&'a Vault),
     /// A vault read off its directory, as [`SideRestoreSource::read`] read
-    /// it first.
-    Disk { dir: PathBuf, first: LiveCustody },
+    /// it first, and the directory on its path another user could change.
+    Disk {
+        dir: PathBuf,
+        first: LiveCustody,
+        #[cfg(unix)]
+        shared: Option<crate::store::SharedPath>,
+    },
 }
 impl SideRestoreSource<'static> {
     /// The vault at `vault_dir`, read without opening it, so a running
@@ -105,18 +110,32 @@ impl SideRestoreSource<'static> {
     /// at its start, and refuses if the vault there is no longer the store
     /// read here, bound to the custody it bound here.
     pub fn read(vault_dir: &Path) -> Result<Self> {
+        let first = crate::store::read_live_custody(vault_dir)?;
         Ok(Self(Source::Disk {
             dir: vault_dir.to_path_buf(),
-            first: crate::store::read_live_custody(vault_dir)?,
+            first,
+            #[cfg(unix)]
+            shared: crate::store::shared_vault_root(vault_dir)?,
         }))
     }
 }
 impl SideRestoreSource<'_> {
+    /// A directory on the path of a source read off the disk that another
+    /// user could change, found when it was read. A restore from it goes
+    /// ahead, since the vault opens and writes there as it is; a caller
+    /// reports it with the fix. `None` for a vault open in this process.
+    #[cfg(unix)]
+    pub fn shared_path(&self) -> Option<&crate::store::SharedPath> {
+        match &self.0 {
+            Source::Disk { shared, .. } => shared.as_ref(),
+            Source::Open(_) => None,
+        }
+    }
     /// The source's live custody state, read now, at a restore's start.
     fn capture(&self) -> Result<LiveCustody> {
         match &self.0 {
             Source::Open(vault) => vault.store.live_custody(),
-            Source::Disk { dir, first } => {
+            Source::Disk { dir, first, .. } => {
                 let live = crate::store::read_live_custody(dir)?;
                 if !first.same_vault(&live) {
                     return Err(Error::InvalidConfig(
@@ -347,6 +366,11 @@ impl Vault {
     /// from another owner or old model can be served while that queue is rebuilt.
     /// The restored vault takes the image's vault's place and keeps its key
     /// custody; a copy served beside it is [`Vault::restore_checkpoint_beside`].
+    ///
+    /// Every restore is refused where another user could move a directory on
+    /// the way to `destination` (or, replacing a vault, on the way to it): a
+    /// directory not this user's or root's, or one a group or other may write
+    /// without its sticky bit. Nothing is made there.
     pub fn restore_checkpoint(
         path: &Path,
         destination: &Path,
@@ -356,7 +380,7 @@ impl Vault {
     ) -> Result<(Self, RestoreReport)> {
         let (mut image, checkpoint_id) = read_image(path)?;
         image.drop_machine_identity();
-        let (vault, report, forked) = Self::restore_image(
+        let (made, forked, mut vault, report) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -366,6 +390,7 @@ impl Vault {
             Custody::Keep,
         )?;
         forked.keep();
+        made.keep(&mut vault);
         Ok((vault, report))
     }
     /// [`Vault::restore_checkpoint`] as a copy served beside its source vault.
@@ -385,7 +410,7 @@ impl Vault {
         let live = source.capture()?;
         let (mut image, checkpoint_id) = read_image(path)?;
         image.drop_machine_identity();
-        let (vault, report, forked) = Self::restore_image(
+        let (made, forked, mut vault, report) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -395,6 +420,7 @@ impl Vault {
             Custody::Fork(Some(&live)),
         )?;
         forked.keep();
+        made.keep(&mut vault);
         Ok((vault, report))
     }
     /// This vault as the source of a restore beside it
@@ -423,7 +449,8 @@ impl Vault {
     /// Reopen the replacement before it mints or retires a key. A vault that
     /// admitted an agent request, or recovered its proof clock, after the
     /// replacement was made refuses it, and nothing moves: the replacement
-    /// would not know those proofs.
+    /// would not know those proofs; so does one that holds an agent id looser
+    /// than this vault now does (H215).
     pub fn swap_in_replacement(
         &self,
         replacement: &Self,
@@ -431,7 +458,14 @@ impl Vault {
     ) -> Result<()> {
         self.store.swap_out(
             &replacement.store,
-            |txn| crate::authority::refuse_moved_proof_freshness(self, txn, replacement),
+            |txn| {
+                crate::authority::refuse_moved_proof_freshness(self, txn, replacement)?;
+                crate::agent_def::refuse_loosened_agent_id_pins(
+                    &self.store,
+                    txn,
+                    &replacement.store,
+                )
+            },
             swap,
         )
     }
@@ -444,13 +478,18 @@ impl Vault {
     /// keeps is read under its own keys before the activation commits; when
     /// this returns `Ok` it is done, and the vault opens live, joining as a
     /// new machine: its replacement is the machine it was. Refuses a vault
-    /// that is not archived, and a `source` whose custody is not the one it
-    /// binds; a refusal leaves it archived, as it was.
+    /// that is not archived, a `source` whose custody is not the one it
+    /// binds, and, before opening anything, a missing `path` or one where
+    /// another user could move a directory on it; a refusal leaves it
+    /// archived, as it was.
     pub fn activate_archived(
         path: &Path,
         config: VaultConfig,
         source: &SideRestoreSource<'_>,
     ) -> Result<()> {
+        // The archive is admitted like the source before anything opens it
+        // by name; a missing one is refused, not made.
+        crate::store::admit_existing_vault_root(path)?;
         let live = source.capture()?;
         let archive = Self::open_owned(path, config)?;
         archive.store.activate_archived(&live)
@@ -525,7 +564,7 @@ impl Vault {
         if let Custody::Fork(_) = custody {
             image.drop_machine_identity();
         }
-        let (vault, report, forked) = Self::restore_image(
+        let (made, forked, mut vault, report) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -534,18 +573,20 @@ impl Vault {
             restored_at,
             custody,
         )?;
-        if let Err(error) = authority_plane::refuse_new_members(current, &vault)
-            .and_then(|()| decisions::refuse_loosened_decisions(current, &vault))
-        {
-            drop(vault);
-            // This call created the destination; nothing else is in it. The
-            // custody it forked goes with it as `forked` drops.
-            let _ = std::fs::remove_dir_all(destination);
-            return Err(error);
-        }
+        #[cfg(test)]
+        panic_if_armed();
+        // Refused here, or unwound, the bindings above drop in reverse: the
+        // copy closes, the custody it forked goes, and then the directory
+        // made for it, still under the copy's lease (review r3, Sol F4).
+        authority_plane::refuse_new_members(current, &vault)
+            .and_then(|()| decisions::refuse_loosened_decisions(current, &vault))?;
         forked.keep();
+        made.keep(&mut vault);
         Ok((vault, report))
     }
+    /// Restores `image` into `destination`. The made directory, the forked
+    /// custody and the copy come back in that order, so a caller's bindings,
+    /// dropped in reverse, close the copy before the others go.
     fn restore_image(
         image: CheckpointImage,
         checkpoint_id: String,
@@ -554,7 +595,7 @@ impl Vault {
         reason: RestoreReason,
         restored_at: u64,
         custody: Custody<'_>,
-    ) -> Result<(Self, RestoreReport, ForkedCustody)> {
+    ) -> Result<(MadeDestination, ForkedCustody, Self, RestoreReport)> {
         // A job row of another kind in the owner-retained key range would
         // hide from that kind's scans: refused before any destination exists.
         if image.databases["job_records"].iter().any(|(key, value)| {
@@ -575,10 +616,21 @@ impl Vault {
         if fork {
             crate::store::refuse_custody_beside(destination)?;
         }
-        // Existing content is never replaced or partially restored over.
-        std::fs::create_dir(destination)?;
+        // The pin pass below reads every agent id pin the restore brings
+        // back: one no pin decodes from is refused here, before a
+        // destination exists (H215).
+        crate::agent_def::refuse_unreadable_agent_id_pins(&image.databases["vault_meta"])?;
+        // Existing content is never replaced or partially restored over. A
+        // refusal from here on drops the copy, then the directory made for
+        // it: only a committed restore keeps them (C8). The config is checked
+        // first, as an owned open checks it before it touches the disk.
+        Self::check_open_config(&config)?;
+        let made = MadeDestination::make(destination, home)?;
         let mut forked = ForkedCustody(None);
-        let vault = Self::open_owned(destination, config.clone())?;
+        let vault = Self::open_under_lease(destination, config.clone(), made.lease()?)?;
+        #[cfg(test)]
+        fail_at(RestoreStep::FirstOpen)?;
+        made.holds(&vault.store)?;
         vault.with_write_txn_grouped(|txn| {
             for entry in DB_MANIFEST {
                 let db = vault
@@ -623,11 +675,19 @@ impl Vault {
                     h.learned_at,
                 )?;
             }
+            // Rows came back without a put: each definition pins its id as a
+            // put of it would have (H215).
+            crate::agent_def::pin_stored_rows_in_txn(&vault.store, txn)?;
+            #[cfg(test)]
+            fail_at(RestoreStep::ImageWrite)?;
             Ok(())
         })?;
         drop(vault);
         // Re-open through all ABI, model, analyzer and manifest gates before rebuilding.
-        let vault = Self::open_owned(destination, config)?;
+        let vault = Self::open_under_lease(destination, config, made.lease()?)?;
+        #[cfg(test)]
+        fail_at(RestoreStep::SecondOpen)?;
+        made.holds(&vault.store)?;
         if let Some(home) = home {
             vault.store.unseal_replacement(home)?;
         }
@@ -640,6 +700,8 @@ impl Vault {
             vault
                 .store
                 .for_each_gate_decision_in_txn(&txn, |_| Ok(()))?;
+            #[cfg(test)]
+            fail_at(RestoreStep::ReceiptCheck)?;
         }
         let (rebuilt_entities, rebuilt_text_documents, pending_embeddings) =
             rebuild::rebuild(&vault)?;
@@ -666,7 +728,7 @@ impl Vault {
             rebuilt_text_documents,
             pending_embeddings,
         };
-        Ok((vault, report, forked))
+        Ok((made, forked, vault, report))
     }
     pub fn restore_epochs(&self) -> Result<Vec<RestoreEpoch>> {
         let txn = self.store.env.read_txn()?;
@@ -678,5 +740,10 @@ impl Vault {
         Ok(epochs)
     }
 }
+#[cfg(test)]
+mod test_hooks;
+#[cfg(test)]
+use test_hooks::{RestoreStep, fail_at, panic_if_armed};
+
 #[cfg(test)]
 mod tests;

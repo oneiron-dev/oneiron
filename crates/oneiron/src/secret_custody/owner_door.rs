@@ -145,8 +145,8 @@ impl Vault {
 
         let id = self.store.clock.entity_id()?;
         let mut wtxn = self.store.env.write_txn()?;
-        owner.revalidate_in_txn(self, &wtxn)?;
-        if !crate::policy_model::is_live_vault_owner_in_txn(self, &wtxn, &owner.actor())? {
+        let actor = owner.revalidate_in_txn(self, &wtxn)?;
+        if !crate::policy_model::is_live_vault_owner_in_txn(self, &wtxn, &actor)? {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "only the vault owner registers a secret",
             )));
@@ -277,7 +277,8 @@ fn bindings_at_rung(
 }
 
 /// How far a class lets the value travel: a cross-vault value never
-/// replicates, a device-bound one stays on its device, a portable one syncs.
+/// replicates, a device-bound one stays on its device, a portable one may
+/// leave it.
 const fn reach(class: CustodyClass) -> u8 {
     match class {
         CustodyClass::CrossVault => 0,

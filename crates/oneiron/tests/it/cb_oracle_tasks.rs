@@ -912,7 +912,8 @@ mod cb_a {
     #[test]
     fn consult_is_synced_assignee_addressed_task_entity() {
         let consult = arm_consult_shape();
-        assert_eq!(consult.consult_task_entities, 2);
+        // The consult TASK, its Owner fact and its ConsultAssignee fact.
+        assert_eq!(consult.consult_task_entities, 3);
         assert_eq!(consult.synced_consult_entities, 1);
         assert_eq!(consult.consult_job_realizations, 0);
         assert_eq!(consult.assignee, "cc-second");
@@ -953,7 +954,10 @@ mod cb_a {
             task_verb::ConsultResultKind, task_verb::TaskAssignee,
         };
 
-        let fixture = super::consult_fixture::ConsultFixture::open_with(VaultConfig::default());
+        // The engine's clock sits inside the consult window the answers name.
+        let fixture = super::consult_fixture::ConsultFixture::open_with(
+            crate::common::on_pinned_clock(VaultConfig::default(), super::CONSULT_NOW + 10),
+        );
         let peers = [
             fixture.peer("cc-first", 0xE2),
             fixture.peer("cc-second", 0xE4),

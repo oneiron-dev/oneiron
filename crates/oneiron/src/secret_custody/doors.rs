@@ -25,7 +25,7 @@ use crate::error::SecretError;
 // ---------------------------------------------------------------------------
 
 /// Live secret name -> custody `EntityId`, keyed by the name itself.
-pub(super) const NAME_INDEX: SideTable<String, EntityId, Raw> =
+const NAME_INDEX: SideTable<String, EntityId, Raw> =
     SideTable::new(&side_table::SECRET_CUSTODY_NAME_INDEX);
 
 /// Resolves a live secret name to its custody `EntityId` inside an
@@ -313,10 +313,9 @@ pub(crate) fn refuse_bindings_wider_than_live_floor(
 /// Writes one custody body through the ONE sealed put shape, stamping
 /// `occurred_at` as both the occurrence range and the learned-at.
 ///
-/// Local type-77 writes use the engine-internal non-replicated shape
-/// (`allow_maintenance && !allow_reserved_predicate`). Public raw puts remain
-/// sealed; same-vault replay separately admits only portable, non-device-only
-/// records and maintains their name index in the body transaction.
+/// Local custody writes use the engine-internal non-replicated shape
+/// (`allow_maintenance && !allow_reserved_predicate`). Public raw puts and
+/// every replicated door stay sealed (`reject_secret_custody_byte`).
 ///
 /// `pub(crate)` for SECRET-04's `Vault::rotate_secret` and
 /// `Vault::revoke_secret` (ONE-1922), which re-put an existing record inside

@@ -356,16 +356,24 @@ impl Vault {
     }
 
     pub(crate) fn expire_critical_write_confirms(&self) -> Result<usize> {
-        self.expire_critical_write_confirms_impl(self.store.clock.now_recorded_at())
+        Ok(self.expire_critical_write_confirms_page()?.demoted)
+    }
+
+    /// One page of the expiry walk, at the vault clock read inside its write
+    /// transaction: pages run in clock order, so a walk that began at `t`
+    /// judges every confirm it reaches at `t` or later.
+    pub(crate) fn expire_critical_write_confirms_page(&self) -> Result<ConfirmExpiryPage> {
+        self.expire_critical_write_confirms_impl(None)
     }
 
     #[cfg(test)]
     pub(super) fn expire_critical_write_confirms_at(&self, now: u64) -> Result<usize> {
-        self.expire_critical_write_confirms_impl(now)
+        Ok(self.expire_critical_write_confirms_impl(Some(now))?.demoted)
     }
 
-    fn expire_critical_write_confirms_impl(&self, now: u64) -> Result<usize> {
+    fn expire_critical_write_confirms_impl(&self, at: Option<u64>) -> Result<ConfirmExpiryPage> {
         self.with_write_txn_grouped(|wtxn| {
+            let now = at.unwrap_or_else(|| self.store.clock.now_recorded_at());
             let (cursor, prior_fence) = self
                 .store
                 .critical_confirm_expiry_sweep_state_in_txn(&*wtxn)?;
@@ -424,9 +432,25 @@ impl Vault {
                     .put_pending_gate_consent_in_txn(wtxn, &timed_out)?;
                 demoted += 1;
             }
-            Ok(demoted)
+            Ok(ConfirmExpiryPage {
+                demoted,
+                began_at: cursor.is_none().then_some(now),
+                ended: complete,
+            })
         })
     }
+}
+
+/// One page of the critical-confirm expiry walk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ConfirmExpiryPage {
+    /// Confirms it demoted.
+    pub(crate) demoted: usize,
+    /// When it began a walk, if it did: the walk judges every confirm at this
+    /// time or later.
+    pub(crate) began_at: Option<u64>,
+    /// Whether it ended the walk it was on.
+    pub(crate) ended: bool,
 }
 
 /// The deterministic authority-log binding for a critical claim attachment.

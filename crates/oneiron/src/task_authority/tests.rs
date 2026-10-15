@@ -19,6 +19,8 @@ fn fact(task_ref: EntityId, kind: TaskAuthorityFactKind, actor_ref: EntityId) ->
         kind,
         actor_ref,
         assigned_ref: (kind == TaskAuthorityFactKind::HumanAssigned).then(|| id(0xA8)),
+        actor_generation: None,
+        assigned_generation: None,
         occurred_at: 100,
     }
 }
@@ -61,6 +63,8 @@ fn strict_v1_bodies_round_trip_and_reject_everything_else() {
         kind: TaskAuthorityFactKind::Cancelled,
         actor_ref: id(0xA2),
         assigned_ref: None,
+        actor_generation: None,
+        assigned_generation: None,
         occurred_at: 1_700_000_000,
     };
     let encoded = encode_task_authority_fact_body(&original);
@@ -80,7 +84,7 @@ fn strict_v1_bodies_round_trip_and_reject_everything_else() {
         (BODY_KEY_ROLE, Value::from(TaskRole::Task.role_byte())),
         (BODY_KEY_SCHEMA_VERSION, Value::from(2_u8)),
         (BODY_KEY_SUBKIND, Value::from("typed")),
-        (BODY_KEY_KIND, Value::from(5_u8)),
+        (BODY_KEY_KIND, Value::from(7_u8)),
         (BODY_KEY_TASK_REF, Value::from("not-a-hex-id")),
         (BODY_KEY_OCCURRED_AT, Value::from("not-a-number")),
     ] {
@@ -98,6 +102,48 @@ fn strict_v1_bodies_round_trip_and_reject_everything_else() {
     }));
     cases.push(rewrite_body(&encoded, |entries| {
         entries.push((Value::from("extra"), Value::from(1_u8)));
+    }));
+    // A binding generation rides only on a consult's party fact, only as
+    // one to eight 32-byte binaries in strictly ascending order, and only
+    // for a party the fact names.
+    cases.push(rewrite_body(&encoded, |entries| {
+        entries.push((
+            Value::from(BODY_KEY_ACTOR_GENERATION),
+            Value::Binary(vec![0xB1; 32]),
+        ));
+    }));
+    let parties = TaskAuthorityFact {
+        kind: TaskAuthorityFactKind::ConsultAssignee,
+        actor_generation: BindingGeneration::from_bindings([[0xB1; 32], [0xB0; 32]]),
+        ..original
+    };
+    let parties_encoded = encode_task_authority_fact_body(&parties);
+    assert_eq!(
+        decode_task_authority_fact_body(&parties_encoded).expect("party round trip"),
+        parties
+    );
+    let binding = |byte: u8| Value::Binary(vec![byte; 32]);
+    for generation in [
+        Value::from("b1".repeat(32)),
+        binding(0xB1),
+        Value::Array(Vec::new()),
+        Value::Array(vec![binding(0xB1), binding(0xB0)]),
+        Value::Array(vec![binding(0xB1), binding(0xB1)]),
+        Value::Array(vec![Value::Binary(vec![0xB1; 31])]),
+        Value::Array(vec![Value::from("b1".repeat(32))]),
+        Value::Array((0..=8).map(binding).collect()),
+    ] {
+        cases.push(body_with(
+            &parties_encoded,
+            BODY_KEY_ACTOR_GENERATION,
+            generation,
+        ));
+    }
+    cases.push(rewrite_body(&parties_encoded, |entries| {
+        entries.push((
+            Value::from(BODY_KEY_ASSIGNED_GENERATION),
+            Value::Binary(vec![0xB2; 32]),
+        ));
     }));
     for (index, case) in cases.iter().enumerate() {
         assert!(
@@ -291,5 +337,24 @@ fn an_authority_fact_admits_only_an_exact_echo() {
             .expect("state")
             .map(|state| state.owner_ref),
         Some(owner)
+    );
+}
+
+/// F24 round 5 (H219): at the cap of eight bindings, every class a party
+/// holds keeps one, so a consult its creator minted as an agent is one it
+/// still moves as that agent.
+#[test]
+fn a_generation_at_the_cap_keeps_every_class() {
+    let held: Vec<_> = (0..8)
+        .map(|byte| ("human", [byte; 32]))
+        .chain([("agent", [0xF0; 32]), ("system", [0xF1; 32])])
+        .collect();
+    let generation = BindingGeneration::from_classed_bindings(&held).expect("a generation");
+    assert_eq!(generation.bindings().len(), MAX_GENERATION_BINDINGS);
+    assert!(generation.names(&[0xF0; 32]), "the agent binding is kept");
+    assert!(generation.names(&[0xF1; 32]), "the system binding is kept");
+    assert!(
+        generation.names(&[0; 32]),
+        "the lowest human binding is kept"
     );
 }

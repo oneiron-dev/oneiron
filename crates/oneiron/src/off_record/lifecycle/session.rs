@@ -197,8 +197,8 @@ impl OffRecordSession<'_> {
         self.route_and_saver().map(|(route, _)| route)
     }
 
-    /// [`Self::write_route`] and, for a `Base` route in a room, the saver
-    /// whose vault it lands in, read under the same lock.
+    /// [`Self::write_route`] and, for a `Base` route, the saver whose vault
+    /// it lands in, read under the same lock.
     pub(super) fn route_and_saver(&self) -> Result<(SessionWriteRoute, Option<OnRecordSaver>)> {
         let state = session_entry_state(&self.entry)?;
         if state.record.closing || state.gone {
@@ -447,7 +447,7 @@ impl OffRecordSession<'_> {
     /// assembly whose room flipped mid-run stage its provisional into the
     /// overlay and then finalize into BASE, publishing the room's
     /// `result_ids` durably under a route it no longer held. One captured
-    /// route, every write. In a room on record the route lands under its
+    /// route, every write. On record, the route lands under its
     /// saver, and each base write checks the saver again in its own
     /// transaction, as every other landing does.
     pub(crate) fn retrieval_telemetry<'session>(
@@ -533,7 +533,7 @@ impl OffRecordSession<'_> {
                 })?;
                 segment.commit()
             }
-            // A room on record writes here only while its saver holds.
+            // A stretch on record writes here only while its saver holds.
             RouteTarget::Base => {
                 self.with_saver_write_txn(self.saver_check_for(route)?, |wtxn| {
                     route.revalidate()?;
@@ -591,7 +591,7 @@ impl OffRecordSession<'_> {
             unreachable!("anonymous recording refused above");
         }
         let overlay = self.entry.overlay.clone();
-        // A room on record writes into base only while its saver holds.
+        // A stretch on record writes into base only while its saver holds.
         let check = self.saver_check_for(route)?;
         let (segment, total) = self.with_saver_write_txn(check, |wtxn| {
             let segment = match target {
@@ -674,18 +674,6 @@ impl OffRecordSession<'_> {
     /// so this projects it rather than lending out the vault.
     pub(crate) fn vault_id(&self) -> VaultId {
         self.vault.vault_id()
-    }
-
-    /// Puts the room on record. A stretch in a room refuses this unbound
-    /// door: flipping saves everyone's later turns into this vault, so only
-    /// [`Self::flip_on_record_as`] may do it there.
-    pub fn flip_on_record(&self) -> Result<()> {
-        if session_entry_state(&self.entry)?.record.room.is_some() {
-            return Err(super::room::unbound_in_room(&self.session_ref));
-        }
-        self.vault
-            .set_off_record_session_mode(&self.session_ref, OffRecordMode::OnRecord)?;
-        Ok(())
     }
 
     /// Notes the messages of a turn witnessed while the room was on record:

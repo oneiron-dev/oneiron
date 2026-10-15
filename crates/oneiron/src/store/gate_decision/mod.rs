@@ -19,10 +19,13 @@ mod types;
 mod vet;
 
 pub(in crate::store) use self::checkpoint_custody::archived_by;
-#[cfg(test)]
-pub(crate) use self::checkpoint_custody::arm_before_activation_fork;
 pub(crate) use self::checkpoint_custody::{
-    LiveCustody, preflight_checkpoint_rows, read_live_custody, refuse_custody_beside,
+    LiveCustody, MadeDestination, admit_existing_vault_root, preflight_checkpoint_rows,
+    read_live_custody, refuse_custody_beside,
+};
+#[cfg(test)]
+pub(crate) use self::checkpoint_custody::{
+    arm_after_restore_destination_made, arm_before_activation_fork, arm_before_live_custody_read,
 };
 pub(in crate::store) use self::keys::{
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,

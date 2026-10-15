@@ -214,7 +214,7 @@ fn first_landed_answer_wins_over_backdated_later_answer_and_survives_reopen() {
     let a = consult_turn(&vault, 0x84);
     let b = consult_turn(&vault, 0x85);
     let mut first = answer_input(a.entity_ref(), a);
-    first.completed_at = unix_seconds_now() + 2;
+    first.completed_at = unix_seconds_now();
     vault
         .memory(owner, EdgeActorClass::Human)
         .land_consult_result(receipt.task_refs[1], &first)

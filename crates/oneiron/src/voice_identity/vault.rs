@@ -163,6 +163,9 @@ impl Vault {
             let space_digest = digest16(b"voice_identity.space", request.space.space_id.as_bytes());
             PRINT_RECORD.put(store, wtxn, &(subject, space_digest), &record)?;
             PRINT_POINTER.put(store, wtxn, &subject, &request.space.space_id)?;
+            if let Some(delete_after) = record.delete_after {
+                note_print_retention_wake(store, wtxn, delete_after)?;
+            }
             for sample in &ordered {
                 let digest = sample_digest(&subject, &sample.sample_id);
                 SAMPLE.put(store, wtxn, &digest, sample)?;
@@ -185,7 +188,12 @@ impl Vault {
         let known_threshold = request.policy.known_threshold;
 
         let rtxn = self.store.env.read_txn()?;
-        let candidates = load_match_candidates(&self.store, &rtxn, &request.space_id)?;
+        let candidates = load_match_candidates(
+            &self.store,
+            &rtxn,
+            &request.space_id,
+            self.now_recorded_at(),
+        )?;
         drop(rtxn);
 
         let mut resolved: Vec<Option<VoiceResolvedSegment>> = vec![None; segments.len()];
@@ -302,8 +310,17 @@ impl Vault {
         voice_session_ref: &str,
     ) -> Result<Option<VoiceSessionRosterV1>> {
         let rtxn = self.store.env.read_txn()?;
+        self.voice_session_roster_in_txn(&rtxn, voice_session_ref)
+    }
+
+    /// [`Self::voice_session_roster`] in the caller's snapshot.
+    pub(crate) fn voice_session_roster_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        voice_session_ref: &str,
+    ) -> Result<Option<VoiceSessionRosterV1>> {
         let digest = digest16(b"voice_identity.roster", voice_session_ref.as_bytes());
-        ROSTER.get(&self.store, &rtxn, &digest)
+        ROSTER.get(&self.store, rtxn, &digest)
     }
 
     /// Display-only corroboration for a voice grant offer. No caller boolean
@@ -382,7 +399,7 @@ impl Vault {
             };
             let digest = digest16(b"voice_identity.space", updated.space.space_id.as_bytes());
             PRINT_RECORD.put(store, wtxn, &(subject_ref, digest), &updated)?;
-            Ok(())
+            note_print_retention_wake(store, wtxn, delete_after)
         })
     }
 
@@ -492,4 +509,18 @@ pub(crate) fn put_raw_voice_roster_for_test(
 ) -> Result<()> {
     let digest = digest16(b"voice_identity.roster", voice_session_ref.as_bytes());
     vault.with_write_txn_grouped(|wtxn| ROSTER.put_undecodable(&vault.store, wtxn, &digest, bytes))
+}
+
+/// A vault that is not running wakes to delete the print at its deadline.
+fn note_print_retention_wake(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    delete_after: u64,
+) -> Result<()> {
+    crate::housekeeping::note_wake_in_txn(
+        store,
+        wtxn,
+        crate::housekeeping::HousekeepingSweep::VoicePrintRetention,
+        delete_after,
+    )
 }

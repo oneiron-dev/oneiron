@@ -553,7 +553,6 @@ fn no_agent_writer_root_or_borrowed_key_signs_a_settings_edit() {
         // A key that is no machine's at all.
         edit_by(&host, mine, &ed_key(66), world, widen.clone()),
     ];
-    land(&host, &forged);
     // The host root is the owner's roster key, not a machine.
     let fold = host.vault.authority_fold().unwrap();
     let root_edit = host
@@ -571,7 +570,27 @@ fn no_agent_writer_root_or_borrowed_key_signs_a_settings_edit() {
             2,
         )
         .unwrap();
-    land(&host, std::slice::from_ref(&root_edit));
+    // The door holds each edit no install key of the machine it names
+    // signed (H72). The work machine's own edit names that machine, so it
+    // lands, and only the fold refuses it.
+    for entry in [&forged[0], &forged[2], &root_edit] {
+        let err = host
+            .vault
+            .put_authority_log_entries(&[(entry.clone(), TimeRange { start: 2, end: 2 }, 2)])
+            .unwrap_err();
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::AuthorityLogSignerPending
+        );
+    }
+    land(&host, std::slice::from_ref(&forged[1]));
+    // The fold refuses the held edits too, wherever they are stored.
+    crate::authority::with_authority_doors_open_for_test(|| {
+        land(
+            &host,
+            &[forged[0].clone(), forged[2].clone(), root_edit.clone()],
+        );
+    });
 
     let fold = host.vault.authority_fold().unwrap();
     for entry in forged.iter().chain([&root_edit]) {
@@ -942,7 +961,7 @@ fn a_replayed_edit_or_a_restore_never_loosens_a_world() {
         .into_iter()
         .filter(|entry| matches!(entry.op, AuthorityOp::WorldPrivacy(_)))
         .collect();
-    let backups = tempfile::tempdir().unwrap();
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     host.vault.snapshot_checkpoint(&image, 100).unwrap();
     set(
@@ -1023,10 +1042,13 @@ fn a_conflicted_root_never_lets_a_private_world_go() {
     };
     assert!(withheld(&host.vault).unwrap().contains(&world));
 
+    // No door stores a rival genesis (H72); build the conflicted log here.
     let rival = genesis_entry(78, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-    host.vault
-        .put_authority_log_entry(&rival, TimeRange { start: 3, end: 3 }, 3)
-        .unwrap();
+    crate::authority::with_authority_doors_open_for_test(|| {
+        host.vault
+            .put_authority_log_entry(&rival, TimeRange { start: 3, end: 3 }, 3)
+    })
+    .unwrap();
     let fold = host.vault.authority_fold().unwrap();
     assert!(fold.vault_root_is_conflicted());
     for destination in [Destination::Unknown, Destination::Machine(here)] {

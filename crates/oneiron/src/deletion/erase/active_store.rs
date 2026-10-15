@@ -39,6 +39,7 @@ impl Vault {
     ) -> Result<(bool, Vec<EntityId>)> {
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
+        crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
         // A purged message's turns stop matching its words: read them while
         // its edges stand, and drop their vectors once it is gone.
         let turns = crate::embed::erased_message_turns_in_txn(self, wtxn, id)?;
@@ -103,6 +104,7 @@ impl Vault {
         crate::conversation_dag::capture_before_erase(self, wtxn, id, false)?;
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
+        crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
         let had_tags = crate::tagging::erase_in_txn(self, wtxn, id)?;
         // A soft erase keeps the graph, so the sieve and projection rows of
         // the same words go here, not at the physical tear.
@@ -130,7 +132,12 @@ impl Vault {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .erase(id, self.store.env.info().last_txn_id);
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
-        crate::ports::invalidate_source_in_txn(&self.store, wtxn, id)?;
+        crate::ports::invalidate_source_in_txn(
+            &self.store,
+            wtxn,
+            id,
+            crate::ports::DependentWalkDoor::SoftErase,
+        )?;
         crate::ports::keep_deleted_worlds_in_txn(&self.store, wtxn, id)?;
         crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
         let (hint_had_vector, hint_had_graph_mutation, _hint_neighbors) =

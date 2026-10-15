@@ -56,6 +56,16 @@ impl FederationPeer {
         authorize_sync_selector(vault, self.scope, &self.selector)
     }
 
+    /// The transport-authenticated principal this peer speaks as.
+    pub(in crate::sync) const fn principal(&self) -> EntityId {
+        self.principal
+    }
+
+    /// The grant this peer speaks under.
+    pub(in crate::sync) const fn grant(&self) -> EntityId {
+        self.selector.grant_id
+    }
+
     fn digest(&self) -> [u8; 32] {
         let mut hash = blake3::Hasher::new();
         hash.update(b"oneiron/federation-peer/v1");

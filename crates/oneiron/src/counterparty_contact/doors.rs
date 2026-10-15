@@ -284,9 +284,18 @@ impl Vault {
         id: &EntityId,
     ) -> Result<Option<CounterpartyContactRecord>> {
         let rtxn = self.store.env.read_txn()?;
+        self.get_counterparty_contact_in_txn(&rtxn, id)
+    }
+
+    /// [`Self::get_counterparty_contact`] in the caller's snapshot.
+    pub(crate) fn get_counterparty_contact_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<CounterpartyContactRecord>> {
         let Some(raw) = self
             .store
-            .port_entity_record(&rtxn, id)?
+            .port_entity_record(rtxn, id)?
             .map(|row| row.encode())
         else {
             return Ok(None);

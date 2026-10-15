@@ -2160,7 +2160,7 @@ fn similarity_result_is_not_a_consent_actor_and_cannot_auto_clear() -> Result<()
         1_000,
     )?;
     assert!(matches!(
-        card.evaluate_action(&request, &owner)
+        card.evaluate_action(&vault, &request, &owner)
             .expect_err("a voice similarity match must not clear a consequential action")
             .kind(),
         ErrorKind::ConsentUnauthenticatedActor,
@@ -2461,7 +2461,7 @@ fn a_restore_never_undoes_a_voice_consent_withdrawal() -> Result<()> {
         200,
     );
     vault.enroll_voice_print(&enrolled)?;
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 300)?;
     vault.withdraw_voice_consent(&VoiceWithdrawalRequest {

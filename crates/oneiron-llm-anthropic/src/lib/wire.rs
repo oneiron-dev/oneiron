@@ -148,10 +148,12 @@ pub fn build_anthropic_messages_request(
 }
 
 pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmResponse> {
+    // `Stop` is a claim the provider makes about the reply. A body that names
+    // no stop reason made none, so it must not read as a finished answer.
     let stop_reason = body
         .get("stop_reason")
         .and_then(JsonValue::as_str)
-        .map_or(FinishReason::Stop, anthropic_finish_reason);
+        .map_or_else(unreported_finish_reason, anthropic_finish_reason);
     let content_blocks = body
         .get("content")
         .and_then(JsonValue::as_array)
@@ -200,7 +202,11 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
                     input: block.get("input").cloned().unwrap_or(JsonValue::Null),
                 });
             }
-            _ => {}
+            // Redacted reasoning carries nothing to read.
+            Some("redacted_thinking") => {}
+            // Every other block kind is tool traffic this decoder cannot read,
+            // so the decode fails, as the streamed decoder's does.
+            _ => return Err(FatalLlmError::InvalidRequest.into()),
         }
     }
 
@@ -331,6 +337,13 @@ pub(super) fn parse_anthropic_usage(usage: &JsonValue) -> LlmUsage {
             reasoning: 0,
         },
         raw_provider: usage.clone(),
+    }
+}
+
+/// The finish of a reply whose provider reported none.
+fn unreported_finish_reason() -> FinishReason {
+    FinishReason::Other {
+        name: "unreported".to_owned(),
     }
 }
 

@@ -532,10 +532,9 @@ pub(super) fn entity_selector_decision(
     if !coreference_claim_passes(header.entity_type, blob, coreference) {
         return None;
     }
-    // Diagnostics are local-only. Credentials use the shared per-credential dial.
+    // Diagnostics and credentials are local-only.
     if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
-        || (header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
-            && !crate::secret_custody::custody_sync_allowed(&blob[ENTITY_METADATA_HEADER_LEN..]))
+        || header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
     {
         return None;
     }

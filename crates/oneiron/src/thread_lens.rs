@@ -15,6 +15,9 @@ use crate::{
     receipt::ReceiptRecord,
 };
 
+#[cfg(test)]
+mod tests;
+
 /// Inbox kind used for drafts that are waiting for an approve-to-send action.
 pub const THREAD_LENS_INBOX_DRAFTS_KIND: &str = "drafts_awaiting_send";
 
@@ -60,13 +63,16 @@ impl ThreadLensEntry {
 }
 
 /// Send-box input: an OF-327 intent plus the engine receipts already known.
+///
+/// Fields are private: the intent is what the send action dispatches, so it
+/// is fixed when the box is built and read back only through accessors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadLensSendBox {
-    pub intent_ref: String,
-    pub intent: OutboundIntent,
-    pub draft_text: String,
-    pub inbox_kind: String,
-    pub receipts: Vec<ReceiptRecord>,
+    intent_ref: String,
+    intent: OutboundIntent,
+    draft_text: String,
+    inbox_kind: String,
+    receipts: Vec<ReceiptRecord>,
 }
 
 impl ThreadLensSendBox {
@@ -94,17 +100,46 @@ impl ThreadLensSendBox {
     pub fn send_progress(&self) -> ThreadLensSendProgress {
         ThreadLensSendProgress::from_receipts(&self.receipts)
     }
+
+    #[must_use]
+    pub fn intent_ref(&self) -> &str {
+        &self.intent_ref
+    }
+
+    #[must_use]
+    pub const fn intent(&self) -> &OutboundIntent {
+        &self.intent
+    }
+
+    #[must_use]
+    pub fn draft_text(&self) -> &str {
+        &self.draft_text
+    }
+
+    #[must_use]
+    pub fn inbox_kind(&self) -> &str {
+        &self.inbox_kind
+    }
+
+    #[must_use]
+    pub fn receipts(&self) -> &[ReceiptRecord] {
+        &self.receipts
+    }
 }
 
 /// Engine-side data needed to render one thread-lens instrument.
+///
+/// Fields are private and [`Self::card`] checks them again before it renders,
+/// so the card a person approves always shows the channel the send action
+/// dispatches on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadLensInstrument {
-    pub card_id: String,
-    pub title: String,
-    pub channel: String,
-    pub thread_ref: String,
-    pub entries: Vec<ThreadLensEntry>,
-    pub send_box: ThreadLensSendBox,
+    card_id: String,
+    title: String,
+    channel: String,
+    thread_ref: String,
+    entries: Vec<ThreadLensEntry>,
+    send_box: ThreadLensSendBox,
 }
 
 impl ThreadLensInstrument {
@@ -128,7 +163,38 @@ impl ThreadLensInstrument {
         Ok(instrument)
     }
 
+    #[must_use]
+    pub fn card_id(&self) -> &str {
+        &self.card_id
+    }
+
+    #[must_use]
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    #[must_use]
+    pub fn channel(&self) -> &str {
+        &self.channel
+    }
+
+    #[must_use]
+    pub fn thread_ref(&self) -> &str {
+        &self.thread_ref
+    }
+
+    #[must_use]
+    pub fn entries(&self) -> &[ThreadLensEntry] {
+        &self.entries
+    }
+
+    #[must_use]
+    pub const fn send_box(&self) -> &ThreadLensSendBox {
+        &self.send_box
+    }
+
     pub fn card(&self) -> Result<GeneratedUiCard> {
+        self.validate()?;
         let mut root = crate::lens::LensNode::with_fallback_text(
             atom_id("thread-lens-root")?,
             LensAtom::Sheet(CollectionAtom {
@@ -286,6 +352,12 @@ fn send_box_node(send_box: &ThreadLensSendBox) -> Result<crate::lens::LensNode> 
         "thread-send-of327-verb",
         "OF-327 verb",
         format!("{}.{}", send_box.intent.channel, send_box.intent.verb),
+    )?);
+    // The action below dispatches to this target, so the card shows it.
+    node.children.push(meta_node(
+        "thread-send-target",
+        "send to",
+        &send_box.intent.target,
     )?);
     node.children.push(send_state_node(
         "thread-send-state-pending",
