@@ -190,7 +190,7 @@ impl LimitsConfig {
         }
         // A byte row is a claim on the machine: one too small for a single
         // transfer would be held to one anyway, past what it says.
-        let least = 2 * crate::api::transfer::LFS_MEMORY_ROOM;
+        let least = 2 * crate::api::LFS_MEMORY_ROOM;
         if self.lfs_memory_bytes < least {
             anyhow::bail!(
                 "limits.lfs_memory_bytes must be at least {least}: room for one LFS transfer in each half"

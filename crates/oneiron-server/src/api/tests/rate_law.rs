@@ -18,7 +18,7 @@ async fn cross(row: LimitRow) -> Crossing {
         LimitRow::LfsTransfers | LimitRow::LfsQuota | LimitRow::LfsObjectSize => {
             crate::api::git_lfs::tests::cross_the_lfs_row(row, CALLERS).await
         }
-        LimitRow::LfsFrameBytes => crate::api::git_lfs::tests::cross_the_frames(CALLERS).await,
+        LimitRow::LfsMemoryBytes => crate::api::git_lfs::tests::cross_the_frames(CALLERS).await,
         LimitRow::CodeRuns => super::mcp_code_admission::cross_the_runs(CALLERS).await,
         LimitRow::CompactionPasses => {
             tokio::task::spawn_blocking(|| crate::ai_host::cross_the_passes(CALLERS))

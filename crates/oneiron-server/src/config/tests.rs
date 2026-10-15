@@ -122,7 +122,7 @@ fn an_unreadable_trusted_proxy_stops_startup() {
 fn an_lfs_memory_row_without_room_for_a_transfer_stops_startup() {
     let dir = tempfile::tempdir().expect("config dir");
     let path = dir.path().join("config.toml");
-    let room = crate::api::transfer::LFS_MEMORY_ROOM;
+    let room = crate::api::LFS_MEMORY_ROOM;
     for (bytes, starts) in [(1, false), (2 * room - 1, false), (2 * room, true)] {
         std::fs::write(&path, format!("[limits]\nlfs_memory_bytes = {bytes}\n")).expect("config");
         let args = ServeArgs {
