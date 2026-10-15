@@ -942,7 +942,7 @@ fn a_replayed_edit_or_a_restore_never_loosens_a_world() {
         .into_iter()
         .filter(|entry| matches!(entry.op, AuthorityOp::WorldPrivacy(_)))
         .collect();
-    let backups = tempfile::tempdir().unwrap();
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     host.vault.snapshot_checkpoint(&image, 100).unwrap();
     set(
