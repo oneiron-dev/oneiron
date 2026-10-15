@@ -297,6 +297,7 @@ impl Drop for Place {
             drop(HeldBytes {
                 line: Arc::clone(&self.line),
                 bytes: self.turn.bytes,
+                past_line: false,
             });
         }
     }
