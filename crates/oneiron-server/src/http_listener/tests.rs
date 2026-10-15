@@ -329,6 +329,8 @@ async fn past_the_floor_a_new_socket_waits_its_turn_and_the_row_asks() {
 
 #[tokio::test]
 async fn an_address_sheds_strangers_past_its_share_but_never_its_authenticated_connections() {
+    const LOGIN: &[u8] = b"GET /login HTTP/1.1\r\nhost: listener\r\n\r\n";
+
     // The address this host would send from to reach the outside: an
     // off-device peer as far as the listener can tell. No packet is sent.
     let probe = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
@@ -351,7 +353,6 @@ async fn an_address_sheds_strangers_past_its_share_but_never_its_authenticated_c
         },
     )
     .await;
-    const LOGIN: &[u8] = b"GET /login HTTP/1.1\r\nhost: listener\r\n\r\n";
 
     // A fleet on one address: each connection authenticates on its first
     // request and leaves the share, so ten of them hold none of it.

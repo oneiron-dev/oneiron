@@ -46,7 +46,7 @@ pub(crate) fn open_file_limit() -> Option<u64> {
         if limit.rlim_cur == libc::RLIM_INFINITY {
             return Some(u64::MAX);
         }
-        u64::try_from(limit.rlim_cur).ok()
+        Some(limit.rlim_cur)
     }
     #[cfg(not(unix))]
     {

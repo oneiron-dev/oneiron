@@ -416,6 +416,10 @@ async fn a_burst_of_two_hundred_callers_on_one_credential_all_complete() {
                 stock_git(
                     &source,
                     &[
+                        "-c",
+                        "user.name=Test",
+                        "-c",
+                        "user.email=test@example.invalid",
                         "commit-tree",
                         "HEAD^{tree}",
                         "-p",
