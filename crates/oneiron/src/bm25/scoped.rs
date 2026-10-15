@@ -100,6 +100,7 @@ where
     // query term's whole posting list once per page, so a common term cost
     // the square of the vault size.
     let mut admitted = HashMap::<EntityId, bool>::new();
+    let walks = crate::ports::any_pending_walk(store, rtxn)?;
     let mut best =
         scoring::score_query_terms(store, rtxn, config, &terms, options.scope.recency, |id| {
             if let Some(admit) = admitted.get(id) {
@@ -111,7 +112,7 @@ where
                     Some(category) => category(&target)?,
                     None => (options.scope.exact_posting_matches_scope)(&target)?,
                 },
-            };
+            } && !(walks && crate::ports::pending_withdrawn_in(store, rtxn, id)?);
             admitted.insert(*id, admit);
             Ok(admit)
         })?;

@@ -96,6 +96,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::PORTS_DEPENDENT_WALK, CONTENT),
     (&t::PORTS_DEPENDENT_WALK_CHECK, LIVE),
     (&t::PORTS_DEPENDENT_WALK_POLICY, LIVE),
+    (&t::PORTS_DEPENDENT_WALK_SETTLED, CONTENT),
     (&t::PORTS_ID_FLOOR, LIVE),
     (&t::PORTS_STALE, CONTENT),
     (&t::PORTS_TOMBSTONE, CONTENT),

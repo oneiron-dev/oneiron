@@ -22,8 +22,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::ops::Bound;
 
-/// Dependents one write transaction withdraws.
-pub const DEFAULT_DEPENDENT_WALK_BATCH: u64 = 10_000;
+/// Dependents one write transaction withdraws: the count the walk refused
+/// at before, so every walk that completed then still completes in the one
+/// transaction that marks it.
+pub const DEFAULT_DEPENDENT_WALK_BATCH: u64 = 100_000;
 /// Dependents of one source past which its walk asks whether everything is
 /// okay: far above what a fleet derives from one record.
 pub const DEFAULT_DEPENDENT_WALK_CHECK_THRESHOLD: u64 = 1_000_000;
@@ -36,6 +38,11 @@ const CHECK: SideTable<EntityId, DependentWalkCheck, Named> =
 /// Device-local walk policy. Key: ().
 const POLICY: SideTable<(), DependentWalkPolicy, Raw> =
     SideTable::new(&side_table::PORTS_DEPENDENT_WALK_POLICY);
+/// A row the walk of its source passes by: one admitted after the mark, or a
+/// dependent withdrawn early because a put rewrote it. Key: the source and
+/// the row.
+const SETTLED: SideTable<(EntityId, RowKey), (), Raw> =
+    SideTable::new(&side_table::PORTS_DEPENDENT_WALK_SETTLED);
 
 /// The frontier and dependent of a dependency row: its key after the source.
 const ROW: usize = 24;
@@ -307,6 +314,8 @@ pub(super) fn begin_in_txn(
         worlds.absorb(&pending.worlds);
         walked = pending.walked;
         end = end.max(pending.end);
+        // The new mark covers every row the source holds now.
+        SETTLED.delete_from(store, txn, document.as_bytes())?;
     }
     let walk = WalkRow {
         door,
@@ -344,10 +353,12 @@ fn batch_in_txn(
         }
         rows.push(row_of(&row?.0, &prefix)?);
     }
-    let dependents = rows
-        .iter()
-        .map(dependent_of)
-        .collect::<Result<BTreeSet<_>>>()?;
+    let mut dependents = BTreeSet::new();
+    for row in &rows {
+        if !SETTLED.contains(store, txn, &(*document, *row))? {
+            dependents.insert(dependent_of(row)?);
+        }
+    }
     for dependent in &dependents {
         integrity::withdraw_dependent_in_txn(store, txn, document, dependent, &walk.worlds)?;
     }
@@ -360,7 +371,11 @@ fn batch_in_txn(
             walk.after = Some(*last);
             WALK.put(store, txn, document, &walk)
         }
-        _ => WALK.delete(store, txn, document).map(drop),
+        _ => {
+            WALK.delete(store, txn, document)?;
+            SETTLED.delete_from(store, txn, document.as_bytes())?;
+            Ok(())
+        }
     }
 }
 
@@ -399,7 +414,7 @@ pub(super) fn pending_withdrawal_in(
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<CarriedWorlds>> {
-    if WALK.iter_raw_from(dbs, txn, &[])?.next().is_none() {
+    if !any_pending_walk(dbs, txn)? {
         return Ok(None);
     }
     let mut withdrawn: Option<CarriedWorlds> = None;
@@ -420,8 +435,10 @@ pub(super) fn pending_withdrawal_in(
             .and_then(|raw| EntityMetadataHeader::parse(&raw))
             .map(|header| header.entity_type);
         for SourceSpan { document, frontier } in &sources {
+            let row = row_key(*frontier, &node);
             if let Some(walk) = WALK.get(dbs, txn, document)?
-                && walk.covers(&row_key(*frontier, &node))
+                && walk.covers(&row)
+                && !SETTLED.contains(dbs, txn, &(*document, row))?
                 && !(entity_type == Some(crate::registry::ENTITY_TYPE_EVENT)
                     && crate::calendar::origin::survives_source_deletion(dbs, txn, node)?)
             {
@@ -437,6 +454,71 @@ pub(super) fn pending_withdrawal_in(
         }
     }
     Ok(withdrawn)
+}
+
+/// Whether any walk is pending: one seek, so a hot read asks once.
+pub(crate) fn any_pending_walk(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<bool> {
+    Ok(WALK.iter_raw_from(dbs, txn, &[])?.next().is_some())
+}
+
+/// Whether a pending walk withdraws `id` before its batch reaches it.
+pub(crate) fn pending_withdrawn_in(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(pending_withdrawal_in(dbs, txn, id)?.is_some())
+}
+
+/// A dependency row written while its source's walk is pending is the new
+/// version's, never one the mark covered: the walk passes it by.
+pub(super) fn settle_admitted_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    source: SourceSpan,
+    dependent: &EntityId,
+) -> Result<()> {
+    let row = row_key(source.frontier, dependent);
+    if WALK
+        .get(dbs, txn, &source.document)?
+        .is_some_and(|walk| walk.covers(&row))
+    {
+        SETTLED.put(dbs, txn, &(source.document, row), &())?;
+    }
+    Ok(())
+}
+
+/// A put is about to rewrite `id`, a dependent a pending walk has not
+/// reached: it is withdrawn here first, from the body and revision the walk
+/// would have read at the mark, and its rows are settled so the walk passes
+/// them by. Its regeneration then meets the same fence as after a
+/// single-transaction walk.
+pub(crate) fn withdraw_before_rewrite_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(worlds) = pending_withdrawal_in(store, txn, id)? else {
+        return Ok(());
+    };
+    let mut direct = false;
+    for SourceSpan { document, frontier } in super::regeneration::sources_of(store, txn, id)? {
+        let row = row_key(frontier, id);
+        let Some(walk) = WALK.get(store, txn, &document)? else {
+            continue;
+        };
+        if walk.covers(&row) && !SETTLED.contains(store, txn, &(document, row))? {
+            integrity::withdraw_dependent_in_txn(store, txn, &document, id, &walk.worlds)?;
+            SETTLED.put(store, txn, &(document, row), &())?;
+            direct = true;
+        }
+    }
+    // Withdrawn only through an epoch summary it was written from: marked
+    // now, so the batch that reaches that summary finds it done.
+    if !direct {
+        integrity::withdraw_in_txn(store, txn, id, &worlds)?;
+    }
+    Ok(())
 }
 
 impl Vault {

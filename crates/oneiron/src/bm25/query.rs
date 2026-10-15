@@ -475,11 +475,15 @@ where
         options.exact_posting_matches_scope,
     )?;
 
+    let walks = crate::ports::any_pending_walk(store, rtxn)?;
     let mut ranked =
         scoring::score_query_terms(store, rtxn, config, &query_terms, options.recency, |id| {
             Ok(!crate::vault_cleanup::is_archived_in_txn(store, rtxn, id)?
                 && (options.private_note_ids.is_some_and(|ids| ids.contains(id))
-                    || crate::note::ordinary_entity_visible(store, rtxn, id)?))
+                    || crate::note::ordinary_entity_visible(store, rtxn, id)?)
+                // Withdrawn by a walk whose batch has not reached it yet:
+                // out of the ranking, as its postings will be.
+                && !(walks && crate::ports::pending_withdrawn_in(store, rtxn, id)?))
         })?;
     ranked.sort_by(|a, b| {
         b.1.total_cmp(&a.1)

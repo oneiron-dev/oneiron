@@ -502,6 +502,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "PORTS_DEPENDENT_WALK",
         "PORTS_DEPENDENT_WALK_CHECK",
         "PORTS_DEPENDENT_WALK_POLICY",
+        "PORTS_DEPENDENT_WALK_SETTLED",
         "PORTS_WITHDRAWN",
         "PROJECT_DEPTH_LOCAL_BIRTH",
         "PROJECT_GOAL_INTAKE_ADMISSION",

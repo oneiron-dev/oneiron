@@ -300,3 +300,120 @@ fn a_restart_mid_walk_resumes_and_finishes() -> Result<()> {
     assert_eq!(vault.dependent_walk_checks()?.len(), 1);
     Ok(())
 }
+
+/// A docs source rewritten at the same stamp: the dependency a new
+/// derivation records mid-walk is the new text's, and stays live (Sol and
+/// Astra R1 on #1471).
+#[test]
+fn a_dependency_admitted_mid_walk_stays_live() -> Result<()> {
+    let (_tmp, vault) = open();
+    let source = entity(0x5B);
+    put_source(&vault, DependentWalkDoor::ChangedDocsSource, &source)?;
+    let dependents = derive_five(&vault, &source)?;
+    vault.put_entity(
+        &source,
+        ENTITY_TYPE_ASSET_TEXT,
+        at(1),
+        1,
+        &body(&serde_json::json!({ "source": "imported", "text": "second page" })),
+    )?;
+    assert_eq!(vault.pending_dependent_walks()?.len(), 1);
+    // Between the walk's last row done and the next it covers.
+    let mut bytes = [0; 16];
+    bytes[0] = 0x63;
+    bytes[15] = 1;
+    let fresh = EntityId::from_bytes(bytes)?;
+    vault
+        .batch()
+        .put(
+            &fresh,
+            ENTITY_TYPE_TURN,
+            at(4),
+            4,
+            &body(&serde_json::json!({ "txt": "fresh" })),
+        )
+        .edge(&fresh, EdgeKind::DerivedFrom, &source, 1.0)
+        .commit()?;
+    assert!(
+        !withdrawn(&vault, &fresh)?,
+        "the new derivation reads live mid-walk"
+    );
+    vault.finish_dependent_walks()?;
+    assert!(!withdrawn(&vault, &fresh)?, "the walk passed it by");
+    for dependent in &dependents {
+        assert!(withdrawn(&vault, dependent)?);
+    }
+    Ok(())
+}
+
+/// A dependent rewritten before the walk reaches it regenerates as it would
+/// after a single-transaction walk: its completion meets the revision the
+/// mark covered, not the rewrite's (Sol R1 on #1471).
+#[test]
+fn a_dependent_rewritten_mid_walk_regenerates() -> Result<()> {
+    use crate::ports::{DependencyIndex, SourceSpan};
+    let (_tmp, vault) = open();
+    let source = entity(0x5B);
+    put_source(&vault, DependentWalkDoor::ChangedDocsSource, &source)?;
+    let dependents = derive_five(&vault, &source)?;
+    walk_through(&vault, DependentWalkDoor::ChangedDocsSource, &source)?;
+    let late = dependents[4];
+    assert!(withdrawn(&vault, &late)?, "past the first batch, pending");
+    vault.put_entity(
+        &late,
+        ENTITY_TYPE_TURN,
+        at(2),
+        20,
+        &body(&serde_json::json!({ "txt": "regenerated" })),
+    )?;
+    vault.finish_dependent_walks()?;
+    let span = SourceSpan {
+        document: source,
+        frontier: vault
+            .read_entity_header(&source)?
+            .expect("source header")
+            .learned_at,
+    };
+    assert!(
+        vault.with_write_txn(|txn| {
+            vault
+                .store
+                .port_dependency_complete_regeneration(txn, &late, 20, &[span])
+        })?,
+        "the regeneration completes"
+    );
+    assert!(!withdrawn(&vault, &late)?);
+    Ok(())
+}
+
+/// Search mid-walk fills its limit with live records: a pending dependent
+/// leaves the ranking at once, as its postings will (Astra R1 on #1471).
+#[test]
+fn search_mid_walk_fills_its_limit_with_live_records() -> Result<()> {
+    let (_tmp, vault) = open();
+    let source = entity(0x5B);
+    put_source(&vault, DependentWalkDoor::ChangedDocsSource, &source)?;
+    derive_five(&vault, &source)?;
+    let live = entity(0x6A);
+    let words = format!("{NEEDLE} and a good many other words that dilute it");
+    vault
+        .batch()
+        .put(
+            &live,
+            ENTITY_TYPE_TURN,
+            at(2),
+            2,
+            &body(&serde_json::json!({ "txt": words })),
+        )
+        .text(&live, &[("body", words.as_str())])
+        .commit()?;
+    walk_through(&vault, DependentWalkDoor::ChangedDocsSource, &source)?;
+    assert_eq!(vault.pending_dependent_walks()?.len(), 1);
+    let hits: Vec<_> = vault
+        .search_text(NEEDLE, 1)?
+        .into_iter()
+        .map(|hit| hit.id)
+        .collect();
+    assert_eq!(hits, vec![live]);
+    Ok(())
+}

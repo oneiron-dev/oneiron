@@ -220,6 +220,11 @@ impl Store {
         if *marker != *token {
             return Ok(false);
         }
+        // A dependent a pending walk withdrew takes no fill, as one whose
+        // batch already cleared its marker does not.
+        if crate::ports::pending_withdrawn_in(self, wtxn, id)? {
+            return Ok(false);
+        }
         let Some(record) = self.entities.get(wtxn, id.as_bytes())? else {
             return Ok(false);
         };

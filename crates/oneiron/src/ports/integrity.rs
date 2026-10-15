@@ -43,6 +43,7 @@ pub(crate) fn record_dependency_in_txn(
         return Err(Error::EntityNotFound);
     }
     let key = [source_prefix(source).as_slice(), dependent.as_bytes()].concat();
+    let admitted = store.vault_meta().get(txn, &key)?.is_none();
     store.vault_meta().put(txn, &key, &[])?;
     let reverse = [
         super::regeneration::reverse_prefix(dependent).as_slice(),
@@ -51,6 +52,9 @@ pub(crate) fn record_dependency_in_txn(
     ]
     .concat();
     store.vault_meta().put(txn, &reverse, &[])?;
+    if admitted {
+        super::dependent_walk::settle_admitted_in_txn(store, txn, source, dependent)?;
+    }
     Ok(())
 }
 pub(super) fn list_by_source(
@@ -273,7 +277,7 @@ pub(super) fn mark_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityI
 }
 /// Marks `id` stale, withdrawn for `worlds`: where the words of the source
 /// whose deletion withdrew it sat.
-fn withdraw_in_txn(
+pub(super) fn withdraw_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
