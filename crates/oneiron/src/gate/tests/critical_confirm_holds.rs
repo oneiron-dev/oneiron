@@ -28,10 +28,12 @@ fn settle(
     let binding = critical_write_confirm_binding(pending)?;
     let (genesis, mut entry) = critical_confirm_owner_entry(pending, disposition, seed);
     match prev {
-        None => vault.put_authority_log_entries(&[
-            (genesis, test_time(1), 1),
-            (entry.clone(), test_time(2), 2),
-        ])?,
+        None => {
+            vault.put_authority_log_entries(&[
+                (genesis, test_time(1), 1),
+                (entry.clone(), test_time(2), 2),
+            ])?;
+        }
         Some(prev) => {
             entry.seq = prev.seq + 1;
             entry.parent_hashes =
