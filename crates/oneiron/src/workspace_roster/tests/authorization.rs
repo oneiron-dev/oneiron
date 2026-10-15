@@ -735,7 +735,10 @@ fn a_member_consent_that_lapses_before_the_grant_mint_mints_no_grant() -> Result
 /// A completed onboarding's replay checks the member's consent inside the
 /// snapshot its publication fence covers: a consent that lapses after the
 /// replay's preflight and before the fence's revision capture is refused,
-/// not published under (Astra mailbox r1 F3).
+/// not published under (Astra mailbox r1 F3). Deleting the member's PERSON
+/// keeps its shell, so the mailbox actor stays anchored to the member and
+/// only the consent lapses (a merge would also move the anchor, which a
+/// separate check refuses).
 #[test]
 fn a_member_consent_that_lapses_before_the_publication_fence_is_refused() -> Result<()> {
     let (_dir, vault, mut intent, owner) = mailbox_fixture()?;
@@ -755,9 +758,11 @@ fn a_member_consent_that_lapses_before_the_publication_fence_is_refused() -> Res
     activate_mailbox(&vault, identity)?;
     vault.onboard_workspace_member_with_owner(intent.clone(), &writer(WRITER), &member, &owner)?;
 
-    set_consent_window_for_test(move |vault| merge_member_away(vault, member_id));
+    set_consent_window_for_test(move |vault| {
+        assert!(vault.delete_entity(&member_id).expect("delete the member"));
+    });
     let result =
-        vault.onboard_workspace_member_with_owner(intent, &writer(WRITER), &member, &owner);
+        vault.onboard_workspace_member_with_owner(intent.clone(), &writer(WRITER), &member, &owner);
     assert!(
         matches!(
             result,
@@ -765,6 +770,14 @@ fn a_member_consent_that_lapses_before_the_publication_fence_is_refused() -> Res
         ),
         "{result:?}"
     );
+    let txn = vault.store.env.read_txn()?;
+    let anchor = crate::subject_model::actor_subject_anchor_in_txn(
+        &vault,
+        &txn,
+        &intent.actor_ref,
+        intent.occurred_at,
+    )?;
+    assert_eq!(anchor.map(|anchor| anchor.subject_ref), Some(member_id));
     Ok(())
 }
 
