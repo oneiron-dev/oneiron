@@ -1,5 +1,10 @@
 //! Socket attachment and bounded reconnect retention. RPC replies never enter
 //! this registry. A fresh bind must match the complete verified CoreAuth.
+//!
+//! Sessions and subscriptions are rows, never refusals (rule 5): past either
+//! row the next session or subscription waits its turn, round-robin across
+//! principals, before the synchronous app tier runs, and a session waiting
+//! its turn outranks a detached one kept only for a reconnect.
 use super::subscriptions::{LiveQueries, LiveQuerySource, Push};
 use super::*;
 use crate::server::SyncServer;
@@ -10,20 +15,27 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
+use crate::admission::{Admission, Permit};
+use crate::wire_telemetry::LimitRow;
+
 const RETENTION: Duration = Duration::from_secs(300);
-const MAX_SESSIONS: usize = 64;
 
 struct Session {
     auth: CoreAuth,
     queries: Arc<LiveQueries>,
     attached: AtomicU32,
     touched: Mutex<Instant>,
+    /// The session's turn under `limits.live_sessions`, held while the hub
+    /// keeps it.
+    _turn: Option<Permit>,
 }
 
 pub(crate) struct Hub {
     server: Weak<SyncServer>,
     sessions: Mutex<BTreeMap<String, Arc<Session>>>,
     budget: Arc<super::budget::Budget>,
+    session_line: Admission<String>,
+    subscription_line: Admission<String>,
 }
 
 impl Hub {
@@ -38,10 +50,24 @@ impl Hub {
         if let Some(hub) = hubs.get(&key).and_then(Weak::upgrade) {
             return hub;
         }
+        let limits = &server.config.limits;
+        let questions = Arc::clone(server.wire_telemetry.limit_questions());
         let hub = Arc::new(Self {
             server: Arc::downgrade(server),
             sessions: Mutex::new(BTreeMap::new()),
-            budget: super::budget::Budget::new(super::budget::HUB_BYTES),
+            budget: super::budget::Budget::new(Arc::clone(&server.retained), questions.clone()),
+            session_line: Admission::new(
+                LimitRow::LiveSessions,
+                questions.clone(),
+                limits.live_sessions,
+                limits.queue_wait(),
+            ),
+            subscription_line: Admission::new(
+                LimitRow::LiveSubscriptions,
+                questions,
+                limits.live_subscriptions,
+                limits.queue_wait(),
+            ),
         });
         hubs.insert(key, Arc::downgrade(&hub));
         let worker = hub.clone();
@@ -77,6 +103,20 @@ impl Hub {
                     .lock()
                     .is_ok_and(|time| time.elapsed() < RETENTION))
         });
+        // Work waiting its turn outranks a session kept only for a
+        // reconnect: the detached session kept longest goes, with its
+        // subscriptions, and its reconnect gets a fresh snapshot.
+        for _ in 0..self.session_line.waiting() + self.subscription_line.waiting() {
+            let oldest = sessions
+                .iter()
+                .filter(|(_, session)| session.attached.load(Ordering::Acquire) == 0)
+                .min_by_key(|(_, session)| session.touched.lock().map_or(Instant::now(), |at| *at))
+                .map(|(document, _)| document.clone());
+            let Some(document) = oldest else {
+                break;
+            };
+            sessions.remove(&document);
+        }
         let pending: Vec<_> = sessions.values().cloned().collect();
         drop(sessions);
         for session in pending {
@@ -107,11 +147,28 @@ impl Hub {
         }
     }
 
+    /// Sessions and subscriptions waiting for their turn now.
+    #[cfg(test)]
+    pub(crate) fn waiting(&self) -> (usize, usize) {
+        (
+            self.session_line.waiting(),
+            self.subscription_line.waiting(),
+        )
+    }
+
+    /// Whether `document` names a session the hub keeps.
+    fn keeps(&self, document: &str) -> bool {
+        self.sessions
+            .lock()
+            .is_ok_and(|sessions| sessions.contains_key(document))
+    }
+
     fn session(
         &self,
         auth: &CoreAuth,
         conn_id: u32,
         cursor: Option<&Cursor>,
+        turn: Option<Permit>,
     ) -> Result<Arc<Session>, AppError> {
         let mut sessions = self.sessions.lock().map_err(|_| unavailable())?;
         if let Some(session) = cursor.and_then(|cursor| sessions.get(&cursor.document)) {
@@ -122,30 +179,21 @@ impl Hub {
             session.queries.reconnect(conn_id)?;
             return Ok(session.clone());
         }
-        if sessions.len() >= MAX_SESSIONS {
-            return Err(AppError::bad_request(
-                "live-query session limit exceeded",
-                None,
-            ));
-        }
         let server = self.server.upgrade().ok_or_else(AppError::unauthorized)?;
         let limits = server
             .vault()
             .policy_livequery_tracker_limits(auth.principal_ref())
             .map_err(|_| AppError::internal_server_error("livequery tracker policy refused"))?;
         let document = oneiron::EntityId::now().to_hex();
-        let session_budget = super::budget::Budget::new(super::budget::SESSION_BYTES);
-        let source: Arc<dyn LiveQuerySource> = Arc::new(super::source::BoundSource::with_budgets(
+        let source: Arc<dyn LiveQuerySource> = Arc::new(super::source::BoundSource::with_budget(
             self.server.clone(),
             auth.clone(),
             document.clone(),
-            session_budget.clone(),
             self.budget.clone(),
         ));
-        let queries = Arc::new(LiveQueries::with_budgets(
+        let queries = Arc::new(LiveQueries::with_budget_limits(
             conn_id,
             source,
-            session_budget,
             self.budget.clone(),
             limits,
         ));
@@ -159,6 +207,7 @@ impl Hub {
             queries,
             attached: AtomicU32::new(conn_id),
             touched: Mutex::new(Instant::now()),
+            _turn: turn,
         });
         sessions.insert(document, session.clone());
         Ok(session)
@@ -182,6 +231,7 @@ impl Hub {
                     queries: queries.clone(),
                     attached: AtomicU32::new(0),
                     touched: Mutex::new(Instant::now()),
+                    _turn: None,
                 }),
             );
         queries
@@ -195,6 +245,8 @@ struct SocketOwner<'a> {
     channel: Channel,
     cursor: Option<Cursor>,
     origin: Option<String>,
+    /// The turn a new subscription takes under `limits.live_subscriptions`.
+    turn: std::cell::Cell<Option<Permit>>,
 }
 
 impl MemorySubscriptionOwner for SocketOwner<'_> {
@@ -202,12 +254,13 @@ impl MemorySubscriptionOwner for SocketOwner<'_> {
     type Error = AppError;
 
     fn open(&self, id: u64, view: ScopedView) -> Result<Self::Delivery, Self::Error> {
-        self.queries.open(
+        self.queries.open_in_turn(
             id,
             view,
             self.channel,
             self.cursor.as_ref(),
             self.origin.clone(),
+            self.turn.take(),
         )
     }
 
@@ -231,6 +284,12 @@ pub(crate) struct Connection {
     /// Requests whose result the release refused: no later chunk of it
     /// leaves.
     refused: BTreeSet<u64>,
+    /// Turns taken for the next request by [`Self::admit`]: a new session's
+    /// and a new subscription's.
+    session_turn: Option<Permit>,
+    subscription_turn: Option<Permit>,
+    /// The next request waited for a turn past its deadline.
+    waited_out: bool,
 }
 
 impl Connection {
@@ -244,7 +303,60 @@ impl Connection {
             sent: BTreeMap::new(),
             withheld: BTreeSet::new(),
             refused: BTreeSet::new(),
+            session_turn: None,
+            subscription_turn: None,
+            waited_out: false,
         }
+    }
+
+    /// Waits for the turns a subscription request needs, before the
+    /// synchronous app tier runs it: a new session's under
+    /// `limits.live_sessions` and a new subscription's under
+    /// `limits.live_subscriptions`, each in its principal's place in line. A
+    /// request that needs neither, or does not decode, waits for nothing.
+    pub(crate) async fn admit(&mut self, auth: Option<&CoreAuth>, payload: &[u8]) {
+        self.session_turn = None;
+        self.subscription_turn = None;
+        self.waited_out = false;
+        let (
+            Some(auth),
+            Ok(SubRequest::Open {
+                subscription_id,
+                cursor,
+                ..
+            }),
+        ) = (auth, decode_sub(payload))
+        else {
+            return;
+        };
+        let key = auth.principal_ref().unwrap_or(auth.principal()).to_owned();
+        let holds = match &self.session {
+            Some(session) => session.queries.holds(subscription_id),
+            None => {
+                if !cursor.is_some_and(|cursor| self.hub.keeps(&cursor.document)) {
+                    match self.hub.session_line.admit(key.clone()).await {
+                        Ok(turn) => self.session_turn = Some(turn),
+                        Err(_) => {
+                            self.waited_out = true;
+                            return;
+                        }
+                    }
+                }
+                false
+            }
+        };
+        if !holds {
+            match self.hub.subscription_line.admit(key).await {
+                Ok(turn) => self.subscription_turn = Some(turn),
+                Err(_) => self.waited_out = true,
+            }
+        }
+    }
+
+    /// Whether subscription `id` is open on this socket.
+    #[cfg(test)]
+    pub(crate) fn opened(&self, id: u64) -> bool {
+        self.active.contains_key(&id)
     }
 
     pub(crate) fn control(
@@ -257,6 +369,10 @@ impl Connection {
             .require(CoreScope::Read)
             .map_err(AppError::from)
             .and_then(|()| self.apply(auth, request));
+        // A turn the request did not use goes back to its line.
+        self.session_turn = None;
+        self.subscription_turn = None;
+        self.waited_out = false;
         match result {
             Ok(pushes) => self.frames(pushes),
             Err(error) => Ok(vec![sub_error(id, error)?]),
@@ -266,9 +382,17 @@ impl Connection {
     fn apply(&mut self, auth: &CoreAuth, request: SubRequest) -> Result<Vec<Push>, AppError> {
         let id = request.id();
         let opening = matches!(&request, SubRequest::Open { .. });
+        if opening && std::mem::take(&mut self.waited_out) {
+            return Err(AppError::waited_out());
+        }
         if self.session.is_none() {
             if let SubRequest::Open { cursor, .. } = &request {
-                self.session = Some(self.hub.session(auth, self.conn_id, cursor.as_ref())?);
+                self.session = Some(self.hub.session(
+                    auth,
+                    self.conn_id,
+                    cursor.as_ref(),
+                    self.session_turn.take(),
+                )?);
             } else if matches!(&request, SubRequest::Close { .. }) {
                 return Ok(Vec::new());
             } else {
@@ -301,6 +425,7 @@ impl Connection {
                         channel,
                         cursor,
                         origin,
+                        turn: std::cell::Cell::new(self.subscription_turn.take()),
                     },
                     id,
                     scoped_view,
@@ -315,6 +440,7 @@ impl Connection {
                         channel: Channel::View,
                         cursor: None,
                         origin: None,
+                        turn: std::cell::Cell::new(None),
                     },
                     id,
                 )?;

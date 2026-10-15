@@ -23,6 +23,8 @@ pub(crate) use self::windows::withheld_from_peers;
 #[cfg(test)]
 mod housekeeping_tests;
 #[cfg(test)]
+pub(crate) mod live_rows_tests;
+#[cfg(test)]
 mod slip_transport_tests;
 #[cfg(test)]
 mod tests;

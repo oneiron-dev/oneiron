@@ -64,15 +64,17 @@ pub(super) fn handle_document(
             if is_note(server, entity)? {
                 require_note_auth(server, state, &request.selector, false)?;
             }
-            let frame = server
-                .reassert_manager
-                .export_document(
+            // An export opens the document: past the live-document row it
+            // waits its turn off the runtime worker (rule 5).
+            let frame = crate::server::blocking(|| {
+                server.reassert_manager.export_document(
                     entity,
                     selector_grant_scope(),
                     &request.selector,
                     &request.remote_vv,
                 )
-                .map_err(storage_error)?;
+            })
+            .map_err(storage_error)?;
             state.documents.insert(entity, request);
             let held = state.documents.len();
             ask_past_row(server, state, held);
@@ -148,20 +150,12 @@ pub(super) fn handle_document(
             // Cached subscription state is only the requested selector. The
             // committing engine writer re-reads its role, scope, expiry, pact
             // and live entity selection; an earlier export is not authority.
-            server
-                .reassert_manager
-                .documents()
-                .open(entity)
-                .map_err(storage_error)?
+            let document = open_for(server, entity, &request.selector.member_ref)?;
+            document
                 .import_from_peer(kind, payload, selector_grant_scope(), &request.selector)
                 .map_err(storage_error)?;
-            let vv = server
-                .reassert_manager
-                .documents()
-                .open(entity)
-                .map_err(storage_error)?
-                .version_vector()
-                .map_err(storage_error)?;
+            let vv = document.version_vector().map_err(storage_error)?;
+            drop(document);
             let ack = transport::encode_document(entity, document_sub_tags::ACK, &vv)
                 .into_result()
                 .map_err(|_| ProtocolError::InvalidPayload("invalid document ack"))?;
@@ -201,10 +195,12 @@ fn owner_request(
         .map_err(storage_error)?
         .is_some()
     {
-        let frame = server
-            .reassert_manager
-            .export_owner_document(entity, remote_vv)
-            .map_err(storage_error)?;
+        let frame = crate::server::blocking(|| {
+            server
+                .reassert_manager
+                .export_owner_document(entity, remote_vv)
+        })
+        .map_err(storage_error)?;
         let _ = direct.send(frame);
     }
     Ok(())
@@ -345,10 +341,11 @@ pub(super) fn document_delivery(
                 continue;
             }
             // Denial withholds this entity; it never falls back to the raw notice.
-            if let Ok(frame) = server
-                .reassert_manager
-                .export_owner_document(doc.entity, remote_vv)
-            {
+            if let Ok(frame) = crate::server::blocking(|| {
+                server
+                    .reassert_manager
+                    .export_owner_document(doc.entity, remote_vv)
+            }) {
                 out.push(frame);
             }
             continue;
@@ -362,12 +359,14 @@ pub(super) fn document_delivery(
                 continue;
             }
             // Denial withholds this entity; it never falls back to the raw notice.
-            if let Ok(frame) = server.reassert_manager.export_document(
-                doc.entity,
-                selector_grant_scope(),
-                &request.selector,
-                &request.remote_vv,
-            ) {
+            if let Ok(frame) = crate::server::blocking(|| {
+                server.reassert_manager.export_document(
+                    doc.entity,
+                    selector_grant_scope(),
+                    &request.selector,
+                    &request.remote_vv,
+                )
+            }) {
                 if doc.kind == document_sub_tags::NOTE_RECEIPT {
                     let receipt: oneiron::note::NoteOperationReceipt =
                         serde_json::from_slice(doc.payload)
@@ -387,11 +386,7 @@ pub(super) fn document_delivery(
                             .map_err(|_| ProtocolError::InvalidPayload("invalid NOTE receipt"))?,
                     );
                 } else if doc.kind == document_sub_tags::ACK {
-                    let vv = server
-                        .reassert_manager
-                        .documents()
-                        .open(doc.entity)
-                        .map_err(storage_error)?
+                    let vv = open_for(server, doc.entity, &request.selector.member_ref)?
                         .version_vector()
                         .map_err(storage_error)?;
                     out.push(
@@ -421,6 +416,23 @@ fn document_principal(server: &SyncServer, state: &ConnState) -> Result<EntityId
             .map_err(|_| ProtocolError::RpcNoPrincipal)?,
     )
     .map_err(|_| ProtocolError::RpcNoPrincipal)
+}
+
+/// Opens `entity` for `member`'s work. Past the vault's live-document row the
+/// open waits its turn, off the runtime worker; it is never refused for the
+/// count (rule 5), and a wait past its deadline ends the request.
+fn open_for(
+    server: &SyncServer,
+    entity: EntityId,
+    member: &EntityId,
+) -> Result<std::sync::Arc<oneiron::sync::documents::EntityDocument>, ProtocolError> {
+    crate::server::blocking(|| {
+        server
+            .reassert_manager
+            .documents()
+            .open_for(entity, member.as_bytes())
+    })
+    .map_err(storage_error)
 }
 
 fn storage_error(error: oneiron::Error) -> ProtocolError {

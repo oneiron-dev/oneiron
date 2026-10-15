@@ -84,6 +84,11 @@ pub struct SyncServer {
     /// Tenant usage ledger over the server vault.
     pub(crate) usage_ledger: UsageLedger,
     pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
+    /// The line app-tier state kept between frames is charged to, sized by
+    /// `limits.retained_memory_bytes` (rule 5: charged, never capped).
+    pub(crate) retained: Arc<crate::byte_line::ByteLine>,
+    /// The presence hub's charge on `retained`.
+    pub(crate) ephemeral_held: std::sync::Mutex<Option<crate::byte_line::HeldBytes>>,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
@@ -132,6 +137,30 @@ pub struct SyncServer {
     /// Instance-local booking clock override; production always reads wall time.
     #[cfg(test)]
     pub(crate) booking_test_now_secs: Option<u64>,
+}
+
+/// Sets the vault's live rows from `[limits]` and points their crossings at
+/// this server's questions.
+fn live_rows(
+    vault: &oneiron::Vault,
+    limits: &crate::config::LimitsConfig,
+    questions: &Arc<crate::wire_telemetry::LimitQuestions>,
+) {
+    use crate::wire_telemetry::LimitRow;
+    use oneiron::live_rows::{LiveRow, LiveRows};
+    vault.set_live_rows(LiveRows {
+        message_streams: limits.message_streams,
+        live_documents: limits.live_documents,
+        wait: limits.queue_wait(),
+    });
+    let questions = Arc::clone(questions);
+    vault.set_live_row_crossing(Some(Arc::new(move |row, bound, observed| {
+        let row = match row {
+            LiveRow::MessageStreams => LimitRow::MessageStreams,
+            LiveRow::LiveDocuments => LimitRow::LiveDocuments,
+        };
+        questions.ask(row, bound, observed);
+    })));
 }
 
 impl SyncServer {
@@ -241,7 +270,13 @@ impl SyncServer {
             &config,
         );
         let wire_telemetry = crate::wire_telemetry::WireTelemetry::new(vault.clone());
+        live_rows(&vault, &config.limits, wire_telemetry.limit_questions());
         Ok(Self {
+            retained: Arc::new(crate::byte_line::ByteLine::new(
+                crate::wire_telemetry::LimitRow::RetainedMemoryBytes,
+                usize::try_from(config.limits.retained_memory_bytes).unwrap_or(usize::MAX),
+            )),
+            ephemeral_held: std::sync::Mutex::default(),
             usage_ledger: UsageLedger::new(vault.clone()),
             transfers: crate::api::Transfers::new(
                 &config.limits,

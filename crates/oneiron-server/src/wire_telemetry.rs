@@ -88,10 +88,25 @@ pub enum LimitRow {
     EmbedderAnswerBytes,
     /// Windows and documents one sync socket keeps state for.
     WindowsPerConnection,
+    /// Live-query sessions held at once, attached or kept for a reconnect.
+    LiveSessions,
+    /// Live-query subscriptions open at once.
+    LiveSubscriptions,
+    /// Message streams one vault holds open at once.
+    MessageStreams,
+    /// Text documents one vault keeps resident at once.
+    LiveDocuments,
+    /// Bytes app-tier state retained between frames holds: the presence hub,
+    /// live-query retention and residence index projections.
+    RetainedMemoryBytes,
+    /// Pages one residence index projection is read in.
+    ResidenceIndexPages,
+    /// Bytes one residence index projection holds.
+    ResidenceIndexBytes,
 }
 impl LimitRow {
     /// Every row, the list every permit site and byte check is built from.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 19] = [
         Self::Connections,
         Self::GitExchanges,
         Self::LfsTransfers,
@@ -104,6 +119,13 @@ impl LimitRow {
         Self::EmbedderBodyBytes,
         Self::EmbedderAnswerBytes,
         Self::WindowsPerConnection,
+        Self::LiveSessions,
+        Self::LiveSubscriptions,
+        Self::MessageStreams,
+        Self::LiveDocuments,
+        Self::RetainedMemoryBytes,
+        Self::ResidenceIndexPages,
+        Self::ResidenceIndexBytes,
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.
@@ -122,6 +144,13 @@ impl LimitRow {
             Self::EmbedderBodyBytes => "embedder.serve:body_bytes",
             Self::EmbedderAnswerBytes => "limits.embedder_answer_bytes",
             Self::WindowsPerConnection => "max_windows_per_connection",
+            Self::LiveSessions => "limits.live_sessions",
+            Self::LiveSubscriptions => "limits.live_subscriptions",
+            Self::MessageStreams => "limits.message_streams",
+            Self::LiveDocuments => "limits.live_documents",
+            Self::RetainedMemoryBytes => "limits.retained_memory_bytes",
+            Self::ResidenceIndexPages => "residence_operation_budgets.max_index_pages",
+            Self::ResidenceIndexBytes => "residence_operation_budgets.index_cache_bytes",
         }
     }
 }

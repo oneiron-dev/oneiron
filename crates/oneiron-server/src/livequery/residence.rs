@@ -2,7 +2,7 @@
 //! App-tier bind provides the actor; request bytes never choose a principal.
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 
 use base64::Engine;
 use oneiron::EntityId;
@@ -17,6 +17,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{AppError, CoreAuth, CoreScope, RpcRequest};
+use crate::wire_telemetry::LimitRow;
 
 /// A result and the rows it carries (DEC-0005).
 type Answer = (Value, Option<Vec<EntityId>>);
@@ -36,6 +37,8 @@ pub(crate) struct ResidenceIndexCache {
     items: Vec<WindowIndexEntry>,
     pages: usize,
     budgets: ResidenceOperationBudgets,
+    /// The projection's charge on the server's retained-memory line.
+    _held: crate::byte_line::HeldBytes,
 }
 
 #[derive(Deserialize)]
@@ -218,9 +221,23 @@ fn index(
                 )
             })
             .ok_or_else(|| AppError::bad_request("index metadata too large", None))?;
+        // Rule 5: the projection is charged to the retained-memory line,
+        // never refused for its size; past its row it asks. Only a full
+        // line, the memory floor, refuses it.
+        let questions = server.wire_telemetry.limit_questions();
         if bytes > budgets.index_cache_bytes {
-            return Err(AppError::bad_request("index metadata too large", None));
+            questions.ask(
+                LimitRow::ResidenceIndexBytes,
+                budgets.index_cache_bytes as u64,
+                bytes as u64,
+            );
         }
+        // Retaken below: the projection this one replaces gives its bytes back.
+        *cache = None;
+        let held = server
+            .retained
+            .try_reserve_alone(bytes, questions)
+            .ok_or_else(AppError::memory_floor)?;
         if doc.oplog_vv().encode() != current_vv
             || server
                 .vault
@@ -256,6 +273,7 @@ fn index(
             items: entries,
             pages: 0,
             budgets,
+            _held: held,
         });
     }
     let retained = cache.as_mut().ok_or_else(index_changed)?;
@@ -275,9 +293,13 @@ fn index(
         return Err(index_changed());
     }
     retained.pages = retained.pages.saturating_add(1);
-    if retained.pages > budgets.max_index_pages {
-        *cache = None;
-        return Err(AppError::bad_request("index page budget exceeded", None));
+    if retained.pages == budgets.max_index_pages.saturating_add(1) {
+        // Rule 5: a read past its page row asks once and goes on.
+        server.wire_telemetry.limit_questions().ask(
+            LimitRow::ResidenceIndexPages,
+            budgets.max_index_pages as u64,
+            retained.pages as u64,
+        );
     }
     let mut items = Vec::with_capacity(page_limit);
     let mut cursor = after;

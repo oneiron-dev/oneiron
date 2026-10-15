@@ -11,9 +11,6 @@ use crate::server::SyncServer;
 /// Clock skew tolerated for Loro `EphemeralStore` LWW timestamps from clients.
 const MAX_EPHEMERAL_FUTURE_SKEW_MS: i64 = 60_000;
 
-/// Hard cap on records decoded from one ephemeral frame, independent of bytes.
-const MAX_EPHEMERAL_RECORDS_PER_FRAME: usize = 1024;
-
 /// Flat ephemeral keys are control-plane identifiers, not arbitrary blobs.
 const MAX_EPHEMERAL_KEY_BYTES: usize = 256;
 
@@ -69,13 +66,10 @@ pub(super) fn validate_ephemeral_payload(
         });
     }
 
+    // The frame's byte bound above bounds its records; their count is
+    // never refused (rule 5).
     let states = decode_ephemeral_states(payload)
         .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
-    if states.len() > MAX_EPHEMERAL_RECORDS_PER_FRAME {
-        return Err(ProtocolError::InvalidPayload(
-            "too many ephemeral records in one frame",
-        ));
-    }
 
     let max_timestamp = ephemeral_now_ms().saturating_add(MAX_EPHEMERAL_FUTURE_SKEW_MS);
     for state in &states {
@@ -95,19 +89,16 @@ pub(super) fn validate_ephemeral_payload(
     Ok(states)
 }
 
+/// Charges the hub's presence, with this frame's, to the server's
+/// retained-memory line (rule 5: charged, never capped per hub). `false`
+/// when the line is full: the frame meets the memory floor, is not kept and
+/// the socket stays open. Presence larger than the whole line runs alone.
 pub(super) fn ensure_ephemeral_hub_budget(
     server: &SyncServer,
     payload: &[u8],
     states: &[EphemeralWireState],
-) -> Result<(), ProtocolError> {
+) -> Result<bool, ProtocolError> {
     let current_snapshot = server.ephemeral_store.encode_all();
-    if current_snapshot.len() > server.config.max_ephemeral_snapshot_bytes {
-        return Err(ProtocolError::FrameTooLarge {
-            size: current_snapshot.len(),
-            max: server.config.max_ephemeral_snapshot_bytes,
-        });
-    }
-
     let candidate = EphemeralStore::new(server.config.ephemeral_timeout_ms);
     if !current_snapshot.is_empty() {
         candidate
@@ -120,13 +111,6 @@ pub(super) fn ensure_ephemeral_hub_budget(
     candidate.remove_outdated();
 
     let candidate_snapshot = candidate.encode_all();
-    if candidate_snapshot.len() > server.config.max_ephemeral_snapshot_bytes {
-        return Err(ProtocolError::FrameTooLarge {
-            size: candidate_snapshot.len(),
-            max: server.config.max_ephemeral_snapshot_bytes,
-        });
-    }
-
     let mut seen = HashSet::new();
     for state in states {
         if !seen.insert(state.key.as_str()) {
@@ -142,7 +126,16 @@ pub(super) fn ensure_ephemeral_hub_budget(
         }
     }
 
-    Ok(())
+    let mut held = server
+        .ephemeral_held
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let held = held.get_or_insert_with(|| server.retained.empty());
+    Ok(server.retained.try_resize(
+        held,
+        candidate_snapshot.len(),
+        server.wire_telemetry.limit_questions(),
+    ))
 }
 
 pub(super) fn canonical_ephemeral_frames(

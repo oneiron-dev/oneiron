@@ -14,6 +14,10 @@ pub(super) struct BoundSource {
     doc: Mutex<CursorDocument>,
 }
 
+/// Views one cursor document keeps positions for before it starts afresh:
+/// a resume past it falls to a gap and a fresh snapshot, never a refusal.
+const RETAINED_VIEWS: usize = 4_096;
+
 struct CursorDocument {
     doc: LoroDoc,
     journal: LoroDoc,
@@ -25,21 +29,14 @@ struct CursorDocument {
 impl BoundSource {
     #[cfg(test)]
     pub(super) fn new(server: Weak<SyncServer>, auth: CoreAuth, document: String) -> Self {
-        Self::with_budgets(
-            server,
-            auth,
-            document,
-            budget::Budget::new(budget::SESSION_BYTES),
-            budget::Budget::new(budget::HUB_BYTES),
-        )
+        Self::with_budget(server, auth, document, budget::Budget::of(64 * 1024 * 1024))
     }
 
-    pub(super) fn with_budgets(
+    pub(super) fn with_budget(
         server: Weak<SyncServer>,
         auth: CoreAuth,
         document: String,
-        session: std::sync::Arc<budget::Budget>,
-        hub: std::sync::Arc<budget::Budget>,
+        budget: std::sync::Arc<budget::Budget>,
     ) -> Self {
         Self {
             server,
@@ -50,7 +47,7 @@ impl BoundSource {
                 journal: LoroDoc::new(),
                 commits: 0,
                 current: BTreeMap::new(),
-                history: super::history::History::new(session, hub),
+                history: super::history::History::new(budget),
             }),
         }
     }
@@ -311,9 +308,7 @@ impl LiveQuerySource for BoundSource {
         let key = blake3::hash(&projection).to_hex().to_string();
         let fingerprint = blake3::hash(encoded.as_bytes()).to_hex().to_string();
         if state.current.get(&key) != Some(&fingerprint) {
-            if !state.current.contains_key(&key)
-                && state.current.len() >= subscriptions::MAX_SUBSCRIPTIONS
-            {
+            if !state.current.contains_key(&key) && state.current.len() >= RETAINED_VIEWS {
                 // Closed/replaced views cannot grow cursor metadata forever.
                 // A new document has no retention for the old VVs.
                 state.doc = LoroDoc::new();
@@ -589,12 +584,14 @@ mod remediation_tests {
             &server,
             &super::super::production_tests::token("human"),
         );
-        let source = BoundSource::with_budgets(
+        // Retention past a full line expires; it is never refused.
+        let line = budget::Budget::of(1);
+        let _full = budget::Reservation::new(line.clone(), 1).unwrap();
+        let source = BoundSource::with_budget(
             std::sync::Arc::downgrade(&server),
             auth,
             "bounded".into(),
-            budget::Budget::new(1),
-            budget::Budget::new(1),
+            line,
         );
         let view = ScopedView::default();
         let cursor = source.derive(&view, Channel::Receipts).unwrap().cursor;

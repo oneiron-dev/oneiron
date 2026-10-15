@@ -1,8 +1,7 @@
 //! Coarse derivation, retained rings and cumulative cursor acknowledgements.
 use super::budget::{Budget, Reservation, value_bytes};
-#[cfg(test)]
-use super::budget::{HUB_BYTES, SESSION_BYTES};
 use super::*;
+use crate::admission::Permit;
 use loro::{ExportMode, LoroDoc, VersionVector};
 use oneiron::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -10,7 +9,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub(crate) const LIVEQUERY_RING_CAPACITY: usize = 1024;
-pub(super) const MAX_SUBSCRIPTIONS: usize = 128;
 const MAX_RING_BYTES: usize = 8 * 1024 * 1024;
 
 pub(crate) struct DerivedView {
@@ -164,6 +162,8 @@ struct Subscription {
     coalesced_bytes: usize,
     acked: Option<Cursor>,
     needs_resync: bool,
+    /// The subscription's turn under `limits.live_subscriptions`.
+    turn: Option<Permit>,
 }
 
 impl Subscription {
@@ -251,8 +251,7 @@ fn cursor_size(cursor: &Cursor) -> Result<usize, AppError> {
 /// RPC results are deliberately absent from this state.
 pub(crate) struct LiveQueries {
     source: Arc<dyn LiveQuerySource>,
-    session_budget: Arc<Budget>,
-    hub_budget: Arc<Budget>,
+    budget: Arc<Budget>,
     state: Mutex<State>,
     tracker: super::publication::PublicationTracker,
     last_owner_feed_poll: Mutex<Instant>,
@@ -288,35 +287,32 @@ impl State {
 impl LiveQueries {
     #[cfg(test)]
     pub(crate) fn new(conn_id: u32, source: Arc<dyn LiveQuerySource>) -> Self {
-        Self::with_budget(conn_id, source, Budget::new(HUB_BYTES))
+        Self::with_budget(conn_id, source, Budget::of(64 * 1024 * 1024))
     }
 
     #[cfg(test)]
     pub(super) fn with_budget(
         conn_id: u32,
         source: Arc<dyn LiveQuerySource>,
-        hub_budget: Arc<Budget>,
+        budget: Arc<Budget>,
     ) -> Self {
-        Self::with_budgets(
+        Self::with_budget_limits(
             conn_id,
             source,
-            Budget::new(SESSION_BYTES),
-            hub_budget,
+            budget,
             oneiron::memory::LiveQueryTrackerLimits::default(),
         )
     }
 
-    pub(super) fn with_budgets(
+    pub(super) fn with_budget_limits(
         conn_id: u32,
         source: Arc<dyn LiveQuerySource>,
-        session_budget: Arc<Budget>,
-        hub_budget: Arc<Budget>,
+        budget: Arc<Budget>,
         limits: oneiron::memory::LiveQueryTrackerLimits,
     ) -> Self {
         Self {
             source,
-            session_budget,
-            hub_budget,
+            budget,
             state: Mutex::new(State {
                 conn_id,
                 batch: 0,
@@ -371,6 +367,7 @@ impl LiveQueries {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn open(
         &self,
         id: u64,
@@ -378,6 +375,20 @@ impl LiveQueries {
         channel: Channel,
         cursor: Option<&Cursor>,
         origin: Option<String>,
+    ) -> Result<Vec<Push>, AppError> {
+        self.open_in_turn(id, view, channel, cursor, origin, None)
+    }
+
+    /// Opens subscription `id` holding `turn`, its turn under
+    /// `limits.live_subscriptions`; a reopen keeps the turn it held.
+    pub(crate) fn open_in_turn(
+        &self,
+        id: u64,
+        view: ScopedView,
+        channel: Channel,
+        cursor: Option<&Cursor>,
+        origin: Option<String>,
+        turn: Option<Permit>,
     ) -> Result<Vec<Push>, AppError> {
         if matches!(channel, Channel::MemoryBoard | Channel::Gap) {
             return Err(AppError::not_implemented("reserved subscription channel"));
@@ -389,6 +400,8 @@ impl LiveQueries {
         let mut state = self.state.lock().map_err(|_| state_error())?;
         let new_subscription = !state.subs.contains_key(&id);
         let mut latest = None;
+        // A reopened subscription keeps the turn it held.
+        let mut turn = turn;
         // Owner-feed snapshots contain claim bodies. Never replay a retained
         // body after a reconnect: policy may have narrowed while this slip
         // remained live. A gap + newly scoped snapshot is the safe resume.
@@ -407,7 +420,9 @@ impl LiveQueries {
                     Some("subscriptionId"),
                 ));
             }
-            state.subs.remove(&id);
+            if let Some(old) = state.subs.remove(&id) {
+                turn = old.turn.or(turn);
+            }
             state.reindex();
         }
         if let Some(sub) = state.subs.get_mut(&id) {
@@ -456,15 +471,11 @@ impl LiveQueries {
                     Some("subscriptionId"),
                 ));
             }
-        } else if state.subs.len() >= MAX_SUBSCRIPTIONS {
-            return Err(AppError::bad_request(
-                "subscription limit exceeded",
-                Some("subscriptionId"),
-            ));
         }
         // The old ring must release its budget before replay plus the fresh
         // indexed tail reserve theirs. A failed replay leaves no stale owner.
-        if state.subs.remove(&id).is_some() {
+        if let Some(old) = state.subs.remove(&id) {
+            turn = old.turn.or(turn);
             state.reindex();
         }
         let derived = if let Some(derived) = latest {
@@ -517,11 +528,8 @@ impl LiveQueries {
                     .len()
                     .saturating_mul(8)
                     + 4096;
-                let budget = Reservation::new(
-                    self.session_budget.clone(),
-                    self.hub_budget.clone(),
-                    bytes.max(4096) + metadata_bytes,
-                )?;
+                let budget =
+                    Reservation::new(self.budget.clone(), bytes.max(4096) + metadata_bytes)?;
                 state.subs.insert(
                     id,
                     Subscription {
@@ -538,6 +546,7 @@ impl LiveQueries {
                         coalesced_bytes: 0,
                         acked: Some(cursor.clone()),
                         needs_resync: false,
+                        turn,
                     },
                 );
                 state.reindex();
@@ -581,11 +590,7 @@ impl LiveQueries {
             .len()
             .saturating_mul(8)
             + 4096;
-        let budget = Reservation::new(
-            self.session_budget.clone(),
-            self.hub_budget.clone(),
-            bytes.max(4096) + metadata_bytes,
-        )?;
+        let budget = Reservation::new(self.budget.clone(), bytes.max(4096) + metadata_bytes)?;
         let current = fingerprint(&derived.value)?;
         self.source.record(&view, channel, &pushes)?;
         state.subs.insert(
@@ -604,6 +609,7 @@ impl LiveQueries {
                 coalesced_bytes: 0,
                 acked: None,
                 needs_resync: false,
+                turn,
             },
         );
         state.reindex();
@@ -645,6 +651,13 @@ impl LiveQueries {
             .resize(sub.metadata_bytes + (sub.bytes + sub.coalesced_bytes).max(4096))?;
         sub.acked = Some(cursor.clone());
         Ok(())
+    }
+
+    /// Whether subscription `id` is open and holds its turn.
+    pub(crate) fn holds(&self, id: u64) -> bool {
+        self.state
+            .lock()
+            .is_ok_and(|state| state.subs.get(&id).is_some_and(|sub| sub.turn.is_some()))
     }
 
     pub(crate) fn close(&self, id: u64) -> Result<(), AppError> {

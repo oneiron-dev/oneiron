@@ -528,6 +528,13 @@ async fn handle_connection(
                         oneiron_vault_contract::now_ts(),
                     );
                 }
+                if let SyncMessage::Sub(payload) = &msg {
+                    // Rule 5: a new session or subscription waits its turn
+                    // here, before the synchronous app tier runs it.
+                    app_connection
+                        .admit(conn_state.bound_auth.as_ref(), payload)
+                        .await;
+                }
                 let handle_result = match msg {
                     SyncMessage::Rpc(payload) => handle_app_message_with_connection(
                         &server,

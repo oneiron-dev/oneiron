@@ -31,8 +31,9 @@ use crate::usage::UsageMode;
 ///   forgets its least recently requested window subscription (the window's
 ///   next change reaches the peer as `WINDOW_INVALIDATE`) and the row asks
 ///   its OF-520 question once; no socket is refused for the count.
-/// - `max_ephemeral_payload_bytes` / `max_ephemeral_snapshot_bytes` —
-///   ENFORCED before ephemeral hub mutation and before late-join snapshot
+/// - `max_ephemeral_payload_bytes` — ENFORCED on each ephemeral frame. The
+///   hub itself is charged to `limits.retained_memory_bytes`, never capped.
+/// - `max_ephemeral_snapshot_bytes` — ENFORCED before late-join snapshot
 ///   send. Oversized late-join snapshots are skipped, not connection-fatal.
 /// - `max_connections_per_user` — not enforced until auth has per-user
 ///   identity.
@@ -82,7 +83,7 @@ pub struct SyncServerConfig {
     pub ephemeral_timeout_ms: i64,
     /// Maximum Loro-native ephemeral payload bytes accepted from one frame.
     pub max_ephemeral_payload_bytes: usize,
-    /// Maximum encoded hub snapshot bytes retained/sent to late joiners.
+    /// Maximum encoded hub snapshot bytes sent to late joiners.
     pub max_ephemeral_snapshot_bytes: usize,
     /// Maximum entity blob size in bytes (M5/M6 bulk + materialization paths).
     pub max_entity_blob: usize,

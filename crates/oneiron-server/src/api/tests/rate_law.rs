@@ -43,6 +43,26 @@ async fn cross(row: LimitRow) -> Crossing {
         LimitRow::WindowsPerConnection => {
             crate::handler::window_row_tests::cross_the_windows(CALLERS).await
         }
+        LimitRow::LiveSessions => crate::livequery::rule5_tests::cross_the_sessions(CALLERS).await,
+        LimitRow::LiveSubscriptions => {
+            crate::livequery::rule5_tests::cross_the_subscriptions(CALLERS).await
+        }
+        LimitRow::MessageStreams => tokio::task::spawn_blocking(|| {
+            crate::server::live_rows_tests::cross_the_streams(CALLERS)
+        })
+        .await
+        .unwrap(),
+        LimitRow::LiveDocuments => tokio::task::spawn_blocking(|| {
+            crate::server::live_rows_tests::cross_the_documents(CALLERS)
+        })
+        .await
+        .unwrap(),
+        LimitRow::RetainedMemoryBytes => {
+            crate::livequery::rule5_tests::cross_the_retained_bytes(CALLERS)
+        }
+        LimitRow::ResidenceIndexPages | LimitRow::ResidenceIndexBytes => {
+            crate::livequery::rule5_tests::cross_the_index(row, CALLERS).await
+        }
     }
 }
 

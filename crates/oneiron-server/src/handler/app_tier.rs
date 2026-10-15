@@ -64,7 +64,14 @@ pub(super) async fn handle_sync_message(
         SyncMessage::Ephemeral(payload) => {
             server.ephemeral_store.remove_outdated();
             let states = validate_ephemeral_payload(server, &payload)?;
-            ensure_ephemeral_hub_budget(server, &payload, &states)?;
+            if !ensure_ephemeral_hub_budget(server, &payload, &states)? {
+                tracing::warn!(
+                    conn_id,
+                    kind = "memory_floor",
+                    "presence frame not kept: retained memory is full"
+                );
+                return Ok(());
+            }
             server
                 .ephemeral_store
                 .apply(&payload)

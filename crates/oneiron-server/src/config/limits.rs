@@ -75,6 +75,27 @@ pub struct LimitsConfig {
     /// claimed, is refused: before a byte is read when it declares its size,
     /// and as soon as it gets there when it does not.
     pub disk_reserve_bytes: u64,
+    /// Live-query sessions held at once: one each socket attached to, and
+    /// the ones kept for a reconnect after their socket went. Past it, the
+    /// longest-kept detached session goes first (its reconnect gets a fresh
+    /// snapshot); while every session is attached, the next waits its turn.
+    pub live_sessions: usize,
+    /// Live-query subscriptions open at once, every session's together.
+    /// Past it, the next subscription waits its turn.
+    pub live_subscriptions: usize,
+    /// Message streams the vault holds open at once. Past it, the next
+    /// stream waits its turn.
+    pub message_streams: usize,
+    /// Text documents the vault keeps resident at once. Past it, the next
+    /// opener waits its turn.
+    pub live_documents: usize,
+    /// Bytes app-tier state kept between frames may hold at once: the
+    /// presence hub, each live-query subscription's retained pushes and each
+    /// socket's residence index projection. State larger than the whole of
+    /// it runs alone. A memory bound sized from the machine (an eighth of
+    /// its memory), not a count: past it, such state is the memory floor's
+    /// one refusal, and a retained ring falls back to a resync.
+    pub retained_memory_bytes: u64,
 }
 
 impl Default for LimitsConfig {
@@ -95,6 +116,11 @@ impl Default for LimitsConfig {
             transfer_idle_timeout_ms: 300_000,
             queue_wait_timeout_ms: 300_000,
             disk_reserve_bytes: 2 * 1024 * 1024 * 1024,
+            live_sessions: 4_096,
+            live_subscriptions: 65_536,
+            message_streams: oneiron::live_rows::LiveRows::DEFAULT_MESSAGE_STREAMS,
+            live_documents: oneiron::live_rows::LiveRows::DEFAULT_LIVE_DOCUMENTS,
+            retained_memory_bytes: memory_floor(),
         }
     }
 }
@@ -109,7 +135,8 @@ fn descriptor_floor() -> usize {
 }
 
 /// An eighth of the machine's memory for what LFS transfers hold in memory,
-/// at least 256 MiB; 2 GiB when the platform does not say.
+/// and as much for app-tier state kept between frames, each at least 256
+/// MiB; 2 GiB when the platform does not say.
 fn memory_floor() -> u64 {
     const MIB: u64 = 1024 * 1024;
     crate::machine::memory_bytes().map_or(2_048 * MIB, |memory| (memory / 8).max(256 * MIB))
@@ -147,6 +174,11 @@ impl LimitsConfig {
             transfer_idle_timeout_ms,
             queue_wait_timeout_ms,
             disk_reserve_bytes,
+            live_sessions,
+            live_subscriptions,
+            message_streams,
+            live_documents,
+            retained_memory_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -164,6 +196,11 @@ impl LimitsConfig {
         set(&mut self.transfer_idle_timeout_ms, transfer_idle_timeout_ms);
         set(&mut self.queue_wait_timeout_ms, queue_wait_timeout_ms);
         set(&mut self.disk_reserve_bytes, disk_reserve_bytes);
+        set(&mut self.live_sessions, live_sessions);
+        set(&mut self.live_subscriptions, live_subscriptions);
+        set(&mut self.message_streams, message_streams);
+        set(&mut self.live_documents, live_documents);
+        set(&mut self.retained_memory_bytes, retained_memory_bytes);
     }
 
     /// A zero bound would refuse every caller, so it is a config error rather
@@ -186,6 +223,11 @@ impl LimitsConfig {
             ("lfs_quota_bytes", self.lfs_quota_bytes),
             ("transfer_idle_timeout_ms", self.transfer_idle_timeout_ms),
             ("queue_wait_timeout_ms", self.queue_wait_timeout_ms),
+            ("live_sessions", self.live_sessions as u64),
+            ("live_subscriptions", self.live_subscriptions as u64),
+            ("message_streams", self.message_streams as u64),
+            ("live_documents", self.live_documents as u64),
+            ("retained_memory_bytes", self.retained_memory_bytes),
         ] {
             if value == 0 {
                 anyhow::bail!("limits.{key} must be at least 1");
@@ -226,4 +268,9 @@ pub(super) struct LimitsConfigOverride {
     pub(super) transfer_idle_timeout_ms: Option<u64>,
     pub(super) queue_wait_timeout_ms: Option<u64>,
     pub(super) disk_reserve_bytes: Option<u64>,
+    pub(super) live_sessions: Option<usize>,
+    pub(super) live_subscriptions: Option<usize>,
+    pub(super) message_streams: Option<usize>,
+    pub(super) live_documents: Option<usize>,
+    pub(super) retained_memory_bytes: Option<u64>,
 }
