@@ -98,6 +98,8 @@ fn window_notifies_named_holders_refuses_admin_and_holds_until_withdrawn() -> Re
             .pending_act_started_events(&admin, 42, 101)?
             .is_empty()
     );
+    // An act nobody objects to, for a first objection at its deadline.
+    let unopposed = vault.start_authority_act(&owner, 42, "delete_vault", Vec::new())?;
     clock.set(101);
     assert!(
         vault
@@ -131,7 +133,7 @@ fn window_notifies_named_holders_refuses_admin_and_holds_until_withdrawn() -> Re
     clock.set(100 + WEEK);
     assert!(
         reopened
-            .change_authority_objection(&other, &act.id, true)
+            .change_authority_objection(&other, &unopposed.id, true)
             .is_err(),
         "an objection at the deadline is late"
     );
