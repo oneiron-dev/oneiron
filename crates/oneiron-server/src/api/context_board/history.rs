@@ -118,8 +118,8 @@ pub(crate) async fn board_turn_idempotency(
         request,
         next,
         |body| serde_json::from_slice::<TurnForm>(body).is_ok_and(|form| form.turn.is_some()),
-        |server, auth, cached, rows| {
-            release_board_replay(server, auth, cached, rows)
+        |server, auth, replay| {
+            release_board_replay(server, auth, replay)
                 .err()
                 .map(|error| EnvelopedApiError::from(error).into_response())
         },
@@ -130,16 +130,19 @@ pub(crate) async fn board_turn_idempotency(
 /// A replayed board response goes out only if the caller may still be shown
 /// everything it disclosed: every pack result and neighbour and every
 /// MEMORIES row passes the caller's current read scope and disclosure clamp,
-/// as on the board's read-back (409 `board_document_unreadable` otherwise).
+/// as on the board's read-back, and every other row it named (each
+/// notification, rider outcome, connector key, lifecycle row and pack
+/// source, kept beside it as `admit`) is one the caller's read still reads
+/// (409 `board_document_unreadable` otherwise). A board kept before those
+/// rows were never replays.
 /// Off this device it goes out only while every row it was derived from
-/// (`rows`, listed when it was cached) may leave this device, and names no
-/// row a device-local world keeps now. A refused replay records nothing
+/// (`rows`, listed when it was cached) may leave this device, and it names
+/// no row a device-local world keeps now. A refused replay records nothing
 /// again.
 fn release_board_replay(
     server: &SyncServer,
     auth: Option<&CoreAuth>,
-    cached: &[u8],
-    rows: &[EntityId],
+    replay: &crate::idempotency::Replay<'_>,
 ) -> Result<(), ApiError> {
     #[derive(Deserialize)]
     struct Disclosed {
@@ -162,16 +165,31 @@ fn release_board_replay(
         id: String,
     }
     let auth = auth.ok_or_else(ApiError::unauthorized)?;
+    let refused = || ApiError::invalid_state(Some("board_document_unreadable"));
     let unreadable = || ApiError::internal_server_error("board replay is unreadable");
-    if crate::device_local::withholds_retained(&server.vault, auth.locality(), rows, cached)
-        .map_err(|error| {
-            tracing::error!(kind = ?error.kind(), "board replay device-local check failed");
-            ApiError::internal_server_error("board history failed")
-        })?
-    {
-        return Err(ApiError::invalid_state(Some("board_document_unreadable")));
+    let check_failed = || {
+        tracing::error!(
+            reason = "board_replay_check_failed",
+            "board replay check failed"
+        );
+        ApiError::internal_server_error("board history failed")
+    };
+    let Some(admit) = replay.admit else {
+        return Err(refused());
+    };
+    if crate::device_local::withholds_retained(
+        &server.vault,
+        auth.locality(),
+        replay.rows,
+        replay.body,
+    )
+    .map_err(|error| {
+        tracing::error!(kind = ?error.kind(), "board replay device-local check failed");
+        ApiError::internal_server_error("board history failed")
+    })? {
+        return Err(refused());
     }
-    let disclosed: Disclosed = serde_json::from_slice(cached).map_err(|_| unreadable())?;
+    let disclosed: Disclosed = serde_json::from_slice(replay.body).map_err(|_| unreadable())?;
     let documents = disclosed
         .memories
         .into_iter()
@@ -189,15 +207,9 @@ fn release_board_replay(
     let admitted = server
         .vault
         .board_documents_admitted(&documents, &read, disclosure.as_ref())
-        .map_err(|_| {
-            tracing::error!(
-                reason = "board_replay_check_failed",
-                "board replay check failed"
-            );
-            ApiError::internal_server_error("board history failed")
-        })?;
-    if !admitted {
-        return Err(ApiError::invalid_state(Some("board_document_unreadable")));
+        .map_err(|_| check_failed())?;
+    if !admitted || !crate::idempotency::replay_admits(server, Some(auth), admit)? {
+        return Err(refused());
     }
     Ok(())
 }
@@ -215,7 +227,8 @@ fn current_board_authority<'a>(
     ApiError,
 > {
     let read = super::super::scoped_read_for_core_auth(vault, auth)?;
-    let interlocutors = super::super::resolve_core_interlocutor_set(vault, auth, None, None)?;
+    let interlocutors =
+        super::super::resolve_core_interlocutor_set(vault, auth, &read, None, None)?;
     let disclosure = super::super::resolve_core_disclosure(vault, interlocutors.as_ref(), None)?;
     Ok((read, disclosure))
 }

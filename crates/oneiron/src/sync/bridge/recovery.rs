@@ -4,7 +4,9 @@ use super::Materializer;
 use crate::batch::EdgeValueFields;
 use crate::error::{ArtifactError, Result};
 use crate::recovery::CanonicalSnapshot;
-use crate::sync::ingest::{EntityStep, IngestCtx, ingest_entity_in_txn};
+use crate::sync::ingest::{
+    EntityStep, IngestCtx, authority_parent_order, ingest_entity_in_txn, is_authority_row,
+};
 use crate::{EntityId, Vault};
 use loro::LoroDoc;
 
@@ -39,7 +41,26 @@ pub(crate) fn preflight_canonical_recovery(
         materializer.lease_vault_id(),
         &tombstones,
     );
-    for entity in &snapshot.entity_blobs {
+    // AUTHORITY_LOG rows first, parents first, as the forward pass lands
+    // them (H72): the door holds a row whose signer's enrollment is not
+    // staged yet, and the preflight refuses on any held row.
+    let keys: Vec<String> = snapshot
+        .entity_blobs
+        .iter()
+        .map(|entity| EntityId::from_bytes(entity.id).map(|id| id.to_hex()))
+        .collect::<std::result::Result<_, _>>()?;
+    let (authority, rest): (Vec<usize>, Vec<usize>) = (0..snapshot.entity_blobs.len())
+        .partition(|at| is_authority_row(&snapshot.entity_blobs[*at].blob));
+    let rows: Vec<(&str, &[u8])> = authority
+        .iter()
+        .map(|at| (keys[*at].as_str(), &snapshot.entity_blobs[*at].blob[..]))
+        .collect();
+    let order = authority_parent_order(&rows)
+        .into_iter()
+        .map(|at| authority[at])
+        .chain(rest);
+    for at in order {
+        let entity = &snapshot.entity_blobs[at];
         let id = EntityId::from_bytes(entity.id)?;
         if let Some((blob, tombstone)) = crate::recovery::retained_soft_shell(doc, &tombstones, &id)
         {

@@ -826,6 +826,47 @@ fn opened_item_residence_rejects_unsolicited_full_window_updates() {
 }
 
 #[test]
+fn a_home_promotion_snapshot_carrying_custody_lands_nowhere() {
+    // C1 review: promotion imported the configured home's snapshot with no
+    // carrier admission, so a custody body inserted and deleted before the
+    // export entered the promoted window's durable history.
+    use crate::sync::loro_support::{map_delete, map_insert_bytes};
+    let at = 1_772_000_000;
+    let custody = entity_blob(
+        crate::registry::ENTITY_TYPE_SECRET_CUSTODY,
+        TimeRange { start: at, end: at },
+        at,
+        b"placeholder custody body",
+    );
+    let carrier = EntityId::now().to_hex();
+    let home = server_window_doc();
+    let entities = home.get_map("entities");
+    map_insert_bytes(&entities, &carrier, &custody).unwrap();
+    home.commit();
+    map_insert_bytes(&entities, "ordinary", b"home row").unwrap();
+    home.commit();
+    let root = home.oplog_frontiers();
+    map_delete(&entities, &carrier).unwrap();
+    home.commit();
+    for snapshot in [
+        home.export(ExportMode::Snapshot).unwrap(),
+        home.export(ExportMode::shallow_snapshot(&root)).unwrap(),
+    ] {
+        let window = LoroDoc::new();
+        assert!(!super::residence::import_promotion_snapshot(
+            &window, &snapshot
+        ));
+        assert!(window.oplog_vv().is_empty());
+    }
+    let clean = home
+        .export(ExportMode::shallow_snapshot(&home.oplog_frontiers()))
+        .unwrap();
+    let window = LoroDoc::new();
+    assert!(super::residence::import_promotion_snapshot(&window, &clean));
+    assert!(window.get_map("entities").get("ordinary").is_some());
+}
+
+#[test]
 fn sync_client_generate_initial_sync() {
     let manager = test_manager();
     let (client, _rx) = SyncClient::new(
