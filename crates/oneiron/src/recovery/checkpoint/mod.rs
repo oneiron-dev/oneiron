@@ -609,6 +609,9 @@ impl Vault {
             vault
                 .store
                 .drop_erased_gate_decisions_in_txn(txn, gate_custody.erased())?;
+            // A written-here mark carried from the live vault binds only a
+            // carrier the restored rows hold, byte for byte.
+            crate::identity_topology::drop_unheld_author_marks_in_txn(&vault.store, txn)?;
             // Open-time seed/backfill gates consult type indexes. Reconstruct this
             // mechanical projection before reopening; tokenizer/model work waits
             // until those compatibility gates have passed.
