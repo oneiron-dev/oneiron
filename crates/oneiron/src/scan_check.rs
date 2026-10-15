@@ -7,21 +7,22 @@
 //! question, never a refusal. Only machine floors (disk, memory) stop a scan.
 //!
 //! A scan counts in a `ScanCount`. A crossing waits with the vault, in
-//! memory, until the vault's next write keeps it in the same transaction;
-//! the host's read of the checks sees it either way. No scan ever opens a
-//! writer, so none can wait on a writer its caller holds, on any thread.
+//! memory, until the vault's next write has committed; that write's door
+//! then keeps it in a write of its own. The host's read of the checks sees
+//! it either way. No scan ever opens a writer, so none can wait on a writer
+//! its caller holds, on any thread, and no check rides in a host's write.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use heed::{RoTxn, RwTxn};
+use heed::RoTxn;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 use crate::side_table::{self, Named, Raw, SideTable};
-use crate::store::{ManifestDbs, Store};
+use crate::store::{Callback, ManifestDbs, Rows, active_write_txn_depth};
 
 /// Rows one engine scan reads past which it asks whether everything is
 /// okay: ten times the count each of the origin scans once refused at.
@@ -225,65 +226,6 @@ impl ScanCount {
     }
 }
 
-/// What one write kept of the crossings waiting with its vault. They leave
-/// the waiting map, and are warned of, only once that write commits
-/// ([`KeptChecks::committed`]); a write that rolls back leaves them waiting.
-#[must_use = "kept checks leave the waiting map only once their write commits"]
-#[derive(Default)]
-pub(crate) struct KeptChecks {
-    keys: Vec<CheckKey>,
-    fresh: Vec<ScanCheck>,
-}
-
-impl KeptChecks {
-    /// The write that kept these committed.
-    pub(crate) fn committed(self, store: &Store) {
-        store.pending_scan_checks.clear(&self.keys);
-        self.fresh.iter().for_each(warn);
-    }
-}
-
-/// Keeps the crossings waiting with the store inside the host's write
-/// `txn`, each scope once, in a nested transaction of their own: a check that
-/// cannot be written (a full map, a row error) is dropped from this write and
-/// waits for the next one, and the host's write goes on as it would have.
-pub(crate) fn keep_pending_in(store: &Store, txn: &mut RwTxn<'_>) -> KeptChecks {
-    let waiting = store.pending_scan_checks.waiting();
-    if waiting.is_empty() {
-        return KeptChecks::default();
-    }
-    match keep_nested(store, txn, &waiting) {
-        Ok(fresh) => KeptChecks {
-            keys: waiting.into_keys().collect(),
-            fresh,
-        },
-        Err(error) => {
-            tracing::warn!(
-                kind = ?error.kind(),
-                "scan checks were not kept; they wait for the next write"
-            );
-            KeptChecks::default()
-        }
-    }
-}
-
-fn keep_nested(
-    store: &Store,
-    txn: &mut RwTxn<'_>,
-    waiting: &BTreeMap<CheckKey, ScanCheck>,
-) -> Result<Vec<ScanCheck>> {
-    let mut nested = store.env.nested_write_txn(txn)?;
-    let mut fresh = Vec::new();
-    for (key, check) in waiting {
-        if !CHECK.contains(store, &nested, key)? {
-            CHECK.put(store, &mut nested, key, check)?;
-            fresh.push(check.clone());
-        }
-    }
-    nested.commit()?;
-    Ok(fresh)
-}
-
 /// `check.scan` is always an [`EngineScan::code`]: a closed code.
 fn warn(check: &ScanCheck) {
     tracing::warn!(
@@ -328,6 +270,65 @@ impl PendingScanChecks {
 }
 
 impl Vault {
+    /// Keeps the crossings waiting with this vault, in a write of their own.
+    /// The write door calls it once a host write has committed, so the
+    /// thread holds no writer and the host's rows are durable whatever
+    /// happens here. A check leaves the waiting map only once the write that
+    /// keeps it commits; one that cannot be kept waits for the next write.
+    pub(crate) fn keep_waiting_scan_checks(&self) {
+        if active_write_txn_depth() > 0 {
+            return;
+        }
+        let waiting = self.store.pending_scan_checks.waiting();
+        if waiting.is_empty() {
+            return;
+        }
+        match self.keep_scan_checks(&waiting) {
+            Ok(fresh) => {
+                let keys: Vec<CheckKey> = waiting.into_keys().collect();
+                self.store.pending_scan_checks.clear(&keys);
+                fresh.iter().for_each(warn);
+            }
+            Err(error) => tracing::warn!(
+                kind = ?error.kind(),
+                "scan checks were not kept; they wait for the next write"
+            ),
+        }
+    }
+
+    /// Writes each waiting check not kept yet; a scope already kept costs a
+    /// read, never a write.
+    fn keep_scan_checks(&self, waiting: &BTreeMap<CheckKey, ScanCheck>) -> Result<Vec<ScanCheck>> {
+        let fresh: Vec<(&CheckKey, &ScanCheck)> = {
+            let txn = self.store.env.read_txn()?;
+            let mut fresh = Vec::new();
+            for (key, check) in waiting {
+                if !CHECK.contains(&self.store, &txn, key)? {
+                    fresh.push((key, check));
+                }
+            }
+            fresh
+        };
+        if fresh.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.store.group_write_as(Callback::Audited, None, |wtxn| {
+            let mut kept = Vec::new();
+            for (key, check) in &fresh {
+                match CHECK.contains(&self.store, wtxn, key) {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(error) => return Rows::Discard(Err(error)),
+                }
+                if let Err(error) = CHECK.put(&self.store, wtxn, key, check) {
+                    return Rows::Discard(Err(error));
+                }
+                kept.push((*check).clone());
+            }
+            Rows::Commit(kept)
+        })
+    }
+
     /// The threshold row of one engine scan.
     pub fn scan_threshold(&self, scan: EngineScan) -> Result<u64> {
         let txn = self.store.env.read_txn()?;
@@ -346,14 +347,13 @@ impl Vault {
     /// Every OF-520 check an engine scan raised, kept or still waiting for
     /// the vault's next write. Checks are local-only.
     pub fn scan_checks(&self) -> Result<Vec<ScanCheck>> {
+        // Waiting first: a check that leaves the map after this copy was
+        // kept by a commit the later snapshot sees.
+        let mut checks = self.store.pending_scan_checks.waiting();
         let txn = self.store.env.read_txn()?;
-        let mut checks = BTreeMap::new();
         for row in CHECK.iter_from(&self.store, &txn, &[])? {
             let (key, check) = row?;
             checks.insert(key, check);
-        }
-        for (key, check) in self.store.pending_scan_checks.waiting() {
-            checks.entry(key).or_insert(check);
         }
         Ok(checks.into_values().collect())
     }
@@ -433,9 +433,8 @@ mod tests {
         );
     }
 
-    /// A waiting crossing leaves the map only with a write that commits: a
-    /// write that keeps it and then rolls back, or a write that fails, leaves
-    /// it waiting for the next.
+    /// A waiting crossing leaves the map only once a write keeps it: a host
+    /// write that fails keeps nothing, and the check waits for the next.
     #[test]
     fn a_waiting_check_leaves_only_with_a_committed_write() {
         let dir = tempfile::tempdir().expect("vault dir");
@@ -451,11 +450,6 @@ mod tests {
         drop(txn);
         count.finish(&vault);
 
-        let mut wtxn = vault.store.env.write_txn().expect("write");
-        let kept = keep_pending_in(&vault.store, &mut wtxn);
-        drop(kept);
-        drop(wtxn);
-        assert_eq!(vault.store.pending_scan_checks.waiting().len(), 1);
         let failed: Result<()> = vault.with_write_txn(|_| Err(crate::Error::InvalidKey));
         assert!(failed.is_err());
         assert_eq!(vault.store.pending_scan_checks.waiting().len(), 1);
@@ -472,8 +466,9 @@ mod tests {
         );
     }
 
-    /// A check that cannot be written never fails the write that carries it:
-    /// the host's row commits and the check waits for the next write.
+    /// A check that cannot be written never touches the host's write: that
+    /// write is durable before the check's own write is tried, and the check
+    /// waits for the next one.
     #[test]
     fn a_check_that_cannot_be_kept_never_fails_the_host_write() {
         let dir = tempfile::tempdir().expect("vault dir");
