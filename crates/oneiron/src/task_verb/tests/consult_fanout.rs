@@ -563,3 +563,21 @@ fn fanout_missing_manifest_threshold_uses_shipped_row_and_malformed_refuses() {
     assert!(facade.fan_out_counted_consults(&input, "research").is_err());
     assert_eq!(task_entity_census(&vault), 1);
 }
+
+/// Rule 5: an actor's fan-out requests are counted, never refused for rate.
+/// A burst of 200 from one actor under the shipped policy lands whole; main
+/// refused the eleventh in a minute.
+#[test]
+fn an_actor_burst_of_200_fan_outs_lands_whole() {
+    let (_dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let input = plan(&vault, 1);
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    for request in 1..=200 {
+        let receipt = facade
+            .fan_out_consults(&input)
+            .unwrap_or_else(|error| panic!("fan-out {request} was refused: {}", error.message));
+        assert_eq!((receipt.task_refs.len(), receipt.paused), (1, None));
+    }
+    assert_eq!(task_entity_census(&vault), 200);
+}
