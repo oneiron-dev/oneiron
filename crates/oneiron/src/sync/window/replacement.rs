@@ -15,7 +15,8 @@
 //! 2. every tombstone this vault holds as a hard delete (`dt:`) that the candidate lacks; no hard
 //!    delete the candidate holds, or takes from this vault, is softened or removed;
 //! 3. every queued send the old window could not apply that the candidate can, as itself; a value
-//!    any queued send writes that the window it applied to does not keep is a conflict;
+//!    a retired queued send wrote, the newest of this vault's writes of its key, that the
+//!    installed candidate does not hold is a conflict;
 //! 4. delete wins: a carried write of a body the candidate hard-deleted, or of an edge naming
 //!    one, comes back out as a conflict;
 //! 5. every pending tombstone (`pt:`), left in place for the next open;
@@ -109,16 +110,14 @@ pub fn prepare_replacement(
     // row that does not apply there is offered to the candidate below.
     let mut carried = Vec::new();
     let mut unapplied = Vec::new();
-    let mut lost = Vec::new();
+    // Every send this install retires, by where it applied and the versions it carries.
+    let mut sends = Vec::new();
     for (seq, update) in crate::sync::queue::queued_window_updates(vault, key.as_str())? {
-        let at = old.oplog_vv();
         if old
             .import(&update)
             .is_ok_and(|status| status.pending.is_none())
         {
-            // A value it writes that the old window already orders below another write never
-            // becomes the old window's value, so the carry-over never sees it: name it here.
-            lost.extend(lost_writes(old, &at)?);
+            sends.push((false, send_span(&update)?));
             carried.push(seq);
         } else {
             unapplied.push((seq, update));
@@ -138,12 +137,10 @@ pub fn prepare_replacement(
     // delete the replacement holds, nor one of this vault's own once it is carried over.
     let mut hard = hard_tombstones(&candidate);
     let (mut conflicts, mut written) = carry_over_unseen_writes(old, &candidate)?;
-    conflicts.extend(lost);
     carry_over_hard_deletes(vault, old, &candidate)?;
     hard.extend(hard_tombstones(&candidate));
     // A queued send the old window could not apply may build on history only the peer kept:
-    // the candidate takes it as the operation it is. One neither takes stays queued, and a value
-    // it writes that the candidate does not keep comes back as a conflict.
+    // the candidate takes it as the operation it is. One neither takes stays queued.
     let before = candidate.oplog_vv();
     for (seq, update) in &unapplied {
         if candidate
@@ -151,9 +148,8 @@ pub fn prepare_replacement(
             .import(update)
             .is_ok_and(|status| status.pending.is_none())
         {
-            let at = candidate.oplog_vv();
             candidate.import(update).map_err(|_| rejected())?;
-            conflicts.extend(lost_writes(&candidate, &at)?);
+            sends.push((true, send_span(update)?));
             carried.push(*seq);
         }
     }
@@ -173,6 +169,13 @@ pub fn prepare_replacement(
     }
     candidate.commit();
     reverse_rematerialize(vault, &candidate, key)?;
+    // A queued send retires only once each value it wrote is in the window being installed or
+    // named as a conflict.
+    for conflict in lost_queued_writes(old, &candidate, &sends)? {
+        if !conflicts.contains(&conflict) {
+            conflicts.push(conflict);
+        }
+    }
     forward_rematerialize(vault, &candidate, materializer, key)?;
 
     let state = export_scrubbed_window_snapshot(vault, key, &candidate)?;
@@ -405,18 +408,46 @@ fn delete_wins(candidate: &LoroDoc, written: &RootKeys) -> Result<Vec<Replacemen
     Ok(conflicts)
 }
 
-/// The values of `doc` written past `from` that its live state does not hold: a queued send the
-/// candidate took in whose write lost Loro's order to the peer's, with the value it wrote.
-fn lost_writes(doc: &LoroDoc, from: &VersionVector) -> Result<Vec<ReplacementConflict>> {
+/// The versions a queued send carries.
+fn send_span(update: &[u8]) -> Result<(VersionVector, VersionVector)> {
+    let meta = LoroDoc::decode_import_blob_meta(update, true).map_err(|_| rejected())?;
+    Ok((meta.partial_start_vv, meta.partial_end_vv))
+}
+
+/// The values the queued sends this install retires wrote that `candidate`, as installed, does not
+/// hold. Each send is read by the versions it carries in the document it applied to, the old
+/// window or the candidate, so a send that window already held counts like one it took in, and a
+/// value it lost there that the candidate keeps is no conflict. Of several sends writing one key,
+/// only the newest write counts: the older ones are this vault's own superseded values.
+fn lost_queued_writes(
+    old: &LoroDoc,
+    candidate: &LoroDoc,
+    sends: &[(bool, (VersionVector, VersionVector))],
+) -> Result<Vec<ReplacementConflict>> {
+    let mut newest = NewestOps::new();
+    for (in_candidate, (from, to)) in sends {
+        let doc = if *in_candidate { candidate } else { old };
+        for (slot, order) in newest_ops(doc, from, to)? {
+            match newest.entry(slot) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(order);
+                }
+                std::collections::btree_map::Entry::Occupied(mut entry) => {
+                    if (order.0, order.1) > (entry.get().0, entry.get().1) {
+                        entry.insert(order);
+                    }
+                }
+            }
+        }
+    }
     let mut lost = Vec::new();
-    for ((name, key), (_, peer, value)) in newest_ops(doc, from, &doc.oplog_vv())? {
-        let map = doc.get_map(name.as_str());
-        let holds = match (map.get(&key), &value) {
+    for ((name, key), (_, _, value)) in newest {
+        let holds = match (candidate.get_map(name.as_str()).get(&key), &value) {
             (Some(ValueOrContainer::Value(held)), Some(value)) => held == *value,
             (None, None) => true,
             _ => false,
         };
-        if !holds || map.get_last_editor(&key) != Some(peer) {
+        if !holds {
             lost.push(ReplacementConflict {
                 map: name,
                 key,

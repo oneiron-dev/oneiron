@@ -1131,7 +1131,7 @@ fn a_replacement_never_softens_the_hubs_hard_delete() {
     assert!(
         prepared.conflicts.contains(&ReplacementConflict {
             map: "tombstones".to_owned(),
-            key: shared.clone(),
+            key: shared,
             held: Some(LoroValue::Binary(soft.to_vec().into())),
         }),
         "the soft delete it could not keep is not named: {:?}",
@@ -1139,73 +1139,92 @@ fn a_replacement_never_softens_the_hubs_hard_delete() {
     );
 }
 
-/// Bug repro (SOL-S3-003, ASTRA-S3-007, ASTRA-S4-001): a queued send whose write lost Loro's order
-/// to the hub's concurrent edit of the same row was retired with no conflict, whether the
-/// candidate took it in (the old window could not apply it) or the old window did. Done-means: the
-/// value it wrote comes back as a conflict either way.
+/// Bug repro (SOL-S3-003, ASTRA-S3-007, ASTRA-S4-001, ASTRA-S5-001): a queued send whose write
+/// lost Loro's order to the hub's concurrent edit of the same row was retired with no conflict,
+/// where the candidate took it in, where the old window did, and where the old window already
+/// held it. Done-means: the value it wrote comes back as a conflict in each case, and a queued
+/// write the installed window keeps is none (ASTRA-S5-003).
 #[test]
 fn a_queued_send_the_hub_overrides_comes_back_as_a_conflict() {
-    for applies_to_old in [false, true] {
-        let (_dir, vault) = test_vault();
-        let at = vault.store.clock.now_recorded_at();
-        let key = WindowKey::from_timestamp(at);
-        let (hub, shared, receiver) = shared_hub(&vault, at, &key);
-        if !applies_to_old {
-            // History the receiver's window never took in, which the queued send builds on.
-            write_row(&hub, at + 1, b"hub row the receiver lacks");
-        }
-        let built_on = hub.oplog_frontiers();
-        let author = hub.fork();
-        let queued = blob(ENTITY_TYPE_TURN, at + 2, b"queued receiver edit");
-        map_insert_bytes(&author.get_map("entities"), &shared, &queued).unwrap();
-        author.commit();
-        let update = author.export(ExportMode::updates(&hub.oplog_vv())).unwrap();
-        crate::sync::queue::SyncQueue::new(Arc::clone(&vault))
-            .unwrap()
-            .push(key.as_str(), &update)
-            .unwrap();
-        for n in 0..2 {
-            let theirs = blob(ENTITY_TYPE_TURN, at + 3 + n, b"hub edit");
-            map_insert_bytes(&hub.get_map("entities"), &shared, &theirs).unwrap();
-            hub.commit();
-        }
-        if applies_to_old {
-            receiver
-                .doc
-                .import(&hub.export(ExportMode::all_updates()).unwrap())
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Applies {
+        Candidate,
+        OldWindow,
+        AlreadyHeld,
+    }
+    for applies in [Applies::Candidate, Applies::OldWindow, Applies::AlreadyHeld] {
+        for hub_overrides in [true, false] {
+            let (_dir, vault) = test_vault();
+            let at = vault.store.clock.now_recorded_at();
+            let key = WindowKey::from_timestamp(at);
+            let (hub, shared, receiver) = shared_hub(&vault, at, &key);
+            if applies == Applies::Candidate {
+                // History the receiver's window never took in, which the queued send builds on.
+                write_row(&hub, at + 1, b"hub row the receiver lacks");
+            }
+            let built_on = hub.oplog_frontiers();
+            let queued = blob(ENTITY_TYPE_TURN, at + 2, b"queued receiver edit");
+            let update = if applies == Applies::AlreadyHeld {
+                let from = receiver.doc.oplog_vv();
+                map_insert_bytes(&receiver.doc.get_map("entities"), &shared, &queued).unwrap();
+                receiver.doc.commit();
+                receiver.doc.export(ExportMode::updates(&from)).unwrap()
+            } else {
+                let author = hub.fork();
+                map_insert_bytes(&author.get_map("entities"), &shared, &queued).unwrap();
+                author.commit();
+                author.export(ExportMode::updates(&hub.oplog_vv())).unwrap()
+            };
+            crate::sync::queue::SyncQueue::new(Arc::clone(&vault))
+                .unwrap()
+                .push(key.as_str(), &update)
                 .unwrap();
-        }
-        let old = receiver.doc.fork();
-        drop(receiver);
-        assert_eq!(
-            old.fork()
-                .import(&update)
-                .is_ok_and(|status| status.pending.is_none()),
-            applies_to_old,
-            "fixture: where the queued send applies"
-        );
-        let root = if applies_to_old {
-            hub.oplog_frontiers()
-        } else {
-            built_on
-        };
+            if hub_overrides {
+                for n in 0..2 {
+                    let theirs = blob(ENTITY_TYPE_TURN, at + 3 + n, b"hub edit");
+                    map_insert_bytes(&hub.get_map("entities"), &shared, &theirs).unwrap();
+                    hub.commit();
+                }
+                if applies != Applies::Candidate {
+                    receiver
+                        .doc
+                        .import(&hub.export(ExportMode::all_updates()).unwrap())
+                        .unwrap();
+                }
+            }
+            let old = receiver.doc.fork();
+            drop(receiver);
+            assert_eq!(
+                old.fork()
+                    .import(&update)
+                    .is_ok_and(|status| status.pending.is_none()),
+                applies != Applies::Candidate,
+                "fixture: where the queued send applies: {applies:?}"
+            );
+            let root = if applies == Applies::Candidate {
+                built_on
+            } else {
+                hub.oplog_frontiers()
+            };
 
-        let prepared = install(&vault, &key, &old, &hub, &root);
-        assert_ne!(
-            map_get_bytes(&prepared.doc.get_map("entities"), &shared),
-            Some(queued.clone()),
-            "fixture: the hub's later edit wins Loro's order"
-        );
-        assert!(
-            prepared.conflicts.contains(&ReplacementConflict {
-                map: "entities".to_owned(),
-                key: shared.clone(),
-                held: Some(LoroValue::Binary(queued.into())),
-            }),
-            "applies to the old window: {applies_to_old}: the queued edit it could not keep is \
-             not named: {:?}",
-            prepared.conflicts
-        );
+            let prepared = install(&vault, &key, &old, &hub, &root);
+            assert_eq!(
+                map_get_bytes(&prepared.doc.get_map("entities"), &shared) == Some(queued.clone()),
+                !hub_overrides,
+                "fixture: {applies:?}: whether the hub's later edit wins Loro's order"
+            );
+            assert_eq!(
+                prepared.conflicts.contains(&ReplacementConflict {
+                    map: "entities".to_owned(),
+                    key: shared,
+                    held: Some(LoroValue::Binary(queued.into())),
+                }),
+                hub_overrides,
+                "{applies:?}, hub overrides: {hub_overrides}: whether the queued edit is named: \
+                 {:?}",
+                prepared.conflicts
+            );
+        }
     }
 }
 
@@ -1265,7 +1284,7 @@ fn a_queued_send_never_softens_this_vaults_hard_delete() {
     assert!(
         prepared.conflicts.contains(&ReplacementConflict {
             map: "tombstones".to_owned(),
-            key: shared.clone(),
+            key: shared,
             held: Some(LoroValue::Binary(soft.to_vec().into())),
         }),
         "the soft delete it could not keep is not named: {:?}",
