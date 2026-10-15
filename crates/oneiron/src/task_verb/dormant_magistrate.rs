@@ -297,7 +297,10 @@ fn apply_magistrate_selection_in_txn(
 ) -> Result<()> {
     if selected != case.contested_state_ref
         && claim_is_active_in_txn(vault, wtxn, selected)?
-        && claim_is_active_in_txn(vault, wtxn, case.contested_state_ref)?
+        // Closing the contested head is a restriction: it lands held or not.
+        && vault
+            .get_claim_in_txn(wtxn, &case.contested_state_ref)?
+            .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active)
     {
         vault.supersede_claim_in_txn(wtxn, &selected, &case.contested_state_ref, case.now)?;
     }

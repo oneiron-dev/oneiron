@@ -14,7 +14,7 @@ use oneiron::{EntityId, TimeRange};
 
 use super::BookingTransportContext;
 use super::constants::{INTAKE_DOMAIN, SELECTED_SLOT_DOMAIN};
-use super::helpers::domain_digest;
+use super::helpers::{domain_digest, engine_read_error};
 use super::subject::{booker_contact_ref, session_key};
 use crate::api::booking_anti_abuse::BookingHttpDisposition;
 use crate::error::ApiError;
@@ -269,7 +269,7 @@ fn active_future_bookings_for_email(
         contact_ref,
         now,
     )
-    .map_err(ApiError::from)
+    .map_err(engine_read_error)
 }
 
 fn selected_slot_hash(slot: Option<SelectedSlot>) -> [u8; 32] {

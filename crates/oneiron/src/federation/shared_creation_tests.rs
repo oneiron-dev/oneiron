@@ -465,6 +465,15 @@ fn every_generic_door_meets_the_ruling_law() -> Result<()> {
         1,
     )?;
     let landed = vault.append_admin_ruling(&owner, 42, "setting", serde_json::json!("kept"), 2)?;
+    // Normal in the shipped policy: the ruling takes effect at once, with no
+    // confirm left for the owner to answer.
+    assert_eq!(
+        vault
+            .live_admin_ruling(42, "setting")?
+            .map(|ruling| ruling.id),
+        Some(landed.ruling.id.clone()),
+        "the ruling door's ruling waits for a confirm"
+    );
     let landed_id = EntityId::from_hex(&landed.ruling.id)?;
     let mut forged = vault.get_claim(&landed_id)?.expect("the ruling door lands");
     forged.value = rmpv::Value::from("forged");

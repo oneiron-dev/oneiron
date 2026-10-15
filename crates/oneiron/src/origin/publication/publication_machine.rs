@@ -120,7 +120,7 @@ impl Vault {
                 ))?;
         if provenance.lifecycle != ClaimLifecycleStatus::Active
             || provenance.predicate == ORIGIN_PUBLICATION_PREDICATE
-            || !self.claim_critical_confirm_settled(&request.provenance_claim_id)?
+            || !self.claim_settled_and_active(&request.provenance_claim_id)?
         {
             return Err(Error::InvariantViolation(
                 "origin publication provenance is not an active source claim",

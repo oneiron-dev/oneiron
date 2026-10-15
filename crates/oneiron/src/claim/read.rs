@@ -71,11 +71,19 @@ impl Vault {
         Ok(Some(body))
     }
 
-    /// [`crate::gate::claim_critical_confirm_settled_in_txn`] in its own read
-    /// transaction, for an acting reader that holds none.
-    pub(crate) fn claim_critical_confirm_settled(&self, id: &EntityId) -> Result<bool> {
+    /// For an acting reader that read the claim's body in an earlier
+    /// transaction: the claim's confirm is settled and the claim is still
+    /// active now. An owner's Decline settles the confirm by retracting the
+    /// claim, so a Decline landing between the two reads never passes the
+    /// active body the reader already holds.
+    pub(crate) fn claim_settled_and_active(&self, id: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        crate::gate::claim_critical_confirm_settled_in_txn(&self.store, &rtxn, id)
+        if !crate::gate::claim_critical_confirm_settled_in_txn(&self.store, &rtxn, id)? {
+            return Ok(false);
+        }
+        Ok(self
+            .get_claim_in_txn(&rtxn, id)?
+            .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active))
     }
 
     /// Transaction-composable [`Vault::get_claim`]: reads and decodes a CLAIM

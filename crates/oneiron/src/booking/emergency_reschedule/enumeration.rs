@@ -132,7 +132,7 @@ pub(super) fn read_fact<T: serde::de::DeserializeOwned>(
             || body.predicate != predicate
             || !claim_surfaceable(&body)
             || !vault
-                .claim_critical_confirm_settled(&id)
+                .claim_settled_and_active(&id)
                 .map_err(storage_failure)?
         {
             continue;

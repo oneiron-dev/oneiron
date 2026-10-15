@@ -151,12 +151,16 @@ fn live_event_facts(vault: &Vault, event_ref: &EntityId) -> Result<LiveEventFact
     let mut attendee_count = 0_u32;
     for claim_id in vault.claims_for_subject_in_txn(&rtxn, event_ref)? {
         let Some(body) = vault
-            .get_claim_for_effect_in_txn(&rtxn, &claim_id)?
+            .get_claim_in_txn(&rtxn, &claim_id)?
             .filter(claim_surfaceable)
         else {
             continue;
         };
-        if body.predicate == PREDICATE_CALENDAR_ATTENDEE {
+        // An attendee awaiting its owner's critical confirm adds nothing to a
+        // card; a cancellation is a restriction and lands held or not.
+        if body.predicate == PREDICATE_CALENDAR_ATTENDEE
+            && crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, &rtxn, &claim_id)?
+        {
             // Decoded, not just counted: a row that is not a well-formed
             // attendee line is a claim-body error, never a silent head count.
             decode_attendee_value(&body.value)?;

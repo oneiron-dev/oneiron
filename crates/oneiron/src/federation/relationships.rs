@@ -278,7 +278,7 @@ fn relationship_claims<T>(
         };
         if body.predicate != predicate
             || body.lifecycle != ClaimLifecycleStatus::Active
-            || !vault.claim_critical_confirm_settled(&claim)?
+            || !vault.claim_settled_and_active(&claim)?
         {
             continue;
         }

@@ -200,12 +200,7 @@ impl crate::Vault {
     ) -> Result<Option<EntityId>> {
         let mut first: Option<(EntityId, EntityId)> = None;
         for id in self.claims_for_subject_in_txn(txn, artifact)? {
-            let body = if for_effects {
-                self.get_claim_for_effect_in_txn(txn, &id)?
-            } else {
-                self.get_claim_in_txn(txn, &id)?
-            };
-            let Some(body) = body else {
+            let Some(body) = self.get_claim_in_txn(txn, &id)? else {
                 continue;
             };
             if body.predicate != ANNOTATION_COMMENT_PREDICATE || !claim_surfaceable(&body) {
@@ -216,7 +211,17 @@ impl crate::Vault {
                 first = Some((id, comment.author));
             }
         }
-        Ok(first.map(|(_, author)| author))
+        let Some((id, author)) = first else {
+            return Ok(None);
+        };
+        // An opening comment awaiting its owner's critical confirm lends no
+        // authority yet, and the next reply's author never takes its place.
+        if for_effects
+            && !crate::gate::claim_critical_confirm_settled_in_txn(&self.store, txn, &id)?
+        {
+            return Ok(None);
+        }
+        Ok(Some(author))
     }
 }
 fn locator_for_target(target: &PptxCommentTarget, inspection: &PptxInspection) -> Result<Locator> {

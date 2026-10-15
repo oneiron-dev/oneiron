@@ -189,8 +189,10 @@ fn vetoed_channel_classes(
     now: u64,
 ) -> Result<BTreeMap<String, Vec<EntityId>>> {
     let mut vetoed = BTreeMap::<String, Vec<EntityId>>::new();
+    // A veto fold: a restriction lands whether or not its owner has answered
+    // its critical confirm, so this read takes no confirm barrier.
     for claim_ref in vault.claims_for_subject_in_txn(txn, &person_ref)? {
-        let Some(body) = vault.get_claim_for_effect_in_txn(txn, &claim_ref)? else {
+        let Some(body) = vault.get_claim_in_txn(txn, &claim_ref)? else {
             continue;
         };
         if body.predicate != PREDICATE_COMM_REACHABLE_VIA

@@ -2,8 +2,7 @@
 
 use super::{
     BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_SOURCE_PAGE_PREDICATE, BOOKING_STATUS_PREDICATE,
-    BookingBookerContactValue, BookingError, BookingSourcePageValue, BookingStatus,
-    BookingStatusValue,
+    BookingBookerContactValue, BookingSourcePageValue, BookingStatus, BookingStatusValue,
 };
 use crate::claim::{ClaimSubject, claim_surfaceable};
 use crate::ports::EntityStoreRead;
@@ -18,20 +17,15 @@ pub fn active_future_booking_count_for_contact(
     page_ref: EntityId,
     contact_ref: EntityId,
     now: u64,
-) -> Result<u8, BookingError> {
-    let txn = vault.store.env.read_txn().map_err(storage_failure)?;
+) -> crate::Result<u8> {
+    let txn = vault.store.env.read_txn()?;
     let mut count: u8 = 0;
     for id in vault
         .store
-        .port_entity_ids_by_type(&txn, ENTITY_TYPE_EVENT, None)
-        .map_err(storage_failure)?
+        .port_entity_ids_by_type(&txn, ENTITY_TYPE_EVENT, None)?
     {
-        let event_ref = id.map_err(storage_failure)?;
-        let Some(record) = vault
-            .store
-            .port_entity_record(&txn, &event_ref)
-            .map_err(storage_failure)?
-        else {
+        let event_ref = id?;
+        let Some(record) = vault.store.port_entity_record(&txn, &event_ref)? else {
             continue;
         };
         if record.entity_type == ENTITY_TYPE_EVENT
@@ -57,15 +51,11 @@ fn booking_is_active_future_for_in_txn(
     page_ref: EntityId,
     contact_ref: EntityId,
     now: u64,
-) -> Result<bool, BookingError> {
+) -> crate::Result<bool> {
     let (mut same_page, mut same_contact, mut confirmed) = (false, false, false);
-    for claim_id in vault
-        .claims_for_subject_in_txn(txn, &event_ref)
-        .map_err(storage_failure)?
-    {
+    for claim_id in vault.claims_for_subject_in_txn(txn, &event_ref)? {
         let Some(body) = vault
-            .get_claim_for_effect_in_txn(txn, &claim_id)
-            .map_err(storage_failure)?
+            .get_claim_for_effect_in_txn(txn, &claim_id)?
             .filter(claim_surfaceable)
         else {
             continue;
@@ -92,8 +82,7 @@ fn booking_is_active_future_for_in_txn(
     if !(same_page && same_contact && confirmed) {
         return Ok(false);
     }
-    let occurrence = crate::calendar::query::event_row_for_effect_in_txn(vault, txn, event_ref)
-        .map_err(storage_failure)?;
+    let occurrence = crate::calendar::query::event_row_for_effect_in_txn(vault, txn, event_ref)?;
     Ok(occurrence.is_none_or(|row| row.occurred.is_none_or(|at| at.end > now)))
 }
 
@@ -101,8 +90,4 @@ fn decode_claim_value<T: serde::de::DeserializeOwned>(value: &rmpv::Value) -> Op
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, value).ok()?;
     rmp_serde::from_slice(&bytes).ok()
-}
-
-fn storage_failure<E>(_: E) -> BookingError {
-    BookingError::SlotOracle("booking admission lookup failed to read the vault".to_owned())
 }
