@@ -164,8 +164,8 @@ impl Vault {
         let kind = self.project_type_byte()?;
         self.with_write_txn_grouped(|txn| {
             if let Some((intent, owner)) = card {
-                owner.revalidate_in_txn(self, txn)?;
-                if intent.principal_ref != owner.principal_ref()
+                let principal_ref = owner.principal_ref_in_txn(self, txn)?;
+                if intent.principal_ref != principal_ref
                     || intent.source_message_ref != source_message.to_hex()
                     || intent.source_room_ref.as_deref() != Some(room.to_hex().as_str())
                     || intent.source_thread_ref.as_deref() != Some(thread.to_hex().as_str())

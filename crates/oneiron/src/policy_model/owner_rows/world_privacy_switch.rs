@@ -97,9 +97,8 @@ impl Vault {
         world: EntityId,
         settings: WorldPrivacy,
     ) -> Result<WorldPrivacyReceipt> {
-        owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-        let change =
-            self.append_world_privacy_edit_in_txn(txn, owner.actor(), origin, world, settings)?;
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let change = self.append_world_privacy_edit_in_txn(txn, actor, origin, world, settings)?;
         let last = RECEIPTS
             .iter_rev_from(&self.store, txn, &[])?
             .next()
@@ -115,7 +114,7 @@ impl Vault {
             receipt_id: self.store.clock.entity_id()?.to_hex(),
             revision,
             world: world.to_hex(),
-            author: owner.actor().to_hex(),
+            author: actor.to_hex(),
             machine: change.machine.to_hex(),
             previous: change.previous,
             next: change.next,
