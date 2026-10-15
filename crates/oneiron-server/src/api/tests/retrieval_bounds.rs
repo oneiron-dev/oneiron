@@ -390,3 +390,133 @@ async fn a_multi_row_read_omits_bodies_past_its_budget_and_one_read_returns_them
         "{pinned} names the omitted revision"
     );
 }
+
+/// `config` with a `[limits].projection_body_bytes` that holds no body, so
+/// every row of a multi-row read carries the marker.
+fn no_body_budget(config: SyncServerConfig) -> (tempfile::TempDir, Arc<SyncServer>) {
+    test_server_with_config(SyncServerConfig {
+        limits: crate::config::LimitsConfig {
+            projection_body_bytes: 1,
+            ..Default::default()
+        },
+        ..config
+    })
+}
+
+/// Bug repro (Bugbot, #1481): a timeline change body left out of the budget
+/// was read at its pinned revision, so its marker's ref names that revision
+/// and hydrates that body after the claim is edited. On the PR's earlier
+/// head the ref was live and missed the edited row.
+#[tokio::test]
+async fn an_omitted_timeline_change_hydrates_its_pinned_body_after_an_edit() {
+    let (_dir, server) = no_body_budget(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let subject = oneiron::EntityId::now();
+    server
+        .vault
+        .put_entity(
+            &subject,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"subject",
+        )
+        .expect("seed subject");
+    let (old, new) = (oneiron::EntityId::now(), oneiron::EntityId::now());
+    seed_active_claim(&server, old, subject, "osaka", 100);
+    seed_active_claim(&server, new, subject, "tokyo", 200);
+    server
+        .vault
+        .supersede_claim(&new, &old, 777)
+        .expect("supersede claim");
+    let path = format!("/v1/core/memory/{}/timeline?view=full", new.to_hex());
+    let (status, timeline) = route_json_auth(
+        server.clone(),
+        Request::builder()
+            .uri(&path)
+            .body(Body::empty())
+            .expect("timeline request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{timeline:#}");
+    let change = &timeline["records"][1]["changes"][0];
+    assert_eq!(change["after_id"], new.to_hex(), "{timeline:#}");
+    let before = change["before"]["bodyOmitted"]["ref"].as_str();
+    assert!(before.is_some_and(|r| r.contains('@')), "{change}");
+    let marker = &change["after"]["bodyOmitted"];
+    assert_eq!(marker["code"], "PROJECTION_BYTES_EXCEEDED", "{change}");
+
+    let mut head = server
+        .vault
+        .get_claim(&new)
+        .expect("read head")
+        .expect("head");
+    head.value = rmpv::Value::from("kyoto");
+    server
+        .vault
+        .put_claim(
+            &new,
+            &head,
+            oneiron::TimeRange {
+                start: 200,
+                end: 200,
+            },
+            201,
+        )
+        .expect("edit head");
+    let (status, hydrated) = route_json(
+        server,
+        core_request_with_authz(
+            "POST",
+            "/v1/core/hydrate",
+            owner_bearer(),
+            Some(&json!({"ref": marker["ref"], "view": "full"})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{marker}: {hydrated}");
+    assert_eq!(hydrated["item"]["val"], "tokyo", "{marker}: {hydrated}");
+}
+
+/// Bug repro (Bugbot, #1481): a Standard row past the budget keeps its id,
+/// kind and time, so a conversation list, which has no outer envelope, still
+/// names the room whose body it left out. On the PR's earlier head the row
+/// carried only the marker.
+#[tokio::test]
+async fn an_omitted_standard_row_in_a_conversation_list_names_its_id() {
+    let (_dir, server) = no_body_budget(SyncServerConfig {
+        allow_unauthenticated: true,
+        ..Default::default()
+    });
+    let (status, room) = route_json(
+        server.clone(),
+        json_request(
+            "POST",
+            "/v1/core/conversations",
+            json!({"body": {"name": "omitted-room"}}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{room}");
+    let room = oneiron::EntityId::from_hex(room["id"].as_str().expect("room id")).expect("hex id");
+    let bearer = owner_reader_bearer(&server);
+    let (status, list) = route_json(
+        server,
+        Request::builder()
+            .uri("/v1/core/conversations?view=standard&limit=10")
+            .header(AUTHORIZATION, bearer)
+            .body(Body::empty())
+            .expect("list request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    let row = item(&list["items"], &room);
+    assert_eq!(
+        row["bodyOmitted"]["code"], "PROJECTION_BYTES_EXCEEDED",
+        "{row}"
+    );
+    assert!(row["kind"].is_string(), "{row}");
+    assert!(row["updatedAt"].is_u64(), "{row}");
+}
