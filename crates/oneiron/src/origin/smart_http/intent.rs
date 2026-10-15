@@ -5,7 +5,9 @@ use std::path::Path;
 
 use super::cgi_finish::realized_updates;
 use super::door::DoorAdmissionStamp;
-use super::door_window::{DoorWindowReport, DoorWindowVerdict, unlandable_ref_reasons};
+use super::door_window::{
+    DoorWindowReport, DoorWindowVerdict, printable_ref_name, unlandable_ref_reasons,
+};
 use super::evidence::{
     PackStats, RECEIVE_PACK_ADMISSION_PREDICATE, ReceivePackOutcome, RefUpdate, receive_pack_field,
     receive_pack_provenance_refused,
@@ -15,9 +17,12 @@ use super::serve_cmd::path_arg;
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
-use crate::error::{CodeError, Error, Result};
-use crate::git_wire::{GitOid, GitWire, lock_repository};
-use crate::origin::lfs::{LfsOid, LfsPushedPointer, lfs_repo_id};
+use crate::error::{CodeError, Error, ErrorKind, Result};
+use crate::git_wire::{GitOid, GitRefName, GitWire, lock_repository};
+use crate::origin::lfs::{
+    DefaultRepositoryLargeLfsPathPolicy, LfsAdmission, LfsOid, LfsPushedPointer, lfs_repo_id,
+};
+use crate::origin::publication::{OriginPublicationStatus, obligations_beyond_owner};
 use crate::origin::residence::OriginAuthorityStamp;
 use crate::origin::scan_check::{OriginScan, ScanCount};
 use crate::side_table::{self, Named, SideKey, SideTable};
@@ -73,6 +78,11 @@ pub enum ReceivePackRefStatus {
     Superseded,
     /// An observed effect still needs publication or attachment recovery.
     Pending,
+    /// The backend applied this ref's move, but a `Published` publication
+    /// had already made that move, and this push needs objects it never
+    /// certified. Terminal: the move is consumed, so no publication of it can
+    /// certify more, and retrying it would only refuse again.
+    Uncertified,
 }
 
 /// One ref's result. A multi-ref operation can contain different results.
@@ -148,6 +158,62 @@ fn receive_pack_repo_identity_hex(vault: &Vault, repo_root: &Path) -> Result<Str
 }
 
 impl Vault {
+    /// Why the push must be refused, for each advancing ref whose move a
+    /// publication owns, `Published` or still `Prepared`, but which needs
+    /// objects that publication does not certify. Decided while the hook
+    /// still blocks the backend: once the ref moves, such a push can only
+    /// end [uncertified](ReceivePackRefStatus::Uncertified). A `Prepared`
+    /// owner's obligations are fixed, so it is held to them before it is
+    /// decided; if it is refused, its move is free and the push can be sent
+    /// again. The large files a push brings count against each of its
+    /// advancing refs, so a push that also brings another ref new large
+    /// files is refused whole.
+    pub(super) fn receive_pack_owner_shortfalls(
+        &self,
+        repo: &RepoRef,
+        updates: &[RefUpdate],
+        pointers: &[LfsPushedPointer],
+    ) -> Result<Vec<String>> {
+        let RepoRef::LocalFolder { path, .. } = repo else {
+            return Err(receive_pack_provenance_refused("intent is not local"));
+        };
+        let root = Path::new(path).canonicalize()?;
+        let repo_id = lfs_repo_id(&receive_pack_repo_identity_hex(self, &root)?)?;
+        let mut lfs_objects = Vec::new();
+        for pointer in pointers {
+            let intent = pointer.intent(repo_id);
+            if self.admit_lfs_pointer(&DefaultRepositoryLargeLfsPathPolicy, &intent)?
+                == LfsAdmission::StoreInLfs
+            {
+                lfs_objects.push((intent.oid, intent.size_bytes));
+            }
+        }
+        let mut reasons = Vec::new();
+        for update in updates {
+            let Some(next) = update.new_oid.as_ref() else {
+                continue;
+            };
+            let name = GitRefName::parse_full(update.name.clone())?;
+            let Some(owner) =
+                self.origin_move_owner(repo_id, &name, update.old_oid.as_ref(), next)?
+            else {
+                continue;
+            };
+            if !matches!(
+                owner.status,
+                OriginPublicationStatus::Prepared | OriginPublicationStatus::Published
+            ) {
+                continue;
+            }
+            if let Some(refusal) =
+                obligations_beyond_owner(&owner, std::iter::once(next), lfs_objects.iter())
+            {
+                reasons.push(format!("{}: {refusal}", printable_ref_name(&update.name)));
+            }
+        }
+        Ok(reasons)
+    }
+
     pub(super) fn record_receive_pack_intent(
         &self,
         repo: &RepoRef,
@@ -505,17 +571,24 @@ impl Vault {
             if matches!(result, Err(Error::Code(CodeError::LfsReadRoomWaitedOut))) {
                 return Err(Error::Code(CodeError::LfsReadRoomWaitedOut));
             }
-            if let Ok(receipt) = result {
-                intent.refs[index].status = ReceivePackRefStatus::Published;
-                self.save_receive_pack_intent(key, intent)?;
-                if let Some(previous) = &mut landing {
-                    previous.replayed &= receipt.replayed;
-                } else {
-                    // The exposed replay outcome must name the same ref and
-                    // source as the first receipt, not an uncertified aggregate.
-                    replay_outcome = Some(outcome);
-                    landing = Some(receipt);
+            match result {
+                Ok(receipt) => {
+                    intent.refs[index].status = ReceivePackRefStatus::Published;
+                    self.save_receive_pack_intent(key, intent)?;
+                    if let Some(previous) = &mut landing {
+                        previous.replayed &= receipt.replayed;
+                    } else {
+                        // The exposed replay outcome must name the same ref and
+                        // source as the first receipt, not an uncertified aggregate.
+                        replay_outcome = Some(outcome);
+                        landing = Some(receipt);
+                    }
                 }
+                Err(error) if error.kind() == ErrorKind::OriginPublicationBeyondOwner => {
+                    intent.refs[index].status = ReceivePackRefStatus::Uncertified;
+                    self.save_receive_pack_intent(key, intent)?;
+                }
+                Err(_) => {}
             }
             // Do not stop after a failed ref: retain its Pending disposition
             // and recover the other refs independently.

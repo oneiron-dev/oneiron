@@ -19,6 +19,8 @@ mod note_socket_tests;
 #[cfg(test)]
 mod residence_socket_tests;
 mod transport;
+#[cfg(test)]
+pub(crate) mod window_row_tests;
 mod window_sync;
 
 pub(crate) use self::connection::ws_routes;

@@ -522,6 +522,16 @@ fn serve_publication_test_connection(
     )
     .expect("serve stock client");
     if request.is_receive_pack() {
+        // A server tells the client that a ref the landing did not certify
+        // failed. This harness fails the whole exchange instead.
+        assert!(
+            report
+                .ref_results
+                .iter()
+                .all(|entry| entry.status == ReceivePackRefStatus::Published),
+            "a ref the landing did not certify: {:?}",
+            report.ref_results
+        );
         if request.query_string.contains("checkout-lease=") {
             let stamp = report.admission.as_ref().expect("lease admission");
             assert_eq!(stamp.method(), "door-credential+registered-principal");
@@ -543,21 +553,36 @@ fn serve_publication_test_connection(
             outcome.pack_stats.ref_update_count,
             outcome.ref_updates.len()
         );
-        let repo = outcome.pinned_repo_ref().expect("replay repo");
         let first = report.landing.as_ref().expect("certified push");
-        let replay = vault
-            .apply_receive_pack_update(&repo, outcome)
-            .expect("the actual served outcome is journal-backed");
-        assert!(replay.replayed);
-        assert_eq!(replay.receipt.record_key, first.receipt.record_key);
-        for field in 0..3 {
-            let mut tampered = outcome.clone();
-            match field {
-                0 => tampered.pack_stats.request_bytes += 1,
-                1 => tampered.pack_stats.response_bytes += 1,
-                _ => tampered.pack_stats.ref_update_count += 1,
+        // The outcome-only door replays an advance from its own durable
+        // publication. A deletion publishes nothing, and a landing that ran no
+        // new effect left nothing new for that door to replay.
+        let replayable = !first.replayed
+            && outcome
+                .ref_updates
+                .iter()
+                .all(|update| update.new_oid.is_some());
+        if replayable {
+            let repo = outcome.pinned_repo_ref().expect("replay repo");
+            let replay = vault
+                .apply_receive_pack_update(&repo, outcome)
+                .expect("the actual served outcome is journal-backed");
+            assert!(replay.replayed);
+            match (&replay.receipt, &first.receipt) {
+                (ReceivePackCertificate::Wire(replay), ReceivePackCertificate::Wire(first)) => {
+                    assert_eq!(replay.record_key, first.record_key);
+                }
+                other => panic!("a served advance lands through its wire record: {other:?}"),
             }
-            assert!(vault.apply_receive_pack_update(&repo, &tampered).is_err());
+            for field in 0..3 {
+                let mut tampered = outcome.clone();
+                match field {
+                    0 => tampered.pack_stats.request_bytes += 1,
+                    1 => tampered.pack_stats.response_bytes += 1,
+                    _ => tampered.pack_stats.ref_update_count += 1,
+                }
+                assert!(vault.apply_receive_pack_update(&repo, &tampered).is_err());
+            }
         }
     }
     let mut response = format!("HTTP/1.1 {} OK\r\n", captured.status);

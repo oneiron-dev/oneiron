@@ -286,6 +286,7 @@ pub enum ErrorKind {
     LfsReadRoomWaitedOut,
     ReceivePackDoorRejected,
     ReceivePackLandingRefused,
+    OriginPublicationBeyondOwner,
     VaultCleanupRestoreNotArchived,
     VaultCleanupArchiveMarkerUndecodable,
     VaultCleanupProposalNotFound,

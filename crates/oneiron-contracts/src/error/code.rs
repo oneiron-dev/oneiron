@@ -198,6 +198,20 @@ pub enum CodeError {
         /// The publication rejection class.
         reason: String,
     },
+    /// An origin publication asked again for a move an earlier publication
+    /// already made, but needs objects that publication never certified. The
+    /// earlier proof cannot answer it, and the move is consumed, so nothing
+    /// is staged or moved for it.
+    #[error(
+        "origin publication needs objects the publication that owns its move never certified: \
+         git {objects:?}, lfs {lfs_objects:?}"
+    )]
+    OriginPublicationBeyondOwner {
+        /// Git object ids the owner never certified.
+        objects: Vec<String>,
+        /// LFS object ids the owner never certified.
+        lfs_objects: Vec<String>,
+    },
     /// A deployment-independent vault-read operation failed (ONE-1433). The
     /// typed taxonomy lives in `code_run::vault_read` and deliberately does not
     /// embed this type, which would make both errors recursive.
@@ -254,6 +268,7 @@ impl CodeError {
             Self::LfsReadRoomWaitedOut => ErrorKind::LfsReadRoomWaitedOut,
             Self::ReceivePackDoorRejected { .. } => ErrorKind::ReceivePackDoorRejected,
             Self::ReceivePackLandingRefused { .. } => ErrorKind::ReceivePackLandingRefused,
+            Self::OriginPublicationBeyondOwner { .. } => ErrorKind::OriginPublicationBeyondOwner,
             Self::VaultRead(_) => ErrorKind::VaultRead,
         }
     }

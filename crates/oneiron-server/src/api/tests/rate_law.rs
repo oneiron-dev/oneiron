@@ -40,6 +40,9 @@ async fn cross(row: LimitRow) -> Crossing {
         })
         .await
         .unwrap(),
+        LimitRow::WindowsPerConnection => {
+            crate::handler::window_row_tests::cross_the_windows(CALLERS).await
+        }
     }
 }
 
