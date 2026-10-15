@@ -444,3 +444,36 @@ fn a_replica_pierces_the_bytes_in_every_arrival_order() -> Result<()> {
     }
     Ok(())
 }
+
+/// Done-means (Engine ruling on #1465, 10-15): bytes a hard erase took stay out of the vault. A
+/// fresh local append of them is refused, and the refusal says that the content was hard-erased
+/// here and that adding it again needs the owner's re-admit, never a bare "erased".
+#[test]
+fn a_fresh_append_of_erased_bytes_is_refused_and_says_why() -> Result<()> {
+    let fixture = Shared::open()?;
+    let vault = &fixture.vault;
+    vault.delete_entity_with_reason(&fixture.erased, DeleteReason::UserHardDelete)?;
+    let actor = WriteActor::new(fixture.person, EdgeActorClass::Human);
+    let refused = vault.append_blob_artifact_version(
+        &fixture.other,
+        SHARED,
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        at(20),
+        20,
+    );
+    let Err(error) = refused else {
+        panic!("a fresh append stored bytes a hard erase took");
+    };
+    assert!(matches!(
+        error,
+        Error::Artifact(ArtifactError::BlobContentErased)
+    ));
+    let said = error.to_string();
+    assert!(
+        said.contains("hard-erased") && said.contains("owner"),
+        "the refusal did not explain itself: {said}"
+    );
+    assert!(vault.get_raw(&fixture.asset()?)?.is_none());
+    Ok(())
+}

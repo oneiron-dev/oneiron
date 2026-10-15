@@ -26,10 +26,15 @@ pub enum ArtifactError {
     /// A hard erase took this blob artifact version's bytes and every reference
     /// to them (ARCH-0005a: HardErase pierces refcounting). The version stays in
     /// its artifact's chain as an erased reference; its bytes and record never
-    /// come back, so a retry reads the same answer. An append of bytes a hard
-    /// erase took is refused the same way: they are never stored again.
+    /// come back, so a retry reads the same answer.
     #[error("blob artifact version was erased")]
     BlobVersionErased,
+    /// An append offered bytes a hard erase took from this vault. They are
+    /// never stored again unless the vault's owner re-admits that content.
+    #[error(
+        "this content was hard-erased in this vault; adding it again needs the vault owner to re-admit it"
+    )]
+    BlobContentErased,
     /// A Git-LFS object did not match what the client declared about it: a
     /// malformed object id, or a body whose SHA-256 or length disagrees with
     /// the declared oid/size. Nothing was written.
@@ -181,6 +186,7 @@ impl ArtifactError {
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
             Self::InvalidBlobArtifactBody(_) => ErrorKind::InvalidBlobArtifactBody,
             Self::BlobVersionErased => ErrorKind::BlobVersionErased,
+            Self::BlobContentErased => ErrorKind::BlobContentErased,
             Self::InvalidLfsObject(_) => ErrorKind::InvalidLfsObject,
             Self::InvalidAnchor(_) => ErrorKind::InvalidAnchor,
             Self::AnnotationThreadNotFound => ErrorKind::AnnotationThreadNotFound,

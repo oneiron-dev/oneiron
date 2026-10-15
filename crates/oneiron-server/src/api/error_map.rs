@@ -53,6 +53,13 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         ErrorKind::EntityNotFound | ErrorKind::EdgeNotFound => ApiError::not_found("entity", None),
         // An erased version is not a missing one: a retry reads the same answer (ARCH-0005a).
         ErrorKind::BlobVersionErased => ApiError::invalid_state(Some("blob_version_erased")),
+        ErrorKind::BlobContentErased => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some("blob_content_erased".to_owned()),
+            },
+            ["Ask the vault owner to re-admit this content before adding it again."],
+        ),
         ErrorKind::HeadAdvanceOffTrunk => ApiError::invalid_state(Some("head_advance_off_trunk")),
         ErrorKind::DagParentOutsideConversation => {
             ApiError::invalid_state(Some("dag_parent_outside_conversation"))

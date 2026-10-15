@@ -297,6 +297,11 @@ impl From<Error> for MemoryError {
                 message,
                 &["A hard erase took this version's bytes; read another version."],
             ),
+            ErrorKind::BlobContentErased => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &["Ask the vault owner to re-admit this content before adding it again."],
+            ),
             // FORBIDDEN like the gate family beside it, but with its OWN
             // remedies: the generic arm points at pending consents and at
             // resubmitting as proposed, and both are exactly what this error

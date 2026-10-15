@@ -110,6 +110,7 @@ pub enum ErrorKind {
     InvalidCodeArtifactBody,
     InvalidBlobArtifactBody,
     BlobVersionErased,
+    BlobContentErased,
     InvalidLfsObject,
     InvalidNoteBody,
     InvalidWitnessMessageBody,
