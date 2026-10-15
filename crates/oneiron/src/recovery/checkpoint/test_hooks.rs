@@ -38,6 +38,7 @@ thread_local! {
 
 /// Panics the next restore on this thread in its final checks against the
 /// current vault, as a host callback there could.
+#[cfg(target_os = "linux")]
 pub(super) fn arm_restore_panic() {
     RESTORE_PANICS.with(|slot| slot.set(true));
 }

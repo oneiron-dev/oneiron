@@ -1,4 +1,6 @@
-use super::test_hooks::{arm_restore_failure, arm_restore_panic};
+use super::test_hooks::arm_restore_failure;
+#[cfg(target_os = "linux")]
+use super::test_hooks::arm_restore_panic;
 use super::*;
 use crate::{EntityId, temporal::TimeRange};
 
