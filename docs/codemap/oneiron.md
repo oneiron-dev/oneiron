@@ -2462,6 +2462,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/checkpoint/restore_class/vault_meta_d_l.rs` | src | s | 1 crate-vis | — | The restore class of every canonical `vault_meta`, `d` to `l` family, in declaration order |
 | `src/recovery/checkpoint/restore_class/vault_meta_m_r.rs` | src | s | 1 crate-vis | — | The restore class of every canonical `vault_meta`, `m` to `r` family, in declaration order |
 | `src/recovery/checkpoint/restore_class/vault_meta_s_z.rs` | src | s | 1 crate-vis | — | The restore class of every canonical `vault_meta`, `s` to `z` family, in declaration order |
+| `src/recovery/checkpoint/test_hooks.rs` | src | s | 5 crate-vis | — | Test hooks that fail or panic a restore at a chosen step |
 | `src/recovery/checkpoint/tests.rs` | test | XL | — | — | — |
 | `src/recovery/checkpoint/tiers.rs` | src | s | 1 enum · 1 fn | StorageTier | Snapshot classification |
 | `src/recovery/document.rs` | src | m | 3 struct · 1 fn · 13 crate-vis | CanonicalDocument, CanonicalHead, CanonicalHeadMove | Canonical entity-local documents and their bound workflows |
@@ -2797,7 +2798,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/channel_identity_receipts.rs` | src | s | 2 struct · 4 fn · 2 crate-vis | ChannelIdentityLifecycleReceiptId, ChannelIdentityLifecycleReceiptRecord | Append-only channel-identity lifecycle receipt ledger |
 | `src/store/commitment_due.rs` | src | m | 15 crate-vis | — | The commitment due index (CMT-2, ONE-1539) |
 | `src/store/diagnostics.rs` | src | s | 1 struct · 3 fn | Diagnostics | The content-free counters one open vault owns |
-| `src/store/gate_decision/checkpoint_custody.rs` | src | m | 25 crate-vis | — | What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038… |
+| `src/store/gate_decision/checkpoint_custody.rs` | src | m | 26 crate-vis | — | What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038… |
 | `src/store/gate_decision/claim_refs.rs` | src | s | 8 crate-vis | — | Inbox-bundle claim references and uncommitted batch-preflight markers: the two gate-decision sidecars… |
 | `src/store/gate_decision/keys.rs` | src | s | 15 crate-vis | — | Gate-decision ledger key prefixes, key constructors, and the id successor |
 | `src/store/gate_decision/ledger.rs` | src | L | 1 fn · 31 crate-vis | — | Gate-decision ledger Store methods plus the row append and record codec |
@@ -2814,7 +2815,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/handle.rs` | src | L | 4 struct · 27 crate-vis | RawDatabases, Store, StoreCore, StoreOwner | The vault handle shape: [`RawDatabases`], [`StoreCore`], [`StoreOwner`], [`Store`], [`SessionStoreView`]… |
 | `src/store/key_encoding.rs` | src | s | 3 fn · 4 crate-vis | — | Foundational byte-layout codecs with crate-wide fan-out: the edge / temporal / type index key encoders and… |
 | `src/store/local_queue_budget.rs` | src | s | 1 crate-vis | — | Byte accounting for bounded device-local queues, separate from verdict/rate policy |
-| `src/store/mod.rs` | src | s | 1 mod · 13 re-export · 9 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | s | 1 mod · 13 re-export · 10 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/open_gates/embedding_transform_gates.rs` | src | s | 5 crate-vis | — | The embedding-transform pin: how a vault's vectors were made, beside the model that made them |
 | `src/store/open_gates/hnsw_model_gates.rs` | src | m | 1 fn · 19 crate-vis | — | HNSW compatibility encode/decode/format, embedding-model preflight and persist gates, temporal migration… |
 | `src/store/open_gates/manifest_storage_gates.rs` | src | m | 31 crate-vis | — | Process path registry, owned environment close semantics, manifest create/open/validate pairs, and storage… |
@@ -2845,7 +2846,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/retrieval_telemetry/state_tests.rs` | test | m | — | — | — |
 | `src/store/retrieval_telemetry/turn_index.rs` | src | s | 3 fn · 3 crate-vis | — | Ordered by-turn projection of independent retrieval runs |
 | `src/store/retrieval_telemetry/types.rs` | src | m | 13 struct · 2 enum · 5 fn · 1 type · 1 re-export · 10 crate-vis | RetrievalAction, RetrievalBlendTuningConfig, RetrievalBlendWeightDataWindow, RetrievalBlendWeightTableEntry, RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalRewardEvidence +7 | Retrieval-telemetry record, trace, signal, and blend-weight types |
-| `src/store/root_directory.rs` | src | m | 1 struct · 5 fn · 8 crate-vis | SharedPath | Descriptor-bound directory identity shared by store opens and writer leases |
+| `src/store/root_directory.rs` | src | m | 1 struct · 5 fn · 9 crate-vis | SharedPath | Descriptor-bound directory identity shared by store opens and writer leases |
 | `src/store/send_receipt_audit.rs` | src | s | 1 crate-vis | — | Append-only send receipt audit storage |
 | `src/store/short_id_alias.rs` | src | m | 1 enum · 14 crate-vis | ShortIdAliasTarget | Legacy short-id alias rows: resolve/insert/retarget, the short-id counter key, and the short-id prefix… |
 | `src/store/structural_kind_registry/mod.rs` | src | s | 2 crate-vis | — | Vault-scoped dynamic entity-type/kind registry: registration, load and rebuild, and zone validation |
@@ -2853,8 +2854,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/test_hooks.rs` | src | m | 27 crate-vis | — | The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it |
 | `src/store/tests.rs` | test | XL | — | — | — |
 | `src/store/tests/gate_claim_lookup.rs` | test | s | — | — | The lookup behind a claim write's receipt: the newest decision about a claim among the newest ledger rows… |
-| `src/store/writer_lease.rs` | src | s | 1 struct · 4 fn · 2 const · 3 crate-vis | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
-| `src/store/writer_lease/tests.rs` | test | s | — | — | Focused process-owner lease and bootstrap regressions |
+| `src/store/writer_lease.rs` | src | m | 1 struct · 4 fn · 2 const · 5 crate-vis | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
+| `src/store/writer_lease/tests.rs` | test | m | — | — | Focused process-owner lease and bootstrap regressions |
 | `src/subject_model.rs` | src | m | 1 struct · 2 enum · 12 fn · 3 const · 1 re-export · 7 crate-vis | ActorSubjectAnchor, PersonSubstrate, SubjectKind | Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7) |
 | `src/subject_model/archive.rs` | src | s | 1 struct · 5 fn · 3 crate-vis | SubjectRestoreReview | Inert subject-fact restore and explicit current-owner activation |
 | `src/subject_model/tests.rs` | test | L | 2 crate-vis | — | — |
@@ -3161,6 +3162,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/identity.rs` | src | s | 4 crate-vis | — | One vault identity, resolved once at open and held on the handle |
 | `src/vault/mod.rs` | src | s | 1 struct · 6 re-export · 12 crate-vis | Vault | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
 | `src/vault/open/config_validation.rs` | src | s | 1 crate-vis | — | — |
+| `src/vault/open/lease_door.rs` | src | s | 3 crate-vis | — | The open a restore uses for its copy: under the writer lease the restore took when it made the copy's… |
 | `src/vault/open/mod.rs` | src | L | 12 fn · 9 crate-vis | — | Vault open and bootstrap: open doors, privacy posture and live-window attachment |
 | `src/vault/places.rs` | src | s | 5 fn | — | Geographic entity doors consume PlaceStore, never concrete database handles |
 | `src/vault/read_fixture.rs` | src | s | 3 fn | — | Explicit actor-bound read policy and foreign Grants for cross-crate integration fixtures |

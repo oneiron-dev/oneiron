@@ -30035,6 +30035,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/test_hooks.rs",
+     "purpose": "Test hooks that fail or panic a restore at a chosen step",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -34142,7 +34152,7 @@
      "path": "src/store/gate_decision/checkpoint_custody.rs",
      "purpose": "What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038…",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -34330,7 +34340,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 1,
       "re-export": 13
      }
@@ -34686,7 +34696,7 @@
      "path": "src/store/root_directory.rs",
      "purpose": "Descriptor-bound directory identity shared by store opens and writer leases",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 5,
       "struct": 1
      }
@@ -34761,7 +34771,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "VaultWriterLease"
@@ -34770,13 +34780,13 @@
      "purpose": "Process-owner writer lease, shared by the server and embedded SDK",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 4,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/store/writer_lease/tests.rs",
@@ -38259,6 +38269,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/open/lease_door.rs",
+     "purpose": "The open a restore uses for its copy: under the writer lease the restore took when it made the copy's…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -41450,7 +41470,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 53,
+     "files": 54,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -41772,7 +41792,7 @@
      "purpose": "—"
     },
     "vault": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -41837,7 +41857,7 @@
    },
    "over_bar": 40,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2531,
+   "source_files": 2533,
    "test_files": 827
   },
   "oneiron-android": {
