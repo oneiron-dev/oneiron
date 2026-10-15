@@ -46,9 +46,10 @@ impl Vault {
     /// Every id is derived from entry content (ONE-1604-D1), exactly as the
     /// single-entry door does. Encoding, validation, and derivation all happen
     /// BEFORE the write transaction opens, so a bad entry anywhere in the
-    /// batch stores nothing at all. The rows stage parents first and each
-    /// signer's by sequence, in whatever order the caller gives them; the
-    /// ids come back in the caller's order.
+    /// batch stores nothing at all. The rows stage parents first, each
+    /// signer's by sequence and each after the rows that let a key vouch
+    /// for it, in whatever order the caller gives them; the ids come back
+    /// in the caller's order.
     ///
     /// This is what makes a genesis owner-binding a single ceremony: a host
     /// composes `[genesis, bind]` and either both land or neither does. The
@@ -144,10 +145,16 @@ impl Vault {
             return Ok(ids);
         }
         // The door judges each row against the rows staged before it (H72),
-        // so stage them parents first and each signer's by sequence,
-        // whatever order the caller gave.
+        // so stage them parents first, each signer's by sequence and each
+        // after the rows that let a key vouch for it, whatever order the
+        // caller gave.
+        let order = if staged.len() < 2 {
+            (0..staged.len()).collect()
+        } else {
+            super::import_order::write_stage_order(&self.store, wtxn, &staged)?
+        };
         let mut ops: Vec<_> = ops.into_iter().map(Some).collect();
-        let ops: Vec<_> = super::authority_stage_order(&staged)
+        let ops: Vec<_> = order
             .into_iter()
             .filter_map(|index| ops[index].take())
             .collect();

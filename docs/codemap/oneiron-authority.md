@@ -18,12 +18,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/federation_pact.rs` | src | s | 3 struct · 4 enum · 6 fn | FederationGrantActivation, FederationLifecycleAction, FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture, FederationPactState, FederationPactStatus | Federation lifecycle and pact types |
 | `src/authority/log_entry_op.rs` | src | m | 1 struct · 1 enum · 13 fn | AuthorityLogEntry, AuthorityOp | The authority op vocabulary and the signed log-entry envelope |
 | `src/authority/machine_profile.rs` | src | s | 2 struct · 2 enum · 5 fn · 4 const · 3 crate-vis | MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole | The physical machine profile: the owner's signed answer when a machine joins the vault, and its wire codec |
-| `src/authority/mod.rs` | src | s | 13 re-export | — | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
+| `src/authority/mod.rs` | src | s | 15 re-export | — | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
+| `src/authority/owner_root.rs` | src | s | 2 struct · 3 fn · 1 const · 3 crate-vis | OwnerRootRecord, RecoveryRootId | The owner's recovery root record and its wire codec (world privacy P6b) |
 | `src/authority/recovery_ceremony.rs` | src | s | 1 enum · 4 fn · 1 const | GenesisRecoveryStep | Explicit genesis recovery-secret acknowledgement and its visible fragile flag |
 | `src/authority/slip_claims.rs` | src | s | 2 struct · 4 fn · 1 const | SlipClaims, SlipMintAction | Capability-slip payloads as the authority log commits them: the claims a host mints and their shape and… |
 | `src/authority/slip_wire.rs` | src | s | 2 fn | — | Field-by-field signed capability claims and six-axis Scope wire codec |
 | `src/authority/wire_decode.rs` | src | m | 13 fn | — | `rmpv::Value` decoding for every authority type |
 | `src/authority/wire_encode.rs` | src | m | 10 fn | — | `rmpv::Value` encoding for every authority type |
+| `src/authority/world_key_wraps.rs` | src | s | 3 struct · 1 enum · 4 fn · 7 const · 3 crate-vis | PolicyRevision, WorldKeyId, WorldKeyWrapsRecord, WrapRecipient | A private world's key records and their wire codec (world privacy P6b) |
 | `src/authority/world_privacy.rs` | src | s | 2 struct · 3 enum · 1 fn · 3 const · 2 crate-vis | ModelOrder, ReadLocation, SealedCopies, WorldPrivacy, WorldPrivacyEdit | A world's privacy settings and their wire codec: where the world may be read, where its sealed copies may… |
 | `src/credential_door.rs` | src | s | 1 fn · 1 const | — | Credential-door bounds the authority log's slip checks share with the door itself |
 | `src/federation/codec.rs` | src | s | 6 fn | — | Shared MessagePack and entity-ref decoding helpers for the federation module |

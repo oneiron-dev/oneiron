@@ -125,7 +125,10 @@ impl Vault {
             .iter()
             .filter(|(hash, _)| resident.contains(*hash))
             .map(|(_, (_, entry))| entry);
-        for (hash, bytes, _) in super::import_order::import_order(stored, &resident, decoded) {
+        let own_roots = super::log_structure::LocalRoots::read_in_txn(&self.store, &txn)?;
+        for (hash, bytes, _) in
+            super::import_order::import_order(stored, &resident, own_roots, decoded)
+        {
             let id = authority_log_entity_id_from_hash(&hash)?;
             ids.push(id);
             ops.push(BatchOp::Put {

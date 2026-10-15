@@ -8,6 +8,7 @@ use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 use super::backup::BackupConfig;
 use super::embedder::EmbedderConfig;
 use super::feedback::FeedbackConfig;
+use super::keystore::KeystoreConfig;
 use super::limits::LimitsConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
 use super::oneironer::OneironerConfig;
@@ -255,6 +256,8 @@ pub struct ServeConfig {
     pub feedback: FeedbackConfig,
     /// The `[recall]` section: call mode's deadline.
     pub recall: RecallConfig,
+    /// The `[keystore]` section: this install's this-device-only key slots.
+    pub keystore: KeystoreConfig,
     /// The `[limits]` section: the bounds on work a remote caller can start.
     pub limits: LimitsConfig,
     /// The `[import]` section: the queue a running `serve` imports session
@@ -316,6 +319,7 @@ impl Default for ServeConfig {
             backup: BackupConfig::default(),
             feedback: FeedbackConfig::default(),
             recall: RecallConfig::default(),
+            keystore: KeystoreConfig::default(),
             limits: LimitsConfig::default(),
             import: super::ImportConfig::default(),
             models: None,
@@ -377,6 +381,7 @@ impl fmt::Debug for ServeConfig {
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
             .field("recall", &self.recall)
+            .field("keystore", &self.keystore)
             .field("limits", &self.limits)
             .field("import", &self.import)
             .field("models", &self.models)
