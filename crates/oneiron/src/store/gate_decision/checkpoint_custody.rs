@@ -227,6 +227,7 @@ fn names(_: &Path, (): &()) -> Result<bool> {
 /// directory it made with everything in it, through the descriptor it holds:
 /// a directory moved in under the name since is left as it is.
 pub(crate) struct MadeDestination {
+    #[cfg(unix)]
     destination: PathBuf,
     #[cfg(unix)]
     made: std::fs::File,
@@ -256,6 +257,7 @@ impl MadeDestination {
             std::fs::create_dir(destination)?;
         }
         let made = Self {
+            #[cfg(unix)]
             destination: destination.to_owned(),
             #[cfg(unix)]
             identity: file_identity(&made.metadata()?),
@@ -296,12 +298,33 @@ impl Drop for MadeDestination {
             return;
         }
         #[cfg(unix)]
-        let removed = remove_held_directory(&self.destination, &self.made).is_ok();
+        let removed = self.remove();
+        // With no directory identity to remove by, the copy is left, as a
+        // refused restore always left it here (review r1, Sol F2).
         #[cfg(not(unix))]
-        let removed = std::fs::remove_dir_all(&self.destination).is_ok();
+        let removed = false;
         if !removed {
             tracing::warn!("a refused restore left the copy it made in place");
         }
+    }
+}
+
+#[cfg(unix)]
+impl MadeDestination {
+    /// Removes the directory made, only while its name still holds it and no
+    /// owner holds its writer lease: a copy another owner opened meanwhile is
+    /// that owner's (review r1, Sol F1). The lease is held through the
+    /// removal, so no owner opens the copy while it goes.
+    fn remove(&self) -> bool {
+        if !names(&self.destination, &self.identity).unwrap_or(false) {
+            return false;
+        }
+        let Ok(lease) = crate::store::VaultWriterLease::acquire(&self.destination) else {
+            return false;
+        };
+        let removed = remove_held_directory(&self.destination, &self.made).is_ok();
+        drop(lease);
+        removed
     }
 }
 
