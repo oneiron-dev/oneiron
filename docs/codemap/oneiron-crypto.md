@@ -20,13 +20,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/envelope/seal.rs` | src | m | 2 struct · 2 enum · 2 fn · 1 crate-vis | OpenKey, OpenPolicy, SealKey, SealParams | Sealing and opening, and the one key schedule every wrap type shares: |
 | `src/envelope/seal/tests.rs` | test | s | — | — | The HKDF key schedule's stack wipe (RustCrypto/meta#38): the bare schedule leaves its secrets below its… |
 | `src/error.rs` | src | s | 1 enum · 1 type | Error | The one error type |
-| `src/keys.rs` | src | s | 6 struct · 9 fn · 11 const · 11 crate-vis | Argon2Cost, HybridPublicKey, HybridSecretKey, Kek, Passphrase, RecoverySecret | Key material types |
-| `src/lib.rs` | src | s | 3 const · 7 re-export | — | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… |
+| `src/keys.rs` | src | m | 6 struct · 10 fn · 11 const · 11 crate-vis | Argon2Cost, HybridPublicKey, HybridSecretKey, Kek, Passphrase, RecoverySecret | Key material types |
+| `src/keys/tests.rs` | test | s | — | — | The seed expansion's stack wipe (RustCrypto/meta#38): building a key from its seed reaches below its caller… |
+| `src/lib.rs` | src | s | 3 const · 1 mod · 7 re-export | — | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… |
 | `src/nonce.rs` | src | s | 1 struct · 2 fn | NonceLedger | Duplicate-nonce detection where the caller can see it |
 | `src/record/mod.rs` | src | m | 3 struct · 2 enum · 8 fn · 1 re-export · 1 crate-vis | CheckpointRef, RecordBody, SigPurpose, SignatureEntry, SignatureRecord | Signature records: the canonical encoding, the strict parser and the roster rules |
 | `src/record/sign.rs` | src | m | 1 struct · 2 enum · 8 fn | SigningKey, VerifyPolicy, VerifyingKey | Signing and verifying records |
 | `src/record/sign/tests.rs` | test | s | — | — | Record signing's stack wipe (RustCrypto/meta#38): the bare SLH-DSA signer leaves its secrets below its… |
-| `src/stack_probe.rs` | src | s | 4 crate-vis | — | Test-only stack probe |
+| `src/stack_probe.rs` | src | s | 1 struct · 3 fn | Below | Test-only stack probe |
 | `src/stretch.rs` | src | s | 1 fn | — | A stretched passphrase as raw key material, for constructions that are not envelope wraps: the recovery kit… |
 | `src/suite.rs` | src | s | 2 struct · 2 enum · 2 fn · 11 const · 3 crate-vis | Suite, SuiteId, SuiteKind, SuiteStatus | The suite table: every algorithm combination the format can name, its state and its minimum epoch |
 | `tests/envelope.rs` | test | L | — | — | Envelope contract: round trips for every wrap type, fail-closed parsing, reader policy, AAD binding of every… |
