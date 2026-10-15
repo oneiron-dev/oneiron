@@ -20,18 +20,19 @@ use crate::common::source_scan::{
     SourceTree, is_ident_byte, is_ident_start, normalized, production_source,
 };
 
-/// Calls that reach a model: the raw seam, the durable-step wrappers above it, the server's offer
-/// ladder and the benchmark harness's own transports.
-const MODEL_CALLS: &[&str] = &[
-    ".generate(",
-    ".generate_while(",
-    ".stream(",
-    "call_as_step(",
-    "call_as_step_checked(",
-    "call_as_step_with_fallbacks(",
-    ".invoke_with_lease(",
-    "call_openrouter(",
+/// Methods that reach a model, called as `x.name(` or through a raw-seam trait path
+/// (`LlmBackend::generate(`): the raw seam, the server's offer ladder and the BEAM transport.
+const MODEL_METHODS: &[&str] = &["generate", "generate_while", "stream", "invoke_with_lease"];
+/// Free fns that reach a model, under any path: the durable-step wrappers and the
+/// interface-bench transport.
+const MODEL_FNS: &[&str] = &[
+    "call_as_step",
+    "call_as_step_checked",
+    "call_as_step_with_fallbacks",
+    "call_openrouter",
 ];
+/// Methods that reach a model only inside one tree: BEAM's model session.
+const SCOPED_METHODS: &[(&str, &str)] = &[("invoke", "crates/oneiron-bench/src/beam/")];
 
 const SEAM_SUFFIXES: &[&str] = &[
     "Judge",
@@ -84,49 +85,49 @@ const fn pin(
 const BYPASSES: &[Pin] = &[
     pin(
         "crates/oneiron/src/dreamer_consolidation/executor.rs",
-        "call_as_step(",
+        "call_as_step",
         "let outcome = call_as_step(&step_ctx, call.backend, self.guard, request).await;",
         "consolidation conflict judge: merge, supersede, accumulate or escalate conflicting claims",
     ),
     pin(
         "crates/oneiron/src/dreamer_consolidation/executor.rs",
-        "call_as_step_checked(",
+        "call_as_step_checked",
         "let outcome = call_as_step_checked(",
         "extraction-time supersede: a claim's corrects field supersedes the head it names, skipping the conflict judge",
     ),
     pin(
         "crates/oneiron/src/saved_query/evaluator.rs",
-        ".generate(",
+        "generate",
         ".generate(request, lease)",
         "saved-query membership judge: match or no_match per candidate",
     ),
     pin(
         "crates/oneiron/src/policy_model/classify.rs",
-        ".generate(",
+        "generate",
         ".generate(llm_request, lease)",
         "owner-policy classifier on a lease: violation bit and category, read as allow, warn, block or route to help",
     ),
     pin(
         "crates/oneiron/src/policy_model/classify.rs",
-        ".generate(",
+        "generate",
         "let response = backend.generate(llm_request, lease.lease()).await;",
         "owner-policy classifier on a budget: the same question under its own admission",
     ),
     pin(
         "crates/oneiron/src/policy_model/relay/hosted.rs",
-        ".generate(",
+        "generate",
         ".generate(prompt.llm_request(config), safeguard.lease)",
         "hosted-policy classifier on the relay: violation bit and category for the hosted policy row",
     ),
     pin(
         "crates/oneiron/src/booking/constraint.rs",
-        ".generate(",
+        "generate",
         ".generate(",
         "booking front: constraint or off_topic (off_topic ends the turn), asked with the schedule extraction",
     ),
     pin(
         "crates/oneiron/src/llm/routing.rs",
-        "call_as_step(",
+        "call_as_step",
         "call_as_step(",
         "routed verdict: a caller's schema verdict sent through the step seam after a description-judge route",
     ),
@@ -220,27 +221,39 @@ const BYPASSES: &[Pin] = &[
 const OUTSIDE: &[Pin] = &[
     pin(
         "crates/oneiron-bench/src/beam/llm_judge.rs",
-        ".invoke_with_lease(",
+        "invoke_with_lease",
         "let (answer, cost) = session.invoke_with_lease(",
         "eval judge: fixed model for comparability (BEAM answer 0, 0.5 or 1 against gold)",
     ),
     pin(
         "crates/oneiron-bench/src/interface_bench/wire_and_scoring.rs",
-        "call_openrouter(",
+        "call_openrouter",
         "let response = call_openrouter(",
         "eval judge: fixed model for comparability (interface-bench browse grades, 1 to 5)",
     ),
     pin(
         "crates/oneiron-bench/src/beam/llm_host.rs",
-        ".generate(",
+        "generate",
         ".block_on(self.backend.generate(request, &lease))",
         "BEAM transport under both the judge and answer generation",
     ),
     pin(
         "crates/oneiron-bench/src/beam/llm_host.rs",
-        ".invoke_with_lease(",
+        "invoke_with_lease",
         "self.invoke_with_lease(pin, purpose, system, user, None)",
         "BEAM invoke, the answer-generation entry",
+    ),
+    pin(
+        "crates/oneiron-bench/src/beam/model_scaffold.rs",
+        "invoke",
+        "session.invoke(pin, CallPurpose::AnswerGen, prompt, &input)",
+        "BEAM benchmark answer",
+    ),
+    pin(
+        "crates/oneiron-bench/src/beam/model_scaffold.rs",
+        "invoke",
+        "let (query, cost) = session.invoke(",
+        "BEAM agentic retrieval query",
     ),
     pin(
         "crates/oneiron-bench/src/beam/scorer.rs",
@@ -250,133 +263,133 @@ const OUTSIDE: &[Pin] = &[
     ),
     pin(
         "crates/oneiron-bench/src/interface_bench/eval_run.rs",
-        "call_openrouter(",
+        "call_openrouter",
         "let response = call_openrouter(api_key, &messages, 900, &request_nonce, settings)?;",
         "interface-bench answer generation",
     ),
     pin(
         "crates/oneiron-ffi/build.rs",
-        ".generate(",
+        "generate",
         ".generate()?",
         "bindings generator in a build script, no model",
     ),
     pin(
         "crates/oneiron-model/src/llm/image.rs",
-        ".generate(",
+        "generate",
         "None if row.generate => adapter.generate(intent, lease).await?,",
         "image generation",
     ),
     pin(
         "crates/oneiron-server/src/ai_host/code_mode.rs",
-        ".generate(",
+        "generate",
         "call.ladder.generate(&run, call.request, None).await",
         "code-mode agent generation",
     ),
     pin(
         "crates/oneiron-server/src/ai_host/compaction.rs",
-        ".generate(",
+        "generate",
         ".block_on(call.ladder.generate(&run, call.request, None));",
         "compaction summary and handoff",
     ),
     pin(
         "crates/oneiron-server/src/ai_host/step.rs",
-        ".generate(",
+        "generate",
         "let response = match runtime.block_on(call.ladder.generate(&run, request, None)) {",
         "saved-workflow step text",
     ),
     pin(
         "crates/oneiron-server/src/api/ai/chat.rs",
-        ".stream(",
+        "stream",
         ".stream(&run, admitted.request, None)",
         "streaming chat answer",
     ),
     pin(
         "crates/oneiron-server/src/api/llm.rs",
-        ".generate(",
+        "generate",
         "match ladder.generate(&run, request, None).await {",
         "raw inference route: the caller's request passed through",
     ),
     pin(
         "crates/oneiron-server/src/api/llm.rs",
-        ".stream(",
+        "stream",
         "let mut source = match ladder.stream(&run, request, None) {",
         "raw inference route, streamed",
     ),
     pin(
         "crates/oneiron-server/src/models/declared.rs",
-        ".generate(",
+        "generate",
         ".generate(&self.admission, request, Some(selector))",
         "declared run: the offer ladder under a caller",
     ),
     pin(
         "crates/oneiron-server/src/models/ladder.rs",
-        ".generate(",
+        "generate",
         "match gate.generate(call, permit.lease()).await {",
         "offer ladder: one gated attempt",
     ),
     pin(
         "crates/oneiron-server/src/models/ladder.rs",
-        ".generate_while(",
+        "generate_while",
         "self.generate_while(run, request, selector, &|| true).await",
         "offer ladder: generate is generate_while with no stop",
     ),
     pin(
         "crates/oneiron-server/src/models/ladder.rs",
-        ".stream(",
+        "stream",
         "let ended = match gate.stream(call, permit.lease()) {",
         "offer ladder: one gated stream",
     ),
     pin(
         "crates/oneiron-server/src/models/raw.rs",
-        ".generate(",
+        "generate",
         "ladder.generate(&run, request, None).await",
         "injected runs: raw backend forwarding to the ladder",
     ),
     pin(
         "crates/oneiron-server/src/models/raw.rs",
-        ".stream(",
+        "stream",
         "ladder.stream(&run, request, None)",
         "injected runs: raw stream forwarding to the ladder",
     ),
     pin(
         "crates/oneiron-server/src/models/run_backend.rs",
-        ".generate(",
+        "generate",
         "Box::pin(self.ladder.generate(&self.run, request, None))",
         "run backend forwarding to the ladder",
     ),
     pin(
         "crates/oneiron-server/src/models/run_backend.rs",
-        ".stream(",
+        "stream",
         "self.ladder.stream(&self.run, request, None)",
         "run backend stream forwarding to the ladder",
     ),
     pin(
         "crates/oneiron-server/src/server/recall_rerank.rs",
-        ".generate_while(",
+        "generate_while",
         ".generate_while(&run, call.request, None, &may_send);",
         "paid recall rerank scores: retrieval ranking, not a typed question",
     ),
     pin(
         "crates/oneiron-server/src/voice_host/extraction.rs",
-        ".generate(",
+        "generate",
         ".generate(request, lease.lease.as_ref().ok_or(HostError::Stopped)?),",
         "voice entity labels and salient terms (extraction)",
     ),
     pin(
         "crates/oneiron/src/dispatch_byoa/dispatcher.rs",
-        ".generate(",
+        "generate",
         ".generate(request, lease)",
         "foreign-agent transcript for a dispatched run",
     ),
     pin(
         "crates/oneiron/src/dreamer_consolidation/scope_summary_attempt.rs",
-        "call_as_step(",
+        "call_as_step",
         "let response = match call_as_step(&step_ctx, self.backend, self.guard, request).await {",
         "scope summary text",
     ),
     pin(
         "crates/oneiron/src/engine_executor/repl.rs",
-        ".generate(",
+        "generate",
         "let response = self.backend.generate(request, self.lease).await?;",
         "code-mode agent loop",
     ),
@@ -388,37 +401,37 @@ const OUTSIDE: &[Pin] = &[
     ),
     pin(
         "crates/oneiron/src/llm/run_admission/admission.rs",
-        ".generate(",
+        "generate",
         "match gated.generate(call.request.clone(), permit.lease()).await {",
         "run admission: the gated call under a run's permit",
     ),
     pin(
         "crates/oneiron/src/llm/run_admission/gate.rs",
-        ".generate(",
+        "generate",
         "let result = self.inner.generate(request, lease).await;",
         "run gate forwarding to the inner backend",
     ),
     pin(
         "crates/oneiron/src/llm/run_admission/gate.rs",
-        ".stream(",
+        "stream",
         "let inner = self.inner.stream(request, lease)?;",
         "run gate stream forwarding to the inner backend",
     ),
     pin(
         "crates/oneiron/src/llm/step/execute.rs",
-        ".generate(",
+        "generate",
         "match backend.generate(request.clone(), lease).await {",
         "durable step: the raw call under every step",
     ),
     pin(
         "crates/oneiron/src/llm/step/execute.rs",
-        "call_as_step_with_fallbacks(",
+        "call_as_step_with_fallbacks",
         "call_as_step_with_fallbacks(",
         "durable step: call_as_step is the form with no fallbacks",
     ),
     pin(
         "crates/oneiron/src/llm/tagger.rs",
-        "call_as_step(",
+        "call_as_step",
         "Some(super::call_as_step(ctx, backend, guard, request).await?)",
         "tagger render (extraction)",
     ),
@@ -454,6 +467,38 @@ fn seam_name(keyword: &str, name: &str) -> bool {
     }
 }
 
+/// Whether the identifier at `start..end` calls a model: a method call, a raw-seam trait path
+/// call or a wrapper fn call, never a declaration or `SigningKey::generate(`.
+fn model_call(rel: &str, masked: &str, start: usize, end: usize) -> bool {
+    let name = &masked[start..end];
+    let method = MODEL_METHODS.contains(&name)
+        || SCOPED_METHODS
+            .iter()
+            .any(|(scoped, tree)| *scoped == name && rel.starts_with(*tree));
+    let free = MODEL_FNS.contains(&name);
+    if !(method || free) || !masked[end..].trim_start().starts_with('(') {
+        return false;
+    }
+    let before = masked[..start].trim_end();
+    if before.ends_with('.') {
+        method
+    } else if let Some(path) = before.strip_suffix("::") {
+        let qualifier = path.trim_end().trim_end_matches('>');
+        free || (method && trailing_ident(qualifier).ends_with("Backend"))
+    } else {
+        free && trailing_ident(before) != "fn"
+    }
+}
+
+fn trailing_ident(text: &str) -> &str {
+    let start = text
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '_'))
+        .map_or(0, |(at, c)| at + c.len_utf8());
+    &text[start..]
+}
+
 /// Every model call and seam declaration in one file, with its 1-based line.
 fn file_edges(rel: &str, source: &str) -> Vec<(Edge, usize)> {
     let masked = production_source(source);
@@ -472,22 +517,6 @@ fn file_edges(rel: &str, source: &str) -> Vec<(Edge, usize)> {
     };
     let bytes = masked.as_bytes();
     let mut edges = Vec::new();
-    for needle in MODEL_CALLS {
-        let mut start = 0;
-        while let Some(found) = masked[start..].find(needle) {
-            let at = start + found;
-            start = at + needle.len();
-            let free_fn = !needle.starts_with('.');
-            // A free fn's own declaration is not a call, nor is `my_call_as_step(`.
-            if free_fn
-                && ((at > 0 && is_ident_byte(bytes[at - 1]))
-                    || masked[..at].trim_end().ends_with("fn"))
-            {
-                continue;
-            }
-            edges.push(edge(needle, at));
-        }
-    }
     let mut i = 0;
     let mut previous = "";
     while i < bytes.len() {
@@ -500,7 +529,9 @@ fn file_edges(rel: &str, source: &str) -> Vec<(Edge, usize)> {
             i += 1;
         }
         let ident = &masked[start..i];
-        if seam_name(previous, ident) {
+        if model_call(rel, &masked, start, i) {
+            edges.push(edge(ident, start));
+        } else if seam_name(previous, ident) {
             edges.push(edge(&format!("{previous} {ident}"), start));
         }
         previous = ident;
@@ -617,16 +648,45 @@ fn decide_path_new_judge_call_and_dropped_bypass_both_fail() {
     let pairs = tree_pairs(&repo);
     assert!(drift(&actual_edges(pairs.clone())).is_empty());
 
-    // A new model call anywhere outside decision/ is unpinned.
+    // A new model call anywhere outside decision/ is unpinned, however it is spelled.
     let judge = "crates/oneiron/src/curation/new_judge.rs";
     let call = "let verdict = backend.generate(request, lease).await?;\n";
-    let with_new = pairs
+    for (rel, line, needle) in [
+        (judge, call, "generate"),
+        (
+            judge,
+            "let verdict = LlmBackend::generate(&*backend, request, lease).await?;\n",
+            "generate",
+        ),
+        (
+            judge,
+            "let verdict = backend.stream (request, lease)?;\n",
+            "stream",
+        ),
+        (
+            "crates/oneiron-bench/src/beam/grade_judge.rs",
+            "let (grade, cost) = session.invoke(pin, purpose, system, user)?;\n",
+            "invoke",
+        ),
+    ] {
+        let with_new = pairs
+            .iter()
+            .cloned()
+            .chain([(rel.to_owned(), line.to_owned())]);
+        let drift_new = drift(&actual_edges(with_new));
+        assert_eq!(drift_new.len(), 1, "{drift_new:?}");
+        assert!(
+            drift_new[0].starts_with(&format!("NEW {needle} ")),
+            "{drift_new:?}"
+        );
+    }
+    // Key generation shares a method name with the raw seam and is not a model call.
+    let keygen = "let key = SigningKey::generate(&mut rng);\n";
+    let with_keygen = pairs
         .iter()
         .cloned()
-        .chain([(judge.to_owned(), call.to_owned())]);
-    let drift_new = drift(&actual_edges(with_new));
-    assert_eq!(drift_new.len(), 1, "{drift_new:?}");
-    assert!(drift_new[0].starts_with("NEW .generate("), "{drift_new:?}");
+        .chain([(judge.to_owned(), keygen.to_owned())]);
+    assert!(drift(&actual_edges(with_keygen)).is_empty());
 
     // So is a new judge seam a host's model could sit behind.
     let seam = "pub trait MergeJudge {\n    fn judge(&self) -> bool;\n}\n";
