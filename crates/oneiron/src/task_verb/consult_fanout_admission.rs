@@ -4,7 +4,7 @@ use super::consult_fanout_store::{
     FrozenInput, StoredFanout, TxnSurface, policy_in, runs_in, save_run,
 };
 use super::create_validation::{ValidatedTaskCreate, consult_refusal, validate_task_create};
-use super::rate_limit::{consume_create_rate_slot, task_actor_ceiling};
+use super::rate_limit::task_actor_ceiling;
 use super::wire_decode::task_verb_body_in;
 use super::{
     ConsultFanOutPolicy, ConsultFanOutReceipt, ConsultFanOutScope, ConsultFanOutSpec,
@@ -26,14 +26,15 @@ use crate::gate::{
     POLICY_CONSULT_FANOUT_SCOPE_ROWS_KEY, PolicyApprovalCeiling,
 };
 use crate::memory::{
-    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryPolicyDenial,
-    MemoryPolicyExceptionProposal, MemoryResult, facade_provenance, verify_actor_binding,
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
+    facade_provenance, verify_actor_binding,
 };
 use crate::outbound_chokepoint::{
     FanoutAdmission, FanoutAutoDecider, FanoutAutoDisposition, FanoutEstimate, FanoutHistory,
     FanoutPlan, FanoutPlanEdge, PeerRateSnapshot, admit_fanout_with_history, fanout_estimate,
     fanout_history_pathology,
 };
+use crate::own_rate::{OwnRate, OwnRateKind, count_in_txn};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::task_verb::sdk::AgentVerb;
@@ -484,41 +485,24 @@ impl Memory<'_> {
         rate_now: u64,
     ) -> MemoryResult<()> {
         self.require_fanout_ceiling(txn)?;
-        // The generic create quota meters requests, not the number of peers
-        // in an admitted request. Charging N slots made the default 10-slot
-        // quota an accidental fan-out cap below the 25-peer approval threshold.
-        let governed = policy_in(self.vault(), txn, &run.input.policy_scope)?;
-        if !consume_create_rate_slot(
-            self.vault(),
+        // A fan-out request is counted, never refused for rate (OF-520). The
+        // policy's create_rate is the bound: the first request past it in a
+        // window leaves one typed check, and every request lands. One count
+        // per request, not per peer in it.
+        let rate = policy_in(self.vault(), txn, &run.input.policy_scope)?
+            .policy
+            .create_rate;
+        count_in_txn(
+            &self.vault().store,
             txn,
+            OwnRateKind::ConsultFanout,
             self.actor(),
             rate_now,
-            governed.policy.create_rate,
-        )? {
-            let trace = governed.quota_trace;
-            let mut refusal = consult_refusal(
-                MEMORY_CODE_INVALID_STATE,
-                &format!(
-                    "fan-out create quota refused at level={} row={} role={}",
-                    trace.level, trace.row_ref, trace.role
-                ),
-                &format!(
-                    "ask_for_exception:fanout.create_rate:level={}:row={}:role={}",
-                    trace.level, trace.row_ref, trace.role
-                ),
-            );
-            refusal.policy_denial = Some(Box::new(MemoryPolicyDenial {
-                level: trace.level.to_owned(),
-                row_ref: trace.row_ref.clone(),
-                role: trace.role.to_owned(),
-                exception_proposal: MemoryPolicyExceptionProposal {
-                    action: "ask_for_exception:fanout.create_rate".to_owned(),
-                    row_ref: trace.row_ref,
-                    required_role: "holder".to_owned(),
-                },
-            }));
-            return Err(refusal);
-        }
+            OwnRate {
+                threshold: rate.limit as u64,
+                window_seconds: rate.window_seconds,
+            },
+        )?;
         let provenance = facade_provenance(AgentVerb::TasksCreate.as_str());
         for entry in entries {
             run.task_refs.push(

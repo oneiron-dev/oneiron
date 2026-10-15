@@ -8,6 +8,7 @@ use crate::fanout_auto::{
     FanoutAskClassifier, FanoutAskContext, FanoutAskVerdict, FanoutClassifierView,
     FanoutDecisionHistory,
 };
+use crate::own_rate::OwnRateKind;
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::store::GateDecisionId;
 
@@ -580,4 +581,51 @@ fn an_actor_burst_of_200_fan_outs_lands_whole() {
         assert_eq!((receipt.task_refs.len(), receipt.paused), (1, None));
     }
     assert_eq!(task_entity_census(&vault), 200);
+    assert_eq!(
+        vault
+            .own_rate_check(actor, OwnRateKind::ConsultFanout)
+            .unwrap(),
+        None,
+        "a burst under the shipped row raises no question"
+    );
+}
+
+/// OF-520: past the owner's row the fan-outs still land, and the first
+/// request past it in the window leaves one typed check.
+#[test]
+fn fan_outs_past_the_owner_row_land_and_leave_one_typed_check() {
+    let (_dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let input = plan(&vault, 1);
+    let facade = vault.memory(actor, EdgeActorClass::Agent);
+    let row = TaskCreateRateLimit {
+        limit: 20,
+        window_seconds: u64::MAX,
+    };
+    facade
+        .set_consult_fanout_policy(
+            &owner(&vault),
+            &ConsultFanOutPolicy {
+                create_rate: row,
+                ..ConsultFanOutPolicy::default()
+            },
+        )
+        .unwrap();
+    for _ in 0..30 {
+        assert_eq!(facade.fan_out_consults(&input).unwrap().task_refs.len(), 1);
+    }
+    assert_eq!(task_entity_census(&vault), 30);
+    let check = vault
+        .own_rate_check(actor, OwnRateKind::ConsultFanout)
+        .unwrap()
+        .expect("the crossing left a check");
+    assert_eq!(
+        (
+            check.actor,
+            check.count,
+            check.threshold,
+            check.window_seconds
+        ),
+        (actor.to_hex(), 21, 20, u64::MAX)
+    );
 }
