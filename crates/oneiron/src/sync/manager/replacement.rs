@@ -12,9 +12,10 @@ use crate::sync::window::{self, LoadedWindow, ReplacementConflict};
 
 impl WindowManager {
     /// Replaces window `key` with a peer's history-free `snapshot`
-    /// ([`window::prepare_replacement`]), then attaches observers to the new document and
-    /// registers it in place of the old one, whose observers drop with it. Returns the keys whose
-    /// local value the replacement could not keep, with that value.
+    /// ([`window::prepare_replacement`]), runs the forward rematerialization over the durable
+    /// candidate, then attaches observers to the new document and registers it in place of the
+    /// old one, whose observers drop with it. Returns the keys whose local value the replacement
+    /// could not keep, with that value.
     ///
     /// Refused with [`SyncProtocolValidation::ReplacementBusy`], and nothing changes, while any
     /// handle other than the registry's holds the window, or a discarded window's handle is
@@ -51,16 +52,21 @@ impl WindowManager {
                 Err(error) => return Err(error),
             },
         };
-        let prepared = window::prepare_replacement(
-            &self.vault,
-            &self.materializer,
-            key,
-            &old,
-            snapshot,
-            evidence,
-        )?;
+        let prepared = window::prepare_replacement(&self.vault, key, &old, snapshot, evidence)?;
         drop(old);
         drop(current);
+        // LMDB takes the replacement only now that it is durable, on the bare document as an open
+        // runs it. Should this pass fail, the registered window no longer matches durable state:
+        // it is dropped, and the next open runs the pass again from durable state, as after a
+        // crash here.
+        if let Err(error) =
+            window::forward_rematerialize(&self.vault, &prepared.doc, &self.materializer, key)
+        {
+            registry.remove(key);
+            drop(registry);
+            self.prune_issued_handles_for_key(key);
+            return Err(error);
+        }
         let window = Arc::new(LoadedWindow::from_doc_with_outbound(
             prepared.doc,
             key.clone(),

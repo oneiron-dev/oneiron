@@ -20,7 +20,8 @@
 //! 4. delete wins: a carried write of a body the candidate hard-deleted, or of an edge naming
 //!    one, comes back out as a conflict;
 //! 5. every pending tombstone (`pt:`), left in place for the next open;
-//! 6. the reverse and forward rematerializations, as a window open runs.
+//! 6. the reverse rematerialization, as a window open runs; the forward one runs once the
+//!    candidate is durable.
 //!
 //! Below the old window's own shallow root no operation is left to read. There a key carries
 //! over when the candidate's value came from a peer whose every operation the old window holds
@@ -49,15 +50,11 @@ use super::egress::{
     scrub_withdrawn_delete_carriers,
 };
 use super::tombstones::apply_tombstone_to_indexed_window_doc;
-use super::{
-    forward_rematerialize, persist_window_doc_in_txn, reverse_rematerialize,
-    write_window_svf_in_txn,
-};
+use super::{persist_window_doc_in_txn, reverse_rematerialize, write_window_svf_in_txn};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError, SyncProtocolValidation};
 use crate::side_table::{self, HexId, Raw, SideTable};
-use crate::sync::bridge::Materializer;
 use crate::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
 use crate::sync::window_rows::{OFF_RECORD_PROMOTE_PICKUP, PENDING_TOMBSTONE, WINDOW_UPDATE};
 
@@ -76,12 +73,13 @@ fn rejected() -> Error {
 /// Builds and persists the replacement of window `key` from `snapshot`, carrying over what
 /// `old` (the live window's document, or its durable state when closed) holds that the snapshot
 /// does not. The snapshot passes the admission an update does, with the same staged `evidence`
-/// for a world window. Returns the bare candidate: the caller attaches observers and installs it,
-/// and no other holder may write `old` meanwhile. Nothing is persisted when the snapshot is
-/// refused.
+/// for a world window. Returns the bare candidate: the caller runs the forward rematerialization
+/// over it, attaches observers and installs it, and no other holder may write `old` meanwhile.
+/// Nothing is persisted when the snapshot is refused, and this vault's rows in LMDB take the
+/// replacement only from that forward pass, once the candidate is durable: an install refused
+/// here, by the disk floor or otherwise, leaves them as they were.
 pub fn prepare_replacement(
     vault: &Vault,
-    materializer: &Materializer,
     key: &WindowKey,
     old: &LoroDoc,
     snapshot: &[u8],
@@ -176,7 +174,6 @@ pub fn prepare_replacement(
             conflicts.push(conflict);
         }
     }
-    forward_rematerialize(vault, &candidate, materializer, key)?;
 
     let state = export_scrubbed_window_snapshot(vault, key, &candidate)?;
     let vv = doc_version_vector(&candidate);
