@@ -96,6 +96,26 @@ impl LlmCatalogEntry {
                 _ => {}
             }
         }
+        self.admit_raw_controls(request)?;
+        Ok(())
+    }
+
+    /// Raw params and provider options reach a provider's wire beside the
+    /// typed fields. A raw spelling of a typed control (a tool declaration or
+    /// choice, a JSON output format or schema) needs the capability the typed
+    /// field needs. A provider cache reference may carry tools the request
+    /// cannot see, so it needs tool calling too.
+    pub fn admit_raw_controls(&self, request: &super::LlmRequest) -> super::LlmResult<()> {
+        let namespaces = request
+            .provider_options
+            .values()
+            .filter_map(JsonValue::as_object)
+            .flat_map(|fields| fields.iter());
+        for (key, value) in request.params.iter().chain(namespaces) {
+            if let Some(capability) = raw_control_capability(key, value) {
+                self.require(capability)?;
+            }
+        }
         Ok(())
     }
 
@@ -109,6 +129,40 @@ impl LlmCatalogEntry {
                 reason: None,
             }))
         }
+    }
+}
+
+/// The capability a raw param or provider-option field needs, by the
+/// spellings the OpenAI-compatible, Anthropic and Gemini wires read.
+fn raw_control_capability(key: &str, value: &JsonValue) -> Option<LlmCapability> {
+    match key {
+        "tools"
+        | "tool_choice"
+        | "functions"
+        | "function_call"
+        | "parallel_tool_calls"
+        | "mcp_servers"
+        | "toolConfig"
+        | "tool_config"
+        | "cachedContent"
+        | "cached_content" => Some(LlmCapability::ToolCalling),
+        "structured_outputs"
+        | "guided_json"
+        | "json_schema"
+        | "responseSchema"
+        | "response_schema"
+        | "responseJsonSchema"
+        | "response_json_schema" => Some(LlmCapability::JsonResponse),
+        "response_format" => (value.get("type").and_then(JsonValue::as_str) != Some("text"))
+            .then_some(LlmCapability::JsonResponse),
+        "output_config" => value
+            .get("format")
+            .is_some()
+            .then_some(LlmCapability::JsonResponse),
+        "responseMimeType" | "response_mime_type" => {
+            (value.as_str() != Some("text/plain")).then_some(LlmCapability::JsonResponse)
+        }
+        _ => None,
     }
 }
 

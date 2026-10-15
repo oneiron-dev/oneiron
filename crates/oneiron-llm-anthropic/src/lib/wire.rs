@@ -10,7 +10,7 @@ use oneiron::{
 };
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
-use super::backend::{validate_capabilities, validate_wire_body};
+use super::backend::validate_capabilities;
 use super::{AnthropicMessagesConfig, AnthropicMessagesHttpRequest, AnthropicProviderOptions};
 
 pub fn build_anthropic_messages_request(
@@ -132,7 +132,6 @@ pub fn build_anthropic_messages_request(
             }
         }
     }
-    validate_wire_body(catalog, &body)?;
 
     Ok(AnthropicMessagesHttpRequest {
         method: "POST",

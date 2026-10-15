@@ -139,6 +139,7 @@ pub(crate) fn validate_capabilities(
     if stream {
         require(catalog, LlmCapability::Streaming, "stream() requested")?;
     }
+    catalog.admit_raw_controls(request)?;
     if !request.tools.is_empty() {
         require(
             catalog,
@@ -178,41 +179,6 @@ pub(crate) fn validate_capabilities(
             catalog,
             LlmCapability::Reasoning,
             "request includes reasoning controls",
-        )?;
-    }
-    Ok(())
-}
-
-/// Raw params and provider options reach the wire beside the typed fields,
-/// so the merged body needs the capability its typed twin would: a tool or
-/// structured-output control is refused on a model without it.
-pub(crate) fn validate_wire_body(
-    catalog: &LlmCatalogEntry,
-    body: &serde_json::Map<String, serde_json::Value>,
-) -> LlmResult<()> {
-    if [
-        "tools",
-        "tool_choice",
-        "functions",
-        "function_call",
-        "parallel_tool_calls",
-    ]
-    .iter()
-    .any(|key| body.contains_key(*key))
-    {
-        require(
-            catalog,
-            LlmCapability::ToolCalling,
-            "request body carries tool controls",
-        )?;
-    }
-    if body.get("response_format").is_some_and(|format| {
-        format.get("type").and_then(serde_json::Value::as_str) != Some("text")
-    }) {
-        require(
-            catalog,
-            LlmCapability::JsonResponse,
-            "request body asks for a structured response",
         )?;
     }
     Ok(())

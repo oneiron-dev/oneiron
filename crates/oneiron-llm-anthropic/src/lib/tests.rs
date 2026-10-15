@@ -145,6 +145,11 @@ fn a_raw_tool_or_format_control_needs_the_capability_its_typed_field_would() {
             LlmCapability::ToolCalling,
         ),
         (
+            "mcp_servers",
+            json!([{ "type": "url", "url": "https://tools.example.test", "name": "remote" }]),
+            LlmCapability::ToolCalling,
+        ),
+        (
             "output_config",
             json!({ "format": { "type": "json_schema", "schema": { "type": "object" } } }),
             LlmCapability::JsonResponse,

@@ -412,6 +412,22 @@ fn a_raw_tool_or_format_control_needs_the_capability_its_typed_field_would() {
             json!({ "type": "json_object" }),
             LlmCapability::JsonResponse,
         ),
+        // Own-server spellings of a JSON schema (vLLM, llama.cpp).
+        (
+            "structured_outputs",
+            json!({ "json": { "type": "object" } }),
+            LlmCapability::JsonResponse,
+        ),
+        (
+            "guided_json",
+            json!({ "type": "object" }),
+            LlmCapability::JsonResponse,
+        ),
+        (
+            "json_schema",
+            json!({ "type": "object" }),
+            LlmCapability::JsonResponse,
+        ),
     ] {
         for via_options in [false, true] {
             let mut call = request();

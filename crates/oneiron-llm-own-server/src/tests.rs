@@ -254,3 +254,68 @@ fn malformed_stream_events_are_refused_before_publication() {
     drop(stream);
     guard.abort(&lease).unwrap();
 }
+
+/// F12 (H90, review r1 F4): this door forwards the request to a server whose
+/// own catalog judges it, so a raw tool or structured-output control must be
+/// judged here against this side's catalog. A server whose catalog grants the
+/// capability would otherwise run what this side's typed check refuses.
+#[test]
+fn a_raw_tool_or_format_control_is_judged_against_this_sides_catalog() {
+    struct Unsent;
+    impl OwnServerTransport for Unsent {
+        fn generate<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
+            unreachable!("a refused request is never sent")
+        }
+        fn stream<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {
+            unreachable!("a refused request is never sent")
+        }
+    }
+    let (_dir, vault, request) = fixture();
+    let backend = OwnServerBackend::from_registry(&vault, Unsent).unwrap();
+    for (namespace, key, value, capability) in [
+        (
+            None,
+            "tools",
+            json!([{ "type": "function", "function": { "name": "run" } }]),
+            LlmCapability::ToolCalling,
+        ),
+        (
+            Some("openai"),
+            "response_format",
+            json!({ "type": "json_object" }),
+            LlmCapability::JsonResponse,
+        ),
+        (
+            Some("anthropic"),
+            "mcp_servers",
+            json!([{ "type": "url", "url": "https://tools.example.test", "name": "remote" }]),
+            LlmCapability::ToolCalling,
+        ),
+    ] {
+        let mut call = request.clone();
+        match namespace {
+            None => {
+                call.params.insert(key.to_owned(), value);
+            }
+            Some(namespace) => {
+                let mut options = serde_json::Map::new();
+                options.insert(key.to_owned(), value);
+                call.provider_options
+                    .insert(namespace.to_owned(), serde_json::Value::Object(options));
+            }
+        }
+        for stream in [false, true] {
+            match backend.admit(&call, stream) {
+                Err(LlmError::Fatal(FatalLlmError::Unsupported(refused))) => {
+                    assert_eq!(refused.capability, capability, "{key}");
+                }
+                other => panic!("raw {key} (stream: {stream}) must be refused: {other:?}"),
+            }
+        }
+    }
+    let mut call = request.clone();
+    call.params.insert("temperature".to_owned(), json!(0.2));
+    backend
+        .admit(&call, true)
+        .expect("a sampling field needs no capability");
+}

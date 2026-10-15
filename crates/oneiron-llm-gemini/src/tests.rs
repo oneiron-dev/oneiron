@@ -166,6 +166,13 @@ fn a_raw_tool_or_format_control_needs_the_capability_its_typed_field_would() {
             json!({ "functionCallingConfig": { "mode": "ANY" } }),
             LlmCapability::ToolCalling,
         ),
+        // A cache resource may carry tool declarations the request cannot see.
+        (
+            true,
+            "cachedContent",
+            json!("cachedContents/cache-1"),
+            LlmCapability::ToolCalling,
+        ),
     ] {
         let mut call = request();
         if via_options {
