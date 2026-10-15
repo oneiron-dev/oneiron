@@ -253,3 +253,45 @@ fn a_lock_file_linked_elsewhere_keeps_its_bytes() {
         drop(lease);
     }
 }
+
+/// Review r4 (Sol F1): a lease refused after its lock was granted unlocks
+/// before it closes, as a held lease does. A child forked while the refused
+/// acquirer held its descriptor keeps the descriptor, never the lock.
+#[cfg(unix)]
+#[test]
+fn a_lease_refused_after_its_lock_leaves_no_lock_a_forked_child_holds() {
+    let root = tempfile::tempdir().expect("tempdir");
+    for held in [false, true] {
+        let dir = root.path().join(format!("vault-{held}"));
+        let aside = root.path().join(format!("aside-{held}"));
+        std::fs::create_dir(&dir).unwrap();
+        let remover = VaultWriterLease::acquire(&dir).expect("the remover's lease");
+        let kept = std::rc::Rc::new(std::cell::RefCell::new(None));
+        arm_before_lock({
+            let (dir, aside, kept) = (dir.clone(), aside.clone(), kept.clone());
+            move || {
+                // The late acquirer's lock stays reachable under another name.
+                std::fs::hard_link(dir.join(VAULT_WRITER_LOCK_FILE), &aside).unwrap();
+                std::fs::remove_file(dir.join(VAULT_WRITER_LOCK_FILE)).unwrap();
+                drop(remover);
+                let fresh = VaultWriterLease::acquire(&dir).expect("a fresh owner");
+                *kept.borrow_mut() = Some((fresh, ParkedChild::fork()));
+            }
+        });
+        let late = if held {
+            VaultWriterLease::acquire_held(open_root_directory(&dir).unwrap(), &dir)
+        } else {
+            VaultWriterLease::acquire(&dir)
+        };
+        assert!(
+            matches!(late, Err(Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD))),
+            "held {held}"
+        );
+        let lock = std::fs::File::open(&aside).unwrap();
+        assert!(
+            VaultWriterLease::lock_file(&lock).is_ok(),
+            "held {held}: the refused lease left its lock held by a forked child"
+        );
+        drop(kept.borrow_mut().take());
+    }
+}
