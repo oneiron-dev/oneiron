@@ -333,16 +333,17 @@ impl CoreContextPackRequest {
             .as_mut()
             .and_then(|budget| budget.retrieval.as_mut())
         {
-            for bucket in [
+            for rows in [
                 &mut retrieval.claims,
                 &mut retrieval.turns,
                 &mut retrieval.summaries,
                 &mut retrieval.facets,
                 &mut retrieval.other,
-            ] {
-                if let Some(rows) = bucket {
-                    *rows = clamp(*rows).0;
-                }
+            ]
+            .into_iter()
+            .flatten()
+            {
+                *rows = clamp(*rows).0;
             }
         }
     }
