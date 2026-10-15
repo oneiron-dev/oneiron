@@ -265,6 +265,19 @@ pub(in crate::batch) fn apply_put(
         authority_dominates_key_squatter =
             check_authority_log_store_key(store, wtxn, &id, &entry_hash, data)?
                 == AuthorityLogKeyOccupant::CrossTypeSquatter;
+        // H72: every store door, local or replicated, holds rows no key that
+        // may vouch signed. The owner's work always lands; another key's rows
+        // past its bound wait (rule 5), a replica retrying them each drain.
+        match crate::authority::authority_door(store, wtxn, posture, &entry)? {
+            crate::authority::AuthorityDoor::Lands => {}
+            crate::authority::AuthorityDoor::AtBound => {
+                let signer = crate::authority::authority_signer_label(entry.signer_key());
+                return Err(Error::Record(RecordError::AuthorityLogFull { id, signer }));
+            }
+            crate::authority::AuthorityDoor::Unowned => {
+                return Err(Error::Record(RecordError::AuthorityLogSignerPending { id }));
+            }
+        }
         authority_entry_hash_pin = Some(entry_hash);
         authority_entry_observation = Some(entry);
     } else if crate::workspace_roster::is_project_revision_type(store, entity_type) {
