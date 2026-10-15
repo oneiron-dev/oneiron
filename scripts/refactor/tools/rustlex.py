@@ -667,11 +667,37 @@ def apply_edits(text, edits):
     return "\n".join(lines)
 
 
+_INCLUDE_MACROS = ("include_str", "include_bytes")
+
+
+def _include_depth_swap(toks, i, old_lit, new_lit):
+    """True iff toks[i] is the sole argument of include_str!/include_bytes!
+    and the new literal names the same relative path at another directory
+    depth: only leading `../` (or `./`) segments differ (F39, H137)."""
+    if not (i >= 3 and toks[i - 3] in _INCLUDE_MACROS and toks[i - 2] == "!"
+            and toks[i - 1] == "(" and i + 1 < len(toks) and toks[i + 1] == ")"):
+        return False
+    lits = []
+    for lit in (old_lit, new_lit):
+        if len(lit) < 2 or not (lit.startswith('"') and lit.endswith('"')) or "\\" in lit:
+            return False
+        lits.append(lit[1:-1])
+
+    def rest(path):
+        while path.startswith(("../", "./")):
+            path = path[3:] if path.startswith("../") else path[2:]
+        return path
+
+    old_path, new_path = lits
+    return (old_path != new_path and rest(old_path) == rest(new_path)
+            and rest(old_path) != "" and not rest(old_path).startswith("/"))
+
+
 def _edit_delta_ok_core(old, new, allow_exceptions=True):
     """True iff old→new is a legal declared edit: every changed region is pure
-    `::`-path text, a single string-literal token swapped for a string-literal
-    token (relative include_str!/include_bytes! paths broken by a directory-depth
-    change), a pure path-segment removal (`crate::types::X` → `crate::X`, the
+    `::`-path text, the one string literal of an include_str!/include_bytes!
+    whose relative path changed only in directory depth (no other literal
+    swap, F39), a pure path-segment removal (`crate::types::X` → `crate::X`, the
     module-un-mount class), or the single visibility-promotion exception
     (empty→`pub(crate)` prepended). Multiple regions are allowed (a line may
     carry more than one `types::X` occurrence re-pointed at once); each must be
@@ -694,8 +720,8 @@ def _edit_delta_ok_core(old, new, allow_exceptions=True):
             while j < n and old_toks[j] != nt[j]:
                 j += 1
             if (allow_exceptions and j - i == 1
-                    and old_toks[i].startswith('"') and nt[i].startswith('"')):
-                # string-literal → string-literal single-token swap
+                    and _include_depth_swap(old_toks, i, old_toks[i], nt[i])):
+                # an include path re-pointed by a directory-depth change
                 i = j
                 continue
             if not (_PATH_RE.match("".join(old_toks[i:j])) and _PATH_RE.match("".join(nt[i:j]))):
