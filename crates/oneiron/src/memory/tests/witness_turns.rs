@@ -1236,9 +1236,10 @@ fn mixed_room_messages() -> (
             occurred_at: 11,
         })
         .expect("second actor appends to the first TURN");
+    // Membership reads nothing: the owner resolves Bob's message (H149).
     let b_message = EntityId::from_hex(
         &vault
-            .memory(bob, EdgeActorClass::Human)
+            .memory(alice, EdgeActorClass::Human)
             .get_entity(&second.message_short_ids[0])
             .unwrap()
             .value

@@ -379,7 +379,9 @@ pub(super) fn principal_autonomy() -> Result<Case> {
 /// the draft to be sent again.
 pub(super) fn esign_ceremonies() -> Result<Case> {
     let (dir, vault) = open_seeded()?;
-    let owner = person(&vault, 0x71)?;
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?;
     let document = entity(0x91);
     vault.put_blob_artifact(
         &document,

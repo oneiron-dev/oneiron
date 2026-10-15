@@ -1250,7 +1250,8 @@ fn shared_vault_structural_and_claim_content_mutations_obey_role_and_scope() {
         );
         assert!(vault.record_scope(&habit_id).unwrap().is_some());
     }
-    let habit_body = member_facade
+    // The owner reads the member's habit; a member reads by grant (H149).
+    let habit_body = facade_for(&vault, owner)
         .get_entity(&habit.id_hex)
         .unwrap()
         .value

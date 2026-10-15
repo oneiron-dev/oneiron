@@ -75,6 +75,7 @@ fn quote_fixture() -> Result<SpanFixture> {
     let vault = crate::Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
     let actor_id = test_entity_id(99);
     put_person(&vault, &actor_id)?;
+    crate::test_util::bind_test_owner(&vault, actor_id);
     let receipt = vault
         .memory(actor_id, crate::edge::EdgeActorClass::Human)
         .witness(&WitnessTurn {
@@ -101,7 +102,6 @@ fn quote_fixture() -> Result<SpanFixture> {
     let target = crate::EntityId::from_hex(&message.id_hex)?;
     let actor =
         crate::write_envelope::WriteActor::new(actor_id, crate::edge::EdgeActorClass::Human);
-    crate::test_util::bind_test_owner(&vault, actor_id);
     let owner = vault.authenticate_owner(
         actor_id,
         "principal:quote-test",

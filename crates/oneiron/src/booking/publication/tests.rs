@@ -15,7 +15,15 @@ fn id(byte: u8) -> EntityId {
     EntityId::from_bytes([byte; 16]).expect("id")
 }
 
+/// A vault rooted under the test host, with `id(2)` bound as its owner.
 fn open() -> (tempfile::TempDir, Vault) {
+    let (dir, vault) = open_unrooted();
+    crate::test_util::bind_test_owner(&vault, id(2));
+    (dir, vault)
+}
+
+/// The same vault with no authority root, for a test that writes its own.
+fn open_unrooted() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("directory");
     let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("vault");
     for (entity, kind) in [
@@ -26,7 +34,6 @@ fn open() -> (tempfile::TempDir, Vault) {
             .put_entity(&entity, kind, TimeRange { start: 1, end: 1 }, 1, b"fixture")
             .expect("entity");
     }
-    crate::test_util::bind_test_owner(&vault, id(2));
     let config = fixture_config();
     vault
         .put_claim(
@@ -380,7 +387,7 @@ fn public_booking_publication_requires_current_rooted_owner_authority() {
         authority_entry_hash, authority_transcript, genesis_vault_id,
     };
     use ed25519_dalek::Signer;
-    let (_dir, vault) = open();
+    let (_dir, vault) = open_unrooted();
     let signing = ed25519_dalek::SigningKey::from_bytes(&[0x21; 32]);
     let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
     let sign = |mut entry: AuthorityLogEntry| {
