@@ -1174,3 +1174,33 @@ fn strict_targeted_reads_remain_strict() {
     assert_eq!(listing.corrupt.len(), 1);
     assert_eq!(&*listing.corrupt[0].key, key.as_slice());
 }
+
+/// F26 H359 (Astra, round 6): a possible-delivery mark is no admission. An
+/// outcome-free Pending row admitted yesterday and marked today, by a retry a
+/// full ceiling then held, counted in today's window and read as paid, so the
+/// next retry skipped the ceiling it had just met. The mark leaves the row in
+/// the window it was admitted in, every time it is written or read again.
+#[test]
+fn a_possible_delivery_mark_pays_no_admission() {
+    let (_dir, vault) = open_vault();
+    let (admitted_at, window_start) = (1_000, 100_000);
+    let row = persist_pending(&vault, attempt(0x31), 0, b"payload", admitted_at, true);
+    for retry in ["first held retry", "next retry"] {
+        let marked = record_possible_delivery(&vault, row.id).expect("mark possible delivery");
+        assert!(marked.delivery_uncertain, "{retry}");
+        let txn = vault.store.env.read_txn().expect("read txn");
+        assert_eq!(
+            admitted_calls_since_in_txn(
+                &vault,
+                &txn,
+                "test-server",
+                "test-tool",
+                window_start,
+                None
+            )
+            .expect("count admitted calls"),
+            0,
+            "FAILBEFORE H359 ({retry}): the mark paid for today's window"
+        );
+    }
+}

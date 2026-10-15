@@ -353,6 +353,59 @@ fn promotion_lands_auto_with_the_computed_source_through_gate() -> Result<()> {
     Ok(())
 }
 
+// H327: past the auto-write threshold the Dreamer's writes stay Auto (ARCH-0067
+// section 7, OF-520) and the first crossing leaves a typed check.
+#[test]
+fn an_auto_write_burst_stays_auto_and_leaves_a_typed_check() -> Result<()> {
+    let (_dir, vault) = open_auto_vault();
+    let fixture = fixture(&vault)?;
+    let first = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let second = candidate(&fixture, "profile.tone", "warm", vec![fixture.turn]);
+    let ids = vec![first.claim_id, second.claim_id];
+    crate::own_rate::set_auto_write_threshold_for_test(Some(1));
+    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![first, second]);
+    crate::own_rate::set_auto_write_threshold_for_test(None);
+    let outcome = outcome?;
+    assert_eq!(outcome.landed, ids, "both writes stay Auto");
+    assert!(outcome.pended.is_empty() && outcome.rejected.is_empty());
+    let check = vault.own_rate_check(
+        fixture.run.agent_actor.entity_ref(),
+        crate::own_rate::OwnRateKind::AutoWrite,
+    )?;
+    assert_eq!(
+        check.map(|check| (check.count, check.threshold)),
+        Some((2, 1)),
+        "H327: an auto-write burst left no typed check"
+    );
+    Ok(())
+}
+
+// F26 H327, rule D: the public unscoped door replays a claim that already
+// stands Auto exactly as it was; the replay lands nothing new, so the
+// Dreamer's window counts that claim once.
+#[test]
+fn an_exact_promotion_replay_counts_its_auto_write_once() -> Result<()> {
+    let (_dir, vault) = open_auto_vault();
+    let fixture = fixture(&vault)?;
+    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
+    let claim_id = promoted.claim_id;
+    let _ = crate::own_rate::take_counted_auto_writes();
+    for pass in ["first pass", "exact replay"] {
+        let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted.clone()])?;
+        assert_eq!(
+            outcome.landed,
+            vec![claim_id],
+            "{pass}: the claim stands Auto"
+        );
+    }
+    assert_eq!(
+        crate::own_rate::take_counted_auto_writes(),
+        vec![crate::own_rate::AutoWriteDoor::Promotion],
+        "FAILBEFORE H327: the exact replay counted the claim's Auto write again"
+    );
+    Ok(())
+}
+
 #[test]
 fn promotion_rejects_rather_than_pends_without_an_auto_permit() -> Result<()> {
     // No policy manifest at all: the gate cannot grant Auto. ONE-1710 turns
@@ -639,6 +692,41 @@ fn promotion_cannot_supersede_user_stated() -> Result<()> {
         crate::claim::ClaimLifecycleStatus::Active
     );
     assert_eq!(outcome.landed, vec![clean_id]);
+    Ok(())
+}
+
+// H327: a Dreamer replacement granted Auto through the public deferred door
+// counts on the Dreamer actor's auto-write window, as the scoped pass's grant
+// does. Past the threshold it is still granted Auto.
+#[test]
+fn a_dreamer_replacement_granted_through_the_public_door_counts() -> Result<()> {
+    let (_dir, vault) = open_auto_vault();
+    let fixture = fixture(&vault)?;
+    let first = candidate(&fixture, "profile.name", "Ada", vec![fixture.turn]);
+    let old = first.claim_id;
+    let mut second = candidate(&fixture, "profile.name", "Ada Lovelace", vec![fixture.turn]);
+    second.supersedes = Some(old);
+    let new = second.claim_id;
+    crate::own_rate::set_auto_write_threshold_for_test(Some(1));
+    let granted = promote_consolidated_claims(&vault, &fixture.run, vec![first])
+        .and_then(|_| promote_consolidated_claims(&vault, &fixture.run, vec![second]))
+        .and_then(|_| vault.grant_deferred_claim_auto(&new, fixture.run.now_ms + 1));
+    crate::own_rate::set_auto_write_threshold_for_test(None);
+    granted?;
+    assert_eq!(
+        vault.get_claim(&new)?.expect("granted").approval,
+        ClaimApprovalStatus::Auto,
+        "the count never holds the grant"
+    );
+    let check = vault.own_rate_check(
+        fixture.run.agent_actor.entity_ref(),
+        crate::own_rate::OwnRateKind::AutoWrite,
+    )?;
+    assert_eq!(
+        check.map(|check| (check.count, check.threshold)),
+        Some((2, 1)),
+        "FAILBEFORE H327: a replacement granted through the public door was not counted"
+    );
     Ok(())
 }
 

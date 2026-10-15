@@ -209,6 +209,16 @@ pub(crate) fn add_default_teacher_probe_policy(entries: &mut Vec<(rmpv::Value, r
 /// schema-1.2 `core:read` grant per reader. A plain scoped-read key reads
 /// nothing until a trusted manifest grants it.
 pub(crate) fn authorize_readers(vault: &Vault, readers: &[&str]) {
+    authorize_readers_with(vault, readers, Vec::new());
+}
+
+/// [`authorize_readers`] with `rows` replacing the shipped manifest's rows
+/// under the same keys.
+pub(crate) fn authorize_readers_with(
+    vault: &Vault,
+    readers: &[&str],
+    rows: Vec<(rmpv::Value, rmpv::Value)>,
+) {
     let authority = crate::federation::scope_codec::encode_scope_value(
         &crate::federation::scope_codec::read_preset(),
     )
@@ -236,11 +246,14 @@ pub(crate) fn authorize_readers(vault: &Vault, readers: &[&str]) {
     else {
         panic!("manifest map");
     };
-    entries.retain(|(key, _)| key.as_str() != Some("scoped_grants"));
+    entries.retain(|(key, _)| {
+        key.as_str() != Some("scoped_grants") && rows.iter().all(|(row, _)| row != key)
+    });
     entries.push((
         rmpv::Value::from("scoped_grants"),
         rmpv::Value::Array(grants),
     ));
+    entries.extend(rows);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries)).expect("manifest encodes");
     put_policy_manifest_bytes(
