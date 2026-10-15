@@ -152,3 +152,101 @@ async fn message_stream_local_host_relay_is_live_without_a_sync_client() {
     );
     assert!(!vault.entity_exists(&message).unwrap());
 }
+
+/// One message's presence frame carrying `text`, and its key.
+fn presence(text: &str) -> (String, Vec<u8>) {
+    let message = oneiron::EntityId::now();
+    let key = format!("msg:{}", message.to_hex());
+    let producer = EphemeralStore::new(30_000);
+    producer.set(
+        &key,
+        LoroValue::Map(
+            vec![
+                ("schema_version".to_owned(), LoroValue::I64(1)),
+                (
+                    "message_id".to_owned(),
+                    LoroValue::String(message.to_hex().into()),
+                ),
+                (
+                    "generation".to_owned(),
+                    LoroValue::String(oneiron::EntityId::now().to_hex().into()),
+                ),
+                ("seq".to_owned(), LoroValue::I64(1)),
+                ("text".to_owned(), LoroValue::String(text.into())),
+            ]
+            .into(),
+        ),
+    );
+    let frame = producer.encode(&key);
+    (key, frame)
+}
+
+async fn send_presence(server: &SyncServer, frame: Vec<u8>) {
+    let mut state = ConnState::new(protocol::PROTOCOL_VERSION);
+    let (direct_tx, _direct_rx) = tokio::sync::mpsc::unbounded_channel();
+    handle_sync_message(
+        server,
+        17,
+        SyncMessage::Ephemeral(frame),
+        &direct_tx,
+        &mut state,
+    )
+    .await
+    .unwrap_or_else(|error| panic!("a presence frame was refused: {error}"));
+}
+
+/// Bug repro (rule 5, row 19): the hub refused presence past its 256 KiB
+/// share and the socket closed. Done-means: every message's presence is
+/// kept, charged to the retained-memory line.
+#[tokio::test]
+async fn presence_past_the_old_hub_share_is_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let server = SyncServer::new(
+        vault,
+        SyncServerConfig {
+            max_ephemeral_snapshot_bytes: 4096,
+            ..SyncServerConfig::default()
+        },
+    )
+    .unwrap();
+    let mut keys = Vec::new();
+    for _ in 0..8 {
+        let (key, frame) = presence(&"x".repeat(1024));
+        send_presence(&server, frame).await;
+        keys.push(key);
+    }
+    for key in keys {
+        assert!(server.ephemeral_store.get(&key).is_some(), "{key} dropped");
+    }
+}
+
+/// Done-means (rule 5, row 19): only a full retained-memory line, the memory
+/// floor, keeps a presence frame out, and the socket stays open; once the
+/// line has room the next frame is kept.
+#[tokio::test]
+async fn only_the_memory_floor_keeps_presence_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let total = 64 * 1024;
+    let server = SyncServer::new(
+        vault,
+        SyncServerConfig {
+            limits: crate::config::LimitsConfig {
+                retained_memory_bytes: total as u64,
+                ..crate::config::LimitsConfig::default()
+            },
+            ..SyncServerConfig::default()
+        },
+    )
+    .unwrap();
+    let questions = server.wire_telemetry.limit_questions();
+    let other = server.retained.try_reserve_alone(total, questions).unwrap();
+    let (refused, frame) = presence("held out");
+    send_presence(&server, frame).await;
+    assert!(server.ephemeral_store.get(&refused).is_none());
+    drop(other);
+    let (kept, frame) = presence("kept");
+    send_presence(&server, frame).await;
+    assert!(server.ephemeral_store.get(&kept).is_some());
+}
