@@ -18,10 +18,11 @@ pub use self::codec::{
 pub(crate) use self::codec::{
     validate_counterparty_contact_body_bytes, validate_counterparty_contact_claim_structure,
 };
+#[cfg(test)]
+pub(crate) use self::lifecycle::rematerialize_contact_cache_in_txn;
 pub use self::lifecycle::{drop_contact_cache_row, rematerialize_contact_cache};
 pub(crate) use self::lifecycle::{
-    rematerialize_contact_cache_in_txn, rematerialize_party_contact_cache_in_txn,
-    supersede_family_owned_claim_in_txn,
+    rematerialize_party_contact_cache_in_txn, supersede_family_owned_claim_in_txn,
 };
 pub(crate) use self::storage::{
     counterparty_contact_by_index_in_txn, counterparty_contact_matches_channel_class,

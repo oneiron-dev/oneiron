@@ -406,8 +406,9 @@ fn duplicate_member_heads_never_veto_an_unsubscribe() -> Result<()> {
         2
     );
 
+    // The suppressed memberships stop the send before the gate's opt-out hold.
     let held = dispatch(&vault, actor, CHANNEL, "intent:torn", None, &mut sink);
-    assert_opt_out_hold(&held);
+    assert_eq!(held.outcome, OutboundDispatchOutcome::Suppressed);
     assert!(sink.calls.is_empty());
     Ok(())
 }
