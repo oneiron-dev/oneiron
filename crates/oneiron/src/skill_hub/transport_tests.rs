@@ -1054,6 +1054,15 @@ fn code_policy_revalidates_owner_and_can_toggle_across_reopen() -> Result<()> {
             .kind(),
         ErrorKind::ConsentOwnerNotAuthenticated
     );
+    // A deleted owner's cached proof switches nothing.
+    assert!(vault.delete_entity(&owner_id)?);
+    assert_eq!(
+        vault
+            .set_marketplace_code_auto_install(&owner, false)
+            .expect_err("a deleted owner")
+            .kind(),
+        ErrorKind::ConsentOwnerNotAuthenticated
+    );
     // A rejected setter neither changes the flag nor spends the next transition.
     let current = vault.store.env.read_txn()?;
     assert_eq!(

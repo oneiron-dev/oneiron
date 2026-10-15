@@ -287,7 +287,6 @@ fn model_catalog_loader_refuses_installed_bytes_outside_the_scan_ledger() -> Res
     ])?;
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::device())?;
-    let at = TimeRange { start: 1, end: 1 };
     let owner = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(
         owner,

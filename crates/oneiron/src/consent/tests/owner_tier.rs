@@ -240,3 +240,111 @@ fn a_merge_never_retires_the_vault_owner_and_the_owner_survives_one() {
         .create_standing_grant(&owner, action_bound("agent-a", "send", &["channel:email"]))
         .expect("the owner still opens owner doors");
 }
+
+/// The owner-retirement rule holds wherever topology history lands, not only
+/// at the local merge door (Sol r2 P1-1, P2-1): a split of the owner is
+/// refused locally, a peer's merge of the owner is refused at replicated
+/// admission, and history that retires the owner folds as a rejection with
+/// the owner still active.
+#[test]
+fn no_split_peer_event_or_replayed_history_retires_the_vault_owner() {
+    use crate::claim::{ClaimApprovalStatus, ClaimSource};
+    use crate::error::SyncError;
+    use crate::identity_topology::{
+        IdentityOpEvidence, IdentityOpWrite, IdentityTopologyAction, IdentityTopologyEvent,
+        IdentityTopologyOp, IdentityTopologyRejection, MergeOp, ReassignmentMap, SplitOp,
+        StoredIdentityOpAction, StoredIdentityOpEvent, SurvivorshipPlan,
+        fold_identity_topology_log,
+    };
+    let (_dir, vault, owner, person) = owner_and_person();
+    let owner_id = owner.actor();
+    let duplicate = person.actor_for_read(&vault).unwrap();
+    let evidence = || IdentityOpEvidence {
+        refs: Vec::new(),
+        rationale: "fixture".into(),
+    };
+    let split = IdentityTopologyOp::Split(SplitOp {
+        entity: owner_id,
+        heads: Vec::new(),
+        reassignment: ReassignmentMap::default(),
+        evidence: evidence(),
+    });
+    let refused = vault.apply_identity_topology_op(
+        &split,
+        &IdentityOpWrite::auto(ClaimSource::Inferred),
+        200,
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(Error::Sync(SyncError::IdentityTopologyRejected(
+                IdentityTopologyRejection::OwnerSplitAway { owner: named }
+            ))) if named == owner_id
+        ),
+        "{refused:?}"
+    );
+    assert!(vault.is_live_vault_owner(&owner).unwrap());
+
+    let peer_merge = StoredIdentityOpEvent {
+        seq: 1,
+        validated_at_write: false,
+        invalidated: false,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![owner_id],
+            survivor: duplicate,
+        },
+    };
+    let rtxn = vault.store.env.read_txn().unwrap();
+    let admitted = vault.validate_replicated_identity_topology_event_in_txn(&rtxn, &peer_merge);
+    drop(rtxn);
+    assert!(
+        matches!(
+            admitted,
+            Err(Error::Sync(SyncError::IdentityTopologyRejected(
+                IdentityTopologyRejection::OwnerMergedAway { .. }
+            )))
+        ),
+        "{admitted:?}"
+    );
+
+    let history = [
+        IdentityTopologyEvent {
+            event_id: crate::EntityId::now(),
+            seq: 1,
+            approval: ClaimApprovalStatus::Auto,
+            action: IdentityTopologyAction::Apply(IdentityTopologyOp::Merge(MergeOp {
+                sources: vec![owner_id],
+                survivor: duplicate,
+                evidence: evidence(),
+                survivorship_plan: SurvivorshipPlan::ReadThrough,
+            })),
+        },
+        IdentityTopologyEvent {
+            event_id: crate::EntityId::now(),
+            seq: 2,
+            approval: ClaimApprovalStatus::Auto,
+            action: IdentityTopologyAction::Apply(split),
+        },
+    ];
+    let fold = fold_identity_topology_log(&history);
+    assert!(
+        !fold.states.contains_key(&owner_id),
+        "the owner folds as active"
+    );
+    assert_eq!(
+        fold.rejections
+            .iter()
+            .map(|(_, rejection)| *rejection)
+            .collect::<Vec<_>>(),
+        vec![
+            IdentityTopologyRejection::OwnerMergedAway { owner: owner_id },
+            IdentityTopologyRejection::OwnerSplitAway { owner: owner_id },
+        ]
+    );
+}

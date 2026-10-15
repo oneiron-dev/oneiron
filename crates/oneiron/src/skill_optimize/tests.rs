@@ -5127,7 +5127,9 @@ fn responsible_pick_is_durable_and_settles_the_next_axis_tie() -> Result<()> {
     assert_eq!(ask.question.proposal, proposal);
     assert_eq!(ask.jev, first.tradeoff_jev);
     let ask_digest = ask.question.digest()?;
-    let stranger = tradeoff_owner(&vault);
+    // Someone other than the responsible person settles nothing.
+    let stranger = crate::test_util::non_owner_proof(&vault);
+    assert_ne!(stranger.actor(), owner.actor());
     assert!(
         settle_skill_tradeoff_ask(
             &vault,

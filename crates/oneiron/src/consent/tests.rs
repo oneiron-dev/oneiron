@@ -1931,6 +1931,8 @@ fn merged_holder_cannot_land_pending_widen_and_proposal_remains_open() {
             vault.now_recorded_at() + 300,
         )
         .unwrap();
+    // Before the merge the holder's proof holds as a person who owns nothing.
+    assert!(!vault.is_live_vault_owner(&held).unwrap());
     let write = IdentityOpWrite::auto(crate::claim::ClaimSource::Inferred)
         .with_actor(crate::WriteActor::new(owner.actor(), EdgeActorClass::Human));
     vault
@@ -1948,6 +1950,8 @@ fn merged_holder_cannot_land_pending_widen_and_proposal_remains_open() {
             200,
         )
         .unwrap();
+    // After it the proof no longer holds at all: a merged-away person.
+    assert!(vault.is_live_vault_owner(&held).is_err());
     let error = vault
         .accept_widen(&held, &proposal.proposal_ref, &proposal.canonical_delta)
         .unwrap_err();

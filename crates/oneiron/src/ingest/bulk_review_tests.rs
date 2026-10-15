@@ -132,11 +132,33 @@ fn decisions_for(
         .collect())
 }
 
-/// Another live owner of the same vault, as on a shared vault.
+/// Another live owner of the same vault: a second Owner-role member once the
+/// vault is shared under its embedded owner.
 fn second_owner(vault: &crate::Vault) -> Result<crate::consent::AuthenticatedOwner> {
-    let actor = vault.ensure_embedded_owner_actor().unwrap();
+    use crate::federation::{FederationGrantRole, InitialSharedMember};
+    let owner = crate::test_util::embedded_owner_proof(vault);
+    let actor = EntityId::now();
     let time = TimeRange { start: 1, end: 1 };
-    vault.authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())
+    vault.put_entity(&actor, ENTITY_TYPE_PERSON, time, 1, b"second owner")?;
+    vault.initialize_shared_vault(
+        &owner,
+        42,
+        None,
+        &[
+            InitialSharedMember {
+                member_ref: owner.actor(),
+                role: Some(FederationGrantRole::Owner),
+            },
+            InitialSharedMember {
+                member_ref: actor,
+                role: Some(FederationGrantRole::Owner),
+            },
+        ],
+        1,
+    )?;
+    let other = vault.authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())?;
+    assert_ne!(other.actor(), owner.actor());
+    Ok(other)
 }
 
 #[test]
