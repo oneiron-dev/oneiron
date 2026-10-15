@@ -632,6 +632,7 @@ fn a_hinted_claim_mid_walk_leaves_the_limit_to_live_records() -> Result<()> {
 fn a_fill_leased_before_a_same_body_put_mid_walk_writes_nothing() -> Result<()> {
     use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
     let (_tmp, vault) = open_with(crate::test_util::embedding_test_config());
+    vault.set_indexed_idle_delay_ms(0)?;
     let source = entity(0x5B);
     put_source(&vault, DependentWalkDoor::SoftErase, &source)?;
     derive_five(&vault, &source)?;
