@@ -103,7 +103,7 @@ fn recall_within_ceiling(
     let scope = input.scope.clone().unwrap_or_default();
     let limit = input.limit.unwrap_or(10);
     crate::memory::caps::check_query(&input.query)?;
-    crate::memory::caps::check_limit(limit)?;
+    crate::memory::caps::check_limit_nonzero(limit)?;
     let host = match door.rerank {
         RecallRerank::Host(host) if effort.requires_rerank() => Some(host),
         _ => None,

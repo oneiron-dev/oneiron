@@ -46,6 +46,8 @@ async fn an_over_large_limit_is_served_at_the_ceiling_and_says_so() {
     let (_dir, server) = auth_test_server();
     seed_turn(&server, "The lantern room opens at dusk.");
     let reader = owner_reader(&server);
+    // A query vector the test vault's index takes; a malformed one is a 500.
+    let vector = vec!["0.1"; oneiron::VaultConfig::device().dimensions].join(",");
     for (limit, clamped) in [
         (MAX_SEARCH_LIMIT, false),
         (MAX_SEARCH_LIMIT + 1, true),
@@ -84,7 +86,7 @@ async fn an_over_large_limit_is_served_at_the_ceiling_and_says_so() {
             ),
             (
                 "GET",
-                format!("/api/search/vector?query=0.1,0.2,0.3&limit={limit}"),
+                format!("/api/search/vector?query={vector}&limit={limit}"),
                 None,
                 "/meta/limitClamped",
             ),
