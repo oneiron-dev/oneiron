@@ -52,16 +52,17 @@ fn crafted_claim(
 }
 
 fn intact(fixture: &Shared) -> Result<bool> {
-    let txn = fixture.vault.store.env.read_txn()?;
-    Ok(
-        content_erased(&fixture.vault.store, &txn, &fixture.shared.content_hash)?.is_none()
-            && !reference_erased(&fixture.vault.store, &txn, &fixture.shared.claim_id)?
-            && fixture
-                .vault
-                .read_blob_artifact_version(&fixture.other, 2)?
-                == Some(SHARED.to_vec())
-            && fixture.vault.get_raw(&fixture.asset()?)?.is_some(),
-    )
+    let marked = {
+        let txn = fixture.vault.store.env.read_txn()?;
+        content_erased(&fixture.vault.store, &txn, &fixture.shared.content_hash)?.is_some()
+            || reference_erased(&fixture.vault.store, &txn, &fixture.shared.claim_id)?
+    };
+    Ok(!marked
+        && fixture
+            .vault
+            .read_blob_artifact_version(&fixture.other, 2)?
+            == Some(SHARED.to_vec())
+        && fixture.vault.get_raw(&fixture.asset()?)?.is_some())
 }
 
 /// Bug repro (#1465 R3, Sol 2): a crafted `blob.version` claim at the id of a record the peer
@@ -206,7 +207,7 @@ fn a_late_reference_the_put_refuses_widens_no_erase() -> Result<()> {
     let existing = EntityId::now();
     let mut prior = crate::claim::decode_claim_body(data, true)?;
     assert_ne!(prior.scope_project, origin.person);
-    prior.predicate = "prefers".to_owned();
+    prior.predicate = "fixture.topic".to_owned();
     prior.scope_project = origin.person;
     vault
         .batch()
