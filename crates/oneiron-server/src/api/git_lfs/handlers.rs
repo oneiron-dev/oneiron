@@ -253,8 +253,11 @@ pub(crate) async fn lfs_download(
     // Its room in memory, then one permit, cover the preflight and the
     // stream: each worker holds them in turn, so a client that hangs up
     // mid-preflight frees nothing early.
-    let room = Transfers::read_room(&server.vault, oid)
-        .map_err(|error| lfs_engine_error("lfs object lookup failed", &error))?;
+    let Some(room) = Transfers::read_room(&server.vault, oid)
+        .map_err(|error| lfs_engine_error("lfs object lookup failed", &error))?
+    else {
+        return Err(ApiError::not_found("lfs object", Some(&oid.to_hex())).into());
+    };
     let Some(room) = server.transfers.lfs_read_room(room).await else {
         return Ok(lfs_waited_out());
     };
@@ -300,13 +303,17 @@ pub(crate) async fn lfs_verify(
     let auth = authorize(&headers, &server, LfsAccess::Write).map_err(EnvelopedApiError::from)?;
     // It waits on its headers and reads its body at its turn, so a request
     // in line holds none of it. Its room in memory is its route's object's,
-    // the only one it may read.
-    let room = match LfsOid::parse_hex(&route_oid) {
+    // the only one it may read, sized before it waits.
+    let sized = match LfsOid::parse_hex(&route_oid) {
         Ok(oid) => Transfers::read_room(&server.vault, oid)
             .map_err(|error| lfs_engine_error("lfs object lookup failed", &error))?,
-        Err(_) => 0,
+        Err(_) => None,
     };
-    let Some(room) = server.transfers.lfs_read_room(room).await else {
+    let Some(room) = server
+        .transfers
+        .lfs_read_room(sized.unwrap_or(crate::api::transfer::READ_ROOM))
+        .await
+    else {
         return Ok(lfs_waited_out());
     };
     let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()).await else {
@@ -325,6 +332,19 @@ pub(crate) async fn lfs_verify(
             Some("oid"),
         )
         .into());
+    }
+    // An object that was not stored when the verify took its room is not
+    // read, even if it has landed since: its manifest is room the verify
+    // does not hold.
+    if sized.is_none() {
+        return lfs_json_response(
+            StatusCode::OK,
+            &LfsVerifyResponse {
+                oid: oid.to_hex(),
+                size: request.size,
+                ok: false,
+            },
+        );
     }
     let vault = Arc::clone(&server.vault);
     let size = request.size;

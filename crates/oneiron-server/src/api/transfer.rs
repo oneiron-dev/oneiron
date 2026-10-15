@@ -56,7 +56,7 @@ pub(super) const DECODED_PER_BYTE: u64 = 256;
 /// What a download or a verify holds beside its manifest: a chunk as stored
 /// and as read, the pieces on their way to the client, and a verify's body,
 /// counted generously.
-const READ_ROOM: u64 = 1024 * 1024;
+pub(super) const READ_ROOM: u64 = 1024 * 1024;
 
 /// Copies of its manifest's row a download or verify holds at once: the row
 /// as read, its body, its references decoded, and their encoding as its id is
@@ -247,16 +247,17 @@ impl Transfers {
 
     /// The room a download or a verify of `oid` takes: its manifest's row,
     /// read in place, as many times as it is copied at once, and the chunk
-    /// and pieces beside it. Only the room beside it when no live object has
-    /// the id.
+    /// and pieces beside it ([`READ_ROOM`]). `None` when no live object has
+    /// the id: a read sized so reads no manifest, even one that lands while
+    /// it waits.
     pub(super) fn read_room(
         vault: &oneiron::Vault,
         oid: oneiron::origin::lfs::LfsOid,
-    ) -> oneiron::Result<u64> {
-        let row = vault.lfs_manifest_row_bytes(oid)?.unwrap_or(0);
-        Ok(row
-            .saturating_mul(MANIFEST_COPIES)
-            .saturating_add(READ_ROOM))
+    ) -> oneiron::Result<Option<u64>> {
+        Ok(vault.lfs_manifest_row_bytes(oid)?.map(|row| {
+            row.saturating_mul(MANIFEST_COPIES)
+                .saturating_add(READ_ROOM)
+        }))
     }
 
     /// The line an upload's worker takes its install room on, once its body
