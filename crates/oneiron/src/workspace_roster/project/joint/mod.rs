@@ -26,9 +26,7 @@ use super::fold::{
     ProjectEffective, ProjectFold, ProjectFrontier, ProjectRank, fold_project, rank_at, reason,
     unsigned_frontier,
 };
-use super::history_policy::{
-    PROJECT_FRONTIER, ProjectDependencies, ProjectEvidenceSet, frozen_frontier, policy_in,
-};
+use super::history_policy::{ProjectDependencies, ProjectEvidenceSet, frozen_frontier, policy_in};
 use super::read::{Decided, Facts, ProjectReader, ProjectVerdict, stored_verdict};
 use super::revision::{ProjectRevision, ProjectRevisionHash};
 use super::validity::{FoldCx, parent_view, read_parents, refusal};
@@ -71,11 +69,9 @@ struct Member {
     labels: BTreeMap<Hash, Label>,
     /// The base each board conduit stands on.
     conduits: BTreeMap<Hash, Hash>,
-    /// A frozen or unsigned member's one frontier.
+    /// A frozen or unsigned member's one frontier; a frozen one's parent
+    /// reads are checked again under the served views (`serve`).
     fixed: Option<ProjectFrontier>,
-    /// A frozen member's saved dependencies with their signers, whose
-    /// parent admissions `serve` re-checks under the served views.
-    saved: Vec<(Hash, String)>,
 }
 
 /// One world of a member: the open states that stand, and its fold.
@@ -95,6 +91,7 @@ struct Solver<'s, 'a, 't> {
     members: Vec<Member>,
     at: BTreeMap<EntityId, usize>,
     bound: u64,
+    max_revisions: u64,
     /// Work spent, and the most the decision may spend before it serves no
     /// authority.
     work: std::cell::Cell<u64>,
@@ -115,6 +112,7 @@ pub(super) fn solve(
         members: Vec::new(),
         at,
         bound: policy.cycle_worlds_max,
+        max_revisions: policy.max_revisions,
         work: std::cell::Cell::new(0),
         budget: 0,
     };
@@ -174,19 +172,11 @@ impl Solver<'_, '_, '_> {
             labels: BTreeMap::new(),
             conduits: BTreeMap::new(),
             fixed: None,
-            saved: Vec::new(),
         };
         if facts.over_budget {
             let cx = FoldCx::intrinsic(self.reader, id, &facts.held);
             let fixed = frozen_frontier(self.reader, &cx, facts.count, max_revisions, false)?;
-            if fixed.effective.is_some()
-                && let Some(record) =
-                    PROJECT_FRONTIER.get(self.reader.store(), self.reader.txn(), &id)?
-            {
-                member.saved = (record.dependencies.all())
-                    .filter_map(|hash| Some((*hash, cx.signer(hash)?)))
-                    .collect();
-            }
+            self.charge(cx.visits());
             member.fixed = Some(fixed);
             return Ok(member);
         }
@@ -228,6 +218,7 @@ impl Solver<'_, '_, '_> {
                     depth += 1;
                     at = facts.held.get(&prior).and_then(|row| row.revision.parent());
                 }
+                self.charge(depth as u64 + 1);
                 order.push((depth, *hash));
             }
         }
@@ -291,6 +282,7 @@ impl Solver<'_, '_, '_> {
             return Ok(Label::Decided(verdict));
         }
         let birth = state.birth;
+        self.charge(state.authority.parents.len() as u64 + 1);
         for (parent, spawned_under) in read_parents(&state.authority, birth, state.host)? {
             if self.at.contains_key(&parent) {
                 continue;
@@ -348,7 +340,10 @@ impl Solver<'_, '_, '_> {
                     let Some(ancestor) = states.get(&at) else {
                         break None;
                     };
-                    if !self.charge(1) {
+                    let scan: usize = (ancestor.inside.iter())
+                        .map(|(parent, _)| plain[*parent].len())
+                        .sum();
+                    if !self.charge(scan as u64 + 1) {
                         break None;
                     }
                     if !seated(&ancestor.authority) {
@@ -435,6 +430,7 @@ impl Solver<'_, '_, '_> {
                     .then(|| member.conduits.get(&state.hash).copied())
                     .flatten();
                 if on(&state.prior) || base.is_some_and(|base| member.stands(&base, assigned)) {
+                    self.charge(assigned.len() as u64);
                     let mut with = assigned.clone();
                     with.insert(state.hash);
                     more.push(with);
@@ -449,7 +445,7 @@ impl Solver<'_, '_, '_> {
         let mut views: Vec<Option<ProjectEffective>> = Vec::new();
         for stands in assignments {
             let fold = self.fold_world(member, &stands)?;
-            if self.spent() {
+            if !self.charge(views.len() as u64) {
                 return Ok(None);
             }
             if !views.contains(&fold.frontier.effective) {
@@ -469,7 +465,9 @@ impl Solver<'_, '_, '_> {
         for (hash, label) in &member.labels {
             verdicts.insert(*hash, member.verdict_in(hash, *label, stands));
         }
-        let rehomed = member.rehomed(stands);
+        let mut walked = 0;
+        let rehomed = member.rehomed(stands, &mut walked);
+        self.charge(walked);
         #[cfg(test)]
         WORLD_FOLDS.with(|count| count.set(count.get() + 1));
         let cx = FoldCx::seeded(
@@ -503,6 +501,7 @@ impl Solver<'_, '_, '_> {
             .map(|worlds| {
                 let mut views: Vec<Option<ProjectEffective>> = Vec::new();
                 for world in worlds {
+                    self.charge(views.len() as u64 + 1);
                     if !views.contains(world.view()) {
                         views.push(world.view().clone());
                     }
@@ -548,6 +547,10 @@ impl Solver<'_, '_, '_> {
                 .is_none_or(|prior| member.stands(&prior, &world.stands))
                 || base.is_some_and(|base| member.stands(&base, &world.stands))
         };
+        let scans: usize = (state.inside.iter())
+            .map(|(parent, _)| candidates[*parent].len())
+            .sum();
+        self.charge(2 * own.len() as u64 + 3 * scans as u64);
         let (every, some) = (own.iter().all(lineage), own.iter().any(lineage));
         let admits = |view: &Option<ProjectEffective>, spawned_under: bool| {
             view.as_ref().is_some_and(|view| {
@@ -633,7 +636,8 @@ impl Solver<'_, '_, '_> {
             .filter(|member| *member != target)
             .collect();
         loop {
-            if !self.charge(set.len() as u64) {
+            let scan: usize = set.iter().map(|member| candidates[*member].len()).sum();
+            if !self.charge(set.len() as u64 + scan as u64) {
                 return BTreeSet::new();
             }
             let keep: BTreeSet<usize> = (set.iter().copied())
@@ -676,10 +680,13 @@ impl Solver<'_, '_, '_> {
         let mut seen = BTreeSet::new();
         let mut todo = self.inside_parents(view);
         while let Some(member) = todo.pop() {
+            if !self.charge(1) {
+                return false;
+            }
             if member == target {
                 return true;
             }
-            if !seen.insert(member) || !self.charge(1) {
+            if !seen.insert(member) || !self.charge(candidates[member].len() as u64) {
                 continue;
             }
             for other in &candidates[member] {
@@ -695,7 +702,8 @@ impl Solver<'_, '_, '_> {
 impl Member {
     /// Where each standing state over a fallen prior hangs: a conduit, decided
     /// or assigned, under its nearest standing ancestor.
-    fn rehomed(&self, assigned: &BTreeSet<Hash>) -> BTreeMap<Hash, Vec<Hash>> {
+    /// `walked` counts the ancestors the walks pass.
+    fn rehomed(&self, assigned: &BTreeSet<Hash>, walked: &mut u64) -> BTreeMap<Hash, Vec<Hash>> {
         let mut rehomed: BTreeMap<Hash, Vec<Hash>> = BTreeMap::new();
         for state in &self.states {
             let Some(prior) = state.prior else {
@@ -707,6 +715,7 @@ impl Member {
             let held = &self.facts.held;
             let mut at = prior;
             while !self.stands(&at, assigned) {
+                *walked += 1;
                 match held.get(&at).and_then(|row| row.revision.parent()) {
                     Some(next) => at = next,
                     None => break,
@@ -741,4 +750,6 @@ thread_local! {
     pub(super) static WORLD_FOLDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// The work allowed per world, scaled down for a test.
     pub(super) static WORK_SCALE: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    /// How many decisions went dark past the work budget, not the world bound.
+    pub(super) static WORK_DARK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }

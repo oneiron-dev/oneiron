@@ -381,9 +381,12 @@ pub(super) fn replay(scaffold: &Scaffold, graph: &Graph, order: &[usize]) -> Res
 }
 
 /// The definition's answer is every door's answer, for every seed, in both
-/// arrival orders, on two replicas and from every entry point.
+/// arrival orders, on two replicas and from every entry point. The reference
+/// models the world bound, not the decision's work budget, so no generated
+/// case may pass the budget (Astra r15 F5).
 #[test]
 fn every_door_serves_the_least_fixpoint_of_the_parent_cycle_rule() -> Result<()> {
+    use super::super::joint::WORK_DARK;
     let mut failures = Vec::new();
     let mut bounded = 0;
     for seed in 0..SEEDS {
@@ -404,6 +407,11 @@ fn every_door_serves_the_least_fixpoint_of_the_parent_cycle_rule() -> Result<()>
         }
     }
     assert!(bounded > 0, "no generated case passed the bound");
+    assert_eq!(
+        WORK_DARK.with(std::cell::Cell::get),
+        0,
+        "a case passed the work budget"
+    );
     assert!(
         failures.is_empty(),
         "{} failing runs:\n{}",

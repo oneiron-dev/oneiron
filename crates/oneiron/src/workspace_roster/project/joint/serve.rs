@@ -3,10 +3,12 @@
 use super::super::fold::{
     ProjectDisposition, ProjectEffective, ProjectFold, ProjectFrontier, ProjectWitness, reason,
 };
-use super::super::history_policy::{ProjectDependencies, ProjectEvidenceSet, counted_set};
+use super::super::history_policy::{
+    ProjectDependencies, ProjectEvidenceSet, counted_set, frozen_frontier,
+};
 use super::super::read::{Decided, ProjectVerdict};
 use super::super::revision::anchor_of;
-use super::super::validity::{FoldCx, parent_view, read_parents, refusal};
+use super::super::validity::{FoldCx, parent_view};
 use super::super::*;
 use super::{Hash, Label, Member, Solver, World};
 use std::collections::BTreeMap;
@@ -61,7 +63,7 @@ impl Solver<'_, '_, '_> {
                     frontier,
                     fold,
                     labels: self.labels(member, reason::CYCLE),
-                    rehomed: member.rehomed(&BTreeSet::new()),
+                    rehomed: member.rehomed(&BTreeSet::new(), &mut 0),
                 }),
             );
         }
@@ -74,17 +76,22 @@ impl Solver<'_, '_, '_> {
         mut worlds: Vec<World>,
     ) -> Result<(ProjectFrontier, Option<ProjectFold>)> {
         if let Some(fixed) = &member.fixed {
-            let fold = (!member.facts.over_budget).then(|| ProjectFold {
-                frontier: fixed.clone(),
-                verdicts: BTreeMap::new(),
-                dependencies: ProjectDependencies::default(),
-                forks: Vec::new(),
-                evidence: ProjectEvidenceSet::default(),
-            });
+            let fold = if member.facts.over_budget {
+                None
+            } else {
+                Some(ProjectFold {
+                    frontier: fixed.clone(),
+                    verdicts: self.verdicts(member, reason::CYCLE)?,
+                    dependencies: ProjectDependencies::default(),
+                    forks: Vec::new(),
+                    evidence: ProjectEvidenceSet::default(),
+                })
+            };
             return Ok((fixed.clone(), fold));
         }
         let verdicts = self.verdicts(member, reason::CYCLE)?;
         let first = worlds.swap_remove(0);
+        self.charge(worlds.len() as u64 + 1);
         let agree = worlds.iter().all(|world| {
             world.fold.frontier.disposition == first.fold.frontier.disposition
                 && world.fold.frontier.witness == first.fold.frontier.witness
@@ -105,9 +112,14 @@ impl Solver<'_, '_, '_> {
             effective: None,
         };
         let path = &first.fold.dependencies.path;
-        let common = path.iter().rposition(|node| {
-            (worlds.iter()).all(|world| world.fold.dependencies.path.contains(node))
-        });
+        let walks: Vec<BTreeSet<&Hash>> = (worlds.iter())
+            .map(|world| world.fold.dependencies.path.iter().collect())
+            .collect();
+        let read: usize = walks.iter().map(BTreeSet::len).sum();
+        self.charge((read + path.len() * (worlds.len() + 1)) as u64);
+        let common = path
+            .iter()
+            .rposition(|node| walks.iter().all(|walk| walk.contains(node)));
         let fold = |frontier: ProjectFrontier, path: Vec<Hash>| ProjectFold {
             frontier,
             verdicts: verdicts.clone(),
@@ -202,23 +214,20 @@ impl Solver<'_, '_, '_> {
                 return Ok(Err(ProjectVerdict::Quarantined(reason::EXCEEDS_PARENT)));
             }
         }
-        for (hash, signer) in &member.saved {
-            self.charge(1);
-            let Some(row) = member.facts.held.get(hash) else {
-                continue;
-            };
-            let Some(authority) = row.revision.authority() else {
-                continue;
-            };
-            let (birth, host) = (row.revision.parent().is_none(), signer == "host");
-            for (parent, spawned_under) in read_parents(authority, birth, host)? {
-                let view = match self.view_of(parent, served)? {
-                    Ok(view) => view,
-                    Err(verdict) => return Ok(Err(verdict)),
-                };
-                if let Some(why) = refusal(&view, authority, signer, spawned_under, host) {
-                    return Ok(Err(ProjectVerdict::Quarantined(why)));
-                }
+        if member.facts.over_budget && member.fixed.is_some() {
+            // The frozen re-check again, every parent read in the component
+            // taking its served view: the closure its saved view rests on
+            // (lineage, seal and resolution envelopes) is checked as alone.
+            let views: BTreeMap<EntityId, Option<ProjectEffective>> = (self.members.iter())
+                .zip(served)
+                .map(|(other, (frontier, _))| (other.id, frontier.effective.clone()))
+                .collect();
+            let facts = &member.facts;
+            let cx = FoldCx::under(self.reader, member.id, &facts.held, Rc::new(views));
+            let fixed = frozen_frontier(self.reader, &cx, facts.count, self.max_revisions, false)?;
+            self.charge(cx.visits() + served.len() as u64);
+            if fixed.effective.is_none() {
+                return Ok(Err(ProjectVerdict::Quarantined(reason::PARENT_HIDDEN)));
             }
         }
         let mut seen = BTreeSet::from([index]);
@@ -227,7 +236,11 @@ impl Solver<'_, '_, '_> {
             if at == index {
                 return Ok(Err(ProjectVerdict::Quarantined(reason::CYCLE)));
             }
-            if seen.insert(at) && self.charge(1) {
+            if !self.charge(1) {
+                // `solve` answers dark.
+                return Ok(Ok(()));
+            }
+            if seen.insert(at) {
                 todo.extend(self.inside_parents(&served[at].0.effective));
             }
         }
@@ -249,7 +262,8 @@ impl Solver<'_, '_, '_> {
     }
 
     /// Every held row's verdict: a state's label (an undefined one refused
-    /// for `open`), and each envelope judged from them.
+    /// for `open`), and each envelope judged from them; a frozen or unsigned
+    /// member's rows each on their own lineage.
     fn verdicts(
         &self,
         member: &Member,
@@ -263,12 +277,13 @@ impl Solver<'_, '_, '_> {
             &facts.held,
             labels,
             facts.signers.clone(),
-            member.rehomed(&BTreeSet::new()),
+            member.rehomed(&BTreeSet::new(), &mut 0),
         );
         let mut verdicts = BTreeMap::new();
         for hash in facts.held.rows.keys() {
             verdicts.insert(*hash, cx.verdict(*hash)?);
         }
+        self.charge(cx.visits());
         Ok(verdicts)
     }
 
@@ -291,8 +306,12 @@ impl Solver<'_, '_, '_> {
         })
     }
 
-    /// Past the bound: no member serves authority.
+    /// Past the world bound or the work budget: no member serves authority.
     pub(super) fn dark(&self) -> Result<BTreeMap<EntityId, Rc<Decided>>> {
+        #[cfg(test)]
+        if self.spent() {
+            super::WORK_DARK.with(|dark| dark.set(dark.get() + 1));
+        }
         let mut decided = BTreeMap::new();
         for member in &self.members {
             let frontier = ProjectFrontier {
@@ -305,10 +324,7 @@ impl Solver<'_, '_, '_> {
             let fold = (!member.facts.over_budget).then(|| -> Result<ProjectFold> {
                 Ok(ProjectFold {
                     frontier: frontier.clone(),
-                    verdicts: match member.fixed {
-                        Some(_) => BTreeMap::new(),
-                        None => self.verdicts(member, reason::CYCLE_BOUND)?,
-                    },
+                    verdicts: self.verdicts(member, reason::CYCLE_BOUND)?,
                     dependencies: ProjectDependencies::default(),
                     forks: Vec::new(),
                     evidence: ProjectEvidenceSet::of(None, &counted_set(&cx)?),

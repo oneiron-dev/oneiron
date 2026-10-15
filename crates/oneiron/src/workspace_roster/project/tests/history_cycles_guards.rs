@@ -213,7 +213,7 @@ fn a_dissolved_cycle_takes_its_question_with_it() -> Result<()> {
 #[cfg(feature = "sync")]
 #[test]
 fn a_ring_past_its_work_budget_serves_nothing_and_asks_once() -> Result<()> {
-    use super::super::joint::WORK_SCALE;
+    use super::super::joint::{WORK_DARK, WORK_SCALE};
     let n = 12;
     let graph = Graph {
         projects: n,
@@ -228,6 +228,7 @@ fn a_ring_past_its_work_budget_serves_nothing_and_asks_once() -> Result<()> {
     let (_lit_dir, lit) = scaffold.replica(&all)?;
     let served = scaffold.public(&lit)?;
     assert!(served.iter().all(Option::is_some), "{served:?}");
+    assert_eq!(WORK_DARK.with(std::cell::Cell::get), 0);
     assert_eq!(lit.project_cycle_questions()?, Vec::new());
     WORK_SCALE.with(|scale| scale.set(Some(1)));
     let (_dark_dir, dark) = scaffold.replica(&all)?;
@@ -238,6 +239,8 @@ fn a_ring_past_its_work_budget_serves_nothing_and_asks_once() -> Result<()> {
     }
     let questions = dark.project_cycle_questions()?;
     WORK_SCALE.with(|scale| scale.set(None));
+    // Dark for its work, within the world bound.
+    assert!(WORK_DARK.with(std::cell::Cell::get) > 0);
     let bound = ProjectDisposition::Unauthorized {
         reason: reason::CYCLE_BOUND.into(),
     };

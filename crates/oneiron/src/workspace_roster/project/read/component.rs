@@ -42,10 +42,17 @@ impl ProjectReader<'_, '_> {
             }
         }
         if over_budget {
-            // A frozen view rests on its saved record alone.
+            // A frozen view rests on its saved record alone: the parents of
+            // every state its re-check reads (each dependency's lineage, and
+            // the states its seal and resolution envelopes read).
             if let Some(saved) = PROJECT_FRONTIER.get(self.store, self.txn, &id)? {
                 for hash in saved.dependencies.all() {
-                    if let Some(authority) = cx.authority_of(hash) {
+                    cx.verdict(*hash)?;
+                }
+                for (hash, verdict) in cx.judged().0 {
+                    if let Some(authority) = cx.authority_of(&hash)
+                        && verdict == ProjectVerdict::Visible
+                    {
                         parents_of(authority, &mut edges);
                     }
                 }
@@ -188,8 +195,10 @@ impl ProjectReader<'_, '_> {
     }
 }
 
-/// The states the one valid seal keeps: its next, the lineage the next's
-/// admission reads, and every descendant. No states when seals conflict.
+/// The states the one valid seal keeps: its next and every descendant, and
+/// the states the seal's own verdict reads (its next's lineage, and each
+/// superseded seal's next and lineage, transitively). No states when seals
+/// conflict.
 fn sealed_tree(cx: &FoldCx<'_, '_, '_>) -> Result<Option<BTreeSet<ProjectRevisionHash>>> {
     let tips = cx.seal_tips()?;
     let mut only = tips.iter();
@@ -197,18 +206,28 @@ fn sealed_tree(cx: &FoldCx<'_, '_, '_>) -> Result<Option<BTreeSet<ProjectRevisio
         return Ok((!tips.is_empty()).then(BTreeSet::new));
     };
     let mut tree = BTreeSet::new();
-    let Some(ProjectRevision::Seal { seal, .. }) = cx.row(tip) else {
+    let Some(ProjectRevision::Seal { seal: active, .. }) = cx.row(tip) else {
         return Ok(Some(tree));
     };
-    let mut at = cx.row(&seal.next).and_then(ProjectRevision::parent);
-    while let Some(prior) = at.filter(|prior| tree.insert(*prior)) {
-        at = cx.row(&prior).and_then(ProjectRevision::parent);
+    let mut seals = vec![*tip];
+    let mut read = BTreeSet::new();
+    while let Some(at) = seals.pop() {
+        let Some(ProjectRevision::Seal { seal, .. }) = cx.row(&at).filter(|_| read.insert(at))
+        else {
+            continue;
+        };
+        let mut lineage = Some(seal.next);
+        while let Some(node) = lineage.filter(|node| tree.insert(*node)) {
+            lineage = cx.row(&node).and_then(ProjectRevision::parent);
+        }
+        seals.extend(seal.supersedes.iter().copied());
     }
-    let mut todo = vec![seal.next];
+    let (mut todo, mut below) = (vec![active.next], BTreeSet::new());
     while let Some(at) = todo.pop() {
-        if tree.insert(at) {
+        if below.insert(at) {
             todo.extend(cx.held.children_of(&at).copied());
         }
     }
+    tree.extend(below);
     Ok(Some(tree))
 }

@@ -54,6 +54,9 @@ pub(super) struct FoldCx<'r, 'a, 't> {
     pub(super) id: EntityId,
     pub(super) held: &'r HeldRevisions,
     pub(super) parents: Parents,
+    /// A component's served views of its members, which a parent read takes
+    /// before the reader's (a frozen member's re-check in `joint/serve.rs`).
+    served: Option<Rc<BTreeMap<EntityId, Option<ProjectEffective>>>>,
     /// Conduit successors hung under their nearest standing ancestor, by
     /// that ancestor: a world of `joint.rs`.
     rehomed: BTreeMap<ProjectRevisionHash, Vec<ProjectRevisionHash>>,
@@ -81,6 +84,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             id,
             held,
             parents: Parents::Read,
+            served: None,
             rehomed: BTreeMap::new(),
             verdicts: RefCell::new(BTreeMap::new()),
             signers: RefCell::new(BTreeMap::new()),
@@ -89,6 +93,19 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             depth: Cell::new(0),
             visits: Cell::new(0),
             refusals: Cell::new(0),
+        }
+    }
+
+    /// A fold that reads a component member's view as `served` gives it.
+    pub(super) fn under(
+        reader: &'r ProjectReader<'a, 't>,
+        id: EntityId,
+        held: &'r HeldRevisions,
+        served: Rc<BTreeMap<EntityId, Option<ProjectEffective>>>,
+    ) -> Self {
+        Self {
+            served: Some(served),
+            ..Self::new(reader, id, held)
         }
     }
 
@@ -307,7 +324,14 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             return Ok(verdict);
         }
         for (parent, spawned_under) in read_parents(authority, parent.is_none(), host)? {
-            let effective = match parent_view(self.reader, parent)? {
+            let served = (self.served.as_ref()).and_then(|served| served.get(&parent));
+            let view = match served {
+                Some(view) => view
+                    .clone()
+                    .ok_or(ProjectVerdict::Quarantined(reason::PARENT_HIDDEN)),
+                None => parent_view(self.reader, parent)?,
+            };
+            let effective = match view {
                 Ok(effective) => effective,
                 Err(verdict) => return Ok(verdict),
             };

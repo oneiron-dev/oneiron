@@ -131,8 +131,11 @@ struct Drained {
 }
 
 /// Authenticates `project` and every member of its component, decides the
-/// component once, and writes each member's record and the owner's question.
-/// Returns each member with whether its served view changed.
+/// component once, and writes each member's record and the owner's question
+/// from that decision. A frozen member whose drain lands a narrowing changes
+/// what the decision read, so its record is written first and the component
+/// is decided again (Sol r15 F4). Returns each member with whether its served
+/// view changed.
 fn refresh_component(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -143,12 +146,51 @@ fn refresh_component(
     authenticate_pending(store, txn, posture, project, kind)?;
     let now = crate::ports::recorded_at_in_txn(store, txn)?;
     let mut authenticated = BTreeSet::from([project]);
-    let (members, dark, plans) = loop {
+    let mut changed: BTreeMap<EntityId, bool> = BTreeMap::new();
+    loop {
+        let (members, dark, plans) =
+            decide_component(store, txn, posture, kind, project, now, &mut authenticated)?;
+        let drained: BTreeSet<EntityId> = (plans.iter())
+            .filter(|(_, (_, refresh))| {
+                matches!(refresh, Refresh::Frozen(_, drained) if !drained.applied.is_empty())
+            })
+            .map(|(member, _)| *member)
+            .collect();
+        let settled = drained.is_empty() || members.len() == 1;
+        if settled {
+            ask_owner(store, txn, &members, dark, now)?;
+        }
+        for (member, plan) in plans {
+            if settled || drained.contains(&member) {
+                *changed.entry(member).or_default() |= write(store, txn, member, plan)?;
+            }
+        }
+        if settled {
+            return Ok(changed.into_iter().collect());
+        }
+    }
+}
+
+/// A component's members, whether it is dark, and each member's plan.
+type Decision = (Vec<EntityId>, bool, Vec<(EntityId, Plan)>);
+
+/// One decision of `project`'s component after every member's pending rows
+/// are authenticated.
+fn decide_component(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    posture: crate::HostingPrivacyPosture,
+    kind: u8,
+    project: EntityId,
+    now: u64,
+    authenticated: &mut BTreeSet<EntityId>,
+) -> Result<Decision> {
+    loop {
         let mut waiting = Vec::new();
         {
             let reader = ProjectReader::new(store, txn, posture)?.ok_or_else(invalid)?;
             let Some(decided) = reader.decide(project)? else {
-                return Ok(Vec::new());
+                return Ok((Vec::new(), false, Vec::new()));
             };
             let members = reader.component(project)?.to_vec();
             for member in &members {
@@ -163,20 +205,14 @@ fn refresh_component(
                 for member in &members {
                     plans.push((*member, plan(&reader, store, txn, kind, *member, now)?));
                 }
-                break (members, dark, plans);
+                return Ok((members, dark, plans));
             }
         }
         // A member's newly authenticated rows can change the component.
         for member in waiting {
             authenticate_pending(store, txn, posture, member, kind)?;
         }
-    };
-    ask_owner(store, txn, &members, dark, now)?;
-    let mut changed = Vec::new();
-    for (member, plan) in plans {
-        changed.push((member, write(store, txn, member, plan)?));
     }
-    Ok(changed)
 }
 
 /// What one member's refresh writes, read with its old record.
