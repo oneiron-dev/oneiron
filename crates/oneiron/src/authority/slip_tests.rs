@@ -490,7 +490,7 @@ fn same_sequence_parent_revoke_invalidates_descendant_slip_without_quarantine() 
         .sign_entry(
             Some(root.claims.vault_id),
             child_entry.seq,
-            child_entry.parent_hashes.clone(),
+            child_entry.parent_hashes,
             AuthorityOp::SlipRevoke {
                 slip_id: root.claims.slip_id,
             },

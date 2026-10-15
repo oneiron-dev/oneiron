@@ -1097,7 +1097,7 @@ fn a_settled_message_fork_marks_its_turn_and_moves_no_clock_floor() {
             .memory(writer, EdgeActorClass::Human)
             .witness(&turn(None, vec![first.clone()]))
             .expect("witness");
-        crate::test_util::bind_test_owner(&vault, writer);
+        crate::test_util::bind_test_owner(vault, writer);
         let owner = vault
             .authenticate_owner(
                 writer,
