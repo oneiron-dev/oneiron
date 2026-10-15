@@ -370,3 +370,71 @@ async fn a_slow_fetch_that_keeps_moving_is_not_cut() {
         "the fetch delivers its pack"
     );
 }
+
+/// The push door's per-blob floor is the server's own `[limits]` row, and its
+/// refusal names the key: a blob past `git_scan_blob_bytes` is refused with no
+/// ref moved, and the same push lands at an origin whose floor holds it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_configured_blob_floor_decides_a_push_and_its_refusal_names_the_key() {
+    let push = |limits: LimitsConfig| async move {
+        let origin = origin(limits).await;
+        let url = format!("http://{}/git/demo.git", origin.addr);
+        let source = origin.source.path().to_owned();
+        let [token, binding] = origin.git_auth.clone();
+        tokio::task::spawn_blocking(move || {
+            // 4,096 bytes of clean text in one blob.
+            std::fs::write(source.join("table.csv"), "7\n".repeat(2048)).expect("table");
+            stock_git(&source, &["add", "table.csv"]);
+            commit(&source, "table");
+            let pushed = std::process::Command::new("git")
+                .current_dir(&source)
+                .args(["-c", &token, "-c", &binding, "push", &url])
+                .arg("HEAD:refs/heads/table")
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .output()
+                .expect("stock Git starts");
+            let refs = stock_git(&source, &["-c", &token, "-c", &binding, "ls-remote", &url]);
+            (pushed, refs)
+        })
+        .await
+        .unwrap()
+    };
+
+    let blob_floor = |git_scan_blob_bytes| LimitsConfig {
+        git_scan_blob_bytes,
+        ..LimitsConfig::default()
+    };
+    let (refused, refs) = push(blob_floor(4095)).await;
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(
+            "oneiron door refused this push: a blob is larger than limits.git_scan_blob_bytes"
+        ),
+        "{stderr}"
+    );
+    assert!(!refs.contains("refs/heads/table"), "{refs}");
+
+    // The configured disk floor reaches the hook too: one past what any disk
+    // holds refuses the same push, naming its key.
+    let (refused, refs) = push(LimitsConfig {
+        git_scan_disk_floor_bytes: oneiron::origin::smart_http::ScanBounds::MAX_BYTES,
+        ..LimitsConfig::default()
+    })
+    .await;
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("limits.git_scan_disk_floor_bytes"),
+        "{stderr}"
+    );
+    assert!(!refs.contains("refs/heads/table"), "{refs}");
+
+    let (landed, refs) = push(blob_floor(4096)).await;
+    assert!(
+        landed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&landed.stderr)
+    );
+    assert!(refs.contains("refs/heads/table"), "{refs}");
+}

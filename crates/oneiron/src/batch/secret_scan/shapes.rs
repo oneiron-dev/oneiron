@@ -27,6 +27,10 @@ pub(super) fn blocklisted(text: &str) -> bool {
 
 /// BIP39 phrase lengths: 128 to 256 bits of entropy in 32-bit steps.
 const PHRASE_WORDS: [usize; 5] = [12, 15, 18, 21, 24];
+/// The most words a phrase holds. Past it no word sequence is a phrase, so
+/// the detector keeps one word more than this of any segment or wrapped run
+/// (enough to know it is too long) and never a whole line's worth.
+const MAX_PHRASE_WORDS: usize = 24;
 /// The longest word on the BIP39 English list.
 const MAX_LIST_WORD_LEN: usize = 8;
 
@@ -73,7 +77,8 @@ pub(super) fn mnemonic(text: &str) -> bool {
             chars.next();
         }
         match list_word_index(&text[start..end]) {
-            Some(index) => segment.push(index),
+            Some(index) if segment.len() <= MAX_PHRASE_WORDS => segment.push(index),
+            Some(_) => {}
             None => pure = false,
         }
     }
@@ -104,7 +109,9 @@ impl WrappedLines {
         if !wraps || words.is_empty() {
             return self.finish();
         }
-        self.words.extend_from_slice(words);
+        let room = (MAX_PHRASE_WORDS + 1).saturating_sub(self.words.len());
+        self.words
+            .extend_from_slice(&words[..words.len().min(room)]);
         self.lines += 1;
         !line_break && self.finish()
     }
@@ -118,7 +125,13 @@ impl WrappedLines {
 /// Consecutive segments made only of list words, between impure segments.
 #[derive(Default)]
 struct PureSegments {
-    segments: Vec<Vec<u16>>,
+    /// The run's words, one per segment, while the run can still hold a
+    /// phrase. A run counts whole or less one word at either edge, so a run
+    /// two words past the longest phrase holds none, and its words are no
+    /// longer kept.
+    words: Vec<u16>,
+    /// The segments in the run, counted past the words kept.
+    count: usize,
     /// A segment of several words joined the run: the run is prose-shaped
     /// (`**a b c** (d, e)`), so only single segments count inside it.
     multi_word: bool,
@@ -139,7 +152,10 @@ impl PureSegments {
             return true;
         }
         self.multi_word |= words.len() > 1;
-        self.segments.push(words);
+        self.count += 1;
+        if !self.multi_word && self.count <= MAX_PHRASE_WORDS + 2 {
+            self.words.extend_from_slice(&words);
+        }
         false
     }
 
@@ -147,11 +163,11 @@ impl PureSegments {
     /// either edge (a list word used as a label). Never an arbitrary window: a
     /// long list of common words must not offer a checksum many chances.
     fn finish(&mut self) -> bool {
-        let segments = std::mem::take(&mut self.segments);
-        if std::mem::take(&mut self.multi_word) {
+        let words = std::mem::take(&mut self.words);
+        let count = std::mem::take(&mut self.count);
+        if std::mem::take(&mut self.multi_word) || count > MAX_PHRASE_WORDS + 2 {
             return false;
         }
-        let count = segments.len();
         [
             (0, count),
             (1, count),
@@ -160,11 +176,7 @@ impl PureSegments {
         ]
         .into_iter()
         .filter(|(first, last)| first < last)
-        .any(|(first, last)| {
-            let words = &segments[first..last];
-            PHRASE_WORDS.contains(&words.iter().map(Vec::len).sum::<usize>())
-                && phrase(&words.concat())
-        })
+        .any(|(first, last)| phrase(&words[first..last]))
     }
 }
 

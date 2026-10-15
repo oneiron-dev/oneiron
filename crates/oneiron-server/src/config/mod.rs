@@ -41,6 +41,8 @@ pub use server_config::{ServeConfig, SyncServerConfig};
 #[cfg(test)]
 mod embedder_tests;
 #[cfg(test)]
+mod limits_tests;
+#[cfg(test)]
 mod privacy_tests;
 #[cfg(all(test, unix))]
 mod process_env_tests;

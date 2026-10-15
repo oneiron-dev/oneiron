@@ -84,7 +84,10 @@ pub(super) async fn run_serve(
             &repo,
             &request,
             smart_http::DoorSeam::Landed,
-            idle,
+            smart_http::ServeBounds {
+                idle,
+                scan: server.transfers.scan,
+            },
             &mut reader,
             &mut sink,
         )

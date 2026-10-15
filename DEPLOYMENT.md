@@ -101,7 +101,14 @@ lfs_transfers = 8                 # LFS uploads, downloads and verifies
 lfs_transfers_per_principal = 4
 lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight (507 past it)
 transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
+git_scan_blob_bytes = 1073741824  # one pushed blob the push door scans (default: RAM / 64)
+git_scan_disk_floor_bytes = 1073741824 # free disk the door's hook leaves while it frames a push
 ```
+
+The push door scans a push one blob at a time, so `git_scan_blob_bytes` is
+its memory floor per blob, never a cap on the push: a push of any size lands
+while each blob fits and the disk keeps `git_scan_disk_floor_bytes` free. A
+push past either is refused whole, with a reason that names the key.
 
 A loopback peer meets `max_connections` only: it is this device, or a TLS
 proxy whose callers all arrive from its one address. A push to a repository

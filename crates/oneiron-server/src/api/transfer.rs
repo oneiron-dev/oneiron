@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use axum::body::{Body, Bytes};
 use futures_util::StreamExt;
+use oneiron::origin::smart_http::ScanBounds;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
@@ -32,17 +33,20 @@ pub(crate) struct Transfers {
     /// Bytes uploads in flight have reserved against `lfs_quota`.
     lfs_reserved: Arc<Mutex<u64>>,
     pub(crate) idle: Duration,
+    /// The floors a push's door scan keeps.
+    pub(crate) scan: ScanBounds,
 }
 
 impl Transfers {
-    pub(crate) fn new(limits: &LimitsConfig) -> Self {
-        Self {
+    pub(crate) fn new(limits: &LimitsConfig) -> oneiron::Result<Self> {
+        Ok(Self {
             git: Admission::new(limits.git_exchanges, limits.git_exchanges_per_principal),
             lfs: Admission::new(limits.lfs_transfers, limits.lfs_transfers_per_principal),
             lfs_quota: limits.lfs_quota_bytes,
             lfs_reserved: Arc::default(),
             idle: Duration::from_millis(limits.transfer_idle_timeout_ms),
-        }
+            scan: limits.scan_bounds()?,
+        })
     }
 
     /// A git exchange's permit. Callers without a registered principal share

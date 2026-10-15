@@ -255,7 +255,7 @@ impl SyncServer {
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
             ),
             dreamer_progress: Mutex::new(DreamerAttemptProgressProducer::new()),
-            transfers: crate::api::Transfers::new(&config.limits),
+            transfers: crate::api::Transfers::new(&config.limits)?,
             config,
             managed_issuer: None,
             mcp_registry,

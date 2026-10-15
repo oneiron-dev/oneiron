@@ -196,6 +196,7 @@ fn receive_pack_hook_requires_durable_intent_before_releasing_the_backend() {
             DoorWindowContext {
                 seam,
                 admission: Some(&stamp),
+                scan: ScanBounds::default(),
             },
         )
         .expect("window answered");

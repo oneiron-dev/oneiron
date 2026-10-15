@@ -79,7 +79,10 @@ fn ends_soon(
                 "demo",
                 &request,
                 DoorSeam::Landed,
-                Duration::from_secs(120),
+                ServeBounds {
+                    idle: Duration::from_secs(120),
+                    ..ServeBounds::default()
+                },
                 &mut io::Cursor::new(bytes),
                 &mut sink,
             )
@@ -266,7 +269,10 @@ fn a_push_killed_mid_pack_leaves_no_quarantine_behind() {
         "demo",
         &request,
         DoorSeam::Landed,
-        Duration::from_secs(1),
+        ServeBounds {
+            idle: Duration::from_secs(1),
+            ..ServeBounds::default()
+        },
         &mut body,
         &mut CapturingSink::default(),
     );
@@ -348,7 +354,10 @@ fn a_push_that_ends_by_itself_leaves_another_quarantine_alone() {
         "demo",
         &request,
         DoorSeam::Landed,
-        Duration::from_secs(5),
+        ServeBounds {
+            idle: Duration::from_secs(5),
+            ..ServeBounds::default()
+        },
         &mut body,
         &mut CapturingSink::default(),
     )
@@ -391,7 +400,10 @@ fn a_backend_that_exits_before_its_body_leaves_another_quarantine_alone() {
         "demo",
         &request,
         DoorSeam::Landed,
-        Duration::from_secs(5),
+        ServeBounds {
+            idle: Duration::from_secs(5),
+            ..ServeBounds::default()
+        },
         &mut body,
         &mut CapturingSink::default(),
     );

@@ -149,7 +149,12 @@ fn blob(path: &str, lines: &[&[u8]]) -> PushedBlob {
     PushedBlob {
         path: path.to_owned(),
         oid: "b".repeat(40),
-        added_lines: lines.iter().map(|line| line.to_vec()).collect(),
+        content: lines
+            .iter()
+            .flat_map(|line| [*line, b"\n"])
+            .flatten()
+            .copied()
+            .collect(),
     }
 }
 
