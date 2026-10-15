@@ -1,9 +1,7 @@
 //! Anonymous, published-capability-only booking transport.
 
-use std::net::SocketAddr;
-
+use axum::extract::RawQuery;
 use axum::extract::rejection::PathRejection;
-use axum::extract::{ConnectInfo, RawQuery};
 use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, LOCATION, X_CONTENT_TYPE_OPTIONS};
 use axum::http::{HeaderValue, StatusCode};
 use oneiron::booking::{
@@ -13,6 +11,7 @@ use oneiron::booking::{
 };
 
 use super::*;
+use crate::auth::ClientAddress;
 
 // -------------------------------------------------------------------------
 // Public booking boundary (ONE-1815)
@@ -67,13 +66,13 @@ pub(super) fn resolve_public_booking_page(
 
 pub(crate) async fn render_public_booking_page(
     State(server): State<Arc<SyncServer>>,
-    peer: Result<ConnectInfo<SocketAddr>, axum::extract::rejection::ExtensionRejection>,
+    client: ClientAddress,
     path: Result<Path<String>, PathRejection>,
     RawQuery(query): RawQuery,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let Path(page_token) = path.map_err(|_| public_booking_not_found())?;
     let (_, publication) = resolve_public_booking_page(&server, &page_token)?;
-    let transport = public_http_transport_context(peer)?;
+    let transport = public_http_transport_context(client)?;
     let session = format!(
         "public-render-{}",
         transport.source_ip.to_string().replace(':', "-")
@@ -171,14 +170,14 @@ fn public_booking_page_json(
 
 async fn public_booking_availability(
     State(server): State<Arc<SyncServer>>,
-    peer: Result<ConnectInfo<SocketAddr>, axum::extract::rejection::ExtensionRejection>,
+    client: ClientAddress,
     path: Result<Path<String>, PathRejection>,
     payload: Result<Json<BookingAvailabilityInput>, JsonRejection>,
 ) -> Result<Json<BookingOperationResponse>, ApiError> {
     let Path(token) = path.map_err(|_| public_booking_not_found())?;
     resolve_public_booking_page(&server, &token)?;
     let input = json_payload(payload)?;
-    let transport = public_http_transport_context(peer)?;
+    let transport = public_http_transport_context(client)?;
     execute_booking_operation(
         &server,
         &token,
@@ -218,7 +217,7 @@ fn match_public_booking_verb(
 
 pub(crate) async fn invoke_public_booking_verb(
     State(server): State<Arc<SyncServer>>,
-    peer: Result<ConnectInfo<SocketAddr>, axum::extract::rejection::ExtensionRejection>,
+    client: ClientAddress,
     path: Result<Path<(String, String)>, PathRejection>,
     payload: Result<Json<BookingOperationRequest>, JsonRejection>,
 ) -> Result<Json<BookingOperationResponse>, ApiError> {
@@ -238,7 +237,7 @@ pub(crate) async fn invoke_public_booking_verb(
     {
         return Err(public_booking_not_found());
     }
-    let transport = public_http_transport_context(peer)?;
+    let transport = public_http_transport_context(client)?;
     dispatch_public_booking_verb(&server, &page_token, &verb, request, &transport)
         .await
         .map(Json)
@@ -257,15 +256,17 @@ async fn dispatch_public_booking_verb(
     execute_booking_operation(server, page_token, request, transport).await
 }
 
-/// Only the listener's peer context supplies the public source IP. Forwarding
-/// headers and bearer headers have no role here. Missing context fails closed.
+/// Only the connection supplies the public source IP: its own peer, or the
+/// client a configured trusted proxy names ([`ClientAddress`]). Bearer headers
+/// have no role here. Missing context fails closed.
 fn public_http_transport_context(
-    peer: Result<ConnectInfo<SocketAddr>, axum::extract::rejection::ExtensionRejection>,
+    ClientAddress(client): ClientAddress,
 ) -> Result<BookingTransportContext, ApiError> {
-    let ConnectInfo(peer) = peer
-        .map_err(|_| ApiError::internal_server_error("public booking peer context unavailable"))?;
+    let source_ip = client.ok_or_else(|| {
+        ApiError::internal_server_error("public booking peer context unavailable")
+    })?;
     Ok(BookingTransportContext {
-        source_ip: peer.ip(),
+        source_ip,
         authenticated_actor_ref: None,
         transport: BookingTransport::AnonymousHttp,
     })
@@ -318,6 +319,9 @@ async fn public_booking_response(mut response: Response) -> Response {
 #[cfg(test)]
 #[path = "public_availability_tests.rs"]
 mod availability_tests;
+#[cfg(test)]
+#[path = "client_address_tests.rs"]
+mod client_address_tests;
 #[cfg(test)]
 #[path = "public_fixture.rs"]
 mod fixture;
