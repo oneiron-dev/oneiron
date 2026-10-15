@@ -1187,7 +1187,7 @@ fn invite_ics_must_carry_the_payloads_own_uid_and_sequence() {
                 String::from_utf8(
                     emit_imip_ics(&ImipEmitRequest {
                         method: CalendarInviteMethod::Request,
-                        uid: other_uid.clone(),
+                        uid: other_uid,
                         sequence: 0,
                         organizer: SENDER.to_owned(),
                         attendees: vec![RECIPIENT.to_owned()],
