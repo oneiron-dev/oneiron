@@ -9,6 +9,7 @@ use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::ports::EntityStoreRead;
@@ -235,6 +236,36 @@ impl Vault {
         self.apply_agent_definition_body(&mut wtxn, id, occurred, learned_at, data)?;
         wtxn.commit()?;
         Ok(())
+    }
+
+    /// [`Self::update_agent_definition`], as `owner`, and the one door that
+    /// may widen an agent's ceiling (H215). Every other put at an agent id, on
+    /// every road, is no wider than the ceiling the id is pinned at; this door
+    /// moves that pin to `def`'s ceiling in the transaction that writes the
+    /// row, so later puts answer to the owner's ceiling. It rechecks the proof
+    /// there, and the actor must own this vault.
+    ///
+    /// # Errors
+    ///
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when the proof no longer holds or its actor does not own this vault;
+    /// otherwise as [`Self::update_agent_definition`].
+    pub fn update_agent_definition_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: &EntityId,
+        def: &AgentDefinition,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let data = encode_agent_definition(def)?;
+        self.with_write_txn(|txn| {
+            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let existing = self.read_agent_definition_in_txn(txn, id)?;
+            validate_agent_definition_update(&existing, def)?;
+            super::id_pin::move_pin_for_owner_in_txn(&self.store, txn, id, def)?;
+            self.apply_agent_definition_body(txn, id, occurred, learned_at, data)
+        })
     }
 
     /// Returns the decoded `AgentDefinition` for `id`, or `None` if absent.
