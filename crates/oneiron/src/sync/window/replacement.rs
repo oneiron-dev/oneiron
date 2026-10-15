@@ -9,15 +9,17 @@
 //! old window contributes what this vault holds that the snapshot does not:
 //!
 //! 1. every key whose value comes from an operation of the old window past the snapshot's
-//!    version (its own writes and scrubs since the peer last saw it) takes that value again, as a
-//!    new operation of the candidate, unless the peer changed the key concurrently and that
-//!    change wins Loro's order or cannot be ordered, which is a conflict;
-//! 2. every tombstone this vault holds as a hard delete (`dt:`) that the candidate lacks;
-//! 3. every queued send the old window could not apply that the candidate can, as itself;
+//!    version (its own writes, scrubs and pending mirrors since the peer last saw it) takes that
+//!    value again, as a new operation of the candidate, unless the peer changed the key
+//!    concurrently and that change wins Loro's order or cannot be ordered, which is a conflict;
+//! 2. every tombstone this vault holds as a hard delete (`dt:`) that the candidate lacks; no hard
+//!    delete the candidate holds is softened or removed;
+//! 3. every queued send the old window could not apply that the candidate can, as itself; a value
+//!    it writes that the candidate does not keep is a conflict;
 //! 4. delete wins: a carried write of a body the candidate hard-deleted, or of an edge naming
 //!    one, comes back out as a conflict;
 //! 5. every pending tombstone (`pt:`), left in place for the next open;
-//! 6. pending mirrors, then the reverse and forward rematerializations, as a window open runs.
+//! 6. the reverse and forward rematerializations, as a window open runs.
 //!
 //! Below the old window's own shallow root no operation is left to read. There a key carries
 //! over when the candidate's value came from a peer whose every operation the old window holds
@@ -35,7 +37,7 @@ use loro::json::{JsonOpContent, MapOp};
 use loro::{ContainerID, ContainerType, LoroDoc, LoroValue, ValueOrContainer, VersionVector};
 
 use super::super::loro_support::{
-    TombstoneIndex, doc_version_vector, map_delete, map_for_each_tombstone_value,
+    TombstoneIndex, doc_version_vector, map_delete, map_for_each_tombstone_value, map_insert_bytes,
 };
 use super::super::types::WindowKey;
 use super::egress::{
@@ -95,6 +97,10 @@ pub fn prepare_replacement(
         return Err(rejected());
     }
 
+    // The work happens on a detached copy of the old window: what this prepares there (queued
+    // sends, scrubs, pending mirrors) feeds the carry-over and never leaves through the live
+    // window's observers, whose document the replacement retires.
+    let old = &old.fork();
     // A local write whose `u:w:` row never landed lives only in the outbound queue: bring every
     // queued send into the old window first, so it carries over like any other unseen write. A
     // row that does not apply there is offered to the candidate below.
@@ -116,10 +122,18 @@ pub fn prepare_replacement(
     scrub_local_claim_carriers(vault, key, old)?;
     scrub_redacted_attribution_carriers(vault, key, old)?;
     scrub_withdrawn_delete_carriers(vault, key, old)?;
+    // A pending mirror is this vault's own write that a crash kept off the window: it goes into
+    // the old window, so the carry-over judges it like any other unseen write and never puts it
+    // over a value the peer provably superseded.
+    replay_pending_mirrors(vault, old, key)?;
+    // Delete semantics never weaken: no carried write or queued send may soften or remove a hard
+    // delete the replacement holds.
+    let hard = hard_tombstones(&candidate);
     let (mut conflicts, mut written) = carry_over_unseen_writes(old, &candidate)?;
     carry_over_hard_deletes(vault, old, &candidate)?;
     // A queued send the old window could not apply may build on history only the peer kept:
-    // the candidate takes it as the operation it is. One neither takes stays queued.
+    // the candidate takes it as the operation it is. One neither takes stays queued, and a value
+    // it writes that the candidate does not keep comes back as a conflict.
     let before = candidate.oplog_vv();
     for (seq, update) in &unapplied {
         if candidate
@@ -127,11 +141,14 @@ pub fn prepare_replacement(
             .import(update)
             .is_ok_and(|status| status.pending.is_none())
         {
+            let at = candidate.oplog_vv();
             candidate.import(update).map_err(|_| rejected())?;
+            conflicts.extend(lost_writes(&candidate, &at)?);
             carried.push(*seq);
         }
     }
     written.extend(newest_ops(&candidate, &before, &candidate.oplog_vv())?.into_keys());
+    conflicts.extend(keep_hard_deletes(&candidate, &hard, &written)?);
     conflicts.extend(delete_wins(&candidate, &written)?);
     let pending: Vec<_> = {
         let rtxn = vault.store.env.read_txn()?;
@@ -145,7 +162,6 @@ pub fn prepare_replacement(
         apply_tombstone_to_indexed_window_doc(&candidate, &tombstones, &marker.id, value)?;
     }
     candidate.commit();
-    replay_pending_mirrors(vault, &candidate, key)?;
     reverse_rematerialize(vault, &candidate, key)?;
     forward_rematerialize(vault, &candidate, materializer, key)?;
 
@@ -371,6 +387,77 @@ fn delete_wins(candidate: &LoroDoc, written: &RootKeys) -> Result<Vec<Replacemen
                 held: Some(held),
             });
         }
+    }
+    candidate.commit();
+    Ok(conflicts)
+}
+
+/// The values of `doc` written past `from` that its live state does not hold: a queued send the
+/// candidate took in whose write lost Loro's order to the peer's, with the value it wrote.
+fn lost_writes(doc: &LoroDoc, from: &VersionVector) -> Result<Vec<ReplacementConflict>> {
+    let mut lost = Vec::new();
+    for ((name, key), (_, peer, value)) in newest_ops(doc, from, &doc.oplog_vv())? {
+        let map = doc.get_map(name.as_str());
+        let holds = match (map.get(&key), &value) {
+            (Some(ValueOrContainer::Value(held)), Some(value)) => held == *value,
+            (None, None) => true,
+            _ => false,
+        };
+        if !holds || map.get_last_editor(&key) != Some(peer) {
+            lost.push(ReplacementConflict {
+                map: name,
+                key,
+                held: value,
+            });
+        }
+    }
+    Ok(lost)
+}
+
+/// Every hard delete `candidate` holds, as its tombstone key and raw value. A value that is not
+/// bytes decodes hard, failing closed.
+fn hard_tombstones(candidate: &LoroDoc) -> Vec<(String, Vec<u8>)> {
+    let mut hard = Vec::new();
+    map_for_each_tombstone_value(&candidate.get_map("tombstones"), |key, value| {
+        if crate::deletion::decode_tombstone_value(value).is_hard() {
+            hard.push((key.to_owned(), value.to_vec()));
+        }
+    });
+    hard
+}
+
+/// Puts back each of the `hard` deletes that a carried write or a queued send softened or
+/// removed. A carried tombstone it displaces comes back as a conflict with the value it held.
+fn keep_hard_deletes(
+    candidate: &LoroDoc,
+    hard: &[(String, Vec<u8>)],
+    written: &RootKeys,
+) -> Result<Vec<ReplacementConflict>> {
+    let map = candidate.get_map("tombstones");
+    let mut conflicts = Vec::new();
+    for (key, raw) in hard {
+        let held = map.get(key);
+        let still_hard = match &held {
+            Some(ValueOrContainer::Value(LoroValue::Binary(value))) => {
+                crate::deletion::decode_tombstone_value(value).is_hard()
+            }
+            Some(_) => true,
+            None => false,
+        };
+        if still_hard {
+            continue;
+        }
+        if written.contains(&("tombstones".to_owned(), key.clone())) {
+            conflicts.push(ReplacementConflict {
+                map: "tombstones".to_owned(),
+                key: key.clone(),
+                held: match held {
+                    Some(ValueOrContainer::Value(value)) => Some(value),
+                    _ => None,
+                },
+            });
+        }
+        map_insert_bytes(&map, key, raw)?;
     }
     candidate.commit();
     Ok(conflicts)

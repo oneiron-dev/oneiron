@@ -1054,3 +1054,179 @@ fn a_replacement_keeps_every_write_the_hub_never_saw() {
         );
     }
 }
+
+/// A hub window holding one row, the receiver's live window that took in all of it, and the
+/// materializer they share.
+fn shared_hub(vault: &Arc<Vault>, at: u64, key: &WindowKey) -> (LoroDoc, String, LoadedWindow) {
+    let hub = create_window_doc("hub", key);
+    let shared = write_row(&hub, at, b"shared prefix");
+    let materializer = Arc::new(Materializer::new());
+    let receiver = LoadedWindow::new("receiver", key.clone(), vault, &materializer);
+    receiver
+        .doc
+        .import(&hub.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    (hub, shared, receiver)
+}
+
+/// Installs `hub`'s history-free snapshot, rooted at `root`, over the receiver's `old` window.
+fn install(
+    vault: &Vault,
+    key: &WindowKey,
+    old: &LoroDoc,
+    hub: &LoroDoc,
+    root: &loro::Frontiers,
+) -> super::PreparedReplacement {
+    let snapshot = hub.export(ExportMode::shallow_snapshot(root)).unwrap();
+    prepare_replacement(
+        vault,
+        &Materializer::new(),
+        key,
+        old,
+        &snapshot,
+        &std::collections::HashMap::new(),
+    )
+    .unwrap()
+}
+
+/// Bug repro (SOL-S3-006, ASTRA-S3-006): the receiver's unsent soft delete of a row, later in
+/// Loro's order than the hub's hard delete of the same row, was carried over it, so the installed
+/// window forgot the hard delete. Done-means: delete semantics never weaken, and the soft delete
+/// comes back as a conflict.
+#[test]
+fn a_replacement_never_softens_the_hubs_hard_delete() {
+    let (_dir, vault) = test_vault();
+    let at = vault.store.clock.now_recorded_at();
+    let key = WindowKey::from_timestamp(at);
+    let (hub, shared, receiver) = shared_hub(&vault, at, &key);
+    let tombstone = |reason| {
+        crate::deletion::TombstoneValueV2 {
+            reason,
+            deleted_at: at + 5,
+            request_id: [0x42; 16],
+        }
+        .encode()
+    };
+    for n in 0..6 {
+        write_row(&receiver.doc, at + 10 + n, b"receiver row");
+    }
+    let soft = tombstone(crate::deletion::TombstoneReason::UserDelete);
+    map_insert_bytes(&receiver.doc.get_map("tombstones"), &shared, &soft).unwrap();
+    receiver.doc.commit();
+    let hard = tombstone(crate::deletion::TombstoneReason::UserHardDelete);
+    map_insert_bytes(&hub.get_map("tombstones"), &shared, &hard).unwrap();
+    crate::sync::loro_support::map_delete(&hub.get_map("entities"), &shared).unwrap();
+    hub.commit();
+    let old = receiver.doc.fork();
+    drop(receiver);
+
+    let prepared = install(&vault, &key, &old, &hub, &hub.oplog_frontiers());
+    let held = map_get_bytes(&prepared.doc.get_map("tombstones"), &shared)
+        .expect("the hub's tombstone is gone");
+    assert!(
+        crate::deletion::decode_tombstone_value(&held).is_hard(),
+        "the hub's hard delete was softened"
+    );
+    assert!(prepared.doc.get_map("entities").get(&shared).is_none());
+    assert!(
+        prepared.conflicts.contains(&ReplacementConflict {
+            map: "tombstones".to_owned(),
+            key: shared.clone(),
+            held: Some(LoroValue::Binary(soft.into())),
+        }),
+        "the soft delete it could not keep is not named: {:?}",
+        prepared.conflicts
+    );
+}
+
+/// Bug repro (SOL-S3-003, ASTRA-S3-007): a queued send the old window could not apply, which the
+/// candidate took in, lost Loro's order to the hub's concurrent edit of the same row, and its
+/// queue row was retired with no conflict. Done-means: the value it wrote comes back as one.
+#[test]
+fn a_queued_send_the_candidate_overrides_comes_back_as_a_conflict() {
+    let (_dir, vault) = test_vault();
+    let at = vault.store.clock.now_recorded_at();
+    let key = WindowKey::from_timestamp(at);
+    let (hub, shared, receiver) = shared_hub(&vault, at, &key);
+    // History the receiver's window never took in, which the queued send builds on.
+    write_row(&hub, at + 1, b"hub row the receiver lacks");
+    let root = hub.oplog_frontiers();
+    let author = hub.fork();
+    let queued = blob(ENTITY_TYPE_TURN, at + 2, b"queued receiver edit");
+    map_insert_bytes(&author.get_map("entities"), &shared, &queued).unwrap();
+    author.commit();
+    let update = author.export(ExportMode::updates(&hub.oplog_vv())).unwrap();
+    crate::sync::queue::SyncQueue::new(Arc::clone(&vault))
+        .unwrap()
+        .push(key.as_str(), &update)
+        .unwrap();
+    for n in 0..2 {
+        let theirs = blob(ENTITY_TYPE_TURN, at + 3 + n, b"hub edit");
+        map_insert_bytes(&hub.get_map("entities"), &shared, &theirs).unwrap();
+        hub.commit();
+    }
+    let old = receiver.doc.fork();
+    drop(receiver);
+    assert!(
+        old.fork()
+            .import(&update)
+            .is_ok_and(|status| status.pending.is_some()),
+        "fixture: the old window cannot apply the queued send"
+    );
+
+    let prepared = install(&vault, &key, &old, &hub, &root);
+    assert_ne!(
+        map_get_bytes(&prepared.doc.get_map("entities"), &shared),
+        Some(queued.clone()),
+        "fixture: the hub's later edit wins Loro's order"
+    );
+    assert!(
+        prepared.conflicts.contains(&ReplacementConflict {
+            map: "entities".to_owned(),
+            key: shared.clone(),
+            held: Some(LoroValue::Binary(queued.into())),
+        }),
+        "the queued edit it could not keep is not named: {:?}",
+        prepared.conflicts
+    );
+}
+
+/// Bug repro (SOL-S3-005): a pending-mirror marker a crash left behind put LMDB's value of a row
+/// back over the hub's edit of it, which the hub made after seeing that value. Done-means: a
+/// pending mirror is judged like any other write of this vault, so the hub's newer edit stands.
+#[test]
+fn a_pending_mirror_never_overwrites_the_hubs_newer_edit() {
+    let (_dir, vault) = test_vault();
+    let at = vault.store.clock.now_recorded_at();
+    let key = WindowKey::from_timestamp(at);
+    let id = EntityId::now();
+    vault
+        .put_entity(
+            &id,
+            ENTITY_TYPE_TURN,
+            TimeRange { start: at, end: at },
+            at,
+            b"mirrored value",
+        )
+        .unwrap();
+    let raw = vault.get_raw(&id).unwrap().unwrap();
+    let hub = create_window_doc("hub", &key);
+    map_insert_bytes(&hub.get_map("entities"), &id.to_hex(), &raw).unwrap();
+    hub.commit();
+    let old = create_window_doc("receiver", &key);
+    old.import(&hub.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    let newer = blob(ENTITY_TYPE_TURN, at + 1, b"hub newer edit");
+    map_insert_bytes(&hub.get_map("entities"), &id.to_hex(), &newer).unwrap();
+    hub.commit();
+    vault
+        .sync_state_put(&format!("pm:{key}:{}", id.to_hex()), &[1])
+        .unwrap();
+
+    let prepared = install(&vault, &key, &old, &hub, &hub.oplog_frontiers());
+    assert_eq!(
+        map_get_bytes(&prepared.doc.get_map("entities"), &id.to_hex()),
+        Some(newer),
+        "a pending mirror put a superseded value back"
+    );
+}

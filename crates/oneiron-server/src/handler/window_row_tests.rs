@@ -1,7 +1,7 @@
 //! `max_windows_per_connection` is a row, never a refusal (rule 5, OF-520): a socket past it is
 //! served, keeps a bounded set of window subscriptions, still receives every change of a window
-//! it forgot, and keeps every document it subscribes. A key that names no exchange creates no
-//! window.
+//! it forgot, and keeps every document it subscribes. A frame that names no exchange, or is
+//! refused, creates no window, and an update that adds nothing wakes no socket.
 
 use crate::config::SyncServerConfig;
 use crate::server::SyncServer;
@@ -486,6 +486,67 @@ async fn a_key_that_names_no_exchange_creates_no_window() {
         !home.lists(&fabricated),
         "an unpromoted residence update created its window"
     );
+}
+
+/// Bug repro (SOL-S3-007, ASTRA-S3-005): an update that adds no operation, such as the catch-up
+/// reply every exchange ends with, was kept and relayed like a change. Past the row, two sockets'
+/// catch-ups then woke each other for ever. Done-means: an update that adds nothing wakes no
+/// socket.
+#[tokio::test]
+async fn an_update_that_adds_nothing_wakes_no_socket() {
+    let home = Home::start(64).await;
+    let (key, at) = months(1).remove(0);
+    let mut owner = home
+        .socket(
+            "window-row-quiet",
+            transport::encode_replacement_full_window_protocol_hello(),
+        )
+        .await;
+    assert_eq!(subscribe(&mut owner, &key).await.close, None);
+    let mut writer = home
+        .socket(
+            "window-row-quiet-writer",
+            transport::encode_replacement_full_window_protocol_hello(),
+        )
+        .await;
+    let change = home.change(&key, at).await;
+    send(&mut writer, change.frame.clone()).await;
+    let heard = listen(&mut owner, Duration::from_secs(3), None).await;
+    assert!(heard.pushed(&key, &change), "fixture: the change is pushed");
+
+    send(&mut writer, change.frame.clone()).await;
+    let heard = listen(&mut owner, Duration::from_secs(3), None).await;
+    assert_eq!(heard.close, None);
+    assert!(
+        heard.tags(&key).is_empty(),
+        "an update that adds nothing woke the socket: {:?}",
+        heard.tags(&key)
+    );
+}
+
+/// Bug repro (ASTRA-S3-008): a vector that does not decode was refused only after the window it
+/// names was created. Done-means: the refused frame creates nothing.
+#[tokio::test]
+async fn a_vector_that_does_not_decode_creates_no_window() {
+    let home = Home::start(64).await;
+    let (key, _) = months(1).remove(0);
+    let mut owner = home
+        .socket(
+            "window-row-bad-vector",
+            transport::encode_replacement_full_window_protocol_hello(),
+        )
+        .await;
+    let frame =
+        transport::encode_window_sync(key.as_str(), window_sub_tags::VV_REQUEST, b"placeholder")
+            .into_result()
+            .unwrap();
+    send(&mut owner, frame).await;
+    let heard = listen(&mut owner, Duration::from_secs(3), None).await;
+    assert!(
+        heard.close.is_some(),
+        "a vector that does not decode was taken"
+    );
+    assert!(!home.lists(&key), "the refused frame created its window");
 }
 
 // The row's question (OF-520) is new with the fix: the checks below have no counterpart on the

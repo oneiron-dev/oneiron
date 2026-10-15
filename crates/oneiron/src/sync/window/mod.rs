@@ -54,8 +54,8 @@ pub use self::egress::{
 pub(crate) use self::forward::forward_recovery;
 pub use self::forward::forward_rematerialize;
 pub use self::history_free::{
-    WindowExport, export_window_replacement, export_window_since, export_window_updates_since,
-    promotion_baseline, update_reaches_below_root,
+    WindowExport, export_promotion_snapshot, export_window_replacement, export_window_since,
+    export_window_updates_since, promotion_baseline, update_reaches_below_root,
 };
 pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_replacement};
 pub(in crate::sync) use self::reverse::is_delegated_channel_identity_carrier;

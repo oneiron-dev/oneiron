@@ -408,9 +408,9 @@ pub(super) fn scrub_redacted_attribution_carriers(
     Ok(!keys.is_empty())
 }
 
-/// The window's state with no history at all: a snapshot rooted at its newest operation. The
-/// canonical promotion snapshot and a device-only window's empty receiver take this; the version
-/// export door roots history-free snapshots through [`super::history_free`].
+/// The window's state with no history at all: a snapshot rooted at its newest operation, for local
+/// persistence only. Nothing exports it: every snapshot a peer or a promotion receives is cut and
+/// checked by [`super::history_free`].
 pub(crate) fn export_history_free_window_snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {
     doc.commit();
     let frontiers = doc.oplog_frontiers();
