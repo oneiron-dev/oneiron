@@ -51,9 +51,10 @@ pub(crate) struct ConnectionLimits {
     /// floor. Past it, new sockets wait in the backlog.
     pub(crate) max_connections: usize,
     /// Connections one off-device peer address may hold before any of them
-    /// has authenticated. A loopback peer is this device: the owner's own
-    /// tools, or a reverse proxy whose callers all arrive from its one
-    /// address. It has no share to keep.
+    /// has authenticated, and never more than half of `max_connections`. A
+    /// loopback peer is this device: the owner's own tools, or a reverse
+    /// proxy whose callers all arrive from its one address. It has no share
+    /// to keep.
     pub(crate) max_unauthenticated_per_peer: usize,
     /// How long a request's headers may take to arrive, counted from when the
     /// connection is ready to read them.
@@ -105,7 +106,7 @@ pub(crate) async fn serve(
         limits.max_connections,
         limits.queue_wait,
     );
-    let strangers = Strangers::new(limits.max_unauthenticated_per_peer);
+    let strangers = Strangers::new(stranger_share(&limits));
     let (stopping, stop) = watch::channel(false);
     let (open, open_watch) = watch::channel(());
     let mut shutdown = pin!(shutdown);
@@ -196,6 +197,16 @@ struct Connection {
 struct Strangers {
     held: Arc<Mutex<HashMap<IpAddr, usize>>>,
     per_peer: usize,
+}
+
+/// One address's share of strangers: as configured, but never more than
+/// half the floor, so strangers from one address cannot fill the floor and
+/// stop the loop before anyone else can reach it to authenticate.
+fn stranger_share(limits: &ConnectionLimits) -> usize {
+    limits
+        .max_unauthenticated_per_peer
+        .min(limits.max_connections / 2)
+        .max(1)
 }
 
 /// One unauthenticated connection's place in its address's share. Dropping

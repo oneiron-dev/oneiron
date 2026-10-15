@@ -141,7 +141,7 @@ fn batch_entry(
 /// per-object size and the storage quota are rows: an upload past either
 /// still lands, and the row asks whether everything is okay. Past the bound
 /// on transfers the upload waits its turn. Its worker holds the transfer
-/// permit and its quota reservation until it ends.
+/// permit, its disk claim and its quota reservation until it ends.
 pub(crate) async fn lfs_upload(
     State(server): State<Arc<SyncServer>>,
     Path((_repo, oid)): Path<(String, String)>,
@@ -197,12 +197,13 @@ pub(crate) async fn lfs_upload(
             declared,
             size_row,
             floor,
+            reservation,
             questions: Arc::clone(&server.transfers.questions),
             now: now_secs()?,
             idle: server.transfers.idle,
         },
         body,
-        (permit, reservation, claim),
+        (permit, claim),
     )
     .await?;
     let Some(outcome) = outcome else {

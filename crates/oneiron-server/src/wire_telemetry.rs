@@ -9,7 +9,8 @@ const MANIFEST: &str = "manifest:rc42:wire-observation:v1";
 const RECEIPT: &str = "wire:window:v2:";
 const QUESTION: &str = "wire:question:v2:";
 const LIMIT_QUESTION: &str = "wire:limit-question:v1:";
-/// A row asks at most once in this many seconds, however often it is crossed.
+/// A row keeps one question for each window of this many seconds, and counts
+/// every crossing in the window in it.
 const LIMIT_QUESTION_WINDOW_SECS: u64 = 60;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -77,10 +78,15 @@ pub enum LimitRow {
     CodeRuns,
     /// Code-mode compaction passes at once.
     CompactionPasses,
+    /// Requests the embedder endpoint's model works on at once, each
+    /// priority its own.
+    EmbedderRequests,
+    /// Bytes the embedder endpoint's request bodies hold at once.
+    EmbedderBodyBytes,
 }
 impl LimitRow {
     /// Every row, the list every permit site and byte check is built from.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::Connections,
         Self::GitExchanges,
         Self::LfsTransfers,
@@ -88,8 +94,11 @@ impl LimitRow {
         Self::LfsObjectSize,
         Self::CodeRuns,
         Self::CompactionPasses,
+        Self::EmbedderRequests,
+        Self::EmbedderBodyBytes,
     ];
-    /// The config key that sets the row.
+    /// The config key that sets the row, or, for a bound the embedder
+    /// endpoint sizes for its one model, the name it asks under.
     pub const fn key(self) -> &'static str {
         match self {
             Self::Connections => "limits.max_connections",
@@ -100,10 +109,13 @@ impl LimitRow {
             Self::CodeRuns => "models.code_mode.max_runs",
             // As many passes as runs: at most one per run is in flight.
             Self::CompactionPasses => "models.code_mode.max_runs:compaction",
+            Self::EmbedderRequests => "embedder.serve:requests",
+            Self::EmbedderBodyBytes => "embedder.serve:body_bytes",
         }
     }
 }
-/// The question a crossed row asks: what it is set to, and what was seen.
+/// The question a crossed row asks: what it is set to, the most it saw, and
+/// how many times it was crossed in its window.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WireLimitQuestion {
     pub kind: WireQuestionKind,
@@ -111,14 +123,22 @@ pub struct WireLimitQuestion {
     pub bound: u64,
     pub observed: u64,
     pub raised_at: u64,
+    pub crossings: u64,
 }
-/// Where crossed rows ask. A row asks once a window; the question is logged
-/// at once and kept on this server's vault at the next observation tick, so
-/// asking never waits on storage.
+/// Where crossed rows ask. Each crossing counts in its row's question for
+/// the window; the first is logged at once, and the question is kept on this
+/// server's vault at the next observation tick, so asking never waits on
+/// storage. Only each row's latest window waits to be kept, so a sink no
+/// vault keeps (the embedder endpoint's) holds one question a row at most.
 #[derive(Default)]
 pub struct LimitQuestions {
-    asked: Mutex<BTreeMap<LimitRow, (u64, WireLimitQuestion)>>,
-    unsaved: Mutex<Vec<(u64, WireLimitQuestion)>>,
+    asked: Mutex<BTreeMap<LimitRow, Asked>>,
+}
+/// A row's question for its latest window.
+struct Asked {
+    window: u64,
+    question: WireLimitQuestion,
+    kept: bool,
 }
 impl LimitQuestions {
     /// `row`, set to `bound`, saw `observed`. Nothing waits on the answer.
@@ -126,7 +146,11 @@ impl LimitQuestions {
         let now = oneiron_vault_contract::now_ts();
         let window = now / LIMIT_QUESTION_WINDOW_SECS * LIMIT_QUESTION_WINDOW_SECS;
         let mut asked = lock(&self.asked);
-        if asked.get(&row).is_some_and(|(at, _)| *at == window) {
+        if let Some(open) = asked.get_mut(&row).filter(|open| open.window == window) {
+            let question = &mut open.question;
+            question.crossings = question.crossings.saturating_add(1);
+            question.observed = question.observed.max(observed);
+            open.kept = false;
             return;
         }
         let question = WireLimitQuestion {
@@ -135,10 +159,17 @@ impl LimitQuestions {
             bound,
             observed,
             raised_at: now,
+            crossings: 1,
         };
-        asked.insert(row, (window, question.clone()));
+        asked.insert(
+            row,
+            Asked {
+                window,
+                question,
+                kept: false,
+            },
+        );
         drop(asked);
-        lock(&self.unsaved).push((window, question));
         tracing::warn!(
             kind = "limit_crossed",
             row = row.key(),
@@ -151,7 +182,18 @@ impl LimitQuestions {
     pub fn latest(&self, row: LimitRow) -> Option<WireLimitQuestion> {
         lock(&self.asked)
             .get(&row)
-            .map(|(_, question)| question.clone())
+            .map(|open| open.question.clone())
+    }
+    /// The questions not kept yet, each with its window, marked kept.
+    fn take_unkept(&self) -> Vec<(u64, WireLimitQuestion)> {
+        lock(&self.asked)
+            .values_mut()
+            .filter(|open| !open.kept)
+            .map(|open| {
+                open.kept = true;
+                (open.window, open.question.clone())
+            })
+            .collect()
     }
 }
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -197,8 +239,7 @@ impl WireTelemetry {
             .transpose()
     }
     fn save_limit_questions(&self) -> Result<()> {
-        let unsaved = std::mem::take(&mut *lock(&self.limits.unsaved));
-        for (window, question) in unsaved {
+        for (window, question) in self.limits.take_unkept() {
             self.vault.sync_state_put(
                 &format!("{LIMIT_QUESTION}{}:{window:020}", question.row),
                 &encode(&question)?,
@@ -332,6 +373,8 @@ impl WireTelemetry {
             .lock()
             .map_err(|_| Error::CorruptedIndex("wire counter lock"))?;
         active.frozen = true;
+        // The barrier keeps what was asked before it, as a tick would have.
+        self.save_limit_questions()?;
         self.flush_active(&mut active)
     }
     pub(crate) fn unfreeze(&self) -> Result<()> {

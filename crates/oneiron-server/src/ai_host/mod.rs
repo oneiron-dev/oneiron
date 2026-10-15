@@ -27,7 +27,7 @@ use crate::server::SyncServer;
 mod code_mode;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod compaction;
-#[cfg(test)]
+#[cfg(all(test, feature = "code-sandbox-wasmtime"))]
 pub(crate) use compaction::tests::cross_the_passes;
 mod dreamer;
 mod policy;

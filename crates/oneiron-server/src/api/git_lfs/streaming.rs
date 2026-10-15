@@ -17,10 +17,11 @@ use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
-/// What an upload holds while its worker runs: a transfer permit, its room
-/// in the LFS quota and its claim on the disk. All three go when the worker
-/// does (after the stored copy is written), not when the handler does.
-pub(super) type UploadHold = (Permit, Reservation, Arc<DiskClaim>);
+/// What an upload holds while its worker runs: a transfer permit and its
+/// claim on the disk. Both go when the worker does (after the stored copy is
+/// written), not when the handler does; so does its room in the LFS quota,
+/// which its body reader holds.
+pub(super) type UploadHold = (Permit, Arc<DiskClaim>);
 
 /// How often, in bytes read, an upload looks at the disk again.
 const FLOOR_EVERY_BYTES: u64 = 8 * 1024 * 1024;
@@ -32,6 +33,8 @@ pub(super) struct UploadTerms {
     /// The per-object size row: past it the upload carries on and asks.
     pub(super) size_row: u64,
     pub(super) floor: DiskFloor,
+    /// Its room in the LFS quota, grown at its end to what it came to.
+    pub(super) reservation: Reservation,
     pub(super) questions: Arc<LimitQuestions>,
     pub(super) now: u64,
     pub(super) idle: Duration,
@@ -50,6 +53,7 @@ pub(super) async fn upload(
         declared,
         size_row,
         floor,
+        reservation,
         questions,
         now,
         idle,
@@ -58,8 +62,10 @@ pub(super) async fn upload(
     let floored = Arc::new(AtomicBool::new(false));
     let reader = FloorReader {
         body: BodyReader::new(receiver),
+        vault: Arc::clone(&vault),
         floor,
-        claim: Arc::clone(&hold.2),
+        claim: Arc::clone(&hold.1),
+        reservation,
         declared,
         floored: Arc::clone(&floored),
         size_row,
@@ -104,11 +110,13 @@ pub(super) async fn upload(
 /// as it goes and against the room its stored copy needs at its end. Each
 /// look moves the upload's claim to what it has still to write, so no other
 /// upload counts that room as free. Past the size row it carries on and asks
-/// once.
+/// once; at its end its quota reservation grows to what it came to.
 struct FloorReader {
     body: BodyReader,
+    vault: Arc<Vault>,
     floor: DiskFloor,
     claim: Arc<DiskClaim>,
+    reservation: Reservation,
     declared: Option<u64>,
     floored: Arc<AtomicBool>,
     size_row: u64,
@@ -123,28 +131,36 @@ struct FloorReader {
 impl Read for FloorReader {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
         let count = self.body.read(output)?;
+        // The engine writes each piece to its spool before it reads the
+        // next, so every piece before this one is on the disk already, gone
+        // from its free space, and this one is not.
+        let written = self.read;
         self.read = self.read.saturating_add(count as u64);
         if !self.asked && self.read > self.size_row {
             self.asked = true;
             self.questions
                 .ask(LimitRow::LfsObjectSize, self.size_row, self.read);
         }
-        // The spool takes the disk as the body arrives, so what it wrote is
-        // gone from the free space already; at the end, the stored copy
-        // needs as much again. A declared upload still has its spool's rest
-        // and its stored copy to write; one with no declaration claims its
-        // copy at its end.
+        // At the end the spool is whole and the stored copy needs as much
+        // again. Before it, a declared upload still has its spool's rest and
+        // its stored copy to write. One with no declaration claims this piece
+        // and all it may write before its next look, and its stored copy at
+        // its end, once its size is known.
         let needed = if count == 0 {
+            self.reservation.cover(&self.vault, self.read);
             Some(self.read)
         } else if self
             .looked_at
             .is_none_or(|at| self.read - at >= FLOOR_EVERY_BYTES)
         {
-            Some(self.declared.map_or(0, |declared| {
-                declared
-                    .saturating_sub(self.read)
-                    .saturating_add(declared.max(self.read))
-            }))
+            Some(self.declared.map_or(
+                (count as u64).saturating_add(FLOOR_EVERY_BYTES),
+                |declared| {
+                    declared
+                        .saturating_sub(written)
+                        .saturating_add(declared.max(self.read))
+                },
+            ))
         } else {
             None
         };

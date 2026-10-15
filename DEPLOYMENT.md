@@ -121,7 +121,8 @@ Only the machine's own floors and the anonymous surface hold work back. Past
 `max_connections` the server stops accepting, so new sockets wait in the
 kernel's backlog; raising the open-file limit (`LimitNOFILE=`) raises the
 default. A connection from off this device that has not yet authenticated
-counts toward its address's `max_unauthenticated_connections_per_peer`, and
+counts toward its address's `max_unauthenticated_connections_per_peer` (never
+more than half of `max_connections`, so one address cannot fill the floor), and
 one past that share is shed with a 503; it leaves the share as soon as a
 request on it presents a credential the server accepts. A loopback peer meets
 `max_connections` only: it is this device, or a TLS proxy whose callers all
@@ -243,9 +244,12 @@ not HTTPS, so reach a remote embedder through a TLS proxy such as
 key before it reads any of a request's body, and reads bodies only within a
 budget (16 MiB for bodies up to 256 KiB, 64 MiB for larger ones, each body at
 most 32 MiB), so neither strangers nor key holders can make it hold more. A
-body must declare its `Content-Length` (411 otherwise); at most 32 requests
-wait for each budget (503 past that, to retry), and a body has 120 s to arrive
-once its budget is reserved (408 after).
+body must declare its `Content-Length` (411 otherwise). Past a full budget,
+and past the requests the model works on at once, a request with the key waits
+its turn in order and is never refused for how many wait; a wait ends at the
+default `queue_wait_timeout_ms` (503, to retry, nothing read), and the first
+wait of each crossing logs a `limit_crossed` question. A body has 120 s to
+arrive once its budget is reserved (408 after).
 
 On a GPU host, build with candle's CUDA kernels (the CUDA toolkit's `nvcc` on
 `PATH`) and ask for the device:

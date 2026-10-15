@@ -14,9 +14,10 @@
 //! deadline, sized as a request timeout rather than as a limit. The host's
 //! own background work waits behind every caller.
 //!
-//! Each bound is a `[limits]` row set far above fleet scale. When work first
-//! has to wait, the row raises its typed "is everything okay" question
-//! (OF-520, see [`LimitQuestions`]), once for each crossing.
+//! Each bound is a `[limits]` row set far above fleet scale. When work has to
+//! wait and nobody waited before it, the row is crossed: it raises its typed
+//! "is everything okay" question (OF-520, see [`LimitQuestions`]), which
+//! counts every crossing.
 
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
@@ -294,11 +295,15 @@ impl<K: Eq + Hash + Clone + Send + 'static> Release for Pool<K> {
     fn release(&self) {
         let mut queue = lock(&self.queue);
         match queue.next() {
-            // The permit passes on as it is: `held` does not change.
+            // The permit passes on as it is: `held` does not change. Once
+            // nobody waits, the crossing is over; the next wait is a new one.
             Some(waiter) => {
                 *lock(&waiter.granted) = true;
                 waiter.woken.notify_one();
                 waiter.woken_blocking.notify_all();
+                if queue.waiters() == 0 {
+                    queue.asked = false;
+                }
             }
             None => {
                 queue.held = queue.held.saturating_sub(1);

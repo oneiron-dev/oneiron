@@ -57,9 +57,10 @@ pub(super) struct LiveCompaction {
     policy: CompactionGatePolicy,
     hot_steps: u64,
     role: ModelRole,
-    /// Passes running at once, across every run. A pass outlives the call
-    /// that started it, so it holds a permit of its own, never the run's.
-    passes: Arc<Admission<()>>,
+    /// Passes running at once, across every run, queued by the credential
+    /// whose run started them. A pass outlives the call that started it, so
+    /// it holds a permit of its own, never the run's.
+    passes: Arc<Admission<String>>,
 }
 
 impl CodeModeCompaction {
@@ -179,11 +180,14 @@ impl CodeModeCompaction {
         status: &StatusCell,
     ) -> McpQuickJsProvider {
         status.update(|status| status.compaction = self.status());
-        provider.with_compaction(Arc::new(move |byline| self.for_run(byline)))
+        provider.with_compaction(Arc::new(move |byline, credential: &str| {
+            self.for_run(byline, credential)
+        }))
     }
 
-    /// A fresh seat for one run, its summaries bylined `byline`.
-    pub(super) fn for_run(&self, byline: WriteActor) -> RunCompaction {
+    /// A fresh seat for one run, its summaries bylined `byline`, its passes
+    /// queued in `credential`'s turn.
+    pub(super) fn for_run(&self, byline: WriteActor, credential: &str) -> RunCompaction {
         let live = match self {
             Self::Off(why) => return RunCompaction::off(*why),
             Self::Live(live) => live,
@@ -196,6 +200,7 @@ impl CodeModeCompaction {
                 live.hot_steps,
                 Arc::new(ThreadSpawn {
                     passes: Arc::clone(&live.passes),
+                    credential: credential.to_owned(),
                 }),
             ),
             Ok(None) => RunCompaction::off(CompactionOff::Disabled),
@@ -264,20 +269,23 @@ fn input_allowances(models: &ModelsConfig, runtime: &ModelRuntime) -> BTreeMap<M
 }
 
 /// Each pass runs on its own thread; the run never waits for it. The thread
-/// takes a permit before the pass starts, waiting its turn past the bound,
-/// and holds it until the pass ends, whether or not the run that started it
-/// is still there.
+/// takes a permit before the pass starts, waiting its credential's turn past
+/// the bound (round-robin across credentials, so one credential's backlog
+/// never holds another's pass back), and holds it until the pass ends,
+/// whether or not the run that started it is still there.
 struct ThreadSpawn {
-    passes: Arc<Admission<()>>,
+    passes: Arc<Admission<String>>,
+    credential: String,
 }
 
 impl CompactionSpawn for ThreadSpawn {
     fn spawn(&self, pass: Box<dyn FnOnce() + Send + 'static>) {
         let passes = Arc::clone(&self.passes);
+        let credential = self.credential.clone();
         if let Err(error) = std::thread::Builder::new()
             .name("code-mode-compaction".to_owned())
             .spawn(move || {
-                let Ok(_permit) = passes.admit_blocking(()) else {
+                let Ok(_permit) = passes.admit_blocking(credential) else {
                     // The pass's sender drops with it, so the run reads a
                     // pass that never ran.
                     tracing::debug!(

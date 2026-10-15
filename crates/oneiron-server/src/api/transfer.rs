@@ -135,23 +135,14 @@ impl Transfers {
         vault: &oneiron::Vault,
         bytes: u64,
     ) -> oneiron::Result<Reservation> {
-        // Held across the read: an upload that publishes and then returns
-        // its reservation is counted once or twice meanwhile, never not at all.
-        let mut reserved = self
-            .lfs_reserved
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let stored = vault.lfs_object_bytes()?;
-        let total = stored.saturating_add(*reserved).saturating_add(bytes);
-        if total > self.lfs_quota {
-            self.questions
-                .ask(LimitRow::LfsQuota, self.lfs_quota, total);
-        }
-        *reserved += bytes;
-        Ok(Reservation {
+        let mut reservation = Reservation {
             reserved: Arc::clone(&self.lfs_reserved),
-            bytes,
-        })
+            bytes: 0,
+            quota: self.lfs_quota,
+            questions: Arc::clone(&self.questions),
+        };
+        reservation.grow(vault, bytes)?;
+        Ok(reservation)
     }
 }
 
@@ -159,6 +150,38 @@ impl Transfers {
 pub(super) struct Reservation {
     reserved: Arc<Mutex<u64>>,
     bytes: u64,
+    quota: u64,
+    questions: Arc<LimitQuestions>,
+}
+
+impl Reservation {
+    /// Grows the reservation to `bytes` when the upload came to more than
+    /// it reserved (one that declared no size reserves the size row), so a
+    /// crossing it made on the way still asks. It reads every stored object,
+    /// so it blocks; a read that fails leaves the reservation as it was,
+    /// and refuses nothing.
+    pub(super) fn cover(&mut self, vault: &oneiron::Vault, bytes: u64) {
+        if bytes > self.bytes {
+            let _ = self.grow(vault, bytes);
+        }
+    }
+
+    /// Sets the reservation to `bytes`, judged against what the vault's
+    /// objects hold and every other reservation.
+    fn grow(&mut self, vault: &oneiron::Vault, bytes: u64) -> oneiron::Result<()> {
+        // Held across the read: an upload that publishes and then returns
+        // its reservation is counted once or twice meanwhile, never not at all.
+        let mut reserved = self.reserved.lock().unwrap_or_else(PoisonError::into_inner);
+        let stored = vault.lfs_object_bytes()?;
+        let others = reserved.saturating_sub(self.bytes);
+        let total = stored.saturating_add(others).saturating_add(bytes);
+        if total > self.quota {
+            self.questions.ask(LimitRow::LfsQuota, self.quota, total);
+        }
+        *reserved = others.saturating_add(bytes);
+        self.bytes = bytes;
+        Ok(())
+    }
 }
 
 impl Drop for Reservation {

@@ -35,13 +35,18 @@
 //! is read. A body must declare its length, and is read only once that fits a
 //! budget, which it holds until its request's work ends: small bodies
 //! (queries, a vault's document batches) and large ones each have their own,
-//! so a recall never waits behind an upload. A few requests at most wait for
-//! a full budget, and a body that does not arrive in time gives its budget
-//! back, so no number of callers can make the server hold much more than
-//! both.
+//! so a recall never waits behind an upload. Past a full budget, and past
+//! the requests the model works on at once, a request with the key waits its
+//! turn in order, up to the queue deadline; it is never refused for how many
+//! wait (the owner's rate law, ARCH-0044 C5), and the first wait of each
+//! crossing asks whether everything is okay (OF-520). A body that does not
+//! arrive in time gives its budget back, so however many callers wait, the
+//! server holds little more than both budgets.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::{Request, State};
@@ -58,7 +63,9 @@ use zeroize::Zeroizing;
 use super::local::evidence::RunProfile;
 use super::local::model_manager::ModelManager;
 use super::local::{Embedded, LocalEmbedder, Priority, Side};
+use crate::admission::Admission;
 use crate::config::{EmbedderConfig, EmbedderProvider};
+use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
 /// Inputs one request may carry, as OpenAI caps them.
 const MAX_INPUTS: usize = 2_048;
@@ -74,10 +81,6 @@ const SMALL_BODY_BYTES: usize = 256 * 1024;
 const SMALL_BODIES_BYTES: usize = 16 * 1024 * 1024;
 /// What larger bodies may hold at once: two of the largest.
 const LARGE_BODIES_BYTES: usize = 2 * MAX_BODY_BYTES;
-/// Requests that may wait at once for a full budget, each; one more is
-/// refused rather than queued. A waiting request holds what the transport
-/// already read of its body, so the queue is bounded too.
-const BODY_WAITERS: usize = 32;
 /// How long a body has to arrive once its bytes are reserved. One that is
 /// still arriving then is refused, and its reservation returned: a stalled
 /// upload holds a budget for this long at most.
@@ -128,11 +131,13 @@ pub(crate) async fn run(config: EmbedderConfig, listen: Listen) -> anyhow::Resul
         auth = listen.key.is_some(),
         "embedder endpoint serving /v1/embeddings"
     );
+    let served = Arc::new(Served::new(embedder, listen.aliases, listen.key));
+    let questions = Arc::clone(&served.questions);
     crate::http_listener::serve(
         listener,
-        router(embedder, listen.aliases, listen.key),
+        routes(served),
         crate::config::LimitsConfig::default().connections(),
-        Arc::default(),
+        questions,
         async {
             let _ = tokio::signal::ctrl_c().await;
         },
@@ -201,47 +206,94 @@ struct Served {
     key: Option<Zeroizing<String>>,
     /// Admission, held until the request's embedding work ends, not only its
     /// handler: a client that hangs up does not free a turn its work still
-    /// takes.
-    bulk: Arc<tokio::sync::Semaphore>,
-    queries: Arc<tokio::sync::Semaphore>,
+    /// takes. Past it a request waits its turn.
+    bulk: Admission<()>,
+    queries: Admission<()>,
     /// The bytes request bodies may hold, by size ([`SMALL_BODY_BYTES`]).
     small_bodies: BodyBudget,
     large_bodies: BodyBudget,
+    /// Where crossed rows ask, the listener's descriptor floor's too. No
+    /// vault keeps them here; each is logged.
+    questions: Arc<LimitQuestions>,
+    /// How long a request waits for its turn before it is told to retry,
+    /// nothing started.
+    wait: Duration,
 }
 
 /// Bytes request bodies may hold at once, one permit a byte, taken before a
 /// body is read and held until its request's work ends.
 struct BodyBudget {
     bytes: Arc<tokio::sync::Semaphore>,
-    /// Room to wait for `bytes` when they are all taken ([`BODY_WAITERS`]).
-    waiters: Arc<tokio::sync::Semaphore>,
+    total: usize,
+    /// Requests waiting for `bytes` now.
+    waiting: AtomicUsize,
 }
 
 impl BodyBudget {
     fn new(total: usize) -> Self {
         Self {
             bytes: Arc::new(tokio::sync::Semaphore::new(total)),
-            waiters: Arc::new(tokio::sync::Semaphore::new(BODY_WAITERS)),
+            total,
+            waiting: AtomicUsize::new(0),
         }
     }
 
-    /// Reserves `bytes`, at once or after waiting among at most
-    /// [`BODY_WAITERS`] others; `None` when there is no room to wait, or the
-    /// server is shutting down.
-    async fn reserve(&self, bytes: usize) -> Option<tokio::sync::OwnedSemaphorePermit> {
+    /// Reserves `bytes`, at once or at its turn: requests that find the
+    /// budget full wait in order, each up to `wait`, and the first to wait
+    /// when none did crosses the row and asks. `None` when the wait ran out.
+    async fn reserve(
+        &self,
+        bytes: usize,
+        wait: Duration,
+        questions: &LimitQuestions,
+    ) -> Option<tokio::sync::OwnedSemaphorePermit> {
         // Every size fits its budget, and both are far under `u32::MAX`.
-        let bytes = u32::try_from(bytes).ok()?;
-        if let Ok(held) = Arc::clone(&self.bytes).try_acquire_many_owned(bytes) {
+        let wanted = u32::try_from(bytes).ok()?;
+        if let Ok(held) = Arc::clone(&self.bytes).try_acquire_many_owned(wanted) {
             return Some(held);
         }
-        let _waiting = Arc::clone(&self.waiters).try_acquire_owned().ok()?;
-        Arc::clone(&self.bytes).acquire_many_owned(bytes).await.ok()
+        let waiting = Waiting::join(&self.waiting);
+        if waiting.first {
+            let held = self.total.saturating_sub(self.bytes.available_permits());
+            questions.ask(
+                LimitRow::EmbedderBodyBytes,
+                self.total as u64,
+                held.saturating_add(bytes) as u64,
+            );
+        }
+        tokio::time::timeout(wait, Arc::clone(&self.bytes).acquire_many_owned(wanted))
+            .await
+            .ok()?
+            .ok()
     }
 
     /// Requests waiting for bytes now.
     #[cfg(test)]
     fn waiting(&self) -> usize {
-        BODY_WAITERS - self.waiters.available_permits()
+        self.waiting.load(Ordering::SeqCst)
+    }
+}
+
+/// One request's place among those waiting for a budget; dropping it leaves.
+struct Waiting<'a> {
+    count: &'a AtomicUsize,
+    /// Nobody waited before it.
+    first: bool,
+}
+
+impl<'a> Waiting<'a> {
+    fn join(count: &'a AtomicUsize) -> Self {
+        let before = count.fetch_add(1, Ordering::SeqCst);
+        Self {
+            count,
+            first: before == 0,
+        }
+    }
+}
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        self.count.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -253,14 +305,26 @@ impl Served {
     ) -> Self {
         let mut names = vec![embedder.model_id().to_owned()];
         names.extend(aliases.into_iter().filter(|alias| !alias.is_empty()));
+        let questions = Arc::new(LimitQuestions::default());
+        let wait = crate::config::LimitsConfig::default().queue_wait();
+        let requests = |bound| {
+            Admission::new(
+                LimitRow::EmbedderRequests,
+                Arc::clone(&questions),
+                bound,
+                wait,
+            )
+        };
         Self {
             embedder,
             names,
             key,
-            bulk: Arc::new(tokio::sync::Semaphore::new(BULK_REQUESTS)),
-            queries: Arc::new(tokio::sync::Semaphore::new(QUERY_REQUESTS)),
+            bulk: requests(BULK_REQUESTS),
+            queries: requests(QUERY_REQUESTS),
             small_bodies: BodyBudget::new(SMALL_BODIES_BYTES),
             large_bodies: BodyBudget::new(LARGE_BODIES_BYTES),
+            questions,
+            wait,
         }
     }
 
@@ -274,6 +338,7 @@ impl Served {
 }
 
 /// The two routes, over one loaded model.
+#[cfg(test)]
 fn router(
     embedder: Arc<dyn ServedModel>,
     aliases: Vec<String>,
@@ -445,11 +510,11 @@ async fn read_body(
     } else {
         &served.large_bodies
     };
-    let Some(held) = budget.reserve(bytes).await else {
+    let Some(held) = budget.reserve(bytes, served.wait, &served.questions).await else {
         return Err(refuse(
             StatusCode::SERVICE_UNAVAILABLE,
             "server_error",
-            "too many requests are waiting to send their bodies; retry",
+            "the request waited past its deadline for room for its body; nothing was read; retry",
         ));
     };
     match tokio::time::timeout(
@@ -575,14 +640,14 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
         );
     }
     let admitted = match priority {
-        Priority::Query => Arc::clone(&served.queries).acquire_owned().await,
-        Priority::Bulk => Arc::clone(&served.bulk).acquire_owned().await,
+        Priority::Query => served.queries.admit(()).await,
+        Priority::Bulk => served.bulk.admit(()).await,
     };
     let Ok(admitted) = admitted else {
         return refuse(
             StatusCode::SERVICE_UNAVAILABLE,
             "server_error",
-            "the endpoint is shutting down",
+            "the request waited past its deadline for its turn; nothing was started; retry",
         );
     };
     let embedder = Arc::clone(&served.embedder);
@@ -682,4 +747,4 @@ fn refuse(status: StatusCode, code: &str, message: &str) -> Response {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

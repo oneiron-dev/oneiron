@@ -186,8 +186,9 @@ pub trait McpCodeModeProvider: Send + Sync {
         task: &str,
     ) -> oneiron::Result<EngineExecutorConfig>;
     /// A compaction seat for a run the host holds none for, its summaries
-    /// bylined `byline`; `None` keeps the run's window raw.
-    fn compaction(&self, _byline: WriteActor) -> Option<RunCompaction> {
+    /// bylined `byline`, its passes queued in `credential`'s turn; `None`
+    /// keeps the run's window raw.
+    fn compaction(&self, _byline: WriteActor, _credential: &str) -> Option<RunCompaction> {
         None
     }
     /// Injected typed judgment, above the raw backend; absent for legacy vaults.
@@ -205,8 +206,10 @@ pub trait McpCodeModeProvider: Send + Sync {
     }
 }
 
-/// Builds one run's compaction seat from the run's write actor.
-pub type RunCompactionSeat = Arc<dyn Fn(WriteActor) -> RunCompaction + Send + Sync>;
+/// Builds one run's compaction seat from the run's write actor and the
+/// credential its passes queue under (its registered fingerprint's stream
+/// connection).
+pub type RunCompactionSeat = Arc<dyn Fn(WriteActor, &str) -> RunCompaction + Send + Sync>;
 
 /// How many `execute_code` runs one server works on at once.
 ///
@@ -332,7 +335,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                 .lock()
                 .map_err(|_| McpCodeExecutionError::RunBinding("run seats poisoned".into()))?
                 .take(run_id)
-                .or_else(|| provider.compaction(write_actor));
+                .or_else(|| provider.compaction(write_actor, &request.actor.stream_connection.0));
             if let Some(seat) = seat.as_mut() {
                 // Its summaries are born where the run's credential writes.
                 seat.place(placement.0, placement.1);

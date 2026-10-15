@@ -23,8 +23,9 @@ pub struct LimitsConfig {
     /// the descriptor floor. Past it, new sockets wait in the backlog.
     pub max_connections: usize,
     /// Connections one off-device peer address may hold before any of them
-    /// has authenticated. A connection leaves this share once a request on it
-    /// authenticates; a loopback peer never holds one.
+    /// has authenticated, and never more than half of `max_connections`. A
+    /// connection leaves this share once a request on it authenticates; a
+    /// loopback peer never holds one.
     pub max_unauthenticated_connections_per_peer: usize,
     /// How long a request's headers may take to arrive, in milliseconds. It
     /// also bounds how long an idle keep-alive connection stays open.
