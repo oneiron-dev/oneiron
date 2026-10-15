@@ -13,6 +13,10 @@ use serde::{Deserialize, Serialize};
 /// runtime to a checkpoint, which keeps none.
 const PREFIX: &str = "models:offer-cooldown:v1:";
 
+/// How long a wait for an offer back sleeps before it asks again whether
+/// the call may still go out: well inside a stopped turn's grace.
+pub(super) const WAIT_SLICE: Duration = Duration::from_secs(1);
+
 /// What set a rest's end: the reset time the refusal named, the wait it
 /// asked for, or the vault's default when it named neither.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,9 +89,20 @@ impl OfferCooldowns {
         })
     }
 
-    /// Waits `wait`, for the offer back `at` then.
-    pub(super) async fn wait(&self, wait: Duration, at: u64) {
-        tokio::time::sleep(wait).await;
+    /// Waits `wait`, for the offer back `at` then, asking `may_send` each
+    /// slice of it: once it says no, the wait ends there.
+    pub(super) async fn wait(&self, wait: Duration, at: u64, may_send: &(dyn Fn() -> bool + Sync)) {
+        let end = tokio::time::Instant::now() + wait;
+        loop {
+            let left = end.saturating_duration_since(tokio::time::Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            if !may_send() {
+                return;
+            }
+            tokio::time::sleep(left.min(WAIT_SLICE)).await;
+        }
         self.waited_until(at);
     }
 

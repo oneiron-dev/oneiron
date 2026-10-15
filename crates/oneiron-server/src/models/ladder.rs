@@ -408,9 +408,10 @@ impl OfferLadder {
 
     /// [`Self::generate`], asking `may_send` before each rung is admitted,
     /// the first one's too, and again once it is admitted, since admission
-    /// can wait on the run's receipts. Once it says no, no rung is sent (an
-    /// admitted one settles unstarted, for nothing), and the call fails with
-    /// the last rung's error (an invalid request when none went out).
+    /// can wait on the run's receipts, and through a wait for an offer back.
+    /// Once it says no, no rung is sent (an admitted one settles unstarted,
+    /// for nothing), and the call fails with the last rung's error (an
+    /// invalid request when none went out).
     pub async fn generate_while(
         &self,
         run: &RunAdmission,
@@ -432,7 +433,7 @@ impl OfferLadder {
                 let Some(back) = self.waits_for(call, &mut walk).filter(|_| may_send()) else {
                     break;
                 };
-                self.rests.wait(back.wait, back.at).await;
+                self.rests.wait(back.wait, back.at, may_send).await;
             }
             let mut sent = vec![false; self.rungs.len()];
             loop {
@@ -596,7 +597,8 @@ impl OfferLadder {
             },
         };
         if let Some(back) = back {
-            self.rests.wait(back.wait, back.at).await;
+            // Dropping the stream drops this wait: nothing else stops it.
+            self.rests.wait(back.wait, back.at, &|| true).await;
             if let Flow::Ended = self
                 .stream_pass(run, request, selector, &mut held, &mut walk, events)
                 .await

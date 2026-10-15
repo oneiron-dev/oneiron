@@ -4,6 +4,8 @@
 //! is back with no action; a request error passes through; work kept on the
 //! device stays there; and the receipt says why another model answered.
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use oneiron::store::ports::ManualClock;
@@ -675,6 +677,47 @@ async fn a_cooling_chain_waits_for_its_first_offer_back_within_the_longest_wait(
     second.push(short("3600"));
     let error = ask(seat).await.expect_err("too long to wait");
     assert_eq!(error, limited(3600, T0 + 10 + 3600));
+}
+
+/// Review repro (CodeRabbit #1460): a call waiting for its first offer back
+/// still asks whether it may go out, so a turn stopped mid-wait ends within
+/// a slice of the wait, not when the offer is back.
+#[tokio::test]
+async fn a_call_stopped_while_it_waits_for_an_offer_back_ends_within_a_slice() {
+    let limit = || {
+        refusal(
+            429,
+            &[("retry-after", "30")],
+            json!({"error": {"message": "rate limit"}}),
+        )
+    };
+    let first = FakeLlm::start(vec![], Some(limit())).await;
+    let second = FakeLlm::start(vec![], Some(limit())).await;
+    let (dir, clock) = (tempfile::tempdir().unwrap(), ManualClock::new(T0));
+    let vault = clocked_vault(dir.path(), &clock);
+    let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
+    let seat = runtime.seat(ModelRole::Checker).expect("seat");
+    let (run, stopped) = (test_run(), AtomicBool::new(false));
+    let may_send = || !stopped.load(Ordering::SeqCst);
+    let call =
+        seat.ladder
+            .generate_while(&run, request(&seat.model, "wait for this"), None, &may_send);
+    // Both offers refuse, so the call waits half a minute for the first back.
+    let stop = async {
+        while second.seen().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        stopped.store(true, Ordering::SeqCst);
+        Instant::now()
+    };
+    let (answer, stopped_at) =
+        tokio::time::timeout(Duration::from_secs(20), async { tokio::join!(call, stop) })
+            .await
+            .expect("the stopped call ended before its offer was back");
+    assert!(stopped_at.elapsed() <= 2 * cooldown::WAIT_SLICE);
+    assert_eq!(answer.expect_err("nothing answered"), limited(30, T0 + 30));
+    assert_eq!((first.seen().len(), second.seen().len()), (1, 1));
 }
 
 /// Review repro (Sol R2 P1): a seat whose first offer cannot be built still
