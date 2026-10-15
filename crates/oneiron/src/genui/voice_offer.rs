@@ -180,19 +180,20 @@ impl Vault {
         }
         let key = offer_key(grant_offer_nonce)?;
         self.with_write_txn_grouped(|txn| {
+            let actor = owner.revalidate_in_txn(self, &*txn)?;
+            let principal_ref = owner.principal_ref_in_txn(self, &*txn)?;
             let row = OFFERS
                 .get(&self.store, txn, &key)
                 .map_err(row_error)?
                 .ok_or_else(invalid_offer)?;
             if row.version != 1
-                || row.owner_actor != owner.actor().to_hex()
-                || row.principal_ref != owner.principal_ref()
+                || row.owner_actor != actor.to_hex()
+                || row.principal_ref != principal_ref
                 || row.bound_digest != bound.digest().to_hex()
                 || row.expires_at <= self.now_recorded_at()
             {
                 return Err(invalid_offer());
             }
-            owner.revalidate_in_txn(self, &*txn)?;
             let receipt = self.create_standing_grant_in_txn(txn, owner, bound)?;
             OFFERS.delete(&self.store, txn, &key)?;
             Ok(receipt)

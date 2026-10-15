@@ -593,3 +593,39 @@ fn own_skill_edit_survives_a_receipt_retention_sweep() {
         "edited after retention"
     );
 }
+
+/// F18 (H397): owner doors take their actor from a proof this vault
+/// authenticated. Another vault's proof for the same PERSON id acts on nothing.
+mod foreign_owner_proof {
+    use super::*;
+
+    #[test]
+    fn a_foreign_owner_proof_neither_reads_nor_rules_a_conflict() {
+        let (_dir, vault) = open_vault();
+        let f = conflict(&vault);
+        let (_other_dir, _other, foreign) =
+            crate::test_util::foreign_owner_proof(f.owner, &f.owner.to_hex());
+        let owner = facade_for(&vault, f.owner);
+
+        assert_eq!(
+            owner.pending_claim_conflicts(&foreign).unwrap_err().code,
+            crate::memory::MEMORY_CODE_BAD_REQUEST
+        );
+        assert_eq!(
+            owner
+                .rule_claim_conflict(&foreign, f.bundle.bundle_id, 200)
+                .unwrap_err()
+                .code,
+            crate::memory::MEMORY_CODE_BAD_REQUEST
+        );
+        let proof = owner_proof(&vault, f.owner);
+        assert_eq!(
+            owner.pending_claim_conflicts(&proof).unwrap(),
+            vec![f.bundle.clone()],
+            "the refused ruling resolved nothing"
+        );
+        owner
+            .rule_claim_conflict(&proof, f.bundle.bundle_id, 200)
+            .unwrap();
+    }
+}
