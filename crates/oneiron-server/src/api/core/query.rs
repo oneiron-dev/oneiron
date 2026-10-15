@@ -257,6 +257,9 @@ pub(crate) struct CoreListQuery {
     pub(crate) count_mode: CountMode,
 }
 
+/// Rows one core list page reads at most before it hands back a cursor.
+const CORE_LIST_SCAN_ROWS: usize = 4_096;
+
 pub(crate) fn core_list_limit(limit: usize) -> usize {
     limit.min(CORE_MAX_LIST_LIMIT)
 }
@@ -268,10 +271,7 @@ pub(crate) fn collect_live_entity_page<F>(
     mut fetch: F,
 ) -> Result<(Vec<oneiron::EntityId>, Option<String>), EnvelopedApiError>
 where
-    F: FnMut(
-        Option<&oneiron::EntityId>,
-        usize,
-    ) -> Result<Vec<oneiron::EntityId>, EnvelopedApiError>,
+    F: FnMut(Option<&oneiron::EntityId>, usize) -> Result<oneiron::IdScanPage, EnvelopedApiError>,
 {
     if limit == 0 {
         return Ok((Vec::new(), None));
@@ -280,6 +280,10 @@ where
     let mut cursor = after;
     let mut ids = Vec::with_capacity(limit);
     let mut next_cursor = None;
+    // Deleted shells are read too: the list stops at a bounded number of
+    // rows read and resumes from the last, never at a count of rows kept
+    // (F13).
+    let mut read = 0_usize;
 
     while next_cursor.is_none() {
         let remaining = limit.saturating_sub(ids.len());
@@ -289,13 +293,9 @@ where
             remaining.saturating_add(1)
         };
         let fetched = fetch(cursor.as_ref(), fetch_limit)?;
-        if fetched.is_empty() {
-            break;
-        }
-
-        let fetched_len = fetched.len();
-        for id in fetched {
-            cursor = Some(id);
+        let stopped_short = fetched.ids.len() < fetch_limit;
+        read = read.saturating_add(fetched.ids.len());
+        for id in fetched.ids {
             if is_deleted_shell_for_core_list(vault, &id)? {
                 continue;
             }
@@ -306,9 +306,15 @@ where
                 break;
             }
         }
-
-        if fetched_len < fetch_limit {
+        if next_cursor.is_some() {
             break;
+        }
+        let Some(resume_after) = fetched.resume_after else {
+            break;
+        };
+        cursor = Some(resume_after);
+        if stopped_short || read >= CORE_LIST_SCAN_ROWS {
+            next_cursor = Some(resume_after.to_hex());
         }
     }
 

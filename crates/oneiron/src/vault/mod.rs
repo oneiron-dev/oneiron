@@ -33,6 +33,7 @@ use crate::store::Store;
 pub use crate::store::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};
 
 pub use self::actors_memory::ActorBound;
+pub use self::edges::IdScanPage;
 #[cfg(test)]
 pub(crate) use self::database_digests::{mask_embed_job_stamps, mask_unrepeatable_stamps};
 pub use self::doctor_manifest::{
@@ -45,8 +46,8 @@ pub(crate) use self::doctor_manifest::{
 #[cfg(test)]
 pub(crate) use self::edges::edge_kind_prefix;
 pub(crate) use self::edges::{
-    CLAIM_OF_DEFAULT_WEIGHT, MAX_EDGE_QUERY_RESULTS, SUPERSEDES_DEFAULT_WEIGHT,
-    filtered_edge_peers_in,
+    CLAIM_OF_DEFAULT_WEIGHT, EDGE_PAGE_SCAN_ROWS, MAX_EDGE_QUERY_RESULTS,
+    SUPERSEDES_DEFAULT_WEIGHT, filtered_edge_peers_in,
 };
 pub use self::entities::HydratedShortId;
 /// The composed session census bounds itself exactly like [`Vault::entities_by_type`],

@@ -5,6 +5,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::vault::{EDGE_PAGE_SCAN_ROWS, IdScanPage};
 
 use super::model::{GRAPH_FS_MAX_PAGE_ENTRIES, GraphFsEntry, GraphFsPage, GraphFsResolver};
 use super::paging::PageBuilder;
@@ -27,7 +28,9 @@ impl GraphFsResolver<'_, '_> {
     ) -> Result<GraphFsPage> {
         let vault = self.scoped_read.vault();
         self.claim_id_page(path, cursor, fetch, |after, limit| {
-            vault.entities_by_type_page(ENTITY_TYPE_CLAIM, after, limit)
+            let ids = vault.entities_by_type_page(ENTITY_TYPE_CLAIM, after, limit)?;
+            let resume_after = (ids.len() >= limit).then(|| ids.last().copied()).flatten();
+            Ok(IdScanPage { ids, resume_after })
         })
     }
 
@@ -60,7 +63,7 @@ impl GraphFsResolver<'_, '_> {
         path: &str,
         cursor: Option<&str>,
         fetch: usize,
-        ids_after: impl FnMut(Option<&EntityId>, usize) -> Result<Vec<EntityId>>,
+        ids_after: impl FnMut(Option<&EntityId>, usize) -> Result<IdScanPage>,
     ) -> Result<GraphFsPage> {
         let scope = self.cursor_scope(path);
         let after: Option<EntityId> = scope.open(cursor)?;
@@ -68,8 +71,8 @@ impl GraphFsResolver<'_, '_> {
         let mut next_cursor = None;
         let mut last_listed = after;
         let mut receipt = self.scoped_read.read_receipt(None, 0)?;
-        let ids = self.device_admitted_run(after, fetch, ids_after)?;
-        for id in &ids {
+        let run = self.device_admitted_run(after, fetch, ids_after)?;
+        for id in &run.ids {
             if self.read_live_into(*id, &mut receipt)?.is_none() {
                 continue;
             }
@@ -79,8 +82,8 @@ impl GraphFsResolver<'_, '_> {
             }
             last_listed = Some(*id);
         }
-        if next_cursor.is_none() && ids.len() >= fetch {
-            next_cursor = ids.last().map(|id| scope.seal(id));
+        if next_cursor.is_none() {
+            next_cursor = run.resume_after.map(|id| scope.seal(&id));
         }
         Ok(builder.finish(next_cursor).with_read_receipt(receipt))
     }
@@ -88,28 +91,41 @@ impl GraphFsResolver<'_, '_> {
     /// Up to `fetch` ids `ids_after` names after `after`. Off this device the
     /// scan pages past every claim a device-local world keeps: such a claim
     /// takes no place in the run and never fills it, so neither the page nor
-    /// its cursor hints at one (DEC-0005).
+    /// its cursor hints at one (DEC-0005). Either way the run reads a bounded
+    /// number of rows (F13), and a short run resumes where it stopped.
     fn device_admitted_run(
         &self,
         after: Option<EntityId>,
         fetch: usize,
-        mut ids_after: impl FnMut(Option<&EntityId>, usize) -> Result<Vec<EntityId>>,
-    ) -> Result<Vec<EntityId>> {
+        mut ids_after: impl FnMut(Option<&EntityId>, usize) -> Result<IdScanPage>,
+    ) -> Result<IdScanPage> {
         if !self.scoped_read.off_device() {
             return ids_after(after.as_ref(), fetch);
         }
         let mut ids = Vec::new();
         let mut scanned = after;
+        let mut read = 0_usize;
         loop {
             let run = ids_after(scanned.as_ref(), fetch)?;
-            let exhausted = run.len() < fetch;
-            scanned = run.last().copied();
-            ids.extend(self.scoped_read.vault().off_device_readable(run)?);
-            if exhausted || ids.len() >= fetch {
+            let stopped_short = run.ids.len() < fetch;
+            read = read.saturating_add(run.ids.len());
+            scanned = run.resume_after;
+            ids.extend(self.scoped_read.vault().off_device_readable(run.ids)?);
+            if scanned.is_none()
+                || stopped_short
+                || ids.len() >= fetch
+                || read >= EDGE_PAGE_SCAN_ROWS
+            {
                 break;
             }
         }
-        ids.truncate(fetch);
-        Ok(ids)
+        if ids.len() > fetch {
+            ids.truncate(fetch);
+            scanned = ids.last().copied();
+        }
+        Ok(IdScanPage {
+            ids,
+            resume_after: scanned,
+        })
     }
 }
