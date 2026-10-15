@@ -312,6 +312,25 @@ pub(crate) fn resolved_machine_history(
         return Err(missing());
     }
     let handoff_chain = verified_handoff_chain(store, txn, &packet, fold)?;
+    // A carrier awaiting its owner's answer leaves the history incomplete, as
+    // one that has not arrived does: no approval projects from it yet.
+    let mut carriers = vec![rows.birth.digest, packet.content_hash().map_err(|_| bad())?];
+    carriers.extend(packet.transitions.iter().map(|event| event.hash));
+    for handoff in &handoff_chain {
+        carriers.push(handoff.content_hash().map_err(|_| bad())?);
+    }
+    for hash in carriers {
+        let id =
+            EntityId::from_bytes(hash[..16].try_into().map_err(|_| bad())?).map_err(|_| bad())?;
+        if !crate::gate::claim_consolidation_eligible_in_txn(
+            store,
+            txn,
+            &id,
+            crate::gate::ConsolidationReader::MachineHistory,
+        )? {
+            return Err(missing());
+        }
+    }
     let event_tips: Vec<_> = packet
         .heads
         .iter()

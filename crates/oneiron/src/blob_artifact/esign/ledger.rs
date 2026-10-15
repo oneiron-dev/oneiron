@@ -51,7 +51,17 @@ pub(super) fn events_in(
     txn: &heed::RoTxn<'_>,
     document: EntityId,
 ) -> Result<Vec<EsignEventRow>> {
+    Ok(chain_in(vault, txn, document)?.0)
+}
+/// The verified event chain, and whether any event in it awaits its owner's
+/// answer.
+fn chain_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    document: EntityId,
+) -> Result<(Vec<EsignEventRow>, bool)> {
     let mut rows = BTreeMap::new();
+    let mut held = false;
     for id in vault.claims_for_subject_in_txn(txn, &document)? {
         let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
             continue;
@@ -60,6 +70,12 @@ pub(super) fn events_in(
             continue;
         }
         let row = decode_event(&body)?;
+        held |= !crate::gate::claim_consolidation_eligible_in_txn(
+            &vault.store,
+            txn,
+            &id,
+            crate::gate::ConsolidationReader::EsignLedger,
+        )?;
         if rows.insert(row.sequence, row).is_some() {
             return Err(invalid("forked document event sequence"));
         }
@@ -78,7 +94,18 @@ pub(super) fn events_in(
         previous_at = row.at;
         output.push(row);
     }
-    Ok(output)
+    Ok((output, held))
+}
+fn awaits_owner_answer() -> Error {
+    invalid("a document event awaits its owner's answer")
+}
+/// A decline, void or expiry narrows the document, so it lands on the whole
+/// chain even while an event in it awaits its owner's answer.
+fn restricts(event: &EsignEvent) -> bool {
+    matches!(
+        event,
+        EsignEvent::Declined { .. } | EsignEvent::Voided { .. } | EsignEvent::Expired { .. }
+    )
 }
 fn fold(rows: &[EsignEventRow]) -> Result<Option<EsignState>> {
     let Some(first) = rows.first() else {
@@ -94,6 +121,23 @@ fn fold(rows: &[EsignEventRow]) -> Result<Option<EsignState>> {
     Ok(Some(state))
 }
 pub(super) fn state_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    document: EntityId,
+) -> Result<EsignState> {
+    let (rows, held) = chain_in(vault, txn, document)?;
+    if held {
+        return Err(awaits_owner_answer());
+    }
+    fold(&rows)?.ok_or_else(|| invalid("unknown signing document"))
+}
+/// Whether an event of `document` awaits its owner's answer.
+pub(super) fn held_in(vault: &Vault, txn: &heed::RoTxn<'_>, document: EntityId) -> Result<bool> {
+    Ok(chain_in(vault, txn, document)?.1)
+}
+/// [`state_in`] for a restriction to narrow: the whole chain, held events
+/// included.
+pub(super) fn restrictive_state_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     document: EntityId,
@@ -122,7 +166,10 @@ pub(super) fn append(
     if vault.get_blob_artifact_in_txn(txn, &document)?.is_none() {
         return Err(Error::EntityNotFound);
     }
-    let rows = events_in(vault, txn, document)?;
+    let (rows, held) = chain_in(vault, txn, document)?;
+    if held && !restricts(&event) {
+        return Err(awaits_owner_answer());
+    }
     let state = if let Some(mut state) = fold(&rows)? {
         state.apply(&event, now)?;
         state

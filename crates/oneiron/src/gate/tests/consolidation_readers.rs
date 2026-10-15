@@ -4,7 +4,10 @@ use crate::Vault;
 use crate::gate::ConsolidationReader;
 use std::collections::BTreeSet;
 
+mod identity;
+mod questions;
 mod reserved;
+mod skill;
 
 fn reader_body() -> ClaimBody {
     public_stamped(source_trust_claim(ClaimSource::UserStated))
@@ -87,13 +90,9 @@ fn seed_question_answer(
     reader: ConsolidationReader,
 ) -> Result<(EntityId, EntityId)> {
     use crate::llm::decision::questions::{
-        AnswerProposal, OutcomeBinding, OutcomeSource, QuestionActivation, QuestionDefinition,
-        RefreshPolicy, RefreshTrigger, create_question, refresh_question,
+        AnswerProposal, OutcomeBinding, OutcomeSource, RefreshTrigger, refresh_question,
     };
-    use crate::llm::decision::{
-        AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial,
-        DecisionQuestion, DecisionRung, ProviderPin,
-    };
+    use crate::llm::decision::{DecisionAnswer, DecisionRung, ProviderPin};
     // A question reads its unit through its principal's scoped read: both
     // rows land through the entity door, as a host writes them.
     for id in [principal, subject] {
@@ -106,47 +105,16 @@ fn seed_question_answer(
         )?;
     }
     crate::test_util::authorize_readers(vault, &[&principal.to_hex()]);
-    let record = create_question(
-        vault,
-        principal,
-        QuestionDefinition {
-            question: DecisionQuestion {
-                id: EntityId::now(),
-                version: 1,
-                text: "fixture question".into(),
-                class: DecisionClass::Judgment,
-                contract: AnswerContract::Noul,
-                accept_type: false,
-            },
-            adapter: "graph".into(),
-            units: vec![subject],
-            recipe: "unit".into(),
-            profile: "fixture".into(),
-            dial: DecisionDial {
-                first: DecisionRung::Rule,
-                ceiling: DecisionRung::Big,
-                band: DecisionBand::default(),
-            },
-            activation: QuestionActivation::Standing,
-            refresh: RefreshPolicy {
-                on_arrival: true,
-                every_seconds: None,
-            },
-            delivery: "now".into(),
-            learning: true,
-            binding: Some(OutcomeBinding {
-                source: OutcomeSource::Claim {
-                    predicate: "profile.name".into(),
-                },
-                horizon: 100,
-                mapping: std::collections::BTreeMap::from([("Ada".to_owned(), true)]),
-                noise_weight: 1.0,
-                linked_by: None,
-            }),
+    let binding = Some(OutcomeBinding {
+        source: OutcomeSource::Claim {
+            predicate: "profile.name".into(),
         },
-        1,
-    )?;
-    let question = record.definition.question.id;
+        horizon: 100,
+        mapping: std::collections::BTreeMap::from([("Ada".to_owned(), true)]),
+        noise_weight: 1.0,
+        linked_by: None,
+    });
+    let question = fixture_question(vault, principal, vec![subject], binding)?;
     let answers = refresh_question(
         vault,
         WriteActor::new(principal, EdgeActorClass::Human),
@@ -169,6 +137,55 @@ fn seed_question_answer(
     assert_eq!(answers.len(), 1, "{reader:?}: answer fixture");
     assert_eq!(answers[0].unit, subject, "{reader:?}: answer unit");
     Ok((question, answers[0].claim))
+}
+
+/// A standing graph question of `principal` over `units`; it learns from
+/// `binding` when one is given.
+fn fixture_question(
+    vault: &Vault,
+    principal: EntityId,
+    units: Vec<EntityId>,
+    binding: Option<crate::llm::decision::questions::OutcomeBinding>,
+) -> Result<EntityId> {
+    use crate::llm::decision::questions::{
+        QuestionActivation, QuestionDefinition, RefreshPolicy, create_question,
+    };
+    use crate::llm::decision::{
+        AnswerContract, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion, DecisionRung,
+    };
+    let record = create_question(
+        vault,
+        principal,
+        QuestionDefinition {
+            question: DecisionQuestion {
+                id: EntityId::now(),
+                version: 1,
+                text: "fixture question".into(),
+                class: DecisionClass::Judgment,
+                contract: AnswerContract::Noul,
+                accept_type: false,
+            },
+            adapter: "graph".into(),
+            units,
+            recipe: "unit".into(),
+            profile: "fixture".into(),
+            dial: DecisionDial {
+                first: DecisionRung::Rule,
+                ceiling: DecisionRung::Big,
+                band: DecisionBand::default(),
+            },
+            activation: QuestionActivation::Standing,
+            refresh: RefreshPolicy {
+                on_arrival: true,
+                every_seconds: None,
+            },
+            delivery: "now".into(),
+            learning: binding.is_some(),
+            binding,
+        },
+        1,
+    )?;
+    Ok(record.definition.question.id)
 }
 
 /// The change-log rows the claim door writes beside a body, which the wake
@@ -690,6 +707,40 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
             }
             ConsolidationReader::PprCommunity => {
                 reserved::ppr_community(&vault, claim, control, reader)?;
+            }
+            ConsolidationReader::SkillReliabilityProjection => {
+                skill::reliability_projection(&vault, reader)?;
+            }
+            ConsolidationReader::SkillReliabilityPosterior => {
+                skill::reliability_posterior(&vault, reader)?;
+            }
+            ConsolidationReader::SkillHubPrior => skill::hub_prior(&vault, reader)?,
+            ConsolidationReader::SkillScanPrior => skill::scan_prior(&vault, reader)?,
+            ConsolidationReader::SkillOptimizeHubVouch => {
+                skill::optimize_hub_vouch(&vault, reader)?
+            }
+            ConsolidationReader::SkillOptimizeCitations => {
+                skill::optimize_citations(&vault, reader)?
+            }
+            ConsolidationReader::HubDefaultPresence => skill::hub_default_presence(&vault, reader)?,
+            ConsolidationReader::ActorSkillFit => {
+                identity::actor_skill_fit(&vault, subject, reader)?
+            }
+            ConsolidationReader::EditCost => identity::edit_cost(&vault, subject, reader)?,
+            ConsolidationReader::PeerBinding => identity::peer_binding(&vault, principal, reader)?,
+            ConsolidationReader::ActorSubjectAnchor => {
+                identity::actor_subject_anchor(&vault, principal, subject, reader)?;
+            }
+            ConsolidationReader::DefaultFacet => identity::default_facet(&vault, reader)?,
+            ConsolidationReader::EdgeProvenance => identity::edge_provenance(reader)?,
+            ConsolidationReader::GraphAnswer => {
+                questions::graph_answer(&vault, [principal, subject, claim, control], reader)?;
+            }
+            ConsolidationReader::StandingAnswerSource => {
+                questions::standing_answer_source(&vault, [principal, subject, claim], reader)?;
+            }
+            ConsolidationReader::QuestionRefreshSource => {
+                questions::question_refresh_source(&vault, [principal, subject, claim], reader)?;
             }
         }
     }

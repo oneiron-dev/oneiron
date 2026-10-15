@@ -193,7 +193,16 @@ pub fn refresh_question(
             }
             QUESTION_HEAD.put(&vault.store, txn, &HeadKey(question), &updated)?;
         }
-        if let RefreshTrigger::Arrival(unit) = trigger {
+        // A held unit keeps its marker, so the pump answers it once its
+        // owner has answered.
+        if let RefreshTrigger::Arrival(unit) = trigger
+            && crate::gate::claim_consolidation_eligible_in_txn(
+                &vault.store,
+                txn,
+                &unit,
+                crate::gate::ConsolidationReader::QuestionRefreshSource,
+            )?
+        {
             arrival::PENDING.delete(&vault.store, txn, &(question, unit))?;
         }
         Ok(answers)
@@ -378,8 +387,16 @@ fn source(
     }
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("question source header"))?;
+    // A claim awaiting its owner's answer is no unit to answer yet.
     if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
         || raw.len() == ENTITY_METADATA_HEADER_LEN
+        || (header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+            && !crate::gate::claim_consolidation_eligible_in_txn(
+                &vault.store,
+                txn,
+                &unit,
+                crate::gate::ConsolidationReader::QuestionRefreshSource,
+            )?)
     {
         return Ok(None);
     }

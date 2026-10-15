@@ -231,6 +231,7 @@ impl Vault {
         // Flags refresh: the D14 winner among REMAINING live Claims, else
         // the contract's retracted stamp with this Claim's persisted class.
         let survivors = self.live_edge_provenance_claims_in_txn(wtxn, &subject, Some(claim_id))?;
+        let survivors = self.eligible_provenance_claims_in_txn(wtxn, survivors)?;
         let precedence: Vec<ProvenancePrecedence> = survivors
             .iter()
             .map(StoredProvenanceClaim::precedence)
@@ -607,23 +608,35 @@ impl Vault {
             live.iter()
                 .partition(|claim| claim.learned_at < learned_at || Some(claim.id) == prior_id);
 
-        // Deterministic winner among the post-write live cohort (D14).
+        // Deterministic winner among the post-write live cohort (D14). A
+        // Claim awaiting its owner's answer stamps no flags; with no eligible
+        // Claim left the edge carries the retracted stamp.
+        let winners = self.eligible_provenance_claims_in_txn(wtxn, survivors)?;
         let mut precedence: Vec<ProvenancePrecedence> =
-            survivors.iter().map(|claim| claim.precedence()).collect();
-        precedence.push(ProvenancePrecedence {
-            learned_at,
-            confidence: body.confidence,
-            claim_id: *claim_id,
-        });
-        let winner = winner_index(&precedence)
-            .ok_or(Error::InvariantViolation("provenance winner set is empty"))?;
-        let flags = if winner == precedence.len() - 1 {
-            EdgeProvenanceFlags {
+            winners.iter().map(|claim| claim.precedence()).collect();
+        let incoming = crate::gate::claim_consolidation_eligible_in_txn(
+            &self.store,
+            wtxn,
+            claim_id,
+            crate::gate::ConsolidationReader::EdgeProvenance,
+        )?;
+        if incoming {
+            precedence.push(ProvenancePrecedence {
+                learned_at,
+                confidence: body.confidence,
+                claim_id: *claim_id,
+            });
+        }
+        let flags = match winner_index(&precedence) {
+            Some(winner) if incoming && winner == precedence.len() - 1 => EdgeProvenanceFlags {
                 confirmation_status: derive_confirmation_status(body.supersession_status),
                 actor_class,
-            }
-        } else {
-            survivors[winner].flags()
+            },
+            Some(winner) => winners[winner].flags(),
+            None => EdgeProvenanceFlags {
+                confirmation_status: EdgeConfirmationStatus::Retracted,
+                actor_class,
+            },
         };
 
         let mut closure_payloads = Vec::with_capacity(closures.len());
@@ -689,5 +702,28 @@ impl Vault {
         ppr::invalidate_ppr_for_edge(&self.store, wtxn, &subject.source, &subject.target)?;
 
         Ok(())
+    }
+}
+
+impl Vault {
+    /// The Claims among `claims` that may stamp an edge's flags: one awaiting
+    /// its owner's answer stamps none. Closures still read every live Claim.
+    fn eligible_provenance_claims_in_txn<C: std::borrow::Borrow<StoredProvenanceClaim>>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: Vec<C>,
+    ) -> Result<Vec<C>> {
+        let mut eligible = Vec::with_capacity(claims.len());
+        for claim in claims {
+            if crate::gate::claim_consolidation_eligible_in_txn(
+                &self.store,
+                txn,
+                &claim.borrow().id,
+                crate::gate::ConsolidationReader::EdgeProvenance,
+            )? {
+                eligible.push(claim);
+            }
+        }
+        Ok(eligible)
     }
 }

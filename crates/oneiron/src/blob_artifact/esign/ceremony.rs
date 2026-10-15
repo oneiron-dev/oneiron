@@ -95,7 +95,15 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             let cap = binding(self, txn, token)?;
             let document = EntityId::from_hex(&cap.document)?;
-            let mut state = state_in(self, txn, document)?;
+            // A reject narrows the document, so it lands even while an event
+            // awaits its owner's answer; nothing else does.
+            let rejecting = matches!(action, SigningAction::Reject { .. });
+            let held = rejecting && super::ledger::held_in(self, txn, document)?;
+            let mut state = if rejecting {
+                super::ledger::restrictive_state_in(self, txn, document)?
+            } else {
+                state_in(self, txn, document)?
+            };
             let recipient = state
                 .document
                 .recipients
@@ -127,7 +135,7 @@ impl Vault {
                 user_agent,
             };
             // Gate 3: first-open is an event, idempotent on refresh.
-            if progress.delivery != DeliveryStatus::Viewed {
+            if progress.delivery != DeliveryStatus::Viewed && !held {
                 state = append(
                     self,
                     txn,

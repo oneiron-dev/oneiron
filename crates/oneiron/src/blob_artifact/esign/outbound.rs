@@ -72,7 +72,11 @@ impl OutboundExecutionSink for EsignSink<'_> {
             {
                 return Err(invalid("autonomous send is outside the principal envelope"));
             }
-            let mut state = state_in(self.vault, txn, id)?;
+            let mut state = if self.command.verb == EsignOutboundVerb::Void {
+                super::ledger::restrictive_state_in(self.vault, txn, id)?
+            } else {
+                state_in(self.vault, txn, id)?
+            };
             if state.document.recipients.len() != self.command.recipient_count {
                 return Err(invalid("recipient count changed"));
             }

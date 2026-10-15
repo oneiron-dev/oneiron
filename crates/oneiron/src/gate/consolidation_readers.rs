@@ -65,11 +65,50 @@ pub(crate) enum ConsolidationReader {
     ProviderConfidence,
     /// A claim vertex of the PPR community graph, the retrieval prior.
     PprCommunity,
+    /// The `skill.reliability` heads a projection folds, compares and supersedes.
+    SkillReliabilityProjection,
+    /// The `skill.reliability` posterior a skill's ranking and floor read.
+    SkillReliabilityPosterior,
+    /// The hub alias (`skill.hub_provenance`) that vouches for an import's prior.
+    SkillHubPrior,
+    /// The clean scan verdict that vets an import's prior.
+    SkillScanPrior,
+    /// The hub alias that makes an imported skill eligible for optimization.
+    SkillOptimizeHubVouch,
+    /// The receipts a `skill.reliability` head cites into an optimization brief.
+    SkillOptimizeCitations,
+    /// An actor's learned fit for a skill (`actor.skill_fit`).
+    ActorSkillFit,
+    /// An actor's or skill's learned edit cost.
+    EditCost,
+    /// The binding that attributes a peer's changes to an actor.
+    PeerBinding,
+    /// The subject an actor is anchored to (`actor.subject_ref`).
+    ActorSubjectAnchor,
+    /// The vault default facet new claims are stamped with.
+    DefaultFacet,
+    /// The hub alias that marks a shipped default skill present.
+    HubDefaultPresence,
+    /// A carrier of a machine claim's signed history: its birth, a
+    /// transition or a handoff.
+    MachineHistory,
+    /// An `edge.provenance` claim whose flags an edge carries.
+    EdgeProvenance,
+    /// An e-sign event the document state is rebuilt from.
+    EsignLedger,
+    /// A claim a graph question's answer is drawn from.
+    GraphAnswer,
+    /// A source a standing answer is pinned to.
+    StandingAnswerSource,
+    /// A claim unit a question refresh answers.
+    QuestionRefreshSource,
+    /// An evidence or voice claim a representation is planned from.
+    RepresentationSource,
 }
 
 impl ConsolidationReader {
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 21] = [
+    pub(crate) const ALL: [Self; 40] = [
         Self::ClaimVad,
         Self::CopingOutcome,
         Self::VadAnnotation,
@@ -91,6 +130,25 @@ impl ConsolidationReader {
         Self::CriticReliability,
         Self::ProviderConfidence,
         Self::PprCommunity,
+        Self::SkillReliabilityProjection,
+        Self::SkillReliabilityPosterior,
+        Self::SkillHubPrior,
+        Self::SkillScanPrior,
+        Self::SkillOptimizeHubVouch,
+        Self::SkillOptimizeCitations,
+        Self::ActorSkillFit,
+        Self::EditCost,
+        Self::PeerBinding,
+        Self::ActorSubjectAnchor,
+        Self::DefaultFacet,
+        Self::HubDefaultPresence,
+        Self::MachineHistory,
+        Self::EdgeProvenance,
+        Self::EsignLedger,
+        Self::GraphAnswer,
+        Self::StandingAnswerSource,
+        Self::QuestionRefreshSource,
+        Self::RepresentationSource,
     ];
 
     const fn code(self) -> &'static str {
@@ -116,6 +174,25 @@ impl ConsolidationReader {
             Self::CriticReliability => "critic_reliability",
             Self::ProviderConfidence => "provider_confidence",
             Self::PprCommunity => "ppr_community",
+            Self::SkillReliabilityProjection => "skill_reliability_projection",
+            Self::SkillReliabilityPosterior => "skill_reliability_posterior",
+            Self::SkillHubPrior => "skill_hub_prior",
+            Self::SkillScanPrior => "skill_scan_prior",
+            Self::SkillOptimizeHubVouch => "skill_optimize_hub_vouch",
+            Self::SkillOptimizeCitations => "skill_optimize_citations",
+            Self::ActorSkillFit => "actor_skill_fit",
+            Self::EditCost => "edit_cost",
+            Self::PeerBinding => "peer_binding",
+            Self::ActorSubjectAnchor => "actor_subject_anchor",
+            Self::DefaultFacet => "default_facet",
+            Self::HubDefaultPresence => "hub_default_presence",
+            Self::MachineHistory => "machine_history",
+            Self::EdgeProvenance => "edge_provenance",
+            Self::EsignLedger => "esign_ledger",
+            Self::GraphAnswer => "graph_answer",
+            Self::StandingAnswerSource => "standing_answer_source",
+            Self::QuestionRefreshSource => "question_refresh_source",
+            Self::RepresentationSource => "representation_source",
         }
     }
 }
