@@ -486,10 +486,12 @@ impl Memory<'_> {
     ) -> MemoryResult<()> {
         self.require_fanout_ceiling(txn)?;
         // A fan-out request is counted, never refused for rate (OF-520). The
-        // policy's create_rate is the bound: the first request past it in a
-        // window leaves one typed check, and every request lands. One count
-        // per request, not per peer in it.
-        let rate = policy_in(self.vault(), txn, &run.input.policy_scope)?
+        // vault's create_rate row is the bound: the first request past it in
+        // a window leaves one typed check, and every request lands. One count
+        // per request, not per peer in it, in one window against one bound
+        // whatever scope the request runs in: a scoped row of another duration
+        // or bound would reset the count or ask again (review r1, Sol F1, F2).
+        let rate = policy_in(self.vault(), txn, &ConsultFanOutScope::default())?
             .policy
             .create_rate;
         count_in_txn(
