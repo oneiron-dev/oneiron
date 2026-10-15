@@ -18,6 +18,8 @@ mod history_cycles_named;
 #[cfg(feature = "sync")]
 mod history_doors;
 #[cfg(feature = "sync")]
+mod history_refresh_order;
+#[cfg(feature = "sync")]
 mod history_resolution;
 #[cfg(feature = "sync")]
 mod history_transport;

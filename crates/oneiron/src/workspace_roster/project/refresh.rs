@@ -20,8 +20,9 @@ use crate::store::Store;
 use std::collections::BTreeMap;
 
 /// How often one batch end decides a project: each refresh another
-/// project's change woke, and each decision again after a frozen member's
-/// drain. A project-parent cycle, or a chain of drains, stops here.
+/// project's change woke, each decision again after a frozen member's drain,
+/// and each again after a project it read changed. A project-parent cycle,
+/// or a chain of drains, stops here.
 const MAX_REFRESH_ROUNDS: u32 = 4;
 
 #[cfg(test)]
@@ -46,9 +47,10 @@ fn max_rounds() -> u32 {
     }
 }
 
-/// Refreshes every touched project once, with every project its parents tie
-/// it to, then each project whose frozen descendants waited on a project
-/// whose view changed.
+/// Refreshes every touched project, with every project its parents tie it
+/// to, after each queued project it reads; then each project whose frozen
+/// descendants waited on a project whose view changed, and each project
+/// whose decision read a project that changed after it.
 pub(crate) fn refresh_project_frontiers(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -61,36 +63,60 @@ pub(crate) fn refresh_project_frontiers(
     let Some(kind) = project_type(store) else {
         return Ok(());
     };
-    // Every touched project's new rows count before any decision, so no
-    // component grows under a member that has spent its rounds (Sol and
-    // Astra r17 F2).
-    for project in touched {
-        authenticate_pending(store, txn, posture, *project, kind)?;
-    }
-    let mut queue = touched.clone();
-    let mut rounds: BTreeMap<EntityId, u32> = BTreeMap::new();
-    while let Some(project) = queue.pop_first() {
-        if rounds
-            .get(&project)
-            .is_some_and(|round| *round >= max_rounds())
-        {
+    let mut schedule = Schedule {
+        queue: touched.clone(),
+        ..Schedule::default()
+    };
+    let mut next = None;
+    while let Some(project) = next.take().or_else(|| schedule.queue.pop_first()) {
+        schedule.queue.remove(&project);
+        if schedule.spent(&project) {
             continue;
         }
         // A component is decided as one, so every member's record is written
-        // from that one decision (Astra #1434b, r14 F4).
-        for (member, changed) in refresh_component(store, txn, posture, kind, project, &mut rounds)?
-        {
-            queue.remove(&member);
-            if !changed {
-                continue;
-            }
-            for key in PROJECT_FROZEN_WAIT_PROJECT.scan_keys(store, txn, member.as_bytes())? {
-                PROJECT_FROZEN_WAIT_PROJECT.delete(store, txn, &key)?;
-                queue.insert(key.1.0);
-            }
+        // from that one decision (Astra #1434b, r14 F4), and after the queued
+        // projects it reads (Sol r18 F2, Astra r18 F1).
+        next = refresh_component(store, txn, posture, kind, project, &mut schedule)?;
+        if next.is_some() {
+            schedule.queue.insert(project);
+            schedule.deferred.insert(project);
+        } else {
+            schedule.deferred.clear();
         }
     }
     Ok(())
+}
+
+/// The batch end's queue, the rounds each project has spent, and what each
+/// decision read.
+#[derive(Default)]
+struct Schedule {
+    queue: BTreeSet<EntityId>,
+    rounds: BTreeMap<EntityId, u32>,
+    /// Every project each project's last decision read: one that changes
+    /// after it decides it again (Sol r18 F2, Astra r18 F1).
+    reads: BTreeMap<EntityId, BTreeSet<EntityId>>,
+    /// The projects waiting, since the last refresh, on a queued project
+    /// they read; none is waited on in turn.
+    deferred: BTreeSet<EntityId>,
+}
+
+impl Schedule {
+    fn spent(&self, project: &EntityId) -> bool {
+        self.rounds
+            .get(project)
+            .is_some_and(|round| *round >= max_rounds())
+    }
+
+    /// `project`'s rows or record changed: each project outside `members`
+    /// whose decision read it is decided again.
+    fn changed(&mut self, project: EntityId, members: &[EntityId]) {
+        for (reader, read) in &self.reads {
+            if read.contains(&project) && !members.contains(reader) {
+                self.queue.insert(*reader);
+            }
+        }
+    }
 }
 
 /// A REVISIONS row: (project, hash) to (companion id, origin).
@@ -111,26 +137,29 @@ fn pending(store: &Store, txn: &heed::RoTxn<'_>, project: EntityId) -> Result<Ve
 }
 
 /// Authenticates each indexed revision whose chain and mint are held. Every
-/// row is authenticated once: Authenticated and Forged are final.
+/// row is authenticated once: Authenticated and Forged are final. Whether
+/// any row's origin changed.
 fn authenticate_pending(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     posture: crate::HostingPrivacyPosture,
     project: EntityId,
     kind: u8,
-) -> Result<()> {
+) -> Result<bool> {
     let indexed = pending(store, txn, project)?;
     if indexed.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     let fold = crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
     let held: HeldRevisions = held_in_txn(store, txn, project, kind)?;
+    let mut changed = false;
     for (key, (id, before)) in indexed {
         let after = authenticate(&held, &fold, key.1);
         let slip = held.get(&key.1).and_then(|row| slip_id_of(&row.revision));
         if after == before {
             continue;
         }
+        changed = true;
         REVISIONS.put(store, txn, &key, &(id, after))?;
         if let Some(slip) = slip {
             let wait = (slip, key);
@@ -141,7 +170,7 @@ fn authenticate_pending(
             }
         }
     }
-    Ok(())
+    Ok(changed)
 }
 
 /// What one refresh writes, decided over a read of the transaction.
@@ -167,32 +196,37 @@ struct Drained {
 /// at the last round a drain is left for the project's next refresh, so no
 /// member's record is written from a decision its drain changed (Sol and
 /// Astra r16 F2). A component holding a member that has spent its rounds is
-/// not decided again and waits for its next refresh (r17 F2). Returns each
-/// member with whether its served view changed.
+/// not decided again and waits for its next refresh (r17 F2). A queued
+/// project the component reads, outside it, is returned to be refreshed
+/// first, before anything is decided (Sol r18 F2, Astra r18 F1).
 fn refresh_component(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     posture: crate::HostingPrivacyPosture,
     kind: u8,
     project: EntityId,
-    rounds: &mut BTreeMap<EntityId, u32>,
-) -> Result<Vec<(EntityId, bool)>> {
-    authenticate_pending(store, txn, posture, project, kind)?;
+    schedule: &mut Schedule,
+) -> Result<Option<EntityId>> {
     let now = crate::ports::recorded_at_in_txn(store, txn)?;
-    let mut authenticated = BTreeSet::from([project]);
+    let mut authenticated = BTreeSet::new();
     let mut changed: BTreeMap<EntityId, bool> = BTreeMap::new();
+    let mut members = Vec::new();
     loop {
-        let Some((members, dark, plans)) = decide_component(
+        let first = members.is_empty();
+        let decision = decide_component(
             store,
             txn,
             posture,
-            (kind, project, now),
+            (kind, project, now, first),
             &mut authenticated,
-            rounds,
-        )?
-        else {
-            return Ok(changed.into_iter().collect());
+            schedule,
+        )?;
+        let (decided, dark, plans) = match decision {
+            Step::After(parent) => return Ok(Some(parent)),
+            Step::Spent => break,
+            Step::Decided(decision) => decision,
         };
+        members = decided;
         let drained: BTreeSet<EntityId> = (plans.iter())
             .filter(|(_, (_, refresh))| {
                 matches!(refresh, Refresh::Frozen(_, drained) if !drained.applied.is_empty())
@@ -201,7 +235,7 @@ fn refresh_component(
             .collect();
         let mut last = false;
         for member in &members {
-            let round = rounds.entry(*member).or_default();
+            let round = schedule.rounds.entry(*member).or_default();
             *round += 1;
             last |= *round >= max_rounds();
         }
@@ -216,48 +250,80 @@ fn refresh_component(
             }
         }
         if settled || last {
-            return Ok(changed.into_iter().collect());
+            break;
         }
     }
+    // A changed member wakes the frozen rows waiting on it, and decides
+    // again each project outside the component that read it.
+    for (member, changed) in changed {
+        schedule.queue.remove(&member);
+        if !changed {
+            continue;
+        }
+        for key in PROJECT_FROZEN_WAIT_PROJECT.scan_keys(store, txn, member.as_bytes())? {
+            PROJECT_FROZEN_WAIT_PROJECT.delete(store, txn, &key)?;
+            schedule.queue.insert(key.1.0);
+        }
+        schedule.changed(member, &members);
+    }
+    Ok(None)
 }
 
 /// A component's members, whether it is dark, and each member's plan.
 type Decision = (Vec<EntityId>, bool, Vec<(EntityId, Plan)>);
 
+/// What one attempt at a component's decision came to.
+enum Step {
+    /// A queued project the component reads, refreshed first.
+    After(EntityId),
+    /// A member has spent its rounds: nothing is decided.
+    Spent,
+    Decided(Decision),
+}
+
 /// One decision of `project`'s component after every member's pending rows
-/// are authenticated; `None`, deciding nothing, when a member has spent its
-/// rounds.
+/// are authenticated, recording what it read. Before the refresh's `first`
+/// decision, a queued project the component reads is refreshed first.
 fn decide_component(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     posture: crate::HostingPrivacyPosture,
-    (kind, project, now): (u8, EntityId, u64),
+    (kind, project, now, first): (u8, EntityId, u64, bool),
     authenticated: &mut BTreeSet<EntityId>,
-    rounds: &BTreeMap<EntityId, u32>,
-) -> Result<Option<Decision>> {
+    schedule: &mut Schedule,
+) -> Result<Step> {
     loop {
         let mut waiting = Vec::new();
         {
             let reader = ProjectReader::new(store, txn, posture)?.ok_or_else(invalid)?;
             let members = reader.component(project)?.to_vec();
+            if first {
+                // The component has read every project its parents lead to.
+                let ahead = |id: &EntityId| {
+                    !members.contains(id)
+                        && schedule.queue.contains(id)
+                        && !schedule.spent(id)
+                        && !schedule.deferred.contains(id)
+                };
+                let queued: BTreeSet<EntityId> =
+                    reader.read_projects().into_iter().filter(ahead).collect();
+                if let Some(parent) = first_queued(&reader, &queued)? {
+                    return Ok(Step::After(parent));
+                }
+            }
             for member in &members {
                 if authenticated.insert(*member) && !pending(store, txn, *member)?.is_empty() {
                     waiting.push(*member);
                 }
             }
             if waiting.is_empty() {
-                let spent = |member: &EntityId| {
-                    rounds
-                        .get(member)
-                        .is_some_and(|round| *round >= max_rounds())
-                };
-                if members.iter().any(spent) {
-                    return Ok(None);
+                if members.iter().any(|member| schedule.spent(member)) {
+                    return Ok(Step::Spent);
                 }
                 #[cfg(test)]
                 DECISIONS.with(|count| count.set(count.get() + 1));
                 let Some(decided) = reader.decide(project)? else {
-                    return Ok(Some((Vec::new(), false, Vec::new())));
+                    return Ok(Step::Decided((Vec::new(), false, Vec::new())));
                 };
                 let dark = matches!(&decided.frontier.disposition,
                     ProjectDisposition::Unauthorized { reason } if reason.as_str() == super::fold::reason::CYCLE_BOUND);
@@ -265,14 +331,55 @@ fn decide_component(
                 for member in &members {
                     plans.push((*member, plan(&reader, store, txn, kind, *member, now)?));
                 }
-                return Ok(Some((members, dark, plans)));
+                let read = reader.read_projects();
+                for member in &members {
+                    schedule.reads.insert(*member, read.clone());
+                }
+                return Ok(Step::Decided((members, dark, plans)));
             }
         }
-        // A member's newly authenticated rows can change the component.
+        // A member's newly authenticated rows can change the component, and
+        // what every earlier decision read of it.
         for member in waiting {
-            authenticate_pending(store, txn, posture, member, kind)?;
+            if authenticate_pending(store, txn, posture, member, kind)? {
+                schedule.changed(member, &[]);
+            }
         }
     }
+}
+
+/// Of the queued projects a component reads, one that reads no other outside
+/// its own component: refreshed first, so a chain of queued parents is
+/// climbed in one step.
+fn first_queued(
+    reader: &ProjectReader<'_, '_>,
+    queued: &BTreeSet<EntityId>,
+) -> Result<Option<EntityId>> {
+    for candidate in queued {
+        let own = reader.component(*candidate)?;
+        let mut seen = BTreeSet::from([*candidate]);
+        let mut todo = vec![*candidate];
+        let mut reads_other = false;
+        while let Some(at) = todo.pop() {
+            if queued.contains(&at) && !own.contains(&at) {
+                reads_other = true;
+                break;
+            }
+            if let Some(facts) = reader.facts(at)? {
+                todo.extend(
+                    facts
+                        .edges
+                        .iter()
+                        .copied()
+                        .filter(|edge| seen.insert(*edge)),
+                );
+            }
+        }
+        if !reads_other {
+            return Ok(Some(*candidate));
+        }
+    }
+    Ok(queued.first().copied())
 }
 
 /// What one member's refresh writes, read with its old record.

@@ -345,6 +345,12 @@ impl<'a, 't> ProjectReader<'a, 't> {
         self.cycle_hits.get()
     }
 
+    /// Every project this reader has read, stored or missing: what its
+    /// decisions rest on.
+    pub(super) fn read_projects(&self) -> BTreeSet<EntityId> {
+        self.facts.borrow().keys().copied().collect()
+    }
+
     /// The effective authority every permission consumer reads.
     pub(crate) fn effective(&self, id: EntityId) -> Result<Option<ProjectEffective>> {
         Ok(self.frontier(id)?.and_then(|frontier| frontier.effective))

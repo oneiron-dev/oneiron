@@ -23,7 +23,7 @@ use super::history_cycles::{owner, readable, set_bound};
 use super::history_resolution::put_companion;
 use crate::authority::{CapabilitySlip, HostSlipIssuer};
 
-fn lit(vault: &Vault, id: EntityId) -> Result<bool> {
+pub(super) fn lit(vault: &Vault, id: EntityId) -> Result<bool> {
     let frontier = vault.project_frontier(id)?.ok_or(Error::EntityNotFound)?;
     Ok(frontier.effective.is_some())
 }
@@ -53,7 +53,7 @@ fn seal(
     )
 }
 
-fn budget(vault: &Vault, max_revisions: u64) -> Result<()> {
+pub(super) fn budget(vault: &Vault, max_revisions: u64) -> Result<()> {
     vault.set_project_history_policy(
         &owner(vault)?,
         ProjectHistoryPolicy {
@@ -194,7 +194,7 @@ fn frozen_under_p(vault: &Vault) -> Result<(EntityId, EntityId, ProjectRevision)
 
 /// Whether `id` serves authority, checking first that the record the batch
 /// end persisted for it is the one a fresh read serves.
-fn persisted_as_served(vault: &Vault, id: EntityId) -> Result<bool> {
+pub(super) fn persisted_as_served(vault: &Vault, id: EntityId) -> Result<bool> {
     let served = vault.project_frontier(id)?.ok_or(Error::EntityNotFound)?;
     let txn = vault.store.env.read_txn()?;
     let record = PROJECT_FRONTIER
@@ -251,8 +251,8 @@ fn a_drain_past_the_refresh_rounds_waits_for_the_next_refresh() -> Result<()> {
 /// the revocation of Q1's slip, and the owner once put H over Q (H1, then
 /// back to R). One batch holds Q3, which freezes Q once it counts and so ties
 /// Q to H through its saved parent, and a row of H still waiting for its
-/// mint. Every touched project counts its new rows first, so the batch end
-/// decides {H, Q} once, never H alone and then again.
+/// mint. H reads Q, so the batch end refreshes Q first (Sol r18 F2, Astra
+/// r18 F1) and decides {H, Q} once, never H alone and then again.
 #[cfg(feature = "sync")]
 #[test]
 fn a_component_that_grows_in_a_batch_is_decided_once() -> Result<()> {
@@ -391,8 +391,8 @@ fn a_seal_the_frozen_record_never_read_names_no_parent() -> Result<()> {
 
 /// Bug repro (Sol r15 F5, Astra r15 F6): A is an owner-door project under
 /// B. A host successor over A's boundary waits for its slip's mint. B's
-/// leader puts B under A past a bound of one world: dark, and A still lists
-/// the waiting successor.
+/// board holder puts B under A past a bound of one world: dark, and A still
+/// lists the waiting successor.
 #[cfg(feature = "sync")]
 #[test]
 fn a_dark_unsigned_member_lists_its_held_revisions() -> Result<()> {
@@ -403,6 +403,7 @@ fn a_dark_unsigned_member_lists_its_held_revisions() -> Result<()> {
         let (root, _, holder) = root_leader(&vault)?;
         // Owner-door births need no signed birth before the vault is rooted.
         let mut b_row = ProjectRecord::new(b, Some(root), root, holder)?;
+        b_row.board = vec![holder.to_hex()];
         b_row.depth_remaining = 6;
         vault.put_project(b, &b_row, 1)?;
         let mut a_row = ProjectRecord::new(a, Some(b), b, holder)?;
@@ -421,7 +422,8 @@ fn a_dark_unsigned_member_lists_its_held_revisions() -> Result<()> {
         put_companion(&vault, revision, at)?;
     }
     let waiting = chain.last().ok_or_else(invalid)?.0;
-    // The owner signs B's row; B's leader then puts B under A.
+    // The owner signs B's row; B's board holder then puts B under A (Sol
+    // r18 F1).
     let mut signed = vault.project(b)?.ok_or(Error::EntityNotFound)?;
     put_signed_project(&vault, b, &mut signed, holder, 10)?;
     let b1 = signed_over(&vault, b, &signed, holder, |row| {
