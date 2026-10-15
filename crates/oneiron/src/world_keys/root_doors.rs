@@ -296,7 +296,7 @@ impl Vault {
         let seed = prepared.seed();
         let anchor = seed.anchor();
         let (root, report) = self.with_write_txn(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let signing = self.door_signing_key_in_txn(txn, secret.machine)?;
             let old = self.authority_view_readonly_in_txn(txn)?;
             let (root, mut marks) = carried_marks(&old, &prepared, carry, Some(secret.machine))?;
@@ -317,7 +317,7 @@ impl Vault {
             self.put_anchor_entry_in_txn(txn, prepared.entry().clone())?;
             let mut appended = Vec::new();
             for mark in &marks {
-                appended.push(self.append_anchor_mark_in_txn(txn, &anchor, owner.actor(), mark)?);
+                appended.push(self.append_anchor_mark_in_txn(txn, &anchor, actor, mark)?);
             }
             self.move_pin_in_txn(txn, old.pinned_root, pin, start.earlier_admitter)?;
             self.end_wait_in_txn(txn, root.id, None)?;
@@ -372,7 +372,7 @@ impl Vault {
         let root = seed.public(&request.vault_id)?;
         let anchor = seed.anchor();
         self.with_write_txn(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
             if fold.vault_id != Some(request.vault_id) {
                 return Err(invalid_authority());
@@ -382,7 +382,7 @@ impl Vault {
                     "anchoring another machine needs the seed's root to be this install's pin",
                 ));
             }
-            let mark = self.append_anchor_mark_in_txn(txn, &anchor, owner.actor(), request)?;
+            let mark = self.append_anchor_mark_in_txn(txn, &anchor, actor, request)?;
             let after = self.authority_view_readonly_in_txn(txn)?;
             if !anchor_mark_stands(&after, root.anchor_key, mark, request) {
                 return Err(refused("the anchor's mark does not stand"));
@@ -417,7 +417,7 @@ impl Vault {
         }
         let anchor = seed.anchor();
         self.with_write_txn(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let signing = self.door_signing_key_in_txn(txn, secret.machine)?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
             let (root, publish) = self.kit_seed_gate_in_txn(txn, &fold, seed, confirm)?;
@@ -435,9 +435,9 @@ impl Vault {
             let start = self.repin_start_in_txn(txn, &door)?;
             self.pin_first_in_txn(txn, fold.pinned_root, pin, start.earlier_admitter)?;
             if publish {
-                self.publish_owner_root_in_txn(txn, &anchor, root_record(&root, owner.actor()))?;
+                self.publish_owner_root_in_txn(txn, &anchor, root_record(&root, actor))?;
             }
-            let mark = self.append_anchor_mark_in_txn(txn, &anchor, owner.actor(), request)?;
+            let mark = self.append_anchor_mark_in_txn(txn, &anchor, actor, request)?;
             self.move_pin_in_txn(txn, fold.pinned_root, pin, start.earlier_admitter)?;
             self.end_wait_in_txn(txn, root.id, None)?;
             let mid = self.authority_view_readonly_in_txn(txn)?;
@@ -479,7 +479,7 @@ impl Vault {
         let (secret, request) = self.own_request()?;
         let anchor = seed.anchor();
         let (restore, usable) = self.with_write_txn(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let signing = self.door_signing_key_in_txn(txn, secret.machine)?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
             let (root, publish) = self.kit_seed_gate_in_txn(txn, &fold, seed, confirm)?;
@@ -497,7 +497,7 @@ impl Vault {
             let start = self.repin_start_in_txn(txn, &door)?;
             self.pin_first_in_txn(txn, fold.pinned_root, pin, start.earlier_admitter)?;
             if publish {
-                self.publish_owner_root_in_txn(txn, &anchor, root_record(&root, owner.actor()))?;
+                self.publish_owner_root_in_txn(txn, &anchor, root_record(&root, actor))?;
             }
             let now = self.authority_view_readonly_in_txn(txn)?;
             let already = now
@@ -513,7 +513,7 @@ impl Vault {
             let mark = if already {
                 None
             } else {
-                Some(self.append_anchor_mark_in_txn(txn, &anchor, owner.actor(), &request)?)
+                Some(self.append_anchor_mark_in_txn(txn, &anchor, actor, &request)?)
             };
             self.move_pin_in_txn(txn, fold.pinned_root, pin, start.earlier_admitter)?;
             self.end_wait_in_txn(txn, root.id, None)?;

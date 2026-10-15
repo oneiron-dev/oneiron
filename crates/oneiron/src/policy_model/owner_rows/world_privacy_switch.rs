@@ -86,7 +86,8 @@ impl Vault {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let receipt = self.set_world_privacy_in_txn(txn, owner, origin, world, settings)?;
             if let Some(secret) = &secret {
-                self.ensure_world_key_after_edit_in_txn(txn, owner.actor(), world, secret)?;
+                let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+                self.ensure_world_key_after_edit_in_txn(txn, actor, world, secret)?;
             }
             Ok((release, receipt))
         })?;
@@ -118,15 +119,9 @@ impl Vault {
         settings: WorldPrivacy,
         earlier: Option<&crate::authority::AuthorityFold>,
     ) -> Result<WorldPrivacyReceipt> {
-        owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-        let change = self.append_world_privacy_edit_under_in_txn(
-            txn,
-            owner.actor(),
-            origin,
-            world,
-            settings,
-            earlier,
-        )?;
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let change = self
+            .append_world_privacy_edit_under_in_txn(txn, actor, origin, world, settings, earlier)?;
         let last = RECEIPTS
             .iter_rev_from(&self.store, txn, &[])?
             .next()
@@ -142,7 +137,7 @@ impl Vault {
             receipt_id: self.store.clock.entity_id()?.to_hex(),
             revision,
             world: world.to_hex(),
-            author: owner.actor().to_hex(),
+            author: actor.to_hex(),
             machine: change.machine.to_hex(),
             previous: change.previous,
             next: change.next,

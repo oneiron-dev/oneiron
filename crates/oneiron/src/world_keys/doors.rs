@@ -165,8 +165,8 @@ impl Vault {
     ) -> Result<WorldKeyStatus> {
         let secret = self.machine_secret_outside_txn()?;
         self.with_write_txn(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            self.ensure_world_key_in_txn(txn, owner.actor(), world, &secret)
+            let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            self.ensure_world_key_in_txn(txn, actor, world, &secret)
         })
     }
 
@@ -181,7 +181,7 @@ impl Vault {
     ) -> Result<Vec<(EntityId, WorldKeyStatus)>> {
         let secret = self.machine_secret_outside_txn()?;
         self.with_write_txn(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
             let worlds: Vec<EntityId> = fold
                 .worlds
@@ -195,7 +195,7 @@ impl Vault {
             let mut out = Vec::new();
             for world in worlds {
                 if let Some(status) =
-                    self.ensure_world_key_after_edit_in_txn(txn, owner.actor(), world, &secret)?
+                    self.ensure_world_key_after_edit_in_txn(txn, actor, world, &secret)?
                 {
                     out.push((world, status));
                 }

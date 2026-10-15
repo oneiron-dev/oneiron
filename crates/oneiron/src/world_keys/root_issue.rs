@@ -44,14 +44,14 @@ impl Vault {
     pub fn prepare_owner_root(&self, owner: &AuthenticatedOwner) -> Result<PreparedRoot> {
         let seed = RecoveryRootSeed::generate()?;
         let txn = self.store.env.read_txn()?;
-        owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let vault_id = fold
             .vault_id
             .ok_or_else(|| super::refused("the vault has no authority genesis yet"))?;
         let root = seed.public(&vault_id)?;
         let record = OwnerRootRecord {
-            owner: owner.actor(),
+            owner: actor,
             root: root.id,
             recovery_key: MachineEncryptionKey {
                 suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,

@@ -191,10 +191,15 @@ pub fn send_approved_feedback(
     owner: &oneiron::consent::AuthenticatedOwner,
     now: u64,
 ) -> Result<oneiron::feedback::FeedbackSendOutcome, SendFeedbackError> {
+    let owner_actor = owner.revalidate(vault).map_err(|_| {
+        oneiron::feedback::FeedbackError::ApprovalNotGranted {
+            outcome: "owner_not_authenticated",
+        }
+    })?;
     let actor = oneiron::outbound::OutboundDispatchActor {
         actor_class: "human".to_owned(),
-        actor_ref: Some(owner.actor().to_hex()),
-        actor_entity_ref: Some(owner.actor()),
+        actor_ref: Some(owner_actor.to_hex()),
+        actor_entity_ref: Some(owner_actor),
     };
     let context = oneiron::feedback::FeedbackSendContext::new(
         config.route(),

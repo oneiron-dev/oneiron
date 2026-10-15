@@ -394,7 +394,9 @@ impl Vault {
     ) -> Result<()> {
         let reader = match row.reader {
             WeaveDigestReader::Person(id) => WeaveReader::Person(id),
-            WeaveDigestReader::Owner(id) if id == owner.actor() => WeaveReader::Owner(owner),
+            WeaveDigestReader::Owner(id) if id == owner.revalidate(self)? => {
+                WeaveReader::Owner(owner)
+            }
             WeaveDigestReader::Owner(_) => return Err(invalid()),
             WeaveDigestReader::Agent(id) => WeaveReader::Agent(id),
         };
@@ -405,7 +407,7 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
-            super::weave_report::validate_weave_recipe(&policy, &reader, &row.recipe)?;
+            super::weave_report::validate_weave_recipe(self, txn, &policy, &reader, &row.recipe)?;
             self.store
                 .vault_meta
                 .put(txn, &row.reader.key(SCHEDULE_PREFIX), &bytes)?;
@@ -454,13 +456,13 @@ impl ScopedRead<'_> {
                 id
             }
             WeaveReader::Owner(owner) => {
-                owner.revalidate_in_txn(self.vault, &txn)?;
-                if self.actor_key.actor_ref() != owner.actor().to_hex()
-                    && self.actor_key.actor_ref() != owner.principal_ref()
+                let actor = owner.revalidate_in_txn(self.vault, &txn)?;
+                if self.actor_key.actor_ref() != actor.to_hex()
+                    && self.actor_key.actor_ref() != owner.principal_ref_for_read(self.vault)?
                 {
                     return Err(invalid());
                 }
-                owner.actor()
+                actor
             }
         };
         let reader_key = match reader {
@@ -593,7 +595,7 @@ impl ScopedRead<'_> {
         };
         let id = match &reader {
             WeaveReader::Person(id) => WeaveDigestReader::Person(*id),
-            WeaveReader::Owner(owner) => WeaveDigestReader::Owner(owner.actor()),
+            WeaveReader::Owner(owner) => WeaveDigestReader::Owner(owner.revalidate(self.vault)?),
             WeaveReader::Agent(id) => WeaveDigestReader::Agent(*id),
         };
         // Do not turn a non-due probe into a backdoor for inspecting the row:
@@ -604,9 +606,9 @@ impl ScopedRead<'_> {
             }
             WeaveReader::Owner(owner) => {
                 let txn = self.vault.store.env.read_txn()?;
-                owner.revalidate_in_txn(self.vault, &txn)?;
-                self.actor_key.actor_ref() != owner.actor().to_hex()
-                    && self.actor_key.actor_ref() != owner.principal_ref()
+                let actor = owner.revalidate_in_txn(self.vault, &txn)?;
+                self.actor_key.actor_ref() != actor.to_hex()
+                    && self.actor_key.actor_ref() != owner.principal_ref_in_txn(self.vault, &txn)?
             }
         } {
             return Err(invalid());

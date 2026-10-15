@@ -174,7 +174,9 @@ fn member_scope_and_missing_named_admin_power_fail_closed() {
 fn default_delegate_does_not_inherit_parent_write_or_admin_verbs() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
-    let owner = person(&vault);
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
     let admin = person(&vault);
     let delegate_member = person(&vault);
     let owner_proof = vault

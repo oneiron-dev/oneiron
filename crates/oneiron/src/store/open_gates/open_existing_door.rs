@@ -160,6 +160,11 @@ impl Store {
             retrieval_writes_disabled: std::sync::atomic::AtomicBool::new(false),
             retrieval_telemetry_capture: config.retrieval_telemetry_capture,
             privacy_posture: config.privacy.posture,
+            open_nonce: {
+                let mut nonce = [0u8; 16];
+                rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut nonce);
+                nonce
+            },
             #[cfg(target_os = "linux")]
             retrieval_telemetry_lease: Mutex::new(None),
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
