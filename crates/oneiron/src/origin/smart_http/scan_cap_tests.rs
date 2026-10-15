@@ -143,6 +143,7 @@ enum Door {
 /// threshold row, twice, raises its check once, and refuses nothing.
 #[test]
 fn no_origin_scan_refuses_for_its_row_count() {
+    let mut refused = Vec::new();
     for scan in OriginScan::ALL {
         let (_vault_dir, vault) = temp_vault();
         vault
@@ -202,20 +203,24 @@ fn no_origin_scan_refuses_for_its_row_count() {
                     .reconcile_origin_publications(&wire, *repo_id, handle, now_secs())
                     .map(|_| past),
             };
+            match read {
+                Ok(rows) => assert_eq!(rows, past, "{} read every row", scan.code()),
+                Err(error) => refused.push(format!("{}: {error}", scan.code())),
+            }
+        }
+        if refused.is_empty() {
             assert_eq!(
-                read.expect("the scan serves past its row"),
-                past,
-                "{} read every row",
+                checks_raised(&vault, scan),
+                1,
+                "{} raised its check once",
                 scan.code()
             );
         }
-        assert_eq!(
-            checks_raised(&vault, scan),
-            1,
-            "{} raised its check once",
-            scan.code()
-        );
     }
+    assert!(
+        refused.is_empty(),
+        "scans refused past their row: {refused:?}"
+    );
 }
 
 /// A settled intent leaves no row; one with a ref still pending keeps its
