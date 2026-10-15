@@ -576,9 +576,11 @@ impl Vault {
         if let Err(error) = authority_plane::refuse_new_members(current, &vault)
             .and_then(|()| decisions::refuse_loosened_decisions(current, &vault))
         {
-            // The copy closes first; then the directory made for it goes as
-            // `made` drops, and the custody it forked as `forked` drops.
+            // The copy closes, the custody it forked goes, and then the
+            // directory made for it, still under the copy's lease.
             drop(vault);
+            drop(forked);
+            drop(made);
             return Err(error);
         }
         forked.keep();
@@ -620,7 +622,9 @@ impl Vault {
         crate::agent_def::refuse_unreadable_agent_id_pins(&image.databases["vault_meta"])?;
         // Existing content is never replaced or partially restored over. A
         // refusal from here on drops the copy, then the directory made for
-        // it: only a committed restore keeps them (C8).
+        // it: only a committed restore keeps them (C8). The config is checked
+        // first, as an owned open checks it before it touches the disk.
+        Self::check_open_config(&config)?;
         let made = MadeDestination::make(destination, home)?;
         let mut forked = ForkedCustody(None);
         let vault = Self::open_under_lease(destination, config.clone(), made.lease()?)?;

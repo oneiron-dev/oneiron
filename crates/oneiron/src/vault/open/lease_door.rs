@@ -23,6 +23,12 @@ impl Vault {
         Self::finish_open(store, config, DefaultPolicySeedMode::Required)
     }
 
+    /// The config checks [`Vault::open_owned`] makes before it touches the
+    /// disk.
+    pub(crate) fn check_open_config(config: &VaultConfig) -> Result<()> {
+        validate_open_config(config)
+    }
+
     /// Hands this vault the writer lease it was opened under, as
     /// [`Vault::open_owned`] would have.
     pub(crate) fn adopt_writer_lease(&mut self, lease: VaultWriterLease) {

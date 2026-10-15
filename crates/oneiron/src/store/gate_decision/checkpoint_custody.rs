@@ -275,17 +275,13 @@ impl MadeDestination {
         {
             callback();
         }
-        // Checked before the lease too, so a directory moved in under the
-        // name is not leased (its lock file not written) in the common case.
+        // Through the directory made, so nothing is locked or written in one
+        // moved in under the name (review r2, Astra F2).
         #[cfg(unix)]
-        if !names(destination, &guard.identity)? {
-            return Err(moved());
-        }
+        let lease =
+            VaultWriterLease::acquire_held(guard.made.try_clone()?, &destination.canonicalize()?)?;
+        #[cfg(not(unix))]
         let lease = VaultWriterLease::acquire(&destination.canonicalize()?)?;
-        #[cfg(unix)]
-        if file_identity(&lease.clone_directory()?.metadata()?) != guard.identity {
-            return Err(moved());
-        }
         guard.lease = Some(lease);
         Ok(guard)
     }

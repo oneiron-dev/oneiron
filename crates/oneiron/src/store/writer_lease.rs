@@ -179,8 +179,6 @@ impl VaultWriterLease {
 
     #[cfg(unix)]
     fn lock_exclusive_nonblocking(vault_dir: &Path) -> Result<Option<std::fs::File>> {
-        use std::os::fd::AsRawFd;
-
         // `create(true)` + `truncate(false)`: the file is a rendezvous point,
         // not state. Truncating before the lock is granted would let a REFUSED
         // acquirer erase the live owner's diagnostics.
@@ -190,13 +188,53 @@ impl VaultWriterLease {
             .create(true)
             .truncate(false)
             .open(vault_dir.join(VAULT_WRITER_LOCK_FILE))?;
-        // SAFETY: `file` is a live, open `std::fs::File` owned by this frame
-        // and closed nowhere within it, so `as_raw_fd()` yields a descriptor
-        // valid for the whole call. `flock` reads only that descriptor and the
-        // flag word, and writes nothing through a pointer.
+        Self::lock_file(&file)?;
+        Ok(Some(file))
+    }
+
+    /// [`Self::acquire`] on `directory`, a vault root this process already
+    /// holds open: the lock file is opened through that descriptor, never
+    /// following a link, so nothing is created, locked or written in a
+    /// directory moved in under `vault_dir`'s name. Refuses unless
+    /// `vault_dir` still names `directory`.
+    #[cfg(unix)]
+    pub(crate) fn acquire_held(directory: std::fs::File, vault_dir: &Path) -> Result<Self> {
+        use rustix::fs::{Mode, OFlags, openat};
+        let pid = std::process::id();
+        let file = std::fs::File::from(
+            openat(
+                &directory,
+                VAULT_WRITER_LOCK_FILE,
+                OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::from_raw_mode(0o600),
+            )
+            .map_err(std::io::Error::from)?,
+        );
+        Self::lock_file(&file)?;
+        let lease = Self {
+            file: Some(file),
+            pid,
+            directory,
+        };
+        lease.validate_directory(vault_dir)?;
+        if let Some(file) = lease.file.as_ref() {
+            Self::write_pid_line(file, pid)?;
+        }
+        Ok(lease)
+    }
+
+    /// Takes `file`'s exclusive lock without waiting.
+    #[cfg(unix)]
+    fn lock_file(file: &std::fs::File) -> Result<()> {
+        use std::os::fd::AsRawFd;
+
+        // SAFETY: `file` is a live, open `std::fs::File` borrowed for the
+        // whole call, so `as_raw_fd()` yields a valid descriptor. `flock`
+        // reads only that descriptor and the flag word, and writes nothing
+        // through a pointer.
         let granted = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
         if granted == 0 {
-            return Ok(Some(file));
+            return Ok(());
         }
         let error = std::io::Error::last_os_error();
         // EWOULDBLOCK (EAGAIN on Linux and macOS) is the ONLY contention

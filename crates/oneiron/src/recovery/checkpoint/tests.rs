@@ -1831,8 +1831,8 @@ fn a_refused_restore_leaves_nothing_at_its_destination() {
 }
 
 /// Control: a refused restore removes only the directory it made. One moved
-/// in under the destination's name after the make is left as it is, and so
-/// is the directory made, now under another name.
+/// in under the destination's name after the make is left as it is, with no
+/// lock created in it, and so is the directory made, now under another name.
 #[cfg(unix)]
 #[test]
 fn a_refused_restore_leaves_a_directory_moved_in_under_its_name() {
@@ -1862,6 +1862,10 @@ fn a_refused_restore_leaves_a_directory_moved_in_under_its_name() {
     assert_eq!(
         std::fs::read_to_string(destination.join("note")).unwrap(),
         "placeholder\n"
+    );
+    // Nothing is locked or written in it either (review r2, Astra F2).
+    assert!(
+        std::fs::symlink_metadata(destination.join(crate::store::VAULT_WRITER_LOCK_FILE)).is_err()
     );
     assert!(aside.is_dir());
 }
