@@ -334,6 +334,50 @@ fn every_provider_token_shape_still_rejects() {
     }
 }
 
+/// F23 (H49, H66): a credential keeps its reason after leading token bytes
+/// (one letter, `_`, `-`), while snake and kebab prose holding a provider
+/// prefix inside a word is not read as a key.
+#[test]
+fn a_credential_after_leading_token_bytes_still_rejects() {
+    let body36 = "0123456789abcdefghijklmnopqrstuvwxyz";
+    for (token, reason) in [
+        (
+            ["AK", "IA0123456789ABCDEF"].concat(),
+            REASON_AWS_ACCESS_KEY_ID,
+        ),
+        (["gh", "p_", body36].concat(), REASON_GITHUB_TOKEN),
+        (
+            ["github", "_pat_", body36, body36].concat(),
+            REASON_GITHUB_TOKEN,
+        ),
+        (
+            ["AI", "za", "0123456789abcdefghijklmnopqrstuvwxy"].concat(),
+            REASON_GOOGLE_API_KEY,
+        ),
+        (
+            ["sk", "-", body36, "ABCDEFGHIJKL"].concat(),
+            REASON_OPENAI_KEY,
+        ),
+        (["sk", "-proj-", body36].concat(), REASON_OPENAI_KEY),
+        (["xo", "xb-", body36].concat(), REASON_SLACK_TOKEN),
+        (["sk", "_live_", body36].concat(), REASON_STRIPE_KEY),
+        (["rk", "_live_", body36].concat(), REASON_STRIPE_KEY),
+    ] {
+        for lead in ["X", "_", "-", "x9_"] {
+            let prose = format!("the value is {lead}{token} for now");
+            assert_eq!(write_reason(&prose), Some(reason), "{lead}{reason}");
+            assert_eq!(scan_file_content("", prose.as_bytes()), Some(reason));
+        }
+    }
+    for prose in [
+        "highs_and_lows_of_the_quarterly_market_report_for_this_year",
+        "risk_live_monitoring_dashboard_configuration_v2",
+        "task-assessment-for-the-quarterly-planning-meeting-notes-and-more-words",
+    ] {
+        assert_eq!(write_reason(prose), None, "{prose}");
+    }
+}
+
 /// A token-shaped name assembled at run time, so no literal in the source
 /// matches a provider pattern.
 fn token_shape() -> String {

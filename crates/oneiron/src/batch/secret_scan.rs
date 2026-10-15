@@ -631,17 +631,36 @@ fn detect_bytes(bytes: &[u8], door: Door) -> bool {
 }
 
 fn classify_token(token: &str) -> Option<&'static str> {
+    // A credential still counts after leading token bytes (`Xghp_…`), so every
+    // later offset is a candidate start too (F23, H49/H66). There a key body
+    // is read over its fixed length only, keeping the scan linear, and a
+    // provider whose real keys are alphanumeric must match as such, so snake
+    // or kebab prose (`highs_and_lows_…`, `risk_live_…`) is not read as a key.
+    // The token is ASCII by construction, so every offset is a char boundary.
+    classify_at(token, Body::Token)
+        .or_else(|| (1..token.len()).find_map(|start| classify_at(&token[start..], Body::Embedded)))
+}
+
+/// How a key body is read: from the token's start, by each provider's own
+/// length rule over token bytes; inside a token, over a fixed length.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Body {
+    Token,
+    Embedded,
+}
+
+fn classify_at(token: &str, body: Body) -> Option<&'static str> {
     if is_aws_access_key_id(token) {
         Some(REASON_AWS_ACCESS_KEY_ID)
-    } else if is_github_token(token) {
+    } else if is_github_token(token, body) {
         Some(REASON_GITHUB_TOKEN)
-    } else if is_google_api_key(token) {
+    } else if is_google_api_key(token, body) {
         Some(REASON_GOOGLE_API_KEY)
-    } else if is_openai_key(token) {
+    } else if is_openai_key(token, body) {
         Some(REASON_OPENAI_KEY)
-    } else if is_slack_token(token) {
+    } else if is_slack_token(token, body) {
         Some(REASON_SLACK_TOKEN)
-    } else if is_stripe_key(token) {
+    } else if is_stripe_key(token, body) {
         Some(REASON_STRIPE_KEY)
     } else {
         None
@@ -658,31 +677,51 @@ fn is_aws_access_key_id(token: &str) -> bool {
         .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
 }
 
-fn is_github_token(token: &str) -> bool {
+fn is_github_token(token: &str, body: Body) -> bool {
     ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"]
         .iter()
-        .any(|prefix| suffix_matches(token, prefix, 36, true, is_ascii_token_body))
-        || suffix_matches(token, "github_pat_", 70, false, is_ascii_token_body)
+        .any(|prefix| key_matches(token, prefix, 36, true, true, body))
+        || key_matches(token, "github_pat_", 70, false, false, body)
 }
 
-fn is_google_api_key(token: &str) -> bool {
-    suffix_matches(token, "AIza", 35, true, is_ascii_token_body)
+fn is_google_api_key(token: &str, body: Body) -> bool {
+    key_matches(token, "AIza", 35, true, false, body)
 }
 
-fn is_openai_key(token: &str) -> bool {
-    suffix_matches(token, "sk-proj-", 32, false, is_ascii_token_body)
-        || suffix_matches(token, "sk-", 48, true, is_ascii_token_body)
+fn is_openai_key(token: &str, body: Body) -> bool {
+    key_matches(token, "sk-proj-", 32, false, false, body)
+        || key_matches(token, "sk-", 48, true, true, body)
 }
 
-fn is_slack_token(token: &str) -> bool {
+fn is_slack_token(token: &str, body: Body) -> bool {
     ["xoxb-", "xoxp-", "xoxa-", "xoxr-", "xoxs-"]
         .iter()
-        .any(|prefix| suffix_matches(token, prefix, 24, false, is_ascii_token_body))
+        .any(|prefix| key_matches(token, prefix, 24, false, false, body))
 }
 
-fn is_stripe_key(token: &str) -> bool {
-    suffix_matches(token, "sk_live_", 24, false, is_ascii_token_body)
-        || suffix_matches(token, "rk_live_", 24, false, is_ascii_token_body)
+fn is_stripe_key(token: &str, body: Body) -> bool {
+    key_matches(token, "sk_live_", 24, false, true, body)
+        || key_matches(token, "rk_live_", 24, false, true, body)
+}
+
+/// One provider rule: `prefix`, then `suffix_len` body bytes (`exact_len`:
+/// only those are read). Inside a token the body is always read over exactly
+/// `suffix_len` bytes, alphanumeric ones when the provider's keys are.
+fn key_matches(
+    token: &str,
+    prefix: &str,
+    suffix_len: usize,
+    exact_len: bool,
+    alphanumeric: bool,
+    body: Body,
+) -> bool {
+    match body {
+        Body::Token => suffix_matches(token, prefix, suffix_len, exact_len, is_ascii_token_body),
+        Body::Embedded if alphanumeric => suffix_matches(token, prefix, suffix_len, true, |byte| {
+            byte.is_ascii_alphanumeric()
+        }),
+        Body::Embedded => suffix_matches(token, prefix, suffix_len, true, is_ascii_token_body),
+    }
 }
 
 fn suffix_matches(
