@@ -42,13 +42,40 @@ fn face_roster() -> Vec<ChannelIdentityCandidate> {
     ]
 }
 
-fn owner_writer() -> ChannelIdentitySelectionWriter {
-    let actor = WriteActor::new(entity(0x66), EdgeActorClass::Human);
-    ChannelIdentitySelectionWriter::from_authenticated_write(&actor).expect("owner writer")
+/// Seeds one PERSON row once, so a writer names a live actor of the vault.
+fn person(vault: &Vault, seed: u8) -> crate::EntityId {
+    let id = entity(seed);
+    if vault.get_entity_type(&id).expect("entity type").is_none() {
+        vault
+            .put_entity(
+                &id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                crate::temporal::TimeRange { start: 1, end: 1 },
+                1,
+                b"selection writer",
+            )
+            .expect("seed person");
+    }
+    id
 }
 
-fn agent_writer() -> ChannelIdentitySelectionWriter {
-    let actor = WriteActor::new(entity(0x67), EdgeActorClass::Agent);
+fn owner_proof(vault: &Vault) -> crate::consent::AuthenticatedOwner {
+    vault
+        .authenticate_owner(
+            person(vault, 0x66),
+            "principal:owner",
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("authenticate owner")
+}
+
+fn owner_writer(vault: &Vault) -> ChannelIdentitySelectionWriter {
+    ChannelIdentitySelectionWriter::owner(&owner_proof(vault))
+}
+
+fn agent_writer(vault: &Vault) -> ChannelIdentitySelectionWriter {
+    let actor = WriteActor::new(person(vault, 0x67), EdgeActorClass::Agent);
     ChannelIdentitySelectionWriter::from_authenticated_write(&actor).expect("agent writer")
 }
 
@@ -482,9 +509,10 @@ fn duplicate_rows_and_regressed_revisions_fail_typed() {
 
 #[test]
 fn writer_kind_is_derived_from_the_authenticated_actor() {
-    assert_eq!(owner_writer().kind(), SelectionRuleWriterKind::Owner);
-    assert_eq!(owner_writer().actor_ref(), entity(0x66));
-    assert_eq!(agent_writer().kind(), SelectionRuleWriterKind::Agent);
+    let (_dir, vault) = open_vault();
+    assert_eq!(owner_writer(&vault).kind(), SelectionRuleWriterKind::Owner);
+    assert_eq!(owner_writer(&vault).actor_ref(), entity(0x66));
+    assert_eq!(agent_writer(&vault).kind(), SelectionRuleWriterKind::Agent);
 
     let system = WriteActor::new(entity(0x6F), EdgeActorClass::System);
     assert!(matches!(
@@ -492,6 +520,70 @@ fn writer_kind_is_derived_from_the_authenticated_actor() {
             .expect_err("system refused"),
         ChannelIdentitySelectionError::WriterClassNotAmendable
     ));
+}
+
+/// H265: a write actor's class is the caller's word. Naming any id as
+/// `Human` must not yield the owner's writer, which would lift every lock the
+/// owner set on selection law.
+#[test]
+fn a_caller_asserted_human_class_cannot_write_as_the_owner() {
+    let (_dir, vault) = open_vault();
+    let forged = WriteActor::new(person(&vault, 0x6E), EdgeActorClass::Human);
+    assert!(
+        ChannelIdentitySelectionWriter::from_authenticated_write(&forged).is_err(),
+        "a caller-asserted Human class minted the owner's writer"
+    );
+}
+
+/// The owner's writer carries its proof to the write door, which checks it in
+/// the write's own transaction: a proof from another vault writes nothing
+/// here, and an agent writer must name a live actor of this vault.
+#[test]
+fn the_selection_write_door_rechecks_its_writer() {
+    let (_dir, vault) = open_vault();
+    let (_other_dir, other) = open_vault();
+    let foreign = ChannelIdentitySelectionWriter::owner(&owner_proof(&other));
+    person(&vault, 0x66);
+    let retire = ChannelIdentitySelectionPatch::Upsert(ChannelIdentitySelectionRule {
+        agent_amendable: false,
+        enabled: false,
+        ..authored_rule(
+            "builtin.work_deal",
+            RelationshipContext::WorkDeal,
+            SelectionRuleScope::VaultDefault,
+            ChannelIdentityFace::DelegatedOwnerAccount,
+        )
+    });
+    assert!(
+        vault
+            .update_channel_identity_selection_rules(0, &foreign, retire.clone())
+            .is_err(),
+        "another vault's owner proof amended this vault's law"
+    );
+    let ghost = WriteActor::new(entity(0x6D), EdgeActorClass::Agent);
+    assert!(matches!(
+        vault
+            .update_channel_identity_selection_rules(
+                0,
+                &ChannelIdentitySelectionWriter::from_authenticated_write(&ghost)
+                    .expect("agent writer"),
+                ChannelIdentitySelectionPatch::Remove {
+                    rule_id: "overlay.absent".to_owned()
+                },
+            )
+            .expect_err("an agent with no row in this vault"),
+        ChannelIdentitySelectionError::WriterNotInVault
+    ));
+    assert_eq!(
+        vault
+            .stored_channel_identity_selection_rules()
+            .expect("stored law"),
+        None,
+        "nothing was written"
+    );
+    vault
+        .update_channel_identity_selection_rules(0, &owner_writer(&vault), retire)
+        .expect("this vault's owner retires the builtin");
 }
 
 #[test]
@@ -517,7 +609,7 @@ fn accepted_changes_stamp_the_actor_and_advance_one_revision() {
     let updated = vault
         .update_channel_identity_selection_rules(
             0,
-            &owner_writer(),
+            &owner_writer(&vault),
             ChannelIdentitySelectionPatch::Upsert(authored_rule(
                 "overlay.world",
                 RelationshipContext::CampaignOutreach,
@@ -550,7 +642,7 @@ fn accepted_changes_stamp_the_actor_and_advance_one_revision() {
     let second = vault
         .update_channel_identity_selection_rules(
             1,
-            &owner_writer(),
+            &owner_writer(&vault),
             ChannelIdentitySelectionPatch::Remove {
                 rule_id: "overlay.world".to_owned(),
             },
@@ -582,7 +674,7 @@ fn stale_expected_revisions_fail_compare_and_swap() {
 
     assert!(matches!(
         vault
-            .update_channel_identity_selection_rules(7, &owner_writer(), patch())
+            .update_channel_identity_selection_rules(7, &owner_writer(&vault), patch())
             .expect_err("stale expectation"),
         ChannelIdentitySelectionError::RevisionConflict {
             expected: 7,
@@ -591,11 +683,11 @@ fn stale_expected_revisions_fail_compare_and_swap() {
     ));
 
     vault
-        .update_channel_identity_selection_rules(0, &owner_writer(), patch())
+        .update_channel_identity_selection_rules(0, &owner_writer(&vault), patch())
         .expect("first write");
     assert!(matches!(
         vault
-            .update_channel_identity_selection_rules(0, &owner_writer(), patch())
+            .update_channel_identity_selection_rules(0, &owner_writer(&vault), patch())
             .expect_err("replayed expectation"),
         ChannelIdentitySelectionError::RevisionConflict {
             expected: 0,
@@ -634,7 +726,7 @@ fn owner_may_lock_a_row_that_the_agent_then_cannot_touch() {
     vault
         .update_channel_identity_selection_rules(
             0,
-            &owner_writer(),
+            &owner_writer(&vault),
             ChannelIdentitySelectionPatch::Upsert(row(true, ChannelIdentityFace::HouseIdentity)),
         )
         .expect("owner seeds an amendable row");
@@ -642,7 +734,7 @@ fn owner_may_lock_a_row_that_the_agent_then_cannot_touch() {
     let amended = vault
         .update_channel_identity_selection_rules(
             1,
-            &agent_writer(),
+            &agent_writer(&vault),
             ChannelIdentitySelectionPatch::Upsert(row(
                 true,
                 ChannelIdentityFace::AgentNamedAddress,
@@ -660,7 +752,7 @@ fn owner_may_lock_a_row_that_the_agent_then_cannot_touch() {
     vault
         .update_channel_identity_selection_rules(
             2,
-            &owner_writer(),
+            &owner_writer(&vault),
             ChannelIdentitySelectionPatch::Upsert(row(false, ChannelIdentityFace::HouseIdentity)),
         )
         .expect("owner locks the row");
@@ -669,7 +761,7 @@ fn owner_may_lock_a_row_that_the_agent_then_cannot_touch() {
         vault
             .update_channel_identity_selection_rules(
                 3,
-                &agent_writer(),
+                &agent_writer(&vault),
                 ChannelIdentitySelectionPatch::Upsert(row(
                     true,
                     ChannelIdentityFace::SideDomainAddress
@@ -682,7 +774,7 @@ fn owner_may_lock_a_row_that_the_agent_then_cannot_touch() {
         vault
             .update_channel_identity_selection_rules(
                 3,
-                &agent_writer(),
+                &agent_writer(&vault),
                 ChannelIdentitySelectionPatch::Remove {
                     rule_id: "overlay.shared".to_owned()
                 },
@@ -695,7 +787,7 @@ fn owner_may_lock_a_row_that_the_agent_then_cannot_touch() {
     vault
         .update_channel_identity_selection_rules(
             3,
-            &owner_writer(),
+            &owner_writer(&vault),
             ChannelIdentitySelectionPatch::Remove {
                 rule_id: "overlay.shared".to_owned(),
             },
@@ -725,7 +817,7 @@ fn an_agent_writer_cannot_mint_or_leave_a_locked_row() {
         vault
             .update_channel_identity_selection_rules(
                 0,
-                &agent_writer(),
+                &agent_writer(&vault),
                 ChannelIdentitySelectionPatch::Upsert(locked),
             )
             .expect_err("agent minting a locked row"),
@@ -760,7 +852,7 @@ fn agents_cannot_amend_a_locked_builtin_but_owners_can() {
         vault
             .update_channel_identity_selection_rules(
                 0,
-                &agent_writer(),
+                &agent_writer(&vault),
                 ChannelIdentitySelectionPatch::Upsert(shadow(true)),
             )
             .expect_err("locked builtin"),
@@ -771,7 +863,7 @@ fn agents_cannot_amend_a_locked_builtin_but_owners_can() {
     let amended = vault
         .update_channel_identity_selection_rules(
             0,
-            &agent_writer(),
+            &agent_writer(&vault),
             ChannelIdentitySelectionPatch::Upsert(ChannelIdentitySelectionRule {
                 face: ChannelIdentityFace::HouseIdentity,
                 ..authored_rule(
@@ -796,7 +888,7 @@ fn agents_cannot_amend_a_locked_builtin_but_owners_can() {
     let law = vault
         .update_channel_identity_selection_rules(
             1,
-            &owner_writer(),
+            &owner_writer(&vault),
             ChannelIdentitySelectionPatch::Upsert(shadow(false)),
         )
         .expect("owner disables the builtin");
@@ -830,7 +922,7 @@ fn an_amendment_that_would_make_the_law_ambiguous_is_refused() {
         vault
             .update_channel_identity_selection_rules(
                 0,
-                &owner_writer(),
+                &owner_writer(&vault),
                 ChannelIdentitySelectionPatch::Upsert(authored_rule(
                     "overlay.second_winner",
                     RelationshipContext::WorkDeal,
@@ -881,7 +973,7 @@ fn a_corrupt_stored_rule_set_fails_typed_rather_than_resolving() {
         vault
             .update_channel_identity_selection_rules(
                 1,
-                &owner_writer(),
+                &owner_writer(&vault),
                 ChannelIdentitySelectionPatch::Remove {
                     rule_id: "overlay.a".to_owned()
                 },
@@ -891,4 +983,67 @@ fn a_corrupt_stored_rule_set_fails_typed_rather_than_resolving() {
 
     drop(vault);
     drop(dir);
+}
+
+/// F24 review (H265): an agent writer's standing in a rooted vault is its
+/// authority binding, not a live row alone. While the binding holds the agent
+/// adds an amendable row; once it is revoked, its row still live, the same
+/// write is refused and the law stays where it was.
+#[test]
+fn a_revoked_agent_binding_cannot_amend_selection_rules() {
+    let (_dir, vault) = open_vault();
+    let agent = WriteActor::new(person(&vault, 0x68), EdgeActorClass::Agent);
+    let revoke = crate::subject_model::tests::authorization::root_owner(&vault, agent, 0xE7)
+        .expect("root the vault with the agent bound");
+    let writer =
+        ChannelIdentitySelectionWriter::from_authenticated_write(&agent).expect("agent writer");
+    let upsert = |face| {
+        ChannelIdentitySelectionPatch::Upsert(ChannelIdentitySelectionRule {
+            agent_amendable: true,
+            ..authored_rule(
+                "overlay.agent",
+                RelationshipContext::GroupSpace,
+                SelectionRuleScope::Space {
+                    space_ref: "space.beta".to_owned(),
+                },
+                face,
+            )
+        })
+    };
+    vault
+        .update_channel_identity_selection_rules(
+            0,
+            &writer,
+            upsert(ChannelIdentityFace::HouseIdentity),
+        )
+        .expect("a bound agent adds an amendable row");
+
+    vault
+        .put_authority_log_entries(&[(
+            revoke,
+            crate::temporal::TimeRange {
+                start: 102,
+                end: 102,
+            },
+            102,
+        )])
+        .expect("revoke the agent's binding");
+    assert!(
+        vault
+            .update_channel_identity_selection_rules(
+                1,
+                &writer,
+                upsert(ChannelIdentityFace::AgentNamedAddress),
+            )
+            .is_err(),
+        "a revoked binding amended the law"
+    );
+    assert_eq!(
+        vault
+            .channel_identity_selection_rules()
+            .expect("law")
+            .revision,
+        1,
+        "the refused write advanced nothing"
+    );
 }

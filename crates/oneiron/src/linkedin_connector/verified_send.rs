@@ -97,7 +97,10 @@ pub struct LinkedInMcpSendMessageRequest {
 /// Minimal host transport used by the verified-send sink.
 ///
 /// Implementors should return stable error codes, not raw provider output or
-/// secrets. `send_message` return values are intentionally ignored for success.
+/// secrets. A `send_message` result is never success on its own: the message
+/// id it names (a `message` object's id, or a top-level `message_id`) is what
+/// verification looks for in the transcript, and a result naming none leaves
+/// the send ambiguous.
 pub trait LinkedInMcpSendTransport {
     fn send_message(
         &mut self,
@@ -222,55 +225,100 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
             plan.max_observation_attempts.to_string(),
         );
 
-        let pre_send_match_count = match self.transport.get_conversation(&plan.thread_id) {
-            Ok(output) => match observed_message(&output, &plan.thread_id, &plan.message_text) {
-                Ok(Some(observation)) => {
-                    fields.insert(
-                        RECEIPT_FIELD_PRE_SEND_MATCH_COUNT.to_owned(),
-                        observation.occurrence_count.to_string(),
-                    );
-                    if plan.guard_retry && observation.tail_matches {
-                        fields.insert(
-                            RECEIPT_FIELD_DUPLICATE_SEND_GUARD.to_owned(),
-                            "observed_existing".to_owned(),
-                        );
-                        fields.insert(
-                            RECEIPT_FIELD_SEND_MESSAGE_CALLED.to_owned(),
-                            "false".to_owned(),
-                        );
-                        fields.insert(
-                            RECEIPT_FIELD_VERIFICATION_STATE.to_owned(),
-                            "content_observed".to_owned(),
-                        );
-                        fields.insert(
-                            RECEIPT_FIELD_VERIFICATION_ATTEMPTS.to_owned(),
-                            "1".to_owned(),
-                        );
-                        return OutboundExecutionOutcome::delivered_to_channel(
-                            observation.message_ref,
-                        )
-                        .with_receipt_fields(fields);
+        let self_key = self.adapter.receiving_address_or_handle().to_owned();
+        let (pre_send_match_count, pre_send_ids) =
+            match self.transport.get_conversation(&plan.thread_id) {
+                Ok(output) => {
+                    // Every id the thread showed before the send, whatever its
+                    // sender or text: a message that was already there, even
+                    // one edited to the text since, is never the new send.
+                    let pre_send_ids = transcript_message_ids(&output, &plan.thread_id);
+                    match observed_message(&output, &plan.thread_id, &plan.message_text, &self_key)
+                    {
+                        Ok(Some(observation)) => {
+                            fields.insert(
+                                RECEIPT_FIELD_PRE_SEND_MATCH_COUNT.to_owned(),
+                                observation.occurrence_count.to_string(),
+                            );
+                            if plan.guard_retry && observation.tail_matches {
+                                fields.insert(
+                                    RECEIPT_FIELD_SEND_MESSAGE_CALLED.to_owned(),
+                                    "false".to_owned(),
+                                );
+                                fields.insert(
+                                    RECEIPT_FIELD_VERIFICATION_ATTEMPTS.to_owned(),
+                                    "1".to_owned(),
+                                );
+                                // A matching tail stops a second send, but it is
+                                // never this intent's delivery: text alone may be
+                                // the recipient's echo, and even this seat's own
+                                // message may be an older one that no earlier
+                                // attempt of this intent can be shown to have sent.
+                                let (guard, state, reason) = if observation.own_tail_id.is_some() {
+                                    (
+                                        "observed_existing",
+                                        "content_observed_unbound",
+                                        "verify_after_send_existing_unbound",
+                                    )
+                                } else {
+                                    (
+                                        "observed_existing_unattributed",
+                                        "content_observed_unattributed",
+                                        "verify_after_send_unattributed_existing",
+                                    )
+                                };
+                                fields.insert(
+                                    RECEIPT_FIELD_DUPLICATE_SEND_GUARD.to_owned(),
+                                    guard.to_owned(),
+                                );
+                                fields.insert(
+                                    RECEIPT_FIELD_VERIFICATION_STATE.to_owned(),
+                                    state.to_owned(),
+                                );
+                                return OutboundExecutionOutcome::failed(reason)
+                                    .with_possible_delivery()
+                                    .with_receipt_fields(fields);
+                            }
+                            if plan.guard_retry {
+                                fields.insert(
+                                    RECEIPT_FIELD_DUPLICATE_SEND_GUARD.to_owned(),
+                                    "observed_existing_not_tail".to_owned(),
+                                );
+                            }
+                            (observation.occurrence_count, pre_send_ids)
+                        }
+                        Ok(None) => {
+                            fields.insert(
+                                RECEIPT_FIELD_PRE_SEND_MATCH_COUNT.to_owned(),
+                                "0".to_owned(),
+                            );
+                            if plan.guard_retry {
+                                fields.insert(
+                                    RECEIPT_FIELD_DUPLICATE_SEND_GUARD.to_owned(),
+                                    "observed_absent".to_owned(),
+                                );
+                            }
+                            (0, pre_send_ids)
+                        }
+                        Err(err) => {
+                            fields.insert(
+                                RECEIPT_FIELD_DUPLICATE_SEND_GUARD.to_owned(),
+                                "precheck_failed".to_owned(),
+                            );
+                            fields.insert(
+                                RECEIPT_FIELD_SEND_MESSAGE_CALLED.to_owned(),
+                                "false".to_owned(),
+                            );
+                            fields.insert(
+                                "verify_precheck_error".to_owned(),
+                                receipt_error_code(&err.to_string()),
+                            );
+                            return OutboundExecutionOutcome::failed(
+                                "verify_after_send_precheck_failed",
+                            )
+                            .with_receipt_fields(fields);
+                        }
                     }
-                    if plan.guard_retry {
-                        fields.insert(
-                            RECEIPT_FIELD_DUPLICATE_SEND_GUARD.to_owned(),
-                            "observed_existing_not_tail".to_owned(),
-                        );
-                    }
-                    observation.occurrence_count
-                }
-                Ok(None) => {
-                    fields.insert(
-                        RECEIPT_FIELD_PRE_SEND_MATCH_COUNT.to_owned(),
-                        "0".to_owned(),
-                    );
-                    if plan.guard_retry {
-                        fields.insert(
-                            RECEIPT_FIELD_DUPLICATE_SEND_GUARD.to_owned(),
-                            "observed_absent".to_owned(),
-                        );
-                    }
-                    0
                 }
                 Err(err) => {
                     fields.insert(
@@ -281,28 +329,11 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
                         RECEIPT_FIELD_SEND_MESSAGE_CALLED.to_owned(),
                         "false".to_owned(),
                     );
-                    fields.insert(
-                        "verify_precheck_error".to_owned(),
-                        receipt_error_code(&err.to_string()),
-                    );
+                    fields.insert("verify_precheck_error".to_owned(), receipt_error_code(&err));
                     return OutboundExecutionOutcome::failed("verify_after_send_precheck_failed")
                         .with_receipt_fields(fields);
                 }
-            },
-            Err(err) => {
-                fields.insert(
-                    RECEIPT_FIELD_DUPLICATE_SEND_GUARD.to_owned(),
-                    "precheck_failed".to_owned(),
-                );
-                fields.insert(
-                    RECEIPT_FIELD_SEND_MESSAGE_CALLED.to_owned(),
-                    "false".to_owned(),
-                );
-                fields.insert("verify_precheck_error".to_owned(), receipt_error_code(&err));
-                return OutboundExecutionOutcome::failed("verify_after_send_precheck_failed")
-                    .with_receipt_fields(fields);
-            }
-        };
+            };
 
         let send_request = LinkedInMcpSendMessageRequest {
             recipient_key: plan.recipient_key.clone(),
@@ -315,12 +346,23 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
             RECEIPT_FIELD_SEND_MESSAGE_CALLED.to_owned(),
             "true".to_owned(),
         );
-        match self.transport.send_message(&send_request) {
-            Ok(_) => {
+        // The send's own message id is the only thing that binds a message in
+        // the transcript to this send: a tool that returns success without
+        // one (or sends nothing) leaves every transcript ambiguous, however
+        // its pages fall.
+        let sent_id = match self.transport.send_message(&send_request) {
+            Ok(output) => {
+                let sent_id = sent_message_id(&output);
                 fields.insert(
                     RECEIPT_FIELD_SEND_MESSAGE_RESULT.to_owned(),
-                    "ignored".to_owned(),
+                    if sent_id.is_some() {
+                        "message_id"
+                    } else {
+                        "no_message_id"
+                    }
+                    .to_owned(),
                 );
+                sent_id
             }
             Err(err) => {
                 fields.insert(
@@ -342,18 +384,31 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
                 return OutboundExecutionOutcome::failed("verify_after_send_send_message_failed")
                     .with_receipt_fields(fields);
             }
-        }
+        };
 
         let mut last_get_error = None;
         let mut observed_stale = false;
+        let mut observed_unattributed = false;
+        let mut observed_unbound = false;
         let mut post_send_match_count = 0;
         for attempt in 1..=plan.max_observation_attempts {
             match self.transport.get_conversation(&plan.thread_id) {
                 Ok(output) => {
-                    match observed_message(&output, &plan.thread_id, &plan.message_text) {
+                    match observed_message(&output, &plan.thread_id, &plan.message_text, &self_key)
+                    {
+                        // Delivered means the transcript holds the message the
+                        // send named, as one this seat sent with the text, and
+                        // the precheck did not show it. Text the transcript
+                        // does not attribute proves nothing (the recipient can
+                        // write the same words), and neither does an own
+                        // message the send did not name: pages can overlap
+                        // and slide, so where a message sits on one is never
+                        // evidence that it is new.
                         Ok(Some(observation))
-                            if observation.tail_matches
-                                && observation.occurrence_count > pre_send_match_count =>
+                            if sent_id.as_deref().is_some_and(|sent| {
+                                observation.own_ids.iter().any(|own| own == sent)
+                                    && !pre_send_ids.iter().any(|known| known == sent)
+                            }) =>
                         {
                             fields.insert(
                                 RECEIPT_FIELD_POST_SEND_MATCH_COUNT.to_owned(),
@@ -373,7 +428,16 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
                             .with_receipt_fields(fields);
                         }
                         Ok(Some(observation)) => {
-                            observed_stale = true;
+                            if !observation.attributed
+                                && observation.tail_matches
+                                && observation.occurrence_count > pre_send_match_count
+                            {
+                                observed_unattributed = true;
+                            } else if sent_id.is_none() && !observation.own_ids.is_empty() {
+                                observed_unbound = true;
+                            } else {
+                                observed_stale = true;
+                            }
                             post_send_match_count =
                                 post_send_match_count.max(observation.occurrence_count);
                             last_get_error = None;
@@ -405,6 +469,10 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
             RECEIPT_FIELD_VERIFICATION_STATE.to_owned(),
             if last_get_error.is_some() {
                 "get_conversation_failed"
+            } else if observed_unattributed {
+                "content_observed_unattributed"
+            } else if observed_unbound {
+                "content_observed_unbound"
             } else if observed_stale {
                 "observed_stale"
             } else {
@@ -420,6 +488,12 @@ impl<T: LinkedInMcpSendTransport> LinkedInMcpVerifiedSendSink<T> {
             fields.insert("verify_get_conversation_error".to_owned(), error);
             OutboundExecutionOutcome::failed("verify_after_send_get_conversation_failed")
                 .with_receipt_fields(fields)
+        } else if observed_unattributed {
+            OutboundExecutionOutcome::failed("verify_after_send_unattributed")
+                .with_receipt_fields(fields)
+        } else if observed_unbound {
+            OutboundExecutionOutcome::failed("verify_after_send_unbound")
+                .with_receipt_fields(fields)
         } else if observed_stale {
             OutboundExecutionOutcome::failed("verify_after_send_observed_stale")
                 .with_receipt_fields(fields)
@@ -434,12 +508,21 @@ struct LinkedInObservedMessage {
     message_ref: String,
     occurrence_count: usize,
     tail_matches: bool,
+    /// The transcript names who sent each message. `false` for page text.
+    attributed: bool,
+    /// The provider id of the last message, when it matches, the transcript
+    /// says this seat sent it, and it carries an id.
+    own_tail_id: Option<String>,
+    /// The provider id of every message that matches and that the transcript
+    /// says this seat sent.
+    own_ids: Vec<String>,
 }
 
 fn observed_message(
     output: &Value,
     expected_thread_id: &str,
     message_text: &str,
+    self_key: &str,
 ) -> Result<Option<LinkedInObservedMessage>> {
     let payload = mcp_payload(output)?;
     let observed_thread_id = match thread_id_from_payload_url(&payload)? {
@@ -450,6 +533,17 @@ fn observed_message(
     if observed_thread_id != expected_thread_id {
         return Ok(None);
     }
+    let message_ref = linkedin_thread_message_ref(expected_thread_id, message_text);
+    if let Some(messages) = payload.get("messages").and_then(Value::as_array) {
+        return Ok(
+            attributed_observation(messages, message_text, self_key).map(|observation| {
+                LinkedInObservedMessage {
+                    message_ref,
+                    ..observation
+                }
+            }),
+        );
+    }
     let Some(conversation_text) = optional_section_text(&payload, "conversation")? else {
         return Ok(None);
     };
@@ -458,10 +552,110 @@ fn observed_message(
         return Ok(None);
     }
     Ok(Some(LinkedInObservedMessage {
-        message_ref: linkedin_thread_message_ref(expected_thread_id, message_text),
+        message_ref,
         occurrence_count,
         tail_matches: conversation_ends_with_message(conversation_text, message_text),
+        attributed: false,
+        own_tail_id: None,
+        own_ids: Vec::new(),
     }))
+}
+
+/// The id of every message a structured transcript of `expected_thread_id`
+/// shows, whatever its sender or text; none for page text or another thread.
+fn transcript_message_ids(output: &Value, expected_thread_id: &str) -> Vec<String> {
+    let Ok(payload) = mcp_payload(output) else {
+        return Vec::new();
+    };
+    let observed_thread_id = match thread_id_from_payload_url(&payload) {
+        Ok(Some(thread_id)) => thread_id,
+        Ok(None) => {
+            match first_conversation_thread_id(&section_references(&payload, "conversation")) {
+                Ok(thread_id) => thread_id.unwrap_or_else(|| expected_thread_id.to_owned()),
+                Err(_) => return Vec::new(),
+            }
+        }
+        Err(_) => return Vec::new(),
+    };
+    if observed_thread_id != expected_thread_id {
+        return Vec::new();
+    }
+    payload
+        .get("messages")
+        .and_then(Value::as_array)
+        .map(|messages| messages.iter().filter_map(message_id).collect())
+        .unwrap_or_default()
+}
+
+/// The provider id of the message `send_message` reports it created: the id
+/// of its `message` object, or a top-level message id, of the structured
+/// result, else of the raw output. `None` when the tool names none.
+fn sent_message_id(output: &Value) -> Option<String> {
+    let named = |payload: &Value| {
+        payload.get("message").and_then(message_id).or_else(|| {
+            ["message_id", "messageId"].iter().find_map(|key| {
+                let id = payload.get(*key)?.as_str()?.trim();
+                (!id.is_empty()).then(|| id.to_owned())
+            })
+        })
+    };
+    mcp_payload(output)
+        .ok()
+        .as_ref()
+        .and_then(named)
+        .or_else(|| named(output))
+}
+
+/// A message's provider id: the first non-blank id field, trimmed.
+fn message_id(message: &Value) -> Option<String> {
+    let object = message.as_object()?;
+    ["id", "message_id", "messageId", "urn", "entity_urn"]
+        .iter()
+        .find_map(|key| {
+            let id = object.get(*key)?.as_str()?.trim();
+            (!id.is_empty()).then(|| id.to_owned())
+        })
+}
+
+/// Reads a transcript whose messages carry an id and a sender. A message is
+/// this seat's only when its `sender` is the seat's own key; a message with
+/// no id, or a blank one, cannot be told apart from an earlier one, so it is
+/// never counted as this seat's.
+fn attributed_observation(
+    messages: &[Value],
+    message_text: &str,
+    self_key: &str,
+) -> Option<LinkedInObservedMessage> {
+    let wanted = normalize_whitespace(message_text);
+    let mut occurrence_count = 0;
+    let mut tail = (false, None);
+    let mut own_ids = Vec::new();
+    for message in messages {
+        let object = message.as_object();
+        let field = |keys: &[&str]| {
+            object.and_then(|object| keys.iter().find_map(|key| object.get(*key)?.as_str()))
+        };
+        let matches = field(&["text", "body", "content", "message"])
+            .is_some_and(|text| normalize_whitespace(text) == wanted);
+        let own_id = if matches && field(&["sender"]) == Some(self_key) {
+            message_id(message)
+        } else {
+            None
+        };
+        own_ids.extend(own_id.clone());
+        tail = (matches, own_id);
+        if matches {
+            occurrence_count += 1;
+        }
+    }
+    (occurrence_count > 0).then(|| LinkedInObservedMessage {
+        message_ref: String::new(),
+        occurrence_count,
+        tail_matches: tail.0,
+        attributed: true,
+        own_tail_id: tail.1,
+        own_ids,
+    })
 }
 
 fn conversation_message_occurrence_count(conversation_text: &str, message_text: &str) -> usize {
