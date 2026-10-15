@@ -13,10 +13,32 @@ fn fixture(
     AuthenticatedOwner,
     AuthenticatedOwner,
 ) {
+    fixture_on(preset, crate::test_util::pinned_store_clock(100))
+}
+
+/// A pending act's window runs on the store clock, so a test that crosses a
+/// deadline opens the vault on a clock it moves.
+fn fixture_on(
+    preset: SharedVaultPreset,
+    store_clock: crate::ports::StoreClock,
+) -> (
+    tempfile::TempDir,
+    Vault,
+    AuthenticatedOwner,
+    AuthenticatedOwner,
+    AuthenticatedOwner,
+) {
     // Membership defaults and act rows are manifest policy: keep the seeded
     // manifest rather than the legacy test opener that removes policy rows.
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), crate::test_util::embedding_test_config()).unwrap();
+    let vault = Vault::open(
+        dir.path(),
+        crate::VaultConfig {
+            store_clock,
+            ..crate::test_util::embedding_test_config()
+        },
+    )
+    .unwrap();
     let mut holders = Vec::new();
     // The first is the personal vault's owner, who shares it.
     let owner = vault.ensure_embedded_owner_actor().unwrap();
@@ -64,8 +86,9 @@ fn fixture(
 
 #[test]
 fn window_notifies_named_holders_refuses_admin_and_holds_until_withdrawn() -> Result<()> {
-    let (dir, vault, owner, other, admin) = fixture(SharedVaultPreset::Team);
-    let act = vault.start_authority_act(&owner, 42, "delete_vault", b"opaque".to_vec(), 100)?;
+    let clock = crate::ports::ManualClock::new(100);
+    let (dir, vault, owner, other, admin) = fixture_on(SharedVaultPreset::Team, clock.bundle());
+    let act = vault.start_authority_act(&owner, 42, "delete_vault", b"opaque".to_vec())?;
     assert_eq!(act.deadline, 100 + WEEK);
     assert_eq!(act.payload, b"opaque");
     assert_eq!(vault.pending_act_started_events(&owner, 42, 101)?.len(), 1);
@@ -75,14 +98,10 @@ fn window_notifies_named_holders_refuses_admin_and_holds_until_withdrawn() -> Re
             .pending_act_started_events(&admin, 42, 101)?
             .is_empty()
     );
+    clock.set(101);
     assert!(
         vault
-            .change_authority_objection(&admin, &act.id, true, 101)
-            .is_err()
-    );
-    assert!(
-        vault
-            .change_authority_objection(&other, &act.id, true, 100 + WEEK)
+            .change_authority_objection(&admin, &act.id, true)
             .is_err()
     );
     assert!(
@@ -90,11 +109,17 @@ fn window_notifies_named_holders_refuses_admin_and_holds_until_withdrawn() -> Re
             .advance_authority_act(&act.id, 100 + WEEK - 1)?
             .completed
     );
-    let held = vault.change_authority_objection(&other, &act.id, true, 101)?;
+    let held = vault.change_authority_objection(&other, &act.id, true)?;
     assert!(!held.completed);
     assert!(!vault.advance_authority_act(&act.id, 100 + WEEK)?.completed);
     drop(vault);
-    let reopened = Vault::open(dir.path(), crate::test_util::embedding_test_config())?;
+    let reopened = Vault::open(
+        dir.path(),
+        crate::VaultConfig {
+            store_clock: clock.bundle(),
+            ..crate::test_util::embedding_test_config()
+        },
+    )?;
     // A proof binds to the open it was minted on: the reopened vault takes a
     // fresh one.
     let other = reopened.authenticate_owner(
@@ -103,14 +128,22 @@ fn window_notifies_named_holders_refuses_admin_and_holds_until_withdrawn() -> Re
         true,
         GateDecisionId::now(),
     )?;
+    clock.set(100 + WEEK);
+    assert!(
+        reopened
+            .change_authority_objection(&other, &act.id, true)
+            .is_err(),
+        "an objection at the deadline is late"
+    );
     assert!(
         !reopened
             .advance_authority_act(&act.id, 100 + WEEK + 1)?
             .completed
     );
+    clock.set(100 + WEEK + 2);
     assert!(
         reopened
-            .change_authority_objection(&other, &act.id, false, 100 + WEEK + 2)?
+            .change_authority_objection(&other, &act.id, false)?
             .completed
     );
     assert!(reopened.pending_authority_act(&act.id)?.unwrap().completed);
@@ -119,12 +152,12 @@ fn window_notifies_named_holders_refuses_admin_and_holds_until_withdrawn() -> Re
 
 #[test]
 fn no_objection_completes_and_row_changes_behavior_without_code_change() -> Result<()> {
-    let (_dir, vault, owner, other, admin) = fixture(SharedVaultPreset::Org);
-    let self_erasure =
-        vault.start_authority_act_with_setting(&owner, 42, "erase", vec![], None, 99)?;
+    let clock = crate::ports::ManualClock::new(100);
+    let (_dir, vault, owner, other, admin) = fixture_on(SharedVaultPreset::Org, clock.bundle());
+    let self_erasure = vault.start_authority_act_with_setting(&owner, 42, "erase", vec![], None)?;
     assert!(self_erasure.completed);
     assert_eq!(vault.shared_act_policy("erase")?.unwrap().wait_secs, WEEK);
-    let old = vault.start_authority_act(&owner, 42, "erase", vec![], 100)?;
+    let old = vault.start_authority_act(&owner, 42, "erase", vec![])?;
     assert!(
         !vault
             .advance_authority_act(&old.id, 100 + WEEK - 1)?
@@ -154,7 +187,8 @@ fn no_objection_completes_and_row_changes_behavior_without_code_change() -> Resu
         }),
         101,
     )?;
-    let updated = vault.start_authority_act(&owner, 42, "erase", vec![], 102)?;
+    clock.set(102);
+    let updated = vault.start_authority_act(&owner, 42, "erase", vec![])?;
     assert_eq!(updated.deadline, 107);
     assert!(
         vault
@@ -162,20 +196,22 @@ fn no_objection_completes_and_row_changes_behavior_without_code_change() -> Resu
             .iter()
             .any(|event| event.act_id == updated.id)
     );
+    clock.set(103);
     assert!(
         vault
-            .change_authority_objection(&other, &updated.id, true, 103)
+            .change_authority_objection(&other, &updated.id, true)
             .is_err()
     );
     assert!(
         !vault
-            .change_authority_objection(&admin, &updated.id, true, 103)?
+            .change_authority_objection(&admin, &updated.id, true)?
             .completed
     );
     assert!(!vault.advance_authority_act(&updated.id, 107)?.completed);
+    clock.set(108);
     assert!(
         vault
-            .change_authority_objection(&admin, &updated.id, false, 108)?
+            .change_authority_objection(&admin, &updated.id, false)?
             .completed
     );
     let off = SharedActPolicy {
@@ -185,7 +221,7 @@ fn no_objection_completes_and_row_changes_behavior_without_code_change() -> Resu
     vault.set_shared_act_policy(&owner, &[&other], 42, "erase", Some(off), 109)?;
     assert!(
         vault
-            .start_authority_act(&owner, 42, "erase", vec![], 110)?
+            .start_authority_act(&owner, 42, "erase", vec![])?
             .completed
     );
     assert!(
@@ -202,8 +238,8 @@ fn merged_owner_cannot_hold_objection_or_block_policy_edit() -> Result<()> {
         IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
     };
     let (_dir, vault, owner, other, _admin) = fixture(SharedVaultPreset::Team);
-    let act = vault.start_authority_act(&owner, 42, "erase", vec![], 100)?;
-    vault.change_authority_objection(&other, &act.id, true, 101)?;
+    let act = vault.start_authority_act(&owner, 42, "erase", vec![])?;
+    vault.change_authority_objection(&other, &act.id, true)?;
     let survivor = EntityId::now();
     vault.put_entity(
         &survivor,
@@ -228,7 +264,7 @@ fn merged_owner_cannot_hold_objection_or_block_policy_edit() -> Result<()> {
     )?;
     assert!(
         vault
-            .change_authority_objection(&other, &act.id, false, 103)
+            .change_authority_objection(&other, &act.id, false)
             .is_err()
     );
     assert!(vault.pending_act_started_events(&other, 42, 103).is_err());
@@ -239,11 +275,12 @@ fn merged_owner_cannot_hold_objection_or_block_policy_edit() -> Result<()> {
 
 #[test]
 fn row_controls_non_owner_starter_own_objection_and_budgets() -> Result<()> {
-    let (_dir, vault, owner, other, admin) = fixture(SharedVaultPreset::Team);
+    let clock = crate::ports::ManualClock::new(100);
+    let (_dir, vault, owner, other, admin) = fixture_on(SharedVaultPreset::Team, clock.bundle());
     let base = vault.shared_act_policy("erase")?.unwrap();
     assert!(
         vault
-            .start_authority_act(&admin, 42, "erase", vec![], 100)
+            .start_authority_act(&admin, 42, "erase", vec![])
             .is_err()
     );
     let mut row = base;
@@ -253,24 +290,27 @@ fn row_controls_non_owner_starter_own_objection_and_budgets() -> Result<()> {
     row.max_payload_bytes = 3;
     row.objector_roles = vec![Role::Admin, Role::Owner];
     vault.set_shared_act_policy(&owner, &[&other], 42, "small_act", Some(row), 100)?;
+    clock.set(101);
     assert!(
         vault
-            .start_authority_act(&admin, 42, "small_act", vec![1, 2, 3, 4], 101)
+            .start_authority_act(&admin, 42, "small_act", vec![1, 2, 3, 4])
             .is_err()
     );
-    let act = vault.start_authority_act(&admin, 42, "small_act", vec![1, 2, 3], 101)?;
+    let act = vault.start_authority_act(&admin, 42, "small_act", vec![1, 2, 3])?;
+    clock.set(102);
     assert!(
         vault
-            .change_authority_objection(&admin, &act.id, true, 102)?
+            .change_authority_objection(&admin, &act.id, true)?
             .objections
             .contains(&admin.actor().to_hex())
     );
     assert!(!vault.advance_authority_act(&act.id, 106)?.completed);
     let mut wider = vault.shared_act_policy("small_act")?.unwrap();
     wider.wait_secs = 0;
+    clock.set(108);
     assert!(
         vault
-            .start_authority_act_with_holder_setting(&admin, 42, "small_act", vec![], wider, 108)
+            .start_authority_act_with_holder_setting(&admin, 42, "small_act", vec![], wider)
             .is_err()
     );
     let mut narrow = vault.shared_act_policy("small_act")?.unwrap();
@@ -283,17 +323,17 @@ fn row_controls_non_owner_starter_own_objection_and_budgets() -> Result<()> {
         "small_act",
         vec![1, 2],
         narrow,
-        108,
     )?;
     assert_eq!(restricted.deadline, 118);
+    clock.set(109);
     assert!(
         vault
-            .change_authority_objection(&admin, &restricted.id, true, 109)
+            .change_authority_objection(&admin, &restricted.id, true)
             .is_err()
     );
     assert!(
         vault
-            .change_authority_objection(&admin, &act.id, false, 107)?
+            .change_authority_objection(&admin, &act.id, false)?
             .completed
     );
     Ok(())
@@ -326,7 +366,7 @@ fn read_only_owner_cannot_start_or_edit_policy() -> Result<()> {
     }
     assert!(
         vault
-            .start_authority_act(&owner, 42, "erase", vec![], 100)
+            .start_authority_act(&owner, 42, "erase", vec![])
             .is_err()
     );
     assert!(
@@ -336,7 +376,7 @@ fn read_only_owner_cannot_start_or_edit_policy() -> Result<()> {
     );
     assert!(
         vault
-            .start_authority_act(&other, 42, "erase", vec![], 102)
+            .start_authority_act(&other, 42, "erase", vec![])
             .is_ok()
     );
     Ok(())
@@ -501,8 +541,8 @@ fn suspended_or_discarded_pact_grant_is_not_a_holder() -> Result<()> {
         // The other binding sorts first, so it wins every equal-digest tie.
         let rival = crate::test_util::entity(0x01);
         assert!(rival < grant);
-        let act = vault.start_authority_act(&owner, 42, "erase", vec![], 100)?;
-        vault.change_authority_objection(&other, &act.id, true, 101)?;
+        let act = vault.start_authority_act(&owner, 42, "erase", vec![])?;
+        vault.change_authority_objection(&other, &act.id, true)?;
 
         let log = PactLog::new(0x61);
         let root = log.root();
@@ -543,7 +583,7 @@ fn suspended_or_discarded_pact_grant_is_not_a_holder() -> Result<()> {
         // Start and events refuse it.
         assert!(
             vault
-                .start_authority_act(&other, 42, "erase", vec![], 102)
+                .start_authority_act(&other, 42, "erase", vec![])
                 .is_err()
         );
         assert!(vault.pending_act_started_events(&other, 42, 102).is_err());
@@ -561,7 +601,7 @@ fn suspended_or_discarded_pact_grant_is_not_a_holder() -> Result<()> {
 #[test]
 fn conflicted_vault_root_fails_closed() -> Result<()> {
     let (_dir, vault, owner, other, _admin) = fixture(SharedVaultPreset::Team);
-    let act = vault.start_authority_act(&owner, 42, "erase", vec![], 100)?;
+    let act = vault.start_authority_act(&owner, 42, "erase", vec![])?;
     // No door stores a rival genesis (H72); build the conflicted log here.
     crate::authority::with_authority_doors_open_for_test(|| {
         vault.put_authority_log_entry(&genesis(0x76), TimeRange { start: 1, end: 1 }, 1)?;
@@ -570,7 +610,7 @@ fn conflicted_vault_root_fails_closed() -> Result<()> {
     assert!(vault.authority_fold()?.vault_root_is_conflicted());
     assert!(
         vault
-            .start_authority_act(&owner, 42, "erase", vec![], 101)
+            .start_authority_act(&owner, 42, "erase", vec![])
             .is_err()
     );
     assert!(
@@ -581,7 +621,7 @@ fn conflicted_vault_root_fails_closed() -> Result<()> {
     assert!(vault.pending_act_started_events(&owner, 42, 101).is_err());
     assert!(
         vault
-            .change_authority_objection(&other, &act.id, true, 101)
+            .change_authority_objection(&other, &act.id, true)
             .is_err()
     );
     // Silence does not complete an act whose holders cannot be resolved.
@@ -593,8 +633,8 @@ fn conflicted_vault_root_fails_closed() -> Result<()> {
 #[test]
 fn deleted_member_objection_releases_and_is_not_an_approver() -> Result<()> {
     let (_dir, vault, owner, other, _admin) = fixture(SharedVaultPreset::Team);
-    let act = vault.start_authority_act(&owner, 42, "erase", vec![], 100)?;
-    vault.change_authority_objection(&other, &act.id, true, 101)?;
+    let act = vault.start_authority_act(&owner, 42, "erase", vec![])?;
+    vault.change_authority_objection(&other, &act.id, true)?;
     // Purged from the active store, the member no longer passes the auth door.
     assert!(vault.delete_entity_with_options(
         &other.actor(),
@@ -607,7 +647,7 @@ fn deleted_member_objection_releases_and_is_not_an_approver() -> Result<()> {
     );
     assert!(
         vault
-            .change_authority_objection(&other, &act.id, false, 102)
+            .change_authority_objection(&other, &act.id, false)
             .is_err()
     );
     assert!(vault.pending_act_started_events(&other, 42, 102).is_err());
@@ -643,7 +683,7 @@ fn manifest_without_owner_door_does_not_change_wait() -> Result<()> {
                 &body,
             )
             .commit()?;
-        let act = vault.start_authority_act(&owner, 42, "erase", vec![], 100)?;
+        let act = vault.start_authority_act(&owner, 42, "erase", vec![])?;
         assert_eq!(act.deadline, 100 + WEEK);
     }
     // No edit is built on the received bytes.
@@ -714,11 +754,7 @@ fn malformed_act_policy_table_refuses_start() -> Result<()> {
         )?;
         txn.commit()?;
         for act in ["erase", "export"] {
-            assert!(
-                vault
-                    .start_authority_act(&owner, 42, act, vec![], 100)
-                    .is_err()
-            );
+            assert!(vault.start_authority_act(&owner, 42, act, vec![]).is_err());
         }
         assert!(vault.shared_act_policy("erase").is_err());
         assert!(
@@ -768,13 +804,58 @@ fn a_bypass_grant_never_skips_another_owners_objection_window() -> Result<()> {
     assert_eq!(evaluation.decision, ConsentDecision::Auto);
     assert!(evaluation.bypassed_by.is_some());
 
-    let act = vault.start_authority_act(&owner, 42, "delete_vault", Vec::new(), 100)?;
+    let act = vault.start_authority_act(&owner, 42, "delete_vault", Vec::new())?;
     assert_eq!(act.deadline, 100 + WEEK, "the bypass opens no shortcut");
     assert!(!act.completed);
-    vault.change_authority_objection(&other, &act.id, true, 101)?;
+    vault.change_authority_objection(&other, &act.id, true)?;
     assert!(
         !vault.advance_authority_act(&act.id, 100 + WEEK)?.completed,
         "the other Owner's objection still holds the act"
     );
+    Ok(())
+}
+
+/// A pending act's window opens at the store clock: a starter whose own time
+/// sits a week back cannot open it already past its deadline.
+#[test]
+fn a_starter_cannot_open_a_window_already_over() -> Result<()> {
+    let now = 2 * WEEK;
+    let (_dir, vault, owner, other, _admin) = fixture_on(
+        SharedVaultPreset::Team,
+        crate::test_util::pinned_store_clock(now),
+    );
+    let act = vault.start_authority_act(&owner, 42, "erase", vec![])?;
+    assert_eq!((act.started_at, act.deadline), (now, now + WEEK));
+    assert!(!act.completed);
+    // The other Owner is told the same deadline, and their objection holds.
+    assert!(
+        vault
+            .pending_act_started_events(&other, 42, now)?
+            .iter()
+            .any(|event| event.act_id == act.id && event.deadline == now + WEEK)
+    );
+    assert!(
+        !vault
+            .change_authority_objection(&other, &act.id, true)?
+            .completed
+    );
+    assert!(!vault.advance_authority_act(&act.id, now)?.completed);
+    Ok(())
+}
+
+/// The store clock, not the holder, says when the deadline has passed: a
+/// withdrawal inside the window releases nothing.
+#[test]
+fn a_withdrawal_inside_the_window_releases_nothing() -> Result<()> {
+    let now = 2 * WEEK;
+    let (_dir, vault, owner, other, _admin) = fixture_on(
+        SharedVaultPreset::Team,
+        crate::test_util::pinned_store_clock(now),
+    );
+    let act = vault.start_authority_act(&owner, 42, "erase", vec![])?;
+    vault.change_authority_objection(&other, &act.id, true)?;
+    let withdrawn = vault.change_authority_objection(&other, &act.id, false)?;
+    assert!(!withdrawn.completed, "the window is still open");
+    assert!(!vault.pending_authority_act(&act.id)?.unwrap().completed);
     Ok(())
 }
