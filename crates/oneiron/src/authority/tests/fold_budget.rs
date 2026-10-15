@@ -139,6 +139,56 @@ fn a_signers_full_bound_still_folds() {
     assert_eq!(fold.valid_entries.len(), MAX_AUTHORITY_ROWS_PER_SIGNER);
 }
 
+/// Bug repro (rule 5): the owner's own rows in one chain, under the row
+/// bound but past the ancestor-pair bound, made the fold refuse the log, so
+/// the owner could neither sign a next row nor use an owner verb. The fold
+/// holds every row, the owner's verbs work, and the log raises its headroom
+/// check once.
+#[test]
+fn the_owners_one_chain_past_the_ancestor_bound_folds_and_owner_verbs_work() {
+    const BOUND: usize = 16;
+    let host = host();
+    let person = crate::vault::embedded_owner_actor_id().unwrap();
+    let subject = EntityId::from_bytes([0x5A; 16]).unwrap();
+    host.vault
+        .put_entity(
+            &subject,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"subject",
+        )
+        .unwrap();
+    with_rows_per_signer_for_test(BOUND, || {
+        // 3 * BOUND rows in one chain: under the 4 * BOUND row bound, past
+        // the 2 * BOUND^2 ancestor pairs.
+        for n in 0..3 * BOUND {
+            let entry = crate::authority::slip_vault::next_entry(
+                &host.issuer,
+                &host.vault.authority_fold().unwrap(),
+                confirm_op(n),
+                host.vault.now_recorded_at(),
+            )
+            .unwrap_or_else(|err| panic!("the owner's row {n} signs on the fold: {err}"));
+            host.vault
+                .put_authority_log_entry(&entry, TimeRange { start: 1, end: 1 }, 1)
+                .unwrap();
+        }
+        let fold = host.vault.authority_fold().unwrap();
+        assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
+        host.vault
+            .memory(person, crate::EdgeActorClass::Human)
+            .safe_delete(&subject.to_hex(), crate::SafeDeleteReason::UserDelete)
+            .expect("owner verbs work past the ancestor bound");
+        let checks = host.vault.authority_log_checks().unwrap();
+        assert_eq!(
+            checks.iter().map(|check| check.kind).collect::<Vec<_>>(),
+            [AuthorityLogCheck::FOLD_HEADROOM],
+            "{checks:?}"
+        );
+    });
+}
+
 /// Substrate invariant (rule 5): a key no slip issuer vouches for, here an
 /// admin the owner admitted, stores up to the `authority_log_signer_bound`
 /// policy row. Its next row waits with a typed error naming it, nothing is
