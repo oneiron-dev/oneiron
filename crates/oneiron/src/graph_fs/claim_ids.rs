@@ -5,7 +5,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::vault::{EDGE_PAGE_SCAN_ROWS, IdScanPage};
+use crate::vault::IdScanPage;
 
 use super::model::{GRAPH_FS_MAX_PAGE_ENTRIES, GraphFsEntry, GraphFsPage, GraphFsResolver};
 use super::paging::PageBuilder;
@@ -88,11 +88,12 @@ impl GraphFsResolver<'_, '_> {
         Ok(builder.finish(next_cursor).with_read_receipt(receipt))
     }
 
-    /// Up to `fetch` ids `ids_after` names after `after`. Off this device the
-    /// scan pages past every claim a device-local world keeps: such a claim
-    /// takes no place in the run and never fills it, so neither the page nor
-    /// its cursor hints at one (DEC-0005). Either way the run reads a bounded
-    /// number of rows (F13), and a short run resumes where it stopped.
+    /// Up to `fetch` ids `ids_after` names after `after`. On this device the
+    /// run reads a bounded number of rows (F13), and a short run resumes where
+    /// it stopped. Off this device the scan pages past every claim a
+    /// device-local world keeps: such a claim takes no place in the run, never
+    /// fills it and never ends it, so neither the page nor its cursor hints at
+    /// one (DEC-0005).
     fn device_admitted_run(
         &self,
         after: Option<EntityId>,
@@ -104,22 +105,15 @@ impl GraphFsResolver<'_, '_> {
         }
         let mut ids = Vec::new();
         let mut scanned = after;
-        let mut read = 0_usize;
         loop {
             let run = ids_after(scanned.as_ref(), fetch)?;
-            let stopped_short = run.ids.len() < fetch;
-            read = read.saturating_add(run.ids.len());
             scanned = run.resume_after;
             ids.extend(self.scoped_read.vault().off_device_readable(run.ids)?);
-            if scanned.is_none()
-                || stopped_short
-                || ids.len() >= fetch
-                || read >= EDGE_PAGE_SCAN_ROWS
-            {
+            if scanned.is_none() || ids.len() >= fetch {
                 break;
             }
         }
-        if ids.len() > fetch {
+        if ids.len() >= fetch {
             ids.truncate(fetch);
             scanned = ids.last().copied();
         }

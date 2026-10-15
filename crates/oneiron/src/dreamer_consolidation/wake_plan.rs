@@ -228,26 +228,13 @@ impl PreparedWake {
             };
             preparations.insert(*attempt.id.as_bytes(), AttemptPreparation::Ready(prepared));
             if attempt.retry_of.is_some() && effective_scope.is_none() {
-                let peers = match vault.filtered_edge_peers(
+                let peers = vault.filtered_edge_peers(
                     &txn,
                     EdgeDirection::In,
                     &partition.conversation_ref,
                     EdgeKind::ChildOf,
                     Some(ENTITY_TYPE_TURN),
-                ) {
-                    Ok(peers) => peers,
-                    Err(crate::Error::IndexOverflow(_)) => {
-                        preparations.insert(
-                            *attempt.id.as_bytes(),
-                            AttemptPreparation::Refused {
-                                reason: "selection retry graph limit exceeded",
-                                scope_error: false,
-                            },
-                        );
-                        continue;
-                    }
-                    Err(error) => return Err(error),
-                };
+                )?;
                 ids.extend(peers.iter().copied());
                 retries.push((*attempt.id.as_bytes(), partition, turns, watermark, peers));
             }
