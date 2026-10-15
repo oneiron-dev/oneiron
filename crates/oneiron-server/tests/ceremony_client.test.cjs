@@ -31,9 +31,10 @@ async function open(pathname, hash = "") {
   return {requests, history, status};
 }
 
-test("canonical signing path posts its bearer only after scrubbing the URL", async () => {
+test("a signing link's fragment bearer is posted only after scrubbing the URL", async () => {
+  // F37: the capability rides in the fragment, which no request target holds.
   const token = "ab".repeat(32);
-  const {requests, history} = await open(`/sign/${token}`, `#${"cd".repeat(32)}`);
+  const {requests, history} = await open("/sign", `#${token}`);
   assert.deepEqual(history[0], [null, "", "/sign"]);
   assert.equal(requests.length, 1);
   assert.equal(requests[0].path, "/sign/action");
@@ -41,10 +42,10 @@ test("canonical signing path posts its bearer only after scrubbing the URL", asy
   assert.equal(requests[0].options.credentials, "omit");
 });
 
-test("fragment-only and malformed signing paths never submit a bearer", async () => {
+test("path tokens and malformed fragments never submit a bearer", async () => {
   const token = "ab".repeat(32);
-  for (const path of ["/sign", "/sign/invalid"]) {
-    const {requests, history, status} = await open(path, `#${token}`);
+  for (const [path, hash] of [[`/sign/${token}`, ""], ["/sign", ""], ["/sign", "#invalid"], ["/sign", `#${token}0`], ["/sign", `#${token.toUpperCase()}`]]) {
+    const {requests, history, status} = await open(path, hash);
     assert.deepEqual(history[0], [null, "", "/sign"]);
     assert.equal(requests.length, 0);
     assert.match(status.textContent, /unavailable/);

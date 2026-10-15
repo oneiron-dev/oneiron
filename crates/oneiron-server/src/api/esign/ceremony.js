@@ -1,8 +1,9 @@
 "use strict";
-const pathToken = location.pathname.match(/^\/sign\/([0-9a-f]{64})$/);
-const token = pathToken ? pathToken[1] : "";
-// A capability in the public link must not remain in browser history or in
-// referrers after the first document load. Subsequent calls use POST bodies.
+const fragmentToken = location.hash.match(/^#([0-9a-f]{64})$/);
+const token = fragmentToken ? fragmentToken[1] : "";
+// The public link carries its capability in the fragment, which no request
+// target holds, so no server or proxy log sees it (F37). It must not remain
+// in browser history or in referrers either. Subsequent calls use POST bodies.
 history.replaceState(null, "", "/sign");
 const status = document.getElementById("status");
 const fields = document.getElementById("fields");
