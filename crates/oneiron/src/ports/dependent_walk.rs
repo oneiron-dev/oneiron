@@ -522,6 +522,19 @@ pub(crate) fn withdraw_before_rewrite_in_txn(
 }
 
 impl Vault {
+    /// What an erase or sweep left after its commit, resumed on open: the
+    /// gate key retirements it staged and the dependent walks it marked.
+    /// Reads honour a walk that fails here until a later pass finishes it.
+    pub(crate) fn resume_erases_after_commit(&self) {
+        self.finish_gate_decision_retirements_after_commit();
+        if let Err(error) = self.finish_dependent_walks() {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a dependent walk did not finish on open; the next pass resumes it"
+            );
+        }
+    }
+
     /// Finishes every pending dependent walk, one batch per write
     /// transaction. A walk an erase, a purge or a changed source left resumes
     /// here; reads honour it until its last batch.
