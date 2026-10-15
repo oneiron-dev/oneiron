@@ -14,6 +14,8 @@ mod history_cycles_closure;
 #[cfg(feature = "sync")]
 mod history_cycles_guards;
 #[cfg(feature = "sync")]
+mod history_cycles_kept;
+#[cfg(feature = "sync")]
 mod history_cycles_named;
 #[cfg(feature = "sync")]
 mod history_doors;

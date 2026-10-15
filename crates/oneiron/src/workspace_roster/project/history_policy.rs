@@ -68,15 +68,21 @@ pub struct ProjectHistoryOverBudget {
 pub(crate) struct ProjectDependencies {
     /// Root to head, the seal's `next` or the birth first.
     pub(crate) path: Vec<ProjectRevisionHash>,
-    /// The fork contenders whose meet the view holds.
+    /// The fork contenders whose meet the view holds; in a combined record,
+    /// also every other node a world rests on that the component holds valid.
     pub(crate) contenders: Vec<ProjectRevisionHash>,
     /// The effective resolution tips on the path and their prior closures.
     pub(crate) resolutions: Vec<ProjectRevisionHash>,
     pub(crate) seal: Option<ProjectRevisionHash>,
+    /// A combined record's nodes that rest on a state its cycle left
+    /// undefined: each still verifies on its own lineage, whatever its
+    /// parents serve (Astra #1434c F1).
+    pub(crate) undefined: Vec<ProjectRevisionHash>,
 }
 
 impl ProjectDependencies {
-    pub(super) fn all(&self) -> impl Iterator<Item = &ProjectRevisionHash> {
+    /// The nodes checked exactly as the fold verifies them.
+    pub(super) fn checked(&self) -> impl Iterator<Item = &ProjectRevisionHash> {
         self.path
             .iter()
             .chain(&self.contenders)
@@ -203,11 +209,18 @@ pub(super) fn frozen_frontier(
     };
     let narrowed = record.frozen.is_some_and(|freeze| freeze.narrowed);
     let mut verified = record.witness.is_some() && record.effective.is_some();
-    for hash in record.dependencies.all() {
+    for hash in record.dependencies.checked() {
         if !verified {
             break;
         }
         verified = cx.verdict(*hash)? == ProjectVerdict::Visible;
+    }
+    let alone = FoldCx::intrinsic(reader, id, cx.held);
+    for hash in &record.dependencies.undefined {
+        if !verified {
+            break;
+        }
+        verified = alone.verdict(*hash)? == ProjectVerdict::Visible;
     }
     if let (true, true, Some(effective)) = (verified, parents, &record.effective) {
         verified = parent_bounds(reader, id, effective)?.is_ok();

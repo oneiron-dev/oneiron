@@ -23,8 +23,8 @@
 //!   work, every member serves no authority, and the refresh raises the
 //!   owner's question (OF-520).
 use super::fold::{
-    ProjectEffective, ProjectFold, ProjectFrontier, ProjectRank, fold_project, rank_at, reason,
-    unsigned_frontier,
+    ProjectDisposition, ProjectEffective, ProjectFold, ProjectFrontier, ProjectRank, fold_project,
+    rank_at, reason, unsigned_frontier,
 };
 use super::history_policy::{ProjectDependencies, ProjectEvidenceSet, frozen_frontier, policy_in};
 use super::read::{Decided, Facts, ProjectReader, ProjectVerdict, stored_verdict};
@@ -72,8 +72,9 @@ struct Member {
     labels: BTreeMap<Hash, Label>,
     /// The base each board conduit stands on.
     conduits: BTreeMap<Hash, Hash>,
-    /// A frozen or unsigned member's one frontier; a frozen one's parent
-    /// reads are checked again under the served views (`serve`).
+    /// A frozen or unsigned member's one frontier, or one whose seals
+    /// conflict; a frozen one's parent reads are checked again under the
+    /// served views (`serve`).
     fixed: Option<ProjectFrontier>,
 }
 
@@ -192,6 +193,19 @@ impl Solver<'_, '_, '_> {
                 Some(_) => ProjectVerdict::Quarantined(reason::CYCLE),
             };
             member.fixed = Some(unsigned_frontier(id, &facts.record, verdict)?);
+            return Ok(member);
+        }
+        if facts.seals.len() > 1 {
+            // Conflicting owner seals, each tip valid on its own lineage: no
+            // authority, and no state of it reads a parent (Astra #1434c F2).
+            member.fixed = Some(ProjectFrontier {
+                id,
+                disposition: ProjectDisposition::ConflictingSeals {
+                    seals: facts.seals.clone(),
+                },
+                witness: None,
+                effective: None,
+            });
             return Ok(member);
         }
         let mut order: Vec<(usize, Hash)> = Vec::new();

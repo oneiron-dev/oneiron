@@ -433,6 +433,7 @@ pub(crate) fn fold_project(cx: &FoldCx<'_, '_, '_>, stored: &ProjectRecord) -> R
             .collect(),
         resolutions: walk.resolutions.iter().copied().collect(),
         seal: walk.seal,
+        undefined: Vec::new(),
     };
     let witness = anchor_of(held, witness_head).map(|anchor| ProjectWitness {
         head: witness_head,

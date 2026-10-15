@@ -48,9 +48,10 @@ impl ProjectReader<'_, '_> {
             if let Some(saved) = PROJECT_FRONTIER.get(self.store, self.txn, &id)? {
                 // A context of its own: a state the count judged (a seal
                 // the saved record never read) names nothing here (Sol and
-                // Astra #1434 r16 F1).
+                // Astra #1434 r16 F1), nor does an undefined node, checked on
+                // its own lineage.
                 let saved_cx = FoldCx::intrinsic(self, id, &held);
-                for hash in saved.dependencies.all() {
+                for hash in saved.dependencies.checked() {
                     saved_cx.verdict(*hash)?;
                 }
                 for (hash, verdict) in saved_cx.judged().0 {
@@ -68,11 +69,22 @@ impl ProjectReader<'_, '_> {
                 }
             }
         }
-        let sealed = if over_budget { None } else { sealed_tree(&cx)? };
+        // The one choice of the owner's seal tips, on each seal's own
+        // lineage, and the one tip's tree: discovery, the solver and every
+        // fold that reads parents keep to it (Engine, Astra-c).
+        let seals = if over_budget {
+            BTreeSet::new()
+        } else {
+            cx.seal_tips()?
+        };
+        let sealed = sealed_tree(&cx, &seals)?;
         if !over_budget {
-            // Only a state the fold could walk names a parent here: inside the
-            // owner's seal, and a boundary only once a valid signed state
-            // builds on it, as for root selection.
+            // Each state a fold reading parents can judge names its parents
+            // here: under one owner seal, only its tree, which is all such a
+            // fold judges (validity.rs); with conflicting seals, every one,
+            // since the fold judges each seal (Astra #1434c F2). A boundary
+            // does only once a valid signed state builds on it, as for root
+            // selection.
             let visible = |hash: &ProjectRevisionHash| -> Result<bool> {
                 Ok(cx.verdict(*hash)? == ProjectVerdict::Visible)
             };
@@ -114,6 +126,7 @@ impl ProjectReader<'_, '_> {
             intrinsic,
             signers,
             edges,
+            seals,
             sealed,
         })
     }
@@ -200,21 +213,23 @@ impl ProjectReader<'_, '_> {
     }
 }
 
-/// The states the one valid seal keeps: its next and every descendant, and
+/// The states the one seal tip keeps: its next and every descendant, and
 /// the states the seal's own verdict reads (its next's lineage, and each
-/// superseded seal's next and lineage, transitively). No states when seals
-/// conflict.
-fn sealed_tree(cx: &FoldCx<'_, '_, '_>) -> Result<Option<BTreeSet<ProjectRevisionHash>>> {
-    let tips = cx.seal_tips()?;
-    let mut only = tips.iter();
-    let (Some(tip), None) = (only.next(), only.next()) else {
-        return Ok((!tips.is_empty()).then(BTreeSet::new));
+/// superseded seal's next and lineage, transitively). None without a seal
+/// or when seals conflict.
+fn sealed_tree(
+    cx: &FoldCx<'_, '_, '_>,
+    tips: &BTreeSet<ProjectRevisionHash>,
+) -> Result<Option<BTreeSet<ProjectRevisionHash>>> {
+    let only = (tips.len() == 1).then(|| tips.first().copied()).flatten();
+    let Some(tip) = only else {
+        return Ok(None);
     };
     let mut tree = BTreeSet::new();
-    let Some(ProjectRevision::Seal { seal: active, .. }) = cx.row(tip) else {
+    let Some(ProjectRevision::Seal { seal: active, .. }) = cx.row(&tip) else {
         return Ok(Some(tree));
     };
-    let mut seals = vec![*tip];
+    let mut seals = vec![tip];
     let mut read = BTreeSet::new();
     while let Some(at) = seals.pop() {
         let Some(ProjectRevision::Seal { seal, .. }) = cx.row(&at).filter(|_| read.insert(at))

@@ -54,9 +54,6 @@ impl Solver<'_, '_, '_> {
                 frontier: frontier.clone(),
                 ..fold
             });
-            if let Some(fold) = &fold {
-                self.reader.publish_forks(&fold.forks);
-            }
             decided.insert(
                 member.id,
                 Rc::new(Decided {
@@ -98,8 +95,11 @@ impl Solver<'_, '_, '_> {
                 && world.view() == first.view()
         });
         if agree {
+            let path = first.fold.dependencies.path.clone();
+            let dependencies = self.combined(path, &first, &worlds, &verdicts);
             let fold = ProjectFold {
                 verdicts,
+                dependencies,
                 ..first.fold
             };
             return Ok((fold.frontier.clone(), Some(fold)));
@@ -120,26 +120,23 @@ impl Solver<'_, '_, '_> {
         let common = path
             .iter()
             .rposition(|node| walks.iter().all(|walk| walk.contains(node)));
-        let fold = |frontier: ProjectFrontier, path: Vec<Hash>| ProjectFold {
+        let fold = |frontier: ProjectFrontier, dependencies: ProjectDependencies| ProjectFold {
             frontier,
             verdicts: verdicts.clone(),
-            dependencies: ProjectDependencies {
-                path,
-                ..ProjectDependencies::default()
-            },
+            dependencies,
             forks: Vec::new(),
             evidence: first.fold.evidence.clone(),
         };
         let (Some(common), Some(mut effective)) = (common, first.view().clone()) else {
             let frontier = no_authority(ProjectDisposition::unauthorized(reason::CYCLE));
-            return Ok((frontier.clone(), Some(fold(frontier, Vec::new()))));
+            return Ok((frontier.clone(), Some(fold(frontier, Default::default()))));
         };
         for world in &worlds {
             match world.view() {
                 Some(view) => effective.meet_view(view),
                 None => {
                     let frontier = no_authority(ProjectDisposition::unauthorized(reason::CYCLE));
-                    return Ok((frontier.clone(), Some(fold(frontier, Vec::new()))));
+                    return Ok((frontier.clone(), Some(fold(frontier, Default::default()))));
                 }
             }
         }
@@ -153,7 +150,7 @@ impl Solver<'_, '_, '_> {
             anchor_of(&member.facts.held, carrier),
         ) else {
             let frontier = no_authority(ProjectDisposition::unauthorized(reason::TOO_DEEP));
-            return Ok((frontier.clone(), Some(fold(frontier, Vec::new()))));
+            return Ok((frontier.clone(), Some(fold(frontier, Default::default()))));
         };
         effective.leader = authority.leader.clone();
         effective.board = authority.board.clone();
@@ -180,10 +177,55 @@ impl Solver<'_, '_, '_> {
             }),
             effective: Some(effective),
         };
-        Ok((
-            frontier.clone(),
-            Some(fold(frontier, path[..=common].to_vec())),
-        ))
+        let dependencies = self.combined(path[..=common].to_vec(), &first, &worlds, &verdicts);
+        Ok((frontier.clone(), Some(fold(frontier, dependencies))))
+    }
+
+    /// Every world's dependencies on one record (Astra #1434c F1): `path`,
+    /// and beside it each node any world's walk, settlement or seal rests
+    /// on, so freezing drops none. A node the component holds valid is
+    /// checked as the fold verifies it; one resting on a state the cycle
+    /// left undefined, on its own lineage.
+    fn combined(
+        &self,
+        path: Vec<Hash>,
+        first: &World,
+        others: &[World],
+        verdicts: &BTreeMap<Hash, ProjectVerdict>,
+    ) -> ProjectDependencies {
+        let worlds: Vec<&World> = std::iter::once(first).chain(others).collect();
+        let seal = first.fold.dependencies.seal;
+        let mut dependencies = ProjectDependencies {
+            path,
+            seal: (worlds.iter())
+                .all(|world| world.fold.dependencies.seal == seal)
+                .then_some(seal)
+                .flatten(),
+            ..ProjectDependencies::default()
+        };
+        let mut listed: BTreeSet<Hash> = dependencies.checked().copied().collect();
+        for world in worlds {
+            let theirs = &world.fold.dependencies;
+            self.charge(theirs.checked().count() as u64);
+            let beside = (theirs.path.iter())
+                .chain(&theirs.contenders)
+                .chain(&theirs.seal)
+                .map(|hash| (hash, false))
+                .chain(theirs.resolutions.iter().map(|hash| (hash, true)));
+            for (hash, resolution) in beside {
+                if !listed.insert(*hash) {
+                    continue;
+                }
+                if verdicts.get(hash) != Some(&ProjectVerdict::Visible) {
+                    dependencies.undefined.push(*hash);
+                } else if resolution {
+                    dependencies.resolutions.push(*hash);
+                } else {
+                    dependencies.contenders.push(*hash);
+                }
+            }
+        }
+        dependencies
     }
 
     /// Main's step 4 over the component's served views: each parent serves

@@ -30,7 +30,7 @@ pub(super) fn lit(vault: &Vault, id: EntityId) -> Result<bool> {
 
 /// The owner seals `id` over `over` with `authority`: the seal envelope's
 /// hash.
-fn seal(
+pub(super) fn seal(
     vault: &Vault,
     id: EntityId,
     authority: ProjectAuthority,

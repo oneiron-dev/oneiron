@@ -206,6 +206,9 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         let Some(row) = self.row(&hash) else {
             return Ok(ProjectVerdict::Pending(reason::NOT_HELD));
         };
+        if self.sealed_off(hash, row)? {
+            return Ok(ProjectVerdict::Quarantined(reason::SEALED_OFF));
+        }
         match self.origin(hash)? {
             RevisionOrigin::Authenticated => {}
             RevisionOrigin::AwaitingParent => {
@@ -227,6 +230,18 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             ProjectRevision::Resolution { resolution, .. } => self.resolution(hash, resolution),
             ProjectRevision::Seal { seal, .. } => self.seal(hash, seal),
         }
+    }
+
+    /// Whether a fold reading parents finds `hash` outside the one owner
+    /// seal's tree: no state there, as for the solver, so no parent of it is
+    /// read and component discovery names none (Astra #1434c F2).
+    fn sealed_off(&self, hash: ProjectRevisionHash, row: &ProjectRevision) -> Result<bool> {
+        if self.parents != Parents::Read || row.authority().is_none() {
+            return Ok(false);
+        }
+        let facts = self.reader.facts(self.id)?;
+        let tree = facts.as_ref().and_then(|facts| facts.sealed.as_ref());
+        Ok(tree.is_some_and(|tree| !tree.contains(&hash)))
     }
 
     /// Main's unsigned rule, without the stripped-proof marker: that marker

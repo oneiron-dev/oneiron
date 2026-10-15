@@ -104,8 +104,10 @@ pub(super) struct Facts {
     pub(super) signers: BTreeMap<ProjectRevisionHash, String>,
     /// Every parent project whose view can decide this one's.
     pub(super) edges: BTreeSet<EntityId>,
-    /// The states the owner's seal keeps (its next's lineage, the next and
-    /// every descendant); `None` without a seal, empty when seals conflict.
+    /// The owner's seal tips, each valid on its own lineage.
+    pub(super) seals: BTreeSet<ProjectRevisionHash>,
+    /// The states the one seal tip keeps (its next's lineage, the next and
+    /// every descendant); `None` without a seal or when seals conflict.
     pub(super) sealed: Option<BTreeSet<ProjectRevisionHash>>,
 }
 
@@ -120,6 +122,36 @@ pub(crate) struct Decided {
     pub(super) labels: Option<BTreeMap<ProjectRevisionHash, ProjectVerdict>>,
     /// Where each board conduit hangs once its prior has fallen.
     pub(super) rehomed: BTreeMap<ProjectRevisionHash, Vec<ProjectRevisionHash>>,
+}
+
+/// A decision that read an open project: no authority, and none of the
+/// verdicts it listed valid. Within budget its fold is what a refresh
+/// persists; past the budget the saved record stays.
+fn read_open(id: EntityId, own: &Decided) -> Rc<Decided> {
+    let frontier = ProjectFrontier {
+        id,
+        disposition: super::fold::ProjectDisposition::unauthorized(reason::CYCLE),
+        witness: None,
+        effective: None,
+    };
+    let fold = own.fold.as_ref().map(|fold| ProjectFold {
+        frontier: frontier.clone(),
+        verdicts: (fold.verdicts.iter())
+            .map(|(hash, verdict)| match verdict {
+                ProjectVerdict::Visible => (*hash, ProjectVerdict::Quarantined(reason::CYCLE)),
+                verdict => (*hash, *verdict),
+            })
+            .collect(),
+        dependencies: Default::default(),
+        forks: Vec::new(),
+        evidence: fold.evidence.clone(),
+    });
+    Rc::new(Decided {
+        frontier,
+        fold,
+        labels: None,
+        rehomed: BTreeMap::new(),
+    })
 }
 
 /// A live write's trial: its row and chain, held beside the snapshot's.
@@ -281,12 +313,20 @@ impl<'a, 't> ProjectReader<'a, 't> {
         for member in members.iter() {
             self.open.borrow_mut().remove(member);
         }
-        let mut decided = decided?;
+        let decided = decided?;
+        if self.cycle_hits.get() != hits {
+            // It read a project this read still had open, which answered
+            // without its component: no authority, and nothing of it is
+            // memoized, published or persisted (Astra #1434c F2). A later
+            // read decides again.
+            return Ok(decided.get(&id).map(|own| read_open(id, own)));
+        }
         let own = decided.get(&id).cloned();
-        if self.cycle_hits.get() == hits {
-            for (member, decision) in std::mem::take(&mut decided) {
-                self.decided.borrow_mut().insert(member, Some(decision));
+        for (member, decision) in decided {
+            if let Some(fold) = &decision.fold {
+                self.publish_forks(&fold.forks);
             }
+            self.decided.borrow_mut().insert(member, Some(decision));
         }
         Ok(own)
     }
@@ -305,7 +345,6 @@ impl<'a, 't> ProjectReader<'a, 't> {
             }));
         }
         let fold = fold_project(&cx, &facts.record)?;
-        self.publish_forks(&fold.forks);
         Ok(Rc::new(Decided {
             frontier: fold.frontier.clone(),
             fold: Some(fold),
