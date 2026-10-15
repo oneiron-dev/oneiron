@@ -9,6 +9,7 @@ use crate::outbound_intent_ledger::IntentId;
 use crate::receipt::{ReceiptKind, ReceiptRecord};
 use crate::registry::ENTITY_TYPE_TASK_LIST;
 use crate::store::Store;
+use heed::RwTxn;
 
 /// The row each scan is lowered to; every fixture reads one row past it.
 const ROW: u64 = 2;
