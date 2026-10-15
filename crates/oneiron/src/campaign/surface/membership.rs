@@ -55,9 +55,11 @@ pub struct MembershipRow {
 /// One page of membership rows.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MembershipPage {
-    /// Rows in stable cursor order.
+    /// Rows in stable cursor order: the order of their head claims' ids.
     pub rows: Vec<MembershipRow>,
-    /// Cursor for the next page; `None` when the page is the last one.
+    /// Cursor for the next page; `None` when the page is the last one. A
+    /// page reads a bounded run of claims, so it may hold fewer rows than
+    /// asked for, or none, and still carry a cursor.
     pub next_cursor: Option<String>,
 }
 
@@ -102,81 +104,57 @@ enum MembershipOwner {
     SavedQuery,
 }
 
-/// One `(entity, query, campaign)` membership head, in cursor order.
+/// One `(entity, query, campaign)` membership head.
 struct MembershipHead {
     entity_ref: EntityId,
     query_ref: EntityId,
     campaign_ref: EntityId,
 }
 
-impl MembershipHead {
-    /// The opaque cursor token for this head.
-    ///
-    /// The full triple, not just `entity_ref`: one entity can hold heads in
-    /// several campaigns derived from one query, so an entity-only cursor could
-    /// skip or repeat a row at a page boundary.
-    fn cursor(&self) -> String {
-        format!(
-            "{}{}{}",
-            self.entity_ref.to_hex(),
-            self.query_ref.to_hex(),
-            self.campaign_ref.to_hex()
-        )
-    }
-}
+/// CLAIM rows one membership page reads at most, heads or not: a page's work
+/// is bounded by the claims it reads, never by the rows it returns (F13).
+const MEMBERSHIP_PAGE_SCAN_ROWS: usize = 4_096;
 
 fn membership_page(
     vault: &Vault,
     req: &MembershipReadRequest,
     owner: MembershipOwner,
 ) -> Result<MembershipPage> {
-    let limit = effective_limit(req.limit);
-    if let Some(cursor) = req.cursor.as_deref() {
-        validate_cursor(cursor)?;
-    }
-    let mut heads = membership_heads(vault, req.owner_ref, owner)?;
-    // Sorted on the same triple the cursor encodes, so "everything after the
-    // cursor" is a total order and a page boundary is stable across calls.
-    heads.sort_unstable_by_key(|head| {
-        (
-            *head.entity_ref.as_bytes(),
-            *head.query_ref.as_bytes(),
-            *head.campaign_ref.as_bytes(),
-        )
-    });
-
+    let limit = effective_limit(req.limit) as usize;
+    let after = req.cursor.as_deref().map(parse_cursor).transpose()?;
+    let claim_ids = vault.entities_by_type_page(
+        ENTITY_TYPE_CLAIM,
+        after.as_ref(),
+        MEMBERSHIP_PAGE_SCAN_ROWS,
+    )?;
     let mut rows = Vec::new();
-    let mut last_token = None;
-    let mut has_more = false;
-    for head in heads {
-        let token = head.cursor();
-        if req
-            .cursor
-            .as_deref()
-            .is_some_and(|cursor| token.as_str() <= cursor)
-        {
-            continue;
-        }
-        if rows.len() as u32 >= limit {
-            has_more = true;
+    let mut last_read = None;
+    let mut filled = false;
+    for claim_id in &claim_ids {
+        if rows.len() >= limit {
+            filled = true;
             break;
         }
-        let events = membership_events(vault, head.query_ref, head.entity_ref)?;
-        if let Some(row) = fold_membership_events(&head, &events, req.at_epoch) {
-            rows.push(row);
+        if let Some(head) = membership_head(vault, claim_id, req.owner_ref, owner)? {
+            let events = membership_events(vault, head.query_ref, head.entity_ref)?;
+            if let Some(row) = fold_membership_events(&head, &events, req.at_epoch) {
+                rows.push(row);
+            }
         }
-        // Advanced for every head the loop CONSUMED, not only for the ones that
-        // produced a row: a head whose history folds to nothing is still done,
-        // and re-offering it on the next page would stall a caller that pages
-        // through a cohort of them.
-        last_token = Some(token);
+        // Advanced for every claim the page READ, not only for the heads that
+        // produced a row: a claim that is no head, or a head whose history
+        // folds to nothing, is still done, and re-offering it would stall a
+        // caller that pages through a run of them.
+        last_read = Some(*claim_id);
     }
-    // A cursor is emitted only when an unvisited head remains. A page that
-    // exhausted the scan reports `None`, so "keep paging while next_cursor is
-    // Some" terminates instead of looping on an empty tail.
+    // A cursor is emitted while unread claims may remain: the page filled, or
+    // it read its whole run of claims. A page that ran out of claims reports
+    // `None`, so "keep paging while next_cursor is Some" terminates; a page
+    // may return no row and still carry a cursor.
+    let more = filled || claim_ids.len() >= MEMBERSHIP_PAGE_SCAN_ROWS;
     Ok(MembershipPage {
         rows,
-        next_cursor: has_more.then_some(last_token).flatten(),
+        next_cursor: more.then(|| last_read.map(|id| id.to_hex())).flatten(),
     })
 }
 
@@ -190,63 +168,54 @@ const fn effective_limit(requested: u32) -> u32 {
     }
 }
 
-/// A cursor is exactly three hex entity ids. Rejecting a malformed one is the
-/// difference between "you asked for a page that does not exist" and silently
-/// returning page one under a caller that believes it is paging.
-fn validate_cursor(cursor: &str) -> Result<()> {
-    const CURSOR_LEN: usize = 96;
-    if cursor.len() != CURSOR_LEN || !cursor.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(Error::InvalidKey);
-    }
-    Ok(())
+/// A cursor is exactly one hex claim id, the last claim a page read.
+/// Rejecting a malformed one is the difference between "you asked for a page
+/// that does not exist" and silently returning page one under a caller that
+/// believes it is paging.
+fn parse_cursor(cursor: &str) -> Result<EntityId> {
+    EntityId::from_hex(cursor).map_err(|_| Error::InvalidKey)
 }
 
-/// Every live `campaign.member` head matching `owner_ref` on the chosen axis.
+/// The live `campaign.member` head `claim_id` holds, when it matches
+/// `owner_ref` on the chosen axis.
 ///
 /// CA-01 owns the head, and its value carries both the campaign it is scoped to
-/// and the query that derived it, so one predicate scan answers both directions.
+/// and the query that derived it, so one claim read answers both directions.
 /// The CRM pack registers no membership index of its own — `registry.rs` is a
-/// hard non-claim for this lane — so this walks the CLAIM type index the way
-/// `/api/core/discover` walks it. Output is bounded by the page limit; the scan
-/// is not, and an index is the honest follow-up if cohorts get large.
-fn membership_heads(
+/// hard non-claim for this lane — so pages walk the CLAIM type index in id
+/// order, a bounded run of claims at a time.
+fn membership_head(
     vault: &Vault,
+    claim_id: &EntityId,
     owner_ref: EntityId,
     owner: MembershipOwner,
-) -> Result<Vec<MembershipHead>> {
-    let mut heads = Vec::new();
-    for claim_id in vault.entities_by_type(ENTITY_TYPE_CLAIM)? {
-        let Some(body) = vault.get_claim(&claim_id)? else {
-            continue;
-        };
-        if body.predicate != PREDICATE_CAMPAIGN_MEMBER
-            || body.lifecycle != ClaimLifecycleStatus::Active
-        {
-            continue;
-        }
-        let ClaimSubject::Entity(entity_ref) = body.subject else {
-            continue;
-        };
-        let value = decode_campaign_member_value(&body.value)?;
-        // A head with no derivation was not written by CA-03's consequence
-        // writer, so there is no `(query, entity)` history to fold and no
-        // honest bitemporal row to emit.
-        let Some(derivation) = value.derivation else {
-            continue;
-        };
-        let matches = match owner {
-            MembershipOwner::Campaign => value.campaign == owner_ref,
-            MembershipOwner::SavedQuery => derivation.source_query == owner_ref,
-        };
-        if matches {
-            heads.push(MembershipHead {
-                entity_ref,
-                query_ref: derivation.source_query,
-                campaign_ref: value.campaign,
-            });
-        }
+) -> Result<Option<MembershipHead>> {
+    let Some(body) = vault.get_claim(claim_id)? else {
+        return Ok(None);
+    };
+    if body.predicate != PREDICATE_CAMPAIGN_MEMBER || body.lifecycle != ClaimLifecycleStatus::Active
+    {
+        return Ok(None);
     }
-    Ok(heads)
+    let ClaimSubject::Entity(entity_ref) = body.subject else {
+        return Ok(None);
+    };
+    let value = decode_campaign_member_value(&body.value)?;
+    // A head with no derivation was not written by CA-03's consequence
+    // writer, so there is no `(query, entity)` history to fold and no
+    // honest bitemporal row to emit.
+    let Some(derivation) = value.derivation else {
+        return Ok(None);
+    };
+    let matches = match owner {
+        MembershipOwner::Campaign => value.campaign == owner_ref,
+        MembershipOwner::SavedQuery => derivation.source_query == owner_ref,
+    };
+    Ok(matches.then_some(MembershipHead {
+        entity_ref,
+        query_ref: derivation.source_query,
+        campaign_ref: value.campaign,
+    }))
 }
 
 /// Folds one head's history into a single row.
