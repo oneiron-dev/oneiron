@@ -5411,7 +5411,7 @@ fn a_deletion_records_the_worlds_it_withdrew_an_epoch_summary_for() -> crate::Re
     ships(true)?;
 
     // A restore over this vault brings the summary back with them.
-    let backups = tempfile::tempdir()?;
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("image");
     vault.snapshot_checkpoint(&image, 100)?;
     let (restored, _) = Vault::restore_checkpoint_keeping_authority(

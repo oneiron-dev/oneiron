@@ -69,6 +69,30 @@ pub(super) fn canonical_repo_ref_for_root(repo_ref: &RepoRef, repo_root: &Path) 
     })
 }
 
+/// The canonical ref a mutation or proposal row records. It must read back as
+/// itself, so a malformed commit pin is refused before any oplog row names it.
+pub(super) fn admitted_repo_ref(repo_ref: &RepoRef, repo_root: &Path) -> Result<RepoRef> {
+    let canonical = canonical_repo_ref_for_root(repo_ref, repo_root)?;
+    if RepoRef::parse(&canonical.canonical()).ok().as_ref() != Some(&canonical) {
+        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
+            "repo mutation repo_ref must name a lowercase 40-hex commit",
+        )));
+    }
+    Ok(canonical)
+}
+
+/// A file write names the commit it was written against. Under the repo lock
+/// that commit must still be HEAD, so a stale pin is refused, never applied
+/// to a newer HEAD under the old name.
+pub(super) fn require_pinned_head(repo_ref: &RepoRef, head: Option<&str>) -> Result<()> {
+    if head.is_none() || repo_ref.commit_hash() != head {
+        return Err(Error::ConcurrentWrite(
+            "repo HEAD is not the commit the write names",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 pub(super) fn current_head_commit(repo_root: &Path) -> Result<String> {
     let output = run_git(

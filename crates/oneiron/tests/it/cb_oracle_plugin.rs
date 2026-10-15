@@ -355,7 +355,7 @@ mod cb_x {
     #[test]
     fn a_restore_goes_ahead_past_a_plugin_proposal_and_refuses_its_approval() {
         let fixture = PluginFixture::open();
-        let backups = tempfile::tempdir().expect("backups");
+        let backups = oneiron::test_support::restore_tempdir();
         let image = backups.path().join("backup");
         fixture.back_up(&image);
 

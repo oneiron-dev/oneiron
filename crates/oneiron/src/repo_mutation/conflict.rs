@@ -27,6 +27,7 @@ use super::git::{
     validate_commit_message, validate_git_object_hash, validate_git_ref_label,
     validate_relative_repo_path,
 };
+use super::oplog::same_repository;
 use super::queue::{PreparedCommitFile, PreparedConflictResolution};
 use super::support::{now_secs, utf8_trimmed};
 use super::trailer::commit_message_with_provenance_trailer;
@@ -195,7 +196,7 @@ pub(super) fn resolve_repo_conflict_file(
     validate_relative_repo_path(path)?;
     validate_commit_message(message)?;
     let open = require_active_repo_conflict_claim(vault, &open_conflict_claim_id, branch_subject)?;
-    if open.repo_ref != *repo_ref || open.branch != branch_name {
+    if !same_repository(&open.repo_ref, repo_ref) || open.branch != branch_name {
         return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "open conflict claim does not match this repo branch",
         )));
@@ -294,7 +295,7 @@ pub(super) fn finish_repo_conflict_resolution(
         &prepared.open_conflict_claim_id,
         prepared.branch_subject,
     )?;
-    if open.repo_ref != *repo_ref
+    if !same_repository(&open.repo_ref, repo_ref)
         || open.branch != prepared.branch_name
         || !open
             .conflicted_paths

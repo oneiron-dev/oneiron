@@ -133,10 +133,11 @@ zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 libc = "0.2"
 
 # `oneiron import` walks a history folder relative to the folders it has
-# open, never through a link: descriptor-relative opens. The version the
-# workspace already builds.
+# open, never through a link: descriptor-relative opens. A restore holds its
+# staging directory open and checks it is its own (`process` for the euid).
+# The version the workspace already builds.
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1", features = ["fs"] }
+rustix = { version = "1.1", features = ["fs", "process"] }
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 candle-core = { version = "=0.11.0", features = ["metal"] }
