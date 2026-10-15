@@ -124,7 +124,8 @@ fn months(count: u64) -> Vec<(WindowKey, u64)> {
             (WindowKey::from_timestamp(at), at)
         })
         .collect();
-    let distinct: std::collections::BTreeSet<_> = windows.iter().map(|(key, _)| key).collect();
+    let distinct: std::collections::BTreeSet<_> =
+        windows.iter().map(|(key, _)| key.as_str()).collect();
     assert_eq!(distinct.len(), windows.len(), "fixture: one key per month");
     windows
 }
