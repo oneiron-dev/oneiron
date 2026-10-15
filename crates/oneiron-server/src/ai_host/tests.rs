@@ -687,41 +687,18 @@ async fn a_step_rung_its_line_cannot_cover_is_denied_and_never_sent() {
     );
 }
 
-/// Runs the saved one-step workflow `workflow` in `world`, with `briefing`,
-/// until it stops.
-async fn step_in(
-    vault: &Arc<Vault>,
-    workflow: EntityId,
-    (world, briefing): (EntityId, Option<&str>),
-    host: &AiHost,
-) {
-    use oneiron::agent_dispatch::{
-        AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
-    };
+/// Runs the saved one-step workflow `workflow` once more, until it stops.
+async fn step_once(vault: &Arc<Vault>, workflow: EntityId, key: &str, host: &AiHost) {
+    use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, DispatchAgent};
     let dispatcher = AgentDispatcher::new(vault);
-    let spawn = AgentSpawnContext {
-        scope: Some(oneiron::llm::Scope {
-            world: Some(world),
-            ..oneiron::llm::Scope::default()
-        }),
-        context_spec: briefing.map(|text| oneiron::context_projection::ContextSpec {
-            briefing: Some(text.to_owned()),
-            ..oneiron::context_projection::ContextSpec::default()
-        }),
-        ..AgentSpawnContext::default()
-    };
-    let key = format!("world-step-{}-{}", world.to_hex(), briefing.is_some());
     dispatcher
-        .dispatch_with_context(
-            DispatchAgent {
-                target: AgentDispatchTarget::Workflow(workflow),
-                parent_attempt: None,
-                dedupe_key: Some(key.clone()),
-                run_id: Some(key),
-                now: 10,
-            },
-            spawn,
-        )
+        .dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Workflow(workflow),
+            parent_attempt: None,
+            dedupe_key: Some(key.to_owned()),
+            run_id: Some(key.to_owned()),
+            now: 10,
+        })
         .unwrap();
     assert!(
         eventually(Duration::from_secs(20), || dispatcher
@@ -733,15 +710,13 @@ async fn step_in(
     );
 }
 
-/// Engine ruling 2026-10-15: a workflow step's call carries the world it was
-/// dispatched in and follows that world's setting. A step in a world kept
-/// on this machine never reaches a cloud fallback (each hold receipted); a
-/// step in a world that may leave falls back to it, while that other world
-/// stays here. Review repro (Astra R2 P1): a briefing is its dispatcher's
-/// text, which the world does not vouch for, so a briefed step names no
-/// world and stays on the device while that other world does.
+/// Engine ruling 2026-10-15 (world privacy, "Models"): a workflow step names
+/// no world, since nothing proves which worlds its definition, briefing and
+/// earlier outputs came from (Astra R3). With no world kept on the device
+/// its call falls back to the cloud as before; once one is, the step never
+/// reaches a cloud fallback, and each held try is receipted.
 #[tokio::test]
-async fn a_workflow_step_follows_its_worlds_setting_for_a_cloud_fallback() {
+async fn a_workflow_step_stays_on_the_device_while_any_world_does() {
     use oneiron::llm::run_admission::{MemoryReceipts, RunDenied, RunEvent};
     let device = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::Status(500))).await;
     let cloud = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::text("word"))).await;
@@ -763,29 +738,6 @@ retry_backoff_secs = 0
         device.base_url, cloud.base_url
     ));
     let (_dir, vault) = rooted_vault();
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(
-        super::test_support::TEST_SECRET.as_bytes(),
-    )
-    .unwrap();
-    let world = |keep: bool| {
-        let world = EntityId::now();
-        vault
-            .put_entity(
-                &world,
-                oneiron::registry::ENTITY_TYPE_WORLD,
-                TimeRange { start: 1, end: 1 },
-                1,
-                b"world",
-            )
-            .unwrap();
-        if keep {
-            vault
-                .keep_world_on_this_machine_under_for_test(&issuer, world, true)
-                .unwrap();
-        }
-        world
-    };
-    let (private, portable) = (world(true), world(false));
     let only = saved_agent(&vault, "worldly", "Say one word.");
     let workflow = EntityId::now();
     vault
@@ -798,15 +750,31 @@ retry_backoff_secs = 0
     let receipts = Arc::new(MemoryReceipts::default());
     let host = AiHost::start_receipted(vault.clone(), Some(&config), true, receipts.clone()).await;
 
-    step_in(&vault, workflow, (private, None), &host).await;
-    assert!(
-        !device.seen().is_empty(),
-        "the step was tried on the device"
-    );
-    assert!(
-        cloud.seen().is_empty(),
-        "the private world's step stayed here"
-    );
+    step_once(&vault, workflow, "no-world-kept", &host).await;
+    assert_eq!(cloud.seen().len(), 1, "the step fell back to the cloud");
+
+    let world = EntityId::now();
+    vault
+        .put_entity(
+            &world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .unwrap();
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(
+        super::test_support::TEST_SECRET.as_bytes(),
+    )
+    .unwrap();
+    vault
+        .keep_world_on_this_machine_under_for_test(&issuer, world, true)
+        .unwrap();
+    let tried = device.seen().len();
+    step_once(&vault, workflow, "a-world-kept", &host).await;
+    let tries = device.seen().len() - tried;
+    assert!(tries > 0, "the step was tried on the device");
+    assert_eq!(cloud.seen().len(), 1, "no held try reached the cloud");
     let held = receipts
         .rows()
         .iter()
@@ -820,11 +788,6 @@ retry_backoff_secs = 0
             )
         })
         .count();
-    assert_eq!(held, device.seen().len(), "each held try is receipted");
-
-    step_in(&vault, workflow, (portable, None), &host).await;
-    assert_eq!(cloud.seen().len(), 1, "the portable world's step fell back");
-    step_in(&vault, workflow, (portable, Some("a note")), &host).await;
-    assert_eq!(cloud.seen().len(), 1, "the briefed step stayed here");
+    assert_eq!(held, tries, "each held try is receipted");
     host.shutdown().await;
 }

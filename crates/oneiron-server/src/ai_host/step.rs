@@ -90,11 +90,7 @@ impl StepRunner {
         {
             messages.push(message(LlmMessageRole::System, instructions.clone()));
         }
-        // A briefing is text the step's dispatcher wrote, from whatever it
-        // read: the world the step was dispatched in proves nothing about it.
-        let briefing = context.briefing.filter(|text| !text.trim().is_empty());
-        let briefed = briefing.is_some();
-        if let Some(briefing) = briefing {
+        if let Some(briefing) = context.briefing.filter(|text| !text.trim().is_empty()) {
             messages.push(message(LlmMessageRole::User, briefing));
         }
         for earlier in &context.workflow_output_refs {
@@ -118,20 +114,12 @@ impl StepRunner {
             model: seat.model.clone(),
             envelope: CallEnvelope {
                 seat_effort: None,
-                // The world the step was dispatched in, which every step of
-                // its workflow shares with its briefing: a fallback goes only
-                // where that world's settings let it. A step dispatched in
-                // none, or briefed, names none, so it is held on the device
-                // while any world stays on it.
-                scope: oneiron::llm::Scope {
-                    world: step
-                        .input
-                        .scope
-                        .as_ref()
-                        .and_then(|scope| scope.world)
-                        .filter(|_| !briefed),
-                    ..oneiron::llm::Scope::default()
-                },
+                // No world: the world a step was dispatched in does not vouch
+                // for its text (Astra R3). Its definition, its briefing and
+                // earlier steps' outputs may come from any world the
+                // dispatcher read, so the vault-wide floor holds its fallback
+                // on the device while any world stays on it.
+                scope: Default::default(),
                 tier: TierPrecedence::for_purpose(
                     &purpose,
                     definition

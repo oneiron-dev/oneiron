@@ -6,7 +6,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::StreamExt;
 use oneiron::llm::run_admission::{CallOutcome, RunAdmission, RunCall, RunDenied, RunPermit};
 use oneiron::{
     ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole,
@@ -18,6 +17,7 @@ use tokio::sync::mpsc::Sender;
 
 use super::cooldown::{OfferCooldowns, Rest, leaves_device};
 use super::driven::Driven;
+use super::forward::{Ended, forward};
 use super::offer::ServedOffer;
 use super::served::served_receipt;
 use super::walk::{Passed, Walk, ends_call, failure_kind};
@@ -80,21 +80,6 @@ fn settle_failed(permit: RunPermit) -> bool {
         tracing::error!(%denied, "a failed rung's settlement was refused");
     }
     sent
-}
-
-/// What one rung's stream came to.
-enum Ended {
-    Done {
-        message: LlmMessage,
-        usage: LlmUsage,
-        finish_reason: oneiron::llm::FinishReason,
-    },
-    Failed {
-        error: LlmError,
-        spoken: bool,
-    },
-    /// The caller stopped reading, or the stream ended with no terminal.
-    Gone,
 }
 
 /// How a model is reached: a seat's ladder, one rung of it alone, or a
@@ -567,20 +552,34 @@ impl OfferLadder {
             selector,
         };
         let mut held = Some((start, first));
+        let mut wait = wait;
+        // A stream that opened with every usable offer resting admitted the
+        // first one back. When that admission saw the world kept on the
+        // device, the rung is settled unsent and every rung is judged again,
+        // so the one wait goes to an offer the call may use now, or none.
+        if let Some(back) = wait
+            && self.kept_on_device(back.index, request)
+        {
+            if let Some((_, (_, permit))) = held.take() {
+                settle_failed(permit);
+            }
+            let mut usable = false;
+            for index in 0..self.rungs.len() {
+                usable |= !self.passes_over(call, index, &mut walk);
+            }
+            wait = None;
+            if !usable {
+                let Some(back) = self.waits_for(&walk) else {
+                    let _ = events.send(Err(self.unanswered(walk))).await;
+                    return;
+                };
+                wait = Some(back);
+            }
+        }
         // The chain, then, when only rests stopped it, the chain once more
         // after one wait for its first offer back. A stream that opened with
-        // every usable offer resting starts with that wait, unless admitting
-        // the offer it waits for saw the world kept on the device: that rung
-        // is held, and the one wait goes to the first offer back the call
-        // may still use.
+        // every usable offer resting starts with that wait.
         let back = match wait {
-            Some(back) if self.kept_on_device(back.index, request) => {
-                if let Some((index, (_, permit))) = held.take() {
-                    settle_failed(permit);
-                    self.hold(call, index, &mut walk);
-                }
-                self.waits_for(&walk)
-            }
             Some(back) => Some(back),
             None => match self
                 .stream_pass(run, request, selector, &mut held, &mut walk, events)
@@ -766,34 +765,4 @@ enum Sent {
 enum Flow {
     On,
     Ended,
-}
-
-/// Hands one rung's events to the caller until its terminal or its failure.
-async fn forward(mut stream: LlmStream<'_>, events: &Sender<LlmResult<LlmStreamEvent>>) -> Ended {
-    let mut spoken = false;
-    loop {
-        match stream.next().await {
-            Some(Ok(LlmStreamEvent::Done {
-                message,
-                usage,
-                finish_reason,
-            })) => {
-                return Ended::Done {
-                    message,
-                    usage,
-                    finish_reason,
-                };
-            }
-            Some(Ok(event)) => {
-                spoken = true;
-                if events.send(Ok(event)).await.is_err() {
-                    return Ended::Gone;
-                }
-            }
-            Some(Err(error)) => return Ended::Failed { error, spoken },
-            // An `LlmStream` that ends before its terminal yields `StreamCut`
-            // first, so this is a caller that stopped reading.
-            None => return Ended::Gone,
-        }
-    }
 }

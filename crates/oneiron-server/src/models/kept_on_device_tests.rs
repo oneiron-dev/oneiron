@@ -18,7 +18,7 @@ use serde_json::json;
 use super::fallback_tests::{
     T0, about, clocked_vault, kept, kept_here, portable_world, private_world, refusal, two_offers,
 };
-use super::tests::{request, test_run, text_of};
+use super::tests::{config, request, test_run, text_of};
 use super::*;
 use crate::fake_llm::{FakeLlm, Reply};
 
@@ -204,10 +204,11 @@ async fn a_world_made_private_while_its_fallback_is_admitted_never_goes_out() {
     assert_eq!(holds(&sink.rows.rows()).len(), 2);
 }
 
-/// Review repro (Sol R4 P2): a stream that opens with every offer resting
-/// admits the first one back before it waits. When that admission sees the
-/// world kept on the device, the one wait goes to the offer on the device
-/// instead, which then answers.
+/// Review repro (Sol R4 P2, Sol R5 P2): a stream that opens with every
+/// offer resting admits the first one back before it waits. When that
+/// admission sees the world kept on the device, every rung is judged again,
+/// so the one wait goes past both cloud offers to the offer on the device,
+/// which then answers.
 #[tokio::test]
 async fn a_stream_spends_its_one_wait_on_an_offer_its_world_may_use() {
     let limit = |seconds: &str| {
@@ -217,32 +218,37 @@ async fn a_stream_spends_its_one_wait_on_an_offer_its_world_may_use() {
             json!({"error": {"message": "rate limit"}}),
         )
     };
-    let first = FakeLlm::start(vec![limit("3")], Some(Reply::text("from the device"))).await;
-    let second = FakeLlm::start(
-        vec![Reply::text("from the cloud"), limit("1"), limit("1")],
-        None,
-    )
-    .await;
+    let local = FakeLlm::start(vec![limit("3")], Some(Reply::text("from the device"))).await;
+    let cloud = FakeLlm::start(vec![limit("1"), limit("1")], None).await;
+    let other_cloud = FakeLlm::start(vec![limit("2")], None).await;
+    let models = config(&format!(
+        r#"
+[providers.local]
+kind = "local-openai-compat"
+base_url = "{}"
+[providers.cloud]
+kind = "openai-compat"
+base_url = "{}"
+[providers.other]
+kind = "openai-compat"
+base_url = "{}"
+[roles.checker]
+rungs = [{{ model = "local:small" }}, {{ model = "cloud:big" }}, {{ model = "other:big" }}]
+"#,
+        local.base_url, cloud.base_url, other_cloud.base_url
+    ));
     let (dir, clock) = (tempfile::tempdir().unwrap(), ManualClock::new(T0));
     let vault = clocked_vault(dir.path(), &clock);
-    let runtime = kept(&two_offers(&first, &second, ""), &vault, &clock);
+    let runtime = kept(&models, &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
     let (other, world) = (portable_world(&vault), portable_world(&vault));
-    // The offer on the device rests until T0 + 3; the cloud's, after a wait
-    // and a second refusal, until T0 + 2.
-    let answer = seat
-        .ladder
-        .generate(&test_run(), about(seat, other), None)
-        .await;
-    assert_eq!(
-        text_of(&answer.expect("answered").message),
-        "from the cloud"
-    );
+    // Each offer refuses; after the call's wait the first cloud offer refuses
+    // again. The local offer rests until T0 + 3, both cloud ones until T0 + 2.
     let error = seat
         .ladder
         .generate(&test_run(), about(seat, other), None)
         .await;
-    assert!(error.is_err(), "both offers rest");
+    assert!(error.is_err(), "every offer rests");
 
     let sink = Arc::new(PrivateOnAdmission {
         vault: Arc::clone(&vault),
@@ -261,8 +267,12 @@ async fn a_stream_spends_its_one_wait_on_an_offer_its_world_may_use() {
         }
     }
     assert_eq!(text, "from the device");
-    assert_eq!(second.seen().len(), 3, "the world's text stayed here");
-    assert_eq!(holds(&sink.rows.rows()).len(), 1);
+    assert_eq!(
+        (cloud.seen().len(), other_cloud.seen().len()),
+        (2, 1),
+        "the world's text stayed here"
+    );
+    assert_eq!(holds(&sink.rows.rows()).len(), 2);
 }
 
 /// Review repro (Astra R1 P2): an offer's cooldown belongs to the deployment
@@ -341,7 +351,7 @@ const LADDER_CALLERS: [(&str, &str); 10] = [
     ),
     (
         "ai_host/step.rs",
-        "the world the workflow was dispatched in, unless briefed; else the floor",
+        "none, as nothing proves its text's worlds: the floor",
     ),
     ("ai_host/compaction.rs", "none: the floor"),
     (

@@ -36,6 +36,7 @@ mod declared;
 mod driven;
 #[cfg(test)]
 mod fallback_tests;
+mod forward;
 mod http;
 #[cfg(test)]
 mod kept_on_device_tests;
