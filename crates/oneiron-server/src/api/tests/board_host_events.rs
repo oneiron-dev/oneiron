@@ -1468,7 +1468,9 @@ async fn a_keyed_board_replays_no_pack_whose_source_its_reader_no_longer_reads()
 /// the replay is refused rather than naming it.
 #[tokio::test]
 async fn a_keyed_board_replays_no_capability_its_reader_no_longer_reads() {
-    use oneiron::registry::{ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN};
+    use oneiron::registry::{
+        ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN,
+    };
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
@@ -1503,7 +1505,13 @@ async fn a_keyed_board_replays_no_capability_its_reader_no_longer_reads() {
         );
         route_json(server.clone(), request)
     };
-    restrict(&[ENTITY_TYPE_TURN, ENTITY_TYPE_SKILL]);
+    // The reader reads its own contact row throughout: its clearance is the
+    // one the clamp serves. Only the skill's read is withdrawn.
+    restrict(&[
+        ENTITY_TYPE_TURN,
+        ENTITY_TYPE_COUNTERPARTY_CONTACT,
+        ENTITY_TYPE_SKILL,
+    ]);
     let (status, first) = keyed().await;
     assert_eq!(status, StatusCode::OK, "{first:#}");
     assert!(
@@ -1516,7 +1524,7 @@ async fn a_keyed_board_replays_no_capability_its_reader_no_longer_reads() {
     assert_eq!(status, StatusCode::OK, "{again:#}");
     assert_eq!(again, first);
 
-    restrict(&[ENTITY_TYPE_TURN]);
+    restrict(&[ENTITY_TYPE_TURN, ENTITY_TYPE_COUNTERPARTY_CONTACT]);
     let (status, refused) = keyed().await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused:#}");
     let refused = refused.to_string();

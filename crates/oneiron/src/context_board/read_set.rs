@@ -388,13 +388,19 @@ impl ChangedEvent {
 }
 
 /// The rows one lifecycle row names: the row, and its successor if it was
-/// superseded.
+/// superseded. An installed pack's row is the pack's name, however it reads,
+/// and names no row: its source is named apart.
 pub(super) fn lifecycle_refs(id: &str, state: &ServedLifecycle) -> impl Iterator<Item = String> {
+    row_refs(id, state).map(str::to_owned)
+}
+
+fn row_refs<'a>(id: &'a str, state: &'a ServedLifecycle) -> impl Iterator<Item = &'a str> {
+    let own = (!matches!(state, ServedLifecycle::Installed(_))).then_some(id);
     let successor = match state {
-        ServedLifecycle::Superseded(next) => Some(next.clone()),
+        ServedLifecycle::Superseded(next) => Some(next.as_str()),
         _ => None,
     };
-    std::iter::once(id.to_owned()).chain(successor)
+    own.into_iter().chain(successor)
 }
 
 impl ChangedEvent {
@@ -413,16 +419,11 @@ impl ChangedEvent {
 
 impl ChangedLine {
     /// Every row this line names or counts: each lifecycle row and its
-    /// successor, each install receipt's skill, each event's row, and each
-    /// row its overflow counts. A ref may carry a `kind:` prefix.
+    /// successor (never an installed pack's name), each install receipt's
+    /// skill, each event's row, and each row its overflow counts. A ref may
+    /// carry a `kind:` prefix.
     pub fn named_rows(&self) -> impl Iterator<Item = &str> {
-        let lifecycle = self.rows.iter().flat_map(|(id, state)| {
-            let successor = match state {
-                ServedLifecycle::Superseded(next) => Some(next.as_str()),
-                _ => None,
-            };
-            std::iter::once(id.as_str()).chain(successor)
-        });
+        let lifecycle = self.rows.iter().flat_map(|(id, state)| row_refs(id, state));
         let installs = self
             .install_rows
             .iter()

@@ -344,3 +344,36 @@ fn a_lifecycle_rider_names_no_retraction_of_a_claim_its_reader_cannot_read() -> 
     );
     Ok(())
 }
+
+/// F16 round 5 (Astra F2): an installed pack's row is the pack's name, and
+/// a name may read like a row ref (`agent:<hex>`). The rows a line names,
+/// rendered or counted past its cap, hold no pack name: a keyed replay
+/// re-admits each pack's source apart, never a row the name seems to name.
+#[test]
+fn a_pack_row_names_no_row_rendered_or_counted() {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let session = SessionReadSet::default();
+    let mut line = ChangedLine {
+        rows: (0..17)
+            .map(|n| {
+                (
+                    format!("agent:{}", id(0x60 + n).to_hex()),
+                    ServedLifecycle::Installed(format!("hash-{n}")),
+                )
+            })
+            .collect(),
+        ..ChangedLine::default()
+    };
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new(id(7).to_hex()).unwrap());
+    session
+        .fold_own_changes(
+            &read,
+            Some(id(7)),
+            crate::claim::CallerLocality::OnDevice,
+            &mut line,
+            16,
+        )
+        .unwrap();
+    assert!(line.overflow >= 1, "{line:?}");
+    assert_eq!(line.named_rows().collect::<Vec<_>>(), Vec::<&str>::new());
+}
