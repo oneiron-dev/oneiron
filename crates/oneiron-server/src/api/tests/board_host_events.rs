@@ -1464,40 +1464,33 @@ async fn a_keyed_board_replays_no_pack_whose_source_its_reader_no_longer_reads()
 
 /// F16 round 3 (Astra F4): a keyed board's replay re-admits each capability
 /// its retrieval discovered, which no document it served names. Once its
-/// reader reads no skill, the replay is refused rather than naming it.
+/// reader, a delegated reader the disclosure clamp clears, reads no skill,
+/// the replay is refused rather than naming it.
 #[tokio::test]
 async fn a_keyed_board_replays_no_capability_its_reader_no_longer_reads() {
-    use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN};
+    use oneiron::registry::{ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN};
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
     });
     let principal = seeded_test_entity_id(0x2516_0431);
+    super::context_board_history::cleared_reader(
+        &server,
+        principal,
+        seeded_test_entity_id(0x2516_0433),
+    );
     let skill = seeded_test_entity_id(0x2516_0432);
     seed_board_skill(&server, skill, "keyedcapsneedle");
-    // A board's owner is a row: its history is recorded against it.
-    server
-        .vault
-        .put_entity(
-            &principal,
-            ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"capability reader",
-        )
-        .unwrap();
     let turn = put_authored_turn(&server, principal);
     let restrict = |types: &[u8]| {
         super::context_board_history::restrict_principal_read_types(&server, principal, types);
     };
     let keyed = || {
-        let mut request = core_request_with_authz(
+        let mut request = core_request_with_principal_ref(
             "POST",
             "/v1/core/context-board",
-            test_bearer(&format!(
-                "scope=core:read,core:write;principal_ref={};actor_class=agent",
-                principal.to_hex()
-            )),
+            "core:read,core:write",
+            &principal.to_hex(),
             Some(&json!({
                 "retrieval": {"query": "keyedcapsneedle", "limit": 1},
                 "session": {"session_id": "caps-keyed"},
@@ -1510,7 +1503,7 @@ async fn a_keyed_board_replays_no_capability_its_reader_no_longer_reads() {
         );
         route_json(server.clone(), request)
     };
-    restrict(&[ENTITY_TYPE_TURN, ENTITY_TYPE_PERSON, ENTITY_TYPE_SKILL]);
+    restrict(&[ENTITY_TYPE_TURN, ENTITY_TYPE_SKILL]);
     let (status, first) = keyed().await;
     assert_eq!(status, StatusCode::OK, "{first:#}");
     assert!(
@@ -1523,7 +1516,7 @@ async fn a_keyed_board_replays_no_capability_its_reader_no_longer_reads() {
     assert_eq!(status, StatusCode::OK, "{again:#}");
     assert_eq!(again, first);
 
-    restrict(&[ENTITY_TYPE_TURN, ENTITY_TYPE_PERSON]);
+    restrict(&[ENTITY_TYPE_TURN]);
     let (status, refused) = keyed().await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused:#}");
     let refused = refused.to_string();

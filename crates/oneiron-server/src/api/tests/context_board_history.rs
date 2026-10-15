@@ -60,7 +60,11 @@ fn history(turn: oneiron::EntityId, reader: oneiron::EntityId) -> Request<Body> 
 /// A delegated board reader the disclosure clamp serves: a counterparty
 /// contact cleared for everything. A reader with no contact is cleared for
 /// nothing, and its board shows no rows.
-fn cleared_reader(server: &SyncServer, principal: oneiron::EntityId, identity: oneiron::EntityId) {
+pub(super) fn cleared_reader(
+    server: &SyncServer,
+    principal: oneiron::EntityId,
+    identity: oneiron::EntityId,
+) {
     seed_counterparty_contact(server, principal, identity, "board-reader@example.test");
     seed_disclosure_scope(server, principal, oneiron::federation::Scope::top());
 }
