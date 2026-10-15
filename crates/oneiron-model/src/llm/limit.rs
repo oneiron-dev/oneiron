@@ -44,8 +44,9 @@ pub fn limit_refusal(headers: &BTreeMap<String, String>, body: &JsonValue) -> Re
 }
 
 /// The HTTP status an error a provider sends inside an open stream stands
-/// for: its own numeric `code` or `status`, else what its `type` names (a
-/// request error, a key refused), else a server error.
+/// for: its own numeric `code` or `status`, else what its `type` or a
+/// worded `code` names (a request error, a key refused), else a server
+/// error. An OpenAI-compatible provider may name the kind in `code` alone.
 #[must_use]
 pub fn stream_error_status(body: &JsonValue) -> u16 {
     let error = body.get("error").unwrap_or(body);
@@ -58,12 +59,15 @@ pub fn stream_error_status(body: &JsonValue) -> u16 {
             .ok()
             .filter(|status| (400..=599).contains(status))
     });
-    numeric.unwrap_or(match error.get("type").and_then(JsonValue::as_str) {
-        Some("invalid_request_error" | "not_found_error") => 400,
-        Some("authentication_error") => 401,
-        Some("permission_error") => 403,
-        _ => 500,
-    })
+    let named = ["type", "code"]
+        .into_iter()
+        .find_map(|key| match error.get(key)?.as_str()? {
+            "invalid_request_error" | "not_found_error" => Some(400),
+            "authentication_error" => Some(401),
+            "permission_error" => Some(403),
+            _ => None,
+        });
+    numeric.or(named).unwrap_or(500)
 }
 
 /// Whether a provider's error body reads as a spent quota or a rate limit:

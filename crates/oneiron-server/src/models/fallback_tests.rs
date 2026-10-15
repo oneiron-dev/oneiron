@@ -440,12 +440,21 @@ async fn a_bad_request_passes_through_unchanged_and_rests_nothing() {
 
     // Review repro (Sol R1): a request error a provider sends inside an open
     // stream, and an Anthropic 400 whose body names a rate-limit type, are
-    // request errors too.
+    // request errors too. Review repro (Bugbot #1460): so is one an
+    // OpenAI-compatible provider names by its `code` alone.
     let in_stream = json!({"error": {
         "type": "invalid_request_error",
         "message": "max_tokens is past this model's output quota",
     }});
-    let streamed = FakeLlm::start(vec![], Some(Reply::Raw(format!("data: {in_stream}\n\n")))).await;
+    let by_code = json!({"error": {
+        "code": "invalid_request_error",
+        "message": "max_tokens is past this model's output quota",
+    }});
+    let streamed = FakeLlm::start(
+        vec![Reply::Raw(format!("data: {in_stream}\n\n"))],
+        Some(Reply::Raw(format!("data: {by_code}\n\n"))),
+    )
+    .await;
     let anthropic = FakeLlm::start(
         vec![],
         Some(refusal(
@@ -476,16 +485,18 @@ rungs = [{{ model = "anthropic:small" }}, {{ model = "second:big" }}]
     ));
     let runtime = kept(&models, &vault, &clock);
     let seat = runtime.seat(ModelRole::Checker).expect("seat");
-    let mut events = seat
-        .ladder
-        .stream(&test_run(), request(&seat.model, "stream this"), None)
-        .expect("a stream");
-    let error = events
-        .next()
-        .await
-        .expect("an event")
-        .expect_err("an in-stream request error ends the stream");
-    assert_eq!(error, LlmError::Fatal(FatalLlmError::InvalidRequest));
+    for _ in 0..2 {
+        let mut events = seat
+            .ladder
+            .stream(&test_run(), request(&seat.model, "stream this"), None)
+            .expect("a stream");
+        let error = events
+            .next()
+            .await
+            .expect("an event")
+            .expect_err("an in-stream request error ends the stream");
+        assert_eq!(error, LlmError::Fatal(FatalLlmError::InvalidRequest));
+    }
     let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
     let error = ask(seat).await.expect_err("an Anthropic 400 ends the call");
     assert_eq!(error, LlmError::Fatal(FatalLlmError::InvalidRequest));
