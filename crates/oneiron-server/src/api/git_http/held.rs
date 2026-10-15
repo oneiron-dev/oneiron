@@ -3,19 +3,14 @@
 //! The report grows with the refs a push names, and a push may name any
 //! number of them (rule 5), so holding it is never refused for its size. It
 //! stays in memory up to a bound sized from the machine's memory and goes on
-//! in an unnamed file in the vault's door root past it. The file has no name
-//! anything else can open, and it is gone once the exchange drops it. Only
-//! the disk itself refuses: a write that fails ends the push as a held
-//! failure.
+//! in a file in the vault's door root past it. The file's name is removed
+//! before a byte is written, so nothing else can open it, and it is gone once
+//! the exchange drops it. Only the disk itself refuses: a write that fails, or
+//! a name that cannot be removed, ends the push as a held failure.
 
-use axum::body::{Body, Bytes};
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
-use tokio::io::AsyncReadExt;
-
-/// The largest piece a held report is streamed back in.
-const HELD_BODY_PIECE: usize = 64 * 1024;
 
 pub(super) struct HeldBytes {
     memory: Vec<u8>,
@@ -54,27 +49,6 @@ impl HeldBytes {
             None => Ok(Box::new(self.memory.as_slice())),
         }
     }
-
-    /// The held bytes as a response body: from memory whole, from disk in
-    /// pieces. The file goes with the body.
-    pub(super) fn into_body(self) -> io::Result<Body> {
-        let Some(file) = self.file else {
-            return Ok(Body::from(self.memory));
-        };
-        let mut file = file.into_inner().map_err(io::IntoInnerError::into_error)?;
-        file.seek(SeekFrom::Start(0))?;
-        let file = tokio::fs::File::from_std(file);
-        let pieces = futures_util::stream::try_unfold(file, |mut file| async move {
-            let mut piece = vec![0; HELD_BODY_PIECE];
-            let read = file.read(&mut piece).await?;
-            if read == 0 {
-                return Ok::<_, io::Error>(None);
-            }
-            piece.truncate(read);
-            Ok(Some((Bytes::from(piece), file)))
-        });
-        Ok(Body::from_stream(pieces))
-    }
 }
 
 impl Write for HeldBytes {
@@ -90,7 +64,11 @@ impl Write for HeldBytes {
             .dir
             .as_ref()
             .ok_or_else(|| io::Error::other("no directory to hold a status report in"))?;
-        let mut file = BufWriter::new(tempfile::tempfile_in(dir)?);
+        // Removing the name is checked, never assumed: a name left behind
+        // would keep the report findable after the exchange.
+        let (file, name) = tempfile::NamedTempFile::new_in(dir)?.into_parts();
+        name.close()?;
+        let mut file = BufWriter::new(file);
         file.write_all(&std::mem::take(&mut self.memory))?;
         file.write_all(bytes)?;
         self.file = Some(file);

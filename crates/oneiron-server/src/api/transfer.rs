@@ -39,8 +39,9 @@ pub(crate) struct Transfers {
 
 /// Bytes of one push's status report held in memory: a 512th of the
 /// machine's memory, 8 MiB when that cannot be read. A push holds two such
-/// copies at most, the report and its rewrite, so even every git exchange
-/// holding both at once keeps to a small share of memory.
+/// copies at most, the report and its rewrite, and only its exchange's worker
+/// holds them, under the exchange's permit until the report is sent; so every
+/// git exchange holding both at once keeps to a small share of memory.
 fn git_status_memory() -> usize {
     physical_memory_bytes().map_or(8 * 1024 * 1024, |bytes| {
         usize::try_from(bytes / 512).unwrap_or(usize::MAX)
