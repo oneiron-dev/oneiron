@@ -1638,6 +1638,47 @@ fn unsafe_formula_depth_refuses_before_recursive_evaluation_on_both_doors() {
 }
 
 #[test]
+fn what_the_writer_refuses_out_of_band_the_formula_door_refuses_too() {
+    use oneiron_xlsx_formula::engine::{RecalcEngine, StagedValue};
+    use std::collections::BTreeMap;
+    // Excel for Windows 16.0.20430: IFERROR(LEN(H6&UNICHAR(128512)),42) over
+    // H6 = REPT("a",32766) is 32766 (job probe-w2-parse-7, SC05), and
+    // ROWS(INDIRECT("F1:F1")#)+1 in F1 is 2 (job probe-w2-parse-4, OC07).
+    // The engine notes each out of band (a caught #N/IMPL!, a #CIRC!) and the
+    // writer refuses the workbook; the formula door returned 42 and #CIRC!.
+    let refused = |result: oneiron_xlsx_formula::Result<()>| {
+        matches!(result, Err(FormulaError::UnsupportedWorkbook(_)))
+    };
+    let split = "IFERROR(LEN(H6&_xlfn.UNICHAR(128512)),42)";
+    let rept = r#"REPT("a",32766)"#;
+    let cycle = r#"ROWS(_xlfn.ANCHORARRAY(INDIRECT("F1:F1")))+1"#;
+    let input = fixture(
+        "",
+        &format!(
+            r#"<c r="F1"><f>{}</f><v>32766</v></c><c r="H6"><f>{rept}</f></c>"#,
+            split.replace('&', "&amp;")
+        ),
+        false,
+    );
+    assert!(refused(recalc(&input).map(|_| ())));
+    let input = fixture(
+        "",
+        &format!(r#"<c r="F1"><f>{cycle}</f><v>2</v></c>"#),
+        false,
+    );
+    assert!(refused(recalc(&input).map(|_| ())));
+    let setup = BTreeMap::from([("H6".into(), StagedValue::Formula(rept.into()))]);
+    let engine = FormualizerEngine::new;
+    assert!(refused(
+        engine().evaluate(&setup, split, "F1", None).map(|_| ())
+    ));
+    let nothing = BTreeMap::new();
+    assert!(refused(
+        engine().evaluate(&nothing, cycle, "F1", None).map(|_| ())
+    ));
+}
+
+#[test]
 fn long_formulas_recalculate_natively() {
     // A real FUSE input of 201 chained additions overflowed a worker's 2 MiB
     // stack in debug builds; the writer evaluates on a stack for the longest

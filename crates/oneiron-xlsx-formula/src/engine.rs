@@ -20,6 +20,7 @@ use formualizer_eval::timezone::TimeZoneSpec;
 use formualizer_workbook::{Workbook, WorkbookConfig};
 
 use crate::error::{FormulaError, Result};
+use crate::xml::unsupported;
 
 /// Pinned upstream identity. Literal: `formualizer-workbook` exposes no
 /// version constant, and `env!` would stamp this harness, not the engine.
@@ -194,6 +195,28 @@ impl FormualizerEngine {
                 )
             })
             .transpose()?;
+        // What the engine notes out of band, where a formula may have caught
+        // the cell error it returned, the writer refuses (`cache_recalculate`),
+        // and so does this door.
+        let noted = workbook.engine();
+        for (seen, feature) in [
+            (
+                noted.split_character(),
+                "a join cut through a character outside the Basic Multilingual Plane",
+            ),
+            (
+                noted.spill_reference_cycle(),
+                "a circular reference through a spill reference",
+            ),
+            (
+                noted.text_named_workbook(),
+                "INDIRECT text that names a workbook",
+            ),
+        ] {
+            if seen {
+                return Err(unsupported(format!("{feature} (workbook)")));
+            }
+        }
         Ok(RecalcReport {
             engine,
             value: from_literal(scalar),
