@@ -363,44 +363,33 @@ fn start_turn(
     server.ai.turn_landed(&vault, WakeTurnSubject::Vault);
     // Past the vault's message-stream row the stream waits its turn (rule 5),
     // so it waits off the runtime's workers.
-    let begun = {
-        let vault = Arc::clone(&vault);
-        let turn = witness_turn(
-            &request.conversation_ref,
-            WitnessAuthor::Companion,
-            String::new(),
-            at,
-        );
-        tokio::task::spawn_blocking(move || {
-            vault
-                .memory(agent, EdgeActorClass::Agent)
-                .begin_message_stream(
-                    &turn,
-                    Some(MessageWriteMode::Streamed {
-                        visibility: StreamSyncVisibility::AllDevices,
-                        cadence: StreamCadence::PerToken,
-                    }),
-                )
-        })
-        .await
-    };
+    let turn = witness_turn(
+        &request.conversation_ref,
+        WitnessAuthor::Companion,
+        String::new(),
+        at,
+    );
+    let begun = crate::server::blocking(|| {
+        vault
+            .memory(agent, EdgeActorClass::Agent)
+            .begin_message_stream(
+                &turn,
+                Some(MessageWriteMode::Streamed {
+                    visibility: StreamSyncVisibility::AllDevices,
+                    cadence: StreamCadence::PerToken,
+                }),
+            )
+    });
     let handle = match begun {
-        Ok(Ok(handle)) => handle,
-        Ok(Err(MessageStreamError::WaitedOut(waited))) => {
+        Ok(handle) => handle,
+        Err(MessageStreamError::WaitedOut(waited)) => {
             return Err(refused(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "turn_waited_out",
                 waited.to_string(),
             ));
         }
-        Ok(Err(error)) => return Err(engine(&error)),
-        Err(_) => {
-            return Err(refused(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "turn_refused",
-                "message stream start failed",
-            ));
-        }
+        Err(error) => return Err(engine(&error)),
     };
 
     // The turn is a run on the vault's budget policy for this actor, one line
