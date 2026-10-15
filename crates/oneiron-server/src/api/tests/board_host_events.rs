@@ -637,17 +637,8 @@ fn install_board_pack_version(server: &SyncServer, name: &str, version: u32) -> 
     ])
     .unwrap();
     let occurred = oneiron::TimeRange { start: 4, end: 4 };
-    let owner_id = oneiron::EntityId::now();
-    server
-        .vault
-        .put_entity(
-            &owner_id,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            occurred,
-            4,
-            b"owner",
-        )
-        .unwrap();
+    // Installing a pack is an owner door: the vault's owner installs it.
+    let owner_id = server.vault.ensure_embedded_owner_actor().unwrap();
     let owner = server
         .vault
         .authenticate_owner(
