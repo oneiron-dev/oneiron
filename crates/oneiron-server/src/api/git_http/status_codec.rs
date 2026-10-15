@@ -300,7 +300,7 @@ fn malformed() -> io::Error {
 }
 
 fn is_malformed(error: &io::Error) -> bool {
-    error.get_ref().is_some_and(|inner| inner.is::<Malformed>())
+    matches!(error.get_ref(), Some(inner) if inner.is::<Malformed>())
 }
 
 /// One pkt-line, appended to `output`; for building reports in tests.
