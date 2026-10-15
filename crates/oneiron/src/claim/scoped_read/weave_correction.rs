@@ -39,7 +39,14 @@ impl ScopedRead<'_> {
         reader: WeaveReader<'_>,
         link: EdgeRef,
     ) -> Result<WeaveLinkCorrection> {
-        let auth_actor = auth.revalidate(self.vault)?;
+        // A person reports a link they see as themselves; the owner reader
+        // reads with the owner role, so it takes the owner tier.
+        let as_owner = matches!(reader, WeaveReader::Owner(_));
+        let auth_actor = if as_owner {
+            auth.revalidate(self.vault)?
+        } else {
+            auth.revalidate_person(self.vault)?
+        };
         let bound = match &reader {
             WeaveReader::Person(id) => *id == auth_actor,
             WeaveReader::Owner(owner) => *owner == auth,
@@ -58,7 +65,11 @@ impl ScopedRead<'_> {
         // Persist the injected authorization clock in the SAME writer before
         // relationship grants are checked against its floor.
         let now = crate::ports::recorded_at_in_txn(&self.vault.store, &mut txn)?;
-        let actor = auth.revalidate_in_txn(self.vault, &txn)?;
+        let actor = if as_owner {
+            auth.revalidate_in_txn(self.vault, &txn)?
+        } else {
+            auth.revalidate_person_in_txn(self.vault, &txn)?
+        };
         self.require_visible_weave_link_in(&txn, reader, link)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &txn)?;
         let limit = policy

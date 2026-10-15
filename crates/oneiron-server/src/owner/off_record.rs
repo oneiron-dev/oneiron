@@ -151,7 +151,7 @@ pub(crate) fn enter(
     owner: &AuthenticatedOwner,
     request: &Enter,
 ) -> OwnerResult<Session> {
-    vault.recheck_owner(owner)?;
+    vault.recheck_person(owner)?;
     let rooms = vault.off_record_session_vault();
     let session = match request.mode {
         EnterMode::OffRecord => rooms.enter(&request.session_ref, request.backend),
@@ -176,7 +176,7 @@ pub(crate) fn record(
     // turns. A room the owner is not in is the same 404 as none.
     if record.room.is_some() {
         let record = bind(vault, owner, session_ref)?
-            .record_for(owner.revalidate(vault)?)
+            .record_for(owner.revalidate_person(vault)?)
             .map_err(|error| session_error(error, session_ref))?;
         return Ok(Session::from(record));
     }
@@ -209,7 +209,7 @@ pub(crate) fn witness(
     owner: &AuthenticatedOwner,
     request: &Witness,
 ) -> OwnerResult<WitnessReceipt> {
-    let actor = owner.revalidate(vault)?;
+    let actor = owner.revalidate_person(vault)?;
     let session = bind(vault, owner, &request.session_ref)?;
     vault
         .memory(actor, EdgeActorClass::Human)
@@ -217,7 +217,7 @@ pub(crate) fn witness(
         .map_err(|error| {
             // The proof is rechecked where the turn lands; one revoked while
             // the witness waited is the same refusal as at the door.
-            if let Err(refusal) = vault.recheck_owner(owner) {
+            if let Err(refusal) = vault.recheck_person(owner) {
                 return OwnerError::from(refusal);
             }
             witness_error(error)
@@ -291,7 +291,7 @@ pub(crate) fn close(
     owner: &AuthenticatedOwner,
     session_ref: &str,
 ) -> OwnerResult<Closed> {
-    vault.recheck_owner(owner)?;
+    vault.recheck_person(owner)?;
     let outcome = bind(vault, owner, session_ref)?
         .close()
         .map_err(|error| session_error(error, session_ref))?;
@@ -315,7 +315,7 @@ fn bind<'vault>(
 ) -> OwnerResult<OffRecordSession<'vault>> {
     vault
         .off_record_session_vault()
-        .bind_for(session_ref, owner.revalidate(vault)?)
+        .bind_for(session_ref, owner.revalidate_person(vault)?)
         .map_err(|error| session_error(error, session_ref))
 }
 

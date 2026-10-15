@@ -397,7 +397,9 @@ impl Vault {
             row.validate_named(act)?;
         }
         let mut txn = self.store.env.write_txn()?;
-        let actor = owner.revalidate_in_txn(self, &txn)?;
+        // Person tier, own holder check: the approvals must be exactly the live
+        // policy editors below, each a named holder.
+        let actor = owner.revalidate_person_in_txn(self, &txn)?;
         let creation = check_vault(self, &txn, vault_id)?;
         let mut policies = self.act_policies_in_txn(&txn, &creation)?;
         let default = policies.effective(DEFAULT_ROW)?;
@@ -416,7 +418,7 @@ impl Vault {
             .collect();
         let mut approvals = BTreeSet::from([actor]);
         for co_owner in co_owners {
-            let co_owner_actor = co_owner.revalidate_in_txn(self, &txn)?;
+            let co_owner_actor = co_owner.revalidate_person_in_txn(self, &txn)?;
             if !approvals.insert(co_owner_actor) {
                 return Err(invalid());
             }
@@ -441,7 +443,7 @@ impl Vault {
             return Err(invalid());
         }
         let data = with_act_table(body, &policies.stored)?;
-        self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
+        self.write_holder_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
         txn.commit()?;
         Ok(())
     }
@@ -520,7 +522,8 @@ impl Vault {
             return Err(invalid());
         }
         let mut txn = self.store.env.write_txn()?;
-        let starter_actor = starter.revalidate_in_txn(self, &txn)?;
+        // Person tier, own holder check: the starter's named initiator role.
+        let starter_actor = starter.revalidate_person_in_txn(self, &txn)?;
         let creation = check_vault(self, &txn, vault_id)?;
         let base = self.act_policies_in_txn(&txn, &creation)?.effective(act)?;
         let policy = match selection {
@@ -610,7 +613,8 @@ impl Vault {
         now: u64,
     ) -> Result<Vec<PendingActStarted>> {
         let txn = self.store.env.read_txn()?;
-        let holder_actor = holder.revalidate_in_txn(self, &txn)?;
+        // Person tier: a member reads their own started events.
+        let holder_actor = holder.revalidate_person_in_txn(self, &txn)?;
         check_vault(self, &txn, vault_id)?;
         if !self
             .live_act_holders(&txn, vault_id, now)?
@@ -641,7 +645,8 @@ impl Vault {
     ) -> Result<PendingAuthorityAct> {
         let id = EntityId::from_hex(id)?;
         let mut txn = self.store.env.write_txn()?;
-        let holder_actor = holder.revalidate_in_txn(self, &txn)?;
+        // Person tier, own holder check: the objector's named role.
+        let holder_actor = holder.revalidate_person_in_txn(self, &txn)?;
         let k = key(ACT_PREFIX, &id.to_hex());
         let raw = self.store.vault_meta.get(&txn, &k)?.ok_or_else(invalid)?;
         let mut record: PendingAuthorityAct = decode(&raw)?;

@@ -121,13 +121,32 @@ pub mod digest;
 
 /// The owner proof still holds in this write: it was authenticated by THIS
 /// vault (a proof from another vault never acts here, whatever PERSON ids the
-/// two share), its credential is live, and its actor is a live, active PERSON.
+/// two share), its credential is live, and its actor is a live, active PERSON
+/// that owns this vault.
 pub(crate) fn validate_owner_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     owner: &crate::consent::AuthenticatedOwner,
 ) -> Result<crate::EntityId> {
-    let actor = owner.revalidate_in_txn(vault, txn)?;
+    require_active_person_in_txn(vault, txn, owner.revalidate_in_txn(vault, txn)?)
+}
+
+/// [`validate_owner_in_txn`] on the person tier, for maintenance a person
+/// does on their own behalf: their own judge budget, a judge ask assigned to
+/// them, a digest delivered to them, a proposal addressed to them.
+pub(crate) fn validate_person_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: &crate::consent::AuthenticatedOwner,
+) -> Result<crate::EntityId> {
+    require_active_person_in_txn(vault, txn, owner.revalidate_person_in_txn(vault, txn)?)
+}
+
+fn require_active_person_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: crate::EntityId,
+) -> Result<crate::EntityId> {
     let refused = || {
         Error::Gate(crate::error::GateError::ConsentOwnerNotAuthenticated(
             "maintenance requires a live owner in this vault",

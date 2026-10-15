@@ -166,6 +166,24 @@ impl ConsentActorIdentity {
                 && self.authenticates_principal(principal_ref),
         )
     }
+
+    /// [`Self::authenticates_owner`] on the person tier, for the asked
+    /// person's own refusal: a decline decides no act, so the person need not
+    /// own this vault.
+    ///
+    /// # Errors
+    /// The proof does not revalidate on `vault`, or a storage error.
+    pub fn authenticates_person(
+        &self,
+        vault: &crate::Vault,
+        principal_ref: &str,
+        authenticated_owner: &AuthenticatedOwner,
+    ) -> Result<bool> {
+        Ok(
+            authenticated_owner.revalidate_person_principal_ref(vault)? == principal_ref
+                && self.authenticates_principal(principal_ref),
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -348,10 +366,18 @@ pub(super) fn ensure_authenticated_actor(
     request: &ConsentActionRequest,
     authenticated_owner: &AuthenticatedOwner,
 ) -> Result<()> {
-    if request
-        .actor
-        .authenticates_owner(vault, principal_ref, authenticated_owner)?
-    {
+    // A decline is the asked person's own refusal; every other action
+    // decides an act, so it takes the owner tier.
+    let authenticated = if matches!(request.action, ConsentActionKind::Decline) {
+        request
+            .actor
+            .authenticates_person(vault, principal_ref, authenticated_owner)?
+    } else {
+        request
+            .actor
+            .authenticates_owner(vault, principal_ref, authenticated_owner)?
+    };
+    if authenticated {
         return Ok(());
     }
     Err(Error::Gate(GateError::ConsentUnauthenticatedActor(

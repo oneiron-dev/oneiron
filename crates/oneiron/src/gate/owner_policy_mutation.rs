@@ -296,9 +296,11 @@ fn set_why(fields: &mut Vec<(Value, Value)>, why: &str, source: PolicyWhySource)
 
 /// Mutate inside the caller's transaction, without committing or issuing a receipt.
 ///
-/// The owner proof is required because the shared write door revalidates it and
-/// stamps the new manifest's local origin. The caller handles separate consent,
-/// audit logging, events, and notifications.
+/// The proof is required because the shared write door revalidates it and
+/// stamps the new manifest's local origin. The caller has found the proof's
+/// actor among the change's named holders in this transaction, so the proof
+/// takes the person tier (the holder's grant is the authority). The caller
+/// handles separate consent, audit logging, events, and notifications.
 pub(crate) fn apply_owner_policy_row_change_in_txn(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -306,7 +308,7 @@ pub(crate) fn apply_owner_policy_row_change_in_txn(
     change: &PolicyRowChange,
     now: u64,
 ) -> Result<()> {
-    owner.revalidate_in_txn(vault, txn)?;
+    owner.revalidate_person_in_txn(vault, txn)?;
     let (row_ref, scope) = target(change);
     validate_target(row_ref, scope)?;
     let id = default_policy_manifest_id()?;
@@ -454,7 +456,7 @@ pub(crate) fn apply_owner_policy_row_change_in_txn(
     if decoded.owner_policy_rows_dropped {
         return Err(invalid("edited owner policy table is malformed"));
     }
-    vault.write_owner_policy_manifest_in_txn(owner, txn, id, updated, now)
+    vault.write_holder_policy_manifest_in_txn(owner, txn, id, updated, now)
 }
 
 #[cfg(test)]

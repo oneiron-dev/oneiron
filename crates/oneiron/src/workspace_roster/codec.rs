@@ -526,7 +526,7 @@ pub(super) fn require_mailbox_owner<'a>(
         ))
     };
     let owner = owner.ok_or_else(refused)?;
-    if owner.revalidate(vault)? != intent.person_ref {
+    if owner.revalidate_person(vault)? != intent.person_ref {
         return Err(refused());
     }
     Ok(owner)

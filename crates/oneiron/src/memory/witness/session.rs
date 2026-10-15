@@ -136,7 +136,7 @@ impl Memory<'_> {
             )
         };
         if owner
-            .revalidate(self.vault)
+            .revalidate_person(self.vault)
             .map_err(|error| refused(error.to_string()))?
             != self.actor
         {
@@ -147,7 +147,7 @@ impl Memory<'_> {
         let room = session.room()?;
         let admit = |txn: &heed::RoTxn<'_>| -> MemoryResult<()> {
             let actor = owner
-                .revalidate_in_txn(self.vault, txn)
+                .revalidate_person_in_txn(self.vault, txn)
                 .map_err(|error| refused(error.to_string()))?;
             match room {
                 Some(room) if !session.is_member_in_txn(txn, room, actor)? => {
