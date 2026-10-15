@@ -201,7 +201,7 @@ fn a_bound_human_who_owns_nothing_drills_nothing_and_the_owner_does() -> Result<
     )?;
     let class = FailureSignalClass::TaskFailure;
     vault.record_custom_agent_failure(leased.id, class)?;
-    let _revoke = bind_owner_with_revocation(&vault, bound.actor())?;
+    bind_owner_with_revocation(&vault, bound.actor())?;
     for human in [&bound, &unbound] {
         assert!(matches!(
             vault.drill_custom_agent_failure(human, class, leased.id),
@@ -214,6 +214,36 @@ fn a_bound_human_who_owns_nothing_drills_nothing_and_the_owner_does() -> Result<
         drill.receipt_refs,
         vec![crate::receipt::attempt_pack_receipt_id(&leased.id)]
     );
+    Ok(())
+}
+
+/// A co-owner of a shared vault is no bootstrap owner, so they drill only
+/// while the vault's authority root binds them, and not once that binding is
+/// revoked.
+#[test]
+fn a_co_owner_drills_only_while_the_authority_root_binds_them() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let co_owner = crate::test_util::co_owner_proof(&vault);
+    let agent = put_scope_agent(&vault, 0xba, "custom.co-owner")?;
+    let leased = leased_dispatch(&vault, agent, 10)?;
+    FailureLadder::new(&vault).handle_attempt_failure(
+        failure_input(&leased, indeterminate(), 20),
+        policy_with(agent, 3, FailureEscalationMode::Human),
+    )?;
+    let class = FailureSignalClass::TaskFailure;
+    vault.record_custom_agent_failure(leased.id, class)?;
+    assert!(matches!(
+        vault.drill_custom_agent_failure(&co_owner, class, leased.id),
+        Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
+    ));
+    let revoke = bind_owner_with_revocation(&vault, co_owner.actor())?;
+    let drill = vault.drill_custom_agent_failure(&co_owner, class, leased.id)?;
+    assert_eq!(drill.trace.id, leased.id);
+    vault.put_authority_log_entries(&[(revoke, TimeRange { start: 3, end: 3 }, 3)])?;
+    assert!(matches!(
+        vault.drill_custom_agent_failure(&co_owner, class, leased.id),
+        Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
+    ));
     Ok(())
 }
 

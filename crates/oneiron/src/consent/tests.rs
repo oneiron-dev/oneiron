@@ -1902,9 +1902,8 @@ fn revoked_holder_credential_cannot_land_a_pending_widen() {
     );
 }
 
-/// A proof for a person merged away lands nothing, and the proposal stays
-/// open for its holder principal, now the survivor's: the vault's owner, the
-/// only person who lands a widen here.
+/// A proof for a co-owner merged away lands nothing, and the proposal stays
+/// open for its holder principal, now the survivor's: the vault's owner.
 #[test]
 fn merged_holder_cannot_land_pending_widen_and_proposal_remains_open() {
     use crate::identity_topology::{
@@ -1912,14 +1911,8 @@ fn merged_holder_cannot_land_pending_widen_and_proposal_remains_open() {
     };
     let (_dir, vault, owner) = owner_vault();
     let agent = entity(0x81);
-    let merged = entity(0x82);
-    for actor in [agent, merged] {
-        vault
-            .put_entity(&actor, ENTITY_TYPE_PERSON, at(1), 1, b"person")
-            .unwrap();
-    }
-    let held = vault
-        .authenticate_owner(merged, owner.principal_ref(), true, GateDecisionId::now())
+    vault
+        .put_entity(&agent, ENTITY_TYPE_PERSON, at(1), 1, b"person")
         .unwrap();
     let proposer = widen_agent_credential(&vault, agent);
     let bound = action_bound(&agent.to_hex(), "claim.put", &["world:home"]);
@@ -1931,8 +1924,12 @@ fn merged_holder_cannot_land_pending_widen_and_proposal_remains_open() {
             vault.now_recorded_at() + 300,
         )
         .unwrap();
-    // Before the merge the holder's proof holds as a person who owns nothing.
-    assert!(!vault.is_live_vault_owner(&held).unwrap());
+    // A co-owner who holds the proposal's principal: an owner until merged.
+    let merged = crate::test_util::co_owner_proof(&vault).actor();
+    let held = vault
+        .authenticate_owner(merged, owner.principal_ref(), true, GateDecisionId::now())
+        .unwrap();
+    assert!(vault.is_live_vault_owner(&held).unwrap());
     let write = IdentityOpWrite::auto(crate::claim::ClaimSource::Inferred)
         .with_actor(crate::WriteActor::new(owner.actor(), EdgeActorClass::Human));
     vault
@@ -1950,7 +1947,6 @@ fn merged_holder_cannot_land_pending_widen_and_proposal_remains_open() {
             200,
         )
         .unwrap();
-    // After it the proof no longer holds at all: a merged-away person.
     assert!(vault.is_live_vault_owner(&held).is_err());
     let error = vault
         .accept_widen(&held, &proposal.proposal_ref, &proposal.canonical_delta)

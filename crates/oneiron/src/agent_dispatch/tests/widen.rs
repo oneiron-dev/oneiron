@@ -12,11 +12,6 @@ fn open_board_vault() -> (tempfile::TempDir, Vault) {
     (dir, vault)
 }
 
-fn owner(vault: &Vault, id: EntityId) -> Result<AuthenticatedOwner> {
-    vault.put_entity(&id, ENTITY_TYPE_PERSON, t(1), 1, b"board owner")?;
-    vault.authenticate_owner(id, &id.to_hex(), true, GateDecisionId::now())
-}
-
 /// The vault's embedded owner's proof: who owns the board and lands a widen.
 fn vault_owner(vault: &Vault) -> Result<AuthenticatedOwner> {
     let id = vault.ensure_embedded_owner_actor()?;
@@ -85,7 +80,6 @@ fn proposed(outcome: AgentDispatchOutcome) -> Box<ContextWidenProposal> {
 fn proposed_widen_is_inert_replay_bound_and_only_board_owner_lands() -> Result<()> {
     let (_dir, vault) = open_board_vault();
     let owner = vault_owner(&vault)?;
-    let outsider = self::owner(&vault, test_id(0xB2))?;
     let row = put_row(&vault, 0xB3, "widen.agent", AgentCeiling::Auto)?;
     let turn = chat_turn(&vault)?;
     let board = board(&vault, owner.actor(), row);
@@ -111,6 +105,17 @@ fn proposed_widen_is_inert_replay_bound_and_only_board_owner_lands() -> Result<(
             .chat_sections
             .is_empty()
     );
+    // A person who owns nothing here is refused at the owner tier, and a
+    // co-owner who does not own this board at the board check.
+    let stranger = crate::test_util::non_owner_proof(&vault);
+    assert_eq!(
+        dispatcher
+            .approve_context_widen(&stranger, &proposal, 4)
+            .expect_err("a non-owner")
+            .kind(),
+        ErrorKind::ConsentOwnerNotAuthenticated
+    );
+    let outsider = crate::test_util::co_owner_proof(&vault);
     assert_eq!(
         dispatcher
             .approve_context_widen(&outsider, &proposal, 4)
@@ -459,7 +464,7 @@ fn workflow_widen_parks_whole_composition_and_replays_one_wrapper_after_reopen()
             .chat_sections
             .is_empty()
     );
-    let outsider = owner(&case.vault, test_id(0xD1))?;
+    let outsider = crate::test_util::co_owner_proof(&case.vault);
     assert_eq!(
         dispatcher
             .approve_context_widen(&outsider, &proposal, 4)

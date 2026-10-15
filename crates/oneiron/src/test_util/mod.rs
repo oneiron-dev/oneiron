@@ -367,6 +367,50 @@ pub(crate) fn non_owner_proof(vault: &Vault) -> crate::consent::AuthenticatedOwn
         .expect("a non-owner person's proof")
 }
 
+/// A second live owner's proof on `vault`: an Owner-role member once the
+/// vault is shared under its embedded owner. It shares the vault, so a test
+/// calls it once per vault.
+pub(crate) fn co_owner_proof(vault: &Vault) -> crate::consent::AuthenticatedOwner {
+    use crate::federation::{FederationGrantRole, InitialSharedMember};
+    let owner = embedded_owner_proof(vault);
+    let co_owner = EntityId::now();
+    vault
+        .put_entity(
+            &co_owner,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"co-owner",
+        )
+        .expect("a live person");
+    vault
+        .initialize_shared_vault(
+            &owner,
+            42,
+            None,
+            &[
+                InitialSharedMember {
+                    member_ref: owner.actor(),
+                    role: Some(FederationGrantRole::Owner),
+                },
+                InitialSharedMember {
+                    member_ref: co_owner,
+                    role: Some(FederationGrantRole::Owner),
+                },
+            ],
+            1,
+        )
+        .expect("a shared vault");
+    vault
+        .authenticate_owner(
+            co_owner,
+            &co_owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("the co-owner's proof")
+}
+
 /// An owner proof another vault authenticated for `actor` under `principal`,
 /// with `actor` a live PERSON there as in the vault under test: what a door
 /// of that vault must refuse. The other vault's `TempDir` and handle come
