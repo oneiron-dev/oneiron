@@ -149,6 +149,7 @@ fn synthetic_keys() -> std::result::Result<(Keys, Vec<u8>), Box<dyn std::error::
 
 /// The same, whose identity also hands over a chain certificate, which the
 /// assembler embeds beside the leaf.
+#[cfg(feature = "hostile-organ-tests")]
 fn synthetic_keys_with_chain() -> std::result::Result<(Keys, Vec<u8>), Box<dyn std::error::Error>> {
     let (mut keys, cert) = synthetic_keys()?;
     let other = rcgen::KeyPair::generate()?;
