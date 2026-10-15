@@ -10,10 +10,11 @@ mod scrub;
 pub(crate) use scrub::deleted;
 
 pub(crate) use materialize::apply;
-pub(crate) use mirror::{copy_selected, refresh};
+pub(crate) use mirror::{copy_judged, copy_selected, dropped_in, refresh};
 
 use crate::note::documents::{doc_key, invalid};
 use crate::note::{NoteFork, NoteLandingReceipt, NoteReviewBundle};
+use crate::sync::loro_support::TombstoneIndex;
 use crate::{EntityId, Vault, error::Result};
 use loro::{LoroDoc, LoroValue, ValueOrContainer};
 use std::collections::{BTreeMap, BTreeSet};
@@ -45,15 +46,14 @@ pub(crate) fn is_native(doc: &LoroDoc) -> bool {
 
 pub(crate) fn validate(doc: &LoroDoc) -> Result<State> {
     let mut state = codec::read(doc)?;
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     let dropped: BTreeSet<_> = state
         .cores
         .keys()
         .chain(state.heads.keys())
         .copied()
         .chain(state.docs.keys().map(|(note, _)| *note))
-        .filter(|note| {
-            crate::sync::loro_support::tombstone_map_contains_id(&doc.get_map("tombstones"), note)
-        })
+        .filter(|note| tombstones.contains(note))
         .collect();
     state.drop_deleted(&dropped);
     state.validate()?;
@@ -99,8 +99,27 @@ fn bundle_notes(bundle: &NoteReviewBundle) -> BTreeSet<EntityId> {
         .chain(bundle.landed.iter().map(|row| row.note))
         .collect()
 }
-fn blocked(vault: &Vault, txn: &heed::RoTxn<'_>, doc: &LoroDoc, note: &EntityId) -> Result<bool> {
-    if crate::sync::loro_support::tombstone_map_contains_id(&doc.get_map("tombstones"), note)
+/// Whether a device-only world keeps `note` on this device. Unlike a blocked
+/// NOTE it is never removed from a window that already carries it: a removal
+/// would delete a receiver's copy once the flag clears. The export doors
+/// withhold such a window whole instead.
+fn held(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    flagged: &BTreeSet<EntityId>,
+    note: &EntityId,
+) -> Result<bool> {
+    crate::settings::device_only_withholds(&vault.store, txn, flagged, note)
+}
+/// Whether no export of the document `tombstones` indexes carries `note`: it
+/// is tombstoned there, deleted here, off the record, or an erased shell.
+pub(crate) fn blocked(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    tombstones: &TombstoneIndex,
+    note: &EntityId,
+) -> Result<bool> {
+    if tombstones.contains(note)
         || vault.local_hard_delete_marker_exists_in_txn(txn, note)?
         || vault.store.off_record_sessions.contains_entity(note)?
     {

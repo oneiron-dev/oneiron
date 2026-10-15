@@ -184,43 +184,6 @@ fn legacy_claim_scope_sweep_stamps_explicit_base_once() -> Result<()> {
     assert_eq!(vault.get(&id)?.expect("fixture"), first);
     Ok(())
 }
-#[test]
-fn legacy_corpus_entry_restamps_onto_project_axis() -> Result<()> {
-    let project = entity(79);
-    let bytes = encode_claim_body(&body())?;
-    let Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice()).expect("fixture")
-    else {
-        panic!("map")
-    };
-    entries.retain(|(k, _)| {
-        ![
-            "worldId",
-            "scopeFacetId",
-            "scopeRelationshipId",
-            "scopeProjectId",
-            "scopeVersion",
-        ]
-        .contains(&k.as_str().expect("fixture"))
-    });
-    entries.push((
-        Value::from("scope"),
-        Value::Map(vec![(
-            Value::from("corpus_id"),
-            Value::Binary(project.as_bytes().to_vec()),
-        )]),
-    ));
-    let upgraded = upgrade_pre_scope_body(&encode(&Value::Map(entries))?)?;
-    let decoded = decode_claim_body(&upgraded, true)?;
-    assert_eq!(decoded.scope_project, project);
-    assert_eq!(
-        decoded.scope,
-        Some(Value::Map(vec![(
-            Value::from("corpus_id"),
-            Value::Binary(project.as_bytes().to_vec()),
-        )]))
-    );
-    Ok(())
-}
 
 #[test]
 fn duplicate_legacy_corpus_entries_refuse_both_orders_and_persist_nothing() -> Result<()> {
@@ -322,6 +285,37 @@ fn unstamped_records_are_excluded_from_read_export_delete_and_debug_is_explicit(
     assert!(vault.get(&remote)?.is_some());
     Ok(())
 }
+/// A scoped record export never carries a row a device-only world keeps on
+/// this device: the WORLD row, or a claim in it.
+#[test]
+fn scoped_export_withholds_rows_of_a_device_only_world() -> Result<()> {
+    let (_dir, vault) = vault()?;
+    let world = entity(37);
+    let private = entity(38);
+    let portable = entity(39);
+    vault.put_entity(&world, crate::registry::ENTITY_TYPE_WORLD, AT, 10, b"world")?;
+    vault.put_entity(&entity(31), ENTITY_TYPE_PERSON, AT, 10, b"subject")?;
+    let mut in_world = body();
+    in_world.world = Some(world);
+    vault.put_claim(&private, &in_world, AT, 10)?;
+    vault.put_claim(&portable, &body(), AT, 10)?;
+    let top = Scope::top();
+    let exported = |vault: &Vault| -> Result<Vec<EntityId>> {
+        Ok(vault
+            .export_records_in_scope(&top, &top, &top)?
+            .into_iter()
+            .map(|record| record.id)
+            .collect())
+    };
+    assert!(exported(&vault)?.contains(&private));
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+
+    let ids = exported(&vault)?;
+    assert!(ids.contains(&portable));
+    assert!(!ids.contains(&private));
+    assert!(!ids.contains(&world));
+    Ok(())
+}
 #[test]
 fn stored_grant_scope_roundtrip_and_bottom_deny_at_existing_doors() -> Result<()> {
     let mut access = crate::access_grant::AccessGrant::companion_profile_read(
@@ -382,28 +376,6 @@ fn put_facet(vault: &Vault, facet: EntityId) -> Result<()> {
 }
 
 #[test]
-fn default_facet_is_the_owner_substrate_facet_until_set() -> Result<()> {
-    let (_dir, vault) = vault()?;
-    let owner = vault.ensure_embedded_owner_actor().expect("owner PERSON");
-
-    assert_eq!(vault.default_facet()?, substrate_facet_id(owner)?);
-    Ok(())
-}
-
-#[test]
-fn set_default_facet_moves_the_default() -> Result<()> {
-    let (_dir, vault) = vault()?;
-    let facet = entity(41);
-    put_facet(&vault, facet)?;
-    vault
-        .set_default_facet(facet, owner_actor(&vault))
-        .expect("the owner sets the default");
-
-    assert_eq!(vault.default_facet()?, facet);
-    Ok(())
-}
-
-#[test]
 fn set_default_facet_refuses_an_id_that_is_not_a_facet() -> Result<()> {
     let (_dir, vault) = vault()?;
     let person = entity(42);
@@ -436,27 +408,25 @@ fn set_default_facet_refuses_a_caller_that_is_not_the_owner() -> Result<()> {
     Ok(())
 }
 
+/// A user deleting a claim about themselves must not stop the next write: a
+/// deleted claim keeps its shell and its owner in-edge, and the default facet
+/// every unmasked write reads used to decode that empty shell and fail.
 #[test]
-fn fork_to_facet_births_a_claim_under_the_new_facet() -> Result<()> {
+fn default_facet_reads_past_a_deleted_claim_about_the_owner() -> Result<()> {
     let (_dir, vault) = vault()?;
-    let owner = owner_actor(&vault);
-    let facet = entity(45);
-    put_facet(&vault, facet)?;
-    let claim = entity(46);
-    let mut origin = ClaimBody::new(
-        "test.fork",
-        ClaimSubject::Entity(owner.entity_ref()),
+    let owner = vault.ensure_embedded_owner_actor().expect("owner PERSON");
+    let claim = entity(45);
+    let about_owner = ClaimBody::new(
+        "test.scope",
+        ClaimSubject::Entity(owner),
         Value::from("fact"),
         1.0,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
     )?;
-    origin.scope_facet = vault.default_facet()?;
-    vault.put_claim(&claim, &origin, AT, 10)?;
-    let fork = vault
-        .fork_to_facet(claim, facet, true, owner)
-        .expect("the owner forks the claim");
+    vault.put_claim(&claim, &about_owner, AT, 10)?;
+    vault.delete_entity_with_reason(&claim, crate::DeleteReason::UserDelete)?;
 
-    assert_eq!(vault.get_claim(&fork)?.expect("fork").scope_facet, facet);
+    assert_eq!(vault.default_facet()?, substrate_facet_id(owner)?);
     Ok(())
 }

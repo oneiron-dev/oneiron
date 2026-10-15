@@ -46,7 +46,7 @@ pub fn record_review_outcome(
     }
     let outcome_value = value_of(&(source, accepted))?;
     let outcome_key = format!("{}:{artifact_id}", result.verdict_claim.to_hex());
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let current = vault
             .get_claim_in_txn(txn, &result.verdict_claim)?
             .ok_or(Error::EntityNotFound)?;

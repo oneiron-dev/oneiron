@@ -250,19 +250,19 @@ pub fn set_skill_tradeoff_preferences(
     rules: Vec<TradeoffRule>,
     jev_band: DecisionBand,
 ) -> Result<String> {
-    vault.with_write_txn(|txn| {
-        owner.revalidate_in_txn(vault, txn)?;
+    vault.with_write_txn_grouped(|txn| {
+        let actor = owner.revalidate_in_txn(vault, txn)?;
         let definition = goal_definition_in_txn(vault, txn, skill)?;
         let previous = preferences_in_txn(vault, txn, &definition.goal_id)?;
         if previous
             .as_ref()
-            .is_some_and(|previous| previous.responsible != owner.actor())
+            .is_some_and(|previous| previous.responsible != actor)
         {
             return Err(invalid(
                 "only the responsible person may revise tradeoff preferences",
             ));
         }
-        let limits = skill_tradeoff_limits_in_txn(&vault.store, txn, &owner.actor())?;
+        let limits = skill_tradeoff_limits_in_txn(&vault.store, txn, &actor)?;
         if u64::try_from(rules.len()).unwrap_or(u64::MAX) > limits.max_authored_rules {
             return Err(invalid("tradeoff rules exceed the resolved policy limit"));
         }
@@ -275,7 +275,7 @@ pub fn set_skill_tradeoff_preferences(
         }
         let preferences = SkillTradeoffPreferences {
             revision: vault.store.clock.entity_id()?,
-            responsible: owner.actor(),
+            responsible: actor,
             rules,
             learned: previous.map_or_else(Vec::new, |previous| previous.learned),
             jev_band,
@@ -590,15 +590,15 @@ pub fn settle_skill_tradeoff_ask(
     choice: TradeoffChoice,
     at: u64,
 ) -> Result<HeldOutVerdict> {
-    vault.with_write_txn(|txn| {
-        owner.revalidate_in_txn(vault, txn)?;
+    vault.with_write_txn_grouped(|txn| {
+        let actor = owner.revalidate_in_txn(vault, txn)?;
         let ask: SkillTradeoffAsk = load(vault, txn, &key(ASK_PREFIX, proposal))?
             .ok_or(invalid("no pending skill tradeoff ask"))?;
         let question = &ask.question;
         if question.digest()? != expected_question_digest {
             return Err(invalid("tradeoff reply does not bind the pending question"));
         }
-        if question.responsible != owner.actor() {
+        if question.responsible != actor {
             return Err(invalid(
                 "tradeoff pick must come from the responsible person",
             ));
@@ -608,16 +608,12 @@ pub fn settle_skill_tradeoff_ask(
         ))?;
         let pending = open_pending_tradeoff_in_txn(vault, txn, proposal, ask.pending, latest, at)?;
         let mut preferences = preferences_in_txn(vault, txn, &question.goal_id)?
-            .filter(|preferences| preferences.responsible == owner.actor())
+            .filter(|preferences| preferences.responsible == actor)
             .ok_or(invalid("tradeoff goal changed before the pick"))?;
         if pending.goal_revision != question.goal_revision {
             return Err(invalid("tradeoff goal changed before the pick"));
         }
-        if preferences.learning_full(skill_tradeoff_limits_in_txn(
-            &vault.store,
-            txn,
-            &owner.actor(),
-        )?) {
+        if preferences.learning_full(skill_tradeoff_limits_in_txn(&vault.store, txn, &actor)?) {
             return Err(invalid(CAPACITY_EXHAUSTED));
         }
         preferences.learned.push(TradeoffRule {
@@ -650,7 +646,7 @@ pub fn settle_skill_tradeoff_ask(
         }
         let resolution = TradeoffResolution {
             pending: pending.id,
-            owner: owner.actor(),
+            owner: actor,
             authentication: format!("{:?}", owner.decision_id()),
             evidence: expected_question_digest.to_owned(),
             rung: TradeoffRung::Person,

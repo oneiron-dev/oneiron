@@ -62,11 +62,6 @@ impl FrozenMcpPayload {
     pub(crate) const fn freeze_event_baseline(&self) -> usize {
         self.freeze_event_baseline
     }
-
-    #[cfg(test)]
-    pub(crate) fn into_bytes(self) -> Vec<u8> {
-        self.bytes
-    }
 }
 
 impl fmt::Debug for FrozenMcpPayload {
@@ -91,7 +86,7 @@ impl OutboundBindingAuthority {
     /// authority after restart without syncing secret material.
     pub fn for_vault(vault: &Vault) -> Result<Self> {
         let mut seed = None;
-        vault.with_write_txn(|wtxn| {
+        vault.with_write_txn_grouped(|wtxn| {
             let identity = crate::identity::ensure_device_identity_in_txn(vault, wtxn)?;
             seed = Some(identity.signing_key.to_bytes());
             Ok(())

@@ -4,11 +4,18 @@ pub mod backup;
 pub mod embedder;
 mod embedder_shape;
 mod embedder_space;
+mod feedback;
+pub mod import;
+mod limits;
 mod lookup;
 pub mod merge;
+pub mod models;
+pub mod oneironer;
+mod recall;
 pub mod remote_embedder;
 pub mod serve_args;
 pub mod server_config;
+mod trusted_proxy;
 
 pub use backup::{BackupConfig, default_backup_dir};
 pub use embedder::{
@@ -16,11 +23,22 @@ pub use embedder::{
     EmbedderQuant, EndpointEmbedderConfig, LocalEmbedderConfig,
 };
 pub use embedder_shape::{EmbedderAttention, EmbedderOutputQuantization};
+pub use feedback::FeedbackConfig;
+pub use import::ImportConfig;
+pub use limits::LimitsConfig;
+pub(crate) use merge::layer_serve_config;
 pub use merge::{
-    EnvConfig, default_config_path, resolve_serve_config, resolve_serve_config_with_sources,
+    EnvConfig, default_config_path, resolve_backup_config, resolve_serve_config,
+    resolve_serve_config_with_sources,
 };
+pub use models::ModelsConfig;
+pub use oneironer::{
+    OneironerArgs, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider,
+};
+pub use recall::RecallConfig;
 pub use serve_args::ServeArgs;
 pub use server_config::{ServeConfig, SyncServerConfig};
+pub use trusted_proxy::TrustedProxy;
 
 #[cfg(test)]
 mod embedder_tests;
@@ -29,13 +47,9 @@ mod privacy_tests;
 #[cfg(all(test, unix))]
 mod process_env_tests;
 #[cfg(test)]
+mod recall_tests;
+#[cfg(test)]
 mod tests;
 
 #[cfg(test)]
-use crate::runtime::{RuntimeMode, RuntimeProviderKind, RuntimeRole};
-#[cfg(test)]
-use crate::usage::UsageMode;
-#[cfg(test)]
-use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
-#[cfg(test)]
-use std::path::PathBuf;
+use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody};

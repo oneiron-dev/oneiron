@@ -82,16 +82,6 @@ thread_local! {
     static ANSWER_SCAN_CAPPED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-#[cfg(test)]
-pub(super) fn answer_scan_capped() -> usize {
-    ANSWER_SCAN_CAPPED.get()
-}
-
-#[cfg(test)]
-pub(super) fn reset_answer_scan_capped() {
-    ANSWER_SCAN_CAPPED.set(0);
-}
-
 fn answer_receipt_record(id: &EntityId, row: &StoredAnswer) -> ReceiptRecord {
     let fields = std::collections::BTreeMap::from([
         (

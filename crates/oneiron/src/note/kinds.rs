@@ -145,7 +145,7 @@ impl Vault {
                 "invalid PACK kind descriptor",
             )));
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if let Some(old) = NOTE_KIND.get(&self.store, txn, &descriptor.kind)? {
                 if old != *descriptor {
                     return Err(Error::Record(RecordError::InvalidNoteBody(

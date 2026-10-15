@@ -36,12 +36,35 @@ impl ClaimReadStatus {
     }
 }
 
+impl<'v> ScopedRead<'v> {
+    /// This lane as the record verbs read it: the same key, its status half
+    /// admitting claims of every status. Only a plain lane has one; a lane
+    /// composed with a room audience, peer reads or a session view refuses.
+    pub fn recorded_lane(&self) -> Result<ScopedRead<'v>> {
+        if self.audience.is_some() || !self.peer_reads.is_empty() || self.session_view.is_some() {
+            return Err(Error::InvariantViolation(
+                "recorded lane of a composed read",
+            ));
+        }
+        Ok(self
+            .vault
+            .scoped_read(self.actor_key.clone())
+            .with_claim_status(ClaimReadStatus::Recorded))
+    }
+}
+
 impl ScopedRead<'_> {
     /// The same lane admitting claims of every status the record verbs serve.
     #[must_use]
     pub(crate) fn with_claim_status(mut self, status: ClaimReadStatus) -> Self {
         self.claim_status = status;
         self
+    }
+
+    /// Whether a claim whose principal audience is `principal` admits this
+    /// reader: one that names a principal admits that principal alone.
+    pub(crate) fn principal_admits(&self, principal: Option<EntityId>) -> bool {
+        principal.is_none() || principal == EntityId::from_hex(self.actor_key.actor_ref()).ok()
     }
 
     pub(super) fn is_claim_raw_readable_with_policy_in(
@@ -64,7 +87,7 @@ impl ScopedRead<'_> {
             return Ok(false);
         }
         let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        self.is_claim_readable_with_body_and_policy_in(rtxn, policy, id, &body, filter)
+        self.is_claim_readable_with_body_and_policy_in(rtxn, policy, id, raw, &body, filter)
     }
 
     fn is_claim_readable_with_body_and_policy_in(
@@ -72,6 +95,7 @@ impl ScopedRead<'_> {
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         id: &EntityId,
+        raw: &[u8],
         body: &ClaimBody,
         filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
@@ -80,12 +104,11 @@ impl ScopedRead<'_> {
         if crate::claim::history_store::machine_history_kind(&body.predicate).is_some() {
             return Ok(false);
         }
-        if !crate::claim::has_live_support_in_txn(&self.vault.store, rtxn, body)? {
+        if !crate::claim::has_live_support_in_txn(&self.store_read(), rtxn, body)? {
             return Ok(false);
         }
         let principal = claim_principal_id(body)?;
-        let reader = EntityId::from_hex(self.actor_key.actor_ref()).ok();
-        if principal.is_some() && principal != reader {
+        if !self.principal_admits(principal) {
             return Ok(false);
         }
         if crate::edit_distance::miner::is_mined_preference(&body.predicate) {
@@ -116,10 +139,12 @@ impl ScopedRead<'_> {
                     id,
                     body,
                 )?,
+                // The shared view of this snapshot's fold, not a copy: this
+                // runs per claim, and a copy grows with the vault's agents.
                 None => crate::authority::claim_causal_admitted(
                     &self.vault.store,
                     rtxn,
-                    &self.vault.authority_fold_readonly_in_txn(rtxn)?,
+                    &*self.vault.authority_view_readonly_in_txn(rtxn)?,
                     id,
                     body,
                 )?,
@@ -131,7 +156,7 @@ impl ScopedRead<'_> {
         let admitted = self.claim_status.admits(filter, body)
             && crate::pipeline::claim_ceiling_allowed(filter, body);
         if !admitted
-            || !self.audience_readable_in(rtxn, id)?
+            || !self.audience_readable_raw_in(rtxn, id, raw)?
             || !self.relationship_claim_allowed_in(rtxn, body)?
         {
             return Ok(false);

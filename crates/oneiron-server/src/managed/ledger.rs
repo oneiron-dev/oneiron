@@ -57,6 +57,8 @@ const WAKE_ID_JOB_READY: &str = "job_ready";
 
 const WAKE_ID_SYNC_DEADLINE: &str = "sync_deadline";
 
+const WAKE_ID_HOUSEKEEPING: &str = "housekeeping";
+
 /// The vault's wake ledger: what the engine wants to be woken for, and when.
 ///
 /// Two delivery paths over the same entries. The pull path rides the
@@ -120,7 +122,7 @@ impl WakeLedger {
     }
 
     /// Builds the current wake entries from the engine's own state: the
-    /// job-ready head probe and the sync deadline.
+    /// job-ready head probe, the sync deadline and the housekeeping deadline.
     ///
     /// No timer is consulted and none is armed — the engine only reports what
     /// it would want; firing is the supervisor's job.
@@ -130,6 +132,9 @@ impl WakeLedger {
             entries.push(entry);
         }
         if let Some(entry) = sync_deadline(server) {
+            entries.push(entry);
+        }
+        if let Some(entry) = housekeeping_deadline(&self.vault)? {
             entries.push(entry);
         }
         validate_wake_entries(&entries).map_err(|error| ManagedError::LedgerRefused {
@@ -250,16 +255,19 @@ impl WakeLedger {
     pub async fn push_with_retry(&self, rev: u64, entries: &[WakeEntry]) -> bool {
         match self.push_once(rev, entries).await {
             Ok(()) => return true,
-            Err(error) => {
-                tracing::warn!(%error, "wake ledger push failed; retrying once");
+            Err(_) => {
+                tracing::warn!(
+                    reason = "ledger_push_failed",
+                    "wake ledger push failed; retrying once"
+                );
             }
         }
         tokio::time::sleep(LEDGER_RETRY_DELAY).await;
         match self.push_once(rev, entries).await {
             Ok(()) => true,
-            Err(error) => {
+            Err(_) => {
                 tracing::warn!(
-                    %error,
+                    reason = "ledger_push_failed",
                     "wake ledger push retry failed; proceeding without the supervisor"
                 );
                 false
@@ -330,4 +338,19 @@ fn sync_deadline(server: &SyncServer) -> Option<WakeEntry> {
         },
         reason_tag: "lease_expiry".to_owned(),
     })
+}
+
+/// Housekeeping deadline: the next moment a retirement the engine owes comes
+/// due (a secret lease's expiry, a voice print's retention deadline, a critical
+/// confirm's window, a waiting erasure). Exact, because the retirement is due
+/// then, not somewhere in a window after it.
+fn housekeeping_deadline(vault: &oneiron::Vault) -> Result<Option<WakeEntry>, ManagedError> {
+    let at = vault
+        .housekeeping_wake_at()
+        .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
+    Ok(at.map(|at| WakeEntry {
+        id: WAKE_ID_HOUSEKEEPING.to_owned(),
+        at: Schedule::Exact { at },
+        reason_tag: WAKE_ID_HOUSEKEEPING.to_owned(),
+    }))
 }

@@ -5,12 +5,14 @@ pub(crate) use builtin::seed_builtin_packs;
 mod codec;
 mod doors;
 mod manifest;
+mod migrations;
 mod source;
 
 pub use crate::gate::PackInstallPolicyOverride;
 pub use agent_facets::AgentPackFacets;
 pub(crate) use codec::{decode as decode_source_body, validate_pack_source_put};
 pub use manifest::{PackAdapter, PackKind, PackManifest};
+pub use migrations::PackMigration;
 pub use screening::PackInstallRules;
 pub use source::{PackSection, PackSource};
 
@@ -47,9 +49,7 @@ pub use admission_types::{
     PackPermissions, PackQualification, PackQualifier, PackRuntimeRecipe,
 };
 #[cfg(all(test, feature = "microvm-firecracker", target_os = "linux"))]
-pub(crate) use script_plan::{ScriptExecutionPlan, script_output_bytes};
-#[cfg(all(test, feature = "microvm-firecracker", target_os = "linux"))]
-pub(crate) use script_runtime::ScriptOutput;
+pub(crate) use script_plan::script_output_bytes;
 pub use script_runtime::{PackScriptGrant, PackScriptOutcome, PackScriptRun};
 #[cfg(test)]
 mod admission_tests;

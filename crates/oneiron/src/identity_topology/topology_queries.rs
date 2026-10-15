@@ -58,7 +58,7 @@ impl Vault {
                 return Ok(ActiveMergeDeleteRole::Source);
             }
             survivor_role |= *id == *survivor;
-            actor |= super::effective_author_in_txn(&self.store, rtxn, event.event_id)?
+            actor |= super::admitted_author_in_txn(&self.store, rtxn, event.event_id)?
                 .is_some_and(|author| author.entity_ref() == *id);
         }
         Ok(if survivor_role {
@@ -114,8 +114,9 @@ impl Vault {
     ///   no structural witness at all (no edge moves, and r6 forbids
     ///   rewriting the claim's subject), so the engine-authored index IS the
     ///   record;
-    /// - a FACET reads its canonical `facet_of` stamps, the same rows the
-    ///   local query filter and the federation selector already honor.
+    /// - a FACET reads the canonical `facet_of` birth stamps of the claims
+    ///   forked under it (r9), the same rows the local query filter and the
+    ///   federation selector already honor.
     ///
     /// This is a READ over records ABOUT the claims. The claims themselves
     /// are untouched: every returned claim still carries the subject its

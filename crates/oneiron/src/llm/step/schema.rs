@@ -4,6 +4,7 @@ use super::super::{
     LlmRequest, LlmResponse, LlmUsage, ResponseFormat,
 };
 use super::schema_runtime::{self, SchemaValidationOutcome, SchemaValidationRequest};
+use super::types::ReplyCheck;
 use super::{DurableStepError, DurableStepResult};
 use crate::dreamer_wake::WakePassDeadline;
 
@@ -26,9 +27,15 @@ pub fn validate_json_schema(
 pub(super) fn validate_fallback(
     request: &LlmRequest,
     response: &LlmResponse,
+    check: Option<&ReplyCheck>,
 ) -> DurableStepResult<()> {
     let ResponseFormat::Json { schema } = &request.envelope.response_format else {
-        return Ok(());
+        return check.map_or(Ok(()), |check| {
+            check(response).map_err(|error| DurableStepError::SchemaValidation {
+                attempts: 1,
+                errors: vec![error],
+            })
+        });
     };
     let text: String = response
         .message
@@ -54,9 +61,22 @@ pub(super) async fn generate(
     lease: &BudgetLease,
     guard: &BudgetGuard,
     deadline: Option<&WakePassDeadline>,
+    check: Option<&ReplyCheck>,
 ) -> DurableStepResult<LlmResponse> {
     let ResponseFormat::Json { schema } = &request.envelope.response_format else {
-        return Ok(super::execute::generate_with_retry(backend, request, lease).await?);
+        let response = super::execute::generate_with_retry(backend, request, lease).await?;
+        let Some(Err(error)) = check.map(|check| check(&response)) else {
+            return Ok(response);
+        };
+        // One answer, paid and refused, as a native schema miss is.
+        guard
+            .settle_per_call(lease, &response.usage)
+            .map_err(super::super::LlmError::from)?;
+        return Err(DurableStepError::SpentSchemaValidation {
+            attempts: 1,
+            errors: vec![error],
+            usage: Box::new(response.usage),
+        });
     };
     // Compile in the same bounded compartment before contacting the backend.
     match schema_runtime::validate(SchemaValidationRequest::CheckSchema(schema)) {
@@ -128,6 +148,8 @@ pub(super) async fn generate(
         let mut response =
             match super::execute::generate_with_retry(backend, &wire, active_lease).await {
                 Ok(response) => response,
+                // The first call failed: nothing was answered, nothing spent.
+                Err(source) if attempt == 1 => return Err(DurableStepError::Llm(source)),
                 Err(source) => {
                     return Err(DurableStepError::SpentLlm {
                         source,

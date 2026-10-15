@@ -170,7 +170,7 @@ impl Vault {
         at: u64,
     ) -> Result<()> {
         let encoded = encode_workflow(definition)?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             require_kind(&self.store, txn, id, ENTITY_TYPE_WORKFLOW)?;
             let prior = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?
                 .ok_or(Error::EntityNotFound)?;
@@ -196,7 +196,7 @@ impl Vault {
         fork: &EntityId,
         at: u64,
     ) -> Result<WorkflowDefinition> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             require_kind(&self.store, txn, parent, ENTITY_TYPE_WORKFLOW)?;
             if crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, fork)?.is_some() {
                 return Err(invalid());

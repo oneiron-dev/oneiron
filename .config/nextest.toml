@@ -23,22 +23,39 @@
 #   * vault_open_drop_cycles_survive_pthread_key_limit
 #     — 600 sequential Vault open/drop cycles (ONE-1142 regression guard)
 #   * hnsw_recall_at_10_vs_bruteforce
-#   * hnsw_recall_at_10_after_refresh_churn
-#     — 1k-vector recall benchmarks against brute force
+#     — 1k-vector recall benchmark against brute force
 #   * the `sync_convergence_props` module inside the `it_sync` binary
 #     — the whole ONE-1136 two-vault CRDT convergence property suite
 #       (multi-round Loro exchange per test; sync feature only)
-# The three unit tests match by name substring (`~`), not exact `=` path, so
+# The two unit tests match by name substring (`~`), not exact `=` path, so
 # a future split of the flat `tests` module cannot silently un-exclude them;
 # each name is unique workspace-wide.
 default-filter = """
 not (
   test(~vault_open_drop_cycles_survive_pthread_key_limit)
   | test(~hnsw_recall_at_10_vs_bruteforce)
-  | test(~hnsw_recall_at_10_after_refresh_churn)
   | (binary(=it_sync) & test(/^sync_convergence_props::/))
 )
 """
+# A stuck test fails instead of stalling the run: nextest kills it after
+# period x terminate-after (each retry under `full`/`ci-pr` gets the same
+# bound). Every profile inherits this and the override below. The slowest
+# healthy tests took ~22 min on a loaded gate host.
+slow-timeout = { period = "60s", terminate-after = 60 }
+
+# The 10,001-record budget test held a gate for 38+ min before its setup
+# stopped committing once per record. It still takes 170-240 s on mel, 400 s
+# alone on sel and 1,271-1,319 s inside a full sel gate: each source turn
+# syncs its own custody key, and each entity read during the wake decodes the
+# whole persisted window. 60 min until those costs drop.
+[[profile.default.overrides]]
+filter = 'package(oneiron) & test(=conversation_dag::tests::replay::ready_parent_budget_continues_after_reopen_without_other_traffic)'
+slow-timeout = { period = "60s", terminate-after = 60 }
+
+# The other conversation_dag replay tests finish in seconds.
+[[profile.default.overrides]]
+filter = 'package(oneiron) & test(/^conversation_dag::tests::replay::/)'
+slow-timeout = { period = "60s", terminate-after = 12 }
 
 [profile.full]
 # Full tier: every test (slow set included). Used by CI and the pre-push
@@ -58,7 +75,6 @@ default-filter = """
 not (
   test(~vault_open_drop_cycles_survive_pthread_key_limit)
   | test(~hnsw_recall_at_10_vs_bruteforce)
-  | test(~hnsw_recall_at_10_after_refresh_churn)
   | (binary(=it_sync) & test(/^sync_convergence_props::/))
 )
 """

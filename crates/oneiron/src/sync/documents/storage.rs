@@ -33,7 +33,7 @@ pub(crate) fn decode_vv(bytes: &[u8]) -> Result<VersionVector> {
 
 /// A closed document is compacted under the write lock, so no stale read can overwrite an append.
 pub(crate) fn compact(vault: &Vault, id: EntityId, erased: bool) -> Result<()> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         if !erased
             && vault.get_entity_type_in_txn(txn, &id)? == Some(crate::registry::ENTITY_TYPE_NOTE)
         {

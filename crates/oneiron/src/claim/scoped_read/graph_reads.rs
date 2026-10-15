@@ -85,6 +85,24 @@ impl ScopedRead<'_> {
 
     /// Edges and both endpoints share one authority snapshot and a mandatory receipt.
     pub fn edges_out(&self, id: &EntityId) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
+        self.edges_out_of(id, None)
+    }
+
+    /// [`Self::edges_out`] of one `kind`: an edge of another kind is neither
+    /// read nor counted as withheld.
+    pub(crate) fn edges_out_of_kind(
+        &self,
+        id: &EntityId,
+        kind: EdgeKind,
+    ) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
+        self.edges_out_of(id, Some(kind))
+    }
+
+    fn edges_out_of(
+        &self,
+        id: &EntityId,
+        kind: Option<EdgeKind>,
+    ) -> Result<ScopedReadResult<Option<Vec<EdgeInfo>>>> {
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let admitted = self.admitted_edges_in(
@@ -93,7 +111,7 @@ impl ScopedRead<'_> {
             &filter,
             id,
             EdgeDirection::Out,
-            None,
+            kind,
             usize::MAX,
             usize::MAX,
             false,
@@ -390,16 +408,58 @@ impl ScopedRead<'_> {
                 header.entity_type,
                 crate::registry::ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_NOTE
             )
-            && !(self.actor_key.enforce_access_grants
+            && !(self.relationship_gated_in(txn)?
                 && matches!(
                     header.entity_type,
                     crate::registry::ENTITY_TYPE_MESSAGE | crate::registry::ENTITY_TYPE_SUMMARY
                 ))
             && raw.len() == ENTITY_METADATA_HEADER_LEN
+            && self.deleted_shell_position_allowed_in(txn, policy, id, &raw)?
             && self
                 .vault
                 .store
                 .entity_deletion_present_in_txn(txn, id, header.learned_at)?)
+    }
+
+    /// The type-only fallback above serves a deleted shell's metadata, but a
+    /// TASK may have been born in any world or facet (ARCH-0067 §5). Its
+    /// shell reads at the position a kept stamp proves; one whose stamp went
+    /// with its body reads as if it sat anywhere, so only a reader whose
+    /// ceiling holds every world and facet sees it.
+    fn deleted_shell_position_allowed_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        use crate::federation::record_scope::{default_stamp, scope_for_blob};
+        use crate::federation::{Scope, ScopeAxis};
+        // A read limited to facets names only a shell that still proves a
+        // place inside them.
+        if !self.facets_allow_in(txn, id, raw)? {
+            return Ok(false);
+        }
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_TASK {
+            return Ok(true);
+        }
+        let kept = match self.session_view {
+            Some(view) => scope_for_blob(view, txn, *id, raw)?,
+            None => scope_for_blob(&self.vault.store, txn, *id, raw)?,
+        };
+        let position = kept.unwrap_or_else(|| Scope {
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::All,
+            verbs: ScopeAxis::Some(["read".to_owned()].into()),
+            ..default_stamp(header.entity_type, *id)
+        });
+        Ok(crate::gate::scoped_read_record_allowed(
+            policy,
+            &self.actor_key,
+            &position,
+        ))
     }
 
     fn timeline_record_allowed_in(
@@ -444,13 +504,14 @@ impl ScopedRead<'_> {
             let scope_erased = matches!(
                 header.entity_type,
                 crate::registry::ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_NOTE
-            ) || (self.actor_key.enforce_access_grants
+            ) || (self.relationship_gated_in(txn)?
                 && matches!(
                     header.entity_type,
                     crate::registry::ENTITY_TYPE_MESSAGE | crate::registry::ENTITY_TYPE_SUMMARY
                 ));
             return Ok(!scope_erased
                 && raw.len() == ENTITY_METADATA_HEADER_LEN
+                && self.deleted_shell_position_allowed_in(txn, policy, &record.id, &raw)?
                 && self.vault.store.entity_deletion_present_in_txn(
                     txn,
                     &record.id,

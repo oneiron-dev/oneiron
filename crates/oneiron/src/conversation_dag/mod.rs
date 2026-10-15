@@ -32,11 +32,15 @@ mod writes;
 
 pub(crate) use branch_scope::{prove_branch_anchor, prove_branch_span};
 pub(crate) use graph::{
-    actor_in_txn, conversation_of, edge_ids, is_sub_session_record, require_type,
+    actor_in_txn, conversation_of, edge_ids, is_sub_session_record, keeps_dag_topology,
+    parent as retained_parent, record_has_dag_topology, require_type,
 };
 pub(crate) use redacted::{capture_before_erase, read as redacted_record_pin};
 pub use reply::{ReplyStrip, Thread, ThreadMeta};
-pub(crate) use reply::{invalidate_thread_meta, invalidate_thread_meta_for_turn_put};
+pub(crate) use reply::{
+    invalidate_thread_meta, invalidate_thread_meta_for_turn_put,
+    rebuild_thread_meta_projection_in_txn,
+};
 pub(crate) use scopes::resolve_in_txn;
 pub(crate) use thread_projection::selected_thread_in_txn;
 pub use types::{

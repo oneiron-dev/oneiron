@@ -4,8 +4,9 @@
 //!
 //! # Custody classes (S1/S2)
 //!
-//! * `custody-portable` — the value may replicate beyond this device (the
-//!   default reach; the ONE-1865 per-credential dial narrows it).
+//! * `custody-portable` — the value may leave this device (the default
+//!   reach; the ONE-1865 per-credential dial narrows it). No sync door
+//!   carries it yet: see the seal below.
 //! * `custody-device-bound` — the value is pinned to this device.
 //! * `cross-vault` — door-only: the value never replicates at all.
 //!
@@ -29,8 +30,9 @@
 //! vault DEK plane** — the same at-rest protection every entity body gets.
 //! The custody discipline is about planes, not a second encryption layer:
 //! the value NEVER leaves this body into claims (secrets are never claims),
-//! into same-vault sync only for portable credentials without the device-only dial;
-//! never into cross-vault export, receipts, or logs. `Debug`
+//! same-vault sync, cross-vault export, receipts, or logs. A peer cannot prove
+//! the owner wrote a custody body, so every replicated door refuses the type
+//! byte and every sync egress drops it (`reject_secret_custody_byte`). `Debug`
 //! for the record redacts the value; `SecretCustodyMetadata` has no value
 //! field by construction.
 //!
@@ -47,7 +49,9 @@
 //! * floor resolution over those bodies: [`SecretCustodyFloor::resolve`];
 //! * the `Vault` doors: [`Vault::register_secret`](crate::Vault::register_secret),
 //!   [`Vault::resolve_secret_ref`](crate::Vault::resolve_secret_ref), [`Vault::get_secret_metadata`](crate::Vault::get_secret_metadata), and the
-//!   SECRET-02 value-read door `Vault::get_secret_value_in_txn`.
+//!   SECRET-02 value-read door `Vault::get_secret_value_in_txn`;
+//! * the owner's registration door,
+//!   [`Vault::register_secret_as_owner`](crate::Vault::register_secret_as_owner).
 //!
 //! Companion [`crate::secret_manifest`] owns the repo-side TOML declaration
 //! and the narrow-only validator (manifest ∧ vault floor, most-restrictive
@@ -56,7 +60,7 @@
 mod codec;
 mod doors;
 mod floor;
-mod replication;
+mod owner_door;
 mod types;
 
 /// MessagePack keys the custody floor reads out of POLICY_MANIFEST bodies.
@@ -71,25 +75,20 @@ mod floor_keys {
     pub(super) const ENV_BINDINGS: &str = "secret.custody.env_bindings";
 }
 
-pub(crate) use self::codec::{custody_sync_allowed, reject_secret_custody_byte};
+pub(crate) use self::codec::{CUSTODY_SEAL_REASON, reject_secret_custody_byte};
 pub use self::codec::{decode_secret_custody_body, encode_secret_custody_body};
 pub(crate) use self::doors::{
     SecretCustodyAdmission, put_secret_custody_in_txn, read_secret_custody_admission_in_txn,
     read_secret_custody_in_txn, refuse_bindings_wider_than_live_floor, resolve_secret_ref_in_txn,
 };
-// `decode_secret_custody_admission_body` is only consumed by in-crate tests
-// (`secret_lease/tests.rs`); a plain `pub(crate)` re-export would warn as
-// unused in non-test builds, so the seam provides it under `cfg(test)`.
-#[cfg(test)]
-pub(crate) use self::doors::decode_secret_custody_admission_body;
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
-pub(crate) use self::replication::{
-    plan_replicated_name_index, stage_replicated_name_index, validate_replicated_custody_put,
+pub use self::owner_door::{
+    ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered,
 };
 pub use self::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
-    SECRET_NAME_INDEX_PREFIX, SECRET_SCOPE_READ, SecretBinding, SecretCustodyFloor,
-    SecretCustodyMetadata, SecretCustodyRecord, SecretCustodyStatus, TierBand,
+    SECRET_NAME_INDEX_PREFIX, SECRET_NAME_MAX_BYTES, SECRET_SCOPE_READ, SecretBinding,
+    SecretCustodyFloor, SecretCustodyMetadata, SecretCustodyRecord, SecretCustodyStatus, TierBand,
 };
 
 #[cfg(test)]
@@ -115,5 +114,3 @@ use crate::store::Store;
 use crate::vault::Vault;
 #[cfg(test)]
 use rmpv::Value;
-#[cfg(test)]
-use std::collections::BTreeMap;

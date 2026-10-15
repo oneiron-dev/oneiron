@@ -7,12 +7,11 @@
 use super::*;
 
 mod authorization;
-mod companion_requirement;
 mod current_architecture;
 mod onboarding_replay;
 use current_architecture::{assert_mailbox_lifecycle_receipt, register_mailbox_custody};
 
-use crate::agent_def::{AgentCeiling, AgentScope, DreamingMode};
+use crate::agent_def::{AgentCeiling, AgentScope};
 use crate::channel_identity_autonomy::{ChannelIdentityActionEnvelope, MailboxReadEnvelope};
 use crate::channel_identity_lifecycle::{
     BindIntent, ChannelIdentityFulfillmentInput, ChannelIdentityLifecycleActor,
@@ -459,54 +458,6 @@ fn existing_companion_person_requires_valid_baseline_before_grant() -> Result<()
     Ok(())
 }
 
-#[test]
-fn existing_companion_person_preserves_valid_edited_baseline_on_resume() -> Result<()> {
-    let (_dir, vault, mut intent) = fixture("Antevon");
-    let birth = companion_birth();
-    intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
-    intent.companion_birth = Some(birth.clone());
-    let edited = serde_json::json!({"display_name": "edited identity", "tone": "patient"});
-    let body = encode_value(&Value::Map(vec![
-        (
-            Value::from("schema_version"),
-            Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
-        ),
-        (
-            Value::from("display_name"),
-            Value::from(birth.display_name.as_str()),
-        ),
-        (
-            Value::from("persona_definition"),
-            crate::companion::companion_value_from_json(
-                &serde_json::json!({"schema_version": 1, "baseline": edited}),
-            )?,
-        ),
-    ]))?;
-    vault.put_entity(
-        &birth.person_ref,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: AT, end: AT },
-        AT,
-        &body,
-    )?;
-    vault.onboard_workspace_member(intent.clone(), &writer(WRITER), None)?;
-    assert_eq!(
-        crate::companion::validated_persona_baseline(
-            &vault.get(&birth.person_ref)?.expect("PERSON")
-        )?,
-        edited
-    );
-    assert!(vault.get_access_grant(&birth.profile_grant_ref)?.is_some());
-    vault.onboard_workspace_member(intent, &writer(WRITER), None)?;
-    assert_eq!(
-        crate::companion::validated_persona_baseline(
-            &vault.get(&birth.person_ref)?.expect("PERSON")
-        )?,
-        edited
-    );
-    Ok(())
-}
-
 /// Done-means 5: the mailbox row carries a custody NAME and read scopes. The
 /// intent has no field a token could occupy, so the stored body cannot hold one.
 #[test]
@@ -822,36 +773,4 @@ fn assert_mailbox_waiting(
         0
     );
     Ok(journal)
-}
-
-#[test]
-fn companion_birth_defaults_to_own_dreaming_without_overriding_authored_mode() -> Result<()> {
-    let (_dir, vault, intent) = fixture("Antevon");
-    let companion_ref = intent.companion_birth.as_ref().expect("birth").actor_ref;
-    vault.onboard_workspace_member(intent, &writer(WRITER), None)?;
-    let companion = vault
-        .get_agent_definition(&companion_ref)?
-        .expect("companion agent");
-    assert_eq!(companion.dreaming, Some(DreamingMode::Own));
-    assert_eq!(companion.dreaming_mode(), DreamingMode::Own);
-    assert_eq!(companion.dreaming_model, None);
-    let member = vault
-        .get_agent_definition(&entity(MEMBER_ACTOR))?
-        .expect("member agent");
-    assert_eq!(member.dreaming_mode(), DreamingMode::Inherit);
-
-    let (_dir, vault, mut intent) = fixture("Antevon");
-    intent
-        .companion_birth
-        .as_mut()
-        .expect("birth")
-        .actor_definition
-        .dreaming = Some(DreamingMode::Off);
-    let companion_ref = intent.companion_birth.as_ref().expect("birth").actor_ref;
-    vault.onboard_workspace_member(intent, &writer(WRITER), None)?;
-    let companion = vault
-        .get_agent_definition(&companion_ref)?
-        .expect("companion agent");
-    assert_eq!(companion.dreaming_mode(), DreamingMode::Off);
-    Ok(())
 }

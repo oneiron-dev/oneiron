@@ -10,7 +10,8 @@ use crate::error::{Error, Result};
 #[cfg(test)]
 use super::journal::JournalScope;
 use super::journal::{
-    JournalEntry, JournalRole, PromotePlan, journal_entry_in_closure, promotion_replay_op,
+    JournalEntry, JournalRole, PromotePlan, PublishedEntry, journal_entry_in_closure,
+    promotion_replay_op,
 };
 use super::keyspace::{
     KeyspaceState, OverlayKeyspace, OverlayState, OverlayValue, duplicate_identity,
@@ -44,6 +45,12 @@ pub(crate) enum SnapshotMergeRow {
     },
 }
 
+/// [`OverlaySnapshot::staged_rows`].
+pub(crate) struct StagedRows {
+    pub(crate) clear_base: bool,
+    pub(crate) rows: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+}
+
 pub(crate) struct SnapshotMergePlan {
     pub(crate) clear_base: bool,
     pub(crate) deleted_keys: BTreeSet<Vec<u8>>,
@@ -60,6 +67,30 @@ impl OverlaySnapshot {
                 None => SnapshotLookup::Passthrough,
             },
             KeyspaceState::DupSort { .. } => SnapshotLookup::Passthrough,
+        }
+    }
+
+    /// What this snapshot stages in a single-valued keyspace: whether it
+    /// cleared base, and each row, `None` for a tombstone over base.
+    pub(crate) fn staged_rows(&self, keyspace: OverlayKeyspace) -> StagedRows {
+        match self.state.keyspaces[keyspace.slot()].as_ref() {
+            KeyspaceState::Single { clear_base, rows } => StagedRows {
+                clear_base: *clear_base,
+                rows: rows
+                    .iter()
+                    .map(|(key, value)| {
+                        let value = match value {
+                            OverlayValue::Present(value) => Some(value.clone()),
+                            OverlayValue::Tombstone => None,
+                        };
+                        (key.clone(), value)
+                    })
+                    .collect(),
+            },
+            KeyspaceState::DupSort { clear_base, .. } => StagedRows {
+                clear_base: *clear_base,
+                rows: Vec::new(),
+            },
         }
     }
 
@@ -236,7 +267,7 @@ impl OverlaySnapshot {
     }
 
     /// Read view of the typed journal, in staging order.
-    pub(crate) fn journal_entries(&self) -> &[JournalEntry] {
+    pub(crate) fn journal_entries(&self) -> &[PublishedEntry] {
         &self.state.journal
     }
 
@@ -252,8 +283,9 @@ impl OverlaySnapshot {
     ///
     /// The closure is: the requested turn's own scoped entries (its
     /// materialized TURN put, its `PartOf` MESSAGE puts, its `DerivedFrom`
-    /// SUMMARY puts, its closure-internal attribution edges — see
-    /// [`attribution_edge_is_closure_internal`] — and every op explicitly
+    /// SUMMARY puts, its attribution edges — `BelongsTo` to the shell and
+    /// `AuthoredBy` to the base actor (ARCH-0052 #d4), whose existence in
+    /// base the promote checks — and every op explicitly
     /// tagged as that turn's owned artifact) plus the room's one fresh
     /// CONVERSATION shell, which is selected by the shell role against the
     /// turn's OWN conversation. The shell is staged once per room, under the first
@@ -264,6 +296,18 @@ impl OverlaySnapshot {
     /// refused: promotion replays a subgraph, and a closure with no turn body
     /// is not one.
     pub(crate) fn plan_promotion(&self, turn: EntityId) -> Result<PromotePlan> {
+        self.plan_promotion_where(turn, |_| true)
+    }
+
+    /// [`Self::plan_promotion`] replaying only the closure entries `keep`
+    /// admits. A copy of a room's talk (ARCH-0052 D5) keeps what the room
+    /// showed: the rows it leaves out never reach base, and they stay in the
+    /// journal, unsaved, until the room closes.
+    pub(crate) fn plan_promotion_where(
+        &self,
+        turn: EntityId,
+        keep: impl Fn(&JournalEntry) -> bool,
+    ) -> Result<PromotePlan> {
         let conversation = self
             .journal_entries()
             .iter()
@@ -273,25 +317,50 @@ impl OverlaySnapshot {
                     && matches!(&entry.op, BatchOp::Put { id, .. } if *id == turn)
             })
             .map(|entry| entry.scope.conversation())
-            .ok_or_else(|| {
-                Error::OffRecord(OffRecordError::OffRecordTurnNotInJournal {
-                    turn_ref: turn.to_hex(),
-                })
-            })?;
+            .ok_or_else(|| not_in_journal(turn))?;
+        self.cut(turn, conversation, false, keep)
+    }
 
+    /// The messages said into `turn` since this stretch saved it, as a plan
+    /// that adds them to the turn in base: the closure entries `keep` admits
+    /// of a turn whose TURN is no longer in the journal. Refused when the
+    /// journal holds nothing of the turn.
+    pub(crate) fn plan_append_where(
+        &self,
+        turn: EntityId,
+        keep: impl Fn(&JournalEntry) -> bool,
+    ) -> Result<PromotePlan> {
+        let conversation = self
+            .journal_entries()
+            .iter()
+            .find(|entry| entry.scope.turn() == turn)
+            .map(|entry| entry.scope.conversation())
+            .ok_or_else(|| not_in_journal(turn))?;
+        self.cut(turn, conversation, true, keep)
+    }
+
+    fn cut(
+        &self,
+        turn: EntityId,
+        conversation: EntityId,
+        appends: bool,
+        keep: impl Fn(&JournalEntry) -> bool,
+    ) -> Result<PromotePlan> {
         let mut ops = Vec::new();
+        let mut cut_from = Vec::new();
         let mut replayed = Vec::new();
         let mut source_learned_at = BTreeSet::new();
         for entry in self
             .journal_entries()
             .iter()
-            .filter(|entry| journal_entry_in_closure(entry, turn, conversation))
+            .filter(|entry| journal_entry_in_closure(entry, turn, conversation) && keep(entry))
         {
             if let BatchOp::Put { id, .. } = &entry.op {
                 replayed.push(*id);
             }
             source_learned_at.insert(entry.learned_at);
             ops.push(promotion_replay_op(entry)?);
+            cut_from.push(entry.seq);
         }
 
         // In-room aliases, read from the overlay's OWN short-id tables. Base
@@ -314,8 +383,10 @@ impl OverlaySnapshot {
             replayed,
             temporary_short_ids,
             source_learned_at: source_learned_at.into_iter().collect(),
+            cut_from,
             turn,
             conversation,
+            appends,
         })
     }
 
@@ -333,4 +404,10 @@ impl OverlaySnapshot {
     pub(crate) fn bytes_used(&self) -> usize {
         self.state.bytes_used
     }
+}
+
+fn not_in_journal(turn: EntityId) -> Error {
+    Error::OffRecord(OffRecordError::OffRecordTurnNotInJournal {
+        turn_ref: turn.to_hex(),
+    })
 }

@@ -2,10 +2,17 @@
 //! decline the whole run in one act (OF-211).
 //!
 //! A run's pending proposals are one content-bound bundle. Review returns its
-//! id; resolve must present that id, and the engine re-hashes the live bundle
-//! inside the resolving transaction, so an approval never lands on proposals
-//! the owner did not see.
+//! id with the bodies read in the same transaction; resolve must present that
+//! id, and the engine re-hashes the live bundle inside the resolving
+//! transaction, so an approval never lands on proposals the owner did not see.
+//! Review shows each value through the release redaction, as every serve
+//! path does; the id stays bound to the stored body. A run id is free text
+//! its proposer chose, so it is shown redacted too, beside a `run_ref` that
+//! review and resolve accept in its place, in a field of its own: a run id
+//! may be any text, a `run_ref` among it, so one read as the other would let
+//! one run's id select another.
 
+use oneiron::claim::{CallerLocality, ClaimBody};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::edge::EdgeActorClass;
 use oneiron::run_tree::{GateConsentBundle, GateConsentBundleAction};
@@ -21,7 +28,10 @@ const PENDING_SCAN_LIMIT: usize = 10_000;
 /// A run with proposals waiting for the owner.
 #[derive(Debug, Serialize)]
 pub(crate) struct PendingRun {
+    /// The run id through the release redaction.
     pub(crate) run_id: String,
+    /// Names the run to review and resolve, whatever its id holds.
+    pub(crate) run_ref: String,
     pub(crate) pending: usize,
 }
 
@@ -32,6 +42,7 @@ pub(crate) struct RunReview {
     pub(crate) bundle_id: String,
     pub(crate) name: String,
     pub(crate) run_id: String,
+    pub(crate) run_ref: String,
     pub(crate) agent_label: Option<String>,
     pub(crate) proposals: Vec<RunProposal>,
 }
@@ -39,9 +50,10 @@ pub(crate) struct RunReview {
 #[derive(Debug, Serialize)]
 pub(crate) struct RunProposal {
     pub(crate) claim_id: String,
-    pub(crate) predicate: Option<String>,
-    pub(crate) subject: Option<String>,
-    pub(crate) value: Option<serde_json::Value>,
+    pub(crate) predicate: String,
+    pub(crate) subject: String,
+    /// The proposed value with credentials and sensitive fields redacted.
+    pub(crate) value: serde_json::Value,
     pub(crate) reason_codes: Vec<String>,
     pub(crate) created_at: u64,
 }
@@ -50,90 +62,267 @@ pub(crate) struct RunProposal {
 #[derive(Debug, Serialize)]
 pub(crate) struct RunResolved {
     pub(crate) run_id: String,
+    pub(crate) run_ref: String,
     pub(crate) bundle_id: String,
     pub(crate) action: &'static str,
     pub(crate) receipt_id: String,
     pub(crate) claim_ids: Vec<String>,
+    /// Approved commitment wakes in the run, each with the outbound intent it
+    /// scheduled or why it could not (ARCH-0046 O2).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) commitment_wakes: Vec<CommitmentWakeScheduled>,
 }
 
-/// Runs with proposals waiting, most proposals first.
-pub(crate) fn pending(vault: &Vault) -> OwnerResult<Vec<PendingRun>> {
-    let mut runs: Vec<PendingRun> = vault
-        .pending_gate_consent_groups(PENDING_SCAN_LIMIT)?
+#[derive(Debug, Serialize)]
+pub(crate) struct CommitmentWakeScheduled {
+    pub(crate) claim_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) intent_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) outcome: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) error: Option<String>,
+}
+
+/// Runs with proposals waiting, most proposals first, of those a caller at
+/// `locality` may see.
+pub(crate) fn pending(vault: &Vault, locality: CallerLocality) -> OwnerResult<Vec<PendingRun>> {
+    let mut runs = Vec::new();
+    for group in vault.pending_gate_consent_groups(PENDING_SCAN_LIMIT)? {
+        let Some(run_id) = group.dreamer_run_id else {
+            continue;
+        };
+        let members = group
+            .records
+            .iter()
+            .map(|record| EntityId::from_bytes(record.claim_id))
+            .collect::<oneiron::Result<Vec<_>>>()?;
+        if !run_kept(vault, locality, members)? {
+            runs.push((run_id, group.records.len()));
+        }
+    }
+    runs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    Ok(runs
         .into_iter()
-        .filter_map(|group| {
-            group.dreamer_run_id.map(|run_id| PendingRun {
-                run_id,
-                pending: group.records.len(),
-            })
+        .map(|(run_id, pending)| PendingRun {
+            run_ref: run_ref(&run_id),
+            run_id: redacted(run_id),
+            pending,
         })
+        .collect())
+}
+
+/// A run's handle for review and resolve, derived from its id and never
+/// carrying it.
+pub(crate) fn run_ref(run_id: &str) -> String {
+    hex(&blake3::derive_key(
+        "oneiron owner run ref v1",
+        run_id.as_bytes(),
+    ))
+}
+
+/// How the owner names a run: by its id, or by the `run_ref` the listing
+/// printed for it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum RunName<'a> {
+    Id(&'a str),
+    Ref(&'a str),
+}
+
+impl<'a> RunName<'a> {
+    /// The run a request names in exactly one of its two fields.
+    pub(crate) fn from_fields(
+        run_id: Option<&'a str>,
+        run_ref: Option<&'a str>,
+    ) -> OwnerResult<Self> {
+        match (run_id, run_ref) {
+            (Some(run_id), None) => Ok(Self::Id(run_id)),
+            (None, Some(run_ref)) => Ok(Self::Ref(run_ref)),
+            _ => Err(OwnerError::Invalid(
+                "name the run by exactly one of run_id or run_ref".into(),
+            )),
+        }
+    }
+}
+
+/// The id of the run `run` names: the id itself, or the waiting run whose
+/// `run_ref` it is.
+fn run_named(vault: &Vault, run: RunName<'_>) -> OwnerResult<String> {
+    match run {
+        RunName::Id(run_id) => Ok(run_id.to_owned()),
+        RunName::Ref(reference) => vault
+            .pending_gate_consent_groups(PENDING_SCAN_LIMIT)?
+            .into_iter()
+            .filter_map(|group| group.dreamer_run_id)
+            .find(|run_id| run_ref(run_id) == reference)
+            .ok_or_else(|| oneiron::Error::EntityNotFound.into()),
+    }
+}
+
+/// Whether a caller at `locality` is kept from the run whose proposals are
+/// `members`: off this device a run holding a proposal a device-local world
+/// keeps is none of its runs, and none of its members is named (DEC-0005).
+/// Such a run reads as one that does not exist.
+fn run_kept(vault: &Vault, locality: CallerLocality, members: Vec<EntityId>) -> OwnerResult<bool> {
+    if locality == CallerLocality::OnDevice {
+        return Ok(false);
+    }
+    let count = members.len();
+    Ok(vault.off_device_readable(members)?.len() != count)
+}
+
+/// The bundle a caller at `locality` may see of the run `run_id`, with its
+/// members' bodies.
+fn visible_bundle(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    run_id: &str,
+    locality: CallerLocality,
+) -> OwnerResult<(GateConsentBundle, Vec<ClaimBody>)> {
+    // Resolve admits an act on what this shows, so the proof is revalidated,
+    // not only read.
+    let actor = WriteActor::new(owner.revalidate(vault)?, EdgeActorClass::Human);
+    let (bundle, bodies) = vault.review_gate_consent_bundle_with_bodies(&actor, run_id)?;
+    let members = bundle
+        .members
+        .iter()
+        .map(|member| member.claim_id)
         .collect();
-    runs.sort_by(|a, b| b.pending.cmp(&a.pending).then(a.run_id.cmp(&b.run_id)));
-    Ok(runs)
+    if run_kept(vault, locality, members)? {
+        return Err(oneiron::Error::EntityNotFound.into());
+    }
+    Ok((bundle, bodies))
 }
 
 /// What one run is waiting on.
 pub(crate) fn review(
     vault: &Vault,
     owner: &AuthenticatedOwner,
-    run_id: &str,
+    run: RunName<'_>,
+    locality: CallerLocality,
 ) -> OwnerResult<RunReview> {
-    let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
-    let bundle = vault.review_gate_consent_bundle(&actor, run_id)?;
-    review_of(vault, bundle)
+    let run_id = run_named(vault, run)?;
+    let (bundle, bodies) = visible_bundle(vault, owner, &run_id, locality)?;
+    Ok(review_of(bundle, bodies))
 }
 
-fn review_of(vault: &Vault, bundle: GateConsentBundle) -> OwnerResult<RunReview> {
+fn review_of(bundle: GateConsentBundle, bodies: Vec<ClaimBody>) -> RunReview {
     let proposals = bundle
         .members
         .into_iter()
-        .map(|member| -> OwnerResult<RunProposal> {
-            let claim = vault.get_claim(&member.claim_id)?;
-            Ok(RunProposal {
+        .zip(bodies)
+        .map(|(member, body)| {
+            // A claim the write door refuses, stored while the ingest scan
+            // was off, serves none of its parts: no read follows this
+            // projection exactly (a key turned to text), so the whole body is
+            // withheld. Nor does a claim whose parts read as a secret together.
+            let secret = oneiron::batch::export::write_door_refuses_claim(&body)
+                || oneiron::batch::export::claim_reads_as_secret(&body);
+            let mut value = if secret {
+                rmpv::Value::from("[redacted]")
+            } else {
+                body.value
+            };
+            // Redact a copy of the stored MessagePack before projecting it,
+            // so binary is checked before it becomes hex, then the projection.
+            oneiron::batch::export::redact_messagepack_credentials(&mut value);
+            let mut value = crate::commands::msgpack_value_json(&value);
+            oneiron::batch::export::redact_credentials(&mut value);
+            RunProposal {
                 claim_id: member.claim_id.to_hex(),
-                predicate: claim.as_ref().map(|body| body.predicate.clone()),
-                subject: claim.as_ref().map(|body| match &body.subject {
+                predicate: if secret {
+                    "[redacted]".to_owned()
+                } else {
+                    redacted(body.predicate)
+                },
+                subject: match &body.subject {
                     ClaimSubject::Entity(id) => id.to_hex(),
                     ClaimSubject::Edge { source, target, .. } => {
                         format!("{}->{}", source.to_hex(), target.to_hex())
                     }
-                }),
-                value: claim
-                    .as_ref()
-                    .map(|body| crate::commands::msgpack_value_json(&body.value)),
+                },
+                value,
                 reason_codes: member.reason_codes,
                 created_at: member.created_at,
-            })
+            }
         })
-        .collect::<OwnerResult<Vec<_>>>()?;
-    Ok(RunReview {
+        .collect();
+    RunReview {
         bundle_id: hex(&bundle.bundle_id),
-        name: bundle.name,
-        run_id: bundle.dreamer_run_id,
-        agent_label: bundle.agent_label,
+        name: redacted(bundle.name),
+        run_ref: run_ref(&bundle.dreamer_run_id),
+        run_id: redacted(bundle.dreamer_run_id),
+        agent_label: bundle.agent_label.map(redacted),
         proposals,
-    })
+    }
+}
+
+/// A stored string as the release redaction serves it: a predicate, a run id
+/// or a label is free text a proposer chose, so it is checked like the value.
+fn redacted(text: String) -> String {
+    let mut value = rmpv::Value::from(text);
+    oneiron::batch::export::redact_messagepack_credentials(&mut value);
+    value.as_str().unwrap_or_default().to_owned()
 }
 
 /// Approves or declines the whole reviewed run in one engine transaction.
+/// Off this device only a run the caller may see is resolved: the bundle id
+/// binds its members, so the resolution lands on exactly the members judged
+/// here or is refused as changed.
 pub(crate) fn resolve(
     vault: &Vault,
     owner: &AuthenticatedOwner,
-    run_id: &str,
+    run: RunName<'_>,
     bundle_id: &str,
     action: GateConsentBundleAction,
+    locality: CallerLocality,
 ) -> OwnerResult<RunResolved> {
     let expected = parse_bundle_id(bundle_id)?;
+    let run_id = run_named(vault, run)?;
+    if locality == CallerLocality::OffDevice {
+        visible_bundle(vault, owner, &run_id, locality)?;
+    }
     let receipt = vault
-        .resolve_gate_consent_bundle(owner, expected, run_id, action, vault.now_recorded_at())
+        .resolve_gate_consent_bundle(owner, expected, &run_id, action, vault.now_recorded_at())
         .map_err(|error| match error.kind() {
             oneiron::ErrorKind::GateConsentStale => OwnerError::Changed(
                 "this run's proposals changed since they were reviewed; review it again".into(),
             ),
             _ => OwnerError::from(error),
         })?;
+    // The approval half of a commitment wake: an approved proposal schedules
+    // its outbound intent now, after the approval committed.
+    let commitment_wakes = match receipt.action {
+        GateConsentBundleAction::Approve => {
+            oneiron::commitment_wake::schedule_approved_commitment_wakes(
+                vault,
+                &receipt.member_claim_ids,
+            )
+        }
+        _ => Vec::new(),
+    }
+    .into_iter()
+    .map(|(claim, scheduled)| {
+        let (intent_ref, outcome, error) = match scheduled {
+            Ok(receipt) => (Some(receipt.intent_ref), Some(receipt.outcome), None),
+            Err(error) => {
+                tracing::warn!(claim = %claim.to_hex(), code = %error.code, "approved commitment wake did not schedule");
+                // The message can quote proposal text, which this endpoint
+                // masks everywhere else.
+                (None, None, Some(redacted(error.to_string())))
+            }
+        };
+        CommitmentWakeScheduled {
+            claim_id: claim.to_hex(),
+            intent_ref,
+            outcome,
+            error,
+        }
+    })
+    .collect();
     Ok(RunResolved {
-        run_id: receipt.dreamer_run_id,
+        run_ref: run_ref(&receipt.dreamer_run_id),
+        run_id: redacted(receipt.dreamer_run_id),
         bundle_id: hex(&receipt.bundle_id),
         action: receipt.action.as_str(),
         receipt_id: receipt.receipt_id.to_hex(),
@@ -142,6 +331,7 @@ pub(crate) fn resolve(
             .iter()
             .map(EntityId::to_hex)
             .collect(),
+        commitment_wakes,
     })
 }
 
@@ -163,4 +353,109 @@ fn parse_bundle_id(value: &str) -> OwnerResult<[u8; 32]> {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `oneiron runs show`: the local owner's review redacts what the ingest
+    /// scan let through while it was off.
+    #[test]
+    fn runs_show_redacts_stored_credentials_with_the_scan_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open_owned(dir.path(), oneiron::VaultConfig::default()).unwrap();
+        let owner = super::super::local_owner(&vault).unwrap();
+        vault
+            .set_secret_scan_mode(
+                &owner,
+                oneiron::policy_model::SecretScanMode::Off,
+                vault.now_recorded_at(),
+            )
+            .unwrap();
+        let token = "ghp_0123456789abcdefghijklmnopqrstuvwxyzAB";
+        let agent = EntityId::now();
+        for value in [
+            rmpv::Value::from(format!("my token is {token}")),
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("api_key"),
+                rmpv::Value::from("sk-not-for-display-0123456789"),
+            )]),
+            rmpv::Value::Binary(token.as_bytes().to_vec()),
+        ] {
+            vault
+                .park_run_proposal_for_test("cli-run", agent, EntityId::now(), value)
+                .unwrap();
+        }
+        let reviewed = review(
+            &vault,
+            &owner,
+            RunName::Id("cli-run"),
+            CallerLocality::OnDevice,
+        )
+        .unwrap();
+        let shown = serde_json::to_string(&reviewed).unwrap();
+        let hex: String = token.bytes().map(|byte| format!("{byte:02x}")).collect();
+        assert!(!shown.contains(token), "{shown}");
+        assert!(!shown.contains(&hex), "{shown}");
+        assert!(!shown.contains("sk-not-for-display"), "{shown}");
+    }
+
+    /// Sol R8: a proposal the write door refuses shows none of its parts,
+    /// though only this review's projection (a key turned to text) brings its
+    /// words together; one it accepts shows all but its credential field.
+    #[test]
+    fn runs_show_withholds_a_body_the_write_door_refuses() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open_owned(dir.path(), oneiron::VaultConfig::default()).unwrap();
+        let owner = super::super::local_owner(&vault).unwrap();
+        vault
+            .set_secret_scan_mode(
+                &owner,
+                oneiron::policy_model::SecretScanMode::Off,
+                vault.now_recorded_at(),
+            )
+            .unwrap();
+        // The public BIP39 test vector, a word per entry behind a key of byte
+        // values, and whole under a credential name.
+        let phrase = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+        let mut entries: Vec<_> = (20_u8..)
+            .zip(phrase.split(' '))
+            .map(|(at, word)| {
+                let key = b"PROSE"
+                    .iter()
+                    .chain([&at])
+                    .map(|&byte| rmpv::Value::from(byte));
+                (rmpv::Value::Array(key.collect()), rmpv::Value::from(word))
+            })
+            .collect();
+        entries.push((rmpv::Value::from("password"), rmpv::Value::from(phrase)));
+        let accepted = rmpv::Value::Map(vec![
+            (rmpv::Value::from("title"), rmpv::Value::from("kept words")),
+            (rmpv::Value::from("password"), rmpv::Value::from("changeme")),
+        ]);
+        let agent = EntityId::now();
+        for (run, value) in [
+            ("refused-run", rmpv::Value::Map(entries)),
+            ("kept-run", accepted),
+        ] {
+            vault
+                .park_run_proposal_for_test(run, agent, EntityId::now(), value)
+                .unwrap();
+        }
+        let shown = |run| {
+            review(&vault, &owner, RunName::Id(run), CallerLocality::OnDevice)
+                .unwrap()
+                .proposals
+        };
+        // Withheld whole, as a claim whose parts read as a secret together is:
+        // neither its predicate nor its value, whatever the JSON read finds.
+        let refused = shown("refused-run");
+        assert_eq!(refused.len(), 1);
+        assert_eq!(refused[0].predicate, "[redacted]");
+        assert_eq!(refused[0].value, serde_json::json!("[redacted]"));
+        let kept = serde_json::to_string(&shown("kept-run")).unwrap();
+        assert!(kept.contains("kept words"), "{kept}");
+        assert!(!kept.contains("changeme"), "{kept}");
+    }
 }

@@ -274,32 +274,56 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
     }
 }
 
+async fn post_room_verb(
+    server: &Arc<SyncServer>,
+    authorization: &str,
+    verb: &str,
+    input: Value,
+) -> (StatusCode, Value) {
+    post_in_room_turn(server, authorization, verb, input, None).await
+}
+
+async fn post_in_room_turn(
+    server: &Arc<SyncServer>,
+    authorization: &str,
+    verb: &str,
+    input: Value,
+    room_turn: Option<EntityId>,
+) -> (StatusCode, Value) {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(format!("/v1/core/facade/{verb}"))
+        .header("Authorization", authorization)
+        .header("Content-Type", "application/json");
+    if let Some(room) = room_turn {
+        request = request.header(super::ROOM_TURN_HEADER, room.to_hex());
+    }
+    let response = crate::build_app(Arc::clone(server))
+        .oneshot(crate::test_credentials::bind_request(
+            server,
+            request
+                .body(Body::from(serde_json::to_vec(&input).unwrap()))
+                .unwrap(),
+        ))
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+fn room_token(actor: EntityId, class: &str) -> String {
+    format!(
+        "{}scope=core:read,core:write;principal_ref={};actor_class={class}",
+        crate::test_credentials::RECIPE_PREFIX,
+        actor.to_hex()
+    )
+}
+
 #[tokio::test]
 async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
-    async fn post(
-        server: &Arc<SyncServer>,
-        authorization: &str,
-        verb: &str,
-        input: Value,
-    ) -> (StatusCode, Value) {
-        let response = crate::build_app(Arc::clone(server))
-            .oneshot(crate::test_credentials::bind_request(
-                server,
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/v1/core/facade/{verb}"))
-                    .header("Authorization", authorization)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(serde_json::to_vec(&input).unwrap()))
-                    .unwrap(),
-            ))
-            .await
-            .unwrap();
-        let status = response.status();
-        let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap())
-    }
     const SECRET: &str = "room-http-acceptance";
+    let post = post_room_verb;
     let dir = tempfile::tempdir().unwrap();
     let vault =
         Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
@@ -331,16 +355,16 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
     vault
         .bind_room_handle(room, "@addressed", addressed)
         .unwrap();
-    let token = |actor: EntityId, class: &str| {
-        format!(
-            "{}scope=core:read,core:write;principal_ref={};actor_class={class}",
-            crate::test_credentials::RECIPE_PREFIX,
-            actor.to_hex()
-        )
-    };
-    let owner_token = token(owner, "human");
-    let addressed_token = token(addressed, "agent");
-    let other_token = token(other, "agent");
+    // Membership reads nothing; each companion reads through its own grant.
+    vault
+        .install_read_permits_for_test(&[
+            oneiron::WriteActor::new(addressed, oneiron::EdgeActorClass::Agent),
+            oneiron::WriteActor::new(other, oneiron::EdgeActorClass::Agent),
+        ])
+        .unwrap();
+    let owner_token = room_token(owner, "human");
+    let addressed_token = room_token(addressed, "agent");
+    let other_token = room_token(other, "agent");
     let server = Arc::new(
         SyncServer::new(
             vault.clone(),
@@ -408,6 +432,193 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
     assert_eq!(messages[1]["actor"], addressed.to_hex());
 }
 
+/// ARCH-0067 §8 over HTTP: the server reads the roster from the room, a
+/// request cannot carry one, and the history read runs inside the Scope that
+/// `room_scope` returns for that roster.
+#[tokio::test]
+async fn rooms_http_history_reads_inside_the_rosters_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault =
+        Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let agent = EntityId::now();
+    vault
+        .put_entity(
+            &agent,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"agent",
+        )
+        .unwrap();
+    let project = EntityId::now();
+    let root = vault.root_project().unwrap();
+    let mut spec =
+        oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
+    spec.roster.push(agent.to_hex());
+    vault.put_project(project, &spec, 1).unwrap();
+    let room = EntityId::from_hex(&spec.home_room).unwrap();
+    // Membership reads nothing; the agent reads through its own grant.
+    vault
+        .install_read_permit_for_test(oneiron::WriteActor::new(
+            agent,
+            oneiron::EdgeActorClass::Agent,
+        ))
+        .unwrap();
+    let server = Arc::new(
+        SyncServer::new(
+            vault.clone(),
+            crate::config::SyncServerConfig {
+                auth_secret: Some("room-scope-http".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let owner_token = room_token(owner, "human");
+    let agent_token = room_token(agent, "agent");
+    let spoken = json!({"conversation_ref":room.to_hex(),"turn_ref":EntityId::now().to_hex(),
+        "occurred_at":2,"messages":[{"author":"user","message_type":"text","content":"hello room",
+        "is_visible":true,"order":0}]});
+    let (status, body) = post_room_verb(&server, &owner_token, "rooms.speak", spoken).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let history = json!({"room_ref":room.to_hex()});
+    let (status, page) =
+        post_room_verb(&server, &agent_token, "rooms.messages", history.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page["rows"].as_array().unwrap().len(), 1);
+    let roster = vault
+        .memory(agent, oneiron::EdgeActorClass::Agent)
+        .room_roster(room)
+        .unwrap();
+    assert_eq!(roster.len(), 2);
+    let applied: oneiron::federation::Scope =
+        serde_json::from_value(page["scope"].clone()).unwrap();
+    assert_eq!(
+        applied,
+        oneiron::context_board::room_scope(&roster).unwrap()
+    );
+
+    // The roster is the engine's read, never a request field.
+    for field in ["roster", "presence"] {
+        let mut supplied = history.clone();
+        supplied[field] = json!([{"actor": agent.to_hex(), "present": false}]);
+        let (status, body) =
+            post_room_verb(&server, &agent_token, "rooms.messages", supplied).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{field}: {body}");
+    }
+}
+
+/// ARCH-0067 §8: every read a room turn makes runs inside the room. A host
+/// names the turn's room in a header; the engine resolves the rest, and a
+/// verb that would read around the room is refused inside the turn.
+#[tokio::test]
+async fn http_room_turn_header_keeps_ordinary_reads_inside_the_room() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault =
+        Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let agent = EntityId::now();
+    vault
+        .put_entity(
+            &agent,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"agent",
+        )
+        .unwrap();
+    let project = EntityId::now();
+    let root = vault.root_project().unwrap();
+    let mut spec =
+        oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
+    spec.roster.push(agent.to_hex());
+    vault.put_project(project, &spec, 1).unwrap();
+    let room = EntityId::from_hex(&spec.home_room).unwrap();
+    let lone = EntityId::now();
+    let fiction = EntityId::now();
+    vault
+        .memory(owner, oneiron::EdgeActorClass::Human)
+        .claim_upsert(&oneiron::memory::ClaimInput {
+            id: None,
+            predicate: "note.topic".into(),
+            subject_ref: room.to_hex(),
+            value: json!("lantern dragon"),
+            confidence: 1.0,
+            source: "user_stated".into(),
+            world_ref: Some(fiction.to_hex()),
+            relationship_ref: None,
+            scope: None,
+            valid_from: None,
+            valid_to: None,
+            occurred_at: None,
+            learned_at: None,
+            salience: None,
+        })
+        .unwrap();
+    let server = Arc::new(
+        SyncServer::new(
+            vault.clone(),
+            crate::config::SyncServerConfig {
+                auth_secret: Some("room-turn-http".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let owner_token = room_token(owner, "human");
+    let recall = json!({"query": "lantern dragon", "effort": "light",
+        "scope": {"world_ref": fiction.to_hex()}, "limit": 10});
+    let fiction_items = |pack: &Value| {
+        pack["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["world"] == json!(fiction.to_hex()))
+            .count()
+    };
+    let (status, open) =
+        post_in_room_turn(&server, &owner_token, "recall", recall.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{open}");
+    assert_eq!(fiction_items(&open), 1, "outside a room the owner reads it");
+    let (status, inside) =
+        post_in_room_turn(&server, &owner_token, "recall", recall, Some(room)).await;
+    assert_eq!(status, StatusCode::OK, "{inside}");
+    assert_eq!(
+        fiction_items(&inside),
+        0,
+        "the room's Scope holds no fiction"
+    );
+    for verb in ["export", "key_value_get", "receipts", "describe"] {
+        let (status, body) =
+            post_in_room_turn(&server, &owner_token, verb, json!({}), Some(room)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{verb}: {body}");
+    }
+    // An unserved verb is refused before it looks up its target, so a task
+    // that does not exist answers exactly as one outside the room would.
+    let missing = json!({"task_ref": EntityId::now().to_hex()});
+    for verb in ["cancel", "tasks.update", "describe"] {
+        let (status, body) =
+            post_in_room_turn(&server, &owner_token, verb, missing.clone(), None).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "{verb} outside a room: {body}"
+        );
+        let (status, body) =
+            post_in_room_turn(&server, &owner_token, verb, missing.clone(), Some(room)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{verb}: {body}");
+        assert!(
+            body.to_string().contains("not served inside a room turn"),
+            "{body}"
+        );
+    }
+    // A turn opens only in a room the caller belongs to.
+    let (status, body) =
+        post_in_room_turn(&server, &owner_token, "rooms.list", json!({}), Some(lone)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}
+
 #[tokio::test]
 async fn keyed_http_round_trip_scope_and_exact_principal_binding() {
     const SECRET: &str = "keyed-facade-test-secret";
@@ -436,6 +647,13 @@ async fn keyed_http_round_trip_scope_and_exact_principal_binding() {
         actor.to_hex()
     ));
     let unbound = recipe("scope=core:read,core:write");
+    // Records that leave the key's claim out (Sol R2-001): the keyed store is
+    // read raw, so this credential is refused rather than read past.
+    let narrowed = recipe(&format!(
+        "scope=core:read;principal_ref={};actor_class=human;records={}",
+        actor.to_hex(),
+        actor.to_hex()
+    ));
     let address = json!({"namespace":["prefs"],"key":"theme"});
     let put = json!({"namespace":["prefs"],"key":"theme","value":{"name":"dark"},"request_id":"http-one","source":"user_stated"});
     let cases = [
@@ -464,6 +682,24 @@ async fn keyed_http_round_trip_scope_and_exact_principal_binding() {
             json!({"prefix":["prefs"]}),
             &full,
             StatusCode::OK,
+        ),
+        (
+            "key_value_get",
+            address.clone(),
+            &narrowed,
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "key_value_search",
+            json!({"namespace_prefix":["prefs"],"limit":1}),
+            &narrowed,
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "key_value_namespaces",
+            json!({"prefix":["prefs"]}),
+            &narrowed,
+            StatusCode::FORBIDDEN,
         ),
         (
             "key_value_delete",
@@ -500,8 +736,8 @@ async fn keyed_http_round_trip_scope_and_exact_principal_binding() {
     assert_eq!(bodies[3]["value"], bodies[2]["item"]["value"]);
     assert_eq!(bodies[4].as_array().unwrap().len(), 1);
     assert_eq!(bodies[5], json!([["prefs"]]));
-    assert_eq!(bodies[7]["existed"], true);
-    assert_eq!(bodies[8], Value::Null);
+    assert_eq!(bodies[10]["existed"], true);
+    assert_eq!(bodies[11], Value::Null);
 }
 
 #[tokio::test]
@@ -553,6 +789,21 @@ async fn generated_facade_read_admission_preserves_defaults_and_record_scope() {
             &narrow,
             "recall",
             json!({"query": "hello"}),
+            StatusCode::FORBIDDEN,
+        ),
+        // Sol R2-002/003: an ask's evidence and outcomes, and the channel
+        // identity a preflight routes through, are read raw.
+        (&narrow, "can", json!({}), StatusCode::FORBIDDEN),
+        (
+            &narrow,
+            "peek",
+            json!({"group_ref": actor.to_hex()}),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            &narrow,
+            "tasks.outcomes",
+            json!({"group_ref": actor.to_hex()}),
             StatusCode::FORBIDDEN,
         ),
         (&slip, "witness", json!({}), StatusCode::FORBIDDEN),
@@ -1057,3 +1308,300 @@ async fn export_projects_five_formats_and_refuses_non_owner_credentials() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// A served vault, its owner, and a read/write slip bound to that owner.
+struct OwnerFacade {
+    _dir: tempfile::TempDir,
+    server: Arc<SyncServer>,
+    slip: oneiron::authority::CapabilitySlip,
+    holder: ed25519_dalek::SigningKey,
+}
+
+impl OwnerFacade {
+    fn new(secret: &str) -> Self {
+        Self::with_rows(secret, |_, _| {})
+    }
+
+    /// [`Self::new`], with rows the owner writes before the host roots the
+    /// vault's authority (after that, minting a PERSON takes a bound owner).
+    fn with_rows(secret: &str, rows: impl FnOnce(&oneiron::Vault, oneiron::EntityId)) -> Self {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault = Arc::new(
+            oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("vault"),
+        );
+        let actor = vault.ensure_embedded_owner_actor().expect("owner");
+        rows(&vault, actor);
+        let server = Arc::new(
+            SyncServer::new(
+                vault,
+                crate::config::SyncServerConfig {
+                    auth_secret: Some(secret.to_owned()),
+                    ..Default::default()
+                },
+            )
+            .expect("server"),
+        );
+        let recipe = format!(
+            "scope=core:read,core:write;principal_ref={};actor_class=human",
+            actor.to_hex()
+        );
+        let (slip, holder) = crate::test_credentials::credential(&server, &recipe);
+        Self {
+            _dir: dir,
+            server,
+            slip,
+            holder,
+        }
+    }
+
+    async fn post(&self, verb: &str, payload: Value) -> (StatusCode, Value) {
+        let request = crate::test_credentials::bind_slip_request(
+            &self.server,
+            &self.slip,
+            &self.holder,
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/core/facade/{verb}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .expect("request"),
+        );
+        let response = crate::build_app(Arc::clone(&self.server))
+            .oneshot(request)
+            .await
+            .expect("response");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 1 << 20).await.expect("body");
+        (status, serde_json::from_slice(&body).expect("JSON"))
+    }
+
+    /// Witnesses one user message per entry, each its own turn, and returns
+    /// the receipts' `(turn, message)` short ids.
+    async fn witness(&self, conversation: &str, messages: &[(u64, &str)]) -> Vec<(String, String)> {
+        let mut said = Vec::new();
+        for (at, content) in messages {
+            let (status, receipt) = self
+                .post(
+                    "witness",
+                    json!({"conversation_ref": conversation, "occurred_at": at, "messages": [{
+                        "author": "user", "message_type": "text", "content": content,
+                        "is_visible": true, "order": 0
+                    }]}),
+                )
+                .await;
+            assert_eq!(status, StatusCode::OK, "{receipt}");
+            let id = |value: &Value| value.as_str().expect("id").to_owned();
+            said.push((
+                id(&receipt["turn_short_id"]),
+                id(&receipt["message_short_ids"][0]),
+            ));
+        }
+        said
+    }
+
+    /// Recalls, returning each item's `(short_id, kind)` and the time hints.
+    async fn recall(&self, request: Value) -> (Vec<(String, String)>, Vec<(String, String)>) {
+        let (status, pack) = self.post("recall", request.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{request}: {pack}");
+        let field = |value: &Value, name: &str| value[name].as_str().unwrap_or_default().to_owned();
+        let items = pack["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|item| (field(item, "short_id"), field(item, "kind")))
+            .collect();
+        let hints = pack["retrieval_meta"]["temporal_hints"]
+            .as_array()
+            .map(|hints| {
+                hints
+                    .iter()
+                    .map(|hint| (field(hint, "phrase"), field(hint, "status")))
+                    .collect()
+            })
+            .unwrap_or_default();
+        (items, hints)
+    }
+}
+
+fn ids(items: &[(String, String)]) -> Vec<&str> {
+    items.iter().map(|(id, _)| id.as_str()).collect()
+}
+
+fn named(hints: &[(&str, &str)]) -> Vec<(String, String)> {
+    hints
+        .iter()
+        .map(|(phrase, status)| ((*phrase).to_owned(), (*status).to_owned()))
+        .collect()
+}
+
+/// Wave 9 long-context A/B: a recall query with a time word the parser could
+/// not resolve (`tomorrow`, `last 2 weeks`, two hints at once) failed the
+/// whole request with a 400, and the agent lost its recall. Recall now runs on
+/// its other signals, names each hint it used or skipped, and resolves hints
+/// against the caller's `as_of`.
+#[tokio::test]
+async fn recall_reads_time_words_without_refusing_and_resolves_them_as_of() {
+    const DAY: u64 = 86_400;
+    // 2026-01-01T00:00:00Z.
+    const DAY0: u64 = 1_767_225_600;
+    let facade = OwnerFacade::new("facade-temporal-hints-secret");
+    let said = [
+        facade
+            .witness(
+                "21212121212121212121212121212121",
+                &[(
+                    DAY0 + 3_600,
+                    "Staging rollout runs tomorrow night after the freeze.",
+                )],
+            )
+            .await,
+        facade
+            .witness(
+                "31313131313131313131313131313131",
+                &[(
+                    DAY0 + DAY + 3_600,
+                    "Staging rollout moved again; the canary goes first.",
+                )],
+            )
+            .await,
+    ]
+    .concat();
+    // Recall returns each message as its turn (ARCH-0004).
+    let said: Vec<String> = said.into_iter().map(|(turn, _)| turn).collect();
+    let recall =
+        |query: &str, as_of: Option<u64>| facade.recall(json!({"query": query, "as_of": as_of}));
+    let both = |found: &[(String, String)]| {
+        ids(found).contains(&said[0].as_str()) && ids(found).contains(&said[1].as_str())
+    };
+
+    // The A/B's refused query: a future hint is named and not applied.
+    let (found, hints) = recall("what runs tomorrow night", None).await;
+    assert!(ids(&found).contains(&said[0].as_str()), "{found:?}");
+    assert_eq!(hints, named(&[("tomorrow", "future")]));
+
+    let (found, hints) = recall("staging rollout in the last 2 weeks", Some(DAY0 + 3 * DAY)).await;
+    assert!(both(&found), "{found:?}");
+    assert_eq!(hints, named(&[("last 2 weeks", "used")]));
+
+    let (found, hints) = recall("recent staging rollout yesterday", Some(DAY0 + 2 * DAY)).await;
+    assert!(both(&found), "{found:?}");
+    assert_eq!(hints, named(&[("recent", "used"), ("yesterday", "used")]));
+
+    let (found, hints) = recall("staging rollout plans for the last several weeks", None).await;
+    assert!(both(&found), "{found:?}");
+    assert_eq!(hints, named(&[("last several weeks", "unresolved")]));
+
+    // `as_of` moves the day "yesterday" names.
+    let (found, _) = recall("staging rollout yesterday", Some(DAY0 + DAY + 7_200)).await;
+    assert_eq!(ids(&found), [said[0].as_str()], "{found:?}");
+    let (found, _) = recall("staging rollout yesterday", Some(DAY0 + 2 * DAY + 7_200)).await;
+    assert_eq!(ids(&found), [said[1].as_str()], "{found:?}");
+}
+
+/// Wave 9 long-context A/B: recall named a message `ms87:76@<revision>` where
+/// its witness receipt said `ms87:76`, so a client stripped the suffix to join
+/// them; and TURN, CONVERSATION and PERSON rows took recall `limit` slots.
+/// Recall now returns the receipt's short ids with the revision beside them,
+/// a matched message as the one turn that quotes it (ARCH-0004), conversations
+/// take no slot unless the scope names their kind, and the author every
+/// message points at ranks below the turns that matched.
+#[tokio::test]
+async fn recall_returns_witness_short_ids_and_limit_counts_content() {
+    let facade = OwnerFacade::new("facade-ids-and-slots-secret");
+    let lines: Vec<String> = (0..7)
+        .map(|turn| format!("The tide table lists spring tide number {turn}."))
+        .collect();
+    let at = |turn: usize| 1_767_225_600 + 60 * turn as u64;
+    let said = facade
+        .witness(
+            "71717171717171717171717171717171",
+            &lines
+                .iter()
+                .enumerate()
+                .map(|(turn, line)| (at(turn), line.as_str()))
+                .collect::<Vec<_>>(),
+        )
+        .await;
+
+    let (status, pack) = facade
+        .post(
+            "recall",
+            json!({"query": "tide table spring tide", "limit": 5}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{pack}");
+    let items = pack["items"].as_array().expect("items");
+    assert_eq!(items.len(), 5, "{pack}");
+    for item in items {
+        assert_eq!(item["kind"], "TURN", "{item}");
+        let short_id = item["short_id"].as_str().expect("short id");
+        let quoted = item["cited_messages"][0]["short_id"]
+            .as_str()
+            .expect("quoted message");
+        assert!(
+            said.iter()
+                .any(|(turn, message)| turn == short_id && message == quoted),
+            "{short_id} quoting {quoted} in {said:?}"
+        );
+        assert_eq!(
+            item["source_revision_ref"].as_str().map(str::len),
+            Some(32),
+            "{item}"
+        );
+    }
+
+    // People stay in recall: the author comes after every matching turn.
+    let (found, _) = facade
+        .recall(json!({"query": "tide table spring tide", "limit": 10}))
+        .await;
+    let kinds: Vec<&str> = found.iter().map(|(_, kind)| kind.as_str()).collect();
+    assert_eq!(kinds[..7], ["TURN"; 7], "{found:?}");
+    assert!(kinds[7..].contains(&"PERSON"), "{found:?}");
+
+    // Containers come back when the scope names them.
+    let (found, _) = facade
+        .recall(json!({"query": "tide table spring tide", "limit": 5,
+            "scope": {"kinds": ["CONVERSATION"]}}))
+        .await;
+    assert!(
+        !found.is_empty() && found.iter().all(|(_, kind)| kind == "CONVERSATION"),
+        "{found:?}"
+    );
+}
+
+/// Owner ruling (Wave 9a, 2026-10-08): people are memories, so an agent
+/// asking "who is Mika?" gets the person by default.
+#[tokio::test]
+async fn recall_returns_the_person_an_agent_asks_about() {
+    use oneiron::memory::{StructuralPutInput, TextIndexField};
+
+    let mut person = String::new();
+    let facade = OwnerFacade::with_rows("facade-person-recall-secret", |vault, owner| {
+        person = vault
+            .memory(owner, oneiron::EdgeActorClass::Human)
+            .put_structural(&StructuralPutInput {
+                id: None,
+                kind: "PERSON".into(),
+                body: json!({"name": "Mika Tanaka"}),
+                text_fields: Some(vec![TextIndexField {
+                    field: "name".into(),
+                    value: "Mika Tanaka".into(),
+                }]),
+                edges: None,
+                occurred_at: 1_767_225_600,
+                learned_at: None,
+            })
+            .expect("put person")
+            .entity_ref;
+    });
+
+    let (found, _) = facade
+        .recall(json!({"query": "who is Mika?", "limit": 5}))
+        .await;
+    assert!(
+        found.contains(&(person.clone(), "PERSON".to_owned())),
+        "{person} in {found:?}"
+    );
+}
+
+mod call_mode;

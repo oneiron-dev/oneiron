@@ -51,6 +51,11 @@ impl Vault {
         if header.entity_type != crate::registry::ENTITY_TYPE_ACCESS_GRANT {
             return Ok(false);
         }
+        // A deleted grant authorizes nothing, even while an unapplied delete
+        // leaves its body stored.
+        if !crate::vault::live_entity_row_in_txn(&self.store, &txn, grant_ref)?.is_live() {
+            return Ok(false);
+        }
         let grant =
             crate::access_grant::decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         let AccessGrantScope::ChannelIdentity {
@@ -115,6 +120,7 @@ impl Vault {
         self.autonomy_owner(owner)?;
         let now = self.store.authorization_now()?;
         let mut txn = self.store.env.write_txn()?;
+        let owner_actor = owner.revalidate_in_txn(self, &txn)?;
         let identity = desired.read_envelope.identity_ref;
         if self.autonomy_identity_actor(&txn, identity)? != desired.actor_ref {
             return Err(invalid_autonomy());
@@ -151,7 +157,10 @@ impl Vault {
             .map(|row| row.encode())
         {
             let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid_autonomy)?;
-            if header.entity_type != crate::registry::ENTITY_TYPE_ACCESS_GRANT {
+            if header.entity_type != crate::registry::ENTITY_TYPE_ACCESS_GRANT
+                || !crate::vault::live_entity_row_in_txn(&self.store, &txn, &read_grant_ref)?
+                    .is_live()
+            {
                 return Err(invalid_autonomy());
             }
             let existing =
@@ -229,7 +238,7 @@ impl Vault {
             read_grant_ref: Some(read_grant_ref),
             action_grant_ref,
         };
-        self.write_autonomy_row(&mut txn, &mkey, owner.actor(), now, mode_value(&mode))?;
+        self.write_autonomy_row(&mut txn, &mkey, owner_actor, now, mode_value(&mode))?;
         let state = self.verify_autonomy_in_txn(&txn, desired, owner, now)?;
         txn.commit()?;
         Ok(state)
@@ -250,11 +259,12 @@ impl Vault {
         }
         let now = self.store.authorization_now()?;
         let mut txn = self.store.env.write_txn()?;
+        let owner_actor = owner.revalidate_in_txn(self, &txn)?;
         let (writer, at, _) = self.autonomy_row(
             &txn,
             &key(PREDICATE_ACTION_ENVELOPE, &envelope_ref.to_hex()),
         )?;
-        if writer != owner.actor() || at > now {
+        if writer != owner_actor || at > now {
             return Err(invalid_autonomy());
         }
         let envelope = self.autonomy_action_envelope(&txn, envelope_ref)?;
@@ -331,6 +341,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         now: u64,
     ) -> Result<ChannelIdentityAutonomyState> {
+        let owner_actor = owner.revalidate_in_txn(self, txn)?;
         let (writer, at, value) = self.autonomy_row(
             txn,
             &mode_key(
@@ -338,7 +349,7 @@ impl Vault {
                 desired.relationship_context,
             ),
         )?;
-        if writer != owner.actor() || at > now {
+        if writer != owner_actor || at > now {
             return Err(invalid_autonomy());
         }
         let state = self.autonomy_state(txn, mode_from(&value)?, now, now)?;
@@ -364,6 +375,7 @@ impl Vault {
         self.autonomy_owner(owner)?;
         let now = self.store.authorization_now()?;
         let mut txn = self.store.env.write_txn()?;
+        let owner_actor = owner.revalidate_in_txn(self, &txn)?;
         if learned_at > now {
             return Err(invalid_autonomy());
         }
@@ -372,14 +384,14 @@ impl Vault {
         let value = mode_value(&mode);
         if AUTONOMY.contains(&self.store, &txn, &key)? {
             let (writer, at, old) = self.autonomy_row(&txn, &key)?;
-            if writer != owner.actor() || learned_at < at {
+            if writer != owner_actor || learned_at < at {
                 return Err(invalid_autonomy());
             }
             if old == value {
                 return address(PREDICATE_AUTONOMY_MODE, &value);
             }
         }
-        self.write_autonomy_row(&mut txn, &key, owner.actor(), learned_at, value.clone())?;
+        self.write_autonomy_row(&mut txn, &key, owner_actor, learned_at, value.clone())?;
         txn.commit()?;
         address(PREDICATE_AUTONOMY_MODE, &value)
     }
@@ -428,7 +440,9 @@ impl Vault {
             .map(|row| row.encode())
             .ok_or_else(invalid_autonomy)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid_autonomy)?;
-        if header.entity_type != crate::registry::ENTITY_TYPE_ACCESS_GRANT {
+        if header.entity_type != crate::registry::ENTITY_TYPE_ACCESS_GRANT
+            || !crate::vault::live_entity_row_in_txn(&self.store, txn, &reference)?.is_live()
+        {
             return Err(invalid_autonomy());
         }
         let grant =

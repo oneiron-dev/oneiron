@@ -52,8 +52,8 @@ Does your sandbox bind the host dispatcher self.oneiron?
 ```
 
 1. Does your sandbox bind Oneiron as the host dispatcher `self.oneiron`? Use
-   [code-mode-repl](#lane-code-mode-repl). A generic REPL is not enough: this release
-   registers `execute_code` nowhere.
+   [code-mode-repl](#lane-code-mode-repl). A generic REPL is not enough: a server
+   lists `execute_code` only when its operator configured code mode.
 2. Otherwise, can you `npm install` one package AND run TypeScript? Use
    [thin-client](#lane-thin-client). The package ships TypeScript source, so the
    runtime must load it: Bun 1.3+, not plain `node`.
@@ -84,9 +84,10 @@ const projection = await self.context({ /* projection descriptor */ });
 ```
 
 `execute_code` is the code-mode entry a host supplies. A server registers it only
-after binding a verified runtime, backend and budget lease; an unconfigured server
-lists it nowhere and refuses a direct call with `code_host_unbound` before any run
-is created. Either way the dispatcher above is the code-mode surface. Do not
+after binding a verified runtime, backend and budget lease (the shipped server binds
+them from `[models]` when `[models.code_mode]` names the executor's prompt package);
+an unconfigured server lists it nowhere and refuses a direct call with
+`code_host_unbound` before any run is created. Either way the dispatcher above is the code-mode surface. Do not
 install the HTTP client for this lane: the dispatcher already speaks the same wire,
 actor identity, and Gate that this pack documents.
 
@@ -122,7 +123,7 @@ the host's curl rather than carrying an HTTP stack, so curl is required either w
 and plain `curl` is equivalent wherever the binary is absent.
 
 ```bash
-export ONEIRON_URL=http://127.0.0.1:3000
+export ONEIRON_URL=http://127.0.0.1:9090  # where `oneiron serve` listens by default
 export ONEIRON_SECRET='<logged-v2.slip-token>'  # the `api` CLI bearer environment
 export ONEIRON_BINDING_KEY='<64-hex-holder-seed>'  # keep outside argv and commits
 
@@ -190,6 +191,23 @@ Every production authentication failure returns `UNAUTHORIZED`. The explicit
 unauthenticated development mode is not a production credential.
 
 Every paired slip carries a slip id, its identity. Two pairings of identical claims produce two distinct slips, so one can be revoked without touching the other. A slip without its connection key authenticates nothing: the holder proof, not the slip, is what each request spends.
+
+**Adding a physical machine.** The owner adds a machine to the vault while pairing it.
+- **The link.** The owner sends `"machine": "yours" | "work_school" | "rented"` on `POST /v1/core/pairing/links`. This needs owner auth.
+  - Only `yours` makes the machine one of the owner's.
+  - Rented and work/school machines, hosted nodes and engine writers are never the owner's.
+- **The redeem.** Redeeming such a link at `POST /v1/core/pairing/redeem` must carry the joining machine's enrolment. A plain link must carry none.
+  - Enrolment fields:
+    - `"vault_id"`: 64 hex;
+    - `"machine"`: the 32-hex MACHINE id;
+    - `"machine_key"`: 64 hex, the install's Ed25519 key;
+    - `"encryption_suite"`: 257, which is hybrid ML-KEM-1024 + X25519;
+    - `"encryption_key"`: base64 of 1600 bytes;
+    - `"machine_proof"`: 128 hex.
+  - The proof is the install key's signature over `b"oneiron/machine-profile/v1\0" || vault_id || machine || machine_key || suite (u16 BE) || encryption_key`.
+- **Naming the machine on later requests.** A request names its machine with `x-oneiron-machine: {"machine": "<32 hex>", "signature": "<128 hex>"}`. The signature is the install key's, over `b"oneiron/machine-proof/v1\0" || vault_id || machine || BLAKE3(slip token) || binding timestamp (u64 BE) || binding nonce UTF-8`.
+  - The header rides the request's own `x-oneiron-binding` proof, so it is single-use with it.
+  - A missing, malformed or unverifiable header never refuses the request. The peer is then an unknown machine.
 
 **Revoking one slip.** `oneiron token revoke --jti <hex64>`. Its own explicit act, on one named token, effective immediately on every route including the owner-grade ones; idempotent, and it reports `{"revoked": false}` when the id was already revoked. It does not affect any other token, whatever claims they share.
 
@@ -720,12 +738,14 @@ Query parameters:
 - `limit` optional: max returned items, default `10`.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
+- `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
 
 Response:
 
 - Envelope: `items`, optional `nextCursor`, and `meta`.
 - `meta.total`: estimate count for search unless `countMode=none`.
 - `meta.countMode`: `estimate` or `none`.
+- `meta.partial`: `true` only when `deadlineMs` came due before the search finished.
 - Summary item fields: `id`, `kind`, `label`, `updatedAt`.
 - Standard item fields: `id`, `score`.
 - Full item fields: summary metadata, raw projected fields, and `score`.
@@ -758,6 +778,7 @@ Request body:
 - `limit` optional: max returned items, default `10`.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
+- `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
 - `depth` optional: `light`, `medium`, `high`, `xhigh`, or `max`; default `light`.
 
 Response:
@@ -810,6 +831,7 @@ Query parameters:
 - `limit` optional: max returned items, default `10`.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`.
 - `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
+- `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
 
 Response: Same paginated envelope and projection profiles as vector search.
 

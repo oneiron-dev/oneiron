@@ -43,9 +43,9 @@ impl AttemptQueue<'_> {
     /// DIFFERENT reference on a row that already carries one is refused
     /// outright (write-once).
     pub fn set_result(&self, input: SetAttemptResult) -> Result<AttemptRecord> {
-        let mut wtxn = self.store.env.write_txn()?;
-        let record = self.set_result_in_txn(&mut wtxn, input)?;
-        wtxn.commit()?;
+        let record = self
+            .store
+            .write_in_group(|wtxn| self.set_result_in_txn(wtxn, input))?;
         self.store.notify_attempt_observers();
         Ok(record)
     }

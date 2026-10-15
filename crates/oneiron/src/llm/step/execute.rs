@@ -8,10 +8,11 @@ use super::step_claim::{
     step_claim_matches_request, step_index_lookup, step_index_lookup_in_txn,
 };
 use super::step_state::{step_state_delete, step_state_read, step_state_write};
-use super::trap::{open_trap, trap_park_owner};
+use super::trap::{open_trap_in_txn, trap_park_owner};
+use super::trap_binding::TrapBindingScope;
 use super::types::{
     DREAMER_STEP_RETRY_BACKOFF_MS, DreamerTrapKind, DurableStepContext, DurableStepError,
-    DurableStepResult, StepOutcome, StepProgression,
+    DurableStepResult, ReplyCheck, StepOutcome, StepProgression,
 };
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, current_legibility};
 use crate::error::Error;
@@ -99,6 +100,38 @@ pub async fn call_as_step(
     .await
 }
 
+/// Durable step whose request asks for its reply without a schema and
+/// checks it here instead: a reply `check` refuses is paid and refused as a
+/// schema miss is, and never memoized, so a replay asks again. Only a reply
+/// the check passed is ever stored, so a memo or a recovered payload needs
+/// no second check. A request with a schema keeps the schema's own door.
+pub async fn call_as_step_checked(
+    ctx: &DurableStepContext<'_>,
+    backend: &dyn LlmBackend,
+    guard: &BudgetGuard,
+    request: LlmRequest,
+    check: &ReplyCheck,
+) -> DurableStepResult<StepOutcome> {
+    if matches!(
+        request.envelope.response_format,
+        super::super::ResponseFormat::Json { .. }
+    ) {
+        return Err(Error::InvalidConfig(
+            "a checked step asks for its reply without a schema".into(),
+        )
+        .into());
+    }
+    durable_step(
+        ctx,
+        backend,
+        guard,
+        request,
+        &super::super::FallbackRegistry::standard(),
+        Some(check),
+    )
+    .await
+}
+
 /// Durable step with an explicitly owned deterministic runner registry.
 pub async fn call_as_step_with_fallbacks(
     ctx: &DurableStepContext<'_>,
@@ -106,6 +139,17 @@ pub async fn call_as_step_with_fallbacks(
     guard: &BudgetGuard,
     request: LlmRequest,
     fallbacks: &super::super::FallbackRegistry,
+) -> DurableStepResult<StepOutcome> {
+    durable_step(ctx, backend, guard, request, fallbacks, None).await
+}
+
+async fn durable_step(
+    ctx: &DurableStepContext<'_>,
+    backend: &dyn LlmBackend,
+    guard: &BudgetGuard,
+    request: LlmRequest,
+    fallbacks: &super::super::FallbackRegistry,
+    check: Option<&ReplyCheck>,
 ) -> DurableStepResult<StepOutcome> {
     let step_hash = request.canonical_hash()?;
 
@@ -173,29 +217,7 @@ pub async fn call_as_step_with_fallbacks(
 
     let admission = match guard.admit_for_request(&request) {
         Ok(admission) => admission,
-        Err(BudgetDenied::Exhausted) => {
-            let failure_policy =
-                resolve_failure_policy(ctx.vault, super::super::DreamerFailureClass::Budget)?;
-            let trap = open_trap(
-                ctx.vault,
-                ctx,
-                DreamerTrapKind::Budget,
-                step_hash,
-                "durable step budget exhausted",
-            )?;
-            let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
-            store.park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
-                attempt_id: ctx.attempt_id,
-                reason: "durable step budget exhausted".to_owned(),
-                park_owner: trap_park_owner(&trap.trap_claim_id),
-                now: ctx.now_s(),
-            })?;
-            step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
-            return Ok(StepOutcome::Trapped {
-                trap,
-                failure_policy,
-            });
-        }
+        Err(BudgetDenied::Exhausted) => return budget_trap(ctx, step_hash),
         Err(denied) => {
             let source = LlmError::from(denied);
             return Err(classified_failure(ctx.vault, source)?);
@@ -204,8 +226,18 @@ pub async fn call_as_step_with_fallbacks(
 
     // The deadline only gates admission. Once admitted, the provider (and any
     // retries) runs to a terminal response so its lease can settle real usage.
-    let generated =
-        super::schema::generate(backend, &request, &admission.lease, guard, ctx.deadline).await;
+    let generated = super::schema::generate(
+        backend,
+        &request,
+        &admission.lease,
+        guard,
+        ctx.deadline,
+        check,
+    )
+    .await;
+    // A corrective call failed: an earlier response was already answered and
+    // paid, whatever usage it reported.
+    let answered = matches!(generated, Err(DurableStepError::SpentLlm { .. }));
     let (generated, failed_usage) = match generated {
         Err(DurableStepError::SpentLlm { source, usage }) => {
             (Err(DurableStepError::Llm(source)), *usage)
@@ -222,7 +254,8 @@ pub async fn call_as_step_with_fallbacks(
             };
             match fallbacks.run(fallback, &request, &error) {
                 Ok(mut response) => {
-                    if let Err(error) = super::schema::validate_fallback(&request, &response) {
+                    if let Err(error) = super::schema::validate_fallback(&request, &response, check)
+                    {
                         settle_failed_usage(guard, &admission.lease, &failed_usage);
                         return Err(error);
                     }
@@ -234,6 +267,17 @@ pub async fn call_as_step_with_fallbacks(
                     return Err(error.into());
                 }
             }
+        }
+        // A metered backend below the step (a host's run admission, rung by
+        // rung) found the budget spent before any response was answered: the
+        // same trap as this step's own admission, never a model failure. Once
+        // a response was answered, a spent budget fails the step as a spent
+        // correction admission does.
+        Err(DurableStepError::Llm(LlmError::BudgetDenied(BudgetDenied::Exhausted)))
+            if !answered =>
+        {
+            settle_failed_usage(guard, &admission.lease, &failed_usage);
+            return budget_trap(ctx, step_hash);
         }
         Err(error) => {
             settle_failed_usage(guard, &admission.lease, &failed_usage);
@@ -390,6 +434,45 @@ fn failure_policy(
     Ok(Some(resolve_failure_policy(vault, class)?))
 }
 
+/// A spent budget parks the step's attempt behind a budget trap. The trap
+/// and its park land in one transaction: an open trap over an unparked
+/// attempt reads as plain leased work, which boot recovery requeues and a
+/// fresh budget runs without the signal.
+fn budget_trap(
+    ctx: &DurableStepContext<'_>,
+    step_hash: [u8; 32],
+) -> DurableStepResult<StepOutcome> {
+    let failure_policy =
+        resolve_failure_policy(ctx.vault, super::super::DreamerFailureClass::Budget)?;
+    let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
+    let trap = ctx.vault.with_write_txn_grouped(|wtxn| {
+        let trap = open_trap_in_txn(
+            ctx.vault,
+            wtxn,
+            ctx,
+            DreamerTrapKind::Budget,
+            step_hash,
+            "durable step budget exhausted",
+            TrapBindingScope::Attempt,
+        )?;
+        store.park_attempt_in_txn(
+            wtxn,
+            crate::dreamer_runner::ParkDreamerAttempt {
+                attempt_id: ctx.attempt_id,
+                reason: "durable step budget exhausted".to_owned(),
+                park_owner: trap_park_owner(&trap.trap_claim_id),
+                now: ctx.now_s(),
+            },
+        )?;
+        Ok(trap)
+    })?;
+    step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
+    Ok(StepOutcome::Trapped {
+        trap,
+        failure_policy,
+    })
+}
+
 fn classified_failure(
     vault: &crate::Vault,
     source: LlmError,
@@ -412,11 +495,20 @@ fn resolve_failure_policy(
 }
 
 fn settle_failed_usage(guard: &BudgetGuard, lease: &super::BudgetLease, usage: &super::LlmUsage) {
-    if usage.input.total > 0 || usage.output.total > 0 {
-        let _ = guard.settle_per_call(lease, usage);
+    let settled = if usage.input.total > 0 || usage.output.total > 0 {
+        guard.settle_per_call(lease, usage)
     } else {
-        let _ = guard.abort(lease);
+        guard.abort(lease)
+    };
+    if let Err(denied) = settled {
+        report_unsettled(lease, denied);
     }
+}
+
+/// A settlement the meter refused once the provider was called. The step's
+/// own outcome still returns; the refusal is reported, never dropped.
+fn report_unsettled(lease: &super::BudgetLease, denied: BudgetDenied) {
+    tracing::error!(lease = lease.id(), %denied, "durable step settlement refused");
 }
 
 /// The wake-pass legibility envelope for this step's outcome: Some inside
@@ -462,8 +554,10 @@ impl<'a> LeaseSettleOnDrop<'a> {
 
 impl Drop for LeaseSettleOnDrop<'_> {
     fn drop(&mut self) {
-        if self.armed {
-            let _ = self.guard.settle_usage(self.lease, self.used_units);
+        if self.armed
+            && let Err(denied) = self.guard.settle_usage(self.lease, self.used_units)
+        {
+            report_unsettled(self.lease, denied);
         }
     }
 }

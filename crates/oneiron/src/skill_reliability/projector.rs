@@ -16,8 +16,8 @@ use crate::temporal::TimeRange;
 use super::codec::{KEY_SCHEMA_VERSION, decode_value, encode_value, invalid, map_u64};
 use super::floor::floor_check_in_txn;
 use super::ledger::{
-    ExecutorArm, OutcomeRef, receipt_executor, receipt_manifest_names_skill, record_outcome_in_txn,
-    tally_outcomes,
+    ExecutorArm, OutcomeRef, outcome_is_local, receipt_executor, receipt_manifest_names_skill,
+    record_outcome_in_txn, tally_outcomes,
 };
 use super::posterior::{
     KEY_ALPHA, KEY_BETA, SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior,
@@ -156,7 +156,7 @@ pub fn project_skill_reliability(
     for (skill, executor, rows) in batches {
         let at = rows.iter().map(|row| row.at).max().unwrap_or_default();
         let prior = skill_reliability_prior(vault, &skill)?;
-        vault.with_write_txn(|wtxn| {
+        vault.with_write_txn_grouped(|wtxn| {
             for row in &rows {
                 // Close the TOCTOU window: a displacement can commit after the
                 // pre-read but before this writer. Recheck under the same writer
@@ -202,7 +202,7 @@ pub fn project_skill_reliability_for(
     at: u64,
 ) -> Result<SkillReliabilityPosterior> {
     let prior = skill_reliability_prior(vault, skill)?;
-    vault.with_write_txn(|wtxn| project_in_txn(vault, wtxn, skill, None, prior, at))
+    vault.with_write_txn_grouped(|wtxn| project_in_txn(vault, wtxn, skill, None, prior, at))
 }
 
 /// Reprojects the named executor's arm; A/B, cutover and held-out runs all
@@ -215,10 +215,12 @@ pub fn project_skill_reliability_for_executor(
 ) -> Result<SkillReliabilityPosterior> {
     validate_executor(executor)?;
     let prior = skill_reliability_prior(vault, skill)?;
-    vault.with_write_txn(|wtxn| project_in_txn(vault, wtxn, skill, Some(executor), prior, at))
+    vault.with_write_txn_grouped(|wtxn| {
+        project_in_txn(vault, wtxn, skill, Some(executor), prior, at)
+    })
 }
 
-fn project_in_txn(
+pub(super) fn project_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     skill: &EntityId,
@@ -371,7 +373,7 @@ fn cites_receipts_absent_locally(
         let Some(receipt) = receipt.as_str() else {
             continue;
         };
-        if !OutcomeRef::new(skill, executor, receipt).contains(vault, rtxn)? {
+        if !outcome_is_local(vault, rtxn, &OutcomeRef::new(skill, executor, receipt))? {
             return Ok(true);
         }
     }

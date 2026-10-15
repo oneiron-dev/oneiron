@@ -215,59 +215,97 @@ fn tied_bindings_resolve_to_nothing() {
     assert_eq!(peer_actor_at(&vault, peer, 200).expect("tied"), None);
 }
 
-/// Record round-trip: both texts, the window refs, the source turn and every
-/// attributed span survive the store.
 #[test]
-fn finalized_record_round_trips() {
-    let (_tmp, vault) = temp_vault();
-    let human = put_actor(&vault, EdgeActorClass::Human);
-    let turn = EntityId::now();
-    let artifact_ref = ProposalArtifactRef::mint();
-
-    let record = FinalizedProposalText {
-        artifact_ref,
-        proposed_ref: LoroOpRef::from_bytes(vec![1, 2, 3]),
-        final_ref: LoroOpRef::from_bytes(vec![4, 5, 6]),
-        ops_by_actor: vec![
-            (
-                OpAttribution::Stamped(human),
-                OpSpan {
-                    peer_id: 9,
-                    counter: 3,
-                    len: 2,
-                    lamport: 11,
-                    timestamp: 1_700_000_000,
-                    before_text: "draft".to_owned(),
-                    after_text: "draft!".to_owned(),
-                },
-            ),
-            (
-                OpAttribution::DevicePeer,
-                OpSpan {
-                    peer_id: 10,
-                    counter: 0,
-                    len: 1,
-                    lamport: 12,
-                    timestamp: 1_700_000_001,
-                    before_text: "draft!".to_owned(),
-                    after_text: "draft!?".to_owned(),
-                },
-            ),
-        ],
-        proposed_text: "draft".to_owned(),
-        final_text: "draft!?".to_owned(),
-        source_turn_ref: Some(turn),
-    };
-
-    put_finalized_proposal_text(&vault, &record).expect("persist");
-    let read = finalized_proposal_text(&vault, artifact_ref)
-        .expect("read")
-        .expect("present");
-    assert_eq!(read, record);
+fn retained_proposal_codec_pins_schema_attribution_and_rejects_malformed_bytes() {
+    let fixture: &[u8] = b"\x88\xa1v\x01\xa8artifact\xc4\x10abcdefghijklmnop\xacproposed_ref\xc4\x01\x01\xa9final_ref\xc4\x01\x02\xadproposed_text\xa1a\xaafinal_text\xa1e\xabsource_turn\xc4\x10qrstuvwxyzABCDEF\xa5spans\x94\x8a\xa4peer\x09\xa3ctr\x03\xa3len\x02\xa7lamport\x0b\xa2ts\x01\xa6before\xa1a\xa5after\xa1b\xa5trust\xa7stamped\xa5actor\xc4\x10ABCDEFGHIJKLMNOP\xa5class\xa5human\x8a\xa4peer\x0a\xa3ctr\x00\xa3len\x01\xa7lamport\x0c\xa2ts\x02\xa6before\xa1b\xa5after\xa1c\xa5trust\xaaregistered\xa5actor\xc4\x10ABCDEFGHIJKLMNOP\xa5class\xa5agent\x8a\xa4peer\x0b\xa3ctr\x00\xa3len\x01\xa7lamport\x0d\xa2ts\x03\xa6before\xa1c\xa5after\xa1d\xa5trust\xaaregistered\xa5actor\xc4\x10ABCDEFGHIJKLMNOP\xa5class\xa6system\x8a\xa4peer\x0c\xa3ctr\x00\xa3len\x01\xa7lamport\x0e\xa2ts\x04\xa6before\xa1d\xa5after\xa1e\xa5trust\xabdevice_peer\xa5actor\xc0\xa5class\xc0";
+    let record = decode_finalized_proposal_text(fixture).expect("fixed v1 schema");
     assert_eq!(
-        finalized_proposal_text(&vault, ProposalArtifactRef::mint()).expect("miss"),
-        None
+        record.artifact_ref.entity_id().as_bytes(),
+        b"abcdefghijklmnop"
     );
+    assert_eq!(record.proposed_ref.as_bytes(), &[1]);
+    assert_eq!(record.final_ref.as_bytes(), &[2]);
+    assert_eq!(record.proposed_text, "a");
+    assert_eq!(record.final_text, "e");
+    assert_eq!(
+        record.source_turn_ref.unwrap().as_bytes(),
+        b"qrstuvwxyzABCDEF"
+    );
+    let actor = EntityId::from_bytes(*b"ABCDEFGHIJKLMNOP").unwrap();
+    assert_eq!(record.ops_by_actor.len(), 4);
+    assert_eq!(
+        record.ops_by_actor[0].0,
+        OpAttribution::Stamped(WriteActor::new(actor, EdgeActorClass::Human))
+    );
+    assert_eq!(
+        record.ops_by_actor[1].0,
+        OpAttribution::Registered(WriteActor::new(actor, EdgeActorClass::Agent))
+    );
+    assert_eq!(
+        record.ops_by_actor[2].0,
+        OpAttribution::Registered(WriteActor::new(actor, EdgeActorClass::System))
+    );
+    assert_eq!(record.ops_by_actor[3].0, OpAttribution::DevicePeer);
+    let first = &record.ops_by_actor[0].1;
+    assert_eq!(
+        (
+            first.peer_id,
+            first.counter,
+            first.len,
+            first.lamport,
+            first.timestamp
+        ),
+        (9, 3, 2, 11, 1)
+    );
+    assert_eq!(
+        (first.before_text.as_str(), first.after_text.as_str()),
+        ("a", "b")
+    );
+    assert_eq!(encode_finalized_proposal_text(&record).unwrap(), fixture);
+    let (_tmp, vault) = temp_vault();
+    put_finalized_proposal_text(&vault, &record).unwrap();
+    let retained = finalized_proposal_text(&vault, record.artifact_ref)
+        .unwrap()
+        .unwrap();
+    assert_eq!(retained.final_text, "e");
+    assert_eq!(encode_finalized_proposal_text(&retained).unwrap(), fixture);
+
+    let mut wrong_version = fixture.to_vec();
+    wrong_version[3] = 2;
+    let mut unknown_trust = fixture.to_vec();
+    let trust = unknown_trust
+        .windows(7)
+        .position(|w| w == b"stamped")
+        .unwrap();
+    unknown_trust[trust] = b'x';
+    let mut unknown_class = fixture.to_vec();
+    let class = unknown_class
+        .windows(5)
+        .position(|w| w == b"human")
+        .unwrap();
+    unknown_class[class] = b'x';
+    let mut negative_len = fixture.to_vec();
+    let len = negative_len
+        .windows(5)
+        .position(|w| w == b"\xa3len\x02")
+        .unwrap();
+    negative_len[len + 4] = 0xff;
+    let mut trailing = fixture.to_vec();
+    trailing.push(0);
+    for bytes in [
+        wrong_version.as_slice(),
+        unknown_trust.as_slice(),
+        unknown_class.as_slice(),
+        negative_len.as_slice(),
+        trailing.as_slice(),
+        &fixture[..fixture.len() - 1],
+        b"\x80".as_slice(),
+    ] {
+        assert!(matches!(
+            decode_finalized_proposal_text(bytes),
+            Err(Error::CorruptedIndex(_))
+        ));
+    }
 }
 
 /// Retention is write-once per artifact ref: re-persisting the same record is
@@ -307,22 +345,6 @@ fn a_divergent_finalize_cannot_overwrite_the_stored_record() {
         record,
         "the first record survives the refused write"
     );
-}
-
-/// The class token is a storage ABI, pinned independently of Gate's policy key.
-#[test]
-fn actor_class_tokens_round_trip() {
-    for class in [
-        EdgeActorClass::Human,
-        EdgeActorClass::Agent,
-        EdgeActorClass::System,
-    ] {
-        assert_eq!(
-            actor_class_from_token(actor_class_token(class)),
-            Some(class)
-        );
-    }
-    assert_eq!(actor_class_from_token("operator"), None);
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────

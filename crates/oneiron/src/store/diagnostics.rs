@@ -19,6 +19,8 @@ use crate::bm25::{Bm25Diagnostics, Bm25DiagnosticsSnapshot};
 use crate::failure_signals::FailureSignalCounts;
 use crate::gate::GateMetrics;
 
+use super::{GroupCommitCounters, GroupCommitStats};
+
 /// The diagnostic counters of one open vault.
 ///
 /// Every field is interior-mutable and recorded into through a shared
@@ -36,6 +38,8 @@ pub struct Diagnostics {
     pub(crate) attempt_queue: AttemptQueueCleanupMetrics,
     /// Versioned tier-1 failure counts for this open vault.
     pub(crate) failure_signals: FailureSignalCounts,
+    /// Shared write transactions and the logical writes they carried.
+    pub(crate) group_commit: GroupCommitCounters,
 }
 
 impl Diagnostics {
@@ -56,5 +60,12 @@ impl Diagnostics {
     #[must_use]
     pub fn attempt_queue_cleanup_snapshot(&self) -> AttemptQueueCleanupMetricsSnapshot {
         self.attempt_queue.snapshot()
+    }
+
+    /// This vault's group-commit counters: shared write transactions, the
+    /// logical writes they carried, and the largest group.
+    #[must_use]
+    pub fn group_commit_snapshot(&self) -> GroupCommitStats {
+        self.group_commit.snapshot()
     }
 }

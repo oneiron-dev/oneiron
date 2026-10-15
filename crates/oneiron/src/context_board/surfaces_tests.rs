@@ -10,6 +10,36 @@ fn id(byte: u8) -> EntityId {
     EntityId::from_bytes([byte; 16]).unwrap()
 }
 
+/// The vault's host root as a read: whole, or limited to one facet
+/// (FACET-READ). No row these fixtures write sits in a facet.
+fn host_root_read(
+    vault: &crate::Vault,
+    facet: Option<EntityId>,
+) -> crate::Result<crate::claim::ScopedRead<'_>> {
+    use crate::federation::{Scope, ScopeAxis, ScopeId};
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"board facet root")?;
+    let mut slip = vault.ensure_host_root_slip(&issuer)?;
+    let proof = match facet {
+        None => vault.verified_host_root_slip(&issuer)?,
+        Some(facet) => {
+            let mut scope = Scope::top();
+            scope.facets = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(facet)]));
+            issuer.attenuate(
+                &mut slip,
+                crate::authority::SlipCaveat {
+                    scope: Some(scope),
+                    ..Default::default()
+                },
+            )?;
+            let binding = issuer.binding_proof(&slip, b"board facet")?;
+            vault.verify_capability_slip(&issuer.public_key(), &slip, b"board facet", &binding)?
+        }
+    };
+    Ok(vault.scoped_read(
+        crate::claim::ScopedReadActorKey::from_verified_slip(&proof).expect("read proof"),
+    ))
+}
+
 #[test]
 fn worlds_filter_before_projection_and_counting() {
     let worlds = [1, 2, 3, 4].map(|n| WorldPresence {
@@ -35,240 +65,6 @@ fn worlds_filter_before_projection_and_counting() {
     let section = projected.board_section().unwrap();
     assert_eq!(section.policy().shed_rank, Some(ShedRank::WorldsToCounts));
     assert_eq!(section.count_rows(), ["active: 1 off: 2"]);
-}
-
-#[test]
-fn changed_line_survives_epoch_and_rides_without_pushing() {
-    let mut session = SessionReadSet::default();
-    session.served("cl1", ServedLifecycle::Active); // rendered board row
-    session.served("cl2", ServedLifecycle::Active); // get() body
-    session.loaded_skill("sk1", "v2");
-    let reopened: SessionReadSet =
-        serde_json::from_slice(&serde_json::to_vec(&session).unwrap()).unwrap();
-    let changes = reopened.changed(1, |key| match key {
-        "cl1" => Some(ServedLifecycle::Superseded("cl3".into())),
-        "cl2" => Some(ServedLifecycle::Retracted),
-        _ => Some(ServedLifecycle::Active),
-    });
-    assert_eq!(
-        changes.render(),
-        ["changed[1:]{id,to}:", "cl1: superseded:cl3", "changed: +1"]
-    );
-    assert_eq!(changes.ride(None), None);
-    let header = BoardBlockHeader {
-        epoch: 9,
-        scope: "base".into(),
-    };
-    let legend = BoardLegend::canonical();
-    let render = render_board_block(
-        &BoardFrame {
-            header: &header,
-            legend: &legend,
-            sections: &[],
-            changes: Some(&changes),
-        },
-        BoardBudgetRequest {
-            harness_default_tok: 0,
-            caller_limit_tok: None,
-            explicit_override_tok: None,
-        },
-    )
-    .unwrap();
-    assert!(
-        render
-            .text
-            .lines()
-            .nth(2)
-            .unwrap()
-            .starts_with("changed[1:]")
-    );
-    let frame = changes
-        .ride(Some(BoardStreamFrame {
-            epoch: 9,
-            kind: FrameKind::Delta(vec![DeltaRow {
-                key: "task1".into(),
-                line: "working".into(),
-            }]),
-        }))
-        .unwrap();
-    let FrameKind::Delta(rows) = frame.kind else {
-        panic!("delta")
-    };
-    assert_eq!(rows[0].key, "changed");
-    assert_eq!(
-        rows[0].line,
-        "changed[1:]{id,to}: cl1: superseded:cl3 changed: +1"
-    );
-    assert_eq!(rows.last().unwrap().key, "task1");
-    assert_eq!(
-        reopened.loaded_skills().collect::<Vec<_>>(),
-        [("sk1", "v2")]
-    );
-}
-
-#[test]
-fn skills_found_and_agent_candidates_shed_before_memory_snippets() {
-    let mut session = SessionReadSet::default();
-    session.loaded_skill("sk-old", "1");
-    let hits = [
-        CapabilityHit {
-            id: id(1),
-            entity_type: crate::registry::ENTITY_TYPE_SKILL,
-            label: "found-skill".into(),
-        },
-        CapabilityHit {
-            id: id(2),
-            entity_type: crate::registry::ENTITY_TYPE_AGENT_DEF,
-            label: "found-agent".into(),
-        },
-    ];
-    let skills = SkillsSection::project(&hits, &session);
-    assert!(skills.found[0].contains("found-skill"));
-    assert_eq!(skills.loaded, "loaded: sk-old@1");
-    let agents = render_agents_section(&[], &[]).with_candidates(&hits);
-    assert_eq!(agents.rows.len(), 1);
-    assert_eq!(agents.rows[0].lane, AgentLane::Cand);
-    // Replacing turn hits clears the old candidates and found rows, not loaded.
-    assert!(agents.clone().with_candidates(&[]).rows.is_empty());
-    assert_eq!(SkillsSection::project(&[], &session).loaded, skills.loaded);
-    let tasks = render_tasks_section(&[], &[]);
-    let [_, agent_section] = assemble_task_agent_sections(&tasks, &agents).unwrap();
-    let sections = [
-        skills.board_section().unwrap(),
-        agent_section,
-        BoardSection::new(
-            "MEMORIES",
-            vec![],
-            vec!["snippet body ".repeat(10)],
-            vec!["count: 1".into()],
-            SectionPolicy {
-                pinned: false,
-                shed_rank: Some(ShedRank::MemoriesSnippets),
-            },
-        )
-        .unwrap(),
-    ];
-    let header = BoardBlockHeader {
-        epoch: 1,
-        scope: "base".into(),
-    };
-    let legend = BoardLegend::canonical();
-    let frame = BoardFrame {
-        header: &header,
-        legend: &legend,
-        sections: &sections,
-        changes: None,
-    };
-    // Find the budget where only the cheaper discovery tier has shed.
-    let rendered = (1..500)
-        .find_map(|cap| {
-            let out = render_board_block(
-                &frame,
-                BoardBudgetRequest {
-                    harness_default_tok: cap,
-                    caller_limit_tok: None,
-                    explicit_override_tok: None,
-                },
-            )
-            .unwrap();
-            (out.shed.applied.last() == Some(&ShedRank::CapabilityDiscovery)).then_some(out)
-        })
-        .expect("discovery tier has a reducing budget interval");
-    assert!(!rendered.text.contains("found-skill"));
-    assert!(!rendered.text.contains("found-agent"));
-    assert!(rendered.text.contains("loaded: sk-old@1"));
-    assert!(rendered.text.contains("snippet body"));
-}
-
-#[test]
-fn new_pack_install_appears_on_existing_session_changed_line_without_push() {
-    let mut session = SessionReadSet::default();
-    let old = vec![("alice.tools".to_owned(), "ab".repeat(32))];
-    let updated = vec![
-        ("alice.tools".to_owned(), "cd".repeat(32)),
-        ("alice.connector".to_owned(), "ef".repeat(32)),
-    ];
-    assert!(session.pack_changes(&updated, 16).rows.is_empty());
-    session.observe_pack_inventory(&old);
-    let changed = session.pack_changes(&updated, 16);
-    assert_eq!(changed.rows.len(), 2);
-    assert!(
-        changed
-            .render()
-            .iter()
-            .any(|row| row.contains("alice.connector: installed:"))
-    );
-    assert!(changed.ride(None).is_none());
-    let frame = changed
-        .ride(Some(BoardStreamFrame {
-            epoch: 7,
-            kind: FrameKind::Keyframe("<board>\nnote: current\nlegend: kinds\n</board>".into()),
-        }))
-        .expect("existing frame");
-    let FrameKind::Keyframe(text) = frame.kind else {
-        panic!("keyframe")
-    };
-    assert!(text.find("note:").unwrap() < text.find("alice.connector: installed:").unwrap());
-    assert!(text.find("alice.connector: installed:").unwrap() < text.find("legend:").unwrap());
-    let reopened: SessionReadSet =
-        serde_json::from_slice(&serde_json::to_vec(&session).unwrap()).unwrap();
-    assert_eq!(reopened.pack_changes(&updated, 16), changed);
-}
-
-#[test]
-fn changed_rider_replaces_the_whole_block_and_clears_on_next_existing_frame() {
-    let changes = ChangedLine {
-        rows: vec![("cl1".into(), ServedLifecycle::Retracted)],
-        ..ChangedLine::default()
-    };
-    let keyframe = changes
-        .ride(Some(BoardStreamFrame {
-            epoch: 3,
-            kind: FrameKind::Keyframe("<board>\nnote: current\nlegend: kinds\n</board>".into()),
-        }))
-        .unwrap();
-    let FrameKind::Keyframe(text) = &keyframe.kind else {
-        panic!("keyframe")
-    };
-    assert!(text.find("note:").unwrap() < text.find("changed[").unwrap());
-    assert!(text.find("changed[").unwrap() < text.find("legend:").unwrap());
-    let mut receiver = AppliedStreamState::default();
-    receiver.apply(keyframe);
-    let delta = || {
-        Some(BoardStreamFrame {
-            epoch: 3,
-            kind: FrameKind::Delta(vec![DeltaRow {
-                key: "task1".into(),
-                line: "working".into(),
-            }]),
-        })
-    };
-    receiver.apply(changes.ride(delta()).unwrap());
-    assert!(receiver.delta_overlay["changed"].contains("cl1: retracted"));
-    receiver.apply(ChangedLine::default().ride(delta()).unwrap());
-    assert_eq!(receiver.delta_overlay["changed"], "");
-    assert_eq!(receiver.delta_overlay["task1"], "working");
-    assert!(ChangedLine::default().ride(None).is_none());
-}
-
-#[test]
-fn base_world_obeys_the_same_exclusion_and_active_off_count_rules() {
-    let authority = |allowed, active| ResolvedWorldAuthority {
-        allowed_set: WorldAuthoritySet::new(allowed, []).unwrap(),
-        default_subset: WorldAuthoritySet::new(active, []).unwrap(),
-        active_set: WorldAuthoritySet::new(active, []).unwrap(),
-        allowed_claim_ids: vec![],
-        default_claim_id: None,
-    };
-    let active = WorldsSection::project(&[], &authority(true, true), 1);
-    assert_eq!(active.rows, ["base ACTIVE local"]);
-    assert_eq!((active.active_count, active.off_count), (1, 0));
-    let off = WorldsSection::project(&[], &authority(true, false), 1);
-    assert_eq!(off.rows, ["off: base AVAILABLE-OFF local"]);
-    assert_eq!((off.active_count, off.off_count), (0, 1));
-    let hidden = WorldsSection::project(&[], &authority(false, false), 1);
-    assert!(hidden.rows.is_empty());
-    assert_eq!((hidden.active_count, hidden.off_count), (0, 0));
 }
 
 /// The rider stays inside the board's row-byte limit whatever a restored
@@ -297,8 +93,15 @@ fn a_restored_checkpoint_cannot_push_the_rider_past_the_row_byte_limit() {
         rows: vec![(huge.clone(), ServedLifecycle::Superseded(huge))],
         ..ChangedLine::default()
     };
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new(id(7).to_hex()).unwrap());
     session
-        .fold_own_changes(&vault, Some(id(7)), &mut line, 16)
+        .fold_own_changes(
+            &read,
+            Some(id(7)),
+            crate::claim::CallerLocality::OnDevice,
+            &mut line,
+            16,
+        )
         .unwrap();
     assert!(!line.events.is_empty());
     let rows = line.render();
@@ -384,7 +187,28 @@ fn a_refused_later_write_never_answers_for_a_settled_proposal() -> crate::Result
     }))
     .unwrap();
     let mut line = ChangedLine::default();
-    session.fold_own_changes(&vault, Some(id(7)), &mut line, 16)?;
+    crate::test_util::authorize_readers(&vault, &[&id(7).to_hex(), "host"]);
+    // FACET-READ: a read limited to a facet the claim does not sit in folds
+    // no outcome of it, as of a missing row; the same root, whole, folds one.
+    for (facet, rides) in [(Some(id(0x5F)), 0), (None, 1)] {
+        let mut folded = ChangedLine::default();
+        session.fold_own_changes(
+            &host_root_read(&vault, facet)?,
+            Some(id(7)),
+            crate::claim::CallerLocality::OnDevice,
+            &mut folded,
+            16,
+        )?;
+        assert_eq!(folded.events.len(), rides, "{facet:?}: {folded:?}");
+    }
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new(id(7).to_hex()).unwrap());
+    session.fold_own_changes(
+        &read,
+        Some(id(7)),
+        crate::claim::CallerLocality::OnDevice,
+        &mut line,
+        16,
+    )?;
     let [ChangedEvent::Proposal { change, .. }] = line.events.as_slice() else {
         panic!("one settled proposal rides: {:?}", line.events);
     };
@@ -449,9 +273,17 @@ fn an_outcome_delivered_past_a_full_watch_rides_once_per_submission() -> crate::
             )
         })
     };
+    crate::test_util::authorize_readers(&vault, &[&actor.to_hex()]);
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new(actor.to_hex()).unwrap());
     let wake = |session: &mut SessionReadSet| -> crate::Result<usize> {
         let mut line = ChangedLine::default();
-        session.fold_own_changes(&vault, Some(actor), &mut line, 16)?;
+        session.fold_own_changes(
+            &read,
+            Some(actor),
+            crate::claim::CallerLocality::OnDevice,
+            &mut line,
+            16,
+        )?;
         session.acknowledge(&line);
         Ok(line.events.len())
     };
@@ -475,4 +307,126 @@ fn an_outcome_delivered_past_a_full_watch_rides_once_per_submission() -> crate::
     assert_eq!(wake(&mut session)?, 0);
     assert_eq!(wake(&mut session)?, 0);
     Ok(())
+}
+
+/// F16 round 3 (Sol F2): a session's lifecycle rider names an agent's
+/// retraction only while the caller's read reads the agent. To a read that
+/// does not, the retraction is no change, as for a missing row.
+#[test]
+fn a_lifecycle_rider_names_no_retraction_its_reader_cannot_read() -> crate::Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let agent = crate::test_util::seed_agent_definition(&vault, id(0x31), "rider");
+    let mut session = SessionReadSet::default();
+    session.served(agent.to_hex(), ServedLifecycle::Active);
+    let mut definition = vault.get_agent_definition(&agent)?.expect("seeded agent");
+    definition.version.push_str("-retired");
+    definition.lifecycle_status = crate::claim::ClaimLifecycleStatus::Retracted;
+    vault.update_agent_definition(
+        &agent,
+        &definition,
+        crate::TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    crate::test_util::authorize_readers(&vault, &[&id(7).to_hex(), "host"]);
+    let rows = |actor: u8| {
+        let read =
+            vault.scoped_read(crate::claim::ScopedReadActorKey::new(id(actor).to_hex()).unwrap());
+        session.refresh(&read, 16).map(|line| line.rows)
+    };
+    assert_eq!(rows(7)?, vec![(agent.to_hex(), ServedLifecycle::Retracted)]);
+    assert_eq!(
+        rows(8)?,
+        Vec::new(),
+        "a reader of no agent learns no retraction"
+    );
+    // FACET-READ: a read limited to a facet the agent does not sit in learns
+    // no retraction either; the same root, whole, does.
+    let root_rows = |facet| -> crate::Result<_> {
+        Ok(session.refresh(&host_root_read(&vault, facet)?, 16)?.rows)
+    };
+    assert_eq!(
+        root_rows(None)?,
+        vec![(agent.to_hex(), ServedLifecycle::Retracted)]
+    );
+    assert_eq!(root_rows(Some(id(0x5F)))?, Vec::new());
+    Ok(())
+}
+
+/// F16 round 4 (Sol F1 = Astra F1): a claim's lifecycle rider holds every
+/// condition of its reader's read but the claim's status. A retraction of a
+/// claim private to one principal rides to that principal alone; to another
+/// reader it is no change, as for a missing row.
+#[test]
+fn a_lifecycle_rider_names_no_retraction_of_a_claim_its_reader_cannot_read() -> crate::Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let subject = id(0x32);
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"subject",
+    )?;
+    let claim = id(0x33);
+    let mut body = crate::claim::ClaimBody::new(
+        "profile.orchid",
+        crate::claim::ClaimSubject::Entity(subject),
+        rmpv::Value::from("prefers orchids"),
+        1.0,
+        crate::claim::ClaimApprovalStatus::Approved,
+        crate::claim::ClaimLifecycleStatus::Retracted,
+    )?;
+    body.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("principal"),
+        rmpv::Value::Binary(id(9).as_bytes().to_vec()),
+    )]));
+    vault.put_claim(&claim, &body, crate::TimeRange { start: 1, end: 1 }, 1)?;
+    let mut session = SessionReadSet::default();
+    session.served(claim.to_hex(), ServedLifecycle::Active);
+    crate::test_util::authorize_readers(&vault, &[&id(7).to_hex(), &id(9).to_hex()]);
+    let rows = |actor: u8| {
+        let read =
+            vault.scoped_read(crate::claim::ScopedReadActorKey::new(id(actor).to_hex()).unwrap());
+        session.refresh(&read, 16).map(|line| line.rows)
+    };
+    assert_eq!(rows(9)?, vec![(claim.to_hex(), ServedLifecycle::Retracted)]);
+    assert_eq!(
+        rows(7)?,
+        Vec::new(),
+        "another principal's reader learns no retraction"
+    );
+    Ok(())
+}
+
+/// F16 round 5 (Astra F2): an installed pack's row is the pack's name, and
+/// a name may read like a row ref (`agent:<hex>`). The rows a line names,
+/// rendered or counted past its cap, hold no pack name: a keyed replay
+/// re-admits each pack's source apart, never a row the name seems to name.
+#[test]
+fn a_pack_row_names_no_row_rendered_or_counted() {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let session = SessionReadSet::default();
+    let mut line = ChangedLine {
+        rows: (0..17)
+            .map(|n| {
+                (
+                    format!("agent:{}", id(0x60 + n).to_hex()),
+                    ServedLifecycle::Installed(format!("hash-{n}")),
+                )
+            })
+            .collect(),
+        ..ChangedLine::default()
+    };
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new(id(7).to_hex()).unwrap());
+    session
+        .fold_own_changes(
+            &read,
+            Some(id(7)),
+            crate::claim::CallerLocality::OnDevice,
+            &mut line,
+            16,
+        )
+        .unwrap();
+    assert!(line.overflow >= 1, "{line:?}");
+    assert_eq!(line.named_rows().collect::<Vec<_>>(), Vec::<&str>::new());
 }

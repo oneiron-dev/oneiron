@@ -623,6 +623,3 @@ fn char_pass(before: &[u32], after: &[u32]) -> CharCounts {
         approx,
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -6,7 +6,7 @@ use crate::context_board::CapabilityHit;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_SKILL};
-use crate::store::{RetrievalScoreComponent, RetrievalSignal, Store};
+use crate::store::{RetrievalScoreComponent, RetrievalSignal, StoreRead};
 use heed::RoTxn;
 use std::collections::{HashMap, HashSet};
 
@@ -22,7 +22,7 @@ pub(super) fn is_capability(kind: u8) -> bool {
 }
 
 pub(crate) fn capability_hit(
-    store: &Store,
+    store: &StoreRead<'_>,
     txn: &RoTxn<'_>,
     id: EntityId,
 ) -> Result<Option<CapabilityHit>> {
@@ -66,11 +66,11 @@ pub(crate) fn capability_hit(
 pub(super) fn partition_capabilities(
     scores: &mut Vec<ScoredEntity>,
     vault: &Vault,
+    store: &StoreRead<'_>,
     txn: &RoTxn<'_>,
     signal_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     executor: Option<&str>,
 ) -> Result<Vec<ScoredEntity>> {
-    let store = &vault.store;
     let mut memory = Vec::with_capacity(scores.len());
     let mut eligible = Vec::new();
     let mut skill_ids = HashSet::new();
@@ -218,7 +218,7 @@ fn semantic_signal(signal: RetrievalSignal) -> bool {
 }
 
 pub(super) fn memory_candidate_count(
-    store: &Store,
+    store: &StoreRead<'_>,
     txn: &RoTxn<'_>,
     scores: &[ScoredEntity],
 ) -> Result<usize> {
@@ -243,7 +243,12 @@ pub(super) enum CapabilityLane {
 }
 
 impl CapabilityLane {
-    pub(super) fn admits(self, store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    pub(super) fn admits(
+        self,
+        store: &StoreRead<'_>,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
         let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
             return Ok(false);
         };
@@ -268,7 +273,7 @@ impl CapabilityLane {
 /// Claim lifecycle and user filters retain their normal post-fusion stages.
 pub(super) fn retain_memory_candidates(
     scores: &mut Vec<ScoredEntity>,
-    store: &Store,
+    store: &StoreRead<'_>,
     txn: &RoTxn<'_>,
 ) -> Result<()> {
     let mut memory = Vec::with_capacity(scores.len());

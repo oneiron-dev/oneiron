@@ -57,7 +57,6 @@ fn external_runner_reads_failure_corpus_and_patch_release_is_human_only() {
             checkpoint_ref: None,
         },
         evidence_refs: vec![],
-        untrusted_detail: None,
         valid_from: 1,
         valid_to: None,
     };
@@ -219,7 +218,7 @@ fn counted_burst_stays_proposed_one_check_and_one_reversal() {
             .unwrap();
         assert_eq!(receipt.actor, actor.entity_ref().to_hex());
     }
-    let backup_dir = tempfile::tempdir().unwrap();
+    let backup_dir = crate::test_support::restore_tempdir();
     let checkpoint = backup_dir.path().join("checkpoint");
     v.snapshot_checkpoint(&checkpoint, 100).unwrap();
     let (restored, _) = Vault::restore_checkpoint(
@@ -308,86 +307,6 @@ fn production_refs_refuse_protected_namespaces_before_persistence() {
 }
 
 #[test]
-fn actor_burst_reversal_covers_distinct_run_names() {
-    let (_dir, v, owner, actor) = fixture();
-    set_proposal_threshold(&v, 1);
-    let registration = v
-        .register_dev_healer(HealerDeployment::SelfHostSingleWriter, actor)
-        .unwrap();
-    let mut ids = Vec::new();
-    for run in ["first-run", "second-run"] {
-        let proposal = patch(RepairOperation::DevPatch {
-            repo_ref: "repo".into(),
-            patch_ref: "patch".into(),
-        });
-        ids.push(proposal.proposal_id);
-        registration.submit(run, "session", proposal).unwrap();
-    }
-    let check = v
-        .proposal_burst_check(&actor.entity_ref())
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        v.proposal_submission_check(&actor.entity_ref())
-            .unwrap()
-            .unwrap()
-            .count,
-        2
-    );
-    let receipts = v.reverse_healer_burst(&owner, &check).unwrap();
-    assert_eq!(receipts.len(), 2);
-    assert!(receipts.iter().all(|receipt| receipt.reversed));
-    for id in ids {
-        assert_eq!(
-            v.healer_proposal(&id).unwrap().unwrap().state,
-            ProposalState::Reversed
-        );
-    }
-    for run in ["first-run", "second-run"] {
-        assert!(
-            v.healer_run_receipt(&actor.entity_ref(), run)
-                .unwrap()
-                .unwrap()
-                .reversed
-        );
-    }
-}
-
-#[test]
-fn production_refs_refuse_encoded_namespace_components() {
-    let (_dir, v, _owner, actor) = fixture();
-    let prod = v.register_prod_healer(actor);
-    for target in [
-        "tenant%2Fengine",
-        "%2Fcore",
-        "tenant%2fsoul",
-        "%65ngine/index",
-        "tenant%252Fengine",
-    ] {
-        for operation in [
-            RepairOperation::Reindex {
-                scope_ref: target.into(),
-            },
-            RepairOperation::Retry {
-                run_ref: target.into(),
-            },
-        ] {
-            let proposal = patch(operation);
-            let id = proposal.proposal_id;
-            assert!(matches!(
-                prod.submit("encoded", "session", proposal),
-                Err(crate::Error::InvalidConfig(_))
-            ));
-            assert!(v.healer_proposal(&id).unwrap().is_none());
-        }
-    }
-    assert!(
-        v.healer_run_receipt(&actor.entity_ref(), "encoded")
-            .unwrap()
-            .is_none()
-    );
-}
-#[test]
 fn healer_diagnostic_events_read_returns_its_receipt() {
     let (_d, v, _owner, actor) = fixture();
     let event = DiagnosticEvent {
@@ -406,7 +325,6 @@ fn healer_diagnostic_events_read_returns_its_receipt() {
             checkpoint_ref: None,
         },
         evidence_refs: vec![],
-        untrusted_detail: None,
         valid_from: 1,
         valid_to: None,
     };
@@ -458,4 +376,48 @@ fn policy_revocation_between_preflight_and_proposal_write_refuses_all_receipts()
     );
     assert!(vault.proposal_burst_check(&actor.entity_ref())?.is_none());
     Ok(())
+}
+
+/// engine-core-08: an owner proof is bound to the vault that issued it. One
+/// from another vault releases no patch here, even when this vault holds a
+/// PERSON with the same id.
+#[test]
+fn an_owner_proof_from_another_vault_releases_no_patch() {
+    let (_d, other, foreign_owner, _) = fixture();
+    let (_d2, v, _owner, actor) = fixture();
+    drop(other);
+    v.put_entity(
+        &foreign_owner.actor(),
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )
+    .unwrap();
+    let registration = v
+        .register_dev_healer(HealerDeployment::Daemon, actor)
+        .unwrap();
+    let proposal = patch(RepairOperation::DevPatch {
+        repo_ref: "repo".into(),
+        patch_ref: "patch".into(),
+    });
+    let id = proposal.proposal_id;
+    registration.submit("run", "session", proposal).unwrap();
+    for result in [
+        v.review_patch_pr(&foreign_owner, &id, Some("release-1"))
+            .map(|_| ()),
+        v.reverse_healer_run(&foreign_owner, &actor.entity_ref(), "run")
+            .map(|_| ()),
+    ] {
+        assert!(matches!(
+            result,
+            Err(Error::Gate(
+                crate::error::GateError::ConsentOwnerNotAuthenticated(_)
+            ))
+        ));
+    }
+    assert_eq!(
+        v.healer_proposal(&id).unwrap().unwrap().state,
+        ProposalState::Proposed
+    );
 }

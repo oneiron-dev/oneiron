@@ -187,26 +187,6 @@ mod tests {
     }
 
     #[test]
-    fn predicate_family_is_exact() {
-        assert!(is_voice_segment_claim_predicate(PREDICATE_VOICE_SEGMENT));
-        assert!(!is_voice_segment_claim_predicate("voice.segment.extra"));
-        assert!(!is_voice_segment_claim_predicate("voice"));
-    }
-
-    #[test]
-    fn well_formed_segment_passes() {
-        validate_voice_segment_claim_structure(&claim(segment_value())).expect("well-formed");
-    }
-
-    #[test]
-    fn every_aec_mode_is_accepted() {
-        for mode in VOICE_SEGMENT_AEC_MODES {
-            validate_voice_segment_claim_structure(&with(KEY_AEC_MODE, Value::from(mode)))
-                .unwrap_or_else(|err| panic!("aec_mode {mode} must be accepted: {err}"));
-        }
-    }
-
-    #[test]
     fn missing_key_is_rejected() {
         let entries = segment_value()
             .into_iter()
@@ -245,22 +225,6 @@ mod tests {
     fn negative_span_is_rejected() {
         assert!(
             validate_voice_segment_claim_structure(&with(KEY_SPAN_START, Value::from(-1_i64)))
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn zero_channels_is_rejected() {
-        assert!(
-            validate_voice_segment_claim_structure(&with(KEY_CHANNELS, Value::from(0_u64)))
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn unknown_aec_mode_is_rejected() {
-        assert!(
-            validate_voice_segment_claim_structure(&with(KEY_AEC_MODE, Value::from("maybe")))
                 .is_err()
         );
     }

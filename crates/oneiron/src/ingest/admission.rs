@@ -418,7 +418,7 @@ pub fn admit_imported_mention_claim(
 ) -> crate::Result<EntityId> {
     let found = vault.lookup_identity_key(kind, mention)?;
     let candidates = score(&found)?;
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let (subject, _) = vault.resolve_prepared_mention_in_txn(
             txn,
             &super::identity_key::MentionResolution {

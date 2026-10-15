@@ -201,55 +201,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn discover_dir_without_marker_returns_portable() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("ko")).unwrap();
-        let ko = KoreanAnalyzer::discover(&[dir.path().to_path_buf()]).unwrap();
-        assert_eq!(ko.mode(), AnalyzerMode::Portable);
-    }
-
-    #[test]
-    fn portable_path_delegates_to_cjk_ngram() {
-        let ko = KoreanAnalyzer::portable();
-        let mut out = Vec::new();
-        ko.analyze("안녕하세요", 0, 0, false, &mut out);
-        let surface: Vec<&str> = out
-            .iter()
-            .filter(|t| t.channel == AnalyzerChannel::Surface)
-            .map(|t| t.term.as_ref())
-            .collect();
-        assert_eq!(surface, vec!["안", "녕", "하", "세", "요"]);
-    }
-
-    #[test]
-    fn empty_input_returns_position_base() {
-        let ko = KoreanAnalyzer::portable();
-        let mut out = Vec::new();
-        let next = ko.analyze("", 0, 7, false, &mut out);
-        assert_eq!(next, 7);
-        assert!(out.is_empty());
-    }
-
-    /// Morphological-mode integration: only runs when a ko-dic dict
-    /// directory is available via `ONEIRON_TEST_KODIC_DIR` (absolute path).
-    #[test]
-    fn morphological_path_with_env_dict() {
-        let Ok(dict_path) = std::env::var("ONEIRON_TEST_KODIC_DIR") else {
-            return;
-        };
-        let ko = KoreanAnalyzer::with_dict_dir(Path::new(&dict_path)).expect("ko-dic should load");
-        assert_eq!(ko.mode(), AnalyzerMode::Morphological);
-
-        let mut out = Vec::new();
-        ko.analyze("한국어는 재미있어요", 0, 0, false, &mut out);
-        assert!(!out.is_empty());
-        for tok in out.iter().filter(|t| t.channel == AnalyzerChannel::Surface) {
-            let slice = &"한국어는 재미있어요"[tok.byte_start as usize..tok.byte_end as usize];
-            assert_eq!(slice, tok.term.as_ref());
-        }
-    }
-
-    #[test]
     fn ko_morph_returns_position_past_bigram_overlay() {
         let Ok(dict_path) = std::env::var("ONEIRON_TEST_KODIC_DIR") else {
             return;

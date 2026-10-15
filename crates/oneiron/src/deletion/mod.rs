@@ -23,11 +23,16 @@ pub use coop_request::{
     encode_cooperative_deletion_request_body, encode_signed_cooperative_deletion_request,
 };
 pub use delete::{DeleteEntityOptions, DeleteEntityOutcome, DeleteEntityPreview};
+// A source's dependents go in bounded batches (`Vault::finish_dependent_walks`).
+pub use crate::ports::{
+    DEFAULT_DEPENDENT_WALK_BATCH, DEFAULT_DEPENDENT_WALK_CHECK_THRESHOLD, DependentWalkCheck,
+    DependentWalkPolicy, DependentWalkProgress,
+};
 pub use sweep_queue::arch0038_carrier_classes;
 pub use timeline::{
     HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
     MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
-    NamedMemoryVerb,
+    NamedMemoryVerb, NamedMemoryVerbRefusal,
 };
 pub use tombstone::{
     DecodedTombstoneValue, DeleteReason, TOMBSTONE_VALUE_LEGACY_LEN, TOMBSTONE_VALUE_V2_LEN,
@@ -40,9 +45,13 @@ pub(crate) use sweep_queue::{
     HARD_ERASE_SWEEP_PREFIX, HardEraseSweepJob, decode_hard_erase_sweep_job,
     decode_hard_erase_sweep_seq, encode_hard_erase_sweep_job_value,
 };
+pub(crate) use timeline::{deletion_window_for_row, row_deletion_marked};
+#[cfg(all(test, feature = "sync"))]
+pub(crate) use tombstone::ROW_DELETION_FENCE_BACKFILLED;
 pub(crate) use tombstone::{
     ARCHIVE_TOMBSTONE_PREFIX, HARD_DELETE_MARKER, IDENTITY_SOFT_DELETE_MARKER,
-    LOCAL_HARD_DELETE_PREFIX, PENDING_TOMBSTONE, archive_tombstone_key, local_hard_delete_key,
+    LOCAL_HARD_DELETE_PREFIX, PENDING_TOMBSTONE, ROW_DELETION_FENCE, archive_tombstone_key,
+    local_hard_delete_key,
 };
 pub(crate) use topology_delete_intent::topology_delete_reservation_in_txn;
 // The replay outcome is read by sync production (`sync::quarantine`) and by
@@ -78,8 +87,8 @@ pub(crate) use rendezvous::{
 };
 #[cfg(test)]
 pub(crate) use sweep_queue::{
-    HARD_ERASE_SWEEP_SLA_SECS, HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY,
-    encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
+    HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY, encode_hard_erase_sweep_job,
+    encode_hard_erase_sweep_key,
 };
 pub(crate) use tombstone::{
     parse_window_label, pending_tombstone_key, window_label_from_timestamp,

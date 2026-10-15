@@ -288,7 +288,7 @@ fn enqueue_next_sync(
     })
     .map_err(|_| ingest_error("connector sync payload did not encode"))?;
     let dedupe_key = format!("{}:due:{not_before}", seat_identity(provider, &seat.config));
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         crate::ports::JobQueue::port_job_enqueue(
             vault,
             txn,

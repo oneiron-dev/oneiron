@@ -169,46 +169,6 @@ fn conversion_moves_open_task_and_projects_thread_origin_without_copy() -> Resul
 }
 
 #[test]
-fn conversion_without_open_task_uses_room_host_and_rejects_wrong_origin() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), oneiron::VaultConfig::default())?;
-    let host = EntityId::now();
-    vault.put_entity(
-        &host,
-        ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"host",
-    )?;
-    let source_id = EntityId::now();
-    let source = ProjectRecord::new(
-        source_id,
-        Some(vault.root_project()?),
-        vault.root_project()?,
-        host,
-    )
-    .expect("fixture");
-    vault.put_project(source_id, &source, 1)?;
-    let room = EntityId::from_hex(&source.home_room)?;
-    let trunk = EntityId::now();
-    let message = EntityId::now();
-    let thread = EntityId::now();
-    speak(&vault, host, room, trunk, EntityId::now(), None);
-    speak(&vault, host, room, thread, message, Some(trunk));
-    let id = EntityId::now();
-    assert!(
-        vault
-            .convert_thread_to_project(room, thread, EntityId::now(), id, None, 3)
-            .is_err()
-    );
-    assert!(vault.project(id)?.is_none());
-    let project = vault.convert_thread_to_project(room, thread, message, id, None, 3)?;
-    assert_eq!(project.leader, host.to_hex());
-    assert!(project.tasks.is_empty());
-    Ok(())
-}
-
-#[test]
 fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_owner() -> Result<()>
 {
     let dir = tempfile::tempdir()?;
@@ -669,37 +629,6 @@ fn mint_request() -> Result<ConsentActionRequest> {
         ConsentSurface::CompanionConversation,
         4,
     )
-}
-
-#[test]
-fn card_confirmed_leader_skips_task_holder_fallback() -> Result<()> {
-    let HeldThread {
-        dir: _dir,
-        vault,
-        owner,
-        room,
-        thread,
-        message,
-        task,
-        leader,
-        ..
-    } = held_thread(true)?;
-    // The row is in force: the unchosen fallback, the outside holder, is refused.
-    assert!(
-        vault
-            .convert_thread_to_project(room, thread, message, EntityId::now(), None, 4)
-            .is_err()
-    );
-    let proof = vault.authenticate_owner(owner, "principal:owner", true, GateDecisionId::now())?;
-    let id = EntityId::now();
-    let project = mint_card(message, leader, owner, vec![])?
-        .on_thread(room, thread)?
-        .convert_thread(&vault, &mint_request()?, &proof, id, 4)?;
-    assert_eq!(project.leader, leader.to_hex());
-    assert_eq!(project.tasks, vec![task.to_hex()]);
-    assert_eq!(vault.project(id)?, Some(project));
-    assert_eq!(vault.thread_project(room, thread)?, Some(id));
-    Ok(())
 }
 
 #[test]

@@ -76,9 +76,12 @@ impl ScopedRead<'_> {
         // The SUMMARY kind is shared with session and DAG producers. Fetch the
         // complete bounded index candidate set so those rows cannot fill the
         // page before document membership is checked below.
-        let candidates_limit =
-            self.vault()
-                .scoped_read_search_candidate_limit(limit, true, vector.is_some())?;
+        let candidates_limit = self.vault().scoped_read_search_candidate_limit(
+            &self.store_read(),
+            limit,
+            true,
+            vector.is_some(),
+        )?;
         // Separate kind lanes avoid a dominant index hiding candidates from the
         // other level before fusion. Distinct lexical/vector ranks can accumulate
         // on the *same* entity, unlike two disjoint kind-only lists.
@@ -197,7 +200,9 @@ impl ScopedRead<'_> {
         ScopedReadResult<Option<serde_json::Value>>,
         Option<super::DocsDeepReceipt>,
     )> {
-        if self.actor_key().actor_ref() != owner.principal_ref() {
+        if self.actor_key().actor_ref()
+            != owner.principal_ref_in_txn(self.vault(), &self.vault().store.env.read_txn()?)?
+        {
             return Err(crate::Error::InvalidConfig(
                 "docs read principal differs from owner".into(),
             ));

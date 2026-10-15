@@ -1,5 +1,6 @@
 //! Exact covers, gated merge atomicity and revision-bound late results.
 
+use super::doors::merge_covers_in_txn;
 use super::*;
 use crate::conversation_dag::fixtures as support;
 use crate::conversation_dag::{ScopePath, ScopeSelector};
@@ -37,8 +38,9 @@ fn retained_subsession_scope_covers_300_body_truth_edges_cap_and_one_header() {
     assert_eq!(vault.head(&conv).unwrap(), Some(asking));
     let before_claims = vault.entities_by_type(ENTITY_TYPE_CLAIM).unwrap().len();
     let summary = vault
-        .mint_dag_scope_summary(&selector, "  handed text verbatim  ", actor)
-        .unwrap();
+        .mint_and_land_scope_summary(&selector, "  handed text verbatim  ", actor, None, false)
+        .unwrap()
+        .0;
     let body = vault.get(&summary).unwrap().unwrap();
     let decoded = decode_scope_summary_body(&body).unwrap();
     assert_eq!(decoded.text, "  handed text verbatim  ");
@@ -158,8 +160,9 @@ fn denied_header_and_reply_roll_back_then_granted_late_result_advances_trunk() {
         .id;
     let selector = scope(conv, ScopePath::SubSession(session), false);
     let summary = vault
-        .mint_dag_scope_summary(&selector, "The result", actor)
-        .unwrap();
+        .mint_and_land_scope_summary(&selector, "The result", actor, None, false)
+        .unwrap()
+        .0;
     let claims_before = vault.entities_by_type(ENTITY_TYPE_CLAIM).unwrap().len();
     let turns_before = vault.entities_by_type(ENTITY_TYPE_TURN).unwrap().len();
     let summaries_before = vault.entities_by_type(ENTITY_TYPE_SUMMARY).unwrap().len();
@@ -253,6 +256,8 @@ fn scope_summary_codec_is_distinct_strict_and_versioned() {
         actor: actor.to_hex(),
         covers: vec![EntityId::now()],
         minted_at: 1,
+        messages: Vec::new(),
+        memo: None,
     };
     let encoded = encode_scope_summary_body(&summary).unwrap();
     assert_eq!(decode_scope_summary_body(&encoded).unwrap(), summary);
@@ -337,8 +342,9 @@ fn stored_summary_covers_prove_ownership_without_recomputing_history() {
         .id;
     let selector = support::scope(conversation, ScopePath::Canonical, false);
     let summary = vault
-        .mint_dag_scope_summary(&selector, "history", actor)
-        .unwrap();
+        .mint_and_land_scope_summary(&selector, "history", actor, None, false)
+        .unwrap()
+        .0;
     let original = decode_scope_summary_body(&vault.get(&summary).unwrap().unwrap()).unwrap();
     let later = vault
         .append_dag_record(&support::input(conversation, Some(root), true, actor))
@@ -417,8 +423,9 @@ fn stored_branch_session_and_span_bounds_are_proved_at_every_read() {
         ..matching
     };
     let good = vault
-        .mint_dag_scope_summary(&matching, "valid anchor", actor)
-        .unwrap();
+        .mint_and_land_scope_summary(&matching, "valid anchor", actor, None, false)
+        .unwrap()
+        .0;
     assert_eq!(vault.scope_summary_covers(&good).unwrap(), [a]);
     let mut forged = decode_scope_summary_body(&vault.get(&good).unwrap().unwrap()).unwrap();
     forged.scope.session = Some(session_b);
@@ -571,8 +578,9 @@ fn ordinary_branch_session_filter_remains_valid_without_worker_covers() {
         ..scope(conv, ScopePath::Branch(root), false)
     };
     let summary = vault
-        .mint_dag_scope_summary(&selector, "ordinary branch", actor)
-        .unwrap();
+        .mint_and_land_scope_summary(&selector, "ordinary branch", actor, None, false)
+        .unwrap()
+        .0;
     assert_eq!(vault.resolve_dag_scope(&selector).unwrap().records, [root]);
     assert_eq!(vault.scope_summary_covers(&summary).unwrap(), [root]);
 }

@@ -146,6 +146,15 @@ impl Memory<'_> {
         for carried_ref in input.kind.carried_refs() {
             require_resolved_payload_ref(self.vault(), carried_ref)?;
         }
+        // The reported completion time is the caller's word. One later than
+        // the engine's clock is refused, so it can never outrank an expiry
+        // when terminal records converge; whether the consult was still open
+        // is judged on the engine's clock inside the settling transaction.
+        if input.completed_at > self.vault().store.clock.now_recorded_at() {
+            return Err(MemoryError::bad_request(
+                "completed_at is later than the engine clock",
+            ));
+        }
         let landed = TaskTerminalRecord {
             disposition: TaskTerminalDisposition::Completed,
             result_ref: Some(input.kind.result_ref()),
@@ -225,6 +234,20 @@ impl Memory<'_> {
                     "Read the settled ladder record; a settled ladder is immutable, and the follow-on task carries the case.",
                 ));
             }
+            // A consult past its deadline is the expiry sweep's to settle, even
+            // before the sweep has run: the engine's clock decides, never the
+            // reported completion time. An identical replay was answered above.
+            if consult_kind.is_some()
+                && body.ttl.is_some_and(|ttl| {
+                    ttl.deadline_at < self.vault().store.clock.now_recorded_at()
+                })
+            {
+                return Err(consult_refusal(
+                    MEMORY_CODE_INVALID_STATE,
+                    "the consult's deadline has passed",
+                    "A late answer does not land; the expiry sweep settles the consult.",
+                ));
+            }
             let option = match consult_kind {
                 Some(super::ConsultResultKind::Answer { option, .. }) => option.as_ref(),
                 _ => None,
@@ -237,11 +260,8 @@ impl Memory<'_> {
                 super::ask_settlement::settle_in(self.vault(), wtxn, group, self.vault().store.clock.now_recorded_at())?;
             }
 
-            // ONE-1702 SEAM (own-task settlement → WAKE/CARRIER): this is the
-            // producer call site for `mint_own_task_event` → `route_event`.
-            // ONE-1702 has not landed on this base and owns both signatures and
-            // every `context_board/stream.rs` edit, so the call is added on its
-            // rebase; no oracle-only event injection substitutes for it.
+            // The TASK put above is announced after commit; the board
+            // publisher (`context_board::stream::publish`) routes it.
             Ok((landed.clone(), false))
         })?;
 
@@ -292,8 +312,18 @@ impl Memory<'_> {
         handle: &super::TaskAskHandle,
         word: &super::TaskAskWord,
     ) -> MemoryResult<super::TaskAskAnswer> {
+        // A person's word is theirs to give: a human connector running
+        // generated code does not make that code's answer the person's.
+        if self.writes_generated() && self.actor_class() == crate::EdgeActorClass::Human {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "generated code cannot answer in a person's name",
+                &["Ask the person to answer through their own client."],
+            ));
+        }
         let answer = self.with_verified_actor_write_txn(|txn| {
-            let group = super::ask_record::read_group(self.vault(), txn, handle.group_ref)?
+            let group = self
+                .ask_group_in(txn, handle.group_ref)?
                 .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
             let now = self.vault().store.clock.now_recorded_at();
             let answer = super::ask_record::admit_word(
@@ -340,7 +370,10 @@ pub(super) fn complete_ask_member_in_txn(
     now: u64,
 ) -> MemoryResult<()> {
     let mut body = consult_body_in_txn(vault, txn, answer.task_ref)?;
-    if body.terminal().is_none() && body.settled_ladder_disposition().is_none() {
+    // A member consult past its deadline on the engine clock is the expiry
+    // sweep's to settle. The word still counts under the ask's own cutoff.
+    let overdue = body.ttl.is_some_and(|ttl| ttl.deadline_at < now);
+    if !overdue && body.terminal().is_none() && body.settled_ladder_disposition().is_none() {
         body.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
             disposition: TaskTerminalDisposition::Completed,
             result_ref: Some(word.result_ref),
@@ -378,7 +411,8 @@ impl Memory<'_> {
     ) -> MemoryResult<Option<super::TaskAskSoftConfirmNotice>> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        let group = super::ask_record::read_group(self.vault(), &txn, handle.group_ref)?
+        let group = self
+            .ask_group_in(&txn, handle.group_ref)?
             .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
         if group.owner != self.actor().to_hex()
             && person != self.actor()

@@ -56,7 +56,10 @@ impl Vault {
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
         let outcome = self.delete_entity_with_reason_impl(id, reason, None, false)?;
+        // The dependents past the first batch go before the delete returns.
+        self.finish_dependent_walks()?;
         while self.collect_lfs_garbage(32)? != 0 {}
+        self.finish_gate_decision_retirements_after_commit();
         Ok(outcome)
     }
 
@@ -73,7 +76,10 @@ impl Vault {
         gate: GatedDeletion<'_>,
     ) -> Result<DeleteEntityOutcome> {
         let outcome = self.delete_entity_with_reason_impl(id, reason, Some(gate), false)?;
+        // The dependents past the first batch go before the delete returns.
+        self.finish_dependent_walks()?;
         while self.collect_lfs_garbage(32)? != 0 {}
+        self.finish_gate_decision_retirements_after_commit();
         Ok(outcome)
     }
 
@@ -89,7 +95,9 @@ impl Vault {
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
         let outcome = self.delete_entity_with_reason_impl(id, reason, None, true)?;
+        self.finish_dependent_walks()?;
         while self.collect_lfs_garbage(32)? != 0 {}
+        self.finish_gate_decision_retirements_after_commit();
         Ok(outcome)
     }
 
@@ -201,9 +209,16 @@ impl Vault {
         {
             let txn = self.store.env.read_txn()?;
             crate::federation::reject_ruling_delete(&self.store, &txn, id)?;
+            crate::task_authority::reject_fact_delete(&self.store, &txn, id)?;
             crate::workspace_roster::precheck_goal_delete(&self.store, &txn, *id, gate.is_some())?;
             self.store.guard_pack_map_carrier_delete_in_txn(&txn, id)?;
         }
+        signal_delete_rendezvous(
+            self,
+            DeleteRendezvous::AfterProtectedRecordPrecheck,
+            id,
+            None,
+        );
         // Hold the entire key partition, and refuse an unsafe explicit hard
         // purge, before any tombstone can be published. The plain
         // `delete_entity` door now defaults to a soft tombstone; an explicitly

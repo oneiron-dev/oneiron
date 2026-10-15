@@ -1,6 +1,6 @@
 //! Insert, localized refresh, and backlink attachment.
 
-use heed::RwTxn;
+use heed::{RoTxn, RwTxn};
 
 use crate::config::VaultConfig;
 use crate::entity_id::{EntityId, parse_entity_id};
@@ -20,13 +20,13 @@ use super::rebuild::{
     build_hnsw_graph_from_snapshot, collect_vector_ids, rebuild_dropped_graph_from_snapshot,
     rebuild_hnsw_from_current_snapshot, write_rebuilt_hnsw,
 };
-use super::search::{beam_search, score_dims_for};
+use super::search::{beam_search, beam_search_logged, score_dims_for};
 use super::slim_drop::hnsw_is_dropped;
 use super::storage::{
     decode_neighbors, load_neighbors, load_vector, prune_neighbors_for_node, read_count,
-    read_entry_point, write_neighbors,
+    read_entry_point, read_vector_version, write_neighbors,
 };
-use super::types::{BeamOptions, InsertOutcome};
+use super::types::{BeamOptions, ExpandedLists, HeapEntry, InsertOutcome, neighbor_list_hash};
 
 /// Direct (non-batched) insert/refresh entry point. Production writes go
 /// through [`hnsw_insert_batched`]; this wrapper keeps the historical
@@ -54,7 +54,7 @@ pub(super) fn hnsw_insert_probed(
     vector: &[f32],
     ops: &mut u64,
 ) -> Result<()> {
-    match hnsw_insert_inner(store, config, wtxn, id, vector, ops)? {
+    match hnsw_insert_inner(store, config, wtxn, (id, vector, None), ops)? {
         InsertOutcome::Applied => Ok(()),
         InsertOutcome::NeedsLegacyRebuild => {
             rebuild_hnsw_from_current_snapshot(store, config, wtxn)
@@ -75,10 +75,25 @@ pub(crate) fn hnsw_insert_batched(
     vector: &[f32],
     pending_rebuild: &mut bool,
 ) -> Result<()> {
+    hnsw_insert_planned(store, config, wtxn, (id, vector), pending_rebuild, None)
+}
+
+/// [`hnsw_insert_batched`] that may take a neighbour search done before the
+/// write transaction opened. The plan is used only when it still describes
+/// this transaction's graph (see [`InsertPlan`]); otherwise the insert searches
+/// here as before.
+pub(crate) fn hnsw_insert_planned(
+    store: &impl ManifestDbs,
+    config: &VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+    (id, vector): (&EntityId, &[f32]),
+    pending_rebuild: &mut bool,
+    plan: Option<&InsertPlan>,
+) -> Result<()> {
     if *pending_rebuild {
         return Ok(());
     }
-    match hnsw_insert_inner(store, config, wtxn, id, vector, &mut 0)? {
+    match hnsw_insert_inner(store, config, wtxn, (id, vector, plan), &mut 0)? {
         InsertOutcome::Applied => Ok(()),
         InsertOutcome::NeedsLegacyRebuild => {
             *pending_rebuild = true;
@@ -101,12 +116,270 @@ pub(crate) fn run_pending_legacy_rebuild(
     Ok(())
 }
 
+/// A fresh node's neighbour search, run under a read snapshot before the
+/// write transaction opens (RESEARCH-1115 Bend 2), so the writer only writes
+/// edges. It stands only while the transaction's graph is the graph it
+/// searched: same node count, entry point and vector version, no earlier graph
+/// write in the batch, and every chosen neighbour still present.
+pub(crate) struct InsertPlan {
+    vector_version: u64,
+    count: u64,
+    entry_point: EntityId,
+    vector: Vec<f32>,
+    /// Every neighbour list the search expanded: the beam is a function of
+    /// these lists, the entry point and the vectors it scored.
+    expanded: ExpandedLists,
+    selected: Vec<EntityId>,
+}
+
+impl std::fmt::Debug for InsertPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InsertPlan")
+            .field("count", &self.count)
+            .field("expanded", &self.expanded.len())
+            .field("selected", &self.selected.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl InsertPlan {
+    /// Searches the committed graph for `id`'s neighbours. `None` when the
+    /// insert is not a fresh one into a live, non-empty graph, or when the
+    /// search fails: the transaction's own search then decides.
+    pub(crate) fn search(
+        store: &impl ManifestDbs,
+        config: &VaultConfig,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        vector: &[f32],
+    ) -> Option<Self> {
+        Self::try_search(store, config, rtxn, id, vector)
+            .ok()
+            .flatten()
+    }
+
+    fn try_search(
+        store: &impl ManifestDbs,
+        config: &VaultConfig,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        vector: &[f32],
+    ) -> Result<Option<Self>> {
+        if hnsw_is_dropped(store, rtxn)?
+            || store.hnsw_neighbors().get(rtxn, id.as_bytes())?.is_some()
+        {
+            return Ok(None);
+        }
+        let count = read_count(store, rtxn)?;
+        let Some(entry_point) = read_entry_point(store, rtxn)? else {
+            return Ok(None);
+        };
+        if count == 0 {
+            return Ok(None);
+        }
+        let expanded = std::cell::RefCell::new(ExpandedLists::new());
+        let mut nearest = beam_search_logged(
+            store,
+            rtxn,
+            vector,
+            (entry_point, &expanded),
+            construction_beam(config),
+            config.dimensions,
+            &mut 0,
+        )?;
+        Ok(Some(Self {
+            vector_version: read_vector_version(store, rtxn)?,
+            count,
+            entry_point,
+            vector: vector.to_vec(),
+            expanded: expanded.into_inner(),
+            selected: select_neighbors(config, id, &mut nearest),
+        }))
+    }
+
+    /// Whether the transaction's search would come out the same: the same
+    /// node count, entry point, query and vector version, and every list the
+    /// search expanded unchanged (a maintenance rebuild rewrites lists without
+    /// touching the version). Any read error means no: the transaction then
+    /// searches, and reports, itself.
+    fn stands(
+        &self,
+        store: &impl ManifestDbs,
+        txn: &RoTxn<'_>,
+        (vector, count, entry_point): (&[f32], u64, EntityId),
+    ) -> bool {
+        self.count == count
+            && self.entry_point == entry_point
+            && self.vector.len() == vector.len()
+            && self
+                .vector
+                .iter()
+                .zip(vector)
+                .all(|(planned, now)| planned.to_bits() == now.to_bits())
+            && read_vector_version(store, txn).is_ok_and(|version| version == self.vector_version)
+            && self.expanded.iter().all(|(node, hash)| {
+                load_neighbors(store, txn, node)
+                    .is_ok_and(|neighbors| neighbor_list_hash(&neighbors) == *hash)
+            })
+            && self.selected.iter().all(|neighbor| {
+                store
+                    .hnsw_neighbors()
+                    .get(txn, neighbor.as_bytes())
+                    .is_ok_and(|row| row.is_some())
+            })
+    }
+}
+
+fn construction_beam(config: &VaultConfig) -> BeamOptions {
+    BeamOptions {
+        ef: config.hnsw.ef_construction,
+        lenient_neighbors: false,
+        check_existence: false,
+        score_dims: score_dims_for(config),
+    }
+}
+
+/// The `m_max_0` nearest nodes of a construction beam, `id` itself excluded.
+fn select_neighbors(
+    config: &VaultConfig,
+    id: &EntityId,
+    nearest: &mut Vec<HeapEntry>,
+) -> Vec<EntityId> {
+    nearest.retain(|entry| entry.id != *id);
+    nearest.truncate(config.hnsw.m_max_0);
+    nearest.iter().map(|entry| entry.id).collect()
+}
+
+/// The `m_max_0` nearest nodes to `vector`, found by the `ef_construction`
+/// beam from `entry_point`.
+/// A graph of `id` alone.
+fn start_graph(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<InsertOutcome> {
+    store
+        .hnsw_meta()
+        .put(wtxn, ENTRY_POINT_KEY, id.as_bytes())?;
+    store
+        .hnsw_meta()
+        .put(wtxn, COUNT_KEY, &1_u64.to_le_bytes())?;
+    store.hnsw_neighbors().put(wtxn, id.as_bytes(), &[])?;
+    // A graph created from empty is symmetric by construction and every
+    // subsequent write in this module preserves the invariant.
+    mark_symmetric_links(store, wtxn)?;
+    Ok(InsertOutcome::Applied)
+}
+
+/// [`hnsw_insert_inner`] on a room's view. A room stages its graph's count
+/// and entry point over base's, and base keeps changing its graph after the
+/// room's segment commits, so the count is only advisory here and the entry
+/// point may name a node base has dropped since, or one whose vector the
+/// room hid (Astra 1397b). The insert enters at a node other than `id` that
+/// the walk loads a vector for ([`room_entry`]); with none, `id` is the
+/// graph's sole node. It never asks for a rebuild, which runs on base alone.
+fn room_insert(
+    store: &impl ManifestDbs,
+    config: &VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+    (id, vector): (&EntityId, &[f32]),
+    discipline: LinkDiscipline,
+    ops: &mut u64,
+) -> Result<InsertOutcome> {
+    let Some(entry) = room_entry(store, &*wtxn, config.dimensions, id)? else {
+        return start_graph(store, wtxn, id);
+    };
+    let count = read_count(store, &*wtxn)?;
+    let existing = store.hnsw_neighbors().get(&*wtxn, id.as_bytes())?.is_some();
+    if existing && discipline == LinkDiscipline::Symmetric {
+        // Another node to enter at: not a sole-node re-anchor, whatever the
+        // count says.
+        hnsw_refresh_localized(store, config, wtxn, id, vector, count.max(2), entry, ops)?;
+        return Ok(InsertOutcome::Applied);
+    }
+    // A Legacy graph's links into a node may be one-way, so base rebuilds it
+    // whole to move one; a room links an existing node anew instead, and the
+    // links into it stay.
+    let selected = nearest_neighbors(store, config, &*wtxn, id, vector, entry, ops)?;
+    write_neighbors(store, wtxn, id, &selected)?;
+    match discipline {
+        LinkDiscipline::Symmetric => {
+            attach_backlinks_symmetric(store, config, wtxn, id, &selected, ops)?;
+        }
+        LinkDiscipline::Legacy => {
+            attach_backlinks_legacy(store, config, wtxn, id, &selected, ops)?;
+        }
+    }
+    if existing {
+        return Ok(InsertOutcome::Applied);
+    }
+    let count = count
+        .checked_add(1)
+        .ok_or(Error::IndexOverflow(ERR_COUNT_OVERFLOW))?;
+    store
+        .hnsw_meta()
+        .put(wtxn, COUNT_KEY, &count.to_le_bytes())?;
+    Ok(InsertOutcome::Applied)
+}
+
+/// The node other than `id` that a room's insert enters its graph at: the
+/// entry point when the walk loads its vector, else the first node it loads
+/// one for; `None` when it loads none.
+fn room_entry(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    dimensions: usize,
+    id: &EntityId,
+) -> Result<Option<EntityId>> {
+    let loads = |node: &EntityId| -> Result<bool> {
+        Ok(node != id
+            && store.hnsw_neighbors().get(txn, node.as_bytes())?.is_some()
+            && load_vector(store, txn, node, dimensions)?.is_some())
+    };
+    if let Some(entry) = read_entry_point(store, txn)?
+        && loads(&entry)?
+    {
+        return Ok(Some(entry));
+    }
+    for row in store.hnsw_neighbors().iter(txn)? {
+        let (key, _) = row?;
+        let node = parse_entity_id(&key, ERR_NEIGHBOR_KEY_BYTES).map_err(|e| match e {
+            Error::InvalidKey => Error::CorruptedIndex(ERR_NEIGHBOR_KEY_BYTES),
+            other => other,
+        })?;
+        if loads(&node)? {
+            return Ok(Some(node));
+        }
+    }
+    Ok(None)
+}
+
+fn nearest_neighbors(
+    store: &impl ManifestDbs,
+    config: &VaultConfig,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    vector: &[f32],
+    entry_point: EntityId,
+    ops: &mut u64,
+) -> Result<Vec<EntityId>> {
+    let mut nearest = beam_search(
+        store,
+        txn,
+        vector,
+        entry_point,
+        construction_beam(config),
+        config.dimensions,
+        ops,
+    )?;
+    Ok(select_neighbors(config, id, &mut nearest))
+}
+
 fn hnsw_insert_inner(
     store: &impl ManifestDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
-    id: &EntityId,
-    vector: &[f32],
+    (id, vector, plan): (&EntityId, &[f32], Option<&InsertPlan>),
     ops: &mut u64,
 ) -> Result<InsertOutcome> {
     let discipline = read_link_discipline(store, &*wtxn)?;
@@ -125,6 +398,9 @@ fn hnsw_insert_inner(
         return Ok(InsertOutcome::Applied);
     }
     *ops += 1;
+    if store.is_union() {
+        return room_insert(store, config, wtxn, (id, vector), discipline, ops);
+    }
     if store.hnsw_neighbors().get(&*wtxn, id.as_bytes())?.is_some() {
         *ops += 1;
         let count = read_count(store, &*wtxn)?;
@@ -150,40 +426,17 @@ fn hnsw_insert_inner(
         {
             return Err(Error::CorruptedIndex(ERR_ZERO_COUNT_GRAPH_NOT_EMPTY));
         }
-        store
-            .hnsw_meta()
-            .put(wtxn, ENTRY_POINT_KEY, id.as_bytes())?;
-        store
-            .hnsw_meta()
-            .put(wtxn, COUNT_KEY, &1_u64.to_le_bytes())?;
-        store.hnsw_neighbors().put(wtxn, id.as_bytes(), &[])?;
-        // A graph created from empty is symmetric by construction and every
-        // subsequent write in this module preserves the invariant.
-        mark_symmetric_links(store, wtxn)?;
-        return Ok(InsertOutcome::Applied);
+        return start_graph(store, wtxn, id);
     }
 
     let entry_point =
         read_entry_point(store, &*wtxn)?.ok_or(Error::CorruptedIndex(ERR_ENTRY_POINT_MISSING))?;
-    let mut nearest = beam_search(
-        store,
-        &*wtxn,
-        vector,
-        entry_point,
-        BeamOptions {
-            ef: config.hnsw.ef_construction,
-            lenient_neighbors: false,
-            check_existence: false,
-            score_dims: score_dims_for(config),
-        },
-        config.dimensions,
-        ops,
-    )?;
-
-    nearest.retain(|entry| entry.id != *id);
-    nearest.truncate(config.hnsw.m_max_0);
-
-    let selected: Vec<EntityId> = nearest.into_iter().map(|entry| entry.id).collect();
+    let selected = match plan {
+        Some(plan) if plan.stands(store, &*wtxn, (vector, count, entry_point)) => {
+            plan.selected.clone()
+        }
+        _ => nearest_neighbors(store, config, &*wtxn, id, vector, entry_point, ops)?,
+    };
     write_neighbors(store, wtxn, id, &selected)?;
     *ops += 1;
 

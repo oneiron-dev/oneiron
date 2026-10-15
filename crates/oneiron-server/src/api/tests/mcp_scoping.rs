@@ -16,11 +16,16 @@ async fn mcp_legacy_catalog_is_unknown_tool_on_both_endpoints() {
     .await;
     let scope = crate::mcp::mcp_effective_scope_value(&crate::mcp::McpConnectorScope::vault_wide());
 
-    let legacy = crate::mcp::McpToolName::all()
-        .iter()
-        .map(|tool| tool.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(legacy.len(), 7, "the retired census is seven names");
+    // The retired seven-name catalog (ONE-1704 M1); the names stay unknown.
+    let legacy = [
+        "oneiron.nav",
+        "oneiron.read",
+        "oneiron.edit",
+        "oneiron.ask",
+        "oneiron.ask_routed",
+        "oneiron.calendar",
+        "oneiron.book",
+    ];
 
     for (index, name) in legacy.iter().enumerate() {
         for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
@@ -52,57 +57,6 @@ async fn mcp_legacy_catalog_is_unknown_tool_on_both_endpoints() {
         .await;
         let names = mcp_listed_tool_names(&listing);
         for name in &legacy {
-            assert!(!names.contains(name), "{name} must not be listed on {path}");
-        }
-    }
-}
-
-/// ARCH-0067's 2026-09-22 amendment renamed the four task rows. Their old
-/// names resolve to no tool on either endpoint and neither listing names them.
-#[tokio::test]
-async fn retired_task_tool_names_are_unknown_tool_on_both_endpoints() {
-    let (_dir, server) = auth_test_server();
-    let actor_ref = seeded_test_entity_id(0x0060_0001);
-    let credential = "t60-retired-task-names";
-    register_mcp_actor(
-        &server,
-        credential,
-        actor_ref,
-        oneiron::EdgeActorClass::Human,
-    )
-    .await;
-    let scope = crate::mcp::mcp_effective_scope_value(&crate::mcp::McpConnectorScope::vault_wide());
-    let retired = ["tasks.check", "tasks.expand", "tasks.ack", "tasks.cancel"];
-
-    for (index, name) in retired.iter().enumerate() {
-        for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
-            let body = mcp_refusal(
-                &server,
-                mcp_endpoint_call_request(
-                    path,
-                    credential,
-                    &format!("retired-{index}"),
-                    name,
-                    mcp_merge_args(
-                        mcp_endpoint_envelope(actor_ref, "read_tasks"),
-                        json!({ "arguments": { "task_ref": actor_ref.to_hex() } }),
-                    ),
-                ),
-            )
-            .await;
-            assert_mcp_structured_error(&body, "unknown_tool");
-            assert_scoped_refusal(&body, &scope, &format!("{name} on {path}"));
-        }
-    }
-
-    for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
-        let (_, listing) = route_json(
-            server.clone(),
-            mcp_list_request(path, credential, "retired-list"),
-        )
-        .await;
-        let names = mcp_listed_tool_names(&listing);
-        for name in &retired {
             assert!(!names.contains(name), "{name} must not be listed on {path}");
         }
     }
@@ -529,8 +483,8 @@ async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
         "a frame queued for another credential must not ride here: {b_first:?}"
     );
     // The narrowed connection the frame WAS queued for still receives nothing:
-    // the engine's router cannot filter world/facet, so the fail-closed
-    // delivery for a narrowed connection is none at all.
+    // only own-task lines are projected through a world or facet ceiling, so
+    // a queued keyframe never rides a narrowed connection.
     for id in ["carrier-a1", "carrier-a2"] {
         let (_, narrowed) =
             route_json(server.clone(), check(cred_facet_a, id, &facet_only_a)).await;

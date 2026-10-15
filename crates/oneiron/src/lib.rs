@@ -2,13 +2,15 @@
 //! Modules sit under family banners below: Vault core, Read path, Knowledge model, Gates & authority,
 //! Identity, Tasks & scheduling, Outbound & sync, Agent runtime, Dreamer & skills, Code & custody, Surfaces.
 //! Only `sync` is feature-gated. The generated map with sizes and one-line docs is `docs/CODEMAP.md`.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+    )
+)]
 
 use std::time::{SystemTime, UNIX_EPOCH};
-
-#[cfg(test)]
-thread_local! {
-    static PANIC_ON_UNIX_SECONDS_NOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
 
 // ===== Vault core & maintenance ===== LMDB substrate: Vault, store, ABI, ids, config, repair
 pub mod batch;
@@ -17,6 +19,7 @@ pub mod deletion;
 pub mod edge;
 pub mod entity_id;
 pub mod error;
+pub mod housekeeping;
 pub(crate) mod identity;
 pub(crate) mod limits;
 pub mod maintain;
@@ -60,6 +63,7 @@ pub mod retrieval_quality;
 pub mod saved_query;
 pub mod serialize;
 pub mod speculative;
+pub mod tagging;
 pub mod tokenizer;
 // ===== Knowledge model ===== typed record families: claims, provenance, corpus, affect, people
 pub mod actor_claims;
@@ -162,6 +166,7 @@ pub mod dreamer_wake;
 pub mod fanout_auto;
 pub mod inbox;
 pub mod learning_setting;
+pub mod own_rate;
 pub mod posterior;
 pub mod skill;
 pub mod skill_attribution;
@@ -208,6 +213,7 @@ pub mod context_board;
 pub mod genui;
 pub mod lens;
 pub mod memory;
+pub mod panic_report;
 pub mod settings;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
 pub mod voice_cascade;
@@ -338,7 +344,7 @@ pub use crate::corpus::CorpusScope;
 pub use crate::deletion::{
     DeleteReason, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
     HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimeline, MemoryTimelineRecordState,
-    NamedMemoryVerb,
+    NamedMemoryVerb, NamedMemoryVerbRefusal,
 };
 pub use crate::delivery_window::DeliveryWindowApnsInterruptionLevel;
 pub use crate::disclosure::{DisclosureAssembly, DisclosureContext};
@@ -381,7 +387,7 @@ pub use crate::feedback::{
     FEEDBACK_APPROVAL_COMPONENT_PREFIX, FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING,
     FEEDBACK_BUNDLE_KEYS, FEEDBACK_CONTENT_REF_PREFIX, FEEDBACK_DAG_MAX_HOPS,
     FEEDBACK_EMBEDDING_MODEL_MAX_BYTES, FEEDBACK_ENGINE_VERSION_MAX_BYTES,
-    FEEDBACK_LOGICAL_SEND_PREFIX, FEEDBACK_MAX_SUBJECT_REFS, FEEDBACK_MECHANISM_MAX_BYTES,
+    FEEDBACK_LOGICAL_SEND_PREFIX, FEEDBACK_MAX_SUBJECT_REFS,
     FEEDBACK_RECEIPT_FIELD_APPROVAL_RECEIPT_REF, FEEDBACK_RECEIPT_FIELD_BUNDLE_DIGEST,
     FEEDBACK_RECEIPT_FIELD_BUNDLE_ENCODING, FEEDBACK_RECEIPT_FIELD_VERB, FEEDBACK_REF_MAX_BYTES,
     FEEDBACK_SEND_VERB, FEEDBACK_USER_NOTE_MAX_BYTES, FEEDBACK_VERBS, FeedbackApproval,
@@ -389,7 +395,7 @@ pub use crate::feedback::{
     FeedbackDagHop, FeedbackError, FeedbackExportOutcome, FeedbackHealerDiagnosis,
     FeedbackHnswSnapshot, FeedbackPlatform, FeedbackPreview, FeedbackRedactionError,
     FeedbackRedactor, FeedbackSendContext, FeedbackSendOutcome, FeedbackSendRoute,
-    FeedbackTransport, FeedbackTransportRequest, FeedbackVerb, PassThroughFeedbackRedactor,
+    FeedbackTransport, FeedbackTransportRequest, FeedbackVerb, UnredactedFeedback,
     decode_feedback_bundle, encode_feedback_bundle, export_feedback_bundle, feedback_approval_card,
     feedback_approval_component_id, feedback_approval_disclosure, feedback_bundle_digest,
     feedback_content_ref, feedback_dispatch_request, feedback_logical_send_ref,
@@ -522,9 +528,9 @@ pub use crate::tokenizer::{DEFAULT_CONTEXT_PACK_TOKENIZER_ID, count_context_pack
 // private module, so the SDK backend that OWNS a lease value and compares the
 // contention message can only name them through this list.
 pub use crate::vault::{
-    ActorBound, HydratedShortId, TextIndexStatus, VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE,
-    Vault, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState, VaultDoctorHnswReport,
-    VaultDoctorReport, VaultWriterLease,
+    ActorBound, HydratedShortId, ReaderTableShortfall, TextIndexStatus, VAULT_WRITER_LEASE_HELD,
+    VAULT_WRITER_LOCK_FILE, Vault, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState,
+    VaultDoctorHnswReport, VaultDoctorReport, VaultWriterLease,
 };
 pub use crate::vault_cleanup::{
     ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest,
@@ -557,21 +563,9 @@ pub use crate::write_envelope::{
 };
 
 pub(crate) fn unix_seconds_now() -> u64 {
-    #[cfg(test)]
-    PANIC_ON_UNIX_SECONDS_NOW.with(|panic_on_call| {
-        assert!(
-            !panic_on_call.get(),
-            "unix_seconds_now must not be called by this path",
-        );
-    });
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs())
-}
-
-#[cfg(test)]
-pub(crate) fn panic_on_unix_seconds_now_for_current_thread(enabled: bool) {
-    PANIC_ON_UNIX_SECONDS_NOW.with(|panic_on_call| panic_on_call.set(enabled));
 }
 
 pub(crate) fn le_bytes_to_f32_vec(bytes: &[u8], dimensions: usize) -> Result<Vec<f32>> {
@@ -596,3 +590,8 @@ mod m8_forward_oracle;
 
 #[cfg(test)]
 pub(crate) mod test_util;
+
+/// Doors for tests that drive the engine from another crate. Not API.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub mod test_support;

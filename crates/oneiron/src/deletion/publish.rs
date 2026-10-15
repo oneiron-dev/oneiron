@@ -71,7 +71,7 @@ impl Vault {
             // only this request's Prepared marker. Once the shared live doc
             // changed, recovery may still redeem its staged sidecar despite
             // a failed LMDB persistence; keep the interlock until replay.
-            self.with_write_txn(|txn| {
+            self.with_write_txn_grouped(|txn| {
                 if let Some(decision) = gate_decision {
                     self.store.discard_pending_deletion_gate_decision_in_txn(
                         txn,
@@ -150,7 +150,8 @@ impl Vault {
         use crate::sync::schema::create_window_doc;
         use crate::sync::types::WindowKey;
         use crate::sync::window::{
-            apply_tombstone_to_window_doc, export_tombstone_commit_delta, load_window_from_state,
+            CarrierRemoval, apply_tombstone_to_window_doc, entity_carriers,
+            export_tombstone_commit_delta, load_window_from_state, mark_removed_carriers_first,
             merge_persisted_state_into_doc,
         };
         use loro::CommitOptions;
@@ -186,9 +187,9 @@ impl Vault {
             // the owner binding against its own view: a `RevokeActor` is
             // therefore ordered strictly before this delete (seen — nothing
             // is published) or strictly after it (LMDB's single writer makes
-            // it wait for this commit). The two steps that need their own
-            // write txn — the mode scrub and the gate staging — run before it
-            // opens, since LMDB admits no nested writer. Lock order
+            // it wait for this commit). The steps that need their own write
+            // txn — the mode scrub, the gate staging and the carrier mark —
+            // run before it opens, since LMDB admits no nested writer. Lock order
             // materializer → LMDB txn matches every other holder; the registry
             // lock is NOT held here (manager lock-order pin).
             let delete_update = {
@@ -202,6 +203,14 @@ impl Vault {
                     id,
                     gate_decision.map(|decision| decision.decision_id),
                 );
+                // Marked before the publish txn opens, which LMDB cannot nest:
+                // a failed publish keeps the mutated live doc, and a later
+                // persist would make its removal durable without the mark.
+                mark_removed_carriers_first(
+                    self,
+                    CarrierRemoval::LocalPublication,
+                    &entity_carriers(&window.doc, &[*id]),
+                )?;
                 let mut wtxn = self.begin_tombstone_publish_txn(
                     id,
                     window_ts,
@@ -274,6 +283,11 @@ impl Vault {
             id,
             gate_decision.map(|decision| decision.decision_id),
         );
+        mark_removed_carriers_first(
+            self,
+            CarrierRemoval::LocalPublication,
+            &entity_carriers(&doc, &[*id]),
+        )?;
         // Same authority boundary as the live path: the transient doc is
         // mutated only after this txn's re-fold passes, and its bytes reach
         // `d:w:`/`u:w:`/`q:` in that same txn.
@@ -430,6 +444,7 @@ impl Vault {
                     )
                 })
                 .and_then(|()| crate::federation::reject_ruling_delete(&self.store, &wtxn, id))
+                .and_then(|()| crate::task_authority::reject_fact_delete(&self.store, &wtxn, id))
                 .and_then(|()| {
                     if value.reason.is_hard() {
                         self.store
@@ -465,6 +480,17 @@ impl Vault {
             window_ts,
             TopologyDeletePhase::Published,
         )?;
+        // A hard delete publishes before its purge, in a later transaction.
+        // The fence commits with the tombstone, so the row reads deleted from
+        // the publication on, even if the purge never lands.
+        if value.reason.is_hard() {
+            super::tombstone::ROW_DELETION_FENCE.put(
+                &self.store,
+                &mut wtxn,
+                &crate::side_table::HexId(*id),
+                &Vec::new(),
+            )?;
+        }
         Ok(wtxn)
     }
 
@@ -569,7 +595,7 @@ impl Vault {
         window_ts: u64,
         value: &TombstoneValueV2,
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if value.reason.is_hard() {
                 self.guard_active_merge_hard_delete_in_txn(txn, id)?;
             }
@@ -599,7 +625,7 @@ impl Vault {
         let Some(decision) = gate_decision else {
             return Ok(());
         };
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             // The authority-required marker is what makes the CRDT tombstone
             // binding on every peer, so the owner binding is re-proven in the
             // SAME txn that stages it — a revocation landing since the gate ran

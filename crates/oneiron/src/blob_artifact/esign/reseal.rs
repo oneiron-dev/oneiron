@@ -17,10 +17,10 @@ impl Vault {
         user_agent: Option<String>,
     ) -> Result<()> {
         let now = self.now_recorded_at();
-        self.with_write_txn(|txn| {
-            verify_owner(self, txn, owner)?;
+        self.with_write_txn_grouped(|txn| {
+            let actor = verify_owner(self, txn, owner)?;
             let required = GrantBound::action(
-                ActorBound::new(owner.actor().to_hex())?,
+                ActorBound::new(actor.to_hex())?,
                 ActionClass::new("esign.reseal")?,
                 ActionEnvelope::new([format!("document:{}", document.to_hex())])?,
             )?;
@@ -40,14 +40,14 @@ impl Vault {
                 txn,
                 document,
                 EsignEvent::ResealRequested {
-                    owner: owner.actor().to_hex(),
+                    owner: actor.to_hex(),
                     authority: format!(
                         "grant:{grant_ref};owner_decision:{}",
                         owner.decision_id().to_hex()
                     ),
                 },
                 EsignAuditActor {
-                    actor: owner.actor().to_hex(),
+                    actor: actor.to_hex(),
                     ip,
                     user_agent,
                 },
@@ -63,7 +63,7 @@ impl Vault {
         if documents.len() > 100 {
             return Err(invalid("seal sweep batch exceeds 100"));
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut queued = 0;
             for &document in documents {
                 let state = state_in(self, txn, document)?;

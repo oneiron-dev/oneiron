@@ -73,6 +73,10 @@ pub enum RecordError {
     InvalidFederationGrantBody(&'static str),
     #[error("invalid authority log body: {0}")]
     InvalidAuthorityLogBody(&'static str),
+    /// A pairing link's scope the vault refuses: a facet limit on the vault
+    /// owner, or a write facet outside the link's facets.
+    #[error("invalid pairing scope: {0}")]
+    InvalidPairingScope(&'static str),
     /// Context-pack assembly found a cross-record anomaly before surfacing output.
     #[error("context pack validation failed for entity {}: {reason}", id.to_hex())]
     ContextPackValidation { id: EntityId, reason: &'static str },
@@ -195,6 +199,24 @@ pub enum RecordError {
         id.to_hex()
     )]
     AuthorityLogStoreKeyMismatch { id: EntityId },
+    /// A replicated AUTHORITY_LOG row the vault cannot apply yet (H72): no
+    /// folded row admitted its signer, or no owner key signed or cosigned it.
+    /// The row is held and never stored; replicated doors classify it as
+    /// dependency-pending.
+    #[error(
+        "authority log row {} is held: its signer is not enrolled here, or no owner key signed it",
+        id.to_hex()
+    )]
+    AuthorityLogSignerPending { id: EntityId },
+    /// Storing this AUTHORITY_LOG row would take its signer, or the log's
+    /// handoffs, past the pinned fold bound (H72). Nothing was written; a
+    /// slip issuer's slip ops, and the rows it signs that only restrict
+    /// authority, are never refused this way.
+    #[error(
+        "authority log at its bound for signer {signer}; row {} not stored",
+        id.to_hex()
+    )]
+    AuthorityLogFull { id: EntityId, signer: String },
     #[error("MESSAGE stream already active: {}", message.to_hex())]
     StreamAlreadyActive { message: EntityId },
     #[error("MESSAGE stream handle is not active: {}", message.to_hex())]
@@ -226,6 +248,7 @@ impl RecordError {
             Self::HeadAdvanceOffTrunk => ErrorKind::HeadAdvanceOffTrunk,
             Self::InvalidConversationDag(_) => ErrorKind::InvalidConversationDag,
             Self::InvalidScopeSummary(_) => ErrorKind::InvalidScopeSummary,
+            Self::InvalidPairingScope(_) => ErrorKind::InvalidPairingScope,
             Self::StreamAlreadyActive { .. } => ErrorKind::StreamAlreadyActive,
             Self::StreamNotActive { .. } => ErrorKind::StreamNotActive,
             Self::StreamLimit { .. } => ErrorKind::StreamLimit,
@@ -269,6 +292,8 @@ impl RecordError {
                 ErrorKind::AuthorityLogAppendOnlyViolation
             }
             Self::AuthorityLogStoreKeyMismatch { .. } => ErrorKind::AuthorityLogStoreKeyMismatch,
+            Self::AuthorityLogSignerPending { .. } => ErrorKind::AuthorityLogSignerPending,
+            Self::AuthorityLogFull { .. } => ErrorKind::AuthorityLogFull,
         }
     }
 }

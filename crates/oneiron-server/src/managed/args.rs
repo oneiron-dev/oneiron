@@ -52,6 +52,11 @@ pub enum ManagedError {
     InvalidListenFd { env: &'static str, value: String },
 
     #[error(
+        "{env} names file descriptor {fd}, which is not a unix socket: managed mode serves only the supervisor's unix listener"
+    )]
+    ListenFdNotUnix { env: &'static str, fd: RawFd },
+
+    #[error(
         "{first} and {second} both name file descriptor {fd}: managed mode adopts each delivered descriptor with unique ownership, so an alias would close one owner's descriptor under the other or write the ready byte into a reused number"
     )]
     AliasedFd {
@@ -386,6 +391,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Refused(NO_AUTH_LAYER_REASON),
     ),
     (
+        "trusted-proxies",
+        |args| args.trusted_proxies.is_some(),
+        ArgvUse::Refused(NO_AUTH_LAYER_REASON),
+    ),
+    (
         "failure-signal-export",
         |args| args.failure_signal_export.is_some(),
         ArgvUse::Refused(NO_TUNING_LAYER_REASON),
@@ -550,6 +560,47 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.runtime_summarizer_model.is_some(),
         ArgvUse::Refused(NO_TUNING_LAYER_REASON),
     ),
+    // The tagger slot's section: a managed child serves no tagger.
+    (
+        "oneironer-provider",
+        |args| args.oneironer.oneironer_provider.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "oneironer-mode",
+        |args| args.oneironer.oneironer_mode.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "oneironer-url",
+        |args| args.oneironer.oneironer_url.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "oneironer-checkpoint-sha16",
+        |args| args.oneironer.oneironer_checkpoint_sha16.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "oneironer-stack-sha16",
+        |args| args.oneironer.oneironer_stack_sha16.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "oneironer-label-count",
+        |args| args.oneironer.oneironer_label_count.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "oneironer-labels",
+        |args| args.oneironer.oneironer_labels.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "oneironer-timeout-ms",
+        |args| args.oneironer.oneironer_timeout_ms.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
 ];
 
 /// Managed mode takes its whole configuration from argv, and reads only part
@@ -576,6 +627,7 @@ fn reject_unmanaged_layers(args: &ServeArgs) -> Result<(), ManagedError> {
         "ONEIRON_CONFIG",
         "ONEIRON_FAILURE_SIGNAL_EXPORT",
         "ONEIRON_FAILURE_SIGNAL_TRAINING",
+        "ONEIRON_TRUSTED_PROXIES",
     ] {
         if std::env::var_os(env).is_some() {
             return Err(ManagedError::ConflictingEnvironment {

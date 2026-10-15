@@ -38,12 +38,14 @@ impl Memory<'_> {
             }
             // Revocation and admission observe the SAME snapshot.
             let holders = self.ask_holders_in_txn(txn, input)?;
-            let context_class = self.ask_class_in_txn(txn, input.task_ref)?;
+            let bound = self.ask_class_in_txn(txn, input.task_ref)?;
+            let context_class = bound.as_ref().map(|(_, class)| class.clone());
             let effective = input.effective(
                 &holders.iter().copied().collect(),
                 now,
                 context_class.clone(),
             )?;
+            self.ask_question_in(txn, &effective.what)?;
             if super::rate_limit::task_actor_ceiling(
                 self.vault(),
                 txn,
@@ -57,6 +59,15 @@ impl Memory<'_> {
                     "Propose the ask through the authority surface.",
                 ));
             }
+            // One ask counts once on the asker's ask window, whatever its
+            // recipients; a replay returned above never counts again.
+            super::rate_limit::record_task_ask(
+                self.vault(),
+                txn,
+                self.actor(),
+                now,
+                super::TaskCreateRateLimit::default(),
+            )?;
             let mut no_live_route = true;
             let mut validated = Vec::with_capacity(holders.len());
             for actor in &holders {
@@ -76,13 +87,17 @@ impl Memory<'_> {
                 // is registered only where the native route actually resolves.
                 let reachable = match assignee {
                     TaskAssignee::Human { actor_ref } => {
-                        crate::human_task::resolve_native_human_route_for_actor_in(
+                        let mut vetoes = Vec::new();
+                        let route = crate::human_task::resolve_native_human_route_for_actor_in(
                             self.vault(),
                             txn,
                             actor_ref,
                             self.actor(),
-                        )
-                        .is_ok()
+                            &mut vetoes,
+                        );
+                        // A standing veto that took the route decides the hold.
+                        self.produced_from(vetoes);
+                        route.is_ok()
                     }
                     TaskAssignee::Dreamer | TaskAssignee::Child { .. } => true,
                     TaskAssignee::Peer { .. } | TaskAssignee::AgentDef { .. } => false,
@@ -162,6 +177,9 @@ impl Memory<'_> {
                 requested: input.clone(),
                 effective,
                 context_class,
+                governed_task: bound
+                    .filter(|_| input.task_ref.is_none())
+                    .map(|(task, _)| task),
                 question_digest,
                 link_verify_key: ask_record::mint_link_key(self.vault(), txn, group_ref)?,
                 members,
@@ -217,20 +235,8 @@ impl Memory<'_> {
             crate::memory::verify_owner_actor_binding_in_txn(self.vault(), txn, self.actor())?;
             return Ok(self.actor());
         }
-        let scan = super::presence_scan::scan_task_entity_pages(
-            super::presence_scan::TASK_PRESENCE_PAGE_SIZE,
-            super::presence_scan::TASK_PRESENCE_SCAN_CAP,
-            |after, limit| {
-                crate::ports::EntityStoreRead::port_entity_ids_by_type(
-                    &self.vault().store,
-                    txn,
-                    crate::registry::ENTITY_TYPE_TASK,
-                    after.copied(),
-                )?
-                .take(limit)
-                .collect()
-            },
-        )?;
+        let scan =
+            super::presence_pages::scan_admitted_tasks_in(self.vault(), txn, self.locality())?;
         if !scan.source_exhausted {
             return Err(MemoryError::bad_request(
                 "agent principal cannot be resolved from a truncated task scan",
@@ -278,6 +284,8 @@ impl Memory<'_> {
             {
                 continue;
             }
+            // The principal is derived from this TASK, a refusal from two.
+            self.produced_from([task]);
             if principal.is_some_and(|found| found != owner) {
                 return Err(MemoryError::bad_request(
                     "agent has more than one human principal",
@@ -288,11 +296,13 @@ impl Memory<'_> {
         principal.ok_or_else(|| MemoryError::bad_request("agent has no verified human principal"))
     }
 
+    /// The class an ask naming `task` binds, with the TASK it came from:
+    /// `task`, or this actor's governed TASK when the ask omits it.
     pub(super) fn ask_class_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         task: Option<EntityId>,
-    ) -> MemoryResult<Option<TaskAskClass>> {
+    ) -> MemoryResult<Option<(EntityId, TaskAskClass)>> {
         let task = match task {
             Some(task) => task,
             None => match self.governed_task_in_txn(txn)? {
@@ -300,6 +310,8 @@ impl Memory<'_> {
                 None => return Ok(None),
             },
         };
+        // The ask answers from this TASK's class.
+        self.read_producer_in(txn, task)?;
         let body = super::create_validation::task_body_in_txn(self.vault(), txn, task)?;
         let authority = self
             .vault()
@@ -329,7 +341,7 @@ impl Memory<'_> {
         let bytes = rmp_serde::to_vec_named(value)
             .map_err(|_| MemoryError::bad_request("invalid task ask class binding"))?;
         rmp_serde::from_slice(&bytes)
-            .map(Some)
+            .map(|class| Some((task, class)))
             .map_err(|_| MemoryError::bad_request("invalid task ask class binding"))
     }
 
@@ -342,20 +354,8 @@ impl Memory<'_> {
         let name_the_task = |message: &str| {
             MemoryError::bad_request_with(message, &["Name the governing task in task_ref."])
         };
-        let scan = super::presence_scan::scan_task_entity_pages(
-            super::presence_scan::TASK_PRESENCE_PAGE_SIZE,
-            super::presence_scan::TASK_PRESENCE_SCAN_CAP,
-            |after, limit| {
-                crate::ports::EntityStoreRead::port_entity_ids_by_type(
-                    &self.vault().store,
-                    txn,
-                    crate::registry::ENTITY_TYPE_TASK,
-                    after.copied(),
-                )?
-                .take(limit)
-                .collect()
-            },
-        )?;
+        let scan =
+            super::presence_pages::scan_admitted_tasks_in(self.vault(), txn, self.locality())?;
         if !scan.source_exhausted {
             return Err(name_the_task(
                 "too many tasks to find this ask's task context",
@@ -381,7 +381,9 @@ impl Memory<'_> {
             {
                 continue;
             }
-            if found.replace(task).is_some() {
+            if let Some(first) = found.replace(task) {
+                // Both TASKs decide this refusal.
+                self.produced_from([first, task]);
                 return Err(name_the_task(
                     "more than one governed task could bind this ask",
                 ));
@@ -399,7 +401,8 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        let group = ask_record::read_group(self.vault(), &txn, handle.group_ref)?
+        let group = self
+            .ask_group_in(&txn, handle.group_ref)?
             .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
         if group.owner != self.actor().to_hex()
             && !group
@@ -447,8 +450,7 @@ impl Memory<'_> {
         let Some(consult) = body.consult else {
             return Ok(None);
         };
-        let Some(group) = ask_record::read_group(self.vault(), &txn, consult.correlation_ref)?
-        else {
+        let Some(group) = self.ask_group_in(&txn, consult.correlation_ref)? else {
             return Ok(None);
         };
         if !group
@@ -509,7 +511,8 @@ impl Memory<'_> {
             return Err(MemoryError::bad_request("invalid wait step key"));
         }
         self.with_verified_actor_write_txn(|txn| {
-            let group = ask_record::read_group(self.vault(), txn, handle.group_ref)?
+            let group = self
+                .ask_group_in(txn, handle.group_ref)?
                 .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
             if group.owner != self.actor().to_hex() {
                 return Err(MemoryError::bad_request("only the asking actor may wait"));
@@ -599,7 +602,8 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        let group = ask_record::read_group(self.vault(), &txn, handle.group_ref)?
+        let group = self
+            .ask_group_in(&txn, handle.group_ref)?
             .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
         if group.owner != self.actor().to_hex() {
             return Err(MemoryError::bad_request(
@@ -611,6 +615,7 @@ impl Memory<'_> {
             self.vault(),
             self.actor(),
             handle.group_ref,
+            self.locality(),
         )?)
     }
 }
@@ -765,7 +770,8 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        let group = ask_record::read_group(self.vault(), &txn, handle.group_ref)?
+        let group = self
+            .ask_group_in(&txn, handle.group_ref)?
             .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
         if group.owner != self.actor().to_hex()
             && !group
@@ -797,7 +803,8 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        let group = ask_record::read_group(self.vault(), &txn, handle.group_ref)?
+        let group = self
+            .ask_group_in(&txn, handle.group_ref)?
             .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
         if group.owner != self.actor().to_hex()
             && !group

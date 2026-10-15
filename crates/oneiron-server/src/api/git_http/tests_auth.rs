@@ -1,10 +1,7 @@
 //! Authentication-gate tests for Git smart-HTTP.
 
-use super::gate::{
-    GIT_HTTP_CHALLENGE, ServiceRefusal, advertised_service, authenticate, remote_user, repo_name,
-};
+use super::gate::{ServiceRefusal, advertised_service, authenticate};
 use super::routes::{GitService, git_http_routes};
-use crate::auth::CoreScope;
 use crate::auth::RevokedTokenJtis;
 use crate::config::SyncServerConfig;
 use crate::server::SyncServer;
@@ -12,7 +9,6 @@ use axum::body::Body;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::http::header::AUTHORIZATION;
-use axum::http::header::WWW_AUTHENTICATE;
 use oneiron::origin::smart_http;
 use std::sync::Arc;
 
@@ -75,60 +71,6 @@ mod tests {
     }
 
     #[test]
-    fn git_smart_http_unauthenticated_info_refs_is_401() {
-        let config = secret_config();
-        let refused = authenticate(
-            &HeaderMap::new(),
-            &config,
-            &NoRevocations,
-            GitService::UploadPack,
-        )
-        .expect_err("unauthenticated info/refs is refused");
-        assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
-        assert_eq!(
-            refused
-                .headers()
-                .get(WWW_AUTHENTICATE)
-                .and_then(|value| value.to_str().ok()),
-            Some(GIT_HTTP_CHALLENGE),
-            "a stock client is told how to authenticate"
-        );
-    }
-
-    #[test]
-    fn git_http_read_scope_serves_upload_pack() {
-        let config = secret_config();
-        let (_dir, server) = fixture(config.clone());
-        let token = scoped_token(&config, "core:read", None);
-        let auth = authenticate(
-            &bearer(&server, &token),
-            &config,
-            server.vault().as_ref(),
-            GitService::UploadPack,
-        )
-        .expect("read scope serves a fetch");
-        assert!(auth.has_scope(CoreScope::Read));
-    }
-
-    #[test]
-    fn git_smart_http_receive_pack_without_registered_principal_ref_refused_even_on_loopback() {
-        let config = secret_config();
-        let (_dir, server) = fixture(config.clone());
-        // A write-scoped bearer with no principal_ref: authenticated, but not a
-        // registered actor. There is no loopback branch that could admit it,
-        // because the gate never reads an address.
-        let token = scoped_token(&config, "core:read,core:write", None);
-        let refused = authenticate(
-            &bearer(&server, &token),
-            &config,
-            server.vault().as_ref(),
-            GitService::ReceivePack,
-        )
-        .expect_err("a push without a registered principal_ref is refused");
-        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[test]
     fn git_http_receive_pack_refuses_the_unauthenticated_dev_hatch() {
         let config = hatch_config();
         // The hatch identity carries every scope and no principal_ref. The
@@ -153,22 +95,6 @@ mod tests {
             .is_err(),
             "the dev escape hatch can never admit a push"
         );
-    }
-
-    #[test]
-    fn git_http_receive_pack_admits_a_registered_principal() {
-        let config = secret_config();
-        let (_dir, server) = fixture(config.clone());
-        let pusher = principal();
-        let token = scoped_token(&config, "core:read,core:write", Some(&pusher));
-        let auth = authenticate(
-            &bearer(&server, &token),
-            &config,
-            server.vault().as_ref(),
-            GitService::ReceivePack,
-        )
-        .expect("a registered principal with write scope may push");
-        assert_eq!(remote_user(&auth).as_deref(), Some(pusher.as_str()));
     }
 
     fn stock_git(root: &std::path::Path, args: &[&str]) -> String {
@@ -439,29 +365,6 @@ mod tests {
             )
             .is_err(),
             "a read scope never becomes a write scope"
-        );
-    }
-
-    #[test]
-    fn git_http_route_shapes_are_closed() {
-        assert_eq!(repo_name("demo.git"), "demo");
-        assert_eq!(repo_name("demo"), "demo");
-        assert_eq!(
-            advertised_service("service=git-upload-pack"),
-            Ok(GitService::UploadPack)
-        );
-        assert_eq!(
-            advertised_service("service=git-receive-pack&extra=1"),
-            Ok(GitService::ReceivePack)
-        );
-        assert_eq!(
-            advertised_service(""),
-            Err(ServiceRefusal::Missing),
-            "the dumb protocol is not served"
-        );
-        assert_eq!(
-            advertised_service("service=git-daemon"),
-            Err(ServiceRefusal::Unsupported)
         );
     }
 

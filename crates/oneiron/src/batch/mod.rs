@@ -22,6 +22,7 @@ mod lexical_query_hints;
 mod ops_pipeline;
 mod person_substrate;
 mod phonetic_apply;
+mod prepared_index;
 mod put_apply;
 pub(crate) use person_substrate::sweep_scope_stamps;
 #[cfg(feature = "sync")]
@@ -42,6 +43,8 @@ pub(crate) use self::vad_postcommit::VadPostcommitScope;
 #[cfg(feature = "sync")]
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_proactivity_change;
+#[cfg(feature = "sync")]
+pub(crate) use self::vad_postcommit::queue_task_updates;
 
 pub(crate) use self::authority_log::validate_replicated_authority_log_for_local_vault;
 use self::base_apply::apply_ops_with_origin;
@@ -50,7 +53,7 @@ pub(crate) use self::base_apply::{
 };
 pub(crate) use self::builder::BatchOp;
 pub(crate) use self::claim_materialization::{
-    ClaimMaterialization, apply_owner_bound_claim_puts,
+    ClaimMaterialization, SuccessionWriter, apply_owner_bound_claim_puts,
     apply_owner_bound_claim_puts_with_transitions, authenticated_claim_author_in_txn,
 };
 #[cfg(test)]
@@ -61,6 +64,8 @@ pub(crate) use self::deindex::{
 };
 pub(crate) use self::facet_validation::validate_facet_of_edge;
 pub(crate) use self::lexical_query_hints::reject_family_owned_candidate;
+#[cfg(test)]
+pub(crate) use self::put_apply::wiped_rows;
 // Reached only from sync-gated modules (`sync::selector`); the re-exports keep
 // the historical `crate::batch::` paths resolvable in sync builds.
 pub(crate) use self::actor_content::apply_actor_ops;
@@ -74,6 +79,7 @@ pub(crate) use self::ops_pipeline::{
     BaseWriteOrigin, apply_ops, apply_ops_session, apply_ops_with_gate_mode,
 };
 pub(crate) use self::phonetic_apply::delete_from_phonetic_postings;
+use self::prepared_index::PreparedIndexWork;
 pub(crate) use self::put_apply::{delete_entity_index_rows, stage_entity_index_rows};
 pub(crate) use self::short_id::{encode_short_id_forward_key, parse_short_id_value};
 pub(crate) use self::types::{

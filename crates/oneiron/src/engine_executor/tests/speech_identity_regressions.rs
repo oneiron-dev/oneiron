@@ -88,112 +88,23 @@ fn distinct_executor_run_ids_do_not_share_fallback_speech_identity() {
     );
 }
 
-/// The compatibility witness door has no durable run id, so it keeps the
-/// legacy run-ref identity family while allocating a fresh bounded order for
-/// each ordinary call. The explicit-order door still uses exactly the caller's
-/// order and does not advance the compatibility allocator.
-#[test]
-fn public_witness_turn_calls_append_at_distinct_orders() {
-    let (_dir, vault) = open_test_vault();
-    let backend = FixtureBackend::new(std::iter::empty::<&str>());
-    let lease = BudgetLease::for_test("executor-lease");
-    let mut runtime = FixtureRuntime::new(std::iter::empty::<JsCodeModeStepOutcome>());
-    let gated_write = gated_actor_write(&vault, "standalone-witness-run");
-    let executor = EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write);
-
-    executor
-        .witness_turn(ExecutorUtterance::Speak, "automatic zero", 10)
-        .expect("first automatic witness");
-    executor
-        .witness_turn_at(ExecutorUtterance::Express, "explicit seven", 11, 7)
-        .expect("explicit-order witness");
-    executor
-        .witness_turn(ExecutorUtterance::Think, "automatic one", 12)
-        .expect("second automatic witness");
-
-    assert_eq!(
-        executor_bubbles(&vault, entity(0xA0)),
-        vec![
-            (
-                "executor.speak".to_owned(),
-                "automatic zero".to_owned(),
-                true,
-                0
-            ),
-            (
-                "executor.think".to_owned(),
-                "automatic one".to_owned(),
-                false,
-                1
-            ),
-            (
-                "executor.express".to_owned(),
-                "explicit seven".to_owned(),
-                true,
-                7
-            ),
-        ],
-    );
-
-    let before = entity_type_count(&vault, crate::registry::ENTITY_TYPE_MESSAGE);
-    executor
-        .witness_turn_at(
-            ExecutorUtterance::Speak,
-            "outside the bounded order domain",
-            13,
-            crate::gate::MAX_WITNESS_MESSAGE_ORDER + 1,
-        )
-        .expect_err("an out-of-range explicit order is refused");
-    assert_eq!(
-        entity_type_count(&vault, crate::registry::ENTITY_TYPE_MESSAGE),
-        before,
-        "order refusal leaves the transcript unchanged",
-    );
-}
-
-struct ReplayConflictAfterSpeechRuntime<'a> {
-    vault: &'a Vault,
-    competing_record: Option<CodeRunReplayRecord>,
+/// A step that speaks, then halts the process before its replay checkpoint.
+struct StopAfterSpeechRuntime {
     call: Option<SelfCall>,
 }
 
-impl JsCodeModeRuntime for ReplayConflictAfterSpeechRuntime<'_> {
+impl JsCodeModeRuntime for StopAfterSpeechRuntime {
     fn run_step(
         &mut self,
         _step: JsCodeModeStep<'_>,
         host: &mut dyn JsCodeModeHost,
     ) -> Result<JsCodeModeStepOutcome> {
         let call = self.call.take().ok_or(Error::InvariantViolation(
-            "missing conflict fixture speech call",
+            "missing stop fixture speech call",
         ))?;
         let _ = host.dispatch_self(call)?;
-        let record = self
-            .competing_record
-            .take()
-            .ok_or(Error::InvariantViolation("missing competing replay record"))?;
-        self.vault.put_code_run_replay_record(&record)?;
-        Ok(JsCodeModeStepOutcome::complete(""))
+        panic!("the process stops before the step's replay checkpoint");
     }
-}
-
-fn initial_executor_replay_record(
-    vault: &Vault,
-    config: &EngineExecutorConfig,
-) -> CodeRunReplayRecord {
-    let mut record = CodeRunReplayRecord::new(config.run_id, config.determinism);
-    let prompt_fingerprint =
-        crate::prompt::resolve_engine_executor_wire_prompt(&config.prompt_package_root)
-            .expect("resolve prompt package")
-            .stamp
-            .resolved_fingerprint;
-    super::super::record_config_marker(
-        &crate::code_run::ExecutorStorage::Canonical(vault),
-        &mut record,
-        config,
-        &prompt_fingerprint,
-    )
-    .expect("record competing config marker");
-    record
 }
 
 fn leave_speech_before_replay_cas(
@@ -203,20 +114,18 @@ fn leave_speech_before_replay_cas(
 ) {
     let backend = FixtureBackend::new(["self.speak('same words');"]);
     let lease = BudgetLease::for_test("executor-lease");
-    let mut runtime = ReplayConflictAfterSpeechRuntime {
-        vault,
-        competing_record: Some(initial_executor_replay_record(vault, config)),
+    let mut runtime = StopAfterSpeechRuntime {
         call: Some(SelfCall::Speak(SelfSpeechCall::new("same words"))),
     };
-    let mut executor =
-        EngineNativeExecutor::new(vault, &backend, &lease, &mut runtime, gated_write);
-
-    let error = block_on_ready(executor.run(config))
-        .expect_err("competing initial replay record must lose the executor CAS");
-    assert!(matches!(
-        error,
-        EngineExecutorError::Engine(Error::ConcurrentWrite(_))
-    ));
+    let stopped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut executor =
+            EngineNativeExecutor::new(vault, &backend, &lease, &mut runtime, gated_write);
+        block_on_ready(executor.run(config))
+    }));
+    assert!(
+        stopped.is_err(),
+        "the process stopped before the checkpoint"
+    );
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -265,8 +174,9 @@ fn transcript_snapshot(vault: &Vault) -> TranscriptSnapshot {
 }
 
 /// A speech witness can commit before the replay-record compare-and-set. When
-/// that CAS loses, retrying the same canonical call must treat the existing
-/// MESSAGE and its verified turn topology as an idempotent success.
+/// the process stops between the two, retrying the same canonical call must
+/// treat the existing MESSAGE and its verified turn topology as an idempotent
+/// success.
 #[test]
 fn same_body_speech_retry_after_replay_cas_failure_is_idempotent() {
     let (_dir, vault) = open_test_vault();

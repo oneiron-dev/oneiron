@@ -195,7 +195,9 @@ pub fn write_provider_prior(
     prior: f32,
     evidence: &str,
 ) -> Result<EntityId> {
-    vault.with_write_txn(|txn| write_provider_prior_in_txn(vault, txn, provider, prior, evidence))
+    vault.with_write_txn_grouped(|txn| {
+        write_provider_prior_in_txn(vault, txn, provider, prior, evidence)
+    })
 }
 
 pub(crate) fn write_provider_prior_in_txn(
@@ -310,7 +312,7 @@ fn mint_enriched_entity_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Res
 pub fn write_enrichment_claim(vault: &Vault, provider: &str, confidence: f32) -> Result<EntityId> {
     validate_provider_key(provider)?;
     let now = vault.store.clock.now_recorded_at();
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let enriched = mint_enriched_entity_in_txn(vault, wtxn)?;
         let claim_id = vault.store.clock.entity_id()?;
         let mut body = ClaimBody::new(
@@ -350,7 +352,7 @@ pub fn write_enrichment_claim(vault: &Vault, provider: &str, confidence: f32) ->
 /// writer mutex first, so callers already holding a transaction must reach
 /// `effective_confidence_in_txn` instead of this door.
 pub fn effective_confidence(vault: &Vault, claim_ref: &EntityId) -> Result<f32> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let mut prior_memo = ProviderPriorMemo::default();
         effective_confidence_in_txn(vault, wtxn, claim_ref, &mut prior_memo)
     })
@@ -413,7 +415,7 @@ pub fn count_active_prior_claims_with_evidence(
     validate_provider_key(provider)?;
     // One write transaction: resolving may repair the actor shortcut. NO
     // NESTING — see the module docs.
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let Some(actor) = resolve_provider_actor_in_txn(vault, wtxn, provider)? else {
             return Ok(0);
         };
@@ -433,7 +435,7 @@ fn count_prior_claims(
     lifecycle: ClaimLifecycleStatus,
 ) -> Result<usize> {
     validate_provider_key(provider)?;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let Some(actor) = resolve_provider_actor_in_txn(vault, wtxn, provider)? else {
             return Ok(0);
         };

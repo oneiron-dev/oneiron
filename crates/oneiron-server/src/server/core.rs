@@ -6,8 +6,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use loro::LoroDoc;
 use oneiron::DreamerAttemptProgressProducer;
 use oneiron::SyncEngineContext;
-#[cfg(test)]
-use oneiron::sync::WindowKey;
 use oneiron::sync::bridge::{LiveQueryTee, Materializer};
 use oneiron::sync::lease::ROOT_LEASES_MAP;
 use oneiron::sync::schema::{
@@ -21,6 +19,7 @@ use crate::api::DeepRetrievalHost;
 use crate::config::SyncServerConfig;
 use crate::embedder::EmbedderSlot;
 use crate::mcp::{McpConnectorActorRegistry, McpCredentialHashKey};
+use crate::oneironer::TaggerSlot;
 use crate::usage::UsageLedger;
 
 use super::lifecycle::{LifecycleJobKey, NEXT_LIFECYCLE_SESSION_ID};
@@ -73,8 +72,12 @@ pub struct SyncServer {
     pub(super) lifecycle_session_id: u64,
     /// In-flight lifecycle jobs keyed by `(kind, vault_id, session_id)`.
     pub(super) lifecycle_in_flight: Mutex<HashSet<LifecycleJobKey>>,
+    /// Housekeeping passes in flight, scheduled or asked for by the owner.
+    pub(crate) housekeeping_passes: super::housekeeping::HousekeepingPasses,
     /// Server configuration.
     pub(crate) config: SyncServerConfig,
+    /// Permits for git and LFS transfers, sized by `config.limits`.
+    pub(crate) transfers: crate::api::Transfers,
     /// Set only by managed boot after inherited-credential and DEK checks.
     /// The supervisor authenticates callers before routing its private socket.
     pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
@@ -106,12 +109,26 @@ pub struct SyncServer {
     /// construction, the same way the deep-retrieval host is: `Self::new` pins
     /// no model and downloads nothing.
     pub(crate) embedder: Option<EmbedderSlot>,
-    pub(crate) llm: Option<(Arc<dyn oneiron::LlmBackend>, oneiron::BudgetGuard)>,
+    /// The `[oneironer]` tagger slot, `None` when no tagger is configured.
+    /// Attached by the serve path after construction, like the embedder.
+    pub(crate) tagger: Option<TaggerSlot>,
+    /// The raw `/v1/llm` routes' models and meter; `None` turns them off.
+    pub(crate) llm: Option<crate::models::RawInference>,
+    /// Where the run admission of every model call writes its receipts.
+    pub(crate) run_receipts: Arc<crate::models::ServerReceipts>,
+    /// Model seats, background AI status and the Dreamer's session hints.
+    /// Inert unless the serve path attaches a configured host.
+    pub(crate) ai: crate::ai_host::AiHandle,
+    /// Where rerank calls run when their door cannot drive them on its
+    /// caller's runtime.
+    pub(crate) rerank_runtime: super::recall_rerank::CallRuntime,
     /// Host-injected, request-by-request egress decision for nonlocal extraction.
     pub(crate) extraction_egress: Option<Arc<dyn oneiron::llm::ExtractionEgressPredicate>>,
     /// The vault's path, backup plan and schedule, set by `serve`. `None`
     /// on a server built without a known vault path.
     pub(crate) owner_host: Option<Arc<crate::owner::schedule::OwnerHost>>,
+    /// Where the owner's feedback goes; `None` until configured.
+    pub(crate) feedback: Option<Arc<crate::feedback_delivery::FeedbackHost>>,
     /// Instance-local booking clock override; production always reads wall time.
     #[cfg(test)]
     pub(crate) booking_test_now_secs: Option<u64>,
@@ -124,7 +141,7 @@ impl SyncServer {
     ///
     /// Startup ordering per ARCH-0023b: (1) the root Doc loads from `d:root`
     /// plus pending `u:root:*`; (2) window Docs load on demand from
-    /// `d:w:{key}` plus pending `u:w:{key}:*` in `Self::get_or_create_window`.
+    /// `d:w:{key}` plus pending `u:w:{key}:*` in `Self::serve_window`.
     /// A fresh vault initializes and persists a new root Doc.
     ///
     /// Boot also reconciles `meta.windows` against the persisted `d:w:*`
@@ -144,9 +161,7 @@ impl SyncServer {
         // An empty configured secret mints nothing either: it carries no key
         // material, and every upgrade bearing it (or nothing) still 401s at
         // the auth door, so booting rootless here is fail-closed, not open.
-        if vault.privacy_posture() != oneiron::HostingPrivacyPosture::Relay
-            && let Some(secret) = config.auth_secret.as_deref().filter(|s| !s.is_empty())
-        {
+        if let Some(secret) = host_root_secret(&vault, &config) {
             let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
             vault.ensure_host_root_slip(&issuer)?;
             // The engine's MACHINE writers sign with host-held keys (ONE-1634).
@@ -238,10 +253,12 @@ impl SyncServer {
             _reactive_tee: reactive_tee,
             lifecycle_session_id: NEXT_LIFECYCLE_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             lifecycle_in_flight: Mutex::new(HashSet::new()),
+            housekeeping_passes: Default::default(),
             standing_block_cache: Mutex::new(
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
             ),
             dreamer_progress: Mutex::new(DreamerAttemptProgressProducer::new()),
+            transfers: crate::api::Transfers::new(&config.limits),
             config,
             managed_issuer: None,
             mcp_registry,
@@ -250,9 +267,14 @@ impl SyncServer {
             self_brief_sessions: Mutex::new(BTreeMap::new()),
             deep_retrieval: None,
             embedder: None,
+            tagger: None,
             llm: None,
+            run_receipts: Arc::default(),
+            ai: crate::ai_host::AiHandle::inert(),
+            rerank_runtime: Default::default(),
             extraction_egress: None,
             owner_host: None,
+            feedback: None,
             #[cfg(test)]
             booking_test_now_secs: None,
         })
@@ -291,12 +313,19 @@ impl SyncServer {
     }
 
     /// Bind a readiness-verified QuickJS provider before exposing this vault's
-    /// routes. Missing components or providers keep execute_code unadvertised.
+    /// routes, running at most `runs` at once. Missing components or providers
+    /// keep execute_code unadvertised.
     #[cfg(feature = "code-sandbox-wasmtime")]
     #[must_use]
-    pub fn with_mcp_quickjs_provider(mut self, provider: crate::mcp::McpQuickJsProvider) -> Self {
+    pub fn with_mcp_quickjs_provider(
+        mut self,
+        provider: crate::mcp::McpQuickJsProvider,
+        runs: crate::mcp::CodeRunLimits,
+    ) -> Self {
+        let provider = provider.with_run_receipts(self.run_receipts());
         self.mcp_code_host = Some(Arc::new(crate::mcp::McpEngineNativeCodeHost::new(
             Arc::new(provider),
+            runs,
         )));
         self
     }
@@ -332,13 +361,51 @@ impl SyncServer {
 
     /// Enables owner-authenticated raw inference with a host-owned backend and budget.
     /// Remote lease IDs are correlation only; each call needs local admission.
+    ///
+    /// Each call is admitted as a run on `budget` and sent through the run's
+    /// gate, which wraps only a backend that sends one request per call, so
+    /// `backend` is a [`oneiron::llm::SingleRouteBackend`]: a ladder or a
+    /// retrying backend cannot be injected below the gate.
     pub fn with_llm_backend(
         mut self,
-        backend: Arc<dyn oneiron::LlmBackend>,
+        backend: Arc<dyn oneiron::llm::SingleRouteBackend>,
         budget: oneiron::BudgetGuard,
     ) -> Self {
-        self.llm = Some((backend, budget));
+        self.llm = Some(crate::models::RawInference::injected(backend, budget));
         self
+    }
+
+    /// Writes every model call's run receipts to `receipts` instead of the
+    /// log, including the calls of models and providers attached before.
+    #[must_use]
+    pub fn with_run_receipts(
+        self,
+        receipts: Arc<dyn oneiron::llm::run_admission::RunReceiptSink>,
+    ) -> Self {
+        self.run_receipts.choose(receipts);
+        self
+    }
+
+    pub(crate) fn run_receipts(&self) -> Arc<dyn oneiron::llm::run_admission::RunReceiptSink> {
+        self.run_receipts.clone()
+    }
+
+    /// Attaches the AI host's handle. When `[models]` configured any model,
+    /// the raw `/v1/llm` routes get its router and their own meter: the
+    /// config is the host injection `with_llm_backend` names.
+    #[must_use]
+    pub fn with_ai(mut self, ai: crate::ai_host::AiHandle) -> Self {
+        if let Some(raw) = ai.raw_inference() {
+            self.llm = Some(raw);
+        }
+        self.ai = ai;
+        self
+    }
+
+    /// Whether boot rooted this vault and provisioned the engine's machine
+    /// writers (the Dreamer among them).
+    pub(crate) fn host_root_provisioned(&self) -> bool {
+        host_root_secret(&self.vault, &self.config).is_some()
     }
 
     /// Install the host's extraction egress predicate. An absent predicate
@@ -361,8 +428,23 @@ impl SyncServer {
         self
     }
 
+    /// Attaches the tagger slot resolved from configuration. Its worker
+    /// drains the tagging markers every witnessed turn commits.
+    pub(crate) fn with_tagger(mut self, tagger: Option<TaggerSlot>) -> Self {
+        self.tagger = tagger;
+        self
+    }
+
     pub(crate) fn with_owner_host(mut self, host: crate::owner::schedule::OwnerHost) -> Self {
         self.owner_host = Some(Arc::new(host));
+        self
+    }
+
+    pub(crate) fn with_feedback(
+        mut self,
+        host: Option<crate::feedback_delivery::FeedbackHost>,
+    ) -> Self {
+        self.feedback = host.map(Arc::new);
         self
     }
 
@@ -385,12 +467,19 @@ impl SyncServer {
             })
             .expect("fetch_update closure always returns Some")
     }
+}
 
-    /// Returns the window key (YYYY-MM) for a Unix timestamp.
-    #[cfg(test)]
-    pub(crate) fn window_key_for_timestamp(ts: u64) -> String {
-        WindowKey::from_timestamp(ts).as_str().to_string()
+/// Genuine host authority exists only off the relay posture and with a
+/// non-empty configured secret. Dev/no-secret and blind-relay modes mint
+/// nothing.
+fn host_root_secret<'c>(vault: &oneiron::Vault, config: &'c SyncServerConfig) -> Option<&'c str> {
+    if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Relay {
+        return None;
     }
+    config
+        .auth_secret
+        .as_deref()
+        .filter(|secret| !secret.is_empty())
 }
 
 fn mcp_registry_hash_key(config: &SyncServerConfig) -> [u8; 32] {

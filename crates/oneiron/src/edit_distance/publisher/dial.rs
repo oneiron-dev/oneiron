@@ -79,7 +79,8 @@ pub fn publisher_enabled(vault: &Vault) -> PublisherResult<bool> {
 ///
 /// Storage errors.
 pub fn set_publisher_enabled(vault: &Vault, enabled: bool) -> PublisherResult<()> {
-    vault.with_write_txn(|wtxn| ENABLED.put(&vault.store, wtxn, &(), &DialToken(enabled)))?;
+    vault
+        .with_write_txn_grouped(|wtxn| ENABLED.put(&vault.store, wtxn, &(), &DialToken(enabled)))?;
     Ok(())
 }
 
@@ -90,7 +91,8 @@ pub fn set_publisher_enabled(vault: &Vault, enabled: bool) -> PublisherResult<()
 ///
 /// Storage errors.
 pub fn set_publisher_install_default(vault: &Vault, enabled: bool) -> PublisherResult<()> {
-    vault
-        .with_write_txn(|wtxn| INSTALL_DEFAULT.put(&vault.store, wtxn, &(), &DialToken(enabled)))?;
+    vault.with_write_txn_grouped(|wtxn| {
+        INSTALL_DEFAULT.put(&vault.store, wtxn, &(), &DialToken(enabled))
+    })?;
     Ok(())
 }

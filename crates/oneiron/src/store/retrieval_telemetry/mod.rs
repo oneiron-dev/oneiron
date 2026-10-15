@@ -13,7 +13,7 @@ mod state;
 mod state_tests;
 mod turn_index;
 mod types;
-pub use state::{RetrievalPackOutput, RetrievalReplayInputs, RetrievalState, RetrievalTurn};
+pub use state::{RetrievalReplayInputs, RetrievalState, RetrievalTurn};
 
 pub(crate) use self::run_store::RETRIEVAL_RUN_KEY_PREFIX;
 pub(in crate::store) use self::run_store::RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT;
@@ -28,13 +28,8 @@ pub(in crate::store) use self::blend_tuning::{
 #[cfg(test)]
 pub(in crate::store) use self::run_store::{
     decode_retrieval_run, encode_retrieval_run, retrieval_outcome_key, retrieval_run_key,
-    retrieval_trace_fork_key,
 };
 pub(crate) use self::types::RetrievalRunFinalize;
-#[cfg(test)]
-pub(in crate::store) use self::types::{
-    RETRIEVAL_BLEND_TUNER_ALGORITHM, RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION,
-};
 pub use self::types::{
     RetrievalAction, RetrievalBlendSignal, RetrievalBlendTuningConfig,
     RetrievalBlendWeightDataWindow, RetrievalBlendWeightTableEntry, RetrievalBlendWeights,

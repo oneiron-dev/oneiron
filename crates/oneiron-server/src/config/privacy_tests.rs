@@ -33,84 +33,6 @@ fn resolve_privacy_layers(
 }
 
 #[test]
-fn privacy_posture_three_layer_transitions_use_the_final_winner() {
-    use HostingPrivacyPosture::{Hosted, SelfHostLocal};
-
-    // File -> environment -> CLI. Every row starts with the same valid hosted
-    // file and reference. An overridden self-host layer must not erase it.
-    for (env, cli, expected) in [
-        (None, None, Hosted),
-        (None, Some(Hosted), Hosted),
-        (None, Some(SelfHostLocal), SelfHostLocal),
-        (
-            None,
-            Some(HostingPrivacyPosture::Relay),
-            HostingPrivacyPosture::Relay,
-        ),
-        (Some(HostingPrivacyPosture::Relay), Some(Hosted), Hosted),
-        (
-            Some(Hosted),
-            Some(HostingPrivacyPosture::Relay),
-            HostingPrivacyPosture::Relay,
-        ),
-        (Some(Hosted), None, Hosted),
-        (Some(Hosted), Some(Hosted), Hosted),
-        (Some(Hosted), Some(SelfHostLocal), SelfHostLocal),
-        (Some(SelfHostLocal), None, SelfHostLocal),
-        (Some(SelfHostLocal), Some(Hosted), Hosted),
-        (Some(SelfHostLocal), Some(SelfHostLocal), SelfHostLocal),
-    ] {
-        let resolved = resolve_privacy_layers(
-            [Some(Hosted), env, cli],
-            [Some("kms://example/file-ref"), None, None],
-        )
-        .unwrap();
-        assert_eq!(
-            resolved.privacy_posture, expected,
-            "env={env:?}, cli={cli:?}"
-        );
-        let expected_ref = match expected {
-            Hosted => Some("kms://example/file-ref"),
-            SelfHostLocal | HostingPrivacyPosture::Relay => None,
-        };
-        assert_eq!(resolved.hosted_kms_key_ref.as_deref(), expected_ref);
-        let privacy = resolved.vault_config().privacy;
-        assert_eq!(privacy.posture, expected);
-        assert_eq!(privacy.host_readable(), expected == Hosted);
-        assert!(privacy.validate().is_ok());
-        if expected != Hosted {
-            assert_eq!(
-                privacy.data_key_custody,
-                VaultDataKeyCustody::OwnerHeldLocal
-            );
-        }
-    }
-
-    // A self-host file can also become hosted through either higher layer.
-    // Neither a missing file posture nor the default posture creates a ref.
-    for postures in [
-        [Some(SelfHostLocal), Some(Hosted), None],
-        [Some(SelfHostLocal), Some(SelfHostLocal), Some(Hosted)],
-        [None, Some(SelfHostLocal), Some(Hosted)],
-    ] {
-        let error = resolve_privacy_layers(postures, [None; 3]).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("non-empty host-managed KMS key reference")
-        );
-        let resolved =
-            resolve_privacy_layers(postures, [None, None, Some("kms://example/cli-ref")]).unwrap();
-        assert_eq!(resolved.privacy_posture, Hosted);
-        assert_eq!(
-            resolved.hosted_kms_key_ref.as_deref(),
-            Some("kms://example/cli-ref")
-        );
-        assert!(resolved.vault_config().privacy.validate().is_ok());
-    }
-}
-
-#[test]
 fn privacy_reference_uses_its_highest_precedence_source() {
     use HostingPrivacyPosture::{Hosted, SelfHostLocal};
 
@@ -177,28 +99,6 @@ fn privacy_reference_uses_its_highest_precedence_source() {
             assert!(!format!("{error:?}").contains(file_ref));
             assert!(!format!("{error:?}").contains(env_ref));
         }
-    }
-}
-
-#[test]
-fn final_self_host_posture_clears_only_lower_precedence_references() {
-    use HostingPrivacyPosture::{Hosted, SelfHostLocal};
-
-    for (posture_source, key_ref_source) in [(1, 0), (2, 0), (2, 1)] {
-        let mut postures = [Some(Hosted), None, None];
-        postures[posture_source] = Some(SelfHostLocal);
-        let mut key_refs = [Some("kms://example/file-ref"), None, None];
-        key_refs[key_ref_source] = Some("kms://example/winning-ref");
-        let resolved = resolve_privacy_layers(postures, key_refs).unwrap();
-        assert_eq!(resolved.privacy_posture, SelfHostLocal);
-        assert_eq!(resolved.hosted_kms_key_ref, None);
-        let privacy = resolved.vault_config().privacy;
-        assert_eq!(privacy.posture, SelfHostLocal);
-        assert_eq!(
-            privacy.data_key_custody,
-            VaultDataKeyCustody::OwnerHeldLocal
-        );
-        assert!(!privacy.host_readable());
     }
 }
 

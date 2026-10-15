@@ -38,15 +38,16 @@ impl Vault {
         let now = self.now_recorded_at();
         // Authenticate before attacker-controlled image decode. Count the
         // attempt separately so an observation failure never denies signing.
-        let (document, recipient) = self.with_write_txn(|txn| {
+        let (document, recipient) = self.with_write_txn_grouped(|txn| {
             let cap = binding(self, txn, token)?;
             if cap.revoked_at.is_some() || now >= cap.hard_expires_at {
                 return Err(invalid("invalid capability"));
             }
             Ok((cap.document, cap.recipient))
         })?;
-        let _ =
-            self.with_write_txn(|txn| super::rate::observe(self, txn, &document, &recipient, now));
+        let _ = self.with_write_txn_grouped(|txn| {
+            super::rate::observe(self, txn, &document, &recipient, now)
+        });
         if bytes.is_empty() || bytes.len() > 2 * 1024 * 1024 {
             return Err(invalid("signature image size"));
         }
@@ -75,7 +76,7 @@ impl Vault {
             return Err(invalid("signature image output size"));
         }
         let now = self.now_recorded_at();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let cap = binding(self, txn, token)?;
             let id = EntityId::from_hex(&cap.document)?;
             let state = state_in(self, txn, id)?;
@@ -173,7 +174,7 @@ impl Vault {
     ) -> Result<Vec<u8>> {
         reference(image_ref)?;
         let now = self.now_recorded_at();
-        let _ = self.with_write_txn(|txn| {
+        let _ = self.with_write_txn_grouped(|txn| {
             let cap = binding(self, txn, token)?;
             super::rate::observe(self, txn, &cap.document, &cap.recipient, now)
         });

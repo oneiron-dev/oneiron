@@ -75,7 +75,9 @@ pub(super) fn outbound_delivery_window_decision_at_door(
     )
 }
 
-pub(super) fn stored_delivery_window_policy_claims(
+/// The `delivery_window.*` claims the execute door reads for `subjects`: each
+/// claim on one of them that its `claim_of` edge reaches.
+pub(crate) fn stored_delivery_window_policy_claims(
     vault: &Vault,
     subjects: &[EntityId],
 ) -> crate::Result<Vec<DeliveryWindowPolicyClaim>> {

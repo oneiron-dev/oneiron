@@ -41,19 +41,74 @@ pub struct AuthenticatedOwner {
     /// The vault that authenticated this principal. A proof from a different
     /// vault must never authorize reading or acting on this vault's records.
     vault_path: std::path::PathBuf,
+    /// The open of that vault (`StoreCore::open_nonce`): a path names a
+    /// place, and another vault may open there after a close.
+    vault_open: [u8; 16],
+    /// The verified capability that carried this owner's request, when a
+    /// transport bound one ([`Vault::bind_owner_credential`]). Every
+    /// revalidation then also requires that capability to be live and the
+    /// actor to be an owner of this vault.
+    credential: Option<Box<crate::authority::VerifiedSlip>>,
 }
 
 impl AuthenticatedOwner {
-    /// The authenticated human actor.
+    /// The authenticated human actor, for tests that inspect a proof. A door
+    /// takes it from [`Self::revalidate_in_txn`] or [`Self::actor_for_read`].
+    #[cfg(test)]
     #[must_use]
     pub const fn actor(&self) -> EntityId {
         self.actor
     }
 
-    /// The authenticated principal reference.
+    /// The authenticated principal reference, for tests that inspect a proof.
+    #[cfg(test)]
     #[must_use]
     pub fn principal_ref(&self) -> &str {
         &self.principal_ref
+    }
+
+    /// The actor for a pure read: this proof belongs to `vault`. Never for an
+    /// act of owner authority, which takes its actor from
+    /// `revalidate_in_txn` inside the acting transaction.
+    pub fn actor_for_read(&self, vault: &Vault) -> Result<EntityId> {
+        self.check_vault(vault)?;
+        Ok(self.actor)
+    }
+
+    /// [`Self::actor_for_read`] for the principal reference: never for an
+    /// act of owner authority.
+    pub fn principal_ref_for_read(&self, vault: &Vault) -> Result<&str> {
+        self.check_vault(vault)?;
+        Ok(&self.principal_ref)
+    }
+
+    /// [`Self::revalidate`] for a door that names its actor by principal
+    /// reference and has no transaction of its own.
+    pub fn revalidate_principal_ref(&self, vault: &Vault) -> Result<&str> {
+        self.revalidate(vault)?;
+        Ok(&self.principal_ref)
+    }
+
+    /// [`Self::revalidate_in_txn`], for a door that names its actor by
+    /// principal reference.
+    pub(crate) fn principal_ref_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<&str> {
+        self.revalidate_in_txn(vault, txn)?;
+        Ok(&self.principal_ref)
+    }
+
+    fn check_vault(&self, vault: &Vault) -> Result<()> {
+        if self.vault_path.as_path() != vault.store.env.path()
+            || self.vault_open != vault.store.open_nonce
+        {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "owner proof belongs to another vault",
+            )));
+        }
+        Ok(())
     }
 
     /// The Gate decision this AUTHENTICATION is bound to.
@@ -68,21 +123,66 @@ impl AuthenticatedOwner {
         self.decision_id
     }
 
-    pub(crate) fn revalidate_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
-        if self.vault_path.as_path() != vault.store.env.path() {
-            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                "owner proof belongs to another vault",
-            )));
-        }
+    /// `revalidate_in_txn` in its own read transaction, for a door that
+    /// checks its owner before it opens its writer. A door never rebuilds a
+    /// proof from its public fields instead: a proof another vault
+    /// authenticated for the same PERSON id would pass that.
+    pub fn revalidate(&self, vault: &Vault) -> Result<EntityId> {
+        let txn = vault.store.env.read_txn()?;
+        self.revalidate_in_txn(vault, &txn)
+    }
+
+    /// The actor of an act of owner authority: this proof belongs to `vault`,
+    /// its person is live, and the credential it carried is still live and
+    /// still an owner's, all in the acting transaction.
+    pub(crate) fn revalidate_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<EntityId> {
+        self.check_vault(vault)?;
         if !person_is_live_in_txn(vault, txn, &self.actor)? {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "authenticated owner is no longer active",
             )));
         }
-        Ok(())
+        if let Some(credential) = &self.credential {
+            // Rechecked in the caller's transaction: a capability revoked, or
+            // an owner removed, while the request waited for the writer
+            // commits nothing.
+            if !vault.capability_slip_is_live_in_txn(txn, credential)? {
+                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                    "owner credential is no longer live",
+                )));
+            }
+            if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &self.actor)? {
+                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                    "authenticated actor is no longer an owner of this vault",
+                )));
+            }
+        }
+        Ok(self.actor)
     }
 
-    fn stamp(&self) -> ConsentOwnerStamp {
+    /// [`Self::revalidate_in_txn`], and the actor owns this vault even when
+    /// no transport bound a credential. A native host's proof shows a live
+    /// person, not whose vault this is, so a door that writes the talk of a
+    /// room into this vault asks for both.
+    pub(crate) fn revalidate_as_vault_owner_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<EntityId> {
+        let actor = self.revalidate_in_txn(vault, txn)?;
+        if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)? {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "authenticated actor is not an owner of this vault",
+            )));
+        }
+        Ok(actor)
+    }
+
+    pub(super) fn stamp(&self) -> ConsentOwnerStamp {
         ConsentOwnerStamp {
             actor: self.actor,
             principal_ref: self.principal_ref.clone(),
@@ -92,7 +192,9 @@ impl AuthenticatedOwner {
 }
 
 /// The authentication door's liveness test: the id names a PERSON whose
-/// identity lifecycle is Active (not deleted, merged or split).
+/// identity lifecycle is Active (not merged or split) and that is not deleted.
+/// A plain user delete keeps the PERSON shell and its Active lifecycle; only
+/// the deletion tombstone says the owner is gone.
 pub(crate) fn person_is_live_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -103,7 +205,8 @@ pub(crate) fn person_is_live_in_txn(
         .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_PERSON);
     Ok(human
         && vault.entity_lifecycle_state_in_txn(txn, id)?
-            == crate::identity_topology::EntityLifecycleState::Active)
+            == crate::identity_topology::EntityLifecycleState::Active
+        && !crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, id)?.deleted)
 }
 
 /// The pinned Gate `actor_class` for owner-authored consent decisions.
@@ -183,6 +286,12 @@ impl Vault {
                 )));
             }
         }
+        // A deleted PERSON keeps its shell and its Active lifecycle.
+        if !person_is_live_in_txn(self, &self.store.env.read_txn()?, &actor)? {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "actor is deleted, not an owner",
+            )));
+        }
         // A hex principal ref is an entity reference: it must decode to THIS
         // actor, or the authenticated principal and the minted grant would
         // name different actors.
@@ -198,7 +307,52 @@ impl Vault {
             principal_ref,
             decision_id,
             vault_path: self.store.env.path().to_path_buf(),
+            vault_open: self.store.open_nonce,
+            credential: None,
         })
+    }
+
+    /// Binds `owner` to the verified, full owner-grade capability its request
+    /// arrived with. From then on every door that revalidates the proof in
+    /// its committing transaction also refuses once that capability is
+    /// revoked or expired, or once the actor is no longer an owner of this
+    /// vault, so a request queued behind either change never lands.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when the capability is not the owner's own unattenuated human slip, is
+    /// no longer live, or the actor is not an owner of this vault now.
+    pub fn bind_owner_credential(
+        &self,
+        mut owner: AuthenticatedOwner,
+        credential: crate::authority::VerifiedSlip,
+    ) -> Result<AuthenticatedOwner> {
+        let claims = credential.claims();
+        if !credential.is_full_vault_owner_grade()
+            || claims.holder_ref != owner.actor.to_hex()
+            || claims.actor_class.as_deref() != Some(CONSENT_ACTOR_CLASS)
+        {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "credential is not this owner's own full slip",
+            )));
+        }
+        owner.credential = Some(Box::new(credential));
+        self.recheck_owner(&owner)?;
+        Ok(owner)
+    }
+
+    /// Rechecks `owner` against the vault as it stands now: the person is
+    /// live and, for a bound credential, the capability is live and the actor
+    /// still owns this vault. For an act that keeps no row of its own to
+    /// recheck in, so it runs only if the proof still holds when it starts.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when the proof no longer holds.
+    pub fn recheck_owner(&self, owner: &AuthenticatedOwner) -> Result<()> {
+        let txn = self.store.env.read_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        Ok(())
     }
 
     fn is_store_truth_human_actor(&self, actor: &EntityId) -> Result<bool> {
@@ -232,7 +386,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         effect_digest: EffectDigest,
     ) -> Result<ConsentReceipt> {
-        self.with_write_txn(|wtxn| self.approve_once_in_txn(wtxn, owner, effect_digest))
+        self.with_write_txn_grouped(|wtxn| self.approve_once_in_txn(wtxn, owner, effect_digest))
     }
 
     /// Composes the exact consent receipt with the effect it authorizes.
@@ -292,7 +446,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         bound: GrantBound,
     ) -> Result<ConsentReceipt> {
-        self.with_write_txn(|wtxn| self.create_standing_grant_in_txn(wtxn, owner, bound))
+        self.with_write_txn_grouped(|wtxn| self.create_standing_grant_in_txn(wtxn, owner, bound))
     }
 
     /// Transaction-composable [`Vault::create_standing_grant`].
@@ -319,6 +473,7 @@ impl Vault {
             status: ConsentGrantStatus::Active,
             owner_stamp: owner.stamp(),
             created_at: mutation_recorded_at,
+            bypass: None,
         };
         let receipt = ConsentReceipt::Approved {
             decision_id: crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?),
@@ -565,9 +720,29 @@ impl Vault {
         {
             spend_approve_once_in_txn(&self.store, &mut wtxn, authorization)?;
         }
+        // DEC-0006 invariant 7: inside its scope, the owner's live bypass
+        // grant replaces the floor's ask, and the act is receipted as
+        // bypassed in this same transaction.
+        if context.decision == ConsentDecision::Ask {
+            let floor =
+                crate::gate::resolve_policy_manifest(&self.store, &wtxn)?.catastrophe_floor();
+            let bypasses = super::bypass::live_bypasses_in_txn(&self.store, &wtxn)?;
+            if let Some(bypass) = super::bypass::covering_bypass(effect, &floor, &bypasses, &grants)
+            {
+                self.record_bypassed_act_in_txn(&mut wtxn, bypass, effect.digest())?;
+                let evaluation = ConsentEvaluation {
+                    decision: ConsentDecision::Auto,
+                    reason_codes: Vec::new(),
+                    bypassed_by: Some(bypass.grant_ref.clone()),
+                };
+                wtxn.commit()?;
+                return Ok(evaluation);
+            }
+        }
         let evaluation = ConsentEvaluation {
             decision: context.decision,
             reason_codes: crate::gate::consent_gate_reason_codes(&context),
+            bypassed_by: None,
         };
         wtxn.commit()?;
         Ok(evaluation)
@@ -604,12 +779,18 @@ impl Vault {
             .collect())
     }
 
+    /// Every owner-authored consent act (a grant, an approval, a denial, a
+    /// revocation) lands its receipt here, in the transaction that writes the
+    /// act. The proof is rechecked in that transaction: one from another
+    /// vault, or whose owner or credential has gone, fails the act and the
+    /// transaction commits none of it.
     pub(super) fn append_consent_receipt_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,
         receipt: &ConsentReceipt,
     ) -> Result<()> {
+        owner.revalidate_in_txn(self, &*wtxn)?;
         self.append_consent_gate_decision_in_txn(wtxn, &owner.stamp(), receipt, None)
     }
 
@@ -618,7 +799,7 @@ impl Vault {
     /// `diff_handle` holds the effect/bound digest and `grant_ref` joins
     /// standing use, exactly as every other Gate receipt does — no second
     /// receipt ledger is minted.
-    fn append_consent_gate_decision_in_txn(
+    pub(super) fn append_consent_gate_decision_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         stamp: &ConsentOwnerStamp,
@@ -675,6 +856,8 @@ pub struct ConsentEvaluation {
     /// Stable `gate.`-namespaced pending reason codes; empty iff `decision`
     /// is [`ConsentDecision::Auto`].
     pub reason_codes: Vec<String>,
+    /// The bypass grant this op ran under instead of asking, if one did.
+    pub bypassed_by: Option<String>,
 }
 
 /// The catastrophe class a bound would cover, if any.
@@ -708,7 +891,9 @@ pub fn load_active_standing_grants(
     Ok(GRANTS
         .scan(store, txn)?
         .into_iter()
-        .filter_map(|(_, row)| row.is_active().then_some(row.grant))
+        // A bypass row covers only catastrophe-floor ops inside its scope,
+        // through the bypass arm; it is never an ordinary standing grant.
+        .filter_map(|(_, row)| (row.is_active() && row.bypass.is_none()).then_some(row.grant))
         .collect())
 }
 

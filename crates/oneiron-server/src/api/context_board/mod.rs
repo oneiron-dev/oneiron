@@ -3,12 +3,14 @@
 //! Step two: `EmptyContext`/`memories` when retrieval is skipped: today `memories: None`; the tail always renders MEMORIES once the renderer lands.
 
 mod cursor;
+mod history;
 mod memories;
 mod prefix;
 mod session;
 mod standing;
 
 pub(crate) use cursor::*;
+pub(crate) use history::*;
 pub(crate) use memories::*;
 pub(crate) use prefix::*;
 pub(crate) use session::*;
@@ -60,6 +62,10 @@ pub(crate) struct ContextBoardRequest {
     /// Append a current describe(self) card to the tail of an existing run.
     #[serde(default)]
     describe_self: bool,
+    /// The TURN this board is assembled for: its board joins the caller's
+    /// board history (ARCH-0067 §3). Needs `core:write`.
+    #[serde(default)]
+    turn: Option<ContextBoardTurnControls>,
 }
 
 /// The assembled context for one turn.
@@ -104,6 +110,9 @@ pub(crate) struct ContextBoardResponse {
     self_brief: Option<oneiron::context_board::PlacedSelfBrief>,
     /// This turn's capability agent candidates.
     agents: Vec<String>,
+    /// What recording the named TURN's board wrote; absent without `turn`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    board_turn: Option<ContextBoardTurnRecord>,
 }
 
 /// Session prefix: API level, entity counts by numeric type, latest activity.
@@ -114,9 +123,12 @@ pub(crate) struct ContextBoardSession {
     #[schema(example = "v1")]
     api_version: String,
     /// Live entity counts keyed by numeric entity type; zero counts are omitted.
+    /// Always empty: a count may count only rows the caller's key reads, and
+    /// no key reads every row.
     #[schema(example = json!({ "16": 1 }))]
     counts: BTreeMap<String, u64>,
-    /// Latest learned-at timestamp across agent-visible entities.
+    /// Latest learned-at timestamp across agent-visible entities. Always
+    /// null, for the same reason.
     #[serde(rename = "last_activity")]
     #[schema(example = 1_770_000_000_u64)]
     last_activity: Option<u64>,
@@ -184,7 +196,9 @@ pub(crate) struct ContextBoardBudget {
         (status = 200, description = "Context board hydrated.", body = ContextBoardResponse, content_type = "application/json"),
         (status = 400, description = "Malformed context-board request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read, or core:write when naming a turn.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "The named turn is not readable.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The named turn's board is already recorded, the turn is another actor's, or a selected document is not readable.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Context-board hydration failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -192,10 +206,17 @@ pub(crate) async fn context_board_hydrate(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<ContextBoardRequest>, JsonRejection>,
-) -> Result<Json<ContextBoardResponse>, EnvelopedApiError> {
+) -> Result<
+    (
+        axum::Extension<crate::idempotency::ServedRows>,
+        Json<ContextBoardResponse>,
+    ),
+    EnvelopedApiError,
+> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let mut req = json_payload(payload)?;
+    let board_turn = board_turn_target(&server, &auth, req.turn.as_ref())?;
     let standing = standing::standing_prefix(&server, &auth, req.standing.as_ref()).await?;
     if let Some(prefix) = &standing
         && let Some(retrieval) = &mut req.retrieval
@@ -213,8 +234,11 @@ pub(crate) async fn context_board_hydrate(
     // same key the MEMORIES cursor store already uses.
     let caller = auth.principal_ref().unwrap_or(auth.principal()).trim();
 
-    let session = session_prefix(&server).await?;
-    let notifications = pending_notifications(&server, caller)?;
+    let read = super::scoped_read_for_core_auth(&server.vault, &auth)?;
+    // The vault's counts and latest activity span rows no key reads all of
+    // (another principal's claims), so every caller reads an empty inventory.
+    let session = empty_session_prefix();
+    let notifications = pending_notifications(&server, &read, caller)?;
     let unprocessed = pending_unprocessed_items(&server, caller);
     let budget = standing.as_ref().map_or_else(
         || current_hydration_budget(&server),
@@ -226,6 +250,11 @@ pub(crate) async fn context_board_hydrate(
         },
     );
 
+    let named_contacts = req
+        .retrieval
+        .as_ref()
+        .map(CoreContextPackRequest::named_contacts)
+        .unwrap_or_default();
     let (pack, memories, advanced) = match req.retrieval {
         Some(retrieval) => {
             let memories = resolve_memories_request(
@@ -243,14 +272,26 @@ pub(crate) async fn context_board_hydrate(
         None => (None, None, None),
     };
 
-    let installed_packs: Vec<(String, String)> = server
+    // The pack inventory the rider folds and the session records is the
+    // caller's: a pack whose source row it cannot read is not installed.
+    let mut installed_packs: Vec<(String, String)> = Vec::new();
+    let mut pack_sources = Vec::new();
+    for row in server
         .vault
         .installed_packs()
         .map_err(|error| super::core_engine_error("pack inventory failed", error))?
-        .into_iter()
-        .map(|row| (row.pack_name, row.content_hash))
-        .collect();
-    let read = super::scoped_read_for_core_auth(&server.vault, &auth)?;
+    {
+        let Ok(source) = oneiron::EntityId::from_hex(&row.source_id) else {
+            continue;
+        };
+        if read
+            .is_entity_readable(&source)
+            .map_err(|error| super::core_engine_error("pack inventory failed", error))?
+        {
+            installed_packs.push((row.pack_name, row.content_hash));
+            pack_sources.push(source);
+        }
+    }
     // The rider is folded from, and acknowledged into, this one session.
     let session_id = resolved_session_id(
         &server,
@@ -260,7 +301,7 @@ pub(crate) async fn context_board_hydrate(
     .await?;
     let reads = session_read_set(&server, caller, session_id.as_deref()).await?;
     // The authenticated principal's own proposal outcomes and connector
-    // changes ride the same line; this route already refuses narrowed slips.
+    // changes ride the same line, each only while the caller's read reads it.
     let own = auth
         .principal_ref()
         .and_then(|reference| oneiron::EntityId::from_hex(reference).ok());
@@ -274,7 +315,7 @@ pub(crate) async fn context_board_hydrate(
             );
             changed.rows.extend(installs.rows);
             changed.overflow += installs.overflow;
-            reads.fold_own_changes(&server.vault, own, &mut changed, 16)?;
+            reads.fold_own_changes(&read, own, auth.locality(), &mut changed, 16)?;
             Ok::<_, oneiron::Error>(changed)
         })
         .transpose()
@@ -366,7 +407,7 @@ pub(crate) async fn context_board_hydrate(
     } else {
         None
     };
-    let response = ContextBoardResponse {
+    let mut response = ContextBoardResponse {
         standing,
         session,
         notifications,
@@ -380,18 +421,22 @@ pub(crate) async fn context_board_hydrate(
         skills,
         agents,
         self_brief,
+        board_turn: None,
     };
-    if let Some(prefix) = &response.standing {
-        let wire = serde_json::to_string(&response).map_err(|_| {
-            crate::error::ApiError::internal_server_error("context serialization failed")
-        })?;
-        if oneiron::count_context_pack_tokens(&wire) > prefix.total_tokens {
-            return Err(crate::error::ApiError::bad_request(
-                "session prefix and retrieval exceed the token budget",
-                Some("standing.token_budget"),
-            )
-            .into());
+    match board_turn {
+        // The turn's record is part of the response the budget counts, so the
+        // check runs inside the recording transaction, with the real record:
+        // a refused hydration leaves the turn free to record its board.
+        Some(target) => {
+            record_board_turn(
+                &server,
+                &read,
+                target,
+                &mut response,
+                within_standing_budget,
+            )?;
         }
+        None => within_standing_budget(&response)?,
     }
     let prefix_committed = staged_prefix.is_some();
     if let Some((key, render, epoch)) = staged_prefix {
@@ -412,7 +457,76 @@ pub(crate) async fn context_board_hydrate(
             reads.acknowledge(&changed_line);
         }
     }
-    Ok(Json(response))
+    // The rows this board was derived from, kept beside a keyed replay of it.
+    // A replay re-admits each row it named beyond its documents: every
+    // notification, rider row (those its overflow counts too), pack source,
+    // named or stamped contact and discovered capability.
+    let mut admit: Vec<_> = response
+        .notifications
+        .iter()
+        .filter_map(|notification| oneiron::EntityId::from_hex(&notification.id).ok())
+        .collect();
+    admit.extend(rider_admits(&changed_line));
+    admit.extend(pack_sources);
+    admit.extend(named_contacts);
+    if let Some(pack) = &response.pack {
+        admit.extend(pack.replay_admits());
+    }
+    let mut served: Vec<_> = crate::device_local::changed_line_rows(&changed_line).collect();
+    served.extend(admit.iter().copied());
+    if let Some(pack) = &response.pack {
+        served.extend(
+            pack.served_rows()
+                .map_err(|error| super::core_engine_error("board rows failed", error))?,
+        );
+    }
+    let memories = response.memories.iter().flat_map(|memories| &memories.rows);
+    let standing = response.standing.iter().map(|prefix| &prefix.world_ref);
+    served.extend(
+        memories
+            .map(|row| &row.id)
+            .chain(standing)
+            .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
+    );
+    Ok((
+        axum::Extension(crate::idempotency::ServedRows {
+            rows: served,
+            admit: Some(admit),
+        }),
+        Json(response),
+    ))
+}
+
+/// The rows a board's rider named or counted, each of which a replay of the
+/// board re-admits (`ChangedLine::named_rows`): every lifecycle row and its
+/// successor, every installed skill, every own proposal whose outcome it
+/// carried, and the key of every connector it mounted, those its overflow
+/// counts included. An erased proposal has no row left to admit, and a
+/// removed connector's key is one the reader was already shown.
+fn rider_admits(
+    line: &oneiron::context_board::ChangedLine,
+) -> impl Iterator<Item = oneiron::EntityId> + '_ {
+    line.named_rows().filter_map(|id| {
+        let hex = id.rsplit_once(':').map_or(id, |(_, hex)| hex);
+        oneiron::EntityId::from_hex(hex).ok()
+    })
+}
+
+/// A standing session's response must fit its whole token budget.
+fn within_standing_budget(response: &ContextBoardResponse) -> Result<(), crate::error::ApiError> {
+    let Some(prefix) = &response.standing else {
+        return Ok(());
+    };
+    let wire = serde_json::to_string(response).map_err(|_| {
+        crate::error::ApiError::internal_server_error("context serialization failed")
+    })?;
+    if oneiron::count_context_pack_tokens(&wire) > prefix.total_tokens {
+        return Err(crate::error::ApiError::bad_request(
+            "session prefix and retrieval exceed the token budget",
+            Some("standing.token_budget"),
+        ));
+    }
+    Ok(())
 }
 
 /// The authenticated SDK describe(self) path uses the same run snapshot and

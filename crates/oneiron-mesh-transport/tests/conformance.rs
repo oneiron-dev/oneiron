@@ -1,4 +1,5 @@
-//! The same admission, stream and reconnect laws for the in-memory and iroh transports.
+//! The admission, stream and reconnect laws for the iroh transport.
+#![cfg(feature = "iroh")]
 use oneiron::entity_id::EntityId;
 use oneiron_mesh_transport::{
     AcceptPolicy, MachineGrants, MachineId, MachineRoster, MeshError, MeshMachineAddress,
@@ -342,7 +343,6 @@ async fn laws(
         .unwrap(); // reconnect after drop
 }
 
-#[cfg(feature = "iroh")]
 #[tokio::test]
 async fn iroh_loopback_conformance() {
     use oneiron_mesh_transport::iroh_transport::IrohTransport;

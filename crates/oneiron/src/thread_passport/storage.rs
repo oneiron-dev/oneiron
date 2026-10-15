@@ -16,10 +16,10 @@ pub(super) fn require_channel_identity(
     wtxn: &heed::RwTxn<'_>,
     id: EntityId,
 ) -> Result<()> {
+    // Read wiped: the id is the caller's, and may name a custody row.
     let raw = vault
         .store
-        .port_entity_record(wtxn, &id)?
-        .map(|row| row.encode())
+        .port_entity_raw_wiped(wtxn, &id)?
         .ok_or(Error::EntityNotFound)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or_else(|| corrupt("entity header"))?;
     if header.entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
@@ -107,9 +107,13 @@ pub(crate) fn validate_thread_claim_in_txn(
     body: &ClaimBody,
     replicated: bool,
 ) -> Result<()> {
-    if let Some(raw) = store.port_entity_record(rtxn, id)?.map(|row| row.encode())
+    // A put reaches this on any prior row, a custody record among them, whose
+    // body carries its value (ARCH-0069 S1): the copy is wiped.
+    if let Some(raw) = store.port_entity_raw_wiped(rtxn, id)?
         && EntityMetadataHeader::parse(&raw)
-            .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+            .ok_or(Error::CorruptedIndex("entity header"))?
+            .entity_type
+            == crate::registry::ENTITY_TYPE_CLAIM
         && let Ok(prior) =
             crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)
         && is_thread_claim_predicate(&prior.predicate)
@@ -143,10 +147,9 @@ pub(super) fn validate_thread_claim_owner_in_txn(
     let ClaimSubject::Entity(subject) = body.subject else {
         unreachable!("validated subject")
     };
-    let Some(raw) = store
-        .port_entity_record(rtxn, &subject)?
-        .map(|row| row.encode())
-    else {
+    // Read wiped: an enveloped or replicated claim names its own subject,
+    // which may be a custody row.
+    let Some(raw) = store.port_entity_raw_wiped(rtxn, &subject)? else {
         return if replicated {
             Ok(())
         } else {

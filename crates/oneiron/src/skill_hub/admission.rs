@@ -52,17 +52,17 @@ pub enum HubAdmissionDisposition {
     Ruled(Box<HubAdmissionReceipt>),
 }
 impl Vault {
-    /// Restore is owner-only even for a no-op. Plain user delete retains a
-    /// PERSON shell; the generic registry-lifecycle check alone cannot see
-    /// its deletion tombstone.
+    /// Restore, and a shared merge's rollback where it asks, is owner-only
+    /// even for a no-op. Plain user delete retains a PERSON shell; the
+    /// generic registry-lifecycle check alone cannot see its deletion
+    /// tombstone.
     pub(super) fn check_restore_owner_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         owner: &AuthenticatedOwner,
     ) -> Result<()> {
-        owner.revalidate_in_txn(self, txn)?;
-        if crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, txn, &owner.actor())?
-            .deleted
+        let actor = owner.revalidate_in_txn(self, txn)?;
+        if crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, txn, &actor)?.deleted
         {
             return Err(crate::error::Error::Gate(
                 crate::error::GateError::ConsentOwnerNotAuthenticated(
@@ -118,7 +118,7 @@ impl Vault {
         ask: &HubActivationAsk,
         owner: &AuthenticatedOwner,
     ) -> Result<ConsentReceipt> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.check_hub_ask_in_txn(txn, ask)?;
             self.approve_once_in_txn(txn, owner, ask.effect)
         })
@@ -170,7 +170,7 @@ impl Vault {
         if scorer.judge_revision() != judge_revision {
             return Err(invalid("marketplace judge revision moved during scoring"));
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             crate::skill_optimize::ensure_current_judge_in_txn(self, txn, &judge_revision)?;
             self.check_hub_ask_in_txn(txn, ask)?;
             let authorization =
@@ -219,7 +219,6 @@ impl Vault {
         record: &crate::skill::SkillRecord,
         occurred: TimeRange,
         learned_at: u64,
-        authorization: &crate::consent::ApproveOnceAuthorization,
         refinement: super::refinement_admission::RefinementAdmissionProof,
     ) -> Result<()> {
         let candidate = refinement.candidate();
@@ -227,8 +226,9 @@ impl Vault {
         admitted.approval_status = ClaimApprovalStatus::Approved;
         admitted.lifecycle_status = SkillLifecycle::Active;
         let data = crate::skill::encode_skill_record(&admitted)?;
-        let proof =
-            super::HubAdmissionProof::consent(&self.store, txn, candidate, &data, authorization)?;
+        // The useful-upstream yes and the held-out win the refinement proof
+        // binds are the admission; a merge carries no per-merge approval.
+        let proof = super::HubAdmissionProof::refined(candidate, &data);
         self.admit_hub_skill_record_with_refinement_in_txn(
             txn,
             occurred,

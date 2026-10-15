@@ -3,6 +3,7 @@
 //! edge-record helpers kept for Vault-facing compatibility.
 
 mod actors_memory;
+mod database_digests;
 mod doctor_manifest;
 mod edges;
 mod entities;
@@ -19,8 +20,11 @@ mod places;
 
 #[cfg(feature = "test-support")]
 mod read_fixture;
+mod reader_table;
+mod retrieval_trace_key;
 mod search_retrieval;
 mod transactions;
+mod vector_evidence;
 
 use crate::analyzer::MultilingualAnalyzer;
 use crate::config::{VaultConfig, VaultPrivacyConfig};
@@ -29,6 +33,8 @@ use crate::store::Store;
 pub use crate::store::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};
 
 pub use self::actors_memory::ActorBound;
+#[cfg(test)]
+pub(crate) use self::database_digests::{mask_embed_job_stamps, mask_unrepeatable_stamps};
 pub use self::doctor_manifest::{
     TextIndexStatus, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState,
     VaultDoctorHnswReport, VaultDoctorReport,
@@ -40,6 +46,7 @@ pub(crate) use self::doctor_manifest::{
 pub(crate) use self::edges::edge_kind_prefix;
 pub(crate) use self::edges::{
     CLAIM_OF_DEFAULT_WEIGHT, MAX_EDGE_QUERY_RESULTS, SUPERSEDES_DEFAULT_WEIGHT,
+    filtered_edge_peers_in,
 };
 pub use self::entities::HydratedShortId;
 /// The composed session census bounds itself exactly like [`Vault::entities_by_type`],
@@ -51,6 +58,10 @@ pub(crate) use self::entities::{
 };
 pub(crate) use self::identity::VaultId;
 pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
+pub use self::reader_table::ReaderTableShortfall;
+#[cfg(test)]
+pub(crate) use self::retrieval_trace_key::unkeyed_for_test;
+pub(crate) use self::vector_evidence::NoMatchFloors;
 
 /// Main vault API wrapping LMDB storage and configuration.
 pub struct Vault {
@@ -59,13 +70,22 @@ pub struct Vault {
     pub(crate) message_streams: crate::memory::MessageStreamRuntime,
     /// Serializes per-request voice-ref uploads with consent withdrawal.
     pub(crate) voice_ref_guard: std::sync::RwLock<()>,
+    /// One housekeeping pass at a time on this handle.
+    pub(crate) housekeeping: std::sync::Mutex<crate::housekeeping::HousekeepingHandle>,
     #[cfg(feature = "sync")]
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
+    /// Where vector evidence starts now: the configured floors until the host
+    /// sets others ([`Vault::set_vector_evidence`]), and any it set for one
+    /// kind of item in one embedding space ([`Vault::set_vector_evidence_for`]).
+    vector_evidence: std::sync::RwLock<vector_evidence::NoMatchFloors>,
     pub(crate) analyzer: MultilingualAnalyzer,
     /// Which vault this handle belongs to, resolved once at open.
     vault_id: VaultId,
+    /// The key over this vault's stored retrieval-trace fork hashes,
+    /// resolved once at open.
+    retrieval_trace_key: self::retrieval_trace_key::RetrievalTraceKey,
     // Declared after Store: LMDB closes before process ownership is released.
     writer_lease: Option<VaultWriterLease>,
     /// Posture/custody pairing this handle was opened under, retained from the
@@ -106,6 +126,13 @@ pub struct Vault {
     /// sweep safety and must defer.
     #[cfg(feature = "sync")]
     pub(crate) live_window_manager_attached: std::sync::atomic::AtomicBool,
+    /// The speculative passes running on threads of their own (call mode on
+    /// ASR partials), capped against the reader slots.
+    pub(crate) speculative_passes: crate::speculative::SpeculativePasses,
+    /// The deadline tests' slow retrieval stage, armed per vault.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) slow_retrieval_stage:
+        std::sync::Mutex<Option<crate::retrieval_depth::SlowRetrievalStage>>,
 }
 
 #[cfg(test)]

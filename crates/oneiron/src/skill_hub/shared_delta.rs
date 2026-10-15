@@ -109,7 +109,7 @@ impl Vault {
         // Derive identity and capabilities from submitted files, not envelope assertions.
         let mut package = super::folder::package_from_files(envelope.files)?;
         let candidate = EntityId::now();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let current = super::admission_view::read_skill(self, txn, base)?;
             if let Some(fork) = local_fork {
                 let branch = super::admission_view::read_skill(self, txn, fork)?;
@@ -207,7 +207,7 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         let parsed = super::folder::package_from_files(package.files.clone())?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut record = self.read_skill_record_in_txn(txn, fork)?;
             if record.forked_from.is_none()
                 || record.lifecycle_status != SkillLifecycle::Candidate

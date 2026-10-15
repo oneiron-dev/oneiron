@@ -10,7 +10,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_RELATIONSHIP};
-use crate::store::Store;
+use crate::store::StoreRead;
 
 use super::corpus_filter::pipeline_candidate_matches_corpus_filter;
 use super::support::intervals_overlap;
@@ -36,7 +36,7 @@ use crate::error::RegistryError;
 /// in `gate` for context-pack field projection.
 pub(super) fn apply_claim_status_gate(
     scores: &mut Vec<ScoredEntity>,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
     gate: &mut ClaimStatusGateCache,
@@ -54,12 +54,15 @@ pub(super) fn apply_claim_status_gate(
 }
 
 pub(super) fn claim_status_gate_allows(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     metadata_cache: &mut EntityMetadataCache,
     gate: &mut ClaimStatusGateCache,
 ) -> Result<bool> {
+    if gate.keeps_device_local(store, rtxn, id)? {
+        return Ok(false);
+    }
     if crate::vault_cleanup::is_archived_in_txn(store, rtxn, id)? {
         metadata_cache.read_suppressed.insert(*id);
         return Ok(false);
@@ -162,8 +165,9 @@ pub(super) fn import_claim_gate_decisions_for_scores(
 /// whether it may be disclosed — stamp-absence is never invariant evidence.
 /// The exposure decision lives on the disclosure axis: the unstamped
 /// sensitivity floor (`claim_sensitivity_band` reads band 2 on a missing
-/// stamp) today, and the ONE-1646 `disclosable_set` conjunct inside
-/// `admits()` next. Relevance never bypasses that conjunct (P7).
+/// stamp) and the ONE-1646 conjunct, [`crate::disclosure::DisclosableSet`],
+/// that `DisclosureContext::admits` applies. Relevance never bypasses that
+/// conjunct (P7).
 ///
 /// Scope of the CLAIM-only reading: this stage is the LOCAL QUERY door, and a
 /// non-CLAIM `FacetOf` stamp being inert HERE is not a statement about the
@@ -173,7 +177,7 @@ pub(super) fn import_claim_gate_decisions_for_scores(
 /// never generalizes to "disclosure-inert".
 pub(super) fn apply_facet_filter(
     scores: &mut Vec<ScoredEntity>,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
     active_facet: &EntityId,
@@ -233,7 +237,7 @@ pub(super) fn apply_facet_filter(
 /// over the 17-byte `(claim_id ‖ FacetOf)` prefix. Only the edge KEY is
 /// read — `(source, kind, target)` carries the whole facet-scope signal.
 fn claim_facet_scope(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     claim_id: &EntityId,
     active_facet: &EntityId,
@@ -271,11 +275,12 @@ enum ClaimFacetScope {
     /// No `FacetOf` edge — a relevance-neutral claim. Passes every mode.
     ///
     /// NOT invariant evidence: absence of a facet stamp never widens
-    /// disclosure (ONE-1645, P3/V2). The disclosure conjunct (ONE-1646) must
-    /// derive invariant admission from POSITIVE evidence only — a stored
-    /// public stamp or a promotion record — never from this variant. The
-    /// live disclosure floor for unstamped provenance is
-    /// `claim_sensitivity_band`, which reads band 2 on a missing stamp.
+    /// disclosure (ONE-1645, P3/V2). The disclosure conjunct (ONE-1646,
+    /// [`crate::disclosure::DisclosableSet::admits`]) derives public admission
+    /// from POSITIVE evidence only — a stored public sensitivity stamp —
+    /// never from this variant. The disclosure floor for unstamped
+    /// provenance is `claim_sensitivity_band`, which reads band 2 on a
+    /// missing stamp.
     Unfaceted,
     /// At least one `FacetOf` edge targets the active facet.
     ActiveFacet,
@@ -303,7 +308,7 @@ enum ClaimFacetScope {
 /// truncation, so excluded claims free their slots.
 pub(super) fn apply_relationship_filter(
     scores: &mut Vec<ScoredEntity>,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
     active_relationship: &EntityId,
@@ -339,7 +344,7 @@ pub(super) fn apply_relationship_filter(
     Ok(())
 }
 
-fn claim_rel(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
+fn claim_rel(store: &StoreRead<'_>, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
     let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
@@ -353,7 +358,7 @@ fn claim_rel(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<En
 
 pub(super) fn apply_world_filter(
     scores: &mut Vec<ScoredEntity>,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     scope: &WorldScope,
     active_set: Option<&WorldAuthoritySet>,
@@ -401,13 +406,9 @@ pub(super) fn apply_world_filter(
 
     let mut kept = Vec::with_capacity(scores.len());
     for scored in scores.iter().copied() {
-        let keep = match claim_world(store, rtxn, &scored.id)? {
-            // Base is an explicit member, never implicit in a named world.
-            None => target.is_none(),
-            // A world-scoped claim passes only for its own world.
-            Some(world) => target == Some(world),
-        };
-        if keep {
+        // Base is an explicit member, never implicit in a named world; a
+        // world-scoped row passes only for its own world.
+        if record_world(store, rtxn, &scored.id)?.is_some_and(|world| world == target) {
             kept.push(scored);
         }
     }
@@ -429,18 +430,19 @@ pub(super) fn apply_world_filter(
 /// re-scanned, so the cost is one prefix scan regardless of candidate count.
 fn drop_stale_federated_claims(
     scores: &mut Vec<ScoredEntity>,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
 ) -> Result<()> {
-    let stale = crate::federation::stale_stamped_worlds(store, rtxn)?;
+    let stale = crate::federation::stale_stamped_worlds(store.base(), rtxn)?;
     if stale.is_empty() {
         return Ok(());
     }
 
     let mut kept = Vec::with_capacity(scores.len());
     for scored in scores.iter().copied() {
-        let stale_world =
-            claim_world(store, rtxn, &scored.id)?.is_some_and(|world| stale.contains_key(&world));
+        let stale_world = record_world(store, rtxn, &scored.id)?
+            .flatten()
+            .is_some_and(|world| stale.contains_key(&world));
         if !stale_world {
             kept.push(scored);
         }
@@ -451,42 +453,48 @@ fn drop_stale_federated_claims(
 }
 
 /// Reads a candidate's world for the post-fusion world filter (ARCH-0004 /
-/// ARCH-0022). Returns `None` for base reality — a non-claim entity, a claim
-/// with no `world` key, or an entity with no parseable envelope — and
-/// `Some(world_id)` for a world-scoped claim. The claim body is decoded once
-/// through the pinned claim validator (the world key was structurally
-/// validated to 16 bytes at write time).
-fn claim_world(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
+/// ARCH-0022) by the rule every world check reads
+/// (`record_scope::record_world_in`): `Some(None)` for base reality, which
+/// also holds an absent row; a claim's own world, or the world a TASK and
+/// its authority facts were born in; `None` for a TASK that cannot prove
+/// one, which no world selection admits. The claim body is decoded once
+/// through the pinned claim validator, and one that fails to decode fails
+/// the run.
+fn record_world(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<Option<EntityId>>> {
     let Some(raw) = store.port_entity_record(rtxn, id)? else {
-        return Ok(None);
+        return Ok(Some(None));
     };
-
-    if raw.entity_type != ENTITY_TYPE_CLAIM {
-        return Ok(None);
+    if raw.entity_type == ENTITY_TYPE_CLAIM {
+        return Ok(Some(
+            crate::claim::decode_claim_body(&raw.body, true)?.world,
+        ));
     }
-    let body = crate::claim::decode_claim_body(&raw.body, true)?;
-    Ok(body.world)
+    crate::federation::record_scope::record_world_in(store, rtxn, *id, raw.entity_type, &raw.body)
 }
 
 /// Whether one candidate survives a resolved per-turn ActiveSet (ONE-1420).
 ///
-/// Base handling is EXPLICIT: base-reality claims and non-claim entities — the
-/// two things [`claim_world`] reports as `None` — survive only when the active
-/// set includes base. A world-scoped claim survives only when its own world is
-/// a selected member; no other world is reachable, and nothing here consults
-/// the codebase scope key.
+/// Base handling is EXPLICIT: base-reality rows — what [`record_world`]
+/// reports as `Some(None)` — survive only when the active set includes base.
+/// A world-scoped row survives only when its own world is a selected member;
+/// no other world is reachable, and nothing here consults the codebase scope
+/// key.
 fn active_set_admits(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     active_set: &WorldAuthoritySet,
 ) -> Result<bool> {
-    Ok(active_set.admits(claim_world(store, rtxn, id)?))
+    Ok(record_world(store, rtxn, id)?.is_some_and(|world| active_set.admits(world)))
 }
 
 pub(super) fn apply_filters(
     scores: &mut Vec<ScoredEntity>,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     filters: PipelineFilterConfig<'_>,
     metadata_cache: &mut EntityMetadataCache,
@@ -563,13 +571,21 @@ pub(super) fn apply_filters(
 }
 
 pub(super) fn pipeline_candidate_matches_filters_and_gate(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     filters: PipelineFilterConfig<'_>,
     metadata_cache: &mut EntityMetadataCache,
     claim_gate: &mut ClaimStatusGateCache,
 ) -> Result<bool> {
+    if let Some(deadline) = filters.deadline {
+        deadline.checkpoint()?;
+    }
+    if let Some(flagged) = filters.device_local
+        && crate::settings::device_local_keeps_among(store, rtxn, flagged, id)?
+    {
+        return Ok(false);
+    }
     if let Some(filter) = filters.candidate_filter
         && !filter(store, rtxn, id)?
     {
@@ -577,11 +593,7 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     }
     // Scoped text scans can visit the whole corpus. Do not memoize that corpus.
     let mut local_metadata = EntityMetadataCache::default();
-    let mut local_gate = ClaimStatusGateCache {
-        include_stale: filters.authority_filter.include_stale,
-        private_note_ids: claim_gate.private_note_ids.clone(),
-        ..ClaimStatusGateCache::default()
-    };
+    let mut local_gate = claim_gate.fresh(filters.authority_filter.include_stale);
     let (metadata_cache, claim_gate) = if filters.candidate_filter.is_some() {
         (&mut local_metadata, &mut local_gate)
     } else {
@@ -700,9 +712,9 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
 /// disclosure contract (ONE-1645): this is a RELEVANCE decision. Admitting an
 /// unfaceted claim here is not evidence that it is invariant or publicly
 /// disclosable — the unstamped sensitivity floor and the ONE-1646
-/// `disclosable_set` conjunct own that axis.
+/// [`crate::disclosure::DisclosableSet`] conjunct own that axis.
 fn pipeline_candidate_matches_facet_filter(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     entity_type: u8,
@@ -734,7 +746,7 @@ fn pipeline_candidate_matches_facet_filter(
 }
 
 fn pipeline_candidate_matches_relationship_filter(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     entity_type: u8,
@@ -765,7 +777,7 @@ fn pipeline_candidate_matches_relationship_filter(
 }
 
 fn pipeline_candidate_matches_world_filter(
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     scope: &WorldScope,
@@ -794,8 +806,5 @@ fn pipeline_candidate_matches_world_filter(
         }
     };
 
-    Ok(match claim_world(store, rtxn, id)? {
-        None => target.is_none(),
-        Some(world) => target == Some(world),
-    })
+    Ok(record_world(store, rtxn, id)?.is_some_and(|world| world == target))
 }

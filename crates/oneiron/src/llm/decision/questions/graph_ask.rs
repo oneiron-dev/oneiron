@@ -173,7 +173,11 @@ fn asker_reader_in_txn(
         Some(class) => ScopedReadActorKey::with_actor_class(principal.to_hex(), class),
         None => ScopedReadActorKey::new(principal.to_hex()),
     };
-    key.ok_or(Error::InvariantViolation("canonical ask principal"))
+    // A relationship's rows answer the asker only on its own membership or
+    // live grant, as on every other read lane, unless the asker is the
+    // vault's live owner; the vault's own rows stay its to read.
+    key.map(|key| key.exempt_while_owner(principal))
+        .ok_or(Error::InvariantViolation("canonical ask principal"))
 }
 
 fn kind_is_graph_evidence(kind: u8) -> bool {
@@ -294,7 +298,7 @@ fn answer_unit(
     // A second, transaction-local authority check closes the race between
     // the preflight and this write. A missing/changed source is an abstention,
     // but provider and write-gate failures remain typed failures.
-    let record = vault.with_write_txn(|txn| {
+    let record = vault.with_write_txn_grouped(|txn| {
         let scoped = vault.scoped_read(asker_reader_in_txn(vault, txn, principal)?);
         if !scoped
             .graph_ask_neighbors_in_txn(

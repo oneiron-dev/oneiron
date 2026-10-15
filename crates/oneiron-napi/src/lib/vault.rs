@@ -50,6 +50,7 @@ impl NapiVault {
         dimensions: Option<u32>,
         dict_search_paths: Option<Vec<String>>,
     ) -> napi::Result<Self> {
+        crate::facade::before_vault_open();
         let mut config = VaultConfig::device();
         if let Some(dims) = dimensions {
             config.dimensions = dims as usize;

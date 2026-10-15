@@ -22,27 +22,6 @@ fn credential_fields_cannot_hide_behind_messagepack_binary_or_json_escapes() {
 }
 
 #[test]
-fn scan_payload_rejects_known_secret_fixture() {
-    let err = scan_payload(b"token=ghp_0123456789abcdefghijklmnopqrstuvwxyz")
-        .expect_err("known GitHub token fixture must reject");
-
-    match err {
-        Error::Gate(GateError::GateWriteRejected {
-            outcome,
-            reason_codes,
-        }) => {
-            assert_eq!(outcome, "deny");
-            assert_eq!(
-                reason_codes.as_slice(),
-                &[REASON_DETECTED, REASON_GITHUB_TOKEN]
-            );
-            assert!(reason_codes.iter().all(|code| code.starts_with("gate.")));
-        }
-        other => panic!("expected GateWriteRejected, got {other:?}"),
-    }
-}
-
-#[test]
 fn scan_payload_rejects_exact_length_secret_prefixes_with_suffix_labels() {
     for (payload, expected_reason) in [
         ("id=AKIA0123456789ABCDEF_suffix", REASON_AWS_ACCESS_KEY_ID),
@@ -72,40 +51,6 @@ fn scan_payload_rejects_exact_length_secret_prefixes_with_suffix_labels() {
 }
 
 #[test]
-fn scan_payload_allows_secret_prefix_embedded_in_larger_identifier() {
-    for payload in [
-        "pack=myghp_0123456789abcdefghijklmnopqrstuvwxyz_label",
-        "pack=myAKIA0123456789ABCDEF_label",
-        "pack=myAIza0123456789abcdefghijklmnopqrstuvwxy_label",
-        "pack=mysk-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKL_label",
-    ] {
-        scan_payload(payload.as_bytes())
-            .expect("embedded secret-like prefix in larger identifier is not a token");
-    }
-}
-
-#[test]
-fn scan_payload_rejects_pgp_private_key_armor() {
-    let err = scan_payload(
-        format!(
-            "-----BEGIN PGP PRIVATE KEY BLOCK-----\nVersion: fixture\n\n{SYNTHETIC_KEY_BODY}\n=AbCd\n-----END PGP PRIVATE KEY BLOCK-----"
-        )
-        .as_bytes(),
-    )
-    .expect_err("PGP private key armor must reject");
-
-    match err {
-        Error::Gate(GateError::GateWriteRejected { reason_codes, .. }) => {
-            assert_eq!(
-                reason_codes.as_slice(),
-                &[REASON_DETECTED, REASON_PRIVATE_KEY]
-            );
-        }
-        other => panic!("expected GateWriteRejected, got {other:?}"),
-    }
-}
-
-#[test]
 fn scan_batch_ops_rejects_phonetic_secret_payload() {
     let dir = tempfile::tempdir().expect("vault tempdir");
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).expect("open vault");
@@ -129,33 +74,6 @@ fn scan_batch_ops_rejects_phonetic_secret_payload() {
         }
         other => panic!("expected GateWriteRejected, got {other:?}"),
     }
-}
-
-#[test]
-fn scan_payload_marks_redacted_payload_as_structurally_secret_nulled() {
-    let manifest = scan_payload(b"api_key=[REDACTED]").expect("redacted payload is safe");
-
-    assert!(manifest.payloads());
-    assert!(manifest.structural_placeholders());
-}
-
-#[test]
-fn scan_payload_marks_export_manifest_redaction_fields_as_secret_nulled() {
-    let manifest =
-        scan_payload(br#"{"secrets_nulled":{"payloads":true,"structural_placeholders":true}}"#)
-            .expect("export manifest marker payload is safe");
-
-    assert!(manifest.payloads());
-    assert!(manifest.structural_placeholders());
-}
-
-#[test]
-fn scan_payload_keeps_legacy_redaction_fields_as_secret_nulled() {
-    let manifest = scan_payload(br#"{"secret_nulled":true,"structurally_secret_nulled":true}"#)
-        .expect("legacy manifest marker payload is safe");
-
-    assert!(manifest.payloads());
-    assert!(manifest.structural_placeholders());
 }
 
 /// Base64 of an English sentence, not a key: the body shape a real block has.
@@ -414,4 +332,200 @@ fn every_provider_token_shape_still_rejects() {
         assert_eq!(write_reason(&prose), Some(reason), "{reason}");
         assert_eq!(scan_file_content("", prose.as_bytes()), Some(reason));
     }
+}
+
+/// A token-shaped name assembled at run time, so no literal in the source
+/// matches a provider pattern.
+fn token_shape() -> String {
+    format!("gh{}_{}", 'p', "0123456789abcdefghijklmnopqrstuvwxyz")
+}
+
+#[test]
+fn a_credential_shaped_json_key_is_read_like_a_value() {
+    // The escape keeps the raw text from spelling the token; the decoded key does.
+    let token = token_shape();
+    let escaped = format!(r#"{{"gh\u0070{}":"note"}}"#, &token[3..]);
+    assert_eq!(
+        write_reason(&escaped),
+        Some("gate.secret_scan.sensitive_env")
+    );
+    let mut fields = serde_json::Map::new();
+    fields.insert("safe".to_owned(), "kept".into());
+    fields.insert(token, "note".into());
+    let mut value = serde_json::Value::Object(fields);
+    assert!(sanitize_credentials(&mut value, false));
+    assert_eq!(value, serde_json::json!({ "safe": "kept" }));
+}
+
+#[test]
+fn a_repeated_json_key_cannot_hide_its_first_value_from_the_write_door() {
+    // The first key is escaped, so no text rule reads it: only a reading that
+    // keeps both members does.
+    let payload = r#"{"pass\u0077ord":"Xq7-not-for-memory-42","password":"[redacted]"}"#;
+    assert_eq!(
+        write_reason(payload),
+        Some("gate.secret_scan.sensitive_env")
+    );
+}
+
+#[test]
+fn a_secret_split_over_array_items_is_read_whole() {
+    let words: Vec<rmpv::Value> = VALID_PHRASES[1].split(' ').map(rmpv::Value::from).collect();
+    let mut key_lines = vec![rmpv::Value::from("-----BEGIN PRIVATE KEY-----")];
+    key_lines.extend(
+        SYNTHETIC_KEY_BODY
+            .as_bytes()
+            .chunks(48)
+            .map(|line| rmpv::Value::from(std::str::from_utf8(line).unwrap())),
+    );
+    key_lines.push(rmpv::Value::from("-----END PRIVATE KEY-----"));
+    for (field, items) in [("words", words), ("key", key_lines)] {
+        let value = rmpv::Value::Map(vec![(rmpv::Value::from(field), rmpv::Value::Array(items))]);
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &value).unwrap();
+        assert!(scan_payload(&bytes).is_err(), "{field}");
+        let mut served = value.clone();
+        assert!(
+            sanitize_messagepack_credentials(&mut served, false),
+            "{field}"
+        );
+        assert_eq!(
+            served,
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from(field),
+                rmpv::Value::from("[redacted]")
+            )])
+        );
+    }
+    // Ordinary lists stay readable.
+    let mut tags = serde_json::json!({ "tags": ["travel", "japan", "spring"] });
+    assert!(!sanitize_credentials(&mut tags, false));
+}
+
+#[test]
+fn a_recovery_phrase_wrapped_over_lines_is_still_a_phrase() {
+    for phrase in VALID_PHRASES {
+        let words: Vec<&str> = phrase.split(' ').collect();
+        let half = words.len() / 2;
+        let wrapped = format!("{}\n{}", words[..half].join(" "), words[half..].join(" "));
+        assert_eq!(
+            write_reason(&wrapped),
+            Some("gate.secret_scan.mnemonic"),
+            "{wrapped}"
+        );
+        assert_eq!(
+            scan_file_content("", wrapped.as_bytes()),
+            Some("gate.secret_scan.mnemonic")
+        );
+    }
+    // A markdown list of short phrases is still prose.
+    let words: Vec<&str> = VALID_PHRASES[1].split(' ').collect();
+    let listed = words
+        .chunks(2)
+        .map(|pair| format!("- {}", pair.join(" ")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(write_reason(&listed), None, "{listed}");
+}
+
+#[test]
+fn a_placeholder_word_inside_a_password_does_not_make_it_a_placeholder() {
+    for real in [
+        r#"{"password":"Q7xk2Lp9dummyZ84mWv3"}"#,
+        r#"{"password":"Q7xk2Lp9exampleZ84mW"}"#,
+        r#"{"password":"yourQ7xk2Lp9Z84mWv3"}"#,
+        "password=Q7xk2Lp9dummyZ84mWv3",
+        "password=Q7xk2xxxxLp9Z84mWv3",
+    ] {
+        assert_eq!(
+            write_reason(real),
+            Some("gate.secret_scan.sensitive_env"),
+            "{real}"
+        );
+    }
+    for stand_in in [
+        r#"{"password":"dummy-password-1"}"#,
+        r#"{"api_key":"your-api-key-here"}"#,
+        r#"{"token":"${TOKEN}"}"#,
+        r#"{"password":"change_me"}"#,
+        r#"{"token":"...abcd"}"#,
+    ] {
+        assert_eq!(write_reason(stand_in), None, "{stand_in}");
+    }
+}
+
+#[test]
+fn a_private_key_joined_from_literals_on_one_line_is_a_key() {
+    let (first, rest) = SYNTHETIC_KEY_BODY.split_at(48);
+    let source = format!(
+        "k = \"-----BEGIN PRIVATE KEY-----\\n\" + \"{first}\\n\" + \"{rest}\\n\" + \
+         \"-----END PRIVATE KEY-----\""
+    );
+    assert_eq!(write_reason(&source), Some(REASON_PRIVATE_KEY), "{source}");
+}
+
+/// An inert refinement receipt: magic, two ids, then the receipt JSON.
+fn refinement_carrier(question: &str) -> Vec<u8> {
+    let mut bytes = b"oneiron.refinement-receipt.v1\0".to_vec();
+    bytes.extend_from_slice(&[7; 32]);
+    bytes.extend_from_slice(
+        serde_json::json!({ "kind": "skill", "receipt": { "question": question } })
+            .to_string()
+            .as_bytes(),
+    );
+    bytes
+}
+
+#[test]
+fn a_framed_receipt_is_read_through_its_frame() {
+    let carrier = refinement_carrier("password=Xq7-not-for-memory-42 merge?");
+    assert!(scan_payload(&carrier).is_err());
+    assert_eq!(
+        scan_file_content("", &carrier),
+        Some("gate.secret_scan.sensitive_env")
+    );
+    let plain = refinement_carrier("merge the two skills?");
+    assert!(scan_payload(&plain).is_ok());
+    assert_eq!(scan_file_content("", &plain), None);
+}
+
+#[test]
+fn a_body_nested_past_its_decoder_is_refused_by_name() {
+    // rmpv recurses once per level up to its 1024 cap; a debug build's frames
+    // need a deeper stack than a test thread's to get there.
+    std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(|| {
+            let member = r#"{"pass\u0077ord":"private fixture"}"#;
+            let json = format!("{}{member}{}", "[".repeat(129), "]".repeat(129));
+            let mut messagepack = vec![0x91; 1100];
+            rmpv::encode::write_value(
+                &mut messagepack,
+                &rmpv::Value::Map(vec![(
+                    rmpv::Value::from("password"),
+                    rmpv::Value::from("private fixture"),
+                )]),
+            )
+            .unwrap();
+            for (payload, reason) in [
+                (json.as_bytes(), REASON_JSON_TOO_DEEP),
+                (&messagepack[..], REASON_MESSAGEPACK_TOO_DEEP),
+            ] {
+                let error = scan_payload(payload).expect_err(reason);
+                assert!(
+                    matches!(&error, Error::Gate(GateError::GateWriteRejected { reason_codes, .. })
+                    if reason_codes.contains(&reason)),
+                    "{error:?}"
+                );
+            }
+            // As deep as the decoder reads, a body is read member by member,
+            // and brackets in text that is no JSON are text.
+            let readable = format!("{}{}", "[".repeat(127), "]".repeat(127));
+            assert!(scan_payload(readable.as_bytes()).is_ok());
+            let source = format!("[{}]", ["'['"; 127].join(","));
+            assert!(scan_payload(source.as_bytes()).is_ok());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

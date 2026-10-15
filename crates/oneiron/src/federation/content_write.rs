@@ -278,7 +278,7 @@ impl Vault {
     where
         E: From<Error>,
     {
-        self.try_with_write_txn(|txn| {
+        self.try_with_write_txn_grouped(|txn| {
             // Construction proves the asserted actor's stored type. Shared
             // content effects additionally refold live authority at each
             // position; an unbound personal agent may still park a proposal.

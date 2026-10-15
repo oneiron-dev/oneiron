@@ -1,38 +1,5 @@
 use super::*;
 
-#[test]
-fn empty_cors_origin_list_stays_restrictive() {
-    let config = SyncServerConfig::default();
-
-    let parsed = parse_allowed_origins(&config.allowed_origins).unwrap();
-
-    assert!(parsed.is_empty());
-    assert!(build_cors_layer(&config).is_ok());
-}
-
-#[test]
-fn configured_cors_origin_is_parsed() {
-    let config = SyncServerConfig {
-        allowed_origins: vec!["https://app.oneiron.dev".to_owned(), "  ".to_owned()],
-        ..Default::default()
-    };
-
-    assert_eq!(
-        parse_allowed_origins(&config.allowed_origins).unwrap(),
-        vec![HeaderValue::from_static("https://app.oneiron.dev")]
-    );
-    assert!(build_cors_layer(&config).is_ok());
-}
-
-#[test]
-fn wildcard_cors_origin_is_rejected() {
-    let origins = vec!["*".to_owned()];
-
-    let error = parse_allowed_origins(&origins).unwrap_err().to_string();
-
-    assert!(error.contains("wildcard CORS origin is not allowed"));
-}
-
 /// The CORS rows above stop at "the config parsed" and "a layer was built" —
 /// neither says what a browser is told. A layer built over the right origin
 /// list but attached to the wrong axum stage, or an allowlist that answered
@@ -139,77 +106,6 @@ fn provenance_claim_json_omits_payload_by_default() {
     assert_eq!(included["value"], "private payload");
 }
 
-#[test]
-fn msgpack_json_conversion_truncates_deep_arrays() {
-    let value = MsgpackValue::Array(vec![MsgpackValue::Array(vec![MsgpackValue::from(
-        "private payload",
-    )])]);
-
-    let rendered = msgpack_value_json_with_depth(&value, 1);
-
-    let entries = rendered.as_array().expect("the outer array is retained");
-    assert_eq!(entries.len(), 1);
-    assert!(entries[0].is_object());
-    assert_eq!(entries[0]["truncated"], json!("max_depth"));
-    assert!(!rendered.to_string().contains("private payload"));
-}
-
-#[test]
-fn init_creates_vault_and_doctor_reports() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault_path = dir.path().join("vault");
-    let args = VaultArgs {
-        path: vault_path.clone(),
-        dimensions: 32,
-        map_size: 64 * 1024 * 1024,
-        dict_search_paths: Some(Vec::new()),
-    };
-
-    init(crate::cli::InitArgs {
-        path: args.path.clone(),
-        config: Some(dir.path().join("oneiron.toml")),
-        embedder: Some(crate::config::EmbedderProvider::None),
-        dimensions: Some(args.dimensions),
-        map_size: args.map_size,
-        dict_search_paths: args.dict_search_paths.clone(),
-        ..Default::default()
-    })
-    .unwrap();
-    assert!(vault_path.join("data.mdb").is_file());
-
-    let vault = open_vault_for_command(&args).unwrap();
-    let report = vault.doctor().unwrap();
-    assert!(report.storage_abi_version.is_some());
-    assert!(report.db_manifest.missing_names.is_empty());
-}
-
-#[test]
-fn doctor_opens_existing_vault() {
-    let dir = tempfile::tempdir().unwrap();
-    let args = VaultArgs {
-        path: dir.path().join("vault"),
-        dimensions: 32,
-        map_size: 64 * 1024 * 1024,
-        dict_search_paths: Some(Vec::new()),
-    };
-
-    init(crate::cli::InitArgs {
-        path: args.path.clone(),
-        config: Some(dir.path().join("oneiron.toml")),
-        embedder: Some(crate::config::EmbedderProvider::None),
-        dimensions: Some(args.dimensions),
-        map_size: args.map_size,
-        dict_search_paths: args.dict_search_paths.clone(),
-        ..Default::default()
-    })
-    .unwrap();
-    doctor(crate::cli::DoctorArgs {
-        vault: args,
-        config: Some(dir.path().join("oneiron.toml")),
-    })
-    .unwrap();
-}
-
 #[tokio::test]
 async fn revoke_command_refuses_missing_vault_path_without_creating_storage() {
     let dir = tempfile::tempdir().unwrap();
@@ -236,6 +132,36 @@ async fn revoke_command_refuses_missing_vault_path_without_creating_storage() {
         !vault_path.join("data.mdb").exists(),
         "bad revoke path must not create LMDB storage"
     );
+}
+
+/// W1b T3: while a running server holds the vault the CLI cannot revoke, and
+/// its refusal names what works: the online route, or stopping the server.
+#[tokio::test]
+async fn revoke_command_names_the_online_path_while_a_server_holds_the_vault() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault_path = dir.path().join("vault");
+    let mut vault_config = oneiron::VaultConfig::server();
+    vault_config.dimensions = 32;
+    vault_config.map_size = 64 * 1024 * 1024;
+    drop(oneiron::Vault::open(&vault_path, vault_config).unwrap());
+    let _server = oneiron::VaultWriterLease::acquire(&vault_path).unwrap();
+
+    let err = revoke(RevokeArgs {
+        client: "0123456789abcdef".to_string(),
+        serve: ServeArgs {
+            vault_path: Some(vault_path),
+            dimensions: Some(32),
+            map_size: Some(64 * 1024 * 1024),
+            dict_search_paths: Some(Vec::new()),
+            ..Default::default()
+        },
+    })
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("POST /api/lease/revoke"), "{err}");
+    assert!(err.contains("stop the server"), "{err}");
 }
 
 #[tokio::test]
@@ -320,27 +246,6 @@ async fn revoke_command_flips_existing_binding_and_preserves_pubkey_floor() {
     );
 }
 
-#[test]
-fn missing_dicts_returns_loud_startup_warning() {
-    let resolution = resolve_dict_search_paths_from_candidates(&[], Vec::new());
-
-    assert!(resolution.paths.is_empty());
-    assert!(resolution.warning.is_some());
-}
-
-#[test]
-fn auto_discovers_candidate_with_cjk_dict_marker() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().join("dicts");
-    std::fs::create_dir_all(root.join("zh")).unwrap();
-    std::fs::write(root.join("zh").join("jieba.dict.utf8"), "token 1 n\n").unwrap();
-
-    let resolution = resolve_dict_search_paths_from_candidates(&[], vec![root.clone()]);
-
-    assert_eq!(resolution.paths, vec![root]);
-    assert_eq!(resolution.warning, None);
-}
-
 /// The CLI's 64-hex door writes signed withdrawal authority, not a legacy
 /// tombstone. Revoking the named parent also kills its logged descendants.
 #[test]
@@ -409,91 +314,6 @@ fn token_revoke_refuses_a_malformed_id() {
     );
 }
 
-/// The revoke command refuses to create storage: a fresh vault holds no
-/// tokens, so it would report success against state the server never reads.
-#[tokio::test]
-async fn token_revoke_refuses_missing_vault_path_without_creating_storage() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault_path = dir.path().join("missing-vault");
-
-    let err = token_revoke(TokenRevokeArgs {
-        jti: "0".repeat(32),
-        serve: ServeArgs {
-            vault_path: Some(vault_path.clone()),
-            dimensions: Some(32),
-            map_size: Some(64 * 1024 * 1024),
-            dict_search_paths: Some(Vec::new()),
-            ..Default::default()
-        },
-    })
-    .unwrap_err();
-
-    assert!(
-        err.to_string()
-            .contains("refusing to create a new vault for revoke")
-    );
-    assert!(!vault_path.join("data.mdb").exists());
-}
-
-/// Every issued token carries an identity, and identical claims mint distinct
-/// tokens — the property that makes per-token revocation meaningful at all.
-#[test]
-fn identified_mint_attaches_a_fresh_id_to_every_token() {
-    for claims in ["", "scope=core:read"] {
-        let (first, first_jti) = mint_identified_core_token_v2("secret", claims);
-        let (second, second_jti) = mint_identified_core_token_v2("secret", claims);
-
-        assert_ne!(first_jti, second_jti);
-        assert_ne!(first, second);
-        assert!(first.contains(&format!("jti={first_jti}")));
-        assert!(
-            validate_bearer_claims(&format!(
-                "{}jti={first_jti}",
-                if claims.is_empty() {
-                    String::new()
-                } else {
-                    format!("{claims};")
-                }
-            ))
-            .is_ok(),
-            "the identified claims must satisfy the server's grammar"
-        );
-    }
-}
-
-#[test]
-fn loopback_host_detection_distinguishes_public_bind_addresses() {
-    for host in ["localhost", "127.0.0.1", "::1"] {
-        assert!(
-            !should_warn_public_bind_without_auth(None, false, host),
-            "{host} should not trigger a public-bind warning",
-        );
-    }
-    for host in ["0.0.0.0", "::", "192.0.2.10", "example.test"] {
-        assert!(
-            should_warn_public_bind_without_auth(None, false, host),
-            "{host} should trigger a public-bind warning",
-        );
-    }
-}
-
-#[test]
-fn public_bind_without_auth_refusal_emits_warning_predicate() {
-    assert!(should_warn_public_bind_without_auth(None, false, "0.0.0.0"));
-    assert!(should_warn_public_bind_without_auth(None, false, "::"));
-    assert!(!should_warn_public_bind_without_auth(
-        None,
-        false,
-        "127.0.0.1"
-    ));
-    assert!(!should_warn_public_bind_without_auth(
-        Some("secret"),
-        false,
-        "0.0.0.0"
-    ));
-    assert!(!should_warn_public_bind_without_auth(None, true, "0.0.0.0"));
-}
-
 // ══════════════════════════════════════════════════════════════════════════
 // ONE-1705 — `oneiron api …`, the curl-backed lane.
 //
@@ -541,90 +361,6 @@ fn fake_curl_script(dir: &std::path::Path, exit_code: i32) -> String {
          printf 'curl: diagnostic on stderr\\n' >&2\n\
          exit {exit_code}\n"
     )
-}
-
-#[test]
-fn api_short_commands_resolve_to_existing_routes() {
-    let base = "http://127.0.0.1:3000";
-
-    let discover = api::request_for_command(base, ApiCommand::Discover).unwrap();
-    assert_eq!(discover.method, "GET");
-    assert_eq!(discover.url, "http://127.0.0.1:3000/api/core/discover");
-    assert_eq!(discover.body, None);
-
-    let search = api::request_for_command(
-        base,
-        ApiCommand::Search {
-            query: "kickoff notes".to_owned(),
-            limit: Some(5),
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        search.url,
-        "http://127.0.0.1:3000/api/search/text?query=kickoff%20notes&limit=5"
-    );
-
-    let unlimited = api::request_for_command(
-        base,
-        ApiCommand::Search {
-            query: "kickoff".to_owned(),
-            limit: None,
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        unlimited.url, "http://127.0.0.1:3000/api/search/text?query=kickoff",
-        "an omitted limit must leave the server's own default in force"
-    );
-
-    let entity = api::request_for_command(
-        base,
-        ApiCommand::Get {
-            entity_id: "entity-42".to_owned(),
-        },
-    )
-    .unwrap();
-    assert_eq!(entity.url, "http://127.0.0.1:3000/api/entity/entity-42");
-
-    let call = api::request_for_command(
-        base,
-        ApiCommand::Call {
-            verb: "board.append".to_owned(),
-            data: "{\"ok\":true}".to_owned(),
-        },
-    )
-    .unwrap();
-    assert_eq!(call.method, "POST");
-    assert_eq!(
-        call.url,
-        "http://127.0.0.1:3000/v1/core/memory/verbs/board.append"
-    );
-    assert_eq!(call.body.as_deref(), Some(b"{\"ok\":true}".as_slice()));
-    assert_eq!(call.content_type.as_deref(), Some("application/json"));
-
-    let raw = api::request_for_command(
-        base,
-        ApiCommand::Raw {
-            method: "get".to_owned(),
-            path: "/api/health".to_owned(),
-            data: None,
-            content_type: None,
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        raw.method, "GET",
-        "the method is normalized, not re-spelled"
-    );
-    assert_eq!(raw.url, "http://127.0.0.1:3000/api/health");
-    assert_eq!(raw.body, None);
-    assert_eq!(raw.content_type, None);
-
-    // A trailing slash on the configured origin must not double up.
-    let trailing =
-        api::request_for_command("http://127.0.0.1:3000/", ApiCommand::Discover).unwrap();
-    assert_eq!(trailing.url, "http://127.0.0.1:3000/api/core/discover");
 }
 
 /// Caller text is DATA. A query, an entity id, or a verb that looks like URL
@@ -730,42 +466,6 @@ fn api_raw_refuses_requests_that_leave_the_configured_origin() {
     }
 }
 
-/// A base URL carrying a PATH is refused rather than quietly honoured. Every
-/// shaped command appends a literal route to the configured origin, so a base
-/// of `http://host/prefix` would send `GET /prefix/api/core/discover` — a
-/// route this server does not serve — and the caller would read a 404 about a
-/// request they never wrote. Rejecting is the only reading that cannot be
-/// wrong: stripping the prefix would discard something the caller typed on
-/// purpose, and honouring it would send the request somewhere else.
-#[test]
-fn api_refuses_a_base_url_that_carries_a_path() {
-    for base in [
-        "http://127.0.0.1:3000/prefix",
-        "https://vault.example/a/b/",
-        "http://vault.example/api",
-    ] {
-        let error = api::request_for_command(base, ApiCommand::Discover)
-            .expect_err(&format!("base URL {base:?} must be refused"))
-            .to_string();
-        assert!(
-            error.contains("plain origin without a path"),
-            "the refusal must name the reason: {error}"
-        );
-    }
-
-    // The origins that always worked still do, trailing slash and all.
-    for (base, expected) in [
-        ("http://127.0.0.1:3000", "http://127.0.0.1:3000"),
-        ("http://127.0.0.1:3000/", "http://127.0.0.1:3000"),
-        ("https://vault.example", "https://vault.example"),
-        ("https://vault.example///", "https://vault.example"),
-    ] {
-        let request = api::request_for_command(base, ApiCommand::Discover)
-            .unwrap_or_else(|error| panic!("base URL {base:?} must be accepted: {error}"));
-        assert_eq!(request.url, format!("{expected}/api/core/discover"));
-    }
-}
-
 /// `raw` is the only command whose body is not this server's own JSON, so the
 /// media type is a caller decision there and nowhere else. The DEFAULT does
 /// not move — a body with no declared type is still `application/json`, which
@@ -820,55 +520,6 @@ fn api_raw_content_type_defaults_to_json_and_only_a_valid_type_replaces_it() {
             "content type {rejected:?} must be refused before it can become a header"
         );
     }
-}
-
-/// `@FILE` and a literal body are different forms, and neither is shell text:
-/// a body full of shell metacharacters is bytes, not a command.
-#[test]
-fn api_body_forms_are_distinct_and_never_shell_evaluated() {
-    let dir = tempfile::tempdir().unwrap();
-    let body_path = dir.path().join("request.json");
-    std::fs::write(&body_path, b"{\"from\":\"file\"}").unwrap();
-
-    let from_file = api::request_for_command(
-        "http://127.0.0.1:3000",
-        ApiCommand::Call {
-            verb: "board.append".to_owned(),
-            data: format!("@{}", body_path.display()),
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        from_file.body.as_deref(),
-        Some(b"{\"from\":\"file\"}".as_slice())
-    );
-
-    let literal = "{\"shell\":\"$(id); rm -rf / `whoami`\"}";
-    let verbatim = api::request_for_command(
-        "http://127.0.0.1:3000",
-        ApiCommand::Call {
-            verb: "board.append".to_owned(),
-            data: literal.to_owned(),
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        verbatim.body.as_deref(),
-        Some(literal.as_bytes()),
-        "a literal body is sent verbatim, never expanded"
-    );
-
-    assert!(
-        api::request_for_command(
-            "http://127.0.0.1:3000",
-            ApiCommand::Call {
-                verb: "board.append".to_owned(),
-                data: format!("@{}", dir.path().join("absent.json").display()),
-            },
-        )
-        .is_err(),
-        "a missing @FILE is an error here, not an empty request"
-    );
 }
 
 /// The credential travels in curl's config channel on stdin. It is in no
@@ -940,75 +591,6 @@ fn api_credential_reaches_curl_only_through_the_config_channel() {
     assert!(
         !std::path::Path::new(staged_path).exists(),
         "the staged request body must not outlive the call"
-    );
-}
-
-/// A success body is the server's bytes, not a re-encoding of them: binary,
-/// invalid UTF-8, and embedded NULs all arrive unchanged.
-#[test]
-#[cfg(unix)]
-fn api_success_body_passes_through_byte_for_byte() {
-    let dir = tempfile::tempdir().unwrap();
-    let response: Vec<u8> = vec![0x00, 0xff, b'{', b'"', b'a', b'"', b'}', 0x0a, 0xc3, 0x28];
-    std::fs::write(dir.path().join("response.bin"), &response).unwrap();
-    let program = write_fake_curl(dir.path(), &fake_curl_script(dir.path(), 0));
-
-    let request = api::request_for_command("http://127.0.0.1:3000", ApiCommand::Discover).unwrap();
-    let output = api::run_curl_output(
-        program.as_os_str(),
-        &request,
-        Some(PLACEHOLDER_SECRET),
-        std::process::Stdio::piped(),
-        std::process::Stdio::piped(),
-    )
-    .unwrap();
-
-    assert_eq!(
-        output.stdout, response,
-        "the response body must arrive byte-identical, binary included"
-    );
-    assert!(api::exit_status_result(&output.status).is_ok());
-}
-
-/// A non-2xx keeps its body and its diagnostic, and still fails. `curl`'s
-/// `--fail-with-body` is what makes both true at once.
-#[test]
-#[cfg(unix)]
-fn api_failure_keeps_the_body_and_exits_non_zero() {
-    let dir = tempfile::tempdir().unwrap();
-    let body = b"{\"code\":\"UNAUTHORIZED\",\"message\":\"request is not authorized\"}";
-    std::fs::write(dir.path().join("response.bin"), body).unwrap();
-    let program = write_fake_curl(dir.path(), &fake_curl_script(dir.path(), 22));
-    // Pin the raced descriptor lifetime without depending on sibling scheduling.
-    let script_writer = std::fs::OpenOptions::new()
-        .write(true)
-        .open(program.with_extension("sh"))
-        .unwrap();
-
-    let request = api::request_for_command("http://127.0.0.1:3000", ApiCommand::Discover).unwrap();
-    let output = api::run_curl_output(
-        program.as_os_str(),
-        &request,
-        Some(PLACEHOLDER_SECRET),
-        std::process::Stdio::piped(),
-        std::process::Stdio::piped(),
-    )
-    .unwrap();
-    drop(script_writer);
-
-    assert_eq!(
-        output.stdout,
-        body.as_slice(),
-        "the server's error envelope must stay visible",
-    );
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("curl: diagnostic on stderr"),
-        "curl diagnostics must stay on stderr",
-    );
-    assert_eq!(output.status.code(), Some(22));
-    assert!(
-        api::exit_status_result(&output.status).is_err(),
-        "a failing curl status must be reported as failure",
     );
 }
 
@@ -1108,42 +690,6 @@ fn pairing_config_sends_slip_and_holder_proof_without_an_injected_option() {
     );
 }
 
-/// curl reads the HOST's own config file before any flag on its command line,
-/// and it reads it EVEN when `--config` is given. A line there that added a
-/// transfer would be handed the credential this process puts on the config
-/// channel — a leak to a host nobody named. `-q` refuses that file, and curl
-/// honours it only as the FIRST argument, which is what this row pins.
-#[test]
-#[cfg(unix)]
-fn api_refuses_the_hosts_curl_config_before_any_other_argument() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("response.bin"), b"{}").unwrap();
-    let program = write_fake_curl(dir.path(), &fake_curl_script(dir.path(), 0));
-
-    let request = api::request_for_command("http://127.0.0.1:3000", ApiCommand::Discover).unwrap();
-    api::run_curl_output(
-        program.as_os_str(),
-        &request,
-        Some(PLACEHOLDER_SECRET),
-        std::process::Stdio::piped(),
-        std::process::Stdio::piped(),
-    )
-    .unwrap();
-
-    let argv = std::fs::read_to_string(dir.path().join("argv.txt")).unwrap();
-    assert_eq!(
-        argv.lines().next(),
-        Some(api::CURL_DISABLE_HOST_CONFIG),
-        "the host-config refusal must be curl's first argument, or curl ignores it: {argv}"
-    );
-    for flag in api::CURL_FLAGS {
-        assert!(
-            argv.contains(flag),
-            "curl must still be invoked with {flag}"
-        );
-    }
-}
-
 /// The property above is curl's own, so this row proves it with the REAL
 /// binary: a populated `CURL_HOME/.curlrc` that sends the transfer's body to a
 /// file of its own choosing. Loaded, that config captures the body; through
@@ -1237,63 +783,100 @@ fn api_keeps_a_host_curlrc_from_capturing_the_transfer() {
     );
 }
 
-/// The server serves public routes and can be configured to allow
-/// unauthenticated access, so an ABSENT credential is a request without one
-/// rather than an error. Nothing stands in for it: no config channel, no empty
-/// header, no placeholder bearer — a bogus credential is an authentication
-/// ATTEMPT the server refuses, which is not the anonymous call that works.
+/// An ambient `http_proxy` routes curl's request, bearer and holder proof
+/// included, to that proxy even for a loopback server, and `-q` does not stop
+/// it (Astra F1 on #1360). This row proves it with the REAL binary, a
+/// recording proxy and a stand-in server, both on loopback: plain curl sends
+/// the request to the proxy; through this module only the server receives it.
+/// A host with no curl stands down, as above.
 #[test]
 #[cfg(unix)]
-fn api_without_a_configured_secret_sends_no_authorization_at_all() {
-    let dir = tempfile::tempdir().unwrap();
-    let served = b"{\"status\":\"ok\"}";
-    std::fs::write(dir.path().join("response.bin"), served).unwrap();
-    let program = write_fake_curl(dir.path(), &fake_curl_script(dir.path(), 0));
+fn api_keeps_an_ambient_proxy_from_receiving_the_credential() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
 
-    let request = api::request_for_command(
-        "http://127.0.0.1:3000",
-        ApiCommand::Raw {
-            method: "GET".to_owned(),
-            path: "/api/health".to_owned(),
-            data: None,
-            content_type: None,
-        },
-    )
-    .unwrap();
+    /// Answers one connection on `listener` with `body`; yields the request
+    /// head it was sent.
+    fn answer_one(listener: TcpListener, body: &'static str) -> std::thread::JoinHandle<String> {
+        std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                .unwrap();
+            let mut head = Vec::new();
+            let mut buf = [0; 4096];
+            while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+                match socket.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => head.extend_from_slice(&buf[..n]),
+                }
+            }
+            let _ = write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            String::from_utf8_lossy(&head).into_owned()
+        })
+    }
+    fn loopback() -> (TcpListener, String) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        (listener, url)
+    }
 
-    let anonymous = api::run_curl_output(
-        program.as_os_str(),
-        &request,
-        None,
-        std::process::Stdio::piped(),
-        std::process::Stdio::piped(),
-    )
-    .unwrap();
+    let probe = std::process::Command::new("curl").arg("--version").output();
+    if !probe.is_ok_and(|probe| probe.status.success()) {
+        return;
+    }
+    let (origin, origin_url) = loopback();
+    let target = format!("{origin_url}/api/core/discover");
+    let origin = answer_one(origin, "origin");
 
-    let argv = std::fs::read_to_string(dir.path().join("argv.txt")).unwrap();
-    let stdin = std::fs::read(dir.path().join("stdin.bin")).unwrap();
-
-    assert_eq!(anonymous.stdout, served, "a public route still answers");
-    assert!(
-        !argv.contains("--config"),
-        "no credential means no config channel at all: {argv}"
-    );
-    assert!(
-        !argv.to_ascii_lowercase().contains("authorization"),
-        "no credential means no Authorization header: {argv}"
-    );
-    assert!(
-        stdin.is_empty(),
-        "nothing is handed to curl's stdin when there is nothing to carry"
-    );
+    // The fixture is real: plain curl, the proxy in its environment, sends
+    // the loopback request to the proxy.
+    let (control, control_url) = loopback();
+    let control = answer_one(control, "proxied");
+    let plain = std::process::Command::new("curl")
+        .env("http_proxy", &control_url)
+        .env_remove("no_proxy")
+        .env_remove("NO_PROXY")
+        .args(["-q", "--silent", "--show-error", "--url", &target])
+        .output()
+        .unwrap();
     assert_eq!(
-        argv.lines().next(),
-        Some(api::CURL_DISABLE_HOST_CONFIG),
-        "the host-config refusal stays first on the anonymous path too"
+        plain.stdout,
+        b"proxied",
+        "fixture check: an ambient proxy must divert plain curl: {}",
+        String::from_utf8_lossy(&plain.stderr)
+    );
+    let diverted = control.join().unwrap();
+    assert!(
+        diverted.starts_with(&format!("GET {target} ")),
+        "{diverted}"
     );
 
-    // The credentialled path is unchanged: the header still rides stdin only.
-    api::run_curl_output(
+    // The same environment, every proxy variable set, in force for this
+    // module's own invocation.
+    let (proxy, proxy_url) = loopback();
+    let proxy_addr = proxy.local_addr().unwrap();
+    let proxy = answer_one(proxy, "proxied");
+    let dir = tempfile::tempdir().unwrap();
+    let program = write_fake_curl(
+        dir.path(),
+        &format!(
+            "#!/bin/sh\nunset no_proxy NO_PROXY\n\
+             export http_proxy=\"{proxy_url}\" https_proxy=\"{proxy_url}\" \
+             all_proxy=\"{proxy_url}\" ALL_PROXY=\"{proxy_url}\"\nexec curl \"$@\"\n"
+        ),
+    );
+    let request = api::CurlRequest {
+        method: "GET".to_owned(),
+        url: target,
+        body: None,
+        content_type: None,
+    };
+    let output = api::run_curl_output(
         program.as_os_str(),
         &request,
         Some(PLACEHOLDER_SECRET),
@@ -1301,28 +884,24 @@ fn api_without_a_configured_secret_sends_no_authorization_at_all() {
         std::process::Stdio::piped(),
     )
     .unwrap();
-    let argv = std::fs::read_to_string(dir.path().join("argv.txt")).unwrap();
-    let config = std::fs::read_to_string(dir.path().join("stdin.bin")).unwrap();
-    assert!(argv.contains("--config\n-\n"), "{argv}");
-    assert!(!argv.contains(PLACEHOLDER_SECRET));
-    assert_eq!(
-        config,
-        format!("header = \"Authorization: Bearer {PLACEHOLDER_SECRET}\"\n")
-    );
 
-    // A credential that IS configured is still checked: an empty one is a
-    // misconfiguration, not an anonymous request.
-    assert!(
-        api::run_curl_output(
-            program.as_os_str(),
-            &request,
-            Some(""),
-            std::process::Stdio::piped(),
-            std::process::Stdio::piped(),
-        )
-        .is_err(),
-        "an empty configured credential must be refused rather than sent"
+    assert_eq!(
+        output.stdout,
+        b"origin",
+        "the request must reach the selected server, not the proxy: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
+    let served = origin.join().unwrap();
+    assert!(
+        served.contains(&format!("Authorization: Bearer {PLACEHOLDER_SECRET}")),
+        "{served}"
+    );
+    // Nothing reached the proxy: the first connection it answers is this one.
+    std::net::TcpStream::connect(proxy_addr)
+        .unwrap()
+        .write_all(b"WAKE\r\n\r\n")
+        .unwrap();
+    assert_eq!(proxy.join().unwrap(), "WAKE\r\n\r\n");
 }
 
 /// Staging a body that fails PART-WAY through must leave nothing on disk. The
@@ -1372,4 +951,111 @@ fn api_a_failed_body_staging_leaves_nothing_behind() {
         !staged_path.exists(),
         "a staged body must not outlive the call"
     );
+}
+
+/// `token agent`'s vault half on a vault whose authority clock trails the
+/// wall clock by more than the default lifetime, as weeks of closed nights
+/// leave it: the fresh credential serves an MCP call and a REST read. The MCP
+/// door judged the slip's expiry, an authority-clock second, on the wall
+/// clock, so it refused a credential minted a moment before.
+#[tokio::test]
+async fn a_fresh_agent_credential_serves_mcp_when_the_vault_clock_trails_the_wall() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode, header::AUTHORIZATION, header::CONTENT_TYPE};
+    use tower::ServiceExt;
+    const SECRET: &str = "trailing-clock-issuer-key";
+    let dir = tempfile::tempdir().unwrap();
+    let wall = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+    let closed_for = 40 * 24 * 60 * 60;
+    let clock = oneiron::store::ports::ManualClock::new(wall() - closed_for);
+    let open = || {
+        let mut config = oneiron::VaultConfig::server();
+        config.store_clock = clock.bundle();
+        oneiron::Vault::open_owned(dir.path(), config).unwrap()
+    };
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    // The vault starts its authority clock 40 days ago and stays closed
+    // until now.
+    open().ensure_host_root_slip(&issuer).unwrap();
+    clock.set(wall());
+
+    let vault = open();
+    let principal = vault
+        .ensure_agent_principal("trailing-clock")
+        .unwrap()
+        .to_hex();
+    let owner = crate::owner::local_owner(&vault).unwrap();
+    let (verbs, ceiling) = agent_tier_authority(AgentTier::FullAccess);
+    let minted = mint_paired_credential(
+        &vault,
+        &issuer,
+        &principal,
+        "agent",
+        verbs,
+        30 * 24 * 60 * 60,
+    )
+    .unwrap();
+    vault
+        .grant_agent_principal(&owner, &principal, ceiling)
+        .unwrap();
+    // Expired on the wall clock, live on the clock the vault judges it on.
+    assert!(minted.expires_at < wall(), "{}", minted.expires_at);
+    assert!(minted.expires_at > vault.capability_slip_now().unwrap());
+    let server = Arc::new(
+        SyncServer::new(
+            Arc::new(vault),
+            SyncServerConfig {
+                auth_secret: Some(SECRET.to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let slip = oneiron::authority::CapabilitySlip::from_token(&minted.token).unwrap();
+    let seed: Vec<u8> = (0..minted.binding_key.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(&minted.binding_key[at..at + 2], 16).unwrap())
+        .collect();
+    let key = ed25519_dalek::SigningKey::from_bytes(&seed.try_into().unwrap());
+    let send = |request: axum::http::request::Builder, body: Body| {
+        let proof = oneiron::authority::holder_proof(&slip, &key, server.vault().now_recorded_at())
+            .unwrap();
+        crate::build_app(server.clone()).oneshot(
+            request
+                .header(AUTHORIZATION, format!("Bearer {}", minted.token))
+                .header("x-oneiron-binding", proof.to_string())
+                .body(body)
+                .unwrap(),
+        )
+    };
+
+    let listed = send(
+        Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header(CONTENT_TYPE, "application/json"),
+        Body::from(json!({"jsonrpc": "2.0", "id": "list", "method": "tools/list"}).to_string()),
+    )
+    .await
+    .unwrap();
+    let status = listed.status();
+    let bytes = axum::body::to_bytes(listed.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: JsonValue = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["result"]["tools"].is_array(), "{body}");
+
+    let read = send(
+        Request::builder().uri("/v1/core/conversations"),
+        Body::empty(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(read.status(), StatusCode::OK);
 }

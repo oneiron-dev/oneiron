@@ -23,10 +23,15 @@ doctest = true
 # module at its old `oneiron::<module>` path.
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
+# The recovery kit stretches its passphrase piece through the crypto contract crate.
+oneiron-crypto = { version = "0.1.0", path = "../oneiron-crypto" }
 oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
 oneiron-retrieval = { version = "0.1.0", path = "../oneiron-retrieval" }
 oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
-oneiron-seal = { version = "0.1.0", path = "../oneiron-seal" }
+# The optional type check of code-mode programs (shadow mode).
+oneiron-code-check = { path = "../oneiron-code-check" }
+# Every subprocess starts with only the descriptors it is named.
+oneiron-spawn = { path = "../oneiron-spawn" }
 # Native DOCX revisions: organ crate remains independent of the vault engine.
 oneiron-docedit = { version = "0.1.0", path = "../oneiron-docedit" }
 # Default xlsx recalc of the edit round trip: the in-process formula engine on
@@ -50,15 +55,19 @@ rmpv = { workspace = true, features = ["with-serde"] }
 xxhash-rust = { workspace = true }
 serde = { workspace = true }
 schemars = "=0.8.22"
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
 jsonschema = { version = "0.33", default-features = false }
 serde_path_to_error = "0.1"
 postcard = { workspace = true, optional = true }
-blake3 = { workspace = true }
+# `zeroize`: the recovery kit wipes the hasher that saw a kit secret.
+blake3 = { workspace = true, features = ["zeroize"] }
 # SECRET-02 (ONE-1920): lease materialization returns the value wrapped in
 # `zeroize::Zeroizing` so the caller's copy is scrubbed on drop. No other
 # deps are added by that ticket.
 zeroize = "1"
+# The recovery kit normalises its passphrase to NFC, so the same words typed on two
+# systems rebuild the same piece. Already resolved transitively.
+unicode-normalization = "0.1"
 # Per-claim hot-value AEAD for erasure-target gate decisions.
 aes-gcm = "0.10"
 p256 = { workspace = true }
@@ -169,6 +178,9 @@ heed = { workspace = true, features = ["posix-sem"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+# Removing a directory tree relative to the directory that holds each
+# entry, never through a path. The version the workspace already builds.
+rustix = { version = "1.1", features = ["fs", "process"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
@@ -214,9 +226,6 @@ test-support = ["oneiron-contracts/test-support", "oneiron-model/test-support"]
 [dev-dependencies]
 wat = "1"
 oneiron-guest = { path = "../oneiron-guest" }
-async-trait = "0.1"
-rcgen = "0.14"
-p256 = { workspace = true, features = ["pkcs8"] }
 # Self dev-dependency that turns on `test-support` for this crate's own tests
 # (the effect-spine oracle needs the unseeded-vault opening seam). Keeps
 # nextest / CI / verify.sh flag-free — no --features needed.

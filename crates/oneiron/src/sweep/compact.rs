@@ -2,9 +2,11 @@
 
 use std::collections::BTreeSet;
 
-use super::run::{HardEraseSweepRun, WindowSweepState};
 #[cfg(all(feature = "sync", test))]
-use super::run::{INJECT_RACE_BEFORE_COMPACT_WRITE, RACE_BENIGN_MARKER, RaceInjection};
+use super::run::{
+    BEFORE_COMPACT_WRITE, INJECT_RACE_BEFORE_COMPACT_WRITE, RACE_BENIGN_MARKER, RaceInjection,
+};
+use super::run::{HardEraseSweepRun, WindowSweepState};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -70,7 +72,7 @@ fn persisted_window_labels(vault: &Vault) -> Result<(BTreeSet<String>, bool)> {
             None => {
                 // A u:w: row that does not address a window cannot be
                 // proven payload-free — fail closed, block completion.
-                tracing::error!(key = %format_args!("u:w:{rest}"), "sweep: malformed u:w: row key");
+                tracing::error!("sweep: malformed u:w: row key");
                 malformed = true;
             }
         }
@@ -149,7 +151,7 @@ pub(super) fn compact_all_windows(
         if parse_window_key_str(label).is_none() {
             // Engine-written labels always validate; a foreign/corrupt row
             // cannot be loaded or proven payload-free — fail closed.
-            tracing::error!(window = %label, "sweep: invalid persisted window label");
+            tracing::error!("sweep: invalid persisted window label");
             if matches!(state, WindowSweepState::AllCompacted) {
                 state =
                     WindowSweepState::Failed(format!("{:?}", crate::error::ErrorKind::InvalidKey));
@@ -161,24 +163,25 @@ pub(super) fn compact_all_windows(
         // OPEN or retained-handle windows are deferred (pinned): the live doc
         // keeps the full history in memory and its next full-snapshot persist
         // would resurrect the carrier over the shallow row, even after forced
-        // deregistration removed the manager registry entry.
-        if vault_window_is_live(vault, &key) {
-            tracing::warn!(window = %label, "sweep: window live or retained — deferred");
+        // deregistration removed the manager registry entry. A closed window
+        // stays closed while it compacts: an open waits, then reads the
+        // compacted window, rather than registering the history dropped here.
+        let Some(compacted) =
+            vault.while_window_closed(&key, || compact_window(vault, &key, erased))
+        else {
+            tracing::warn!("sweep: window live or retained — deferred");
             run.windows_deferred_live += 1;
             if matches!(state, WindowSweepState::AllCompacted) {
                 state = WindowSweepState::Deferred;
             }
             continue;
-        }
+        };
 
-        match compact_window(vault, &key, erased) {
+        match compacted {
             Ok(CompactOutcome::Compacted) => run.windows_compacted += 1,
             Ok(CompactOutcome::Empty) => {}
             Ok(CompactOutcome::RacedDefer) => {
-                tracing::warn!(
-                    window = %label,
-                    "sweep: window raced between read and compaction write — deferred"
-                );
+                tracing::warn!("sweep: window raced between read and compaction write — deferred");
                 run.windows_deferred_raced += 1;
                 // Outcome precedence (pinned): Failed > Deferred(raced) >
                 // Deferred(live) > AllCompacted. A raced window downgrades
@@ -191,8 +194,7 @@ pub(super) fn compact_all_windows(
             }
             Err(err) => {
                 tracing::error!(
-                    window = %label,
-                    error = %err,
+                    kind = ?err.kind(),
                     "sweep: window compaction FAILED — obligation kept for retry"
                 );
                 if !matches!(state, WindowSweepState::Failed(_)) {
@@ -234,11 +236,6 @@ pub(super) fn compact_all_windows(
         return Ok(WindowSweepState::Deferred);
     }
     Ok(WindowSweepState::AllCompacted)
-}
-
-#[cfg(feature = "sync")]
-fn vault_window_is_live(vault: &Vault, key: &crate::sync::types::WindowKey) -> bool {
-    vault.live_window_for_sweep(key)
 }
 
 /// Compacts one CLOSED window: load `d:w:` + pending `u:w:` rows, scrub
@@ -285,7 +282,7 @@ fn compact_window(
     // map. Remove every entities/edges key referencing an erased id —
     // across hex-casing aliases (fail closed). Tombstones map untouched
     // (permanent); receipt entities are receipt-ids, never erased ids.
-    scrub_erased_ids_from_doc(&doc, erased)?;
+    scrub_erased_ids_from_doc(vault, &doc, erased)?;
 
     // Shallow snapshot at the latest frontiers: live state byte-exact, op
     // history (the payload carrier) dropped, doc identity + VV preserved.
@@ -318,6 +315,10 @@ fn compact_window(
     // guards below have something to catch (one-shot).
     #[cfg(test)]
     inject_race_before_compact_write(vault, key, &snapshot_bytes)?;
+    #[cfg(test)]
+    if let Some(hook) = BEFORE_COMPACT_WRITE.with(|hook| hook.borrow_mut().take()) {
+        hook();
+    }
 
     // ABORT-ONLY raced-defer signal: the write closure returns `Err` (so
     // `with_write_txn` rolls the txn back, committing NOTHING) and sets this
@@ -325,7 +326,7 @@ fn compact_window(
     // `Ok` arm that commits nothing — the `d:w:`/`sv:` puts live AFTER the
     // re-read+compare, so an early return can never clobber a newer carrier.
     let raced = std::cell::Cell::new(false);
-    let result = vault.with_write_txn(|wtxn| {
+    let result = vault.with_write_txn_grouped(|wtxn| {
         // Finding 4 (anti-clobber): re-read `d:w:` and compare byte-for-byte
         // against the snapshot captured in the read phase — `Option<Vec<u8>>`
         // equality, so absent-vs-present (None↔Some) AND any byte difference
@@ -449,8 +450,13 @@ fn inject_race_before_compact_write(
 /// hex-casing alias), committing once if anything changed. The tombstones
 /// map is PERMANENT and untouched.
 #[cfg(feature = "sync")]
-fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -> Result<()> {
-    use crate::sync::loro_support::map_delete;
+fn scrub_erased_ids_from_doc(
+    vault: &Vault,
+    doc: &loro::LoroDoc,
+    erased: &BTreeSet<EntityId>,
+) -> Result<()> {
+    use crate::sync::loro_support::{map_delete, map_get_bytes};
+    use crate::sync::window::{CarrierRemoval, mark_removed_carriers_first};
 
     if erased.is_empty() {
         return Ok(());
@@ -530,6 +536,18 @@ fn scrub_erased_ids_from_doc(doc: &loro::LoroDoc, erased: &BTreeSet<EntityId>) -
     if doomed_entities.is_empty() && doomed_edges.is_empty() {
         return Ok(());
     }
+    // The erased ids' carriers mark the task of an authority fact this vault
+    // never admitted before any of them leaves the doc.
+    let carriers: Vec<_> = doomed_entities
+        .iter()
+        .filter_map(|key| {
+            let id = EntityId::from_hex(key)
+                .ok()
+                .filter(|id| erased.contains(id))?;
+            map_get_bytes(&entities, key).map(|carrier| (id, carrier))
+        })
+        .collect();
+    mark_removed_carriers_first(vault, CarrierRemoval::HardEraseSweep, &carriers)?;
     for key in &doomed_entities {
         map_delete(&entities, key)?;
     }
@@ -559,6 +577,16 @@ fn birth_payload_contains_erased_id(
     })
 }
 
+/// [`compact_window`] for the carrier-removal checks outside the sweep.
+#[cfg(all(test, feature = "sync"))]
+pub(crate) fn compact_window_for_test(
+    vault: &Vault,
+    key: &crate::sync::types::WindowKey,
+    erased: &BTreeSet<EntityId>,
+) -> Result<()> {
+    compact_window(vault, key, erased).map(drop)
+}
+
 #[cfg(all(test, feature = "sync"))]
 mod scoped_update_tests {
     use super::*;
@@ -567,6 +595,107 @@ mod scoped_update_tests {
     use crate::sync::types::WindowKey;
     use crate::sync::window_rows::WindowUpdateKey;
     use crate::test_util::{embedding_test_config, open_test_vault_with};
+
+    /// F24 round 7 (H219): compaction scrubs an erased id's window carrier,
+    /// and a carrier holding an authority fact this vault never admitted
+    /// marks the fact's task, which then reads as a refusal.
+    #[test]
+    fn compaction_marks_the_task_of_an_unadmitted_erased_fact() {
+        use crate::task_authority::{
+            TaskAuthorityFact, TaskAuthorityFactKind, encode_task_authority_fact_body,
+            put_task_authority_fact_in_txn,
+        };
+        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        let learned_at = 1_771_027_200u64;
+        let at = crate::temporal::TimeRange {
+            start: learned_at,
+            end: learned_at,
+        };
+        let fact_of = |task_ref, kind, actor_ref| TaskAuthorityFact {
+            task_ref,
+            kind,
+            actor_ref,
+            assigned_ref: None,
+            actor_generation: None,
+            assigned_generation: None,
+            occurred_at: learned_at,
+        };
+        let owner = EntityId::now();
+        vault
+            .put_entity(
+                &owner,
+                crate::registry::ENTITY_TYPE_PERSON,
+                at,
+                learned_at,
+                b"x",
+            )
+            .unwrap();
+        let tasks: Vec<EntityId> = (0..2).map(|_| EntityId::now()).collect();
+        for task in &tasks {
+            vault
+                .put_entity(
+                    task,
+                    crate::registry::ENTITY_TYPE_TASK,
+                    at,
+                    learned_at,
+                    &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
+                )
+                .unwrap();
+            vault
+                .with_write_txn(|wtxn| {
+                    put_task_authority_fact_in_txn(
+                        &vault,
+                        wtxn,
+                        fact_of(*task, TaskAuthorityFactKind::Owner, owner),
+                    )
+                })
+                .unwrap();
+        }
+        let fact = EntityId::now();
+        let mut carrier = vec![crate::registry::ENTITY_TYPE_TASK];
+        for field in [learned_at, learned_at, learned_at] {
+            carrier.extend_from_slice(&field.to_be_bytes());
+        }
+        carrier.extend_from_slice(&encode_task_authority_fact_body(&fact_of(
+            tasks[0],
+            TaskAuthorityFactKind::Cancelled,
+            owner,
+        )));
+        let key = WindowKey::from_timestamp(learned_at);
+        let doc = create_window_doc("local", &key);
+        doc.get_map("entities")
+            .insert(&fact.to_hex(), carrier.as_slice())
+            .unwrap();
+        doc.commit();
+        let snapshot = export_snapshot(&doc).unwrap();
+        vault
+            .with_write_txn(|txn| {
+                WINDOW_SNAPSHOT.put(&vault.store, txn, &key.to_string(), &snapshot)
+            })
+            .unwrap();
+
+        assert!(matches!(
+            compact_window(&vault, &key, &BTreeSet::from([fact])).unwrap(),
+            CompactOutcome::Compacted
+        ));
+        assert!(
+            matches!(
+                vault.task_authority_state(tasks[0]),
+                Err(crate::error::Error::InvariantViolation(
+                    "task authority fact suppressed"
+                ))
+            ),
+            "the erased fact's task reads as a refusal"
+        );
+        assert_eq!(
+            vault
+                .task_authority_state(tasks[1])
+                .unwrap()
+                .map(|state| (state.owner_ref, state.cancelled)),
+            Some((owner, false)),
+            "positive control: a task with no suppressed fact still reads"
+        );
+    }
 
     #[test]
     fn compact_window_ignores_prefix_colliding_update_and_preserves_it() {

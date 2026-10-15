@@ -10,8 +10,12 @@ impl Memory<'_> {
         id: &EntityId,
         facet_hint: Option<EntityId>,
         mode: crate::vault::ReadMode,
+        cited: &[EntityId],
         receipt: &mut ScopedReadReceipt,
     ) -> MemoryResult<Option<MemoryItem>> {
+        // What the lane admits from is what the item is projected from: a
+        // room's view, or base.
+        let content = lane.store_read();
         let ScopedReadResult {
             value: admitted,
             receipt: read,
@@ -21,13 +25,49 @@ impl Memory<'_> {
             };
             let entity_type = row.entity_type;
             let body = row.body.clone();
-            let view = self.entity_view_of_in_txn(txn, row, mode)?;
-            Ok(Some((entity_type, body, view)))
+            // A TURN's text is its messages', which its own body does not
+            // hold: those this actor may read, under the text revision that
+            // pins them, both read in this snapshot. A pin at a text revision
+            // reads the words it was served with.
+            let turn = if entity_type == ENTITY_TYPE_TURN {
+                // Every message is judged under this snapshot's one policy.
+                let policy = lane.policy_manifest_in(txn)?;
+                let readable = |message: &EntityId| {
+                    lane.is_entity_readable_with_policy_in(txn, &policy, message)
+                };
+                // Every message the turn reads its text from, a hidden or
+                // empty one too, which may show text after its next change.
+                let mut members = Vec::new();
+                for (message, ..) in
+                    crate::tagging::turn_members_in_txn(self.vault, &content, txn, id, false)?
+                        .unwrap_or_default()
+                {
+                    if readable(&message)? {
+                        members.push(message);
+                    }
+                }
+                match crate::vault::entity_revision::served_turn_text_in_txn(
+                    self.vault, &content, txn, id, mode, true,
+                )? {
+                    Some(text) => {
+                        let revision = text.revision;
+                        let messages = text.released(readable)?;
+                        Some((messages, Some(revision), members))
+                    }
+                    None => Some((Vec::new(), None, members)),
+                }
+            } else {
+                None
+            };
+            let view = self.entity_view_of_in_txn(lane, txn, row, mode)?;
+            Ok(Some((entity_type, body, view, turn)))
         })?;
         receipt.restrict_with(&read);
-        let Some((entity_type, Some(body), Some(view))) = admitted else {
+        let Some((entity_type, Some(body), Some(view), turn)) = admitted else {
             return Ok(None);
         };
+        let (turn_messages, turn_revision, turn_members) = turn.unwrap_or_default();
+        let turn_text = crate::embed::joined_turn_text(&turn_messages);
         let ScopedReadResult {
             value: edges,
             receipt: graph,
@@ -42,13 +82,50 @@ impl Memory<'_> {
                 .filter(|edge| edge.kind == EdgeKind::Supersedes)
                 .map(|edge| edge.target.to_hex()),
         );
+        // A TURN's words are its messages', so each message it reads them
+        // from, or quotes, is a source too: an edit, erase, archive or
+        // disclosure change of one changes the item. A live view depends on
+        // every source an item names.
+        let mut named = std::collections::HashSet::from([*id]);
+        named.extend(
+            edges
+                .iter()
+                .filter(|edge| edge.kind == EdgeKind::Supersedes)
+                .map(|edge| edge.target),
+        );
+        for message in turn_members
+            .iter()
+            .chain(turn_messages.iter().map(|(message, _)| message))
+        {
+            if named.insert(*message) {
+                source_revision_ids.push(message.to_hex());
+            }
+        }
         let facet = facet_hint.map(|facet| facet.to_hex()).or_else(|| {
             edges
                 .iter()
                 .find(|edge| edge.kind == EdgeKind::HasFacet)
                 .map(|edge| edge.target.to_hex())
         });
-        let short_id = view.short_ref.clone().unwrap_or_else(|| id.to_hex());
+        // The view qualifies a pinned short ref with its revision; the item
+        // carries the two apart, so its short id matches a witness receipt.
+        let short_id = view.short_ref.as_deref().map_or_else(
+            || id.to_hex(),
+            |short| {
+                short
+                    .rsplit_once('@')
+                    .map_or(short, |(bare, _)| bare)
+                    .to_owned()
+            },
+        );
+        // A TURN names the text revision of the words it serves, not the
+        // revision of its row, which holds none of them.
+        let source_revision_ref = match mode {
+            crate::vault::ReadMode::Pinned(revision) => {
+                Some(turn_revision.unwrap_or(revision).to_hex())
+            }
+            crate::vault::ReadMode::Live | crate::vault::ReadMode::Indexed => None,
+        };
         let kind = kind_string_for_type(entity_type);
 
         if entity_type == ENTITY_TYPE_CLAIM {
@@ -56,11 +133,22 @@ impl Memory<'_> {
             if !claim_surfaceable(&body) {
                 return Ok(None);
             }
-            let value_json = companion_value_to_json(&body.value);
+            // A claim whose parts read as a secret together serves none of them.
+            let secret = crate::batch::export::claim_reads_as_secret(&body);
+            let value_json = if secret {
+                serde_json::Value::String("[redacted]".to_owned())
+            } else {
+                companion_value_to_json(&body.value)
+            };
             Ok(Some(MemoryItem {
                 short_id,
+                source_revision_ref,
                 kind,
-                predicate: Some(body.predicate.clone()),
+                predicate: Some(if secret {
+                    "[redacted]".to_owned()
+                } else {
+                    body.predicate.clone()
+                }),
                 value_text: truncate_text(&value_text_of(&value_json), DEFAULT_MAX_FIELD_CHARS),
                 confidence: body.confidence,
                 hedge_bucket: hedge_bucket_for(body.confidence).to_owned(),
@@ -75,13 +163,18 @@ impl Memory<'_> {
                 facet,
                 salience: body.salience,
                 reactions: Vec::new(),
+                cited_messages: Vec::new(),
+                conversation_id: None,
             }))
         } else {
-            let value_text = view
-                .body
-                .as_ref()
-                .and_then(|body| body.get("content"))
-                .and_then(serde_json::Value::as_str)
+            let value_text = turn_text
+                .as_deref()
+                .or_else(|| {
+                    view.body
+                        .as_ref()
+                        .and_then(|body| body.get("content"))
+                        .and_then(serde_json::Value::as_str)
+                })
                 .map_or_else(
                     || {
                         view.body
@@ -91,8 +184,12 @@ impl Memory<'_> {
                     },
                     str::to_owned,
                 );
-            let reactions = if matches!(entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
-                lane.reaction_lines(id)?
+            let mut reactions = if matches!(entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
+                let mut counted = Vec::new();
+                let lines = lane.reaction_lines_counting(id, &mut counted)?;
+                // Each reaction claim a line counts is a producer of the item.
+                self.produced_from(counted);
+                lines
             } else {
                 Vec::new()
             };
@@ -105,8 +202,68 @@ impl Memory<'_> {
             } else {
                 Vec::new()
             };
+            // The conversation a TURN (by `ChildOf`) or a MESSAGE (by
+            // `BelongsTo`) is in, through an edge the lane admitted: one the
+            // actor may read.
+            let conversation_kind = match entity_type {
+                ENTITY_TYPE_TURN => Some(EdgeKind::ChildOf),
+                ENTITY_TYPE_MESSAGE => Some(EdgeKind::BelongsTo),
+                _ => None,
+            };
+            let mut conversation_id = None;
+            {
+                // Closed before the quotes below, which open their own.
+                let txn = self
+                    .vault
+                    .store
+                    .env
+                    .read_txn()
+                    .map_err(crate::error::Error::from)?;
+                for edge in edges
+                    .iter()
+                    .filter(|edge| Some(edge.kind) == conversation_kind)
+                {
+                    if crate::ports::EntityStoreRead::port_entity_record(
+                        &content,
+                        &txn,
+                        &edge.target,
+                    )?
+                    .map(|row| row.entity_type)
+                        == Some(crate::registry::ENTITY_TYPE_CONVERSATION)
+                    {
+                        conversation_id = Some(edge.target.to_hex());
+                        break;
+                    }
+                }
+            }
+            // Each message a TURN took in is read through the same lane, so a
+            // quote is one the actor may read. Its words are the ones the
+            // turn's text joined in the turn's own snapshot, which the turn's
+            // text revision pins; a message that text left out is not quoted.
+            // Its reactions ride on the turn that returns it.
+            let mut cited_messages = Vec::with_capacity(cited.len());
+            for message in cited {
+                let Some((_, text)) = turn_messages.iter().find(|(id, _)| id == message) else {
+                    continue;
+                };
+                if let Some(item) = self.memory_item_for(
+                    lane,
+                    message,
+                    None,
+                    crate::vault::ReadMode::Live,
+                    &[],
+                    receipt,
+                )? {
+                    reactions.extend(item.reactions);
+                    cited_messages.push(CitedMessage {
+                        short_id: item.short_id,
+                        value_text: truncate_text(text, DEFAULT_MAX_FIELD_CHARS),
+                    });
+                }
+            }
             Ok(Some(MemoryItem {
                 short_id,
+                source_revision_ref,
                 kind,
                 predicate: None,
                 value_text: truncate_text(&value_text, DEFAULT_MAX_FIELD_CHARS),
@@ -121,6 +278,8 @@ impl Memory<'_> {
                 facet,
                 salience: None,
                 reactions,
+                cited_messages,
+                conversation_id,
             }))
         }
     }

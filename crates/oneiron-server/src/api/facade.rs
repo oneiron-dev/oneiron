@@ -35,7 +35,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use axum::Router;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::post;
 use serde::Serialize;
@@ -43,14 +43,19 @@ use serde::Serialize;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::ApiError;
 use crate::server::SyncServer;
+use oneiron::federation::record_scope::BirthPosition;
+use oneiron::federation::{ScopeAxis, ScopeId};
 use oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES;
 use oneiron::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
-    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_NOT_FOUND,
-    MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
+    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,
+    MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError,
 };
 use oneiron::{EdgeActorClass, EntityId};
+
+use super::credential_memory;
+use super::write_facet::{landing_facet, request_session};
 
 /// Request-body ceiling for the facade nest: 64 MiB.
 ///
@@ -125,6 +130,142 @@ fn facade_actor(auth: &CoreAuth) -> Result<(EntityId, EdgeActorClass), FacadeApi
     Ok((actor, actor_class))
 }
 
+/// Names the room whose turn a request runs in (ARCH-0067 §8). It names only
+/// the room: the engine reads the roster and its Scope from the vault.
+pub(crate) const ROOM_TURN_HEADER: &str = "x-oneiron-room-turn";
+
+fn facade_room_turn(headers: &HeaderMap) -> Result<Option<EntityId>, FacadeApiError> {
+    let Some(value) = headers.get(ROOM_TURN_HEADER) else {
+        return Ok(None);
+    };
+    value
+        .to_str()
+        .ok()
+        .and_then(|room| EntityId::from_hex(room).ok())
+        .map(Some)
+        .ok_or_else(|| {
+            FacadeApiError::new(
+                StatusCode::BAD_REQUEST,
+                MEMORY_CODE_BAD_REQUEST,
+                "invalid room turn header",
+                ["Name the room as its 32-hex id."],
+            )
+        })
+}
+
+/// Runs one SDK verb as the caller's credential reads, inside the named room
+/// turn when the request names one.
+fn facade_invoke(
+    server: &SyncServer,
+    headers: &HeaderMap,
+    auth: &CoreAuth,
+    actor: EntityId,
+    class: EdgeActorClass,
+    verb: &str,
+    value: serde_json::Value,
+) -> Result<serde_json::Value, FacadeApiError> {
+    let memory = credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality());
+    Ok(match facade_room_turn(headers)? {
+        Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
+        None => oneiron::task_verb::sdk::invoke(&memory, verb, value)?,
+    })
+}
+
+/// Where the records this credential births land (owner ruling FACET-READ;
+/// placement stays derived, ARCH-0028). A credential never narrowed to facets
+/// keeps the derived birth, under the same strict door as before. A narrowed
+/// one lands in its landing facet, which it must carry; any other narrowing
+/// still fails closed.
+fn facade_landing(
+    server: &SyncServer,
+    headers: &HeaderMap,
+    auth: &CoreAuth,
+) -> Result<BirthPosition, FacadeApiError> {
+    let Some(proof) = auth.verified_slip() else {
+        return Ok(BirthPosition::default());
+    };
+    if matches!(proof.scope().facets, ScopeAxis::All) {
+        auth.require_unrestricted_record_scope()?;
+        return Ok(BirthPosition::default());
+    }
+    let session = request_session(headers).map_err(|()| {
+        FacadeApiError::new(
+            StatusCode::BAD_REQUEST,
+            MEMORY_CODE_BAD_REQUEST,
+            "invalid session header",
+            ["Name the session as its 32-hex id."],
+        )
+    })?;
+    let write_facet = server
+        .vault
+        .paired_write_facet(&proof.claims().slip_id)
+        .map_err(MemoryError::from)?;
+    let landing = landing_facet(&server.vault, session, &proof.scope().facets, write_facet)
+        .map_err(|_| {
+            FacadeApiError::forbidden(
+                "the session this request names does not place this credential's writes",
+                ["Name a session whose facet this credential reads, or none."],
+            )
+        })?;
+    auth.require_record_scope_carried(
+        ScopeAxis::All,
+        landing.map_or(ScopeAxis::All, |facet| {
+            ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(facet)]))
+        }),
+    )?;
+    Ok(BirthPosition {
+        world: None,
+        facet: landing,
+    })
+}
+
+/// [`facade_invoke`] for a verb that births records at `position`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the generated route passes facade_invoke's inputs plus the birth position"
+)]
+fn facade_invoke_born(
+    server: &SyncServer,
+    headers: &HeaderMap,
+    auth: &CoreAuth,
+    actor: EntityId,
+    class: EdgeActorClass,
+    verb: &str,
+    value: serde_json::Value,
+    position: BirthPosition,
+) -> Result<serde_json::Value, FacadeApiError> {
+    let memory = credential_memory(&server.vault, Some(auth), actor, class)
+        .at(auth.locality())
+        .with_birth_position(position);
+    Ok(match facade_room_turn(headers)? {
+        Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
+        None => oneiron::task_verb::sdk::invoke(&memory, verb, value)?,
+    })
+}
+
+/// A verb that reads around the read lane is not served inside a room turn.
+fn facade_outside_room_turn(headers: &HeaderMap, verb: &str) -> Result<(), FacadeApiError> {
+    facade_room_turn_serves(headers, verb, false)
+}
+
+/// Refuses, before any lookup the verb would make, a verb the named room
+/// turn does not serve, so the refusal says nothing about the verb's target.
+fn facade_room_turn_serves(
+    headers: &HeaderMap,
+    verb: &str,
+    served: bool,
+) -> Result<(), FacadeApiError> {
+    if !served && facade_room_turn(headers)?.is_some() {
+        return Err(FacadeApiError::new(
+            StatusCode::BAD_REQUEST,
+            MEMORY_CODE_BAD_REQUEST,
+            format!("{verb} is not served inside a room turn"),
+            ["Call it without the room turn header."],
+        ));
+    }
+    Ok(())
+}
+
 /// Decodes a facade request body, reporting a malformed one in the FACADE
 /// error vocabulary rather than the server's closed one.
 fn facade_json<T>(payload: Result<Json<T>, JsonRejection>) -> Result<T, FacadeApiError> {
@@ -149,6 +290,18 @@ fn facade_input<T: serde::de::DeserializeOwned>(
             MEMORY_CODE_BAD_REQUEST,
             "invalid typed SDK arguments",
             ["Send a JSON body matching this verb's documented input."],
+        )
+    })
+}
+
+/// Encodes a typed verb result in the facade's vocabulary.
+fn facade_output<T: Serialize>(output: T) -> Result<serde_json::Value, FacadeApiError> {
+    serde_json::to_value(output).map_err(|_| {
+        FacadeApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            MEMORY_CODE_INTERNAL,
+            "result encoding failed",
+            ["Report this SDK response mismatch."],
         )
     })
 }
@@ -313,6 +466,11 @@ impl From<MemoryError> for FacadeApiError {
             MEMORY_CODE_INVALID_STATE
             | MEMORY_CODE_OFF_RECORD_SESSION_DOOR
             | MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER => StatusCode::CONFLICT,
+            // A paid call its line cannot cover, as a chat turn's is.
+            MEMORY_CODE_BUDGET_SPENT => StatusCode::PAYMENT_REQUIRED,
+            // The model the request needs did not answer: not the caller's
+            // fault, and not this server's to stand in for.
+            MEMORY_CODE_MODEL_UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };

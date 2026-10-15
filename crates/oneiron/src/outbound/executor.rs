@@ -79,7 +79,7 @@ impl Vault {
         let queue = AttemptQueue::new(self);
         let mut executed = 0_usize;
         loop {
-            let attempt = match self.with_write_txn(|txn| {
+            let attempt = match self.with_write_txn_grouped(|txn| {
                 crate::ports::JobQueue::port_job_claim(
                     self,
                     txn,
@@ -157,6 +157,20 @@ impl Vault {
                 // A terminal possibly-delivered send is not a fresh send permit,
                 // even if a duplicate queue row is scheduled later.
                 complete_connector_task_attempt(self, &attempt, now)?;
+                continue;
+            }
+            // A commitment wake sends only while its approval stands. Asked on
+            // every attempt, so a retraction after scheduling stops the send.
+            if !crate::commitment_wake::scheduled_commitment_wake_authorised(self, &task)? {
+                fail_connector_task_attempt_and_project(
+                    self,
+                    &queue,
+                    &attempt,
+                    task_ref,
+                    now,
+                    "commitment_wake_approval_withdrawn",
+                    ConnectorSendTaskOutcome::Failed,
+                )?;
                 continue;
             }
             #[cfg(test)]
@@ -526,7 +540,7 @@ fn complete_connector_task_attempt(
     attempt: &crate::attempt_queue::AttemptRecord,
     now: u64,
 ) -> Result<(), Error> {
-    match vault.with_write_txn(|txn| {
+    match vault.with_write_txn_grouped(|txn| {
         crate::ports::JobQueue::port_job_complete(
             vault,
             txn,
@@ -548,7 +562,7 @@ fn fail_connector_task_attempt(
     now: u64,
     reason: &str,
 ) -> Result<(), Error> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         crate::ports::JobQueue::port_job_fail(
             vault,
             txn,
@@ -575,7 +589,7 @@ fn fail_connector_task_attempt_and_project(
     reason: &str,
     outcome: ConnectorSendTaskOutcome,
 ) -> Result<(), Error> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         project_connector_send_task_outcome_in_txn(vault, wtxn, task_ref, outcome, now)?;
         queue.fail_in_txn(
             wtxn,

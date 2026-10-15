@@ -9,15 +9,26 @@ use crate::{EdgeKind, EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use std::collections::BTreeSet;
 
-impl EntityStore for Vault {
-    fn port_entity_get(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityRecord>> {
-        let Some(mut row) = self.port_entity_record(txn, id)? else {
+impl Vault {
+    /// [`EntityStore::port_entity_get`] read through `store`, a room's view
+    /// included. A NOTE's document, an entity document and an LFS chunk's
+    /// publication stay the vault's: they read its own store.
+    pub(crate) fn live_entity_in_txn(
+        &self,
+        store: &impl ManifestDbs,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EntityRecord>> {
+        let Some(mut row) = store.port_entity_record(txn, id)? else {
             return Ok(None);
         };
         if row.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
             return Err(crate::secret_custody::reject_secret_custody_byte());
         }
-        if self.port_tombstone_is_deleted(txn, id)? || stale_in_txn(&self.store, txn, id)? {
+        if crate::origin::lfs::unpublished_lfs_chunk_in_txn(&self.store, txn, id, row.entity_type)?
+            || store.port_deletion_state(txn, id)?.deleted
+            || stale_in_txn(store, txn, id)?
+        {
             return Ok(None);
         }
         if super::safe_read::body_is_stale(&row.body) {
@@ -34,6 +45,12 @@ impl EntityStore for Vault {
         row.body = crate::note::live_body_in_txn(&self.store, txn, id, row.entity_type, &row.body)?
             .into_owned();
         Ok(Some(row))
+    }
+}
+
+impl EntityStore for Vault {
+    fn port_entity_get(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityRecord>> {
+        self.live_entity_in_txn(&self.store, txn, id)
     }
     fn port_entity_put(
         &self,
@@ -249,16 +266,13 @@ impl EdgeStore for Vault {
         kind: EdgeKind,
         dst: &EntityId,
     ) -> Result<bool> {
-        crate::edge::validate_public_edge_kind(kind)?;
-        crate::workspace_roster::validate_project_edge_delete(&self.store, txn, *src, kind, *dst)?;
-        let out = Store::encode_edge_key(src, kind, dst);
-        let incoming = Store::encode_edge_key(dst, kind, src);
-        let existed = self.store.edges_out.delete(txn, &out)?;
-        self.store.edges_in.delete(txn, &incoming)?;
-        if existed {
-            crate::ppr::invalidate_ppr_for_edge(&self.store, txn, src, dst)?;
-            crate::ppr::increment_graph_version(&self.store, txn)?;
-        }
+        // One delete door: the batch arm owns every edge-delete guard.
+        let existed = self
+            .store
+            .edges_out
+            .get(txn, &Store::encode_edge_key(src, kind, dst))?
+            .is_some();
+        self.batch_in().delete_edge(src, kind, dst).apply(txn)?;
         Ok(existed)
     }
     fn port_edge_neighbors(

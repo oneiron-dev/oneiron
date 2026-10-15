@@ -35,6 +35,25 @@ pub(crate) fn scoped_read_claim_allowed(
     body: &ClaimBody,
     claim_facets: &[EntityId],
 ) -> bool {
+    scoped_read_claim_allowed_with_scope(
+        policy,
+        actor_key,
+        body,
+        claim_facets,
+        actor_key.authority_scope(),
+    )
+}
+
+/// What a key holding a proof of `explicit_scope` reads under `policy`, as
+/// `scoped_read_claim_allowed` asks of the proof a key carries. The key's
+/// own proof, if any, is not read, and no proof is built.
+pub(crate) fn scoped_read_claim_allowed_with_scope(
+    policy: &PolicyManifestResolution,
+    actor_key: &ScopedReadActorKey,
+    body: &ClaimBody,
+    claim_facets: &[EntityId],
+    explicit_scope: Option<&crate::federation::Scope>,
+) -> bool {
     // This derived-data restriction narrows even a default-open vault. The
     // question's principal is a reader boundary, never a grant by itself.
     if let Some(Value::Map(scope)) = &body.scope {
@@ -60,7 +79,6 @@ pub(crate) fn scoped_read_claim_allowed(
         return false;
     }
 
-    let explicit_scope = actor_key.authority_scope();
     if explicit_scope.is_some_and(|scope| {
         !scope.admits(
             "read",
@@ -234,6 +252,58 @@ fn scoped_read_scope_matches_claim(
             }
             true
         }
+        _ => false,
+    }
+}
+
+/// Whether `grant` reads claims in `world` (`None` is base reality), as
+/// [`scoped_read_claim_allowed`] judges a claim's world: its canonical Scope
+/// admits a read of some record there (the read verb, the world, and no
+/// axis left at bottom, which no record narrows), retrieval's floor for it
+/// under the reader's `credential` leaves some entity type its selectors,
+/// its bands and the credential's share (a TASK-only grant does), and a
+/// world selector, if it carries one, names that world. A
+/// selector on another axis leaves the world readable; one this matcher does
+/// not know admits no claim, so no world. A grant that needs a receipt or a
+/// budget reads none.
+pub(crate) fn scoped_read_grant_reads_world(
+    grant: &PolicyScopedGrant,
+    world: Option<EntityId>,
+    credential: Option<&crate::federation::Scope>,
+) -> bool {
+    if grant.receipt_required || grant.budget.is_some() {
+        return false;
+    }
+    let scope = &grant.authority_scope;
+    let id = crate::federation::ScopeId(world.unwrap_or_else(crate::claim::base_world_id));
+    if !scope.verbs.contains(&"read".to_owned())
+        || !scope.worlds.contains(&id)
+        || scope.audience.is_bottom()
+        || !super::retrieval_filter::scoped_read_grant_reads_some_type(grant, credential)
+    {
+        return false;
+    }
+    match grant.scope.as_ref() {
+        None | Some(Value::Nil) => true,
+        Some(Value::Map(entries)) => entries.iter().all(|(key, value)| match key.as_str() {
+            Some("world" | "world_ref" | "worldRef") => {
+                scoped_read_world_matches_claim(value, world)
+            }
+            Some(
+                "claim_scope"
+                | "claimScope"
+                | "scope"
+                | "facet"
+                | "facet_ref"
+                | "facetRef"
+                | "entity_types"
+                | "max_sensitivity_band"
+                | "include_stale"
+                | "min_confidence"
+                | "min_salience",
+            ) => true,
+            _ => false,
+        }),
         _ => false,
     }
 }
@@ -423,6 +493,15 @@ pub(crate) fn companion_profile_access_grant(
         if header.entity_type != ENTITY_TYPE_ACCESS_GRANT {
             return Err(Error::CorruptedIndex("access grant entity type"));
         }
+        // Authority is a live grant row: a deleted one grants nothing, even
+        // while an unapplied delete leaves its body stored. Its shell is
+        // skipped here; a stored body is checked last, once it matches.
+        let live = || -> Result<bool> {
+            Ok(crate::vault::live_entity_row_in_txn(store, txn, &id)?.is_live())
+        };
+        if raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN && !live()? {
+            continue;
+        }
 
         let grant = match crate::access_grant::decode_access_grant_body(
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
@@ -432,7 +511,9 @@ pub(crate) fn companion_profile_access_grant(
                 return Err(Error::CorruptedIndex("access grant body"));
             }
         };
-        if grant.allows_companion_profile_read(principal_ref, person_ref, persona_ref, now) {
+        if grant.allows_companion_profile_read(principal_ref, person_ref, persona_ref, now)
+            && live()?
+        {
             return Ok(Some(id));
         }
     }

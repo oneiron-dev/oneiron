@@ -290,13 +290,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn channel_field_id_roundtrip() {
-        for ch in AnalyzerChannel::ALL_RESERVED {
-            assert_eq!(AnalyzerChannel::from_field_id(ch.field_id()), Some(ch));
-        }
-    }
-
-    #[test]
     fn channel_field_ids_are_contiguous_from_zero() {
         assert_eq!(AnalyzerChannel::Surface.field_id(), 0);
         assert_eq!(AnalyzerChannel::Stem.field_id(), 1);

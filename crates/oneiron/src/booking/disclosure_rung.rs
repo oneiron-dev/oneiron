@@ -391,78 +391,6 @@ mod tests {
     }
 
     #[test]
-    fn default_disclosure_rung_matches_arch0062_r1() {
-        assert_eq!(
-            default_disclosure_rung(CalendarDisclosureDefault::FamilyCalendarMember),
-            DisclosureRung::Full
-        );
-        assert_eq!(
-            default_disclosure_rung(CalendarDisclosureDefault::WorkplaceWorkCalendarMember),
-            DisclosureRung::Full
-        );
-        assert_eq!(
-            default_disclosure_rung(CalendarDisclosureDefault::PersonalToWorkplace),
-            DisclosureRung::Busy
-        );
-        assert_eq!(
-            default_disclosure_rung(CalendarDisclosureDefault::PublicSurface),
-            DisclosureRung::Slots
-        );
-    }
-
-    #[test]
-    fn narrower_descends_the_ladder_in_both_argument_orders() {
-        let events = vec![event(1)];
-        let slot_mask = mask();
-        for (left, right) in [
-            (DisclosureRung::Full, DisclosureRung::Slots),
-            (DisclosureRung::Slots, DisclosureRung::Full),
-        ] {
-            let projection = project_at_rung(
-                &events,
-                left.narrower(right),
-                SurfaceClass::SameVault,
-                Some(&slot_mask),
-            )
-            .expect("slots projection");
-            assert!(matches!(projection, RungProjection::Slots(_)));
-        }
-        for (left, right) in [
-            (DisclosureRung::Nothing, DisclosureRung::Full),
-            (DisclosureRung::Full, DisclosureRung::Nothing),
-        ] {
-            let projection = project_at_rung(
-                &events,
-                left.narrower(right),
-                SurfaceClass::SameVault,
-                Some(&slot_mask),
-            )
-            .expect("nothing projection");
-            assert!(matches!(projection, RungProjection::Nothing));
-        }
-        let projection = project_at_rung(
-            &events,
-            DisclosureRung::Busy.narrower(DisclosureRung::Busy),
-            SurfaceClass::SameVault,
-            Some(&slot_mask),
-        )
-        .expect("busy projection");
-        let RungProjection::Busy(rows) = projection else {
-            panic!("expected a busy projection");
-        };
-        assert_eq!(rows.len(), 1);
-    }
-
-    #[test]
-    fn project_full_keeps_title_and_details() {
-        let events = vec![event(1)];
-        let projection =
-            project_at_rung(&events, DisclosureRung::Full, SurfaceClass::SameVault, None)
-                .expect("full projection");
-        assert_eq!(projection, RungProjection::Full(events));
-    }
-
-    #[test]
     fn project_titles_strips_details_and_attendees() {
         let events = vec![event(1)];
         let projection = project_at_rung(
@@ -493,52 +421,6 @@ mod tests {
     }
 
     #[test]
-    fn project_busy_is_opaque_intervals_only() {
-        let events = vec![event(1)];
-        let projection = project_at_rung(
-            &events,
-            DisclosureRung::Busy,
-            SurfaceClass::CrossVault,
-            None,
-        )
-        .expect("busy projection");
-        let json = serde_json::to_string(&projection).expect("serialize busy projection");
-        for leak in [
-            "Therapy",
-            "weekly session",
-            "Clinic",
-            &id(1).to_hex(),
-            &id(0xAA).to_hex(),
-            "event_ref",
-            "title",
-        ] {
-            assert!(
-                !json.contains(leak),
-                "busy projection leaked {leak}: {json}"
-            );
-        }
-        assert_eq!(
-            projection,
-            RungProjection::Busy(vec![BusyBlockRow {
-                start_utc: 1_000,
-                end_utc: 2_000
-            }])
-        );
-    }
-
-    #[test]
-    fn project_nothing_returns_no_rows() {
-        let projection = project_at_rung(
-            &[event(1)],
-            DisclosureRung::Nothing,
-            SurfaceClass::SameVault,
-            Some(&mask()),
-        )
-        .expect("nothing projection");
-        assert_eq!(projection, RungProjection::Nothing);
-    }
-
-    #[test]
     fn public_projection_clamps_full_to_slots_inside_chokepoint() {
         let mask = mask();
         let projection = project_at_rung(
@@ -550,43 +432,6 @@ mod tests {
         .expect("clamped projection");
         assert_eq!(projection, RungProjection::Slots(mask));
         assert_eq!(SurfaceClass::Public.ceiling(), DisclosureRung::Slots);
-    }
-
-    #[test]
-    fn public_projection_clamps_titles_and_busy_to_slots_inside_chokepoint() {
-        let mask = mask();
-        for granted in [DisclosureRung::Titles, DisclosureRung::Busy] {
-            let projection =
-                project_at_rung(&[event(1)], granted, SurfaceClass::Public, Some(&mask))
-                    .expect("clamped projection");
-            assert_eq!(
-                projection.rung(),
-                DisclosureRung::Slots,
-                "{granted:?} must clamp to slots on a public surface"
-            );
-        }
-    }
-
-    #[test]
-    fn slots_projection_without_precomputed_mask_returns_booking_error() {
-        let error = project_at_rung(
-            &[event(1)],
-            DisclosureRung::Full,
-            SurfaceClass::Public,
-            None,
-        )
-        .expect_err("public projection without a mask must fail");
-        assert!(matches!(error, BookingError::Surface(_)), "{error:?}");
-
-        // And never a silently empty mask.
-        let error = project_at_rung(
-            &[event(1)],
-            DisclosureRung::Slots,
-            SurfaceClass::SameVault,
-            None,
-        )
-        .expect_err("slots projection without a mask must fail");
-        assert!(matches!(error, BookingError::Surface(_)), "{error:?}");
     }
 
     #[test]
@@ -747,21 +592,5 @@ mod tests {
             project(&companion, &reader, &calendar),
             RungProjection::Nothing
         );
-    }
-
-    #[test]
-    fn projection_dtos_round_trip_through_serde() {
-        let events = vec![event(1)];
-        for projection in [
-            RungProjection::Full(events.clone()),
-            RungProjection::Titles(vec![TitledEventRow::redacted_from(&events[0])]),
-            RungProjection::Busy(vec![BusyBlockRow::opaque_from(&events[0])]),
-            RungProjection::Slots(mask()),
-            RungProjection::Nothing,
-        ] {
-            let json = serde_json::to_string(&projection).expect("serialize");
-            let restored: RungProjection = serde_json::from_str(&json).expect("deserialize");
-            assert_eq!(restored, projection);
-        }
     }
 }

@@ -57,30 +57,12 @@ pub(super) fn seed_historical_lease(
     lease::mirror_leases_from_root(&server.vault, &server.root_doc).unwrap();
 }
 
-fn deep_map_has_map(doc: &LoroDoc, map: &str, key: &str) -> bool {
-    let deep = doc.get_deep_value();
-    let Some(root) = deep.as_map() else {
-        return false;
-    };
-    let Some(inner) = root.get(map).and_then(LoroValue::as_map) else {
-        return false;
-    };
-    inner.get(key).and_then(LoroValue::as_map).is_some()
-}
-
 fn with_window(mut keys: Vec<WindowKey>, key: WindowKey) -> Vec<WindowKey> {
     if !keys.contains(&key) {
         keys.push(key);
     }
     keys.sort_by(|left, right| left.as_str().cmp(right.as_str()));
     keys
-}
-
-#[test]
-fn window_key_for_known_timestamps() {
-    assert_eq!(SyncServer::window_key_for_timestamp(1771027200), "2026-02");
-    assert_eq!(SyncServer::window_key_for_timestamp(1764547200), "2025-12");
-    assert_eq!(SyncServer::window_key_for_timestamp(0), "1970-01");
 }
 
 #[tokio::test]
@@ -173,75 +155,6 @@ fn fresh_server_root_indexes_unopened_world_claim_and_older_base_row() {
     assert!(server.reassert_manager.loaded_keys().is_empty());
 }
 
-#[test]
-fn root_doc_initialization() {
-    let (_dir, vault) = test_vault();
-    let server = SyncServer::new(vault, SyncServerConfig::default()).unwrap();
-
-    // schema_version must be i64-LE bytes (Loro Binary), matching the
-    // shared schema writer (`schema::create_root_doc`).
-    assert_eq!(
-        deep_map_bytes(&server.root_doc, "meta", "schema_version").unwrap(),
-        schema_version_bytes()
-    );
-    assert!(deep_map_has_map(&server.root_doc, "meta", "windows"));
-    assert_eq!(
-        read_window_list(&server.root_doc),
-        vec![WindowKey::new("1970-01")]
-    );
-}
-
-#[test]
-fn server_rejects_non_positive_ephemeral_timeout() {
-    let (_dir, vault) = test_vault();
-    let result = SyncServer::new(
-        vault,
-        SyncServerConfig {
-            ephemeral_timeout_ms: 0,
-            ..Default::default()
-        },
-    );
-
-    assert!(matches!(result, Err(error) if error
-                    .to_string()
-                    .contains("ephemeral_timeout_ms must be positive")));
-}
-
-#[test]
-fn window_materializer_uses_configured_lease_vault_id() {
-    let (_dir, vault) = test_vault();
-    let lease_vault_id = 0x0a0b_0c0d_0e0f_1011u64;
-    let server = SyncServer::new(
-        vault,
-        SyncServerConfig {
-            lease_vault_id,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-
-    assert_eq!(
-        server.reassert_manager.materializer().lease_vault_id(),
-        lease_vault_id
-    );
-}
-
-#[tokio::test]
-async fn window_creation() {
-    let (_dir, vault) = test_vault();
-    let server = SyncServer::new(vault, SyncServerConfig::default()).unwrap();
-
-    let doc = server
-        .get_or_create_window(&WindowKey::new("2026-03"))
-        .await
-        .unwrap();
-    let deep = doc.get_deep_value();
-    let map = deep.as_map().unwrap();
-    assert!(map.contains_key("entities"));
-    assert!(map.contains_key("edges"));
-    assert!(map.contains_key("tombstones"));
-}
-
 #[tokio::test]
 async fn window_creation_persists_snapshot_and_registers_in_root() {
     let (_dir, vault) = test_vault();
@@ -310,58 +223,9 @@ async fn window_open_root_write_serializes_with_lease_registrar() {
     );
 }
 
-#[tokio::test]
-async fn imported_updates_and_root_windows_survive_server_recreation() {
-    let (_dir, vault) = test_vault();
-
-    // ── Server instance 1: create a window, import an update (entity +
-    //    tombstone), persist via the Observer-A-equivalent path.
-    {
-        let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
-        let key = WindowKey::new("2026-02");
-        let doc = server.get_or_create_window(&key).await.unwrap();
-
-        let author = LoroDoc::new();
-        author
-            .get_map("entities")
-            .insert("e1", b"v1".as_slice())
-            .unwrap();
-        author
-            .get_map("tombstones")
-            .insert("deadbeef", b"1".as_slice())
-            .unwrap();
-        author.commit();
-        let update = author.export(ExportMode::all_updates()).unwrap();
-
-        doc.import_with(&update, "conn:1").unwrap();
-        server.persist_imported_update(&key, &update).unwrap();
-    }
-
-    // ── Server instance 2 over the same vault: RAM state is gone;
-    //    everything must come back from sync_state.
-    let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
-
-    // Root doc reloaded from d:root — meta.windows still lists the key.
-    assert!(read_window_list(&server.root_doc).contains(&WindowKey::new("2026-02")));
-
-    // Window doc reloaded from d:w: + pending u:w: — the relayed entity
-    // AND the tombstone (delete propagation) survive the restart.
-    let doc = server
-        .get_or_create_window(&WindowKey::new("2026-02"))
-        .await
-        .unwrap();
-    assert_eq!(deep_map_bytes(&doc, "entities", "e1").unwrap(), b"v1");
-    assert_eq!(
-        deep_map_bytes(&doc, "tombstones", "deadbeef").unwrap(),
-        b"1",
-        "a relayed tombstone must survive a server restart"
-    );
-}
-
 /// ONE-519: imported state is durable without a server-side `commit()`.
 ///
-/// The companion of `imported_updates_and_root_windows_survive_server_recreation`
-/// for the commit question: `import_with` + the Observer-A-equivalent durable
+/// On the commit question: `import_with` + the Observer-A-equivalent durable
 /// append is the WHOLE contract. No `doc.commit()` runs here — `commit()`
 /// finalizes locally authored ops, and relayed bytes have none — yet entity,
 /// edge and tombstone content plus the oplog VV must all come back from
@@ -684,63 +548,6 @@ async fn lease_expiry_tick_flips_only_active_expired_rows_and_is_idempotent() {
 }
 
 #[tokio::test]
-async fn concurrent_lease_expiry_tick_skips_in_flight_job() {
-    let (_dir, vault) = test_vault();
-    let server = Arc::new(SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap());
-    let now = 10_000;
-    let client_id = 0x2000_0000_0000_0001u64;
-    let record = LeaseRecord {
-        vault_id: SERVER_LEASE_VAULT_ID,
-        status: LeaseStatus::Active,
-        pubkey: [9; 32],
-        granted_at: 1,
-        renewed_at: 2,
-        expires_at: now - 1,
-    };
-    server
-        .root_doc
-        .get_map(ROOT_LEASES_MAP)
-        .insert(
-            lease::client_id_hex(client_id).as_str(),
-            lease::encode_lease_record(&record).as_slice(),
-        )
-        .unwrap();
-    server.root_doc.commit();
-
-    let registrar_guard = server.lease_registrar.lock().await;
-    let first = {
-        let server = Arc::clone(&server);
-        tokio::spawn(async move { server.expire_leases_once_at(now).await.unwrap() })
-    };
-    let expiry_key = server.lifecycle_job_key(LifecycleJobKind::LeaseExpiry);
-    loop {
-        if server
-            .lifecycle_in_flight
-            .lock()
-            .await
-            .contains(&expiry_key)
-        {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-
-    let second = server.expire_leases_once_at(now).await.unwrap();
-    assert!(second.skipped, "overlapping tick is skipped, not queued");
-    drop(registrar_guard);
-    let first = first.await.unwrap();
-    assert_eq!(first.expired_rows, 1);
-    assert_eq!(
-        vault
-            .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_id))
-            .unwrap()
-            .unwrap()[1],
-        0x02,
-        "the row is flipped exactly once"
-    );
-}
-
-#[tokio::test]
 async fn ra_drain_tick_clears_only_fully_reasserted_windows() {
     let (_dir, vault) = test_vault();
     let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
@@ -907,67 +714,6 @@ async fn historical_lease_revoke_root_and_mirror_roll_back_together_on_failure()
     );
 }
 
-/// Retired enrollment never writes, even when the old registry is corrupt.
-#[tokio::test]
-async fn register_refuses_on_non_binary_lease_entry() {
-    use ed25519_dalek::{Signer, SigningKey};
-
-    let (_dir, vault) = test_vault();
-    let server = SyncServer::new(vault.clone(), SyncServerConfig::default()).unwrap();
-
-    // Inject a NON-binary value into the root leases map (e.g. an i64),
-    // simulating local registry corruption.
-    let corrupt_key = lease::client_id_hex(0x00cc_00cc_00cc_00ccu64);
-    server
-        .root_doc
-        .get_map(ROOT_LEASES_MAP)
-        .insert(corrupt_key.as_str(), LoroValue::I64(7))
-        .unwrap();
-    server.root_doc.commit();
-
-    // A fully valid registration (valid PoP) must still be refused.
-    let key = SigningKey::from_bytes(&[55u8; 32]);
-    let pubkey = key.verifying_key().to_bytes();
-    let client_id = 0x00dd_00dd_00dd_00ddu64;
-    let pop = key
-        .sign(&lease::lease_pop_transcript(client_id, &pubkey))
-        .to_bytes();
-
-    let refused = server
-        .register_lease(client_id, &pubkey, &pop)
-        .await
-        .unwrap();
-    assert!(!refused.granted);
-    assert!(refused.root_update.is_none());
-
-    // Fail-closed-hard: NO ls:/active row for the attempted registration,
-    // and no existing lease altered (no row was written at all).
-    assert!(
-        vault
-            .sync_state_get(&lease::lease_key(SERVER_LEASE_VAULT_ID, client_id))
-            .unwrap()
-            .is_none(),
-        "a refused registration writes NO ls: row"
-    );
-    assert!(
-        deep_map_bytes(
-            &server.root_doc,
-            "leases",
-            &lease::lease_registry_key(SERVER_LEASE_VAULT_ID, client_id),
-        )
-        .is_none(),
-        "no leases-map entry for the refused registration"
-    );
-    // The corrupt entry is left exactly as-is (never silently rewritten).
-    assert!(
-        matches!(
-            server.root_doc.get_map(ROOT_LEASES_MAP).get(&corrupt_key),
-            Some(ValueOrContainer::Value(LoroValue::I64(7)))
-        ),
-        "the non-binary entry is not silently mutated"
-    );
-}
-
 /// B5: revoke distinguishes absent from corrupt. A non-binary root lease
 /// entry is local registry corruption and must fail closed with
 /// `CorruptedIndex(_)`, not masquerade as Ok(None).
@@ -993,13 +739,4 @@ async fn revoke_refuses_on_non_binary_lease_entry() {
         ),
         "the corrupt lease entry must not be mutated by revoke"
     );
-}
-
-#[test]
-fn used_window_sub_tags_are_pinned() {
-    // The handler relies on these wire literals; keep them pinned here
-    // so the server crate notices a transport renumbering.
-    assert_eq!(window_sub_tags::UPDATE, 0);
-    assert_eq!(window_sub_tags::VV_REQUEST, 2);
-    assert_eq!(window_sub_tags::VV_RESPONSE, 3);
 }

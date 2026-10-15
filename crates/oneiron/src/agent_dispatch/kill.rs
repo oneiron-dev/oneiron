@@ -13,7 +13,7 @@ use super::codec::decode_agent_dispatch_input;
 use super::dispatch::AgentDispatcher;
 use super::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchTarget, DispatchHealer, HealerSlot,
-    HealerSlotOutcome, KillOutcome, KillProposal,
+    HealerSlotOutcome, KillOutcome, KillProposal, KillerLease,
 };
 use crate::error::ArtifactError;
 
@@ -107,17 +107,21 @@ impl AgentDispatcher<'_> {
 impl AgentDispatcher<'_> {
     /// Cancels a direct child spawn when the executing attempt is its spawner.
     ///
-    /// `killer_attempt` MUST be the runtime-authenticated executing attempt.
-    /// The caller/runtime owns that binding; this trusted wrapper is not a raw
-    /// agent verb, and queue intervention must not be exposed around it.
-    /// Requests from any other attempt leave the spawn unchanged and surface
-    /// a typed proposal.
+    /// `killer` is the lease the executing attempt runs under, as its claim
+    /// returned it. The attempt must be leased (or landing) to that owner at
+    /// that generation: an attempt id alone is no authority, since every queue
+    /// read shows it, and a queued or paused parent has no runtime that could
+    /// be asking. This trusted wrapper is not a raw agent verb, and queue
+    /// intervention must not be exposed around it. Requests from any other
+    /// attempt, or under any other lease, leave the spawn unchanged and
+    /// surface a typed proposal.
     pub fn kill_spawn(
         &self,
         spawn_attempt_id: &AttemptId,
-        killer_attempt: &AttemptId,
+        killer: &KillerLease,
         now: u64,
     ) -> Result<KillOutcome> {
+        let killer_attempt = &killer.attempt;
         let queue = AttemptQueue::new(self.vault);
         let mut wtxn = self.vault.store.env.write_txn()?;
         let record = queue
@@ -138,29 +142,32 @@ impl AgentDispatcher<'_> {
         }
         decode_agent_dispatch_input(&payload.input)?;
 
-        let Some(killer) = queue.get_in_write_txn(&wtxn, *killer_attempt)? else {
+        let Some(killer_row) = queue.get_in_write_txn(&wtxn, *killer_attempt)? else {
             return Ok(KillOutcome::Proposed(KillProposal {
                 spawn_attempt_id: *spawn_attempt_id,
                 proposer: *killer_attempt,
             }));
         };
+        // Only the runtime holding the killer's live lease speaks for it: the
+        // lease fence `complete` and `fail` use, read in this transaction. A
+        // queued or paused parent has no runtime, and a lease reclaimed by
+        // another worker or an older generation no longer speaks for it.
         // ONE-1896: a LANDING parent is live work — it still holds its lease
         // and its runtime — so it keeps the standing its lease gives it.
         // Omitting it read a landing spawner as dead and downgraded its ask to
         // a proposal precisely when it was tidying up its own children.
         if !matches!(
-            killer.state,
-            AttemptState::Queued
-                | AttemptState::Leased
-                | AttemptState::Paused
-                | AttemptState::Landing
-        ) {
+            killer_row.state,
+            AttemptState::Leased | AttemptState::Landing
+        ) || killer_row.lease_owner.as_deref() != Some(killer.lease_owner.as_str())
+            || killer_row.attempt_count != killer.attempt_count
+        {
             return Ok(KillOutcome::Proposed(KillProposal {
                 spawn_attempt_id: *spawn_attempt_id,
                 proposer: *killer_attempt,
             }));
         }
-        if killer.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
+        if killer_row.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
             return Ok(KillOutcome::Proposed(KillProposal {
                 spawn_attempt_id: *spawn_attempt_id,
                 proposer: *killer_attempt,
@@ -173,7 +180,7 @@ impl AgentDispatcher<'_> {
         // kind, and `DreamerRunnerStore::enqueue` stores an unvalidated input `Value` —
         // so a killer whose envelope or dispatch input does not decode is an
         // unconfirmable killer, not storage corruption: classify it, do not error.
-        let Ok(killer_payload) = decode_dreamer_attempt_payload(&killer.payload) else {
+        let Ok(killer_payload) = decode_dreamer_attempt_payload(&killer_row.payload) else {
             return Ok(KillOutcome::Proposed(KillProposal {
                 spawn_attempt_id: *spawn_attempt_id,
                 proposer: *killer_attempt,

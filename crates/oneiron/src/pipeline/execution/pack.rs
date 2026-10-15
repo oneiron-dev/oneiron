@@ -2,7 +2,7 @@
 
 use super::super::budget::context_pack_evidence_abstains;
 use super::super::builder::PipelineBuilder;
-use super::super::support::normalize_range;
+use super::super::support::{normalize_range, read_entity_metadata};
 use super::super::trace::{merge_retrieval_diagnostics, telemetry_score_breakdown};
 use super::super::types::{FacetMode, PipelineOutput, ScoredEntity};
 use super::types::HydeAttemptOverrides;
@@ -16,7 +16,7 @@ use crate::query_expansion::{
 };
 use crate::retrieval_quality::{RetrievalDiagnostics, classify_retrieval_quality};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal};
-use crate::temporal::{TemporalExpressionParseError, temporal_expression_from_query};
+use crate::temporal::{TemporalHintReport, temporal_hints_from_query};
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -36,9 +36,11 @@ impl PipelineBuilder<'_> {
             return Ok(PipelineOutput {
                 vector_completed: false,
                 revisions: HashMap::new(),
+                words_bound: Default::default(),
                 // No channel ran: an authority refusal is not a cache failure.
                 retrieval_quality: Default::default(),
                 scores: Vec::new(),
+                cited_messages: HashMap::new(),
                 capabilities: Vec::new(),
                 claim_bodies: HashMap::new(),
                 pending_vectors: Vec::new(),
@@ -49,6 +51,7 @@ impl PipelineBuilder<'_> {
                 empty_reason: Some(EmptyReason::FilterMatchedNone),
                 telemetry_run_id: None,
                 signals: Vec::new(),
+                temporal_hints: Vec::new(),
             });
         }
         if self.ppr_search.is_some() || self.ppr_expand.is_some() {
@@ -61,9 +64,12 @@ impl PipelineBuilder<'_> {
             state.validate()?;
         }
         let started = Instant::now();
+        // One read of the no-match floors judges the run, keys its fork and
+        // fills its replay inputs, whatever a host sets while it runs.
+        self.no_match_floors = Some(std::sync::Arc::new(self.vault.no_match_floors()));
         let started_at = self.vault.store.clock.now_recorded_at();
         let temporal_now = self.temporal_now.unwrap_or(started_at);
-        let occurred_range = self.resolved_occurred_range(temporal_now)?;
+        let (occurred_range, temporal_hints) = self.resolved_occurred_range(temporal_now);
         // A parsed query range replaces the effort's default now anchor for
         // the temporal scan. Keep the effort flag: it is not a host window,
         // so the independent recency blend still applies.
@@ -214,8 +220,10 @@ impl PipelineBuilder<'_> {
                     .succeeded
                     .contains(&RetrievalSignal::Vector),
                 revisions: HashMap::new(),
+                words_bound: Default::default(),
                 retrieval_quality: classify_retrieval_quality(&attempt.diagnostics),
                 scores: Vec::new(),
+                cited_messages: HashMap::new(),
                 capabilities: Vec::new(),
                 claim_bodies: HashMap::new(),
                 pending_vectors: Vec::new(),
@@ -226,12 +234,15 @@ impl PipelineBuilder<'_> {
                 empty_reason: None,
                 telemetry_run_id: None,
                 signals: telemetry_signals,
+                temporal_hints,
             });
         }
         let mut diagnostics = attempt.diagnostics;
         let mut ppr_expand_executed = attempt.ppr_expand_executed;
         let mut scores = attempt.scores;
+        let mut cited_messages = attempt.cited_messages;
         let mut revisions = attempt.revisions;
+        let mut words_bound = attempt.words_bound;
         let mut capabilities = attempt.capabilities;
         let mut pending_vectors = attempt.pending_vectors;
         let mut claim_gate = attempt.claim_gate;
@@ -247,15 +258,7 @@ impl PipelineBuilder<'_> {
         let mut retrieval_trace = attempt.retrieval_trace;
         let mut replay_inputs = attempt.replay_inputs;
 
-        if !self
-            .session
-            .is_some_and(crate::off_record::SessionRetrievalTelemetry::discards_writes)
-        {
-            crate::ppr::flush_deferred_ppr_cache_writes(
-                &self.vault.store,
-                &deferred_ppr_cache_writes,
-            )?;
-        }
+        self.flush_ppr_cache_writes(&deferred_ppr_cache_writes)?;
 
         let mut claim_bodies = HashMap::new();
         let mut claims_suppressed = 0_usize;
@@ -309,19 +312,13 @@ impl PipelineBuilder<'_> {
                         skip_ret01_abstain: true,
                     },
                 )?;
-                if !self
-                    .session
-                    .is_some_and(crate::off_record::SessionRetrievalTelemetry::discards_writes)
-                {
-                    crate::ppr::flush_deferred_ppr_cache_writes(
-                        &self.vault.store,
-                        &retry.deferred_ppr_cache_writes,
-                    )?;
-                }
+                self.flush_ppr_cache_writes(&retry.deferred_ppr_cache_writes)?;
                 // A retry cache hit must not erase an earlier miss in this run.
                 merge_retrieval_diagnostics(&mut diagnostics, retry.diagnostics);
                 scores = retry.scores;
+                cited_messages = retry.cited_messages;
                 revisions = retry.revisions;
+                words_bound = retry.words_bound;
                 capabilities = retry.capabilities;
                 pending_vectors = retry.pending_vectors;
                 claim_gate = retry.claim_gate;
@@ -354,14 +351,14 @@ impl PipelineBuilder<'_> {
             let abstain = second_insufficient
                 || (matches!(verdict, EvidenceVerdict::Insufficient { .. }) && !options.retry_once)
                 || (self.context_pack_budget.is_some()
-                    && context_pack_evidence_abstains(
+                    && self.post_assessment_evidence_abstains(
                         &scores,
                         &signal_components,
-                        self.text_search.as_ref().map(|(query, _)| query.as_str()),
-                        self.vector_search.is_some() || hyde_expansion.is_some(),
-                    ));
+                        hyde_expansion.is_some(),
+                    )?);
             if abstain {
                 scores.clear();
+                cited_messages.clear();
                 pending_vectors.clear();
                 retrieval_trace = None;
                 empty_reason = Some(EmptyReason::BelowThreshold);
@@ -399,10 +396,25 @@ impl PipelineBuilder<'_> {
             telemetry_signals.retain(|signal| *signal != RetrievalSignal::Ppr);
         }
         let retrieval_quality = classify_retrieval_quality(&diagnostics);
-        let capture = self.vault.store.retrieval_telemetry_capture_enabled();
+        // A run that read a room staging anything of its own may name its
+        // rows, or score by them, in its results, scores and trace. Base holds no reference to a live
+        // overlay row (ARCH-0052: the taint guard covers references), so such
+        // a run keeps its run row in the room alone: none once the room is on
+        // record, and none without a room to route it. On record its saver
+        // must still hold, as for the row it keeps out.
+        let capture_enabled = self.vault.store.retrieval_telemetry_capture_enabled();
+        let withheld = self
+            .session
+            .is_none_or(crate::off_record::SessionRetrievalTelemetry::writes_to_base)
+            && self.read.holds_room_rows();
+        let capture = capture_enabled && !withheld;
         let telemetry_run_id = if !capture {
             if let Some(session) = self.session {
-                session.revalidate_without_capture()?;
+                if capture_enabled {
+                    session.admit_withheld_write()?;
+                } else {
+                    session.revalidate_without_capture()?;
+                }
             }
             None
         } else {
@@ -472,8 +484,10 @@ impl PipelineBuilder<'_> {
         Ok(PipelineOutput {
             vector_completed: diagnostics.succeeded.contains(&RetrievalSignal::Vector),
             revisions,
+            words_bound,
             retrieval_quality,
             scores,
+            cited_messages,
             capabilities,
             claim_bodies,
             pending_vectors,
@@ -484,6 +498,7 @@ impl PipelineBuilder<'_> {
             empty_reason,
             telemetry_run_id,
             signals: telemetry_signals,
+            temporal_hints,
         })
     }
 
@@ -567,29 +582,83 @@ impl PipelineBuilder<'_> {
                 .is_some_and(|(seeds, _)| !seeds.is_empty())
     }
 
-    fn resolved_occurred_range(&self, now: u64) -> Result<Option<(u64, u64)>> {
+    /// ARCH-0052 D3: a room's PPR cache rows never reach base. An overlay
+    /// route drops them; a base route lands as every other base write does,
+    /// checked as the cache write's last statement, so a room that flipped
+    /// off record mid-walk, or whose saver left, drops them too. As with the
+    /// base witness, the instant between that check and the commit stays
+    /// open until a flip drains base writers.
+    fn flush_ppr_cache_writes(&self, writes: &[crate::ppr::DeferredPprCacheWrite]) -> Result<()> {
+        let store = &self.vault.store;
+        match self.session {
+            None => crate::ppr::flush_deferred_ppr_cache_writes(store, writes),
+            Some(session) if session.writes_to_base() => {
+                crate::ppr::flush_deferred_ppr_cache_writes_admitted(store, writes, |txn| {
+                    session.admit_base_write(txn)
+                })
+            }
+            Some(_) => Ok(()),
+        }
+    }
+
+    /// The occurred-time window this run filters on, and the temporal phrases
+    /// the query held. A host window or a host temporal search wins over the
+    /// query, which is then not read. Query phrases never fail the run: one
+    /// the parser cannot use is reported and left out.
+    fn resolved_occurred_range(&self, now: u64) -> (Option<(u64, u64)>, Vec<TemporalHintReport>) {
         if self.occurred_range.is_some()
             || self
                 .temporal_search
                 .as_ref()
                 .is_some_and(|config| !config.effort_anchor)
         {
-            return Ok(self.occurred_range);
+            return (self.occurred_range, Vec::new());
         }
 
         let Some((query, _)) = self.text_search.as_ref() else {
-            return Ok(None);
+            return (None, Vec::new());
         };
 
-        temporal_expression_from_query(query)
-            .map(|expression| expression.map(|expression| expression.resolve(now)))
-            .map(|range| range.map(|range| normalize_range(range.start, range.end)))
-            .map_err(invalid_temporal_expression)
+        let hints = temporal_hints_from_query(query, now);
+        (
+            hints
+                .range
+                .map(|range| normalize_range(range.start, range.end)),
+            hints.hints,
+        )
     }
-}
 
-fn invalid_temporal_expression(error: TemporalExpressionParseError) -> Error {
-    Error::InvalidTemporalExpression(error)
+    /// RET-01 over the scores the HyDE assessment settled on, after every
+    /// read transaction has closed. A kind is read in a transaction of its
+    /// own, opened only when the vault's space keys its floors by kind.
+    fn post_assessment_evidence_abstains(
+        &self,
+        scores: &[ScoredEntity],
+        signal_components: &HashMap<EntityId, Vec<crate::store::RetrievalScoreComponent>>,
+        hyde_expanded: bool,
+    ) -> Result<bool> {
+        let floors = self.no_match_floors();
+        let space = self.vault.evidence_space();
+        let rtxn = if floors.keys_space(space) {
+            Some(self.vault.store.env.read_txn()?)
+        } else {
+            None
+        };
+        context_pack_evidence_abstains(
+            scores,
+            signal_components,
+            self.text_search.as_ref().map(|(query, _)| query.as_str()),
+            self.vector_search.is_some() || hyde_expanded,
+            space,
+            &floors,
+            |id| match rtxn.as_ref() {
+                Some(rtxn) => {
+                    Ok(read_entity_metadata(&self.read, rtxn, id)?.map(|meta| meta.entity_type))
+                }
+                None => Ok(None),
+            },
+        )
+    }
 }
 
 /// Fail-closed admission of the caller's per-entity read-side decay

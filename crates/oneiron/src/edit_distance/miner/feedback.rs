@@ -194,7 +194,7 @@ pub fn bind_amendment_preference_principal(
     target: &CompilationTarget,
 ) -> Result<()> {
     target.validate()?;
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         vault.verify_owner_write_actor_in_txn(txn, &owner)?;
         let evidence =
             crate::edit_distance::attribution::amendment_evidence_in_txn(vault, txn, receipt)?

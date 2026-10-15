@@ -207,6 +207,12 @@ impl<'a, 't> ProjectReader<'a, 't> {
             ));
         }
         let Some(proof) = proof else {
+            // Only a v3 proof signs a roster; an unsigned state vouches for none.
+            if authority.roster.is_some() {
+                return Ok(ProjectVerdict::Quarantined(
+                    "an unsigned project state carries a roster",
+                ));
+            }
             return self.unsigned(id, authority);
         };
         let holder = match self.verify(id, authority, proof)? {
@@ -318,7 +324,14 @@ impl<'a, 't> ProjectReader<'a, 't> {
         if fold.slips.is_revoked(&slip.claims.slip_id) {
             return Ok(Err(ProjectVerdict::Quarantined("authorizing slip revoked")));
         }
-        let challenge = authority.write_challenge(id, proof.signed_at, proof.anchor.as_deref())?;
+        // A v2 proof over a roster, or a v3 proof without one, signs nothing.
+        let Ok(challenge) =
+            authority.write_challenge(id, proof.version, proof.signed_at, proof.anchor.as_deref())
+        else {
+            return Ok(Err(ProjectVerdict::Quarantined(
+                "invalid project write proof",
+            )));
+        };
         let Ok(verified) = slip.verify_history(
             &mint.signer,
             &fold,
@@ -350,4 +363,22 @@ impl<'a, 't> ProjectReader<'a, 't> {
             attenuated: !slip.caveats.is_empty(),
         }))
     }
+}
+
+/// The facets a project's home room limits what is read through it: its
+/// project's own slice facet, as the read fold accepts the project (owner
+/// ruling FACET-READ). A MESSAGE or TURN said there sits in it. `None` is a
+/// room no project owns, or one whose project's slice names no facet.
+pub(crate) fn room_facets_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> Result<Option<ScopeAxis<ScopeId>>> {
+    let Some(project) = ROOM_PROJECT.get(&vault.store, txn, &room)? else {
+        return Ok(None);
+    };
+    Ok(vault
+        .visible_project_in_txn(txn, project)?
+        .and_then(|project| project.slice.facet)
+        .map(|facet| ScopeAxis::Some([ScopeId(facet)].into())))
 }

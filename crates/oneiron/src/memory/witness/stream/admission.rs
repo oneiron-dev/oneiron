@@ -111,7 +111,7 @@ impl Memory<'_> {
         }
         let admitted: MessageStreamResult<()> =
             self.vault
-                .try_with_write_txn(|txn| -> MessageStreamResult<()> {
+                .try_with_write_txn_grouped(|txn| -> MessageStreamResult<()> {
                     if storage::ACTIVE.contains(&self.vault.store, txn, &id)? {
                         return Err(MessageStreamError::StreamAlreadyActive(id));
                     }

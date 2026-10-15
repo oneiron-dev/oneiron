@@ -5,12 +5,17 @@ mod records;
 mod routing;
 mod speech_identity;
 
-pub(crate) use self::compaction::ExecutorOutputSpan;
+pub(crate) use self::compaction::{CodeRunCompactionCoverage, ExecutorOutputSpan};
 pub use self::records::CodeRunModelHealCount;
-pub(crate) use self::routing::ExecutorStorage;
+pub(crate) use self::routing::{ExecutorStorage, require_facet_placement_in, unplaceable};
 #[cfg(test)]
 pub(super) use self::speech_identity::canonical_speech_conversation_id;
+pub(in crate::code_run) use self::speech_identity::derived_executor_id;
 #[cfg(test)]
+pub(crate) use self::speech_identity::executor_speech_message_id;
+#[cfg(test)]
+pub(super) use self::speech_identity::executor_speech_turn_id;
 pub(crate) use self::speech_identity::{
-    canonical_speech_conversation_id_for_run, executor_speech_message_id,
+    executor_compaction_session_id, executor_speech_message_id_in_run,
+    executor_speech_turn_id_for_run,
 };

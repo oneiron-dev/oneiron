@@ -5,9 +5,8 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::derived_domains::PERSON_SUBSTRATE_FACET;
 use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use crate::memory::{MemoryError, MemoryResult};
-use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET};
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 use crate::write_envelope::WriteActor;
 use crate::{
     EntityId, TimeRange,
@@ -40,14 +39,21 @@ pub const PREDICATE_VAULT_DEFAULT_FACET: &str = "vault.default_facet";
 pub(crate) fn default_facet_in(store: &Store, txn: &heed::RoTxn<'_>) -> Result<EntityId> {
     let owner = crate::vault::embedded_owner_actor_id()?;
     let mut newest: Option<((u64, EntityId), Value)> = None;
-    for edge in store.port_edges(
+    // Every claim write asks this, and most claims are about the owner: walk
+    // the predicate's posting list, then keep the claims of the owner (the
+    // same in-edge rows a walk of the owner's claims reads), not every claim
+    // about the owner.
+    for claim in super::claim_ids_for_predicate_bounded_in_txn(
+        store,
         txn,
-        &owner,
-        EdgeDirection::In,
-        Some(EdgeKind::ClaimOf),
-        None,
+        PREDICATE_VAULT_DEFAULT_FACET,
+        usize::MAX,
     )? {
-        let claim = edge?.target;
+        let in_edge = Store::encode_edge_key(&owner, EdgeKind::ClaimOf, &claim);
+        let Some(row) = store.edges_in().get(txn, &in_edge)? else {
+            continue;
+        };
+        crate::edge::parse_strict_edge_record(&in_edge, &row)?;
         let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &claim)? else {
             continue;
         };
@@ -91,7 +97,7 @@ impl crate::Vault {
     pub fn set_default_facet(&self, facet: EntityId, actor: WriteActor) -> MemoryResult<()> {
         let owner = self.ensure_embedded_owner_actor()?;
         let now = self.store.clock.now_recorded_at();
-        self.try_with_write_txn(|wtxn| {
+        self.try_with_write_txn_grouped(|wtxn| {
             if actor.actor_class() != EdgeActorClass::Human
                 || crate::memory::verify_owner_actor_binding_in_txn(self, wtxn, actor.entity_ref())
                     .is_err()

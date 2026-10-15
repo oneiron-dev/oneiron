@@ -46,7 +46,17 @@ fn ceiling(auto: bool) -> PolicyApprovalCeiling {
         PolicyApprovalCeiling::Proposed
     }
 }
-pub(super) fn resolve(
+/// Every actor an owner has introduced, by the id its introduction is
+/// resolved under.
+pub(crate) fn introduced_foreign_agents(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<EntityId>> {
+    INTRODUCTION.scan_keys(store, txn, &[])
+}
+/// The bound an owner's introduction of `actor` puts on its writes, through
+/// the introducer's own bound and chain; `None` when no owner introduced it.
+pub(crate) fn resolve(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     actor: WriteActor,
@@ -117,8 +127,8 @@ impl Vault {
         introducer: WriteActor,
         confirmed: AgentCeiling,
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
+        self.with_write_txn_grouped(|txn| {
+            let actor = owner.revalidate_in_txn(self, txn)?;
             if foreign == introducer.entity_ref()
                 || crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &foreign)?
                     .is_none()
@@ -144,7 +154,7 @@ impl Vault {
                     introducer: *introducer.entity_ref().as_bytes(),
                     introducer_class: introducer.actor_class() as u8,
                     confirmed_auto: confirmed == AgentCeiling::Auto,
-                    owner: *owner.actor().as_bytes(),
+                    owner: *actor.as_bytes(),
                     widen: None,
                 },
             )
@@ -159,10 +169,10 @@ impl Vault {
         foreign: EntityId,
         requested: AgentCeiling,
     ) -> Result<bool> {
-        self.with_write_txn(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
+        self.with_write_txn_grouped(|txn| {
+            let owner_actor = owner.revalidate_in_txn(self, txn)?;
             let mut row = load(&self.store, txn, foreign)?.ok_or(Error::EntityNotFound)?;
-            if row.owner != *owner.actor().as_bytes() {
+            if row.owner != *owner_actor.as_bytes() {
                 return Err(Error::Gate(
                     crate::error::GateError::ConsentOwnerNotAuthenticated(
                         "foreign introduction belongs to another owner",
@@ -179,7 +189,7 @@ impl Vault {
             let input = GateEvaluatorInput {
                 actor: GateActor {
                     actor_class: "human".to_owned(),
-                    actor_ref: Some(owner.actor().to_hex()),
+                    actor_ref: Some(owner_actor.to_hex()),
                     delegation_grant_ref: None,
                 },
                 // A widen request carries no claim candidate or sensitivity.
@@ -190,7 +200,7 @@ impl Vault {
                 criticality: PolicyCriticality::Normal,
                 policy_manifest_version: super::POLICY_SCHEMA_VERSION.to_owned(),
                 provenance: GateProvenanceHandles {
-                    actor_entity_ref: Some(owner.actor()),
+                    actor_entity_ref: Some(owner_actor),
                     ..Default::default()
                 },
                 external_effect: None,
@@ -222,7 +232,7 @@ impl Vault {
                     receipt_reasons: Vec::new(),
                     system_notices: Vec::new(),
                     actor_class: "human".to_owned(),
-                    actor_ref: Some(owner.actor().to_hex()),
+                    actor_ref: Some(owner_actor.to_hex()),
                     content_kind: "claim".to_owned(),
                     policy_manifest_version: super::POLICY_SCHEMA_VERSION.to_owned(),
                     claim_id: None,
@@ -245,6 +255,22 @@ impl Vault {
         &self,
         owner: &AuthenticatedOwner,
         principal: &str,
+    ) -> Result<GateDecisionRecord> {
+        self.grant_agent_principal(owner, principal, AgentCeiling::Proposed)
+    }
+
+    /// [`Vault::grant_foreign_principal`] at the ceiling the owner names: the
+    /// same read and propose Grant, and the principal's one `agent` ceiling
+    /// row set to `ceiling`. Any earlier row bound to the same principal is
+    /// replaced, so the owner's latest grant is the one that holds rather
+    /// than the most restrictive of every grant ever made. ARCH-0028's tiers
+    /// are what `oneiron token agent` maps onto this: `full-access` is
+    /// `auto`, `propose-only` and `read-only` are `proposed`.
+    pub fn grant_agent_principal(
+        &self,
+        owner: &AuthenticatedOwner,
+        principal: &str,
+        ceiling: AgentCeiling,
     ) -> Result<GateDecisionRecord> {
         use super::constants::{
             ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, GRANT_EFFECTOR_KEY,
@@ -281,10 +307,22 @@ impl Vault {
                 EdgeActorClass::Agent.gate_actor_class().into(),
             ),
             (ACTOR_REF_KEY.into(), principal.into()),
-            (ACTOR_CEILING_KEY.into(), "proposed".into()),
+            (ACTOR_CEILING_KEY.into(), ceiling.as_str().into()),
         ]);
-        self.with_write_txn(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
+        let bound_here = |row: &Value| {
+            let field = |key: &str| {
+                row.as_map().and_then(|fields| {
+                    fields
+                        .iter()
+                        .find(|(name, _)| name.as_str() == Some(key))
+                        .and_then(|(_, value)| value.as_str())
+                })
+            };
+            field(ACTOR_CLASS_KEY) == Some(EdgeActorClass::Agent.gate_actor_class())
+                && field(ACTOR_REF_KEY) == Some(principal)
+        };
+        self.with_write_txn_grouped(|txn| {
+            let actor = owner.revalidate_in_txn(self, txn)?;
             let id = super::default_policy_manifest_id()?;
             let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?
                 .ok_or(Error::EntityNotFound)?;
@@ -316,6 +354,9 @@ impl Vault {
                     .find(|(key, _)| key.as_str() == Some(table))
                 {
                     Some((_, Value::Array(rows))) => {
+                        if table == POLICY_ACTOR_CEILINGS_KEY {
+                            rows.retain(|existing| !bound_here(existing));
+                        }
                         if !rows.contains(row) {
                             rows.push(row.clone());
                         }
@@ -360,7 +401,7 @@ impl Vault {
                 receipt_reasons: Vec::new(),
                 system_notices: Vec::new(),
                 actor_class: EdgeActorClass::Human.gate_actor_class().to_owned(),
-                actor_ref: Some(owner.actor().to_hex()),
+                actor_ref: Some(actor.to_hex()),
                 content_kind: GateContentKind::PolicyManifest.as_str().to_owned(),
                 policy_manifest_version: super::POLICY_SCHEMA_VERSION.to_owned(),
                 claim_id: None,

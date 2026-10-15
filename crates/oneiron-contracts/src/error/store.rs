@@ -205,6 +205,10 @@ pub enum StoreError {
     /// transitive Sudachi/jieba/lindera error types into the public surface.
     #[error("analyzer error: {0}")]
     AnalyzerError(String),
+    /// One document's text for the BM25 index is over the per-document ceiling. The write is
+    /// refused before anything is tokenized, and the document's index stays as it was.
+    #[error("indexed text is {bytes} bytes, over the {limit}-byte ceiling")]
+    IndexedTextTooLarge { bytes: usize, limit: usize },
     /// A side-table row does not have its declared shape: its key, its
     /// version byte or its body is not what the declared table encodes.
     #[error("side table {table}: {problem}")]
@@ -218,6 +222,12 @@ pub enum StoreError {
     /// door refuses to write it rather than let an undeclared key land.
     #[error("sync_state key {key:?} is not declared in side_table")]
     SideTableKeyUndeclared { key: String },
+    /// This vault is the image a restore in its place set aside, archived.
+    /// It shares key custody with the vault that replaced it, so it reads
+    /// but refuses every write, erase and key retirement until an owner
+    /// activates it as a side vault with custody of its own.
+    #[error("this vault is archived: a restore replaced it; activate it as a side vault to write")]
+    ArchivedVault,
 }
 
 /// What was wrong with one side-table row.
@@ -271,8 +281,10 @@ impl StoreError {
             Self::InvalidRankProfile { .. } => ErrorKind::InvalidRankProfile,
             Self::AnalyzerAssetMissing(_) => ErrorKind::AnalyzerAssetMissing,
             Self::AnalyzerError(_) => ErrorKind::AnalyzerError,
+            Self::IndexedTextTooLarge { .. } => ErrorKind::IndexedTextTooLarge,
             Self::SideTableRow { .. } => ErrorKind::SideTableRow,
             Self::SideTableKeyUndeclared { .. } => ErrorKind::SideTableKeyUndeclared,
+            Self::ArchivedVault => ErrorKind::ArchivedVault,
         }
     }
 }

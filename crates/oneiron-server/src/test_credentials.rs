@@ -5,55 +5,19 @@ use axum::body::Body;
 use axum::http::{Request, header::AUTHORIZATION};
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
-use oneiron::federation::{Scope, ScopeAxis};
+use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const RECIPE_PREFIX: &str = "OneironTestCredential ";
 
-/// A test-only stand-in for local Keychain custody: the stdio request carries
-/// NO bearer or holder id. The token and proof key come from this local source
-/// and cross the same `bind_slip_request` seam as remote holder credentials.
-pub(crate) struct TestKeychainCredentialSource {
-    token: zeroize::Zeroizing<String>,
-    holder_key: SigningKey,
-}
-
-impl TestKeychainCredentialSource {
-    pub(crate) fn from_recipe(server: &SyncServer, recipe: &str) -> Self {
-        let (slip, holder_key) = credential(server, recipe);
-        Self {
-            token: zeroize::Zeroizing::new(slip.to_token().unwrap()),
-            holder_key,
-        }
-    }
-
-    pub(crate) fn bind(&self, server: &SyncServer, request: Request<Body>) -> Request<Body> {
-        let slip = CapabilitySlip::from_token(&self.token).unwrap();
-        bind_slip_request(server, &slip, &self.holder_key, request)
-    }
-
-    pub(crate) fn verified_for_proposal(
-        &self,
-        server: &SyncServer,
-    ) -> oneiron::authority::VerifiedSlip {
-        let slip = CapabilitySlip::from_token(&self.token).unwrap();
-        let issuer =
-            HostSlipIssuer::from_secret(server.config.auth_secret.as_ref().unwrap().as_bytes())
-                .unwrap();
-        let challenge = b"local-stdio-proposal";
-        let signature = self
-            .holder_key
-            .sign(&slip.binding_transcript(challenge).unwrap());
-        server
-            .vault()
-            .verify_capability_slip(
-                &issuer.public_key(),
-                &slip,
-                challenge,
-                &signature.to_bytes(),
-            )
-            .unwrap()
-    }
+/// The host root the server's vault is rooted under.
+pub(crate) fn host_issuer(server: &SyncServer) -> HostSlipIssuer {
+    let secret = server
+        .config
+        .auth_secret
+        .as_deref()
+        .expect("authenticated fixture needs a configured host root");
+    HostSlipIssuer::from_secret(secret.as_bytes()).unwrap()
 }
 
 pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, SigningKey) {
@@ -62,12 +26,7 @@ pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, 
         .filter(|part| !part.is_empty())
         .map(|part| part.split_once('=').expect("credential recipe key/value"))
         .collect();
-    let secret = server
-        .config
-        .auth_secret
-        .as_deref()
-        .expect("authenticated fixture needs a configured host root");
-    let issuer = HostSlipIssuer::from_secret(secret.as_bytes()).unwrap();
+    let issuer = host_issuer(server);
     let identity = fields.get("jti").copied().unwrap_or(recipe);
     let id = *blake3::hash(format!("oneiron/test-slip/id/{identity}").as_bytes()).as_bytes();
     let key = SigningKey::from_bytes(
@@ -80,6 +39,10 @@ pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, 
         .to_owned();
     let actor_class = fields.get("actor_class").map(ToString::to_string);
     let org_ref = fields.get("org_ref").map(ToString::to_string);
+    let records: BTreeSet<String> = fields
+        .get("records")
+        .map(|records| records.split(',').map(str::to_owned).collect())
+        .unwrap_or_default();
     let mut scope = Scope::top();
     if let Some(scopes) = fields.get("scope") {
         scope.verbs = ScopeAxis::Some(
@@ -96,7 +59,27 @@ pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, 
                 .collect::<BTreeSet<_>>(),
         );
     }
+    if let Some(bands) = fields.get("bands") {
+        scope.bands = ScopeAxis::Some(
+            bands
+                .split(',')
+                .map(|band| band.trim().parse().expect("credential recipe band"))
+                .collect(),
+        );
+    }
     let cache = format!("test:api:slip:{}", hex(&id));
+    if let Some(facets) = fields.get("facets") {
+        scope.facets = ScopeAxis::Some(
+            facets
+                .split(',')
+                .map(|facet| {
+                    ScopeId(
+                        oneiron::EntityId::from_hex(facet.trim()).expect("credential recipe facet"),
+                    )
+                })
+                .collect(),
+        );
+    }
     if let Some(bytes) = server.vault().sync_state_get(&cache).unwrap() {
         let slip = CapabilitySlip::from_token(std::str::from_utf8(&bytes).unwrap()).unwrap();
         assert_eq!(
@@ -105,6 +88,7 @@ pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, 
         );
         assert_eq!(slip.claims.actor_class, actor_class);
         assert_eq!(slip.claims.org_ref, org_ref);
+        assert_eq!(slip.claims.records, records);
         assert_eq!(
             slip.claims.scope, scope,
             "attenuate a slip explicitly instead of reusing an id with new authority"
@@ -120,6 +104,7 @@ pub(crate) fn credential(server: &SyncServer, recipe: &str) -> (CapabilitySlip, 
     claims.binding_key = key.verifying_key().to_bytes();
     claims.actor_class = actor_class;
     claims.org_ref = org_ref;
+    claims.records = records;
     claims.scope = scope;
     let slip = server
         .vault()
@@ -153,10 +138,9 @@ pub(crate) fn bind_slip_request(
     key: &SigningKey,
     mut request: Request<Body>,
 ) -> Request<Body> {
-    // Freshness is judged on the authority plane's monotonic anchor, which a
-    // recording-clock step does not move; signing on the stepped recording
-    // clock would lock the holder out of a server whose wall clock jumped.
-    let timestamp = server.vault().capability_slip_now().unwrap();
+    // Freshness is judged on the vault's recording clock, the wall time a
+    // holder signs on; a test that steps that clock signs on the stepped one.
+    let timestamp = server.vault().now_recorded_at();
     let nonce = oneiron::EntityId::now().to_hex();
     let challenge = format!("oneiron-request:{timestamp}:{nonce}");
     let signature = hex(&key
@@ -248,6 +232,17 @@ pub(crate) fn bind_payload(server: &SyncServer, recipe: &str) -> serde_json::Val
 /// pinned against `HostSlipIssuer::binding_key` so a core KDF move fails
 /// loudly here instead of minting a signature the fold would reject.
 pub(crate) fn bind_owner(vault: &oneiron::Vault, secret: &str, actor: oneiron::EntityId) {
+    bind_actor(vault, secret, actor, "human");
+}
+
+/// Binds `actor` with `actor_class` under the host key derived from
+/// `secret`, as [`bind_owner`] binds a human owner.
+pub(crate) fn bind_actor(
+    vault: &oneiron::Vault,
+    secret: &str,
+    actor: oneiron::EntityId,
+    actor_class: &str,
+) {
     use ed25519_dalek::Signer;
     use oneiron::TimeRange;
     use oneiron::authority::{
@@ -281,6 +276,11 @@ pub(crate) fn bind_owner(vault: &oneiron::Vault, secret: &str, actor: oneiron::E
         if !fold.valid_entries.contains(&hash) {
             continue;
         }
+        // A world's side entry is never a main-log head, and retires none.
+        if matches!(entry.op, AuthorityOp::WorldPrivacy(_)) {
+            heads.remove(&hash);
+            continue;
+        }
         for parent in &entry.parent_hashes {
             heads.remove(parent);
         }
@@ -298,7 +298,7 @@ pub(crate) fn bind_owner(vault: &oneiron::Vault, secret: &str, actor: oneiron::E
         op: AuthorityOp::BindActor {
             authority_key: host_key.clone(),
             actor_ref: actor,
-            actor_class: "human".to_owned(),
+            actor_class: actor_class.to_owned(),
             epoch: 1,
         },
         signer: AuthoritySignature {
@@ -322,9 +322,13 @@ pub(crate) fn bind_owner(vault: &oneiron::Vault, secret: &str, actor: oneiron::E
             },
             now,
         )
-        .expect("owner binding lands");
+        .expect("actor binding lands");
     assert!(
-        actor_binding_is_active(&vault.authority_fold().expect("refold"), &actor, "human"),
-        "fixture owner binding must fold active"
+        actor_binding_is_active(
+            &vault.authority_fold().expect("refold"),
+            &actor,
+            actor_class
+        ),
+        "fixture actor binding must fold active"
     );
 }

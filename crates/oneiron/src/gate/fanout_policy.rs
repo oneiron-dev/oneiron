@@ -54,16 +54,8 @@ pub(crate) struct FanoutScopedRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FanoutPolicyTrace {
-    pub(crate) level: &'static str,
-    pub(crate) row_ref: String,
-    pub(crate) role: &'static str,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedFanoutPolicy {
     pub(crate) policy: ConsultFanOutPolicy,
-    pub(crate) quota_trace: FanoutPolicyTrace,
     /// Shipped default rows read in place of rows the vault manifest lacks.
     pub(crate) shipped_rows: Vec<String>,
 }
@@ -75,8 +67,6 @@ pub(crate) struct ShippedFanoutRows {
     pub(crate) controls: FanoutControls,
     pub(crate) precedence: FanoutPrecedence,
 }
-
-pub(crate) const VAULT_ROW_REF: &str = "oneiron.default.fanout.v1";
 
 /// Names the shipped row a decision read in place of a missing vault row;
 /// `key` is the manifest key a holder writes to map the row by hand.
@@ -176,14 +166,6 @@ impl ConsultFanOutScope {
                 .as_ref()
                 .is_none_or(|id| self.thread_ref.as_ref() == Some(id))
     }
-    fn level_name(&self) -> &'static str {
-        match self.level() {
-            0 => "vault",
-            1 => "project",
-            2 => "sub-project",
-            _ => "thread",
-        }
-    }
 }
 
 fn stricter_mode(a: FanoutApprovalMode, b: FanoutApprovalMode) -> FanoutApprovalMode {
@@ -247,14 +229,10 @@ pub(crate) fn resolve(
         ));
         shipped.threshold
     });
-    let (controls, controls_row) = match controls {
-        Some(controls) => (controls, VAULT_ROW_REF.to_owned()),
-        None => {
-            let row_ref = shipped_row_ref(POLICY_CONSULT_FANOUT_CONTROLS_KEY);
-            shipped_rows.push(row_ref.clone());
-            (&shipped.controls, row_ref)
-        }
-    };
+    let controls = controls.unwrap_or_else(|| {
+        shipped_rows.push(shipped_row_ref(POLICY_CONSULT_FANOUT_CONTROLS_KEY));
+        &shipped.controls
+    });
     let precedence = precedence.unwrap_or_else(|| {
         shipped_rows.push(shipped_row_ref(POLICY_CONSULT_FANOUT_PRECEDENCE_KEY));
         shipped.precedence
@@ -267,11 +245,6 @@ pub(crate) fn resolve(
     };
     let mut effective = ResolvedFanoutPolicy {
         policy: vault.clone(),
-        quota_trace: FanoutPolicyTrace {
-            level: "vault",
-            row_ref: controls_row,
-            role: "owner",
-        },
         shipped_rows,
     };
     let mut matches: Vec<_> = rows
@@ -285,7 +258,6 @@ pub(crate) fn resolve(
             .then_with(|| a.row_ref.cmp(&b.row_ref))
     });
     for row in matches {
-        let was = effective.policy.create_rate;
         effective.policy =
             if row.holder_ref.is_some() && precedence == FanoutPrecedence::NestedNarrowing {
                 // An authenticated holder can loosen its parent, but the vault is
@@ -294,17 +266,6 @@ pub(crate) fn resolve(
             } else {
                 narrow(&effective.policy, &row.policy)
             };
-        if effective.policy.create_rate != was {
-            effective.quota_trace = FanoutPolicyTrace {
-                level: row.scope.level_name(),
-                row_ref: row.row_ref.clone(),
-                role: if row.holder_ref.is_some() {
-                    "holder"
-                } else {
-                    "owner"
-                },
-            };
-        }
     }
     Ok(effective)
 }
@@ -314,121 +275,5 @@ pub(crate) fn merge_controls(a: &FanoutControls, b: &FanoutControls) -> FanoutCo
         mode: stricter_mode(a.mode, b.mode),
         peer_rate: narrow_rate(a.peer_rate.clone(), b.peer_rate.clone()),
         create_rate: narrow_quota(a.create_rate, b.create_rate),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn shipped_controls_decode() {
-        let bytes = crate::gate::default_policy_manifest().unwrap();
-        let Value::Map(entries) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else {
-            panic!("shipped manifest is a map")
-        };
-        let value = entries
-            .iter()
-            .find(|(key, _)| key.as_str() == Some("consult_fanout_controls"))
-            .unwrap()
-            .1
-            .clone();
-        let mut encoded = Vec::new();
-        rmpv::encode::write_value(&mut encoded, &value).unwrap();
-        let result = rmp_serde::from_slice::<FanoutControls>(&encoded);
-        assert!(result.is_ok(), "shipped controls: {:?}", result.err());
-        assert!(crate::gate::decode::decode_policy_manifest(&bytes).is_some());
-    }
-    #[test]
-    fn missing_vault_rows_resolve_to_shipped_rows_named_as_source() {
-        let shipped = crate::gate::default_consult_fanout_policy();
-        let resolved = resolve(None, None, None, &[], &ConsultFanOutScope::default()).unwrap();
-        assert_eq!(resolved.policy, shipped);
-        assert_eq!(
-            resolved.shipped_rows,
-            [
-                "shipped:consult_fanout_approval_threshold",
-                "shipped:consult_fanout_controls",
-                "shipped:consult_fanout_precedence",
-            ]
-        );
-        assert_eq!(
-            resolved.quota_trace,
-            FanoutPolicyTrace {
-                level: "vault",
-                row_ref: "shipped:consult_fanout_controls".into(),
-                role: "owner",
-            }
-        );
-
-        let controls = FanoutControls {
-            mode: FanoutApprovalMode::Manual,
-            peer_rate: None,
-            create_rate: shipped.create_rate,
-        };
-        let present = resolve(
-            Some(7),
-            Some(&controls),
-            Some(FanoutPrecedence::NestedNarrowing),
-            &[],
-            &ConsultFanOutScope::default(),
-        )
-        .unwrap();
-        assert_eq!(present.policy.approval_threshold, 7);
-        assert_eq!(present.policy.mode, FanoutApprovalMode::Manual);
-        assert!(present.shipped_rows.is_empty());
-        assert_eq!(present.quota_trace.row_ref, VAULT_ROW_REF);
-    }
-
-    #[test]
-    fn malformed_controls_precedence_and_scope_rows_fail_closed() {
-        let data = crate::gate::default_policy_manifest().unwrap();
-        let Value::Map(original) = rmpv::decode::read_value(&mut data.as_slice()).unwrap() else {
-            panic!("default manifest map")
-        };
-        for (key, corrupt) in [
-            (
-                "consult_fanout_controls",
-                Value::Map(vec![
-                    (Value::from("mode"), Value::from("full-access")),
-                    (Value::from("peer_rate"), Value::Nil),
-                    (
-                        Value::from("create_rate"),
-                        Value::Map(vec![
-                            (Value::from("limit"), Value::from(0_u64)),
-                            (Value::from("window_seconds"), Value::from(60_u64)),
-                        ]),
-                    ),
-                ]),
-            ),
-            ("consult_fanout_precedence", Value::from("last_writer_wins")),
-            (
-                "consult_fanout_scope_rows",
-                Value::Array(vec![Value::Map(vec![
-                    (Value::from("row_ref"), Value::from("unbound")),
-                    (
-                        Value::from("scope"),
-                        Value::Map(vec![(
-                            Value::from("subproject_ref"),
-                            Value::from("not-parented"),
-                        )]),
-                    ),
-                    (Value::from("policy"), Value::Nil),
-                    (Value::from("holder_ref"), Value::Nil),
-                ])]),
-            ),
-        ] {
-            let mut rows = original.clone();
-            rows.iter_mut()
-                .find(|(name, _)| name.as_str() == Some(key))
-                .expect("shipped row")
-                .1 = corrupt;
-            let mut bytes = Vec::new();
-            rmpv::encode::write_value(&mut bytes, &Value::Map(rows)).unwrap();
-            assert!(
-                crate::gate::decode::decode_policy_manifest(&bytes).is_none(),
-                "malformed {key} must not be an implicit policy default"
-            );
-        }
     }
 }

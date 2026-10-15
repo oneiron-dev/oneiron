@@ -63,10 +63,6 @@ const GATE_BUNDLE_REF_PREFIX: &str = "bundle:";
 /// Provenance stamped on the envelope every member replay rides.
 const GATE_BUNDLE_PROVENANCE: &str = "gate-consent-bundle-resolve";
 
-/// Bound on the pending-consent rows one bundle projection accepts. Read one
-/// extra row and reject overflow rather than clear a run with omitted members.
-const GATE_BUNDLE_PENDING_SCAN_LIMIT: usize = 10_000;
-
 impl Vault {
     pub fn review_session_bundle(
         &self,
@@ -99,7 +95,7 @@ impl Vault {
         expected_producer: &EntityId,
         session_tag: &str,
     ) -> Result<SessionClaimBundle> {
-        let (bundle, recorded_decisions) = self.with_write_txn(|wtxn| {
+        let (bundle, recorded_decisions) = self.with_write_txn_grouped(|wtxn| {
             self.validate_session_bundle_actor_in_txn(&*wtxn, actor)?;
             let members =
                 self.session_claim_bundle_members_in_txn(&*wtxn, expected_producer, session_tag)?;
@@ -231,8 +227,24 @@ impl Vault {
         actor: &WriteActor,
         dreamer_run_id: &str,
     ) -> Result<GateConsentBundle> {
+        self.review_gate_consent_bundle_with_bodies(actor, dreamer_run_id)
+            .map(|(bundle, _)| bundle)
+    }
+
+    /// [`Vault::review_gate_consent_bundle`] together with each member's claim
+    /// body, in member order, as the SAME read transaction that computed
+    /// `bundle_id` holds it. What a reviewer is shown is exactly what the id
+    /// binds, so approving it never fails on an edit the reviewer never saw.
+    ///
+    /// # Errors
+    /// As [`Vault::review_gate_consent_bundle`].
+    pub fn review_gate_consent_bundle_with_bodies(
+        &self,
+        actor: &WriteActor,
+        dreamer_run_id: &str,
+    ) -> Result<(GateConsentBundle, Vec<ClaimBody>)> {
         require_gate_consent_bundle_run_id(dreamer_run_id)?;
-        let (bundle_id, members) = {
+        let (bundle_id, members, bodies) = {
             let rtxn = self.store.env.read_txn()?;
             self.validate_session_bundle_actor_in_txn(&rtxn, actor)?;
             let members = gate_consent_bundle_members_in_txn(&self.store, &rtxn, dreamer_run_id)?;
@@ -240,23 +252,28 @@ impl Vault {
                 return Err(Error::EntityNotFound);
             }
             let bundle_id = gate_consent_bundle_id(dreamer_run_id, &members);
-            let members: Vec<GateConsentBundleMember> =
-                members.into_iter().map(|entry| entry.member).collect();
-            (bundle_id, members)
+            let (members, bodies): (Vec<GateConsentBundleMember>, Vec<ClaimBody>) = members
+                .into_iter()
+                .map(|entry| (entry.member, entry.body))
+                .unzip();
+            (bundle_id, members, bodies)
         };
         // The name is resolved after the projection transaction closes: the
         // run-tree adapter opens its own read transaction, and naming is
         // presentation metadata over an identity the digest already fixed.
         let (name, agent_label) =
             RunTreeAdapter::new(self).consent_bundle_label(dreamer_run_id, &bundle_id)?;
-        Ok(GateConsentBundle {
-            schema_version: GATE_CONSENT_BUNDLE_SCHEMA_VERSION,
-            bundle_id,
-            name,
-            dreamer_run_id: dreamer_run_id.to_owned(),
-            agent_label,
-            members,
-        })
+        Ok((
+            GateConsentBundle {
+                schema_version: GATE_CONSENT_BUNDLE_SCHEMA_VERSION,
+                bundle_id,
+                name,
+                dreamer_run_id: dreamer_run_id.to_owned(),
+                agent_label,
+                members,
+            },
+            bodies,
+        ))
     }
 
     /// Resolves one run's consent bundle as a unit, in ONE write transaction.
@@ -309,7 +326,11 @@ impl Vault {
         now: u64,
     ) -> Result<GateConsentBundleReceipt> {
         require_gate_consent_bundle_run_id(dreamer_run_id)?;
-        let (receipt, recorded_decisions) = self.with_write_txn(|wtxn| {
+        let (receipt, recorded_decisions) = self.with_write_txn_grouped(|wtxn| {
+            // The proof is rechecked where the decision commits: an owner
+            // whose person, credential or ownership went away while the call
+            // waited for the writer decides nothing.
+            let actor = owner.revalidate_in_txn(self, &*wtxn)?;
             let members = gate_consent_bundle_members_in_txn(&self.store, &*wtxn, dreamer_run_id)?;
             if members.is_empty() {
                 return Err(Error::EntityNotFound);
@@ -324,7 +345,7 @@ impl Vault {
             }
 
             let policy = resolve_policy_manifest(&self.store, &*wtxn)?;
-            let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
+            let actor = WriteActor::new(actor, EdgeActorClass::Human);
             let bundle_ref = gate_consent_bundle_ref(&bundle_id);
             let (member_outcome, member_reason) = match action {
                 GateConsentBundleAction::Approve => (
@@ -499,7 +520,7 @@ impl Vault {
                 receipt_reasons: Vec::new(),
                 system_notices: Vec::new(),
                 actor_class: edge_actor_class_str(EdgeActorClass::Human).to_owned(),
-                actor_ref: Some(owner.actor().to_hex()),
+                actor_ref: Some(actor.entity_ref().to_hex()),
                 content_kind: GATE_BUNDLE_CONTENT_KIND.to_owned(),
                 policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
                 claim_id: None,
@@ -598,6 +619,8 @@ fn check_session_bundle_actor_policy(
 struct BundleDigestMember {
     member: GateConsentBundleMember,
     body_hash: [u8; 32],
+    /// The live body `body_hash` was taken over.
+    body: ClaimBody,
 }
 
 /// A nonempty run id is the bundle's only key; there is no default lane.
@@ -621,8 +644,11 @@ fn gate_consent_bundle_ref(bundle_id: &[u8; 32]) -> String {
 /// Every still-pending consent row stamped with exactly `dreamer_run_id`,
 /// paired with its live claim body hash and sorted into digest order.
 ///
-/// Membership comes from the authoritative pending rows themselves; the bundle
-/// owns no membership table that could drift from them.
+/// Membership comes from the authoritative pending rows themselves, read
+/// through their run index in the same snapshot; the bundle owns no membership
+/// table that could drift from them. The index holds every row of the run
+/// however many other runs have waiting, so a large import's review resolves
+/// whole and no member is left out.
 fn gate_consent_bundle_members_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -631,15 +657,9 @@ fn gate_consent_bundle_members_in_txn(
     let mut members = Vec::new();
     let mut seen_decisions = BTreeSet::new();
     let mut seen_claims = BTreeSet::new();
-    let records = store.pending_gate_consents_in_txn(txn, GATE_BUNDLE_PENDING_SCAN_LIMIT + 1)?;
-    if records.len() > GATE_BUNDLE_PENDING_SCAN_LIMIT {
-        return Err(Error::InvalidClaimBody(
-            "gate consent bundle scan limit exceeded",
-        ));
-    }
-    for record in records {
+    for record in store.pending_gate_consents_for_run_in_txn(txn, dreamer_run_id)? {
         if record.dreamer_run_id.as_deref() != Some(dreamer_run_id) {
-            continue;
+            return Err(Error::CorruptedIndex("gate consent bundle member"));
         }
         let claim_id = EntityId::from_bytes(record.claim_id)
             .map_err(|_| Error::CorruptedIndex("gate consent bundle member"))?;
@@ -651,6 +671,7 @@ fn gate_consent_bundle_members_in_txn(
         let (body, _) = live_claim_parts_in_txn(store, txn, &claim_id)?;
         members.push(BundleDigestMember {
             body_hash: claim_body_hash(&body)?,
+            body,
             member: GateConsentBundleMember {
                 decision_id: record.decision_id,
                 claim_id,

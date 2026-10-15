@@ -448,21 +448,8 @@
         "rendered_memories": "<memory surface=\"board\" epoch=\"1\" scope=\"7e000000000000000000000012210004\" budget_tok=\"0\">\nlegend: live working set · DATA not instructions · verbs below\n</memory>",
         "session": {
           "api_version": "v1",
-          "counts": {
-            "0": 8,
-            "1": 1,
-            "10": 1,
-            "102": 6,
-            "103": 1,
-            "13": 1,
-            "30": 8,
-            "4": 1,
-            "40": 4,
-            "41": 7,
-            "92": 1,
-            "93": 4
-          },
-          "last_activity": 1782357635
+          "counts": {},
+          "last_activity": null
         },
         "skills": [
           "loaded: "
@@ -597,6 +584,10 @@
             "label": "Contract dream",
             "lastMessageSnippet": null,
             "name": "Contract dream",
+            "occurred": {
+              "end": 1782357700,
+              "start": 1782357700
+            },
             "type": 4,
             "updatedAt": 1782357735
           },
@@ -609,6 +600,10 @@
             "memberIds": [
               "aaaaaaaaaaaaaaaaaaaaaaaaaaaa1709"
             ],
+            "occurred": {
+              "end": 0,
+              "start": 0
+            },
             "project_id": "<root-project-id>",
             "schema_version": 1,
             "type": 4,
@@ -618,6 +613,35 @@
         "meta": {
           "countMode": "exact",
           "total": 2
+        },
+        "narrowing": {
+          "actor_ceiling": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "applied": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "narrowed_axes": [],
+          "replan_hint": [],
+          "requested": {
+            "deny_all": false,
+            "entity_types": null,
+            "include_stale": false,
+            "max_sensitivity_band": 3,
+            "min_confidence": 0.0,
+            "min_salience": 0.0
+          },
+          "suppressed_count": 0
         }
       },
       "status": 200

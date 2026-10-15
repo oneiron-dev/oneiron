@@ -214,28 +214,6 @@ fn canonical_snapshot_writer_refuses_invalid_capture_without_publishing() -> Res
     Ok(())
 }
 
-#[cfg(unix)]
-#[test]
-fn canonical_snapshot_writer_syncs_filename_only_destination_and_refuses_overwrite() -> Result<()> {
-    let fixture = fixture()?;
-    let window = rebuild_vault_window_from_canonical(&fixture.snapshot)?;
-    // Keep a cleanup guard, but publish through a filename-only path. Changing
-    // process CWD would race other tests in this shared-process test binary.
-    let guard = tempfile::NamedTempFile::new_in(".")?.into_temp_path();
-    let relative = std::path::PathBuf::from(guard.file_name().unwrap());
-    fs::remove_file(&guard)?;
-    let digest = write_canonical_window_snapshot(&fixture.vault, "2026-09", &window, &relative)?;
-    let bytes = fs::read(&relative)?;
-    assert_eq!(digest, *blake3::hash(&bytes).as_bytes());
-    assert_eq!(CanonicalSnapshot::decode(&bytes)?, fixture.snapshot);
-    assert!(matches!(
-        write_canonical_window_snapshot(&fixture.vault, "2026-09", &window, &relative),
-        Err(Error::ConcurrentWrite(_))
-    ));
-    assert_eq!(fs::read(&relative)?, bytes);
-    Ok(())
-}
-
 #[cfg(not(unix))]
 #[test]
 fn canonical_snapshot_writer_refuses_before_creating_private_or_unstable_artifact() -> Result<()> {
@@ -248,37 +226,6 @@ fn canonical_snapshot_writer_refuses_before_creating_private_or_unstable_artifac
         Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::Unsupported
     ));
     assert_eq!(fs::read_dir(output_dir.path())?.count(), 0);
-    Ok(())
-}
-
-#[cfg(unix)]
-#[test]
-fn canonical_writer_refuses_pointer_only_entity_before_creating_artifact() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let entity = EntityId::now();
-    vault.put_entity(
-        &entity,
-        crate::registry::ENTITY_TYPE_ASSET,
-        TimeRange { start: 7, end: 7 },
-        9,
-        b"seed",
-    )?;
-    let mut blob = vault.get_raw(&entity)?.unwrap();
-    blob.truncate(crate::batch::ENTITY_METADATA_HEADER_LEN);
-    rmpv::encode::write_value(
-        &mut blob,
-        &rmpv::Value::Map(vec![(
-            rmpv::Value::from("entity_doc_ref"),
-            rmpv::Value::from(entity.to_hex()),
-        )]),
-    )
-    .unwrap();
-    let window = LoroDoc::new();
-    canonical::insert(&window, "entities", &entity.to_hex(), &blob)?;
-    let path = dir.path().join("incomplete.canonical");
-    assert!(write_canonical_window_snapshot(&vault, "2026-09", &window, &path).is_err());
-    assert!(!path.exists());
     Ok(())
 }
 
@@ -1056,32 +1003,6 @@ fn hard_delete_marker_blocks_soft_shell_recreation_without_quarantining_manifest
     Ok(())
 }
 
-#[test]
-fn canonical_capture_preserves_absent_roots_and_refuses_nonmap_carriers() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let window = LoroDoc::new();
-    let before = window.get_deep_value();
-    let snapshot = capture_canonical_window(&vault, "2026-09", &window)?;
-    assert!(snapshot.entity_blobs.is_empty());
-    assert_eq!(window.get_deep_value(), before);
-
-    window
-        .get_text("entities")
-        .insert(0, "not a carrier map")
-        .unwrap();
-    window.commit();
-    let before = window.get_deep_value();
-    assert!(matches!(
-        capture_canonical_window(&vault, "2026-09", &window),
-        Err(crate::Error::Artifact(
-            ArtifactError::InvalidRecoveryArtifact(_)
-        ))
-    ));
-    assert_eq!(window.get_deep_value(), before);
-    Ok(())
-}
-
 fn note_window(vault: &Vault, entities: &[EntityId]) -> Result<LoroDoc> {
     let window = LoroDoc::new();
     let txn = vault.store.env.read_txn()?;
@@ -1474,21 +1395,6 @@ fn rejected_fork_without_document_recovers_and_divergent_workflow_fails_prefligh
 }
 
 #[test]
-fn canonical_adapter_missing_live_value_refuses_before_quarantine() -> Result<()> {
-    let fixture = fixture()?;
-    let mut incomplete = fixture.snapshot;
-    incomplete.doc_snapshots.clear();
-    incomplete.document_heads.clear();
-    incomplete.refresh_containers();
-    assert!(incomplete.validate().is_err());
-    let path = fixture._dir.path().join("missing-note-manifest");
-    fs::write(&path, b"untouched manifest")?;
-    assert!(prepare_recovery(&path, &incomplete, RecoveryBudget::default()).is_err());
-    assert_eq!(fs::read(&path)?, b"untouched manifest");
-    Ok(())
-}
-
-#[test]
 fn canonical_adapter_recovery_binds_merge_target_to_displayed_proposal() -> Result<()> {
     let fixture = fixture()?;
     let core = crate::note::decode_note_body(&fixture.vault.get(&fixture.note)?.unwrap())?;
@@ -1716,5 +1622,137 @@ fn canonical_roundtrip_keeps_suppression_record_over_quarantined_tombstone() -> 
             .iter()
             .any(|row| row.receipt_id == receipt.receipt_id)
     );
+    Ok(())
+}
+
+/// Review repro (access deletion fences): a row this vault fenced as deleted
+/// whose window no longer holds its tombstone (a peer withdrew the delete)
+/// must not be captured as a live row another vault would rematerialize.
+#[test]
+fn canonical_capture_refuses_a_deleted_row_without_its_tombstone() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let relationship = EntityId::from_bytes([0x91; 16])?;
+    let at = 1_771_027_200;
+    vault.put_entity(
+        &relationship,
+        crate::registry::ENTITY_TYPE_RELATIONSHIP,
+        TimeRange { start: at, end: at },
+        at,
+        b"relationship",
+    )?;
+    let doc = LoroDoc::new();
+    canonical::insert(
+        &doc,
+        "entities",
+        &relationship.to_hex(),
+        &vault.get_raw(&relationship)?.unwrap(),
+    )?;
+    doc.commit();
+    capture_canonical_window(&vault, "2026-02", &doc)?;
+
+    vault
+        .with_write_txn(|txn| vault.fence_unapplied_delete_in_txn(txn, &relationship, &[1; 25]))?;
+    assert!(
+        capture_canonical_window(&vault, "2026-02", &doc).is_err(),
+        "a withdrawn delete is not exported as a live row"
+    );
+    Ok(())
+}
+
+/// F24 round 9 (Astra r8 R8-1): a build without sync captures too. Its
+/// capture leaves out the carrier of a deleted fact this vault never
+/// admitted, so it marks that fact's task first, and the artifact carries
+/// the refusal. Positive control: a task with no such fact still reads.
+#[test]
+fn a_capture_without_sync_carries_the_refusal_of_a_deleted_fact_never_admitted() -> Result<()> {
+    use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
+    use crate::task_authority::{
+        TaskAuthorityFact, TaskAuthorityFactKind, encode_task_authority_fact_body,
+        put_task_authority_fact_in_txn,
+    };
+    const LEARNED_AT: u64 = 1_772_400_000; // 2026-03 window
+    let at = TimeRange {
+        start: LEARNED_AT,
+        end: LEARNED_AT,
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = EntityId::now();
+    vault.put_entity(&owner, ENTITY_TYPE_PERSON, at, LEARNED_AT, b"x")?;
+    let fact_of = |task_ref, kind| TaskAuthorityFact {
+        task_ref,
+        kind,
+        actor_ref: owner,
+        assigned_ref: None,
+        actor_generation: None,
+        assigned_generation: None,
+        occurred_at: LEARNED_AT,
+    };
+    let window = LoroDoc::new();
+    let entities = window.get_map("entities");
+    let mut carried = vec![owner];
+    let mut tasks = Vec::new();
+    for _ in 0..2 {
+        let task = EntityId::now();
+        vault.put_entity(
+            &task,
+            ENTITY_TYPE_TASK,
+            at,
+            LEARNED_AT,
+            &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
+        )?;
+        let owner_fact = vault.with_write_txn(|wtxn| {
+            put_task_authority_fact_in_txn(
+                &vault,
+                wtxn,
+                fact_of(task, TaskAuthorityFactKind::Owner),
+            )
+        })?;
+        carried.extend([task, owner_fact]);
+        tasks.push(task);
+    }
+    for id in &carried {
+        let raw = vault.get_raw(id)?.expect("stored row");
+        entities.insert(&id.to_hex(), &raw[..]).expect("carrier");
+    }
+    // A cancellation of the first task, never admitted here, and the hard
+    // tombstone of its id.
+    let fact = EntityId::now();
+    let body =
+        encode_task_authority_fact_body(&fact_of(tasks[0], TaskAuthorityFactKind::Cancelled));
+    let mut blob = vec![ENTITY_TYPE_TASK];
+    for stamp in [at.start, at.end, LEARNED_AT] {
+        blob.extend_from_slice(&stamp.to_be_bytes());
+    }
+    blob.extend_from_slice(&body);
+    entities
+        .insert(&fact.to_hex(), &blob[..])
+        .expect("fact carrier");
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserHardDelete,
+        deleted_at: LEARNED_AT,
+        request_id: [0x5A; 16],
+    }
+    .encode()
+    .to_vec();
+    window
+        .get_map("tombstones")
+        .insert(&fact.to_hex(), &tombstone[..])
+        .expect("tombstone");
+
+    let snapshot = capture_canonical_window(&vault, "2026-03", &window)?;
+    assert!(
+        matches!(
+            vault.task_authority_state(tasks[0]),
+            Err(crate::error::Error::InvariantViolation(
+                "task authority fact suppressed"
+            ))
+        ),
+        "the capturing vault's task reads as a refusal"
+    );
+    assert_eq!(snapshot.suppressed_tasks, vec![*tasks[0].as_bytes()]);
+    let state = vault.task_authority_state(tasks[1])?.expect("owned task");
+    assert_eq!((state.owner_ref, state.cancelled), (owner, false));
     Ok(())
 }

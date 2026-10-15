@@ -8,6 +8,7 @@ use crate::attempt_queue::{AttemptId, EnqueueAttempt, EnqueueOutcome};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::federation::record_scope::{BirthPosition, stamp_task_birth};
 use crate::gate::PolicyApprovalCeiling;
 use crate::habit::TaskRole;
 use crate::human_task::{register_human_followup_in_txn, resolve_native_human_route};
@@ -118,7 +119,8 @@ impl Memory<'_> {
             let route = self.route_created_task_in_txn(wtxn, task_ref, &validated, now)?;
             // A caller-chosen owner_ref does not certify who authored the
             // assignment. This independent witness is minted only after an
-            // authenticated human owner creates an agent-addressed TASK.
+            // authenticated human owner creates an agent-addressed TASK, never
+            // when code a model wrote does so under the owner's connector.
             if validated.kind == TaskKind::Standard
                 && validated.assignee.is_some_and(|assignee| {
                     matches!(
@@ -129,6 +131,7 @@ impl Memory<'_> {
                     )
                 })
                 && self.actor_class() == crate::EdgeActorClass::Human
+                && !self.writes_generated()
                 && owner_ref == self.actor()
                 && crate::memory::verify_owner_actor_binding_in_txn(self.vault(), wtxn, owner_ref)
                     .is_ok()
@@ -141,6 +144,8 @@ impl Memory<'_> {
                         kind: TaskAuthorityFactKind::HumanAssigned,
                         actor_ref: owner_ref,
                         assigned_ref: validated.assignee.and_then(TaskAssignee::entity_ref),
+                        actor_generation: None,
+                        assigned_generation: None,
                         occurred_at: now,
                     },
                 )?;
@@ -190,6 +195,10 @@ impl Memory<'_> {
     /// still-`Proposed` row counts — once the owner settles or withdraws one,
     /// the next create parks a fresh proposal.
     ///
+    /// And only one parked where this ask would be born (`persist_task_proposal`):
+    /// the same ask from a surface bound to another world or facet is a
+    /// different proposal, which that surface's reviewers must be able to see.
+    ///
     /// THIS actor's, on the envelope's word. The index is claims-about-subject,
     /// so being the subject of a row says nothing about who wrote it: a match
     /// on payload alone would let this caller's ask be answered by a claim
@@ -216,6 +225,11 @@ impl Memory<'_> {
         let wanted = create_proposal_identity(&task_create_proposal_value(spec, now));
         let rtxn = self.vault().store.env.read_txn().map_err(Error::from)?;
         let actor = self.actor();
+        let position = self.birth_position();
+        let facet = match position.facet {
+            Some(facet) => facet,
+            None => crate::claim::default_facet_in(&self.vault().store, &rtxn)?,
+        };
         Ok(self
             .vault()
             .find_claim_for_subject_in_txn(&rtxn, &actor, |id, body| {
@@ -227,6 +241,8 @@ impl Memory<'_> {
                     // produce would answer its ask with a foreign actor's
                     // provenance and skip the gate receipt this create owes.
                     && crate::claim::session_claim_producer(body) == Some(actor)
+                    && body.world == position.claim_world()
+                    && body.scope_facet == facet
                     && create_proposal_identity(&body.value) == wanted)
                     .then_some(*id)
             })?)
@@ -293,6 +309,10 @@ impl Memory<'_> {
             created_at: now,
         });
         self.put_task_body_in_txn(wtxn, task_ref, &body, now)?;
+        // A TASK is born in its writer's world and facet (ARCH-0067 §5).
+        if self.birth_position() != BirthPosition::default() {
+            stamp_task_birth(&self.vault().store, wtxn, task_ref, self.birth_position())?;
+        }
         put_task_authority_fact_in_txn(
             self.vault(),
             wtxn,
@@ -301,9 +321,39 @@ impl Memory<'_> {
                 kind: TaskAuthorityFactKind::Owner,
                 actor_ref: owner_ref,
                 assigned_ref: None,
+                actor_generation: None,
+                assigned_generation: None,
                 occurred_at: now,
             },
         )?;
+        // A consult's parties bear its authority (they move the ladder and
+        // counter), so they are fixed here, beside the Owner fact, with the
+        // binding generation each holds now. Every consult has this fact,
+        // a Dreamer-addressed one naming its asker alone, so a second fact
+        // naming anyone else is a fork. A later rewrite of the body's
+        // `assignee` changes what the board shows, never who may act.
+        if validated.kind == TaskKind::Consult {
+            let vault = self.vault();
+            let assignee = validated.assignee.and_then(TaskAssignee::entity_ref);
+            let actor_generation = vault.actor_binding_generation_in_txn(wtxn, owner_ref)?;
+            let assigned_generation = match assignee {
+                Some(assignee) => vault.actor_binding_generation_in_txn(wtxn, assignee)?,
+                None => None,
+            };
+            put_task_authority_fact_in_txn(
+                vault,
+                wtxn,
+                TaskAuthorityFact {
+                    task_ref,
+                    kind: TaskAuthorityFactKind::ConsultAssignee,
+                    actor_ref: owner_ref,
+                    assigned_ref: assignee,
+                    actor_generation,
+                    assigned_generation,
+                    occurred_at: now,
+                },
+            )?;
+        }
         Ok(task_ref)
     }
 

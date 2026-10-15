@@ -203,9 +203,6 @@ impl DependencyIndex for Memory {
         regenerated_at: u64,
         sources: &[SourceSpan],
     ) -> Result<bool> {
-        if sources.len() > 100_000 {
-            return Err(Error::IndexOverflow("regeneration sources"));
-        }
         let Some(stale_revision) = txn.stale_revision.get(dependent) else {
             return Ok(false);
         };
@@ -410,6 +407,7 @@ impl JobQueue for Memory {
             claimed_at: None,
             scheduled_at: None,
             retry_of: None,
+            folded_retries: 0,
             backoff_until: None,
             last_error: None,
             task_ref: scope.task_ref,

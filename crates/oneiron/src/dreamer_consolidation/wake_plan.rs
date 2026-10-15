@@ -24,6 +24,8 @@ pub struct PreparedConsolidationAttempt {
     queued_input: rmpv::Value,
     source_versions: BTreeMap<EntityId, ScopeResource>,
     retry_budget: crate::gate::retry_source_policy::ResolvedRetryBudget,
+    /// The known entities its turns name, read at the wake's snapshot.
+    neighbourhood: super::neighbourhood::Neighbourhood,
 }
 
 impl PreparedConsolidationAttempt {
@@ -51,6 +53,9 @@ impl PreparedConsolidationAttempt {
     pub(crate) fn version(&self, id: &EntityId) -> Option<&ScopeResource> {
         self.source_versions.get(id)
     }
+    pub(crate) fn neighbourhood(&self) -> &super::neighbourhood::Neighbourhood {
+        &self.neighbourhood
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -66,13 +71,25 @@ pub(crate) enum AttemptPreparation {
     },
 }
 
+/// The most queued TURNs one wake prepares: one Meso round's worth. A pass
+/// admits work from the head of the ready order, so the wake prepares that
+/// head and leaves the rest of a larger backlog (a whole history import) to
+/// the passes after it, rather than reading all of it before any budget or
+/// deadline applies.
+const WAKE_PREPARED_TURN_CAP: usize = super::DEFAULT_MESO_ROUND_TURN_CAP;
+
 /// Source bodies frozen by the Dreamer at ONE ledger snapshot, before the
 /// wake starts any writes. The read transaction closes immediately after this
 /// bounded projection; a wake never holds an LMDB reader slot across writes.
 #[derive(Debug, Default)]
 pub struct PreparedWake {
     sources: BTreeMap<EntityId, (u8, u64, Vec<u8>)>,
+    /// Every prepared TURN's text and the MESSAGEs it was read from, pinned
+    /// in the same snapshot as `sources`.
+    texts: BTreeMap<EntityId, super::turn_text::TurnText>,
     attempts: BTreeSet<[u8; 16]>,
+    /// Ready work past the head this wake prepared, for a later pass.
+    left: BTreeSet<[u8; 16]>,
     preparations: BTreeMap<[u8; 16], AttemptPreparation>,
     /// The receipt of the one scoped read behind `sources`; `None` when the
     /// wake read nothing. Every branch opened on this wake folds it.
@@ -114,9 +131,15 @@ impl PreparedWake {
         only_attempt: Option<AttemptId>,
     ) -> Result<Self> {
         use crate::ports::EdgeDirection;
-        let txn = vault.store.env.read_txn()?;
+        // Witnessed TURN text is read under live relationship grants.
+        let txn = super::turn_text::snapshot(vault)?;
         let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
         let records = crate::attempt_queue::AttemptQueue::new(vault).list_in_txn(&txn)?;
+        let left = if only_attempt.is_some() {
+            BTreeSet::new()
+        } else {
+            left_for_later(&records, scope)
+        };
         let mut ids = BTreeSet::new();
         let mut attempts = BTreeSet::new();
         let mut retries = Vec::new();
@@ -125,6 +148,8 @@ impl PreparedWake {
             if attempt.kind != scope.attempt_kind()
                 || attempt.state.is_terminal()
                 || only_attempt.is_some_and(|id| id != attempt.id)
+                || left.contains(attempt.id.as_bytes())
+                || (only_attempt.is_none() && idle(vault, &txn, &attempt)?)
             {
                 continue;
             }
@@ -199,6 +224,7 @@ impl PreparedWake {
                 queued_input: payload.input.clone(),
                 source_versions: BTreeMap::new(),
                 retry_budget: budget,
+                neighbourhood: Default::default(),
             };
             preparations.insert(*attempt.id.as_bytes(), AttemptPreparation::Ready(prepared));
             if attempt.retry_of.is_some() && effective_scope.is_none() {
@@ -251,6 +277,7 @@ impl PreparedWake {
         if ids.is_empty() {
             return Ok(Self {
                 attempts,
+                left,
                 preparations,
                 ..Self::default()
             });
@@ -265,15 +292,15 @@ impl PreparedWake {
         let source_ids: Vec<_> = ids.into_iter().collect();
         let rows = read.get_entities_parts_in_txn(&txn, &source_ids)?;
         // The receipt is resolved in the SAME snapshot and counts every
-        // existing row withheld from the Dreamer actor, retry peers included.
+        // existing row withheld from the Dreamer actor, retry peers and
+        // witnessed TURN messages included.
         let mut withheld = 0;
         for (id, row) in source_ids.iter().zip(&rows) {
             if row.is_none() && vault.get_entity_type_in_txn(&txn, id)?.is_some() {
                 withheld += 1;
             }
         }
-        let read_receipt = read.read_receipt_in(&txn, None, withheld)?;
-        let sources: BTreeMap<_, _> = source_ids
+        let mut sources: BTreeMap<_, _> = source_ids
             .into_iter()
             .zip(rows)
             .filter_map(|(id, row)| row.map(|body| (id, body)))
@@ -295,12 +322,16 @@ impl PreparedWake {
             let original: BTreeSet<_> = original.into_iter().collect();
             let mut turns = Vec::new();
             for id in peers {
-                let Some((kind, learned_at, bytes)) = sources.get(&id) else {
+                let Some((kind, stored, bytes)) = sources.get(&id) else {
                     continue;
                 };
                 if *kind != ENTITY_TYPE_TURN {
                     continue;
                 }
+                // Membership and order read the effective selection key, as
+                // the scan does; the source pin keeps the row's own learned_at.
+                let carrier = super::redirty::carrier_key_in_txn(vault, &txn, scope, &id, *stored)?;
+                let (learned_at, key) = carrier.unwrap_or((*stored, id));
                 let facts = decode_turn_body(bytes);
                 let role = dreamer_turn_role(
                     facts.speaker.as_deref(),
@@ -309,9 +340,9 @@ impl PreparedWake {
                 if dreamer_extraction_role_admissible(role)
                     && facts.world_ref.or(parent.world_ref) == partition.world_ref
                     && facts.facet_ref.or(parent.facet_ref) == partition.facet_ref
-                    && (original.contains(&id) || *learned_at >= watermark)
+                    && (original.contains(&id) || learned_at >= watermark)
                 {
-                    turns.push((*learned_at, id));
+                    turns.push((learned_at, key, id, carrier.map(|(_, order)| order)));
                 }
             }
             turns.sort_unstable();
@@ -325,7 +356,7 @@ impl PreparedWake {
             if turns.len() > limit
                 || !original
                     .iter()
-                    .all(|id| turns.iter().any(|(_, got)| got == id))
+                    .all(|id| turns.iter().any(|(_, _, got, _)| got == id))
             {
                 preparations.insert(
                     attempt,
@@ -338,7 +369,7 @@ impl PreparedWake {
             }
             let working_set: Vec<super::WorkingSetTurn> = turns
                 .into_iter()
-                .map(|(learned_at, turn_id)| {
+                .map(|(learned_at, _, turn_id, carrier)| {
                     let facts = decode_turn_body(&sources[&turn_id].2);
                     super::WorkingSetTurn {
                         turn_id,
@@ -347,6 +378,7 @@ impl PreparedWake {
                             &vault.config.assistant_display_names,
                         ),
                         learned_at,
+                        carrier,
                         conversation: Some(partition.conversation_ref),
                     }
                 })
@@ -362,6 +394,34 @@ impl PreparedWake {
                 );
             }
         }
+        // Witnessed TURN text lives on MESSAGE children: pin them in THIS
+        // snapshot. A child set that cannot be read refuses only its branches.
+        let mut texts = BTreeMap::new();
+        let mut refused_texts = BTreeMap::new();
+        for outcome in preparations.values() {
+            let AttemptPreparation::Ready(plan) = outcome else {
+                continue;
+            };
+            for turn in &plan.turn_ids {
+                let Some((ENTITY_TYPE_TURN, _, body)) = sources.get(turn) else {
+                    continue;
+                };
+                if texts.contains_key(turn) || refused_texts.contains_key(turn) {
+                    continue;
+                }
+                match super::turn_text::collect_in(&read, &txn, turn, body, &mut withheld) {
+                    Ok(text) => {
+                        texts.insert(*turn, text);
+                    }
+                    Err(crate::Error::InvalidClaimBody(reason)) => {
+                        refused_texts.insert(*turn, reason);
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        let read_receipt = read.read_receipt_in(&txn, None, withheld)?;
+        let mut known_rows = BTreeMap::new();
         for outcome in preparations.values_mut() {
             let AttemptPreparation::Ready(plan) = outcome else {
                 continue;
@@ -390,6 +450,17 @@ impl PreparedWake {
                 };
                 continue;
             }
+            if let Some(&reason) = plan.turn_ids.iter().find_map(|id| refused_texts.get(id)) {
+                *outcome = AttemptPreparation::Refused {
+                    reason,
+                    scope_error: false,
+                };
+                continue;
+            }
+            let (neighbourhood, rows) =
+                neighbourhood_in(vault, &txn, &read, plan, &sources, &texts)?;
+            known_rows.extend(rows);
+            plan.neighbourhood = neighbourhood;
             plan.source_versions = ids
                 .into_iter()
                 .filter_map(|id| {
@@ -397,11 +468,30 @@ impl PreparedWake {
                         .get(&id)
                         .map(|row| (id, super::resources::document_version(id, &row.2)))
                 })
+                .chain(
+                    plan.neighbourhood
+                        .claim_versions()
+                        .map(|(id, version)| (id, version.clone())),
+                )
+                .chain(
+                    plan.turn_ids
+                        .iter()
+                        .filter_map(|id| texts.get(id))
+                        .flat_map(super::turn_text::TurnText::versions)
+                        .map(|(id, version)| (id, version.clone())),
+                )
                 .collect();
+        }
+        // The heads a neighbourhood lists are read at this snapshot too; the
+        // branch admits them as priors from these bytes.
+        for (id, row) in known_rows {
+            sources.entry(id).or_insert(row);
         }
         Ok(Self {
             sources,
+            texts,
             attempts,
+            left,
             preparations,
             read_receipt: Some(read_receipt),
         })
@@ -410,6 +500,12 @@ impl PreparedWake {
     /// Only work known at the wake's single revision may execute on it.
     pub(crate) fn contains_attempt(&self, id: AttemptId) -> bool {
         self.attempts.contains(id.as_bytes())
+    }
+
+    /// Ready work this wake left past the head it prepared: a later pass
+    /// prepares and runs it.
+    pub(crate) fn left_for_later(&self, id: AttemptId) -> bool {
+        self.left.contains(id.as_bytes())
     }
 
     pub(crate) fn preparation(&self, id: AttemptId) -> Option<&AttemptPreparation> {
@@ -428,8 +524,122 @@ impl PreparedWake {
         self.sources.get(id).cloned()
     }
 
+    /// The frozen text of each branch TURN; a TURN this wake did not prepare
+    /// cannot be read on it.
+    pub(super) fn turn_texts(
+        &self,
+        turns: &[EntityId],
+    ) -> Result<BTreeMap<EntityId, super::turn_text::TurnText>> {
+        turns
+            .iter()
+            .map(|id| {
+                self.texts
+                    .get(id)
+                    .map(|text| (*id, text.clone()))
+                    .ok_or_else(|| invalid_consolidation("branch turn text was not prepared"))
+            })
+            .collect()
+    }
+
     /// The receipt of the wake's one scoped read, if it read anything.
     pub(super) fn read_receipt(&self) -> Option<&ScopedReadReceipt> {
         self.read_receipt.as_ref()
     }
+}
+
+/// The known entities `plan`'s turns name, with the claims the branch may
+/// hold as priors. Claims are listed only when the turns share one project,
+/// so a listing never mixes projects into one branch's input.
+fn neighbourhood_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    read: &crate::claim::ScopedRead<'_>,
+    plan: &PreparedConsolidationAttempt,
+    sources: &BTreeMap<EntityId, (u8, u64, Vec<u8>)>,
+    texts: &BTreeMap<EntityId, super::turn_text::TurnText>,
+) -> Result<(
+    super::neighbourhood::Neighbourhood,
+    super::neighbourhood::ListedRows,
+)> {
+    let mut turns = Vec::new();
+    let mut projects = BTreeSet::new();
+    for id in &plan.turn_ids {
+        let Some((kind, _, body)) = sources.get(id) else {
+            continue;
+        };
+        projects.insert(super::resources::stored_project(
+            &vault.store,
+            txn,
+            *id,
+            *kind,
+            body,
+        )?);
+        turns.push((
+            body.as_slice(),
+            texts.get(id).and_then(super::turn_text::TurnText::text),
+        ));
+    }
+    let bound = plan.scope.as_ref();
+    let project = match (bound.and_then(|scope| scope.project), projects.len()) {
+        (Some(project), _) => Some(project),
+        (None, 1) => projects.into_iter().next().flatten(),
+        _ => None,
+    };
+    let axes = project.map(|project| Scope {
+        world: plan.partition.world_ref,
+        facet: plan.partition.facet_ref,
+        relationship: bound.and_then(|scope| scope.relationship),
+        project: Some(project),
+        ..Scope::default()
+    });
+    let passage = super::neighbourhood::Passage {
+        turns: &turns,
+        axes: axes.as_ref(),
+        bound,
+    };
+    super::neighbourhood::discover_in(vault, txn, read, plan.attempt_id, &passage)
+}
+
+/// An attempt no pass runs before a later write, which a later wake
+/// prepares: a paused one, or one parked under its lease until the lease
+/// lapses and the queue hands it out again.
+fn idle(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: &crate::attempt_queue::AttemptRecord,
+) -> Result<bool> {
+    Ok(attempt.state == crate::attempt_queue::AttemptState::Paused
+        || (attempt.state.is_running()
+            && crate::dreamer_runner::DreamerRunnerStore::new(vault)
+                .is_parked_in_txn(txn, attempt.id)?))
+}
+
+/// The ready work of `scope` past the head one wake prepares, in the order a
+/// pass admits it: every attempt from the first whose queued TURNs would take
+/// the head past [`WAKE_PREPARED_TURN_CAP`]. The head always holds at least
+/// one attempt, however many TURNs it queued.
+fn left_for_later(
+    records: &[crate::attempt_queue::AttemptRecord],
+    scope: crate::dreamer_runner::DreamerConsolidationScope,
+) -> BTreeSet<[u8; 16]> {
+    let mut ready: Vec<_> = records
+        .iter()
+        .filter(|record| record.kind == scope.attempt_kind())
+        .filter_map(|record| Some((crate::attempt_queue::admission_order(record)?, record)))
+        .collect();
+    ready.sort_unstable_by_key(|(order, _)| *order);
+    let mut head = 0_usize;
+    let mut left = BTreeSet::new();
+    for (_, record) in ready {
+        let queued = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)
+            .ok()
+            .and_then(|payload| super::partition::decode_partition_payload(&payload.input).ok())
+            .map_or(0, |(_, turns, _)| turns.len());
+        if !left.is_empty() || (head > 0 && head.saturating_add(queued) > WAKE_PREPARED_TURN_CAP) {
+            left.insert(*record.id.as_bytes());
+        } else {
+            head = head.saturating_add(queued);
+        }
+    }
+    left
 }

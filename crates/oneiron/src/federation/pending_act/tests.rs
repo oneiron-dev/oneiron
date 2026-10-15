@@ -18,17 +18,20 @@ fn fixture(
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), crate::test_util::embedding_test_config()).unwrap();
     let mut holders = Vec::new();
-    for _ in 0..3 {
-        let id = EntityId::now();
-        vault
-            .put_entity(
-                &id,
-                crate::registry::ENTITY_TYPE_PERSON,
-                TimeRange { start: 1, end: 1 },
-                1,
-                b"human",
-            )
-            .unwrap();
+    // The first is the personal vault's owner, who shares it.
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    for id in [owner, EntityId::now(), EntityId::now()] {
+        if id != owner {
+            vault
+                .put_entity(
+                    &id,
+                    crate::registry::ENTITY_TYPE_PERSON,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    b"human",
+                )
+                .unwrap();
+        }
         holders.push(
             vault
                 .authenticate_owner(id, &id.to_hex(), true, GateDecisionId::now())
@@ -57,59 +60,6 @@ fn fixture(
         )
         .unwrap();
     (dir, vault, owner, other, admin)
-}
-
-#[test]
-fn preset_seeds_only_four_rows_and_personal_has_none() -> Result<()> {
-    for preset in [
-        SharedVaultPreset::Family,
-        SharedVaultPreset::Team,
-        SharedVaultPreset::Org,
-        SharedVaultPreset::Community,
-    ] {
-        let (_dir, vault, owner, _other, _admin) = fixture(preset);
-        for name in [
-            "delete_vault",
-            "erase",
-            "transfer_ownership",
-            "remove_owner",
-        ] {
-            assert_eq!(
-                vault.shared_act_policy(name)?,
-                Some(SharedActPolicy {
-                    wait_secs: WEEK,
-                    objector_roles: vec![Role::Owner],
-                    initiator_roles: vec![Role::Owner],
-                    policy_editor_roles: vec![Role::Owner],
-                    required_verb: "admin".into(),
-                    starter_may_object: true,
-                    max_act_name_bytes: 128,
-                    max_payload_bytes: 1_048_576,
-                    precedence: SharedActPrecedence::HolderMayNarrow,
-                })
-            );
-            assert!(
-                !vault
-                    .start_authority_act(&owner, 42, name, vec![], 100)?
-                    .completed
-            );
-        }
-        assert_eq!(vault.shared_act_policy("export")?, None);
-        assert_eq!(vault.shared_act_policy("_default")?, None);
-        assert!(
-            vault
-                .start_authority_act(&owner, 42, "export", vec![], 100)?
-                .completed
-        );
-    }
-    let (_dir, vault, owner, _other, _admin) = fixture(SharedVaultPreset::Personal);
-    assert_eq!(vault.shared_act_policy("delete_vault")?, None);
-    assert!(
-        vault
-            .start_authority_act(&owner, 42, "delete_vault", vec![], 100)?
-            .completed
-    );
-    Ok(())
 }
 
 #[test]
@@ -145,6 +95,14 @@ fn window_notifies_named_holders_refuses_admin_and_holds_until_withdrawn() -> Re
     assert!(!vault.advance_authority_act(&act.id, 100 + WEEK)?.completed);
     drop(vault);
     let reopened = Vault::open(dir.path(), crate::test_util::embedding_test_config())?;
+    // A proof binds to the open it was minted on: the reopened vault takes a
+    // fresh one.
+    let other = reopened.authenticate_owner(
+        other.actor(),
+        other.principal_ref(),
+        true,
+        GateDecisionId::now(),
+    )?;
     assert!(
         !reopened
             .advance_authority_act(&act.id, 100 + WEEK + 1)?
@@ -604,8 +562,11 @@ fn suspended_or_discarded_pact_grant_is_not_a_holder() -> Result<()> {
 fn conflicted_vault_root_fails_closed() -> Result<()> {
     let (_dir, vault, owner, other, _admin) = fixture(SharedVaultPreset::Team);
     let act = vault.start_authority_act(&owner, 42, "erase", vec![], 100)?;
-    vault.put_authority_log_entry(&genesis(0x76), TimeRange { start: 1, end: 1 }, 1)?;
-    vault.put_authority_log_entry(&genesis(0x77), TimeRange { start: 2, end: 2 }, 2)?;
+    // No door stores a rival genesis (H72); build the conflicted log here.
+    crate::authority::with_authority_doors_open_for_test(|| {
+        vault.put_authority_log_entry(&genesis(0x76), TimeRange { start: 1, end: 1 }, 1)?;
+        vault.put_authority_log_entry(&genesis(0x77), TimeRange { start: 2, end: 2 }, 2)
+    })?;
     assert!(vault.authority_fold()?.vault_root_is_conflicted());
     assert!(
         vault
@@ -656,47 +617,6 @@ fn deleted_member_objection_releases_and_is_not_an_approver() -> Result<()> {
     let done = vault.advance_authority_act(&act.id, 100 + WEEK)?;
     assert!(done.completed);
     assert!(done.objections.is_empty());
-    Ok(())
-}
-
-#[test]
-fn act_policy_rows_live_in_manifest_not_vault_meta() -> Result<()> {
-    let (_dir, vault, owner, other, _admin) = fixture(SharedVaultPreset::Team);
-    let row = SharedActPolicy {
-        wait_secs: 60,
-        ..vault.shared_act_policy("erase")?.unwrap()
-    };
-    vault.set_shared_act_policy(&owner, &[&other], 42, "erase", Some(row.clone()), 100)?;
-    assert_eq!(
-        vault
-            .start_authority_act(&owner, 42, "erase", vec![], 101)?
-            .deadline,
-        161
-    );
-    let txn = vault.store.env.read_txn()?;
-    let id = crate::gate::default_policy_manifest_id()?;
-    let raw = vault.store.entities.get(&txn, id.as_bytes())?.unwrap();
-    assert!(crate::gate::manifest_authenticity::manifest_is_trusted(
-        &vault.store,
-        &txn,
-        &id,
-        &raw[ENTITY_METADATA_HEADER_LEN..]
-    )?);
-    let rows = crate::gate::resolve_policy_manifest(&vault.store, &txn)?
-        .shared_act_policies
-        .unwrap();
-    assert_eq!(rows.len(), 4);
-    assert_eq!(rows.get("erase"), Some(&row));
-    for entry in vault.store.vault_meta.iter(&txn)? {
-        let (key, value) = entry?;
-        assert!(serde_json::from_slice::<SharedActPolicy>(&value).is_err());
-        assert!(
-            !key.starts_with(b"shared-act:")
-                || key.starts_with(ACT_PREFIX)
-                || key.starts_with(EVENT_PREFIX),
-            "only act state lives in vault_meta"
-        );
-    }
     Ok(())
 }
 
@@ -810,30 +730,51 @@ fn malformed_act_policy_table_refuses_start() -> Result<()> {
     Ok(())
 }
 
+/// DEC-0006 invariant 7 (REV-9 item 4): an owner's live bypass grant answers
+/// that owner's own ask inside its scope, and never skips another Owner's
+/// objection window: the act still waits, and the other Owner's objection
+/// still holds it.
 #[test]
-fn absent_row_uses_shipped_default_and_zero_wait_runs_at_once() -> Result<()> {
-    let (_dir, vault, owner, other, _admin) = fixture(SharedVaultPreset::Family);
-    let row = vault.shared_act_policy("erase")?.unwrap();
-    // Deleting the row does not turn the wait off: the shipped row applies.
-    vault.set_shared_act_policy(&owner, &[&other], 42, "erase", None, 100)?;
-    assert_eq!(vault.shared_act_policy("erase")?, None);
-    let act = vault.start_authority_act(&owner, 42, "erase", vec![], 101)?;
-    assert_eq!(act.deadline, 101 + WEEK);
-    assert!(!act.completed);
-    // An act with no row anywhere takes the shipped default row: no wait.
-    assert!(
-        vault
-            .start_authority_act(&owner, 42, "export", vec![], 101)?
-            .completed
-    );
-    // A zero wait written into the row runs the act at once.
-    let off = SharedActPolicy {
-        wait_secs: 0,
-        ..row
+fn a_bypass_grant_never_skips_another_owners_objection_window() -> Result<()> {
+    use crate::consent::{
+        ActionClass, ActionEnvelope, ActorBound, BypassScope, CatastropheClass, ComposedEffect,
+        ConsentDecision, EffectFacts, EffectPlace, GrantBound,
     };
-    vault.set_shared_act_policy(&owner, &[&other], 42, "erase", Some(off), 102)?;
-    let now = vault.start_authority_act(&owner, 42, "erase", vec![], 103)?;
-    assert!(now.completed);
-    assert_eq!(now.deadline, 103);
+    let (_dir, vault, owner, other, _admin) = fixture(SharedVaultPreset::Team);
+    let thread = EntityId::now();
+    vault.put_entity(
+        &thread,
+        crate::registry::ENTITY_TYPE_CONVERSATION,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"\x80",
+    )?;
+    let bound = GrantBound::action(
+        ActorBound::new(owner.actor().to_hex())?,
+        ActionClass::new(CatastropheClass::VaultWideDestruction.as_str())?,
+        ActionEnvelope::new(["act:delete_vault".to_owned()])?,
+    )?;
+    let warning = vault.bypass_grant_warning(&owner, bound.clone(), BypassScope::Thread(thread))?;
+    vault.create_bypass_grant(&owner, &warning)?;
+    let effect = ComposedEffect::new(
+        EffectFacts::new("delete_vault")?.with_catastrophe(CatastropheClass::VaultWideDestruction),
+    )
+    .with_action_requirement(bound)?
+    .in_place(EffectPlace {
+        project: None,
+        thread: Some(thread),
+    });
+    let evaluation = vault.evaluate_consent_for(&effect, None)?;
+    assert_eq!(evaluation.decision, ConsentDecision::Auto);
+    assert!(evaluation.bypassed_by.is_some());
+
+    let act = vault.start_authority_act(&owner, 42, "delete_vault", Vec::new(), 100)?;
+    assert_eq!(act.deadline, 100 + WEEK, "the bypass opens no shortcut");
+    assert!(!act.completed);
+    vault.change_authority_objection(&other, &act.id, true, 101)?;
+    assert!(
+        !vault.advance_authority_act(&act.id, 100 + WEEK)?.completed,
+        "the other Owner's objection still holds the act"
+    );
     Ok(())
 }

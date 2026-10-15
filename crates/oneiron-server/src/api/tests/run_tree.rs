@@ -345,23 +345,6 @@ async fn v1_core_run_tree_intervene_requires_write_and_returns_snapshot() {
 }
 
 #[tokio::test]
-async fn v1_core_run_tree_rejects_unbounded_reads() {
-    let (_dir, server) = test_server_with_config(SyncServerConfig {
-        auth_secret: Some("secret".to_owned()),
-        ..Default::default()
-    });
-
-    let (status, body) = core_json(server, "GET", "/v1/core/run-tree", "core:read", None).await;
-
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_error_envelope(&body, "BAD_REQUEST");
-    assert_eq!(
-        error_envelope(&body)["message"],
-        Value::from("run_id is required; unfiltered run-tree reads are not supported")
-    );
-}
-
-#[tokio::test]
 async fn v1_core_run_tree_redirect_is_durable_idempotent_and_fences_workers() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),

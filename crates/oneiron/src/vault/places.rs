@@ -17,7 +17,7 @@ impl Vault {
         learned_at: u64,
         body: &[u8],
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.port_place_put(
                 txn,
                 id,

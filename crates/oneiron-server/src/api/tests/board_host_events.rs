@@ -1,6 +1,14 @@
 //! Router proofs for session observations and turn-local capability riders.
 use super::*;
 use oneiron::context_board::{BoardStreamFrame, DeltaRow, FrameKind};
+use oneiron::skill_hub::pack_catalog::{
+    PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackPermissions, PackSource,
+    PackSourceAdapter,
+};
+use oneiron::skill_hub::{
+    HubFile, HubPackage, HubPin, HubRef, HubSyncPolicy, SkillHubAdapter, SkillHubKind,
+    SkillHubRecord, SkillHubTrustTier,
+};
 
 fn seed_board_skill(server: &SyncServer, id: oneiron::EntityId, needle: &str) -> String {
     let mut record = oneiron::skill::SkillRecord::new(
@@ -570,54 +578,171 @@ async fn board_host_narrow_connector_never_delivers_a_rider() {
     assert_mcp_structured_error(&refused, "mcp_scope_refused");
 }
 
+struct Adapter {
+    hub: oneiron::EntityId,
+    source: PackSource,
+}
+impl SkillHubAdapter for Adapter {
+    fn hub_id(&self) -> oneiron::EntityId {
+        self.hub
+    }
+    fn kind(&self) -> SkillHubKind {
+        SkillHubKind::Git
+    }
+    fn endpoint(&self) -> Option<&str> {
+        Some("https://example.invalid/board-pack")
+    }
+    fn fetch_package(&self, _: &HubRef) -> oneiron::Result<HubPackage> {
+        Err(oneiron::Error::EntityNotFound)
+    }
+}
+impl PackSourceAdapter for Adapter {
+    fn fetch_pack_source(&self, _: &HubRef) -> oneiron::Result<PackSource> {
+        Ok(self.source.clone())
+    }
+}
+struct Fit;
+impl PackFitPolicy for Fit {
+    fn evaluate(&self, _: &PackSource, card: &PackPermissions) -> oneiron::Result<PackFitVerdict> {
+        assert_eq!(card.section_authorities, ["read"]);
+        Ok(PackFitVerdict {
+            fits: true,
+            rules_hit: false,
+            code_auto_install: true,
+        })
+    }
+}
+
+/// Installs a one-section board pack named `name` from a verified hub, as
+/// the owner, and returns its receipt's content hash.
+fn install_board_pack(server: &SyncServer, name: &str) -> String {
+    install_board_pack_version(server, name, 1)
+}
+
+/// [`install_board_pack`] at `version`: a later version replaces the earlier
+/// one's install and leaves its source stored.
+fn install_board_pack_version(server: &SyncServer, name: &str, version: u32) -> String {
+    let section = json!({"section_id": format!("{name}.panel"), "state_family":{"family":"claim","version":1},
+        "verbs":["board.expand"], "authority_lane":"read", "budget_policy":"board.plugin_sections.v1"});
+    let manifest = format!(
+        "---\nname: {name}\ndescription: board pack\nversion: {version}\nkind: capability\n\
+         predicates: [\"{name}.topic\"]\n---\nBoard pack\n"
+    );
+    let source = PackSource::from_files(vec![
+        HubFile::new("PACK.md", manifest.as_bytes()),
+        HubFile::new(
+            format!("knowledge/sections/{name}.panel.json"),
+            serde_json::to_vec(&section).unwrap(),
+        ),
+    ])
+    .unwrap();
+    let occurred = oneiron::TimeRange { start: 4, end: 4 };
+    let owner_id = oneiron::EntityId::now();
+    server
+        .vault
+        .put_entity(
+            &owner_id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            occurred,
+            4,
+            b"owner",
+        )
+        .unwrap();
+    let owner = server
+        .vault
+        .authenticate_owner(
+            owner_id,
+            &format!("principal:{name}:{version}"),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let hub = oneiron::EntityId::now();
+    server
+        .vault
+        .configure_skill_hub(
+            &owner,
+            &hub,
+            &SkillHubRecord::new(
+                SkillHubKind::Git,
+                "https://example.invalid/board-pack",
+                SkillHubTrustTier::Verified,
+                HubSyncPolicy::ContentHashFrozen,
+            )
+            .unwrap(),
+            occurred,
+            4,
+        )
+        .unwrap();
+    let publisher = server
+        .vault
+        .admit_skill_publisher(&owner, &format!("publisher:{name}:{version}"), hub)
+        .unwrap();
+    let reference = HubRef::new(
+        hub,
+        format!("packs/{name}"),
+        HubPin::ContentHash(source.content_hash().to_hex()),
+    )
+    .unwrap();
+    let PackInstallDisposition::Installed(receipt) = server
+        .vault
+        .install_pack_from_adapter(
+            &Adapter { hub, source },
+            &reference,
+            &publisher,
+            &Fit,
+            occurred,
+            4,
+        )
+        .unwrap()
+    else {
+        panic!("post-fit board pack")
+    };
+    receipt.content_hash
+}
+
+/// F16 H385: the core board's changed line names only packs whose source row
+/// its reader reads. To a reader that cannot read the pack's source, the
+/// pack is not installed; once its grant reads the source, it sees the
+/// install.
+#[tokio::test]
+async fn a_board_names_no_pack_its_reader_cannot_read() {
+    use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x2516_0201).to_hex();
+    let restrict = |types: &[u8]| {
+        super::context_board_history::restrict_principal_read_types(
+            &server,
+            seeded_test_entity_id(0x2516_0201),
+            types,
+        );
+    };
+    restrict(&[ENTITY_TYPE_TURN, ENTITY_TYPE_PERSON]);
+    for session in ["hidden-session", "shown-session"] {
+        assert_eq!(
+            core_board(&server, &principal, session).await["changed"],
+            json!([])
+        );
+    }
+    let hash = install_board_pack(&server, "alice.hidden");
+    let hidden = core_board(&server, &principal, "hidden-session").await;
+    assert!(
+        !hidden.to_string().contains("alice.hidden") && !hidden.to_string().contains(&hash),
+        "{hidden:#}"
+    );
+    restrict(&[ENTITY_TYPE_TURN, ENTITY_TYPE_PERSON, ENTITY_TYPE_ASSET]);
+    let shown = core_board(&server, &principal, "shown-session").await;
+    assert!(
+        shown["changed"].to_string().contains("alice.hidden"),
+        "a reader that reads the pack's source sees it installed: {shown:#}"
+    );
+}
+
 #[tokio::test]
 async fn board_host_pack_install_is_changed_line_and_live_section_next_render() {
-    use oneiron::skill_hub::pack_catalog::{
-        PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackPermissions, PackSource,
-        PackSourceAdapter,
-    };
-    use oneiron::skill_hub::{
-        HubFile, HubPackage, HubPin, HubRef, HubSyncPolicy, SkillHubAdapter, SkillHubKind,
-        SkillHubRecord, SkillHubTrustTier,
-    };
-    struct Adapter {
-        hub: oneiron::EntityId,
-        source: PackSource,
-    }
-    impl SkillHubAdapter for Adapter {
-        fn hub_id(&self) -> oneiron::EntityId {
-            self.hub
-        }
-        fn kind(&self) -> SkillHubKind {
-            SkillHubKind::Git
-        }
-        fn endpoint(&self) -> Option<&str> {
-            Some("https://example.invalid/board-pack")
-        }
-        fn fetch_package(&self, _: &HubRef) -> oneiron::Result<HubPackage> {
-            Err(oneiron::Error::EntityNotFound)
-        }
-    }
-    impl PackSourceAdapter for Adapter {
-        fn fetch_pack_source(&self, _: &HubRef) -> oneiron::Result<PackSource> {
-            Ok(self.source.clone())
-        }
-    }
-    struct Fit;
-    impl PackFitPolicy for Fit {
-        fn evaluate(
-            &self,
-            _: &PackSource,
-            card: &PackPermissions,
-        ) -> oneiron::Result<PackFitVerdict> {
-            assert_eq!(card.section_authorities, ["read"]);
-            Ok(PackFitVerdict {
-                fits: true,
-                rules_hit: false,
-                code_auto_install: true,
-            })
-        }
-    }
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
@@ -1012,7 +1137,7 @@ async fn a_rejection_rides_ahead_of_a_full_cap_of_approvals() {
                     "rider-approve",
                     agent,
                     oneiron::EntityId::now(),
-                    &format!("approved {n}"),
+                    format!("approved {n}"),
                 )
                 .unwrap()
         })
@@ -1122,5 +1247,345 @@ async fn a_removed_connector_is_named_by_its_whole_key() {
     assert!(
         removals[0].ends_with(&format!("key={}", removed.to_hex())),
         "{tail:?}"
+    );
+}
+
+/// F16 (S-F4): the own-change rider carries an outcome or a connector only
+/// while the caller's read reads its row. An agent whose grant reads no claim
+/// and no connector key learns of neither; the outcome stays owed, and both
+/// ride once its read admits them.
+#[tokio::test]
+async fn the_rider_carries_no_outcome_or_connector_its_reader_cannot_read() {
+    let (_dir, server) = auth_test_server();
+    let agent = seeded_test_entity_id(0x2516_0401);
+    let own = server
+        .vault
+        .park_run_proposal_for_test("rider-hidden", agent, oneiron::EntityId::now(), "one")
+        .unwrap();
+    assert!(agent_board(&server, agent, "hidden").await.is_empty());
+    settle_run(&server, "rider-hidden", "decline").await;
+    let key = oneiron::EntityId::now();
+    server
+        .vault
+        .register_connector_key(
+            &key,
+            oneiron::connector_key::ConnectorKeyRecord::active("rider_hidden", None, Vec::new(), 1),
+        )
+        .unwrap();
+    let names = |rows: &[String], needle: &str| rows.iter().any(|row| row.contains(needle));
+
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        agent,
+        &[oneiron::registry::ENTITY_TYPE_TURN],
+    );
+    let hidden = agent_board(&server, agent, "hidden").await;
+    for needle in [own.to_hex(), key.to_hex(), "rider_hidden".to_owned()] {
+        assert!(!names(&hidden, &needle), "{needle}: {hidden:?}");
+    }
+
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        agent,
+        &[
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::registry::ENTITY_TYPE_CLAIM,
+            oneiron::registry::ENTITY_TYPE_CONNECTOR_KEY,
+        ],
+    );
+    let shown = agent_board(&server, agent, "hidden").await;
+    assert!(
+        names(&shown, &format!("claim:{}: rejected", own.to_hex())),
+        "the withheld outcome was still owed: {shown:?}"
+    );
+    assert!(names(&shown, &key.to_hex()), "{shown:?}");
+}
+
+/// A keyed board hydration by `principal` naming its own `turn`, in
+/// `session`, under `key`.
+fn keyed_board(
+    principal: oneiron::EntityId,
+    turn: oneiron::EntityId,
+    session: &str,
+    key: &'static str,
+) -> axum::http::Request<axum::body::Body> {
+    let mut request = core_request_with_authz(
+        "POST",
+        "/v1/core/context-board",
+        test_bearer(&format!(
+            "scope=core:read,core:write;principal_ref={};actor_class=agent",
+            principal.to_hex()
+        )),
+        Some(&json!({"session": {"session_id": session}, "turn": {"id": turn.to_hex()}})),
+    );
+    request
+        .headers_mut()
+        .insert("Idempotency-Key", axum::http::HeaderValue::from_static(key));
+    request
+}
+
+/// A TURN `author` wrote.
+fn put_authored_turn(server: &SyncServer, author: oneiron::EntityId) -> oneiron::EntityId {
+    let turn = oneiron::EntityId::now();
+    server
+        .vault
+        .put_entity(
+            &turn,
+            oneiron::registry::ENTITY_TYPE_TURN,
+            oneiron::TimeRange { start: 2, end: 2 },
+            2,
+            &rmp_serde::to_vec_named(&json!({ "actor": author.to_hex() })).unwrap(),
+        )
+        .unwrap();
+    turn
+}
+
+/// F16 round 2 (Sol F2, Astra F2): a keyed board's replay re-admits its
+/// rider, the own outcome and the connector key it carried, under its
+/// reader's read as it stands then. Once that read reads neither, the replay
+/// is refused rather than repeating them.
+#[tokio::test]
+async fn a_keyed_board_replays_no_rider_its_reader_no_longer_reads() {
+    use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONNECTOR_KEY, ENTITY_TYPE_TURN};
+    let (_dir, server) = auth_test_server();
+    let agent = seeded_test_entity_id(0x2516_0411);
+    let own = server
+        .vault
+        .park_run_proposal_for_test("rider-keyed", agent, oneiron::EntityId::now(), "one")
+        .unwrap();
+    assert!(agent_board(&server, agent, "keyed").await.is_empty());
+    settle_run(&server, "rider-keyed", "decline").await;
+    let key = oneiron::EntityId::now();
+    server
+        .vault
+        .register_connector_key(
+            &key,
+            oneiron::connector_key::ConnectorKeyRecord::active("rider_keyed", None, Vec::new(), 1),
+        )
+        .unwrap();
+    let turn = put_authored_turn(&server, agent);
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        agent,
+        &[
+            ENTITY_TYPE_TURN,
+            ENTITY_TYPE_CLAIM,
+            ENTITY_TYPE_CONNECTOR_KEY,
+        ],
+    );
+    let keyed = || {
+        route_json(
+            server.clone(),
+            keyed_board(agent, turn, "keyed", "rider-keyed"),
+        )
+    };
+    let (status, first) = keyed().await;
+    assert_eq!(status, StatusCode::OK, "{first:#}");
+    let changed = first["changed"].to_string();
+    assert!(
+        changed.contains(&format!("claim:{}: rejected", own.to_hex())),
+        "{first:#}"
+    );
+    assert!(changed.contains(&key.to_hex()), "{first:#}");
+    let (status, again) = keyed().await;
+    assert_eq!(status, StatusCode::OK, "{again:#}");
+    assert_eq!(again, first);
+
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        agent,
+        &[ENTITY_TYPE_TURN],
+    );
+    let (status, refused) = keyed().await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused:#}");
+    let refused = refused.to_string();
+    assert!(refused.contains("board_document_unreadable"), "{refused}");
+    assert!(!refused.contains(&own.to_hex()) && !refused.contains(&key.to_hex()));
+}
+
+/// F16 round 2 (Sol F4, Astra F4): a keyed board's replay re-admits the exact
+/// source of each pack it named, whatever the catalog installs now. A later
+/// version's install leaves the first source stored; once the reader's grant
+/// reads no source, the replay is refused rather than naming the first.
+#[tokio::test]
+async fn a_keyed_board_replays_no_pack_whose_source_its_reader_no_longer_reads() {
+    use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x2516_0421);
+    let restrict = |types: &[u8]| {
+        super::context_board_history::restrict_principal_read_types(&server, principal, types);
+    };
+    restrict(&[ENTITY_TYPE_TURN, ENTITY_TYPE_PERSON, ENTITY_TYPE_ASSET]);
+    assert_eq!(
+        core_board(&server, &principal.to_hex(), "pack-keyed").await["changed"],
+        json!([])
+    );
+    let first_hash = install_board_pack_version(&server, "alice.keyed", 1);
+    // A board's owner is a row: its history is recorded against it.
+    server
+        .vault
+        .put_entity(
+            &principal,
+            ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"pack reader",
+        )
+        .unwrap();
+    let turn = put_authored_turn(&server, principal);
+    let keyed = || {
+        route_json(
+            server.clone(),
+            keyed_board(principal, turn, "pack-keyed", "pack-keyed"),
+        )
+    };
+    let (status, first) = keyed().await;
+    assert_eq!(status, StatusCode::OK, "{first:#}");
+    assert!(
+        first["changed"].to_string().contains(&first_hash),
+        "{first:#}"
+    );
+    let (status, again) = keyed().await;
+    assert_eq!(status, StatusCode::OK, "{again:#}");
+    assert_eq!(again, first);
+
+    let second_hash = install_board_pack_version(&server, "alice.keyed", 2);
+    assert_ne!(second_hash, first_hash);
+    restrict(&[ENTITY_TYPE_TURN, ENTITY_TYPE_PERSON]);
+    let (status, refused) = keyed().await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused:#}");
+    let refused = refused.to_string();
+    assert!(refused.contains("board_document_unreadable"), "{refused}");
+    assert!(!refused.contains(&first_hash), "{refused}");
+}
+
+/// F16 round 3 (Astra F4): a keyed board's replay re-admits each capability
+/// its retrieval discovered, which no document it served names. Once its
+/// reader, a delegated reader the disclosure clamp clears, reads no skill,
+/// the replay is refused rather than naming it.
+#[tokio::test]
+async fn a_keyed_board_replays_no_capability_its_reader_no_longer_reads() {
+    use oneiron::registry::{
+        ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN,
+    };
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x2516_0431);
+    super::context_board_history::cleared_reader(
+        &server,
+        principal,
+        seeded_test_entity_id(0x2516_0433),
+    );
+    let skill = seeded_test_entity_id(0x2516_0432);
+    seed_board_skill(&server, skill, "keyedcapsneedle");
+    let turn = put_authored_turn(&server, principal);
+    let restrict = |types: &[u8]| {
+        super::context_board_history::restrict_principal_read_types(&server, principal, types);
+    };
+    let keyed = || {
+        let mut request = core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-board",
+            "core:read,core:write",
+            &principal.to_hex(),
+            Some(&json!({
+                "retrieval": {"query": "keyedcapsneedle", "limit": 1},
+                "session": {"session_id": "caps-keyed"},
+                "turn": {"id": turn.to_hex()}
+            })),
+        );
+        request.headers_mut().insert(
+            "Idempotency-Key",
+            axum::http::HeaderValue::from_static("caps-keyed"),
+        );
+        route_json(server.clone(), request)
+    };
+    // The reader reads its own contact row throughout: its clearance is the
+    // one the clamp serves. Only the skill's read is withdrawn.
+    restrict(&[
+        ENTITY_TYPE_TURN,
+        ENTITY_TYPE_COUNTERPARTY_CONTACT,
+        ENTITY_TYPE_SKILL,
+    ]);
+    let (status, first) = keyed().await;
+    assert_eq!(status, StatusCode::OK, "{first:#}");
+    assert!(
+        first["pack"]["capabilities"]
+            .to_string()
+            .contains(&skill.to_hex()),
+        "{first:#}"
+    );
+    let (status, again) = keyed().await;
+    assert_eq!(status, StatusCode::OK, "{again:#}");
+    assert_eq!(again, first);
+
+    restrict(&[ENTITY_TYPE_TURN, ENTITY_TYPE_COUNTERPARTY_CONTACT]);
+    let (status, refused) = keyed().await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused:#}");
+    let refused = refused.to_string();
+    assert!(refused.contains("board_document_unreadable"), "{refused}");
+    assert!(!refused.contains(&skill.to_hex()), "{refused}");
+}
+
+/// F16 rounds 3 and 4 (Astra F5): a rider that counts outcomes past its cap
+/// keeps the rows it counted. Its keyed board replays while each of them
+/// still reads, so a lost response loses no outcome, and is refused once a
+/// row it only counted no longer reads.
+#[tokio::test]
+async fn a_keyed_board_replays_no_count_of_a_row_its_reader_no_longer_reads() {
+    use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+    let (_dir, server) = auth_test_server();
+    let agent = seeded_test_entity_id(0x2516_0441);
+    let own: Vec<_> = (0..17)
+        .map(|outcome| {
+            server
+                .vault
+                .park_run_proposal_for_test(
+                    "rider-overflow",
+                    agent,
+                    oneiron::EntityId::now(),
+                    format!("outcome {outcome}"),
+                )
+                .unwrap()
+        })
+        .collect();
+    assert!(agent_board(&server, agent, "overflow").await.is_empty());
+    settle_run(&server, "rider-overflow", "decline").await;
+    let turn = put_authored_turn(&server, agent);
+    super::context_board_history::restrict_principal_read_types(
+        &server,
+        agent,
+        &[ENTITY_TYPE_TURN, ENTITY_TYPE_CLAIM],
+    );
+    let keyed = || {
+        route_json(
+            server.clone(),
+            keyed_board(agent, turn, "overflow", "rider-overflow"),
+        )
+    };
+    let (status, first) = keyed().await;
+    assert_eq!(status, StatusCode::OK, "{first:#}");
+    let changed = first["changed"].to_string();
+    assert!(changed.contains("changed: +"), "{first:#}");
+    let counted: Vec<_> = own
+        .iter()
+        .filter(|id| !changed.contains(&id.to_hex()))
+        .collect();
+    assert!(!counted.is_empty(), "{first:#}");
+    let (status, again) = keyed().await;
+    assert_eq!(status, StatusCode::OK, "{again:#}");
+    assert_eq!(again, first);
+
+    assert!(server.vault.delete_entity(counted[0]).unwrap());
+    let (status, refused) = keyed().await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused:#}");
+    assert!(
+        refused.to_string().contains("board_document_unreadable"),
+        "{refused:#}"
     );
 }

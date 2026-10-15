@@ -78,8 +78,6 @@ use crate::claim::{ClaimApprovalStatus, ClaimSubject};
 #[cfg(test)]
 use crate::edge::EdgeActorClass;
 #[cfg(test)]
-use crate::edit_roundtrip::{AnchorEffect, Axis, StructuralShift};
-#[cfg(test)]
 use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::error::{Error, Result};

@@ -1,0 +1,169 @@
+[
+ {
+  "uuid": "4c2d9e1a-7b3f-4a6c-8d2e-1f0a9b8c7d01",
+  "name": "Sourdough starter",
+  "summary": "",
+  "created_at": "2026-08-02T09:15:00.000000Z",
+  "updated_at": "2026-08-02T09:20:00.000000Z",
+  "account": {
+   "uuid": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a"
+  },
+  "chat_messages": [
+   {
+    "uuid": "a0b1c2d3-0001-4000-8000-000000000001",
+    "text": "My sourdough starter Gus smells like nail polish. Is it dying?",
+    "content": [
+     {
+      "start_timestamp": "2026-08-02T09:15:01.000000Z",
+      "stop_timestamp": "2026-08-02T09:15:01.000000Z",
+      "type": "text",
+      "text": "My sourdough starter Gus smells like nail polish. Is it dying?",
+      "citations": []
+     }
+    ],
+    "sender": "human",
+    "created_at": "2026-08-02T09:15:01.000000Z",
+    "updated_at": "2026-08-02T09:15:01.000000Z",
+    "attachments": [],
+    "files": []
+   },
+   {
+    "uuid": "a0b1c2d3-0001-4000-8000-000000000002",
+    "text": "Not dying: the acetone smell means Gus is hungry. Feed it twice a day at a 1:1:1 ratio.\nMost bakers find it fades within three feedings.",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "Acetone smell usually means hunger.",
+      "summaries": []
+     },
+     {
+      "start_timestamp": "2026-08-02T09:15:09.000000Z",
+      "stop_timestamp": "2026-08-02T09:15:09.000000Z",
+      "type": "text",
+      "text": "Not dying: the acetone smell means Gus is hungry. Feed it twice a day at a 1:1:1 ratio.",
+      "citations": []
+     },
+     {
+      "type": "tool_use",
+      "name": "web_search",
+      "input": {
+       "query": "sourdough starter acetone smell"
+      }
+     },
+     {
+      "type": "tool_result",
+      "name": "web_search",
+      "content": [
+       {
+        "type": "text",
+        "text": "results"
+       }
+      ],
+      "is_error": false
+     },
+     {
+      "start_timestamp": "2026-08-02T09:15:12.000000Z",
+      "stop_timestamp": "2026-08-02T09:15:12.000000Z",
+      "type": "text",
+      "text": "Most bakers find it fades within three feedings.",
+      "citations": []
+     }
+    ],
+    "sender": "assistant",
+    "created_at": "2026-08-02T09:15:12.000000Z",
+    "updated_at": "2026-08-02T09:15:12.000000Z",
+    "attachments": [],
+    "files": []
+   },
+   {
+    "uuid": "a0b1c2d3-0001-4000-8000-000000000003",
+    "text": "Attached is my feeding log.",
+    "content": [
+     {
+      "start_timestamp": "2026-08-02T09:18:00.000000Z",
+      "stop_timestamp": "2026-08-02T09:18:00.000000Z",
+      "type": "text",
+      "text": "Attached is my feeding log.",
+      "citations": []
+     }
+    ],
+    "sender": "human",
+    "created_at": "2026-08-02T09:18:00.000000Z",
+    "updated_at": "2026-08-02T09:18:00.000000Z",
+    "attachments": [
+     {
+      "file_name": "feeding-log.txt",
+      "file_size": 96,
+      "file_type": "txt",
+      "extracted_content": "day 1 fed 50g"
+     }
+    ],
+    "files": []
+   },
+   {
+    "uuid": "a0b1c2d3-0001-4000-8000-000000000004",
+    "text": "Your log shows proofing at 30 degrees; drop to 24 and the smell will settle.",
+    "content": [
+     {
+      "start_timestamp": "2026-08-02T09:18:20.000000Z",
+      "stop_timestamp": "2026-08-02T09:18:20.000000Z",
+      "type": "text",
+      "text": "Your log shows proofing at 30 degrees; drop to 24 and the smell will settle.",
+      "citations": []
+     }
+    ],
+    "sender": "assistant",
+    "created_at": "2026-08-02T09:18:20.000000Z",
+    "updated_at": "2026-08-02T09:18:20.000000Z",
+    "attachments": [],
+    "files": []
+   },
+   {
+    "uuid": "a0b1c2d3-0001-4000-8000-000000000005",
+    "text": "I fed Gus at 8am and 8pm and the smell is gone.",
+    "content": [
+     {
+      "start_timestamp": "2026-08-04T08:00:00.000000Z",
+      "stop_timestamp": "2026-08-04T08:00:00.000000Z",
+      "type": "text",
+      "text": "I fed Gus at 8am and 8pm and the smell is gone.",
+      "citations": []
+     }
+    ],
+    "sender": "human",
+    "created_at": "2026-08-04T08:00:00.000000Z",
+    "updated_at": "2026-08-04T08:00:00.000000Z",
+    "attachments": [],
+    "files": []
+   },
+   {
+    "uuid": "a0b1c2d3-0001-4000-8000-000000000006",
+    "text": "Great: Gus is ready to bake with on Saturday.",
+    "content": [
+     {
+      "start_timestamp": "2026-08-04T08:00:07.000000Z",
+      "stop_timestamp": "2026-08-04T08:00:07.000000Z",
+      "type": "text",
+      "text": "Great: Gus is ready to bake with on Saturday.",
+      "citations": []
+     }
+    ],
+    "sender": "assistant",
+    "created_at": "2026-08-04T08:00:07.000000Z",
+    "updated_at": "2026-08-04T08:00:07.000000Z",
+    "attachments": [],
+    "files": []
+   }
+  ]
+ },
+ {
+  "uuid": "4c2d9e1a-7b3f-4a6c-8d2e-1f0a9b8c7d02",
+  "name": "",
+  "created_at": "2026-08-03T10:00:00.000000Z",
+  "updated_at": "2026-08-03T10:00:00.000000Z",
+  "account": {
+   "uuid": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a"
+  },
+  "chat_messages": []
+ }
+]

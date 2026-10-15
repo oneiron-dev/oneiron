@@ -69,6 +69,7 @@ impl Fixture {
                     holder_ref: Some(holder.to_owned()),
                     actor_class: class.map(str::to_owned),
                     org_ref: None,
+                    write_facet: None,
                 },
             )
             .unwrap();
@@ -94,6 +95,7 @@ impl Fixture {
                     holder_ref: Some(self.person.clone()),
                     actor_class: Some("human".into()),
                     org_ref: None,
+                    write_facet: None,
                 },
             )
             .unwrap();
@@ -155,7 +157,15 @@ async fn a_paired_client_witnesses_claims_recalls_and_reads_its_receipts() {
         let claimed = client.claim_upsert(&claim).unwrap();
         let effort = oneiron_remote::parse_effort("medium").unwrap();
         client
-            .recall("window seat", effort, &RecallScope::default(), 10, None)
+            .recall(
+                "window seat",
+                effort,
+                &RecallScope::default(),
+                10,
+                None,
+                None,
+                None,
+            )
             .unwrap();
         let receipts = client.receipts(100).unwrap();
         receipts
@@ -164,6 +174,57 @@ async fn a_paired_client_witnesses_claims_recalls_and_reads_its_receipts() {
     })
     .await;
     assert!(found);
+}
+
+/// Wave 9 A/B: `oneiron token read` and `token pair --scope core:read` spell
+/// the Read verb `core:read`. A non-owner agent holding such a credential
+/// recalled an empty pack over HTTP, because the door dropped its slip.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_core_read_slip_lets_a_non_owner_agent_recall() {
+    let fixture = Fixture::serve().await;
+    let owner = EntityId::from_hex(&fixture.person).unwrap();
+    let agent = EntityId::now();
+    fixture
+        .vault
+        .put_entity(
+            &agent,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"an agent",
+        )
+        .unwrap();
+    let said = fixture
+        .vault
+        .memory(owner, oneiron::EdgeActorClass::Human)
+        .witness(&turn())
+        .unwrap()
+        .message_short_ids[0]
+        .clone();
+    let (link, _) = fixture.link(&["core:read"], &agent.to_hex(), Some("agent"));
+    let pack = blocking(move || {
+        let effort = oneiron_remote::parse_effort("medium").unwrap();
+        paired(&link)
+            .recall(
+                "window seat",
+                effort,
+                &RecallScope::default(),
+                10,
+                None,
+                None,
+                None,
+            )
+            .unwrap()
+    })
+    .await;
+    // The message comes back as its turn, quoting it (ARCH-0004).
+    assert!(
+        pack.items.iter().any(|item| item
+            .cited_messages
+            .iter()
+            .any(|message| message.short_id == said)),
+        "{pack:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -116,7 +116,8 @@ impl Vault {
     ) -> Result<SpacePostingReceipt> {
         self.autonomy_owner(owner)?;
         let head = head_key(identity, space)?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
+            let owner_actor = owner.revalidate_in_txn(self, txn)?;
             self.autonomy_identity_actor(txn, identity)?;
             let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &identity)?
                 .ok_or_else(invalid_autonomy)?;
@@ -154,7 +155,7 @@ impl Vault {
             self.write_autonomy_row(
                 txn,
                 &head,
-                owner.actor(),
+                owner_actor,
                 at,
                 Value::Array(vec![id_value(setting), Value::from(decision_id.to_hex())]),
             )?;
@@ -169,7 +170,7 @@ impl Vault {
                     receipt_reasons: Vec::new(),
                     system_notices: Vec::new(),
                     actor_class: "human".to_owned(),
-                    actor_ref: Some(owner.actor().to_hex()),
+                    actor_ref: Some(owner_actor.to_hex()),
                     content_kind: "channel_identity.posting".to_owned(),
                     policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
                     claim_id: None,

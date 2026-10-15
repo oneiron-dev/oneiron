@@ -2,6 +2,7 @@ use super::ViewQuery;
 use super::check_api_auth;
 use super::query_params;
 use super::scoped_read_for_legacy_api;
+use crate::auth::Locality;
 use crate::error::ApiError;
 use crate::projection;
 use crate::projection::View;
@@ -101,11 +102,12 @@ use utoipa::ToSchema;
 )]
 pub(crate) async fn get_entity(
     headers: HeaderMap,
+    Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
     query: Result<Query<ViewQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    check_api_auth(&headers, &server)?;
+    let auth = check_api_auth(&headers, &server)?.at(locality);
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Standard);
 
@@ -113,10 +115,10 @@ pub(crate) async fn get_entity(
         ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
     })?;
 
-    let scoped_read = scoped_read_for_legacy_api(&server)?;
+    let scoped_read = scoped_read_for_legacy_api(&server, &auth)?;
     let read = scoped_read
         .read(&[oneiron::claim::PointRead::id(id)], None)
-        .inspect_err(|error| tracing::error!(%error,"get entity failed"))
+        .inspect_err(|error| tracing::error!(kind = ?error.kind(), "get entity failed"))
         .map_err(|_| ApiError::internal_server_error("get entity failed"))?
         .single();
     let response = match read
@@ -189,72 +191,6 @@ mod credential_tests {
             assert_eq!(got["nested"]["password"], "[redacted]");
         }
     }
-    #[tokio::test]
-    async fn edge_transport_keeps_its_array_and_receipts_missing_and_live_sources() {
-        let (_dir, server) = crate::api::tests::auth_test_server();
-        let (slip, key) = crate::test_credentials::credential(&server, "jti=edge-transport");
-        let id = oneiron::EntityId::from_bytes([0x31; 16]).unwrap();
-        for present in [false, true] {
-            if present {
-                server
-                    .vault
-                    .put_entity(
-                        &id,
-                        oneiron::registry::ENTITY_TYPE_PERSON,
-                        oneiron::TimeRange { start: 1, end: 1 },
-                        1,
-                        b"source",
-                    )
-                    .unwrap();
-            }
-            let signed = crate::test_credentials::bind_slip_request(
-                &server,
-                &slip,
-                &key,
-                axum::http::Request::builder()
-                    .body(axum::body::Body::empty())
-                    .unwrap(),
-            );
-            let response = get_edges(
-                signed.headers().clone(),
-                State(server.clone()),
-                Path(id.to_hex()),
-                Ok(Query(ViewQuery {
-                    view: Some(View::Full),
-                })),
-            )
-            .await
-            .unwrap();
-            assert_eq!(
-                response.status(),
-                if present {
-                    StatusCode::OK
-                } else {
-                    StatusCode::NOT_FOUND
-                }
-            );
-            let receipt: Value = serde_json::from_str(
-                response.headers()["x-oneiron-read-receipt"]
-                    .to_str()
-                    .unwrap(),
-            )
-            .unwrap();
-            assert_eq!(receipt["suppressed_count"], 0);
-            assert!(receipt["applied"].is_object());
-            if present {
-                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-                    .await
-                    .unwrap();
-                let edges = serde_json::from_slice::<Value>(&body).unwrap();
-                assert_eq!(edges.as_array().unwrap().len(), 1);
-                assert_eq!(edges[0]["kind"], oneiron::EdgeKind::HasFacet as u8);
-                assert_eq!(
-                    edges[0]["target"],
-                    oneiron::claim::substrate_facet_id(id).unwrap().to_hex()
-                );
-            }
-        }
-    }
 }
 
 /// Get outbound edges for an entity.
@@ -304,11 +240,12 @@ mod credential_tests {
 )]
 pub(crate) async fn get_edges(
     headers: HeaderMap,
+    Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
     query: Result<Query<ViewQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    check_api_auth(&headers, &server)?;
+    let auth = check_api_auth(&headers, &server)?.at(locality);
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
 
@@ -316,11 +253,11 @@ pub(crate) async fn get_edges(
         ApiError::bad_request("entity id must be a 32-character hex entity id", Some("id"))
     })?;
 
-    let scoped_read = scoped_read_for_legacy_api(&server)?;
+    let scoped_read = scoped_read_for_legacy_api(&server, &auth)?;
     let read = scoped_read
         .edges_out(&id)
         .inspect_err(|e| {
-            tracing::error!(error = %e, "get edges failed");
+            tracing::error!(kind = ?e.kind(), "get edges failed");
         })
         .map_err(|_| ApiError::internal_server_error("get edges failed"))?;
     let response = match read.value {

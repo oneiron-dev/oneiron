@@ -507,7 +507,7 @@ impl EnvBlueprintStore for VaultEnvBlueprintStore<'_> {
             stages: blueprint.stages.clone(),
         };
         self.vault
-            .try_with_write_txn::<_, _, EnvBlueprintError>(|txn| {
+            .try_with_write_txn_grouped::<_, _, EnvBlueprintError>(|txn| {
                 BLUEPRINT.put(&self.vault.store, txn, &hash, &row)?;
                 Ok(())
             })

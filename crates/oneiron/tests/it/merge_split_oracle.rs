@@ -374,8 +374,8 @@ mod seam {
             .len()
     }
 
-    /// Applies a facet op: mints one FACET entity per label and backfills
-    /// `facet_of` scoping per `assignments` (claim id → facet index).
+    /// Applies a facet op: mints one FACET entity per label and forks each
+    /// claim in `assignments` (claim id → facet index) under its mask (r9).
     /// Returns the minted FACET entity ids, in label order.
     pub(crate) fn apply_facet(
         vault: &Vault,
@@ -608,6 +608,28 @@ mod seam {
             .expect("resolve ramp scope")
     }
 
+    /// The owner whose rulings the propose lane records: a ruling is the
+    /// owner's word, so the door takes the owner's proof.
+    fn ruling_owner(vault: &Vault) -> oneiron::consent::AuthenticatedOwner {
+        let id = EntityId::from_bytes([0x25; 16]).expect("fixture id");
+        if vault.get_entity_type(&id).expect("entity type").is_none() {
+            super::put_person(vault, 0x25);
+        }
+        vault
+            .authenticate_owner(
+                id,
+                "principal:owner",
+                true,
+                oneiron::store::GateDecisionId::now(),
+            )
+            .expect("authenticate owner")
+    }
+
+    /// A live agent actor a ramp scope can name, as its hex scope actor.
+    pub(crate) fn ramp_agent(vault: &Vault) -> String {
+        super::put_person(vault, 0x2A).to_hex()
+    }
+
     /// Records one outcome receipt on a propose-lane scope.
     pub(crate) fn record_outcome_receipt(
         vault: &Vault,
@@ -615,7 +637,7 @@ mod seam {
         outcome: ProposalOutcome,
     ) {
         vault
-            .record_proposal_outcome_for_ramp(scope, outcome)
+            .record_proposal_outcome_for_ramp(&ruling_owner(vault), scope, outcome)
             .expect("record ramp outcome");
     }
 
@@ -654,13 +676,13 @@ mod seam {
     }
 
     /// The agent self-demotes an auto scope back to propose (r7: its own
-    /// judgment, said out loud, receipted).
+    /// judgment, said out loud, receipted), through its own facade: only the
+    /// actor the scope names may step it back without the owner.
     pub(crate) fn demote_scope_to_propose(vault: &Vault, scope: &RampScope) {
+        let agent = EntityId::from_hex(&scope.actor).expect("the scope names a vault actor");
         vault
-            .demote_scope_to_propose(
-                scope,
-                oneiron::consent_graduation::DemotionReason::AgentJudgment,
-            )
+            .memory(agent, oneiron::EdgeActorClass::Agent)
+            .demote_own_ramp_scope(scope)
             .expect("self-demote scope");
     }
 
@@ -945,9 +967,9 @@ fn ms03_facet_mints_exactly_n_type13_entities() {
     assert_eq!(seam::count_facet_entities_of(&vault, &person), 3);
 }
 
-/// r5/r6: the facet op backfills `facet_of` scoping on the named
-/// behavioral claims and mints NO new base entity ids — facet ops touch no
-/// entity ids beyond the FACET entities themselves.
+/// r5/r6/r9: the facet op scopes the named behavioral claims by forking each
+/// under its mask and mints NO new base entity ids — facet ops touch no
+/// entity ids beyond the FACET entities and the claim forks themselves.
 #[test]
 fn ms03_facet_backfills_scoping_and_mints_no_base_ids() {
     let (_dir, vault) = open_vault();
@@ -992,15 +1014,19 @@ fn ms03_facet_never_blends_profiles_across_masks() {
     assert_eq!(seam::count_facet_of_scoped_claims(&vault, &minted[1]), 1);
 
     // Exact per-facet MEMBERSHIP, not just counts: each mask carries the
-    // one claim the map scoped to it, and never the other's.
-    assert_eq!(
-        seam::claim_ids_scoped_to_facet(&vault, &minted[0]),
-        vec![claim_a]
-    );
-    assert_eq!(
-        seam::claim_ids_scoped_to_facet(&vault, &minted[1]),
-        vec![claim_b]
-    );
+    // fork of the one claim the map scoped to it (r9, "fork, never
+    // restamp"), and never the other's.
+    for (mask, origin) in [(minted[0], claim_a), (minted[1], claim_b)] {
+        let scoped = seam::claim_ids_scoped_to_facet(&vault, &mask);
+        assert_eq!(scoped.len(), 1);
+        assert!(
+            vault
+                .edges_out(&scoped[0])
+                .expect("fork edges")
+                .iter()
+                .any(|edge| edge.kind == oneiron::EdgeKind::DerivedFrom && edge.target == origin)
+        );
+    }
 }
 
 // ===== ONE-1746 (MS-04) — entity.distinct_from =====
@@ -1256,7 +1282,8 @@ fn ms06_streak_offers_standing_grant_never_auto_grants() {
 #[test]
 fn ms06_self_demotion_is_receipted_never_silent() {
     let (_dir, vault) = open_vault();
-    let scope = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
+    let agent = seam::ramp_agent(&vault);
+    let scope = seam::ramp_scope(&vault, "send_email", "client_followup", &agent);
     assert!(matches!(
         vault
             .ramp_scope_state(&scope)
@@ -1292,7 +1319,8 @@ fn ms06_demotion_from_graduated_revokes_the_standing_grant() {
     let owner = vault
         .authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())
         .expect("authenticate owner");
-    let scope = seam::ramp_scope(&vault, "send_email", "client_followup", "agent-a");
+    let agent = seam::ramp_agent(&vault);
+    let scope = seam::ramp_scope(&vault, "send_email", "client_followup", &agent);
 
     for _ in 0..oneiron::consent_graduation::DEFAULT_GRADUATION_STREAK_FLOOR {
         seam::record_outcome_receipt(&vault, &scope, ProposalOutcome::ApprovedUntouched);

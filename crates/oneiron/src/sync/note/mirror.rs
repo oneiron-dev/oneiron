@@ -51,7 +51,13 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
         window.end_timestamp().ok_or(invalid("NOTE window"))?,
     )?;
     let mut state = State::default();
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     let txn = vault.store.env.read_txn()?;
+    let flagged = crate::settings::device_local_worlds_at(
+        vault,
+        &txn,
+        crate::claim::CallerLocality::OffDevice,
+    )?;
     let mut local = BTreeSet::new();
     let mut removed = BTreeSet::new();
     for (key, raw) in rows(doc, "entities")? {
@@ -62,7 +68,7 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
             if raw.len() > ENTITY_METADATA_HEADER_LEN {
                 state.cores.entry(note).or_insert(raw);
             }
-            if blocked(vault, &txn, doc, &note)? {
+            if blocked(vault, &txn, &tombstones, &note)? {
                 removed.insert(note);
             }
         }
@@ -77,8 +83,13 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
         {
             continue;
         }
+        // A NOTE a device-only world keeps is never packed into a window
+        // that does not already carry it.
+        if !state.cores.contains_key(&note) && held(vault, &txn, &flagged, &note)? {
+            continue;
+        }
         local.insert(note);
-        if blocked(vault, &txn, doc, &note)? {
+        if blocked(vault, &txn, &tombstones, &note)? {
             removed.insert(note);
         } else {
             state.cores.insert(note, raw.to_vec());
@@ -87,7 +98,7 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
     // Only trusted local workflows are exported. Untrusted inbox or carried
     // peer rows are never promoted or replayed as local review decisions.
     for note in state.cores.keys() {
-        if blocked(vault, &txn, doc, note)? {
+        if blocked(vault, &txn, &tombstones, note)? {
             removed.insert(*note);
         }
     }
@@ -173,18 +184,67 @@ pub(crate) fn refresh(vault: &Vault, doc: &LoroDoc, window: &WindowKey) -> Resul
     Ok(changed)
 }
 
-/// Copy only complete workflows whose NOTE owners already passed selection.
-/// A partial bundle is an error, not permission to leak its shared explainer.
-pub(crate) fn copy_selected(vault: &Vault, source: &LoroDoc, out: &LoroDoc) -> Result<()> {
+/// The NOTEs among `ids` an export of `source` drops, judged in the export's
+/// own read transaction `txn` against the flags it read there: blocked, or
+/// kept on this device by a device-only world.
+pub(crate) fn dropped_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    flagged: &BTreeSet<EntityId>,
+    source: &LoroDoc,
+    ids: &BTreeSet<EntityId>,
+) -> Result<BTreeSet<EntityId>> {
+    let mut dropped = BTreeSet::new();
+    if !is_native(source) {
+        return Ok(dropped);
+    }
+    let state = codec::read(source)?;
+    let tombstones = TombstoneIndex::build(&source.get_map("tombstones"));
+    for note in ids {
+        if state.cores.contains_key(note)
+            && (blocked(vault, txn, &tombstones, note)? || held(vault, txn, flagged, note)?)
+        {
+            dropped.insert(*note);
+        }
+    }
+    Ok(dropped)
+}
+
+/// [`copy_selected`] for a door with no snapshot of its own: the NOTEs in
+/// `out` are judged in a read transaction of their own.
+pub(crate) fn copy_judged(vault: &Vault, source: &LoroDoc, out: &LoroDoc) -> Result<()> {
+    let ids = rows(out, "entities")?
+        .iter()
+        .map(|(key, _)| id(key))
+        .collect::<Result<BTreeSet<_>>>()?;
+    let txn = vault.store.env.read_txn()?;
+    let flagged = crate::settings::device_local_worlds_at(
+        vault,
+        &txn,
+        crate::claim::CallerLocality::OffDevice,
+    )?;
+    let dropped = dropped_in(vault, &txn, &flagged, source, &ids)?;
+    drop(txn);
+    copy_selected(source, out, &dropped)
+}
+
+/// Copy only complete workflows whose NOTE owners already passed selection:
+/// every NOTE in `out` but those the export judged `dropped`, so nothing is
+/// withheld after the export's own snapshot. A partial bundle is an error,
+/// not permission to leak its shared explainer.
+pub(crate) fn copy_selected(
+    source: &LoroDoc,
+    out: &LoroDoc,
+    dropped: &BTreeSet<EntityId>,
+) -> Result<()> {
     if !is_native(source) {
         return Ok(());
     }
     let mut state = codec::read(source)?;
-    let txn = vault.store.env.read_txn()?;
     let mut keep = BTreeSet::new();
     for (key, _) in rows(out, "entities")? {
         let note = id(&key)?;
-        if state.cores.contains_key(&note) && !blocked(vault, &txn, source, &note)? {
+        if state.cores.contains_key(&note) && !dropped.contains(&note) {
             keep.insert(note);
         } else if state.cores.contains_key(&note) {
             map_delete(&out.get_map("entities"), &key)?;

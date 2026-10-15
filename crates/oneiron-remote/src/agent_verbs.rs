@@ -29,9 +29,7 @@ impl OneironClient {
         }
         oneiron::task_verb::sdk::validate_input(verb, &input)?;
         match &self.backend {
-            Backend::Embedded(client) => {
-                oneiron::task_verb::sdk::invoke(&client.memory(), verb, input)
-            }
+            Backend::Embedded(client) => client.invoke(verb, input),
             Backend::Remote(client) => {
                 match verb {
                     "cancel" => remote_agent_verb_output::<oneiron::task_verb::TaskCancelReceipt>(
@@ -240,17 +238,24 @@ impl OneironClient {
     }
     /// Recalls a memory pack.
     ///
-    /// The lease argument the engine takes is `None` and is NOT a client
-    /// input: no lease issuer exists, and a bearer slip is not one. An
-    /// `Effort::High` call therefore returns the engine's `LEASE_REQUIRED`
-    /// through both backends, spelled identically.
+    /// The lease the engine takes is not a client input, and a bearer slip
+    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the
+    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the
+    /// server admits them on a line of its own and reranks on its `[models]`
+    /// reranker, or runs them unreranked and says so when it has none.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one parameter per SDK argument of the verb"
+    )]
     pub fn recall(
         &self,
         query: &str,
-        effort: oneiron::memory::Effort,
+        effort: oneiron::memory::RecallEffort,
         scope: &oneiron::memory::RecallScope,
         limit: usize,
         format: Option<&str>,
+        as_of: Option<u64>,
+        deadline_ms: Option<u64>,
     ) -> Result<oneiron::memory::MemoryPack, MemoryError> {
         let input = oneiron::task_verb::sdk::RecallRequest {
             query: query.to_owned(),
@@ -258,9 +263,13 @@ impl OneironClient {
             scope: Some(scope.clone()),
             limit: Some(limit),
             format: format.map(str::to_owned),
+            as_of,
+            deadline_ms,
         };
         oneiron::memory::caps::check_query(&input.query)?;
         oneiron::memory::caps::check_limit(input.limit.unwrap_or(10))?;
+        oneiron::memory::caps::check_as_of(input.as_of)?;
+        oneiron::memory::caps::check_deadline_ms(input.deadline_ms)?;
         let value = serde_json::to_value(&input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

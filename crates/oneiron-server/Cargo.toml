@@ -20,6 +20,13 @@ name = "oneiron"
 path = "src/bin/oneiron.rs"
 doc = false
 
+# The credential broker (ARCH-0069 #broker-design). It ships beside the server
+# and calls only the `oneiron-broker` library: no model, no vault.
+[[bin]]
+name = "oneiron-broker"
+path = "src/bin/oneiron-broker.rs"
+doc = false
+
 [lib]
 # No doc-comment code fences in this crate (audited 2026-08-19); skip the
 # doctest compile pass entirely.
@@ -29,19 +36,41 @@ doctest = false
 heed.workspace = true
 base64 = "0.22"
 oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync"] }
+# `[models.code_mode.check]`: the type checkers shadow mode runs.
+oneiron-code-check = { version = "0.1.0", path = "../oneiron-code-check" }
 # Supervisor ⇄ vault child-process contract, consumed READ-ONLY: managed serve
 # mode speaks exactly the wire types, framing and limits this crate freezes, so
 # a framing bug cannot diverge between supervisor and engine. No wire reshape
 # and no CONTRACT_VERSION bump belongs on this side of the seam.
 oneiron-vault-contract = { version = "0.1.0", path = "../oneiron-vault-contract" }
+# The credential broker's frames, checks and binary entry point.
+oneiron-broker = { version = "0.1.0", path = "../oneiron-broker" }
+# Every subprocess starts with only the descriptors it is named.
+oneiron-spawn = { version = "0.1.0", path = "../oneiron-spawn" }
+# The Dreamer's starter motor: the server owns the wake supervisor and the
+# workflow pump for its one vault (ARCH-0026: one Dreamer per vault, on the
+# primary node).
+oneiron-driver = { version = "0.1.0", path = "../oneiron-driver" }
+# Protocol mappers for the `[models]` provider kinds. Both own wire mapping
+# only; this crate supplies the HTTP transport (models/openai.rs and
+# models/anthropic.rs).
+oneiron-llm-anthropic = { version = "0.1.0", path = "../oneiron-llm-anthropic" }
+oneiron-llm-openai = { version = "0.1.0", path = "../oneiron-llm-openai" }
 loro = "1.10"
 axum = { version = "0.8", features = ["ws"] }
+# The accept loop (`http_listener`) drives hyper's HTTP/1 connection itself, so
+# it can set the header deadline and hold a permit inside each socket. Both
+# are already in the graph through axum.
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "service"] }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.26"
 futures-util = "0.3"
 zstd = "0.13"
 serde = { workspace = true }
-serde_json = { workspace = true }
+# `raw_value`: secret rotation borrows the value from its own wiped body
+# instead of letting the parser copy it.
+serde_json = { workspace = true, features = ["raw_value"] }
 toml = "0.9"
 rmp-serde = { workspace = true }
 rmpv = { workspace = true }
@@ -51,8 +80,12 @@ clap = { version = "4", features = ["derive", "env"] }
 tower-http = { version = "0.6", features = ["cors"] }
 anyhow = "1"
 serde_bytes = "0.11"
+# `oneiron import notes` reads each note's YAML frontmatter; the tests also
+# parse memory-reason YAML in quoted-scalar control-character regressions.
+serde_yaml_ng = "0.10"
 blake3 = { workspace = true }
 ed25519-dalek = { workspace = true }
+rand_core = { workspace = true }
 subtle = "2"
 libc = "0.2"
 jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }
@@ -72,6 +105,9 @@ candle-nn = "=0.11.0"
 # engine is in this tree whichever we ask for, and it is the engine the
 # reference runtime tokenized with — the parity row would find any difference.
 tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+# The local embedder's tiled Q8_0 kernel spreads its tiles over rayon's pool.
+# Already in the tree through candle, which runs its own CPU work on rayon.
+rayon = "1.12"
 # Model-artifact download rides the `reqwest` blocking client already in this
 # file. `hf-hub` 1.0 was the blueprint's choice, but its sync handle drives an
 # owned tokio runtime through `block_on`, which the embedding worker cannot call
@@ -83,6 +119,9 @@ zeroize = "1"
 # Already in the tree through the engine's f16 vector rows; named explicitly
 # because the numerics guard rounds every component through `f16` itself.
 half = "2"
+# `oneiron import` reads an export's conversations out of its zip. The version
+# the workspace already builds; DEFLATE is what ChatGPT and Claude.ai exports use.
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 
 # Metal is the default embedder device on Apple silicon, expressed as a
 # target-gated feature activation rather than a cargo feature: a cargo feature
@@ -91,14 +130,19 @@ half = "2"
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
 
+# `oneiron import` walks a history folder relative to the folders it has
+# open, never through a link: descriptor-relative opens. A restore holds its
+# staging directory open and checks it is its own (`process` for the euid).
+# The version the workspace already builds.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["fs", "process"] }
+
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 candle-core = { version = "=0.11.0", features = ["metal"] }
 candle-nn = { version = "=0.11.0", features = ["metal"] }
 
 [dev-dependencies]
 oneiron-remote = { path = "../oneiron-remote" }
-# Parse memory-reason YAML in quoted-scalar control-character regressions.
-serde_yaml_ng = "0.10"
 tempfile = "3"
 # `util` carries `ServiceExt::oneshot`, which the router-level rows in
 # `src/api/tests.rs` and `src/commands/tests.rs` drive requests through. The
@@ -133,9 +177,14 @@ production-ws-codec = { package = "tokio-tungstenite", version = "0.29" }
 # atomicity test (ONE-1140); no production effect. `test-support` compiles in
 # the fixture that mints a foreign principal's Grant through the owner verb.
 oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync", "test-hooks", "test-support"] }
+# The paid-leg fixture's local TLS fake provider.
+oneiron-broker = { version = "0.1.0", path = "../oneiron-broker", features = ["test-support"] }
 
 [lints]
 workspace = true
 
 [features]
+# The shipped server serves MCP `execute_code` over the checked-in QuickJS
+# component once `[models.code_mode]` asks for it.
+default = ["code-sandbox-wasmtime"]
 code-sandbox-wasmtime = ["oneiron/code-sandbox-wasmtime"]

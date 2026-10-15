@@ -207,7 +207,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<BlobArtifactVersion> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             self.append_blob_artifact_version_in_txn(
                 wtxn,
                 artifact_id,
@@ -235,7 +235,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<BlobArtifactVersion> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             self.append_blob_artifact_version_with_parent_in_txn(
                 wtxn,
                 artifact_id,
@@ -606,6 +606,71 @@ impl Vault {
             return Ok(None);
         };
         read_blob_asset_in_txn(self, rtxn, &record.content_hash).map(Some)
+    }
+}
+
+impl Vault {
+    /// Lends one version's stored bytes to `lend` without copying them out
+    /// of the store. The organ host uses it to fill a shared region once per
+    /// content hash. Liveness (deletion, staleness) is checked on every call;
+    /// the content hash is checked when `lend` asks for the bytes, so a
+    /// caller that already holds them verified under this hash skips both
+    /// the hash and the copy. `lend` runs inside the read transaction and
+    /// must not open another one on this thread.
+    pub fn lend_blob_artifact_version<R>(
+        &self,
+        artifact_id: &EntityId,
+        version: u64,
+        lend: impl FnOnce(&BlobArtifactVersion, BlobBytes<'_>) -> R,
+    ) -> Result<Option<R>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(record) =
+            self.blob_artifact_version_metadata_in_txn(&rtxn, artifact_id, version)?
+        else {
+            return Ok(None);
+        };
+        let bytes = self
+            .lend_blob_in_txn(&rtxn, &record.content_hash)?
+            .ok_or(Error::EntityNotFound)?;
+        Ok(Some(lend(
+            &record,
+            BlobBytes {
+                bytes,
+                hash: record.content_hash,
+            },
+        )))
+    }
+}
+
+/// One version's bytes, borrowed from a read transaction.
+#[derive(Debug)]
+pub struct BlobBytes<'t> {
+    bytes: std::borrow::Cow<'t, [u8]>,
+    hash: [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+}
+
+impl<'t> BlobBytes<'t> {
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// Checks the bytes against the version's content hash, then lends them.
+    ///
+    /// # Errors
+    /// [`Error::CorruptedIndex`] when the stored bytes no longer hash to the
+    /// version's content hash.
+    pub fn verified(self) -> Result<std::borrow::Cow<'t, [u8]>> {
+        if blake3::hash(&self.bytes).as_bytes() == &self.hash {
+            Ok(self.bytes)
+        } else {
+            Err(Error::CorruptedIndex("blob content hash"))
+        }
     }
 }
 

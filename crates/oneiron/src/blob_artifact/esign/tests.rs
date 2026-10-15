@@ -2197,3 +2197,86 @@ fn completed_recipient_window_cannot_expire_a_different_pending_signer() -> Resu
     );
     Ok(())
 }
+
+/// ASTRA-9A-2 F6: a recipient's rejection closes the ceremony, and a restore
+/// over the vault from before it may not reopen it. The capability rows are
+/// unchanged by the rejection, so the restore refuses on the ceremony itself;
+/// the same link stays closed.
+#[test]
+fn a_restore_never_reopens_a_ceremony_rejected_since() -> Result<()> {
+    let (_dir, vault, id, _doc, owner) = ceremony_setup()?;
+    let tokens = vault.issue_esign_capabilities(&owner, id)?;
+    let command = EsignOutboundCommand {
+        document: id.to_hex(),
+        recipient_count: 2,
+        verb: EsignOutboundVerb::SendForSignature,
+        reason: None,
+    };
+    let request = send_request(id, owner.actor(), command.verb, "restore-send");
+    vault
+        .dispatch_esign(request, &command, None, None)
+        .expect("sent");
+    let first = &tokens[0].1;
+    assert!(matches!(
+        vault.execute_signing_action(first, &SigningAction::Load, None, None)?,
+        SigningOutcome::Page(_)
+    ));
+    let backups = crate::test_support::restore_tempdir();
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, crate::unix_seconds_now())?;
+    assert_eq!(
+        vault.execute_signing_action(
+            first,
+            &SigningAction::Reject {
+                reason: "declined".into()
+            },
+            None,
+            None
+        )?,
+        SigningOutcome::AwaitingSeal
+    );
+
+    let destination = backups.path().join("restored");
+    let error = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        VaultConfig::default(),
+        &vault,
+        crate::unix_seconds_now(),
+    )
+    .err()
+    .expect("the restore must be refused");
+    assert!(error.to_string().contains("e-sign ceremonies"), "{error}");
+    assert!(!destination.exists());
+    assert_eq!(
+        vault.execute_signing_action(first, &SigningAction::Load, None, None)?,
+        SigningOutcome::AwaitingSeal
+    );
+    Ok(())
+}
+
+/// F18 (H397): owner doors take their actor from a proof this vault
+/// authenticated. Another vault's proof for the same PERSON id acts on nothing.
+mod foreign_owner_proof {
+    use super::*;
+
+    #[test]
+    fn a_foreign_owner_proof_issues_no_signing_credentials() -> Result<()> {
+        let (_dir, vault, id, doc, owner) = ceremony_setup()?;
+        let (_other_dir, _other, foreign) =
+            crate::test_util::foreign_owner_proof(owner.actor(), owner.principal_ref());
+        assert_eq!(
+            vault
+                .issue_esign_capabilities(&foreign, id)
+                .unwrap_err()
+                .kind(),
+            crate::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert_eq!(
+            vault.issue_esign_capabilities(&owner, id)?.len(),
+            doc.recipients.len(),
+            "the refused call minted no recipient's credential"
+        );
+        Ok(())
+    }
+}

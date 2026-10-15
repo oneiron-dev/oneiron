@@ -19,7 +19,7 @@ pub fn replay_entity(
     entity: ReplicatedEntity<'_>,
     tier: ImportTier,
 ) -> crate::Result<()> {
-    vault.with_write_txn(|txn| {
+    let replayed = vault.with_write_txn_grouped(|txn| {
         vault
             .batch_in()
             .with_import_tier(tier)
@@ -31,5 +31,20 @@ pub fn replay_entity(
                 entity.body,
             )
             .apply(txn)
-    })
+    });
+    if replayed.is_err() {
+        // A task authority fact deleted here before it arrived is refused
+        // above, and the refusal rolls its transaction back: its task is
+        // marked in a transaction of its own, as window ingest marks it.
+        vault.with_write_txn_grouped(|txn| {
+            crate::task_authority::note_fenced_fact_in_txn(
+                &vault.store,
+                txn,
+                &entity.id,
+                entity.entity_type,
+                entity.body,
+            )
+        })?;
+    }
+    replayed
 }

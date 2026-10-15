@@ -2,8 +2,8 @@
 use super::super::install_transition::{InstallBinding, InstallDisposition, InstallPlan};
 use super::{
     BundledSkillPermissions, PackAdapter, PackCandidateReason, PackFitPolicy, PackFitVerdict,
-    PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackPermissions,
-    PackQualification, PackRuntimeRecipe, PackSource, invalid,
+    PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackKind,
+    PackPermissions, PackQualification, PackRuntimeRecipe, PackSource, invalid,
 };
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::{
@@ -38,6 +38,7 @@ impl Vault {
         let source = self
             .get_pack_source(&source_id)?
             .ok_or_else(|| invalid("pack source missing"))?;
+        refuse_engine_namespace(&source)?;
         let prior = {
             let txn = self.store.env.read_txn()?;
             self.installed_pack_in_txn(&txn, &source.manifest.name)?
@@ -112,9 +113,15 @@ impl Vault {
     }
     /// The copied object is not a grant. Requested powers remain on its card;
     /// a code flag or rules hit leaves it Candidate, without registering verbs.
+    ///
+    /// A changed source for an installed pack is an update: in the same
+    /// transaction, the source's shipped migration map for the move is stored
+    /// and every saved query reading a predicate the update dropped or
+    /// remapped runs the pack-drift repair ladder (ARCH-0059 §4).
     pub fn install_pack(&self, ask: &PackInstallAsk) -> Result<PackInstallDisposition> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let source = self.check_pack_install_ask(txn, ask)?;
+            refuse_engine_namespace(&source)?;
             if let Some(reason) = self.screen_pack_in_txn(
                 txn,
                 &source,
@@ -246,9 +253,10 @@ impl Vault {
                     }));
                 }
             }
-            if let Some(old) = self.installed_pack_in_txn(txn, &source.manifest.name)? {
-                for predicate in old.predicates {
-                    PACK_PREDICATE.delete(&self.store, txn, &predicate)?;
+            let prior = self.installed_pack_in_txn(txn, &source.manifest.name)?;
+            if let Some(old) = &prior {
+                for predicate in &old.predicates {
+                    PACK_PREDICATE.delete(&self.store, txn, predicate)?;
                 }
             }
             for predicate in &source.manifest.predicates {
@@ -256,8 +264,54 @@ impl Vault {
             }
             PACK_CANDIDATE.delete(&self.store, txn, &candidate_key(&source))?;
             PACK_INSTALL.put(&self.store, txn, &source.manifest.name, &receipt)?;
+            if let Some(old) = prior
+                && old.content_hash != receipt.content_hash
+            {
+                let from_version = self
+                    .pack_source_in_txn(txn, &EntityId::from_hex(&old.source_id)?)?
+                    .map(|old_source| old_source.manifest.version)
+                    .unwrap_or_default();
+                let from_predicates = old.predicates.into_iter().collect();
+                crate::saved_query::repair_saved_queries_after_pack_move_in_txn(
+                    self,
+                    txn,
+                    &crate::saved_query::PackMove {
+                        pack: &source.manifest.name,
+                        from_version: &from_version,
+                        to_version: &source.manifest.version,
+                        from_source: &old.content_hash,
+                        to_source: &receipt.content_hash,
+                        from_predicates: &from_predicates,
+                        to_predicates: &source.manifest.predicates,
+                        shipped: source
+                            .manifest
+                            .migration_from(&from_version, &old.content_hash),
+                    },
+                    self.now_recorded_at(),
+                )?;
+            }
             Ok(PackInstallDisposition::Installed(Box::new(receipt)))
         })
+    }
+    /// Each pack name whose install receipt selects a script, with the source
+    /// it selects, read without the catalog listing's bound: a restore asks
+    /// `installed_script_pack` about every one, however many packs it holds.
+    pub(crate) fn script_pack_selections(&self) -> Result<Vec<(String, EntityId)>> {
+        let txn = self.store.env.read_txn()?;
+        let mut selections = Vec::new();
+        for entry in PACK_INSTALL.iter_from(&self.store, &txn, &[])? {
+            let (name, receipt) = entry.map_err(|error| {
+                if error.kind() == crate::error::ErrorKind::SideTableRow {
+                    invalid("pack install catalog corrupt")
+                } else {
+                    error
+                }
+            })?;
+            if matches!(receipt.adapter, Some(PackAdapter::Script(_))) {
+                selections.push((name, EntityId::from_hex(&receipt.source_id)?));
+            }
+        }
+        Ok(selections)
     }
     /// Active installations only, verified against their still-live exact source.
     /// A Candidate never enters the section/board projection.
@@ -645,5 +699,22 @@ fn validate_qualification(source: &PackSource, result: &PackQualification) -> Re
     crate::skill::SkillContentHash::parse_hex(&runtime.runtime_hash)?;
     super::script_plan::ScriptExecutionPlan::from_source(source, runtime)?.qualified_shape()?;
     crate::batch::secret_scan::scan_metadata_field(&runtime.runtime_id)?;
+    Ok(())
+}
+
+/// A pack never takes a namespace the engine owns, not as its name and not in
+/// a declaration, so no shipped migration map can move an owner's query over
+/// engine state (ARCH-0059 §4). Checked where a source is admitted, not where
+/// a stored one is decoded, so a source stored before the rule still reads.
+pub(super) fn refuse_engine_namespace(source: &PackSource) -> Result<()> {
+    let manifest = &source.manifest;
+    if manifest.kind != PackKind::Agent
+        && std::iter::once(&manifest.name)
+            .chain(&manifest.predicates)
+            .chain(&manifest.kinds)
+            .any(|name| super::migrations::engine_owned(name))
+    {
+        return Err(invalid("a pack cannot take a namespace the engine owns"));
+    }
     Ok(())
 }

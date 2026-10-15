@@ -168,6 +168,7 @@ fn open_probed_vault(
     let isolated = evidence.admits();
     let vault = oneiron::Vault::open_owned(data_dir, vault_config)
         .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
+    warn_if_reader_table_short(&vault);
     check_gates_with_isolation(&vault, vault_name, credentials, isolated)?;
     // Bind before any managed caller can enqueue or serve derived content.
     vault
@@ -179,6 +180,22 @@ fn open_probed_vault(
     Ok(vault)
 }
 
+/// Warns, and serving goes on, when LMDB gave the vault fewer reader slots
+/// than the server asked for: another process (an older build, or a reader
+/// that asked for fewer) opened the vault first and still holds it, so LMDB
+/// kept its smaller table.
+pub(crate) fn warn_if_reader_table_short(vault: &oneiron::Vault) {
+    if let Some(oneiron::ReaderTableShortfall { requested, granted }) =
+        vault.reader_table_shortfall()
+    {
+        tracing::warn!(
+            requested,
+            granted,
+            "the vault's LMDB reader table holds {granted} slots, not the {requested} the server asked for: another process opened the vault first with a smaller table and still holds it, and reads past {granted} at once fail with MDB_READERS_FULL; stop that process, then restart the server"
+        );
+    }
+}
+
 /// Real managed vaults cannot inherit the local-development scope-zero bypass.
 /// The generated identity is canonical and survives reopen, wake, and restore.
 pub(super) fn managed_lease_scope(vault: &oneiron::Vault) -> Result<u64, ManagedError> {
@@ -186,7 +203,7 @@ pub(super) fn managed_lease_scope(vault: &oneiron::Vault) -> Result<u64, Managed
         return Ok(0);
     }
     vault
-        .with_write_txn(|txn| {
+        .with_write_txn_grouped(|txn| {
             const KEY: &str = "managed:lease_scope:v1";
             if let Some(raw) = vault.sync_state_get_in_write_txn(txn, KEY)? {
                 let bytes = raw

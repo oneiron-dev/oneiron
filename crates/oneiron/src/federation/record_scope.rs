@@ -16,6 +16,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+mod export;
 #[cfg(test)]
 mod tests;
 
@@ -67,6 +68,30 @@ fn bump_scope_revision(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
     Ok(())
 }
 
+/// Settle a TASK that carries no birth stamp in base reality, as the upgrade
+/// sweep does once: a TASK put before birth positions (#1401) was written by
+/// a vault-wide writer. A stamp never travels with its TASK, so one a peer
+/// replicates later stays unstamped, and a device-local world keeps it until
+/// its world is known (DEC-0005).
+pub(crate) fn backfill_task_base(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    data: &[u8],
+) -> Result<()> {
+    if SCOPE_RECORD.get(store, txn, &id)?.is_some() {
+        return Ok(());
+    }
+    stamp_put(
+        store,
+        txn,
+        id,
+        crate::registry::ENTITY_TYPE_TASK,
+        data,
+        false,
+    )
+}
+
 /// Retire an id's scope sidecar in the same transaction that erases its body.
 /// A later same-id write never inherits the deleted record's birth position.
 pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<()> {
@@ -75,6 +100,22 @@ pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityI
 }
 fn singleton<T: Ord>(v: T) -> ScopeAxis<T> {
     ScopeAxis::Some(BTreeSet::from([v]))
+}
+/// The world and facet a narrowed writer's TASKs are born at (ARCH-0067 §5:
+/// a peer hears "my tasks" only where it may read them). An axis left `None`
+/// keeps the default birth: base reality, under the record's own substrate
+/// facet.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BirthPosition {
+    pub world: Option<EntityId>,
+    pub facet: Option<EntityId>,
+}
+impl BirthPosition {
+    /// The world a CLAIM born here names; base reality is a CLAIM with none.
+    pub(crate) fn claim_world(self) -> Option<EntityId> {
+        self.world
+            .filter(|world| *world != crate::claim::base_world_id())
+    }
 }
 pub(crate) fn default_stamp(kind: u8, facet: EntityId) -> Scope {
     Scope {
@@ -177,11 +218,9 @@ pub(crate) fn stamp_put(
     if let Some(prior) = prior {
         // Content is mutable. The type, facet and authority position are NOT.
         // A changed facet/sensitivity/world/audience is a fork with a new id.
-        if prior.version != 2
-            || prior.kind != kind
-            || prior.birth_facet != *facet.as_bytes()
-            || (prior.scope != scope && !leader_settled(kind, &prior.scope, &scope))
-        {
+        let kept = prior.birth_facet == *facet.as_bytes()
+            && (prior.scope == scope || settled_at_birth(kind, &prior.scope, &scope));
+        if prior.version != 2 || prior.kind != kind || !(kept || writer_settled(&prior, &scope)) {
             return Err(Error::InvalidClaimBody("record scope restamp refused"));
         }
         return Ok(());
@@ -205,16 +244,168 @@ pub(crate) fn stamp_put(
     Ok(())
 }
 /// A TURN/MESSAGE body never proposes an audience: only
-/// `stamp_leader_project` settles a non-default one, at the record's birth. A
-/// later content put recomputes the default and keeps that settled position.
-fn leader_settled(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
-    matches!(
-        kind,
-        crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE
-    ) && Scope {
-        audience: proposed.audience.clone(),
-        ..prior.clone()
-    } == *proposed
+/// `stamp_leader_project` settles a non-default one, at the record's birth.
+/// A SUMMARY body never proposes a world or facet: only `settle_epoch_birth`
+/// settles them. A later content put recomputes the default and keeps that
+/// settled position.
+fn settled_at_birth(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
+    match kind {
+        crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE => {
+            Scope {
+                audience: proposed.audience.clone(),
+                ..prior.clone()
+            } == *proposed
+        }
+        crate::registry::ENTITY_TYPE_SUMMARY => {
+            Scope {
+                worlds: proposed.worlds.clone(),
+                facets: proposed.facets.clone(),
+                ..prior.clone()
+            } == *proposed
+        }
+        _ => false,
+    }
+}
+/// Settles an epoch SUMMARY's birth position in its mint transaction: born
+/// in `world` under `facet`, where its run's records are born, never the
+/// generic SUMMARY position. Only the default stamp `stamp_put` just wrote
+/// may be settled; its structural anchor and every other axis stay.
+pub(crate) fn settle_epoch_birth(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    world: EntityId,
+    facet: EntityId,
+) -> Result<()> {
+    let kind = crate::registry::ENTITY_TYPE_SUMMARY;
+    let anchor = crate::claim::substrate_facet_id(id)?;
+    let birth = default_stamp(kind, anchor);
+    let prior = SCOPE_RECORD
+        .get(store, txn, &id)?
+        .ok_or(Error::InvalidClaimBody("unstamped epoch summary"))?;
+    if prior.version != 2
+        || prior.kind != kind
+        || prior.birth_facet != *anchor.as_bytes()
+        || prior.scope != birth
+    {
+        return Err(Error::InvalidClaimBody("record scope restamp refused"));
+    }
+    let mut scope = birth;
+    scope.worlds = singleton(ScopeId(world));
+    scope.facets = singleton(ScopeId(facet));
+    bump_scope_revision(store, txn)?;
+    SCOPE_RECORD.put(
+        store,
+        txn,
+        &id,
+        &Stamp {
+            version: 2,
+            kind,
+            birth_facet: *anchor.as_bytes(),
+            scope,
+        },
+    )?;
+    Ok(())
+}
+/// A TASK body never proposes a position either: only `stamp_task_birth`
+/// settles its writer's world and facet, at the record's birth. A later
+/// content put recomputes the default and keeps that settled position.
+fn writer_settled(prior: &Stamp, proposed: &Scope) -> bool {
+    prior.kind == crate::registry::ENTITY_TYPE_TASK
+        && matches!(&prior.scope.worlds, ScopeAxis::Some(worlds) if worlds.len() == 1)
+        && EntityId::from_bytes(prior.birth_facet)
+            .is_ok_and(|facet| prior.scope.facets == singleton(ScopeId(facet)))
+        && Scope {
+            worlds: proposed.worlds.clone(),
+            facets: proposed.facets.clone(),
+            ..prior.scope.clone()
+        } == *proposed
+}
+/// Settle a locally minted TASK at its writer's world and facet, in the
+/// transaction that put its first body. The writer's facet is provenance:
+/// the mask that spoke stamps the record (ARCH-0022 "Every record carries a
+/// facet").
+///
+/// The birth position is immutable (see `stamp_put`): like
+/// `stamp_leader_project`, this door only moves the record's own default
+/// birth stamp, or confirms the position it already carries. Any other prior
+/// position is refused. Opaque replicated rows cannot call it and remain
+/// unstamped.
+pub(crate) fn stamp_task_birth(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    position: BirthPosition,
+) -> Result<()> {
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
+        .ok_or(Error::EntityNotFound)?;
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("task birth scope header"))?;
+    let kind = header.entity_type;
+    if kind != crate::registry::ENTITY_TYPE_TASK {
+        return Err(Error::InvalidEntityType(kind));
+    }
+    let substrate = crate::claim::substrate_facet_id(id)?;
+    let facet = position.facet.unwrap_or(substrate);
+    let mut scope = default_stamp(kind, facet);
+    if let Some(world) = position.world {
+        scope.worlds = singleton(ScopeId(world));
+    }
+    if let Some(prior) = SCOPE_RECORD.get(store, txn, &id)? {
+        let settled = prior.birth_facet == *facet.as_bytes() && prior.scope == scope;
+        let birth = prior.birth_facet == *substrate.as_bytes()
+            && prior.scope == default_stamp(kind, substrate);
+        if prior.version != 2 || prior.kind != kind || !(settled || birth) {
+            return Err(Error::InvalidClaimBody("record scope restamp refused"));
+        }
+        if settled {
+            return Ok(());
+        }
+    }
+    bump_scope_revision(store, txn)?;
+    SCOPE_RECORD.put(
+        store,
+        txn,
+        &id,
+        &Stamp {
+            version: 2,
+            kind,
+            birth_facet: *facet.as_bytes(),
+            scope,
+        },
+    )?;
+    Ok(())
+}
+/// An authority fact about one TASK is born at that TASK's settled position,
+/// so a reader outside the TASK's world reads none of the facts about it. A
+/// TASK at its default birth, or with no stamp, leaves the fact at its own.
+pub(crate) fn stamp_task_fact(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    fact: EntityId,
+    task: EntityId,
+) -> Result<()> {
+    let Some(stamp) = SCOPE_RECORD.get(store, txn, &task)? else {
+        return Ok(());
+    };
+    if stamp.version != 2 || stamp.kind != crate::registry::ENTITY_TYPE_TASK {
+        return Ok(());
+    }
+    let world = match &stamp.scope.worlds {
+        ScopeAxis::Some(worlds) if worlds.len() == 1 => worlds.first().map(|world| world.0),
+        _ => None,
+    };
+    let substrate = crate::claim::substrate_facet_id(task)?;
+    let position = BirthPosition {
+        world: world.filter(|world| *world != crate::claim::base_world_id()),
+        facet: EntityId::from_bytes(stamp.birth_facet)
+            .ok()
+            .filter(|facet| *facet != substrate),
+    };
+    if position == BirthPosition::default() {
+        return Ok(());
+    }
+    stamp_task_birth(store, txn, fact, position)
 }
 /// Restamp a locally authenticated leader-chat TURN/MESSAGE at the ordinary
 /// record-position scope door, after the typed write's full batch succeeds.
@@ -290,6 +481,12 @@ fn stored_scope(
         Some(id)
     } else if carries_birth_stamp(kind) {
         birth_facet(store, txn, id)?
+    } else if kind == crate::registry::ENTITY_TYPE_TASK {
+        // A TASK is born under its writer's facet (`stamp_task_birth`) or its
+        // own substrate facet; the stamp's one facet names which.
+        EntityId::from_bytes(stamp.birth_facet)
+            .ok()
+            .filter(|facet| stamp.scope.facets == singleton(ScopeId(*facet)))
     } else {
         Some(crate::claim::substrate_facet_id(id)?)
     };
@@ -297,6 +494,73 @@ fn stored_scope(
         return Ok(None);
     }
     Ok(Some(stamp.scope))
+}
+/// The world the stored row `id` of `kind`, with body `data`, sits in: what
+/// every read that checks a world asks. A CLAIM names its own; a TASK and its
+/// authority facts sit where `stamp_task_birth` settled them, and a SUMMARY
+/// where `settle_epoch_birth` settled it, whatever its body reads now; an
+/// epoch SUMMARY, in whatever form it is stored (`stored_epoch_in`), sits
+/// where its birth stamp says; every other record, and any
+/// other SUMMARY, is base reality (`Some(None)`). `None` where the row cannot
+/// prove its world (an erased CLAIM, a TASK or epoch SUMMARY whose stamp is
+/// gone or was never settled), which a read narrowed on worlds keeps out.
+pub(crate) fn record_world_in(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    data: &[u8],
+) -> Result<Option<Option<EntityId>>> {
+    if kind == crate::registry::ENTITY_TYPE_CLAIM {
+        return Ok(crate::claim::decode_claim_body(data, true)
+            .ok()
+            .map(|body| body.world));
+    }
+    let summary = kind == crate::registry::ENTITY_TYPE_SUMMARY;
+    if kind != crate::registry::ENTITY_TYPE_TASK && !summary {
+        return Ok(Some(None));
+    }
+    let worlds = stored_scope(store, txn, id, kind)?.map(|scope| scope.worlds);
+    let stamped = match worlds {
+        Some(ScopeAxis::Some(worlds)) if worlds.len() == 1 => worlds
+            .first()
+            .map(|world| Some(world.0).filter(|world| *world != crate::claim::base_world_id())),
+        _ => None,
+    };
+    // An epoch summary is one whatever form its body takes, and a pointer no
+    // head stands for may be one (Astra 1384e).
+    if summary
+        && stamped.flatten().is_none()
+        && !crate::compaction::stored_epoch_in(store, txn, &id, data)?.may_be()
+    {
+        return Ok(Some(None));
+    }
+    Ok(stamped)
+}
+/// Whether the TASK or authority-fact row `id`, with header and body `raw`,
+/// sits by its birth stamp inside the worlds and facets `credential` grants.
+/// An axis the credential leaves whole holds every position, so a credential
+/// that narrows neither excludes no TASK. Under one that does, a row that
+/// cannot prove its position is not inside, so no count names a denial of it
+/// (ARCH-0067 §5, DEC-0005).
+pub(crate) fn task_inside_credential(
+    store: &(impl ManifestDbs + MachineHistoryScope),
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+    credential: &Scope,
+) -> Result<bool> {
+    let whole = |axis: &ScopeAxis<ScopeId>| matches!(axis, ScopeAxis::All);
+    if whole(&credential.worlds) && whole(&credential.facets) {
+        return Ok(true);
+    }
+    Ok(
+        scope_for_blob(store, txn, id, raw)?.is_some_and(|position| {
+            (whole(&credential.worlds) || !position.worlds.meet(&credential.worlds).is_bottom())
+                && (whole(&credential.facets)
+                    || !position.facets.meet(&credential.facets).is_bottom())
+        }),
+    )
 }
 /// A promoted edit may change content but cannot re-position the same id.
 /// Read this in the author admission snapshot, before importing peer ops.
@@ -433,6 +697,22 @@ impl MachineHistoryScope for crate::store::SessionStoreView<'_> {
     }
 }
 
+/// A read target answers as the store it reads: a room's union as its view
+/// does, base as the vault does.
+impl MachineHistoryScope for crate::store::StoreRead<'_> {
+    fn machine_history_scope(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        body: &ClaimBody,
+    ) -> Result<Option<Option<Scope>>> {
+        if self.is_union() {
+            Ok(crate::claim::history_store::machine_history_kind(&body.predicate).map(|_| None))
+        } else {
+            machine_history_disclosure_scope(self.base(), txn, body)
+        }
+    }
+}
+
 fn machine_history_disclosure_scope(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -465,7 +745,11 @@ fn machine_history_disclosure_scope(
     }
 }
 
-fn disclosure_scope_for_stored_row(
+/// The position the scoped read and export doors select the stored row of
+/// `id` at, from its body `data` of `kind`: a history control's current
+/// effective audience, or the row's birth stamp; `None` where neither door
+/// selects it.
+pub(crate) fn disclosure_scope_for_stored_row(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
@@ -505,6 +789,9 @@ impl Vault {
     }
     /// Scoped reads bind a selector, the authenticated slip's Scope and channel.
     /// Debug additionally requires an explicit `debug` class on that slip.
+    /// A SECRET_CUSTODY row is never a scoped record, in either view: its body
+    /// carries the value, which only its binding door reads. Nor is an LFS
+    /// chunk that no published object holds yet.
     pub fn records_in_scope(
         &self,
         selector: &Scope,
@@ -527,6 +814,16 @@ impl Vault {
             let (id, raw) = row?;
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
+            if h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+                || crate::origin::lfs::unpublished_lfs_chunk_in_txn(
+                    &self.store,
+                    &txn,
+                    &id,
+                    h.entity_type,
+                )?
+            {
+                continue;
+            }
             let scope = disclosure_scope_for_stored_row(
                 &self.store,
                 &txn,
@@ -537,7 +834,8 @@ impl Vault {
             let allowed = scope
                 .as_ref()
                 .is_some_and(|scope| admits(scope, selector, slip, channel, "read"))
-                && crate::authority::row_causal_admitted(self, &txn, &id, &raw)?;
+                && crate::authority::row_causal_admitted(self, &txn, &id, &raw)?
+                && self.epoch_fence_in(&txn, id, &raw, [selector, slip, channel], "read")?;
             if allowed || view == ScopeView::Debug {
                 out.push(ScopedRecord {
                     id,
@@ -549,37 +847,36 @@ impl Vault {
         }
         Ok(out)
     }
-    /// Export never has a debug mode and requires the export verb class.
-    pub fn export_records_in_scope(
+    /// The epoch fence at a scoped door: an epoch summary passes only while
+    /// this door, under `door` (selector, slip, channel) and `verb`, passes
+    /// every record its words came from.
+    fn epoch_fence_in(
         &self,
-        selector: &Scope,
-        slip: &Scope,
-        channel: &Scope,
-    ) -> Result<Vec<ScopedRecord>> {
-        let txn = self.store.env.read_txn()?;
-        let mut out = Vec::new();
-        for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
-            let (id, raw) = row?;
-            let h =
-                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
-            if let Some(scope) = disclosure_scope_for_stored_row(
-                &self.store,
-                &txn,
-                id,
-                h.entity_type,
-                &raw[ENTITY_METADATA_HEADER_LEN..],
-            )? && admits(&scope, selector, slip, channel, "export")
-                && crate::authority::row_causal_admitted(self, &txn, &id, &raw)?
-            {
-                out.push(ScopedRecord {
-                    id,
-                    bytes: raw,
-                    scope: Some(scope),
-                    suppressed: false,
-                });
-            }
-        }
-        Ok(out)
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        raw: &[u8],
+        [selector, slip, channel]: [&Scope; 3],
+        verb: &str,
+    ) -> Result<bool> {
+        let h = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("record header"))?;
+        crate::compaction::epoch_exportable_in(
+            &self.store,
+            txn,
+            &id,
+            h.entity_type,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            |source, row| {
+                Ok(disclosure_scope_for_stored_row(
+                    &self.store,
+                    txn,
+                    *source,
+                    row.entity_type,
+                    &row.body,
+                )?
+                .is_some_and(|scope| admits(&scope, selector, slip, channel, verb))
+                    && crate::authority::row_causal_admitted(self, txn, source, &row.encode())?)
+            },
+        )
     }
     /// Selection and delete share one write transaction; no row can change between them.
     pub fn delete_records_in_scope(
@@ -588,7 +885,7 @@ impl Vault {
         slip: &Scope,
         channel: &Scope,
     ) -> Result<Vec<EntityId>> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut ids = Vec::new();
             for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, txn)? {
                 let (id, raw) = row?;

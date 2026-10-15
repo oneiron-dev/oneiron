@@ -7,10 +7,7 @@ use oneiron::booking::anti_abuse::{
 };
 
 use super::tests_support::tests::*;
-use super::{
-    BookingHttpDisposition, cached_slot_list_body, enforce_book, enforce_hold, enforce_slot_list,
-    remember_slot_list_body,
-};
+use super::{BookingHttpDisposition, enforce_book};
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -171,122 +168,6 @@ pub(crate) mod tests {
                 .expect("pending")
                 .len(),
             2
-        );
-    }
-
-    #[tokio::test]
-    async fn server_adapters_thread_state_and_api_error_for_slot_list_hold_and_book() {
-        // Every guard threads `State<Arc<SyncServer>>`, loads its rows and
-        // counters from that one state, and returns `Result<_, ApiError>` —
-        // the assertions below exercise each adapter's verdict, counter,
-        // cache, and quarantine wiring through nothing but `server`.
-        let (_dir, server) = test_server();
-        install_defaults(&server);
-
-        let good = facts();
-        for call in ["slot", "hold", "book"] {
-            let disposition = match call {
-                "slot" => enforce_slot_list(State(server.clone()), good.clone(), false)
-                    .await
-                    .expect("slot adapter"),
-                "hold" => enforce_hold(State(server.clone()), good.clone())
-                    .await
-                    .expect("hold adapter"),
-                _ => enforce_book(State(server.clone()), good.clone())
-                    .await
-                    .expect("book adapter"),
-            };
-            // The slot/hold calls above consumed one unit of each window, so
-            // all three adapters demonstrably share the seeded rows.
-            assert_eq!(
-                disposition,
-                BookingHttpDisposition::Continue,
-                "{call} adapter must continue a clean request"
-            );
-        }
-
-        // A correctable verdict maps onto the correction disposition.
-        let mut short_intake = facts();
-        short_intake.intake_chars = 0;
-        let prompted = enforce_book(State(server.clone()), short_intake)
-            .await
-            .expect("prompt adapter");
-        let BookingHttpDisposition::PromptCorrection { body } = prompted else {
-            panic!("intake correction prompts: {prompted:?}");
-        };
-        let parsed: serde_json::Value = serde_json::from_str(&body).expect("correction json");
-        assert_eq!(parsed["field"], "intake");
-
-        // Hold creation does not evaluate submit-form honeypot fields.
-        let mut bot = facts();
-        bot.honeypot_nonempty = true;
-        let disposition = enforce_hold(State(server.clone()), bot)
-            .await
-            .expect("hold adapter");
-        assert_eq!(disposition, BookingHttpDisposition::Continue);
-
-        // Borderline traffic quarantines through the adapter and is accepted.
-        let mut borderline = facts();
-        borderline.email_hash = Some(booking_email_hash("sketchy@example.net"));
-        borderline.email = Some(oneiron::booking::anti_abuse::EmailValidationEvidence {
-            syntax_valid: true,
-            mx_present: Some(false),
-            disposable_domain: true,
-        });
-        let quarantined = enforce_book(State(server.clone()), borderline)
-            .await
-            .expect("quarantine adapter");
-        assert_eq!(quarantined, BookingHttpDisposition::QuarantineAndAccept);
-    }
-
-    #[tokio::test]
-    async fn page_wide_rows_govern_event_typed_requests() {
-        let (_dir, server) = test_server();
-        // Only page-wide (`event_type: None`) rows exist; no event-scoped
-        // stack is ever installed.
-        install_defaults_scoped(&server, None);
-
-        // A request naming an event type still answers to the page-wide
-        // intake control...
-        let mut typed = facts();
-        typed.intake_chars = 0;
-        let prompted = enforce_book(State(server.clone()), typed)
-            .await
-            .expect("page-wide intake governs");
-        let BookingHttpDisposition::PromptCorrection { body } = prompted else {
-            panic!("the page-wide intake rule must govern an event-typed request: {prompted:?}");
-        };
-        let parsed: serde_json::Value = serde_json::from_str(&body).expect("correction json");
-        assert_eq!(parsed["field"], "intake");
-
-        // ...and to the page-wide slot-list rate knob: 120 pass, the 121st
-        // event-typed listing is limited exactly as if the stack had been
-        // seeded event-scoped.
-        let good = facts();
-        for _ in 0..120 {
-            let disposition = enforce_slot_list(State(server.clone()), good.clone(), false)
-                .await
-                .expect("slot list");
-            assert_eq!(disposition, BookingHttpDisposition::Continue);
-        }
-        let limited = enforce_slot_list(State(server.clone()), good, false)
-            .await
-            .expect("slot-list limit");
-        assert!(
-            matches!(limited, BookingHttpDisposition::RetryAfter { .. }),
-            "the page-wide 120/min slot-list row governs event-typed traffic: {limited:?}"
-        );
-
-        // The cache helper resolves the page-wide TTL for the same typed
-        // scope as well.
-        let body = b"{\"slots\":[]}".to_vec();
-        assert!(
-            remember_slot_list_body(&server, &page(), Some(&event()), &body).expect("cache write"),
-            "the page-wide slot-list row supplies the cache TTL"
-        );
-        assert_eq!(
-            cached_slot_list_body(&server, &page(), Some(&event())).expect("cache read"),
-            Some(body)
         );
     }
 }

@@ -30,3 +30,6 @@ pub use self::wire::{
 // module through `use super::*`: its own oneiron/std import header, and the
 // `json!` macro. After the directory split the seam re-imports them so
 // `tests.rs` resolves exactly as it did before.
+
+#[cfg(test)]
+mod tests;

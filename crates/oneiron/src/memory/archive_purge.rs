@@ -1,4 +1,5 @@
-//! Owner-only archive impact preview and confirmed ARCH-0038 erasure.
+//! Owner-only archive impact preview and confirmed ARCH-0038 delete. The
+//! ladder's erase, which also clears backups, is a different act.
 
 use crate::EntityId;
 use crate::memory::support::verify_deletion_authority_in_txn;
@@ -40,7 +41,7 @@ impl ArchivePurgePreview {
 
 impl Memory<'_> {
     /// Preview only explicit archive targets, under the same owner authority as
-    /// erasure. No cron path holds a Memory owner capability.
+    /// the delete. No cron path holds a Memory owner capability.
     pub fn preview_archive_purge(&self, ids: &[EntityId]) -> MemoryResult<ArchivePurgePreview> {
         let txn = self
             .vault
@@ -71,7 +72,7 @@ impl Memory<'_> {
     }
 
     /// Each result carries its own ARCH-0038 receipt or refusal. A later row's
-    /// failure must not hide an earlier completed erasure. The deletion rail
+    /// failure must not hide an earlier completed delete. The deletion rail
     /// rechecks both authority and the preview inside its linearizing transaction.
     pub fn confirm_archive_purge(
         &self,

@@ -121,6 +121,4 @@ mod tests;
 #[cfg(test)]
 use self::{inspect::*, session_validate::*};
 #[cfg(test)]
-use crate::blob_artifact::BlobVersionProvenance;
-#[cfg(test)]
 use crate::error::{Error, Result};

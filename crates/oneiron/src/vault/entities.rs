@@ -8,7 +8,7 @@ use crate::error::{Error, Result};
 
 use crate::pipeline::{RetrievalWithTelemetry, ScoredEntity};
 use crate::ports::EntityStoreRead;
-use crate::store::{RetrievalSignal, ShortIdAliasTarget, Store};
+use crate::store::{RetrievalSignal, ShortIdAliasTarget};
 use crate::temporal::TimeRange;
 use std::time::Instant;
 
@@ -84,7 +84,7 @@ pub(crate) enum LiveEntityRow {
 /// shell rule is the canonical [`Vault::is_deleted_shell`] one — header-only
 /// PLUS deletion metadata — so a live zero-byte payload stays live.
 pub(crate) fn live_entity_row_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<LiveEntityRow> {
@@ -106,6 +106,15 @@ impl LiveEntityRow {
     /// True only for a live entity row.
     pub(crate) const fn is_live(&self) -> bool {
         matches!(self, Self::Live { .. })
+    }
+
+    /// The type byte of a live row. An absent row and a deleted shell have
+    /// none, though the shell's header still carries the byte it had.
+    pub(crate) const fn live_type(&self) -> Option<u8> {
+        match self {
+            Self::Live { entity_type, .. } => Some(*entity_type),
+            Self::Absent | Self::DeletedShell => None,
+        }
     }
 }
 
@@ -148,7 +157,7 @@ impl Vault {
         learned_at: u64,
         data: &[u8],
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             crate::ports::EntityStore::port_entity_put(
                 self,
                 txn,
@@ -195,10 +204,18 @@ impl Vault {
     }
 
     pub(crate) fn read_entity_header(&self, id: &EntityId) -> Result<Option<EntityMetadataHeader>> {
-        let rtxn = self.store.env.read_txn()?;
+        self.entity_header_in_txn(&self.store.env.read_txn()?, id)
+    }
+
+    /// [`Self::read_entity_header`] in the caller's transaction.
+    pub(crate) fn entity_header_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EntityMetadataHeader>> {
         let Some(raw) = self
             .store
-            .port_entity_record(&rtxn, id)?
+            .port_entity_record(txn, id)?
             .map(|row| row.encode())
         else {
             return Ok(None);
@@ -213,7 +230,7 @@ impl Vault {
     /// Model-free hosts can call [`Self::refresh_staged_indexed_at_idle`] after
     /// configuring [`Self::set_indexed_idle_delay_ms`].
     pub fn put_vector(&self, id: &EntityId, vector: &[f32]) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             crate::ports::RetrievalIndex::port_retrieval_upsert(self, txn, id, Some(vector), None)
         })
     }
@@ -284,15 +301,26 @@ impl Vault {
     ///
     /// Unlike `get()` which strips the header, this returns the full LMDB
     /// value. SECRET_CUSTODY (byte 77) is denied for the same reason `get()`
-    /// denies it: the body carries the secret value in the clear.
+    /// denies it: the body carries the secret value in the clear. An LFS chunk
+    /// no published object holds yet reads as absent, as `get()` reads it.
     pub fn get_raw(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
-        let Some(bytes) = self.get_raw_unsealed(id)? else {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(bytes) = self.get_raw_in(&rtxn, id)? else {
             return Ok(None);
         };
-        if EntityMetadataHeader::parse(&bytes)
-            .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY)
-        {
+        let Some(header) = EntityMetadataHeader::parse(&bytes) else {
+            return Ok(Some(bytes));
+        };
+        if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
             return Err(crate::secret_custody::reject_secret_custody_byte());
+        }
+        if crate::origin::lfs::unpublished_lfs_chunk_in_txn(
+            &self.store,
+            &rtxn,
+            id,
+            header.entity_type,
+        )? {
+            return Ok(None);
         }
         Ok(Some(bytes))
     }
@@ -459,6 +487,42 @@ impl Vault {
         Ok(ids)
     }
 
+    /// [`Self::entities_by_type`] for a caller at `locality`. Off this device
+    /// a row a device-local world keeps is skipped before it counts toward
+    /// the cap, so neither the ids nor an overflow hint at one (DEC-0005).
+    pub fn entities_by_type_at(
+        &self,
+        entity_type: u8,
+        locality: crate::claim::CallerLocality,
+    ) -> Result<Vec<EntityId>> {
+        self.entities_by_type_at_with_cap(entity_type, locality, MAX_TYPE_QUERY_RESULTS)
+    }
+
+    pub(crate) fn entities_by_type_at_with_cap(
+        &self,
+        entity_type: u8,
+        locality: crate::claim::CallerLocality,
+        cap: usize,
+    ) -> Result<Vec<EntityId>> {
+        let rtxn = self.store.env.read_txn()?;
+        let flagged = crate::settings::device_local_worlds_at(self, &rtxn, locality)?;
+        let mut ids = Vec::new();
+        for entry in self
+            .store
+            .port_entity_ids_by_type(&rtxn, entity_type, None)?
+        {
+            let id = entry?;
+            if crate::settings::device_local_keeps_among(&self.store, &rtxn, &flagged, &id)? {
+                continue;
+            }
+            if ids.len() >= cap {
+                return Err(Error::IndexOverflow("entities_by_type"));
+            }
+            ids.push(id);
+        }
+        Ok(ids)
+    }
+
     /// Returns at most `limit` entity IDs of a given type after `after`.
     ///
     /// This is the bounded counterpart to [`Self::entities_by_type`] for
@@ -482,13 +546,17 @@ impl Vault {
     ///
     /// Scans at most `scan_limit` rows from the `temporal_learned` index in
     /// newest-first order and reads matching entity bodies from the same LMDB
-    /// snapshot, returning `(id, learned_at, body)` tuples.
+    /// snapshot, returning `(id, learned_at, body)` tuples. SECRET_CUSTODY is
+    /// refused as [`Vault::get_raw`] refuses it: its body carries the value.
     pub fn latest_entity_bodies_by_type(
         &self,
         entity_type: u8,
         limit: usize,
         scan_limit: usize,
     ) -> Result<Vec<(EntityId, u64, Vec<u8>)>> {
+        if entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+            return Err(crate::secret_custody::reject_secret_custody_byte());
+        }
         if limit == 0 || scan_limit == 0 {
             return Ok(Vec::new());
         }
@@ -509,7 +577,14 @@ impl Vault {
             let Some(row) = self.store.port_entity_record(&txn, &entry.id)? else {
                 continue;
             };
-            if row.entity_type != entity_type {
+            if row.entity_type != entity_type
+                || crate::origin::lfs::unpublished_lfs_chunk_in_txn(
+                    &self.store,
+                    &txn,
+                    &entry.id,
+                    row.entity_type,
+                )?
+            {
                 continue;
             }
             if row.learned_at != entry.timestamp {
@@ -539,16 +614,28 @@ impl Vault {
     /// This is the exact count primitive for deterministic paginated list
     /// metadata. It does not materialize entity IDs or read entity bodies.
     pub fn count_entities_by_type(&self, entity_type: u8) -> Result<u64> {
+        self.count_entities_by_type_at(entity_type, crate::claim::CallerLocality::OnDevice)
+    }
+
+    /// [`Self::count_entities_by_type`] for a caller at `locality`: one off
+    /// this device counts no row a device-local world keeps (DEC-0005).
+    pub fn count_entities_by_type_at(
+        &self,
+        entity_type: u8,
+        locality: crate::claim::CallerLocality,
+    ) -> Result<u64> {
         let rtxn = self.store.env.read_txn()?;
+        let flagged = crate::settings::device_local_worlds_at(self, &rtxn, locality)?;
         let mut total = 0_u64;
         for entry in self
             .store
             .port_entity_ids_by_type(&rtxn, entity_type, None)?
         {
-            entry?;
-            total = total
-                .checked_add(1)
-                .ok_or(Error::IndexOverflow("count_entities_by_type"))?;
+            if !crate::settings::device_local_keeps_among(&self.store, &rtxn, &flagged, &entry?)? {
+                total = total
+                    .checked_add(1)
+                    .ok_or(Error::IndexOverflow("count_entities_by_type"))?;
+            }
         }
         Ok(total)
     }

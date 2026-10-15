@@ -63,6 +63,7 @@ pub(super) fn task_verb_body_in(
     Ok(Some(body))
 }
 
+#[cfg(test)]
 pub(super) fn task_entity_role(vault: &Vault, task_ref: EntityId) -> Result<Option<TaskRole>> {
     let rtxn = vault.store.env.read_txn()?;
     task_entity_role_in(vault, &rtxn, task_ref)
@@ -571,11 +572,28 @@ fn decode_task_execution_state(value: &Value) -> Result<TaskExecutionState> {
                 )?,
             })
         }
-        Some("interrupted") => Ok(TaskExecutionState::Interrupted {
-            ladder: task_body_optional(entries, "ladder")?
+        Some("interrupted") => {
+            let ladder = task_body_optional(entries, "ladder")?
                 .map(decode_interrupted_ladder_terminal)
-                .transpose()?,
-        }),
+                .transpose()?;
+            // A row written before the flag was persisted never said whether
+            // its interruption asked for consent, so an ordinary one reads as
+            // asking: durably paused progress is not progress.
+            let consent_required = match task_body_optional(entries, "consent_required")? {
+                None => ladder.is_none(),
+                Some(value) => {
+                    value
+                        .as_bool()
+                        .ok_or(Error::Record(RecordError::InvalidTaskBody(
+                            "tasks.body.state.consent_required",
+                        )))?
+                }
+            };
+            Ok(TaskExecutionState::Interrupted {
+                ladder,
+                consent_required,
+            })
+        }
         Some("terminal") => Ok(TaskExecutionState::Terminal(decode_task_terminal_record(
             task_body_field(entries, "terminal")?,
         )?)),
@@ -601,6 +619,36 @@ pub(super) fn task_body_field<'a>(entries: &'a [(Value, Value)], name: &str) -> 
         )));
     }
     Ok(value)
+}
+
+/// What a TASK body says authorizes the asks bound to the task: who owns it,
+/// whom it is assigned to, and the ask class its spec sets.
+#[derive(PartialEq)]
+pub(crate) struct TaskBinding {
+    owner: String,
+    assignee: Option<EntityId>,
+    ask_class: Vec<Value>,
+}
+
+/// The binding a TASK body carries, or `None` for a body that is not a task
+/// verb body.
+pub(crate) fn task_binding(body: &[u8]) -> Option<TaskBinding> {
+    if !task_body_has_typed_subkind(body).ok()? {
+        return None;
+    }
+    let body = decode_task_verb_body(body).ok()?;
+    (body.role == TaskRole::Task.role_byte()).then(|| TaskBinding {
+        owner: body.owner_ref,
+        assignee: body.assignee.and_then(TaskAssignee::entity_ref),
+        ask_class: body
+            .spec
+            .as_map()
+            .into_iter()
+            .flatten()
+            .filter(|(key, _)| key.as_str() == Some("ask_class"))
+            .map(|(_, value)| value.clone())
+            .collect(),
+    })
 }
 
 pub(super) fn task_body_has_typed_subkind(body: &[u8]) -> Result<bool> {

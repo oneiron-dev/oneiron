@@ -2,6 +2,7 @@
 
 use super::surface::MCP_STREAM_CONNECTION_PREFIX;
 use oneiron::context_board::{StreamConnectionId, SubscriptionScope};
+use oneiron::federation::{ScopeAxis, ScopeId};
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 use std::collections::BTreeSet;
 use std::fmt;
@@ -51,7 +52,11 @@ impl fmt::Debug for McpCredentialFingerprint {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct McpConnectorScope {
     pub world_ref: Option<EntityId>,
+    /// The facet this connector's writes are born in: one of `facets`.
     pub facet_ref: Option<EntityId>,
+    /// The facets this connector reads (owner ruling FACET-READ = A); `All`
+    /// when it was never narrowed. A one-facet registration reads that one.
+    pub facets: ScopeAxis<ScopeId>,
 }
 
 impl McpConnectorScope {
@@ -60,21 +65,56 @@ impl McpConnectorScope {
         Self {
             world_ref: None,
             facet_ref: None,
+            facets: ScopeAxis::All,
         }
     }
 
+    /// A connector narrowed to at most one world and one facet.
     #[must_use]
-    pub const fn scoped(world_ref: Option<EntityId>, facet_ref: Option<EntityId>) -> Self {
+    pub fn scoped(world_ref: Option<EntityId>, facet_ref: Option<EntityId>) -> Self {
         Self {
             world_ref,
             facet_ref,
+            facets: facet_ref.map_or(ScopeAxis::All, |facet| {
+                ScopeAxis::Some(BTreeSet::from([ScopeId(facet)]))
+            }),
         }
+    }
+
+    /// A connector that reads `facets` and writes in `write_facet`, which
+    /// must be one of them; with none named, it writes in the smallest.
+    /// `None` for an empty set or a write facet outside it.
+    #[must_use]
+    pub fn with_facets(
+        world_ref: Option<EntityId>,
+        facets: BTreeSet<EntityId>,
+        write_facet: Option<EntityId>,
+    ) -> Option<Self> {
+        let facet_ref = match write_facet {
+            Some(facet) => facets.contains(&facet).then_some(facet)?,
+            None => *facets.first()?,
+        };
+        Some(Self {
+            world_ref,
+            facet_ref: Some(facet_ref),
+            facets: ScopeAxis::Some(facets.into_iter().map(ScopeId).collect()),
+        })
     }
 
     /// True when this credential was NARROWED to a world or a facet.
     #[must_use]
-    pub const fn is_narrow(&self) -> bool {
-        self.world_ref.is_some() || self.facet_ref.is_some()
+    pub fn is_narrow(&self) -> bool {
+        self.world_ref.is_some() || !matches!(self.facets, ScopeAxis::All)
+    }
+
+    /// Where a TASK this credential writes is born: its own world and facet
+    /// (ARCH-0067 §5). A vault-wide credential's TASKs keep the default birth.
+    #[must_use]
+    pub const fn birth_position(&self) -> oneiron::federation::record_scope::BirthPosition {
+        oneiron::federation::record_scope::BirthPosition {
+            world: self.world_ref,
+            facet: self.facet_ref,
+        }
     }
 
     /// The STREAM subscription ceiling this scope admits.
@@ -228,6 +268,15 @@ pub struct McpResolvedActor {
 }
 
 impl McpResolvedActor {
+    /// Where the caller's connection sits: off this device unless its
+    /// verified auth was found on it.
+    pub(crate) fn locality(&self) -> oneiron::claim::CallerLocality {
+        self.auth.as_ref().map_or(
+            oneiron::claim::CallerLocality::OffDevice,
+            crate::auth::CoreAuth::locality,
+        )
+    }
+
     pub(crate) fn has_unrestricted_record_scope(&self) -> bool {
         self.auth
             .as_ref()

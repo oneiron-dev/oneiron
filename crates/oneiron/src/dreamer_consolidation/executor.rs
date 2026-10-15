@@ -7,20 +7,21 @@ use merge_resolution::{MergeResolution, decode_merge_resolution};
 
 use super::evidence::{ExtractedCandidate, VerifiedCandidate, VerifiedEvidenceSet};
 use super::resources::{BranchResources, FallbackOutputPin};
+use super::roles::{DREAMER_EXTRACTION_ROLE, DREAMER_VERDICT_ROLE, RoleBackends, RoleCall};
 use super::value_projection::{json_to_rmpv, rmpv_to_json};
 use rmpv::Value;
 
 use super::conflict::{ConflictIdentity, ConflictSet, candidate_facts, deterministic_claim_id};
 use super::failure_rules::{self, FailureRules, Stage};
-use super::gap::{ReflectionGap, ReflectionGapKind, scan_reflection_gaps, upsert_gap_queue};
+use super::gap::{ReflectionGap, ReflectionGapKind};
 use super::partition::{ConsolidationPartitionKey, decode_partition_payload};
 use super::provenance::{
     ConsolidationProvenanceHop, ConsolidationSink, PromotionCandidate, source_meet,
 };
 use super::step_charge::StepChargeTally;
 use super::support::{
-    DREAMER_GAP_SCAN_ATTEMPT_TYPE, DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE, TURN_BODY_FACET_REF_KEY,
-    invalid_consolidation,
+    DREAMER_GAP_SCAN_ATTEMPT_TYPE, DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE, SCOPE_PROJECT_KEY,
+    TURN_BODY_FACET_REF_KEY, invalid_consolidation,
 };
 use super::watermark::{WorkingSetTurn, conversation_of, read_turn_facts};
 use crate::claim::{ClaimSource, ClaimSubject};
@@ -32,7 +33,7 @@ use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
     DurableStepResult, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
     LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepEffectBinding, StepOutcome,
-    TierPrecedence, call_as_step,
+    TierPrecedence, call_as_step, call_as_step_checked,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
@@ -56,6 +57,9 @@ pub struct ConsolidationExecutor<'a> {
     pub model: ModelId,
     /// Explicit host binding and extraction egress decision for this backend.
     pub inference: HostInferenceContext<'a>,
+    /// The backend each role's calls go out on; a role it does not name
+    /// calls `backend` as `model`.
+    pub roles: RoleBackends,
     pub sink: &'a mut dyn ConsolidationSink,
     /// Trusted caller's exact branch scope, in addition to actor authority.
     /// A queued scope is its upper bound. None inherits that scope, or admits
@@ -79,6 +83,11 @@ enum PartitionRun {
     Trapped,
     /// The response was charged but the run must stop before publishing it.
     Checkpoint,
+    /// The reply broke the extraction contract: charged, not memoized, and
+    /// the attempt parks with the reason, to ask again on resume.
+    Refused {
+        reason: String,
+    },
     Held {
         candidates: Vec<VerifiedCandidate>,
         retry_at_ms: u64,
@@ -101,6 +110,9 @@ impl ConsolidationExecutor<'_> {
         resources.require_output(resources.scope())?;
         resources.require_signals(resources.scope())?;
         let transcript = resources.transcript(resources.scope(), &turn_ids)?;
+        // What this attempt lists stays what it listed first, so a replay
+        // meets its memoized answer.
+        super::neighbourhood::pin(ctx.vault, attempt_id, resources.known())?;
 
         let step_ctx = DurableStepContext {
             vault: ctx.vault,
@@ -112,20 +124,27 @@ impl ConsolidationExecutor<'_> {
             now_ms: ctx.now_ms,
         };
         let rules = failure_rules::load(ctx.vault)?;
-        let mut request = self.extraction_request(&partition, &transcript, resources.scope())?;
+        let call = self.role(DREAMER_EXTRACTION_ROLE);
+        let mut request =
+            Self::extraction_request(&call, &partition, &transcript, &resources.request_scope())?;
         if let Some(rules) = &rules {
             rules.bind(Stage::Extraction, &mut request);
         }
-        let request = ctx
+        let mut request = ctx
             .vault
-            .authorize_model_role(
-                crate::llm::manifest::ModelRole::ExtractionTeacher,
-                request,
-                &self.inference,
-            )?
+            .authorize_model_role(DREAMER_EXTRACTION_ROLE, request, &call.inference)?
             .into_request();
+        // The level is for the model and route the call goes out on.
+        super::roles::bind_reasoning(ctx.vault, call.backend, &mut request)?;
         let step_hash = request.canonical_hash()?;
-        let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await;
+        let outcome = call_as_step_checked(
+            &step_ctx,
+            call.backend,
+            self.guard,
+            request,
+            &extraction::check_extraction_reply,
+        )
+        .await;
         let (response, failure_policy) = match outcome {
             Ok(StepOutcome::Finished {
                 response,
@@ -140,11 +159,16 @@ impl ConsolidationExecutor<'_> {
                 charges.record_usage(&usage);
                 return Ok(PartitionRun::Checkpoint);
             }
-            Err(crate::llm::DurableStepError::SpentSchemaValidation { usage, .. })
-                if ctx.deadline.expired() =>
-            {
+            // A reply that broke the contract is paid and not memoized: the
+            // attempt parks with its spend and asks again on resume.
+            Err(crate::llm::DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
                 charges.record_usage(&usage);
-                return Ok(PartitionRun::Checkpoint);
+                if ctx.deadline.in_finalize_window() {
+                    return Ok(PartitionRun::Checkpoint);
+                }
+                return Ok(PartitionRun::Refused {
+                    reason: format!("extraction reply refused: {}", errors.join("; ")),
+                });
             }
             Err(error) => return Err(error),
         };
@@ -171,7 +195,7 @@ impl ConsolidationExecutor<'_> {
             )?)?;
         }
         let candidates = if accepted {
-            self.decode_candidates(
+            Self::decode_candidates(
                 &partition,
                 &response,
                 resources,
@@ -199,12 +223,9 @@ impl ConsolidationExecutor<'_> {
                 &turn_ids,
                 resources.scope(),
                 ctx.now_ms,
-                resources
-                    .fallback_binding()
-                    .map(|binding| (binding, self.actor.entity_ref())),
                 Some(ctx.deadline),
+                Some(&resources.write_fence()),
             )
-            .map(|_| ())
         } else {
             Ok(())
         };
@@ -244,6 +265,7 @@ impl ConsolidationExecutor<'_> {
             super::assembly::assemble_extracted(ctx.vault, resources, candidates, ctx.now_ms)?;
         let candidates = assembled.candidates;
         let conflicts = assembled.conflicts;
+        let corrections = assembled.corrections;
         let policy = {
             let txn = ctx.vault.store.env.read_txn().map_err(crate::Error::from)?;
             crate::gate::resolve_policy_manifest(&ctx.vault.store, &txn)?
@@ -274,7 +296,14 @@ impl ConsolidationExecutor<'_> {
                 .map(|id| resources.prior(id))
                 .transpose()?;
             let member_data: Vec<_> = members.iter().map(|member| &member.proposal).collect();
-            if super::judge_context::fast_path(&policy, conflict, &member_data, prior) {
+            if super::judge_context::fast_path(&policy, conflict, &member_data, prior)
+                || super::judge_context::bound_correction(
+                    &corrections,
+                    conflict,
+                    &member_data,
+                    prior,
+                )
+            {
                 let mut candidate = (*members[0]).clone();
                 candidate.proposal.supersedes = conflict.prior_head;
                 dropped.extend(conflict.candidate_indexes.iter().copied());
@@ -286,7 +315,9 @@ impl ConsolidationExecutor<'_> {
                 .iter()
                 .map(|id| resources.prior(*id).cloned())
                 .collect::<Result<Vec<_>>>()?;
-            let mut request = self.merge_request(
+            let call = self.role(DREAMER_VERDICT_ROLE);
+            let mut request = Self::merge_request(
+                &call,
                 &conflict.identity,
                 &member_data,
                 &prior_heads,
@@ -305,16 +336,13 @@ impl ConsolidationExecutor<'_> {
             if let Some(rules) = rules {
                 rules.bind(Stage::Conflict, &mut request);
             }
-            let request = ctx
+            let mut request = ctx
                 .vault
-                .authorize_model_role(
-                    crate::llm::manifest::ModelRole::GenerativeReasoner,
-                    request,
-                    &self.inference,
-                )?
+                .authorize_model_role(DREAMER_VERDICT_ROLE, request, &call.inference)?
                 .into_request();
+            super::roles::bind_reasoning(ctx.vault, call.backend, &mut request)?;
             let step_hash = request.canonical_hash()?;
-            let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await;
+            let outcome = call_as_step(&step_ctx, call.backend, self.guard, request).await;
             let response = match outcome {
                 Ok(StepOutcome::Finished { response, .. }) => {
                     charges.record_terminal(
@@ -460,8 +488,20 @@ impl ConsolidationExecutor<'_> {
         })
     }
 
+    /// Where `role`'s calls go in this executor.
+    fn role(&self, role: crate::llm::manifest::ModelRole) -> RoleCall<'_> {
+        RoleCall::resolve(
+            &self.roles,
+            role,
+            self.backend,
+            &self.model,
+            &self.inference.binding,
+            self.inference.extraction_egress,
+        )
+    }
+
     fn merge_request(
-        &self,
+        call: &RoleCall<'_>,
         identity: &ConflictIdentity,
         members: &[&PromotionCandidate],
         prior_heads: &[super::PriorHead],
@@ -492,7 +532,7 @@ impl ConsolidationExecutor<'_> {
              \"value\": <json when resolution is merge>, \"candidate_ref\": <listed candidate id>}. Select a candidate identity for cross-predicate merges. Choose accumulate only for \
              genuinely multi-valued predicates; escalate real contradictions.";
         Ok(LlmRequest {
-            model: self.model.clone(),
+            model: call.model.clone(),
             envelope: CallEnvelope {
                 seat_effort: None,
                 scope: scope.clone(),
@@ -516,7 +556,7 @@ impl ConsolidationExecutor<'_> {
                         "value": {}
                     }, "required": ["resolution"]}),
                 },
-                locality: self.inference.selected_locality().ok_or_else(||
+                locality: call.inference.selected_locality().ok_or_else(||
                     crate::Error::InvalidConfig("consolidation host binding needs locality".into()))?,
             }.with_purpose_defaults(),
             messages: vec![
@@ -594,6 +634,7 @@ fn merged_candidate(
         conflict.identity.world,
         conflict.identity.facet,
         conflict.identity.rel,
+        conflict.identity.project,
         conflict.identity.topic.as_deref(),
     )?;
     let mut candidate = ClaimCandidate::new(
@@ -767,11 +808,12 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                     turn_id: *turn_id,
                     role,
                     learned_at: 0,
+                    carrier: None,
                     conversation: conversation_of(ctx.vault, turn_id)?,
                 });
             }
-            let gaps = scan_reflection_gaps(ctx.vault, &working_set, ctx.now_ms)?;
-            upsert_gap_queue(ctx.vault, gaps, ctx.now_ms)?;
+            let (gaps, texts) = super::gap::scan_with_texts(ctx.vault, &working_set, ctx.now_ms)?;
+            super::gap::upsert_scanned_gap_queue(ctx.vault, gaps, &texts, ctx.now_ms)?;
             return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         }
 
@@ -868,6 +910,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 Ok(charges.checkpoint())
             }
             Ok(PartitionRun::Checkpoint) => Ok(charges.checkpoint()),
+            Ok(PartitionRun::Refused { reason }) => Ok(charges.park(&reason)),
             Ok(PartitionRun::Completed { candidates }) => {
                 resources.accept_verified(resources.scope(), self.sink, candidates)?;
                 Ok(DreamerAttemptExecution::Completed {

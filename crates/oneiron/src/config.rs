@@ -37,6 +37,18 @@ pub fn validate_ppr_vad_alpha(alpha: f32) -> crate::error::Result<()> {
 /// Default hard byte budget for one live off-record session overlay.
 pub const DEFAULT_OFF_RECORD_OVERLAY_BUDGET_BYTES: usize = 64 * 1024 * 1024;
 
+/// The LMDB reader slots every opener of a vault asks for: both presets, the
+/// read-only door and the history import's dry run. LMDB sizes a vault's reader table (in `lock.mdb`) when
+/// a process opens it with no other process holding it, and never shrinks
+/// it; a process that opens beside a holder gets the holder's table. So every
+/// opener asks for the same table, and whoever opens first builds it.
+///
+/// LMDB keeps a slot for each thread that has read, and a server reads on
+/// its blocking pool (up to 512 threads): at 126 slots, 128 agents recalling
+/// at once were refused with `MDB_READERS_FULL`. A slot is 64 bytes of the
+/// lock file.
+pub const READER_SLOTS: u32 = 1024;
+
 /// Deployment posture: managed host root, blind relay, or owner self-host.
 /// This describes key custody, not an encryption protocol.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -252,18 +264,58 @@ impl Default for HnswConfig {
     }
 }
 
+/// Where vector evidence starts in one embedding space, for the check that
+/// withholds a pack with no real match (ARCH-0004, pre-assembly validation).
+///
+/// A raw cosine means different things in different models: a compressed
+/// space scores a true paraphrase below where a wide one scores noise. The
+/// host that knows its model states these; the default is the engine's
+/// original calibration.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VectorEvidenceFloors {
+    /// The similarity floor: with no keyword hit, a pack whose every vector
+    /// score sits under it abstains.
+    pub floor: f32,
+    /// The score of a strong match: under it, a top hit that barely leads
+    /// the next is uniformly mediocre and the pack abstains.
+    pub strong: f32,
+}
+
+impl Default for VectorEvidenceFloors {
+    fn default() -> Self {
+        Self {
+            floor: 0.3,
+            strong: 0.5,
+        }
+    }
+}
+
+impl VectorEvidenceFloors {
+    /// Both are cosine similarities, which span `-1.0..=1.0`. A floor under
+    /// zero would count a vector pointing away from the query as evidence,
+    /// so each must lie in `0.0..=1.0`, and a strong match is no weaker than
+    /// the floor: `0 <= floor <= strong <= 1`. A value outside that, or not a
+    /// number, would admit evidence the check exists to withhold, so it is
+    /// refused, never clamped.
+    pub fn validate(&self) -> crate::error::Result<()> {
+        let in_range = |value: f32| value.is_finite() && (0.0..=1.0).contains(&value);
+        if !in_range(self.floor) || !in_range(self.strong) || self.floor > self.strong {
+            return Err(crate::Error::InvalidConfig(format!(
+                "vector evidence floors must satisfy 0 <= floor <= strong <= 1, \
+                 got floor {} and strong {}",
+                self.floor, self.strong
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// Vault runtime configuration.
 ///
 /// The struct is `#[non_exhaustive]`, so downstream callers cannot build it
 /// with a struct literal. Use one of the presets (`VaultConfig::device()`
 /// or `VaultConfig::server()`, or `VaultConfig::default()` which aliases
-/// `device()`) and mutate fields as needed:
-///
-/// ```
-/// # use oneiron::VaultConfig;
-/// let mut cfg = VaultConfig::default();
-/// cfg.dimensions = 768;
-/// ```
+/// `device()`) and mutate fields as needed.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct VaultConfig {
@@ -314,9 +366,29 @@ pub struct VaultConfig {
     /// refused (`EmbeddingTransformChanged`), and a vault that has none
     /// adopts it. `None` checks nothing.
     pub embedding_transform: Option<String>,
+    /// Where vector evidence starts in this vault's embedding space
+    /// ([`VectorEvidenceFloors`]), as the host's embedder states it. Opening
+    /// a vault refuses floors outside [`VectorEvidenceFloors::validate`]. A
+    /// host that learns its provider's floors only once it is admitted sets
+    /// them on the open vault ([`crate::Vault::set_vector_evidence`]).
+    pub vector_evidence: VectorEvidenceFloors,
+    /// How long a call-mode recall may take before it answers with the best
+    /// results ready (retrieval hub #call-mode). Defaults to
+    /// [`crate::memory::DEFAULT_CALL_MODE_DEADLINE`], the ARCH-0042
+    /// #call-mode-budget bar; a request's `deadline_ms` overrides it. Opening
+    /// a vault refuses one outside 1 ms to
+    /// [`crate::memory::caps::MAX_RECALL_DEADLINE_MS`].
+    pub call_mode_deadline: std::time::Duration,
+    /// Arms the tagging marker (ARCH-0036, serving the tagger): a base witness
+    /// commits one marker per touched turn inside its own transaction, keyed
+    /// by the turn and this tagger checkpoint, and the answer each marker
+    /// settles on is saved as the turn's tags in its mode. `None` commits
+    /// none.
+    pub tagging: Option<crate::tagging::TaggingMarkerConfig>,
     /// LMDB map size in bytes.
     pub map_size: usize,
-    /// Maximum LMDB reader slots.
+    /// Maximum LMDB reader slots. Both presets ask for [`READER_SLOTS`],
+    /// which says why every opener of one vault asks for the same.
     pub max_readers: u32,
     /// HNSW tuning configuration.
     pub hnsw: HnswConfig,
@@ -558,9 +630,12 @@ impl VaultConfig {
             fast_dims: None,
             embedding_model: None,
             embedding_transform: None,
+            vector_evidence: VectorEvidenceFloors::default(),
+            call_mode_deadline: crate::memory::DEFAULT_CALL_MODE_DEADLINE,
+            tagging: None,
             privacy: VaultPrivacyConfig::default(),
             map_size: 1 << 30,
-            max_readers: 126,
+            max_readers: READER_SLOTS,
             hnsw: HnswConfig::default(),
             text_analyzer: TextAnalyzerConfig::default(),
             dict_search_paths: Vec::new(),
@@ -584,11 +659,14 @@ impl VaultConfig {
             fast_dims: None,
             embedding_model: None,
             embedding_transform: None,
+            vector_evidence: VectorEvidenceFloors::default(),
+            call_mode_deadline: crate::memory::DEFAULT_CALL_MODE_DEADLINE,
+            tagging: None,
             // The server preset is still self-host/local by default: running a
             // server does not by itself mean a third party hosts the vault.
             privacy: VaultPrivacyConfig::default(),
             map_size: 1 << 33,
-            max_readers: 126,
+            max_readers: READER_SLOTS,
             hnsw: HnswConfig::default(),
             text_analyzer: TextAnalyzerConfig::default(),
             dict_search_paths: Vec::new(),
@@ -599,6 +677,3 @@ impl VaultConfig {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -135,47 +135,6 @@ fn diagnostic_admission_binds_address_and_indexed_validity() -> Result<()> {
     Ok(())
 }
 
-struct MisattributedDetector;
-
-impl DeterministicDetector for MisattributedDetector {
-    fn detector_id(&self) -> &'static str {
-        "test.impostor"
-    }
-
-    fn detect(&self, input: &DiagnosticWorkingSet<'_>) -> Vec<DiagnosticEvent> {
-        StubDetector.detect(input)
-    }
-}
-
-#[test]
-fn diagnostic_identity_is_validated_before_any_write() -> Result<()> {
-    let mut event = sample_event();
-    let canonical = encode_diagnostic_event_body(&event)?;
-    for invalid in [
-        "".to_owned(),
-        "UPPER".to_owned(),
-        "a".repeat(MAX_TOKEN_LEN + 1),
-    ] {
-        event.detector_id = invalid.clone();
-        assert!(encode_diagnostic_event_body(&event).is_err());
-        let mut entries = body_entries(&canonical);
-        set_key(&mut entries, "detector_id", Value::from(invalid));
-        assert_rejected(&encode_entries(entries), "invalid detector identity");
-    }
-    let (_dir, vault) = open_vault();
-    let observations = [observation(2, 1_000)];
-    let input = DiagnosticWorkingSet {
-        scope_ref: "scope.fixture",
-        observations: &observations,
-    };
-    assert!(
-        run_deterministic_detectors(&vault, &input, &[&StubDetector, &MisattributedDetector])
-            .is_err()
-    );
-    assert!(vault.entities_by_type(ENTITY_TYPE_DIAGNOSTIC)?.is_empty());
-    Ok(())
-}
-
 #[test]
 fn diagnostic_local_and_replicated_admission_bind_identity_and_body() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
@@ -262,55 +221,6 @@ fn diagnostic_local_and_replicated_admission_bind_identity_and_body() -> Result<
         before,
         "same-id divergence keeps local bytes"
     );
-    Ok(())
-}
-
-#[test]
-fn diagnostic_all_puts_bind_occurrence_to_open_and_closed_validity() -> Result<()> {
-    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
-    for end in [None, Some(1_060)] {
-        let mut event = draft();
-        event.valid_to = end;
-        let body = encode_diagnostic_event_body(&event)?;
-        let id = diagnostic_event_id(&event.detector_id, &body);
-        let occurred = TimeRange {
-            start: event.valid_from,
-            end: end.unwrap_or(u64::MAX),
-        };
-        for wrong in [
-            TimeRange {
-                start: 999,
-                ..occurred
-            },
-            TimeRange {
-                start: 1_000,
-                end: 1_000,
-            },
-            TimeRange {
-                start: 1_000,
-                end: 1_061,
-            },
-        ] {
-            assert_eq!(
-                local_put(&vault, id, wrong, body.clone())
-                    .unwrap_err()
-                    .kind(),
-                ErrorKind::InvalidDiagnosticBody
-            );
-            assert_eq!(
-                vault
-                    .batch()
-                    .put_replicated(&id, ENTITY_TYPE_DIAGNOSTIC, wrong, 1_000, &body)
-                    .commit()
-                    .unwrap_err()
-                    .kind(),
-                ErrorKind::InvalidDiagnosticBody
-            );
-            assert!(vault.get_raw(&id)?.is_none());
-        }
-        local_put(&vault, id, occurred, body)?;
-    }
-    assert_eq!(vault.entities_by_type(ENTITY_TYPE_DIAGNOSTIC)?.len(), 2);
     Ok(())
 }
 

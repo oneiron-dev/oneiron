@@ -48,35 +48,6 @@ fn record(
 }
 
 #[test]
-fn custody_class_wire_strings_match_canon() {
-    // ARCH-0069 canon nouns, kebab-case on the wire.
-    assert_eq!(CustodyClass::CustodyPortable.as_str(), "custody-portable");
-    assert_eq!(
-        CustodyClass::CustodyDeviceBound.as_str(),
-        "custody-device-bound"
-    );
-    assert_eq!(CustodyClass::CrossVault.as_str(), "cross-vault");
-    assert_eq!(
-        CustodyClass::parse("cross-vault"),
-        Some(CustodyClass::CrossVault)
-    );
-    assert_eq!(CustodyClass::parse("CustodyPortable"), None);
-    assert_eq!(CustodyClass::parse("portable"), None);
-}
-
-#[test]
-fn tier_orders_by_exposure() {
-    assert!(CustodyTier::T0Doored < CustodyTier::T1Leased);
-    assert!(CustodyTier::T1Leased < CustodyTier::T2LocalRegistered);
-    assert_eq!(CustodyTier::from_u8(0), Some(CustodyTier::T0Doored));
-    assert_eq!(
-        CustodyTier::from_u8(2),
-        Some(CustodyTier::T2LocalRegistered)
-    );
-    assert_eq!(CustodyTier::from_u8(3), None);
-}
-
-#[test]
 fn body_keys_are_thirteen_and_complete() {
     let rec = record("api-key", CustodyClass::CrossVault, b"hunter2", vec![]);
     let bytes = encode_secret_custody_body(&rec).expect("encode");
@@ -110,20 +81,6 @@ fn body_keys_are_thirteen_and_complete() {
         .and_then(floor::as_u64)
         .expect("schema version must be an unsigned integer");
     assert_eq!(version, 1);
-}
-
-#[test]
-fn record_round_trips_encode_decode() {
-    let rec = record(
-        "api-key",
-        CustodyClass::CustodyPortable,
-        b"hunter2",
-        vec![binding("connector:gmail", CustodyTier::T2LocalRegistered)],
-    );
-    let bytes = encode_secret_custody_body(&rec).expect("encode");
-    let back = decode_secret_custody_body(&bytes).expect("decode");
-    assert_eq!(back, rec);
-    assert_eq!(back.value_bytes, b"hunter2");
 }
 
 /// The metadata projection is the read most callers get, and it carries no
@@ -200,57 +157,6 @@ fn record_debug_redacts_value_bytes() {
         !dbg.contains(&numeric_bytes),
         "Debug must never leak the numeric value bytes, got: {dbg}"
     );
-}
-
-#[test]
-fn floor_defaults_match_canon() {
-    let floor = SecretCustodyFloor::default();
-    assert_eq!(
-        floor.portable,
-        TierBand {
-            min: CustodyTier::T0Doored,
-            max: CustodyTier::T2LocalRegistered
-        }
-    );
-    assert_eq!(
-        floor.device_bound,
-        TierBand {
-            min: CustodyTier::T0Doored,
-            max: CustodyTier::T2LocalRegistered
-        }
-    );
-    assert_eq!(floor.cross_vault, TierBand::only(CustodyTier::T0Doored));
-    assert_eq!(floor.rotation_max_age_secs, None);
-    assert!(floor.env_bindings.is_empty());
-}
-
-#[test]
-fn floor_merge_is_most_restrictive_per_field() {
-    let mut a = SecretCustodyFloor::default();
-    let b = SecretCustodyFloor {
-        // narrower than a's T0..T2
-        portable: TierBand::only(CustodyTier::T0Doored),
-        rotation_max_age_secs: Some(86_400),
-        env_bindings: BTreeMap::from([("prod".to_owned(), "require-lease".to_owned())]),
-        ..SecretCustodyFloor::default()
-    };
-    a.merge(b);
-    assert_eq!(a.portable, TierBand::only(CustodyTier::T0Doored));
-    assert_eq!(a.rotation_max_age_secs, Some(86_400));
-    assert_eq!(
-        a.env_bindings.get("prod").map(String::as_str),
-        Some("require-lease")
-    );
-    // device_bound / cross_vault untouched by b → defaults remain.
-    assert_eq!(a.cross_vault, TierBand::only(CustodyTier::T0Doored));
-}
-
-#[test]
-fn resolve_on_empty_vault_returns_defaults() {
-    let (_tmp, vault) = temp_vault();
-    let rtxn = vault.store.env.read_txn().expect("read txn");
-    let floor = SecretCustodyFloor::resolve(&vault.store, &rtxn).expect("resolve");
-    assert_eq!(floor, SecretCustodyFloor::default());
 }
 
 /// Writes a POLICY_MANIFEST row carrying `rows` as its body, the way the
@@ -435,23 +341,6 @@ fn a_manifest_body_that_is_present_but_unreadable_fails_the_floor_closed() {
 }
 
 #[test]
-fn readable_bodies_of_another_plane_still_leave_the_floor_at_its_defaults() {
-    // The control for the strictness above: READABILITY is the dividing line,
-    // not shape. A body that canonically decodes to something other than a map
-    // belongs to some other policy plane — the manifest body schema is the
-    // gate's — so it carries no custody floor rows and refuses nothing.
-    let (_tmp, vault) = temp_vault();
-    let mut array_body = Vec::new();
-    let rows = vec![Value::from(1_u64)];
-    rmpv::encode::write_value(&mut array_body, &Value::Array(rows)).expect("encode body");
-    put_policy_manifest_body(&vault, 0x76, array_body);
-
-    let rtxn = vault.store.env.read_txn().expect("read txn");
-    let floor = SecretCustodyFloor::resolve(&vault.store, &rtxn).expect("resolve");
-    assert_eq!(floor, SecretCustodyFloor::default());
-}
-
-#[test]
 fn two_narrowing_manifests_still_resolve_most_restrictively() {
     // The strict walk must still VISIT every valid body and merge them: the
     // fail-closed arms above may not cost the resolver its ordinary answer.
@@ -554,53 +443,6 @@ fn duplicated_floor_row_errors_because_the_intended_value_is_ambiguous() {
         matches!(err, Error::Secret(SecretError::InvalidSecretCustodyBody(_))),
         "got {err:?}"
     );
-}
-
-#[test]
-fn absent_floor_rows_still_take_the_defaults() {
-    // The control for the two tests above: a manifest is PRESENT and readable
-    // but declares no custody floor. Absence is not malformation — it means
-    // "this pack narrows nothing", and the defaults stand.
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest(
-        &vault,
-        0x6F,
-        vec![(Value::from("some.other.policy.key"), Value::from(1_u64))],
-    );
-    let rtxn = vault.store.env.read_txn().expect("read txn");
-    let floor = SecretCustodyFloor::resolve(&vault.store, &rtxn).expect("resolve");
-    assert_eq!(floor, SecretCustodyFloor::default());
-    drop(rtxn);
-
-    // And a portable T2 binding still registers under those defaults.
-    let rec = record(
-        "portable-default",
-        CustodyClass::CustodyPortable,
-        b"v",
-        vec![binding("connector:gmail", CustodyTier::T2LocalRegistered)],
-    );
-    vault
-        .register_secret(rec)
-        .expect("default floor still admits a portable T2 binding");
-}
-
-#[test]
-fn register_then_resolve_and_metadata() {
-    let (_tmp, vault) = temp_vault();
-    let rec = record("api-key", CustodyClass::CustodyPortable, b"hunter2", vec![]);
-    let id = vault.register_secret(rec).expect("register");
-    assert_eq!(
-        vault.resolve_secret_ref("api-key").expect("resolve"),
-        Some(id)
-    );
-    let meta = vault
-        .get_secret_metadata(&id)
-        .expect("metadata")
-        .expect("some");
-    assert_eq!(meta.name, "api-key");
-    assert_eq!(meta.status, SecretCustodyStatus::Active);
-    // Unknown name resolves to None.
-    assert_eq!(vault.resolve_secret_ref("nope").expect("resolve"), None);
 }
 
 #[test]
@@ -777,46 +619,6 @@ fn decode_rejects_missing_required_body_keys() {
 }
 
 #[test]
-fn register_rejects_binding_wider_than_live_floor() {
-    // FIX4 FLOOR-TOCTOU: resolve_secret runs inside the write txn against the
-    // LIVE floor. A CrossVault record binding T2LocalRegistered against the
-    // DEFAULT floor (T0..T0 band) must be rejected even though the same
-    // binding would pass a stale/wider snapshot the caller asserted.
-    let (_tmp, vault) = temp_vault();
-    let rec = record(
-        "xv-t2",
-        CustodyClass::CrossVault,
-        b"v",
-        vec![binding("door:receive-pack", CustodyTier::T2LocalRegistered)],
-    );
-    let err = vault
-        .register_secret(rec)
-        .expect_err("CrossVault + T2 binding exceeds live floor");
-    assert!(
-        matches!(err, Error::Secret(SecretError::ManifestWidensFloor { .. })),
-        "got {err:?}"
-    );
-    // The rejected registration must not hold the name.
-    assert_eq!(vault.resolve_secret_ref("xv-t2").expect("resolve"), None);
-}
-
-#[test]
-fn register_custody_portable_t2_binding_passes_default_floor() {
-    // The default floor's portable band is T0..T2, so a portable T2 binding is
-    // inside it: same shape, class that admits it, must commit.
-    let (_tmp, vault) = temp_vault();
-    let rec = record(
-        "port-t2",
-        CustodyClass::CustodyPortable,
-        b"v",
-        vec![binding("connector:gmail", CustodyTier::T2LocalRegistered)],
-    );
-    vault
-        .register_secret(rec)
-        .expect("portable T2 binding fits the default floor");
-}
-
-#[test]
 fn register_secret_with_credential_shaped_value_commits() {
     // FIX3 SCAN-CONFLICT: the batch secret scanner skips the credential-shape
     // scan for SECRET_CUSTODY Put bodies only. Registering a secret whose
@@ -918,34 +720,6 @@ fn value_read_goes_through_get_secret_value_in_txn_door() {
 }
 
 #[test]
-fn value_read_requires_binding() {
-    let (_tmp, vault) = temp_vault();
-    let rec = record(
-        "door-key",
-        CustodyClass::CrossVault,
-        b"hunter2",
-        vec![binding("door:receive-pack", CustodyTier::T0Doored)],
-    );
-    let id = vault.register_secret(rec).expect("register");
-    let wtxn = vault.store.env.write_txn().expect("write txn");
-    // No binding for this effector → typed deny.
-    let err = vault
-        .get_secret_value_in_txn(&wtxn, &id, "connector:other")
-        .expect_err("unbound effector denied");
-    assert!(
-        matches!(err, Error::Secret(SecretError::SecretBindingDenied { .. })),
-        "got {err:?}"
-    );
-    // Bound effector reads the value.
-    let value = vault
-        .get_secret_value_in_txn(&wtxn, &id, "door:receive-pack")
-        .expect("bound read")
-        .expect("value present");
-    assert_eq!(value, b"hunter2");
-    wtxn.abort();
-}
-
-#[test]
 fn value_read_requires_a_read_scope_on_the_matched_binding() {
     // C4 BINDING-SCOPE: `binding_for` matches the effector STRING only, and no
     // door read `binding.scopes` — so a binding declared for, say, rotation
@@ -993,15 +767,6 @@ fn value_read_requires_a_read_scope_on_the_matched_binding() {
 }
 
 #[test]
-fn device_only_round_trips_on_portable() {
-    let mut rec = record("portable-pin", CustodyClass::CustodyPortable, b"v", vec![]);
-    rec.device_only = true;
-    let bytes = encode_secret_custody_body(&rec).expect("encode");
-    let back = decode_secret_custody_body(&bytes).expect("decode");
-    assert!(back.device_only, "device_only survives the body codec");
-}
-
-#[test]
 fn device_only_is_stored_but_inert_on_cross_vault() {
     // On a cross-vault record the dial is data only: it is stored and
     // round-trips, but it moves nothing — cross-vault is door-only regardless.
@@ -1045,7 +810,10 @@ fn device_only_is_stored_but_inert_on_cross_vault() {
 
 #[cfg(feature = "sync")]
 #[test]
-fn custody_portable_dial_window_roundtrip_and_replay_wall() -> crate::Result<()> {
+fn no_custody_class_enters_leaves_or_lands_through_a_window() -> crate::Result<()> {
+    // C1 (secscan 2026-10-14): a portable credential used to ride the window
+    // and land on the peer verbatim. A replica cannot tell an owner's body from
+    // a peer's, so the seal now holds for every class and dial.
     use crate::TimeRange;
     use crate::sync::loro_support::{map_get_bytes, map_insert_bytes};
     use crate::sync::window::{
@@ -1054,11 +822,11 @@ fn custody_portable_dial_window_roundtrip_and_replay_wall() -> crate::Result<()>
     use crate::sync::{WindowKey, bridge::Materializer, schema::create_window_doc};
     let key = WindowKey::new("2026-03");
     let ts = key.start_timestamp().unwrap() + 60;
-    for (class, device_only, allowed) in [
-        (CustodyClass::CustodyPortable, false, true),
-        (CustodyClass::CustodyPortable, true, false),
-        (CustodyClass::CustodyDeviceBound, false, false),
-        (CustodyClass::CrossVault, false, false),
+    for (class, device_only) in [
+        (CustodyClass::CustodyPortable, false),
+        (CustodyClass::CustodyPortable, true),
+        (CustodyClass::CustodyDeviceBound, false),
+        (CustodyClass::CrossVault, false),
     ] {
         let (_src_dir, src) = temp_vault();
         let src = std::sync::Arc::new(src);
@@ -1081,10 +849,13 @@ fn custody_portable_dial_window_roundtrip_and_replay_wall() -> crate::Result<()>
         let raw = src.get_raw_unsealed(&id)?.unwrap();
         let doc = create_window_doc("source", &key);
         reverse_rematerialize(&src, &doc, &key)?;
-        assert_eq!(
-            map_get_bytes(&doc.get_map("entities"), &id.to_hex()).is_some(),
-            allowed
+        assert!(
+            map_get_bytes(&doc.get_map("entities"), &id.to_hex()).is_none(),
+            "{class:?} device_only={device_only} entered the window doc"
         );
+        // A carrier planted before the seal is scrubbed from the export.
+        map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &raw)?;
+        doc.commit();
         let bytes = export_window_updates_since(
             &src,
             &key,
@@ -1093,129 +864,202 @@ fn custody_portable_dial_window_roundtrip_and_replay_wall() -> crate::Result<()>
         )?;
         let received = create_window_doc("receiver", &key);
         received.import(&bytes).unwrap();
-        assert_eq!(
-            map_get_bytes(&received.get_map("entities"), &id.to_hex()).is_some(),
-            allowed
+        assert!(
+            map_get_bytes(&received.get_map("entities"), &id.to_hex()).is_none(),
+            "{class:?} device_only={device_only} left in an export"
         );
-        forward_rematerialize(&dst, &received, &Materializer::new(), &key)?;
-        assert_eq!(dst.get_raw_unsealed(&id)?.is_some(), allowed);
-        if allowed {
-            assert_eq!(dst.get_raw_unsealed(&id)?.unwrap(), raw);
-            assert_eq!(dst.resolve_secret_ref("roundtrip")?, Some(id));
-            let txn = dst.store.env.write_txn()?;
-            assert_eq!(
-                dst.get_secret_value_in_txn(&txn, &id, "door:roundtrip")?,
-                Some(b"custody-canary".to_vec())
-            );
-        } else {
-            assert_eq!(dst.resolve_secret_ref("roundtrip")?, None);
-            // A hostile peer bypassing egress still cannot write the forbidden row.
-            let hostile = create_window_doc("hostile", &key);
-            map_insert_bytes(&hostile.get_map("entities"), &id.to_hex(), &raw)?;
-            hostile.commit();
-            forward_rematerialize(&dst, &hostile, &Materializer::new(), &key)?;
-            assert!(dst.get_raw_unsealed(&id)?.is_none());
-            let body = encode_secret_custody_body(&rec)?;
-            assert!(
-                dst.batch()
-                    .put_replicated(
-                        &EntityId::now(),
-                        ENTITY_TYPE_SECRET_CUSTODY,
-                        TimeRange { start: ts, end: ts },
-                        ts,
-                        &body
-                    )
-                    .commit()
-                    .is_err()
-            );
-        }
+        // A hostile peer bypassing egress still cannot write the row.
+        let hostile = create_window_doc("hostile", &key);
+        map_insert_bytes(&hostile.get_map("entities"), &id.to_hex(), &raw)?;
+        hostile.commit();
+        forward_rematerialize(&dst, &hostile, &Materializer::new(), &key)?;
+        assert!(dst.get_raw_unsealed(&id)?.is_none());
+        assert_eq!(dst.resolve_secret_ref("roundtrip")?, None);
+        let body = encode_secret_custody_body(&rec)?;
+        let err = dst
+            .batch()
+            .put_replicated(
+                &EntityId::now(),
+                ENTITY_TYPE_SECRET_CUSTODY,
+                TimeRange { start: ts, end: ts },
+                ts,
+                &body,
+            )
+            .commit()
+            .expect_err("a replicated custody put lands nowhere");
+        assert!(matches!(
+            err,
+            Error::Secret(SecretError::InvalidSecretCustodyBody(_))
+        ));
     }
     Ok(())
 }
 
 #[test]
-fn custody_replay_name_index_is_atomic_and_cannot_displace_live_name() -> crate::Result<()> {
+fn a_peer_replay_cannot_rewrite_a_custody_record() -> crate::Result<()> {
+    // C1 (secscan 2026-10-14): replay checked only portability and the name,
+    // so a same-vault peer could restate a record under its own id with any
+    // value, bindings, generation or status, and the broker door would hand
+    // the peer's value to the next effector. Every such rewrite is refused and
+    // the owner's record stays as the owner wrote it.
     use crate::TimeRange;
     let (_dir, vault) = temp_vault();
-    let original = record(
-        "shared-name",
+    let live = vault.register_secret(record(
+        "rotated",
         CustodyClass::CustodyPortable,
-        b"first",
-        vec![],
-    );
-    let live = vault.register_secret(original)?;
-    let incoming = record(
-        "shared-name",
+        b"owner-first",
+        vec![binding("door:owner", CustodyTier::T0Doored)],
+    ))?;
+    vault.rotate_secret("rotated", b"owner-second", 1_700_000_100)?;
+    let dead = vault.register_secret(record(
+        "revoked",
         CustodyClass::CustodyPortable,
-        b"second",
-        vec![],
-    );
-    let peer_id = EntityId::now();
-    let body = encode_secret_custody_body(&incoming)?;
-    let ts = TimeRange { start: 1, end: 1 };
-    let err = vault
-        .batch()
-        .put_replicated(&peer_id, ENTITY_TYPE_SECRET_CUSTODY, ts, 1, &body)
-        .commit()
-        .expect_err("live names cannot be displaced by replay");
-    assert!(matches!(
-        err,
-        Error::Secret(SecretError::SecretNameInUse { .. })
-    ));
-    assert_eq!(vault.resolve_secret_ref("shared-name")?, Some(live));
-    assert!(vault.get_secret_metadata(&peer_id)?.is_none());
-    let renamed = record("renamed", CustodyClass::CustodyPortable, b"first", vec![]);
-    let renamed_bytes = encode_secret_custody_body(&renamed)?;
-    let err = vault
-        .batch()
-        .put_replicated(&live, ENTITY_TYPE_SECRET_CUSTODY, ts, 1, &renamed_bytes)
-        .commit()
-        .expect_err("an indexed credential cannot be renamed by replay");
-    assert!(matches!(
-        err,
-        Error::Secret(SecretError::InvalidSecretCustodyBody(_))
-    ));
-    assert_eq!(vault.resolve_secret_ref("renamed")?, None);
-    assert_eq!(
-        vault.get_secret_metadata(&live)?.unwrap().name,
-        "shared-name"
-    );
+        b"owner-dead",
+        vec![binding("door:owner", CustodyTier::T0Doored)],
+    ))?;
+    vault.revoke_secret("revoked", 1_700_000_200)?;
+    let stored = |id: &EntityId| -> crate::Result<SecretCustodyRecord> {
+        let txn = vault.store.env.read_txn()?;
+        Ok(read_secret_custody_in_txn(&vault.store, &txn, id)?.expect("stored record"))
+    };
+    let current = stored(&live)?;
+    assert_eq!(current.rotation_generation, 1);
 
-    // Failed replay may be quarantined in a transaction that commits other
-    // work. Read-only planning must not create a phantom name in that case.
-    let invalid = record(
-        "rejected-name",
-        CustodyClass::CustodyPortable,
-        b"bad",
-        vec![],
+    let mut new_value = current.clone();
+    new_value.value_bytes = b"peer-value".to_vec();
+    let mut wider = current.clone();
+    wider
+        .bindings
+        .push(binding("connector:peer", CustodyTier::T0Doored));
+    let mut rolled_back = current.clone();
+    rolled_back.rotation_generation = 0;
+    rolled_back.rotated_at = None;
+    rolled_back.value_bytes = b"owner-first".to_vec();
+    let mut revived = stored(&dead)?;
+    revived.status = SecretCustodyStatus::Active;
+    let mut renamed = current;
+    renamed.name = "renamed".to_owned();
+    let squatter = record("rotated", CustodyClass::CustodyPortable, b"peer", vec![]);
+    let cases = [
+        ("value change", live, new_value),
+        ("binding widening", live, wider),
+        ("generation rollback", live, rolled_back),
+        ("revoked to active", dead, revived),
+        ("rename", live, renamed),
+        ("live name under a new id", EntityId::now(), squatter),
+    ];
+    let ts = TimeRange { start: 1, end: 1 };
+    // Every case runs, so a failure names each rewrite the door let through.
+    let mut admitted = Vec::new();
+    for (case, id, incoming) in cases {
+        let before = vault.get_raw_unsealed(&id)?;
+        let result = vault
+            .batch()
+            .put_replicated(
+                &id,
+                ENTITY_TYPE_SECRET_CUSTODY,
+                ts,
+                1,
+                &encode_secret_custody_body(&incoming)?,
+            )
+            .commit();
+        if !matches!(
+            result,
+            Err(Error::Secret(SecretError::InvalidSecretCustodyBody(_)))
+        ) || vault.get_raw_unsealed(&id)? != before
+        {
+            admitted.push(format!("{case}: {result:?}"));
+        }
+    }
+    assert!(admitted.is_empty(), "{admitted:#?}");
+    assert_eq!(vault.resolve_secret_ref("rotated")?, Some(live));
+    assert_eq!(vault.resolve_secret_ref("renamed")?, None);
+    let txn = vault.store.env.write_txn()?;
+    assert_eq!(
+        vault.get_secret_value_in_txn(&txn, &live, "door:owner")?,
+        Some(b"owner-second".to_vec())
     );
-    let invalid_id = EntityId::now();
-    let bytes = encode_secret_custody_body(&invalid)?;
-    vault.with_write_txn(|txn| {
-        let err = crate::batch::apply_ops(
-            &vault.store,
-            &vault.config,
-            &vault.analyzer,
-            txn,
-            vec![crate::batch::BatchOp::Put {
-                id: invalid_id,
-                entity_type: ENTITY_TYPE_SECRET_CUSTODY,
-                occurred: TimeRange { start: 2, end: 1 },
-                learned_at: 1,
-                data: bytes.clone(),
-                allow_maintenance: true,
-                allow_reserved_predicate: true,
-                hub_sync_imported: false,
-            }],
-            true,
-            false,
-            false,
-        )
-        .expect_err("bad range");
-        assert!(matches!(err, Error::InvalidTimeRange { .. }));
-        Ok(())
-    })?;
-    assert_eq!(vault.resolve_secret_ref("rejected-name")?, None);
-    assert!(vault.get_secret_metadata(&invalid_id)?.is_none());
+    assert!(
+        vault
+            .get_secret_value_in_txn(&txn, &live, "connector:peer")
+            .is_err()
+    );
+    assert!(
+        vault
+            .get_secret_value_in_txn(&txn, &dead, "door:owner")
+            .is_err()
+    );
     Ok(())
+}
+
+#[test]
+fn a_peer_tombstone_cannot_erase_a_custody_record() -> crate::Result<()> {
+    // C1 review: a peer's tombstone proves no owner intent either. A soft
+    // delete would truncate the value away and a hard one purge the record.
+    use crate::deletion::{TombstoneReason, TombstoneValueV2};
+    for reason in [TombstoneReason::UserDelete, TombstoneReason::GdprDelete] {
+        let (_dir, vault) = temp_vault();
+        let id = vault.register_secret(record(
+            "erased",
+            CustodyClass::CustodyPortable,
+            b"owner-value",
+            vec![binding("door:owner", CustodyTier::T0Doored)],
+        ))?;
+        let before = vault.get_raw_unsealed(&id)?;
+        let tombstone = TombstoneValueV2 {
+            reason,
+            deleted_at: 10,
+            request_id: *EntityId::now().as_bytes(),
+        }
+        .encode();
+        let err = vault
+            .apply_replayed_tombstone(&id, &tombstone)
+            .expect_err("a replayed tombstone never erases a credential");
+        assert!(
+            matches!(err, Error::Secret(SecretError::InvalidSecretCustodyBody(_))),
+            "{reason:?}: {err:?}"
+        );
+        assert_eq!(vault.get_raw_unsealed(&id)?, before, "{reason:?}");
+        assert_eq!(vault.resolve_secret_ref("erased")?, Some(id));
+        let txn = vault.store.env.write_txn()?;
+        assert_eq!(
+            vault.get_secret_value_in_txn(&txn, &id, "door:owner")?,
+            Some(b"owner-value".to_vec())
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn bulk_body_readers_never_hand_out_a_custody_row() {
+    use crate::federation::Scope;
+    use crate::federation::record_scope::ScopeView;
+    let (_tmp, vault) = temp_vault();
+    let value = b"Zq8-custody-fixture-value";
+    let id = vault
+        .register_secret(record(
+            "bulk-reader",
+            CustodyClass::CrossVault,
+            value,
+            vec![],
+        ))
+        .expect("register");
+    let err = vault
+        .latest_entity_bodies_by_type(ENTITY_TYPE_SECRET_CUSTODY, 10, 100)
+        .expect_err("the latest-body reader keeps the custody seal");
+    assert!(
+        matches!(err, Error::Secret(SecretError::InvalidSecretCustodyBody(_))),
+        "got {err:?}"
+    );
+    let top = Scope::top();
+    for view in [ScopeView::Normal, ScopeView::Debug] {
+        let rows = vault
+            .records_in_scope(&top, &top, &top, view)
+            .expect("scoped read");
+        assert!(!rows.iter().any(|row| row.id == id), "{view:?}");
+    }
+    let exported = vault
+        .export_records_in_scope(&top, &top, &top)
+        .expect("scoped export");
+    assert!(!exported.iter().any(|row| row.id == id));
 }

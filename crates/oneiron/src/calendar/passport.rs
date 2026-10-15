@@ -27,7 +27,7 @@ use super::claims::{
     CalendarPassportPresence, CalendarPassportValue, PREDICATE_CALENDAR_PASSPORT,
     decode_passport_value,
 };
-use crate::claim::ClaimLifecycleStatus;
+use crate::claim::{ClaimLifecycleStatus, ClaimSubject, claim_surfaceable};
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::side_table::{self, Raw, SideTable};
@@ -38,7 +38,14 @@ use crate::vault::Vault;
 const PASSPORT_INDEX: SideTable<[u8; 32], EntityId, Raw> =
     SideTable::new(&side_table::CALENDAR_PASSPORT_UID_INDEX);
 
-pub(crate) fn live_passports_for_event_in_txn(
+/// The admitted passports on `event`: surfaceable heads about the EVENT itself.
+///
+/// This is the revision-authority read. A writer derives a passport's next UID
+/// and SEQUENCE from these and supersedes only these, so a pending, rejected
+/// or stale proposal can neither block a revision nor steer it. The ingest
+/// diff keeps the approval-blind [`live_passports_for_event`], because the
+/// import gate files its own passports pending review.
+pub(crate) fn admitted_passports_for_event_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     event: &EntityId,
@@ -46,8 +53,9 @@ pub(crate) fn live_passports_for_event_in_txn(
     let mut values = Vec::new();
     for id in vault.claims_for_subject_in_txn(txn, event)? {
         if let Some(body) = vault.get_claim_in_txn(txn, &id)?
-            && body.lifecycle == ClaimLifecycleStatus::Active
             && body.predicate == PREDICATE_CALENDAR_PASSPORT
+            && body.subject == ClaimSubject::Entity(*event)
+            && claim_surfaceable(&body)
         {
             values.push((id, decode_passport_value(&body.value)?));
         }
@@ -55,14 +63,16 @@ pub(crate) fn live_passports_for_event_in_txn(
     Ok(values)
 }
 
-pub(crate) fn live_passport_for_in_txn(
+/// The one admitted passport on `event` for exactly `(system, uid)`. Two
+/// admitted heads for one key are refused, never picked by scan order.
+pub(crate) fn admitted_passport_for_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     event: &EntityId,
     system: &str,
     uid: &str,
 ) -> Result<Option<(EntityId, CalendarPassportValue)>, CalendarError> {
-    let mut matching = live_passports_for_event_in_txn(vault, txn, event)?
+    let mut matching = admitted_passports_for_event_in_txn(vault, txn, event)?
         .into_iter()
         .filter(|(_, value)| value.system == system && value.uid == uid);
     let found = matching.next();
@@ -110,10 +120,40 @@ pub enum PassportDecision {
 /// never "absent": the scan walks live passport claims so an EVENT that
 /// synced in on another node is still found rather than twinned.
 ///
+/// This is the ingest diff's resolver, so a pending passport vouches for its
+/// EVENT: the import gate files its own passports pending review. Only an
+/// admitted passport repairs the index, though, because the first outbound
+/// invite falls back to that shortcut (`event_ref_for_indexed_uid`).
+///
 /// # Errors
 ///
 /// [`CalendarError::IcsIngest`] on store or stored-claim decode failures.
 pub fn resolve_event_by_uid(vault: &Vault, uid: &str) -> Result<Option<EntityId>, CalendarError> {
+    resolve_uid(vault, uid, carries_live_uid)
+}
+
+/// Resolves one UID to its EVENT through admitted passports only.
+///
+/// The authority form of [`resolve_event_by_uid`]: an index hit counts only
+/// when an admitted passport on that EVENT carries the UID, and the scan reads
+/// only admitted passports. So a pending, rejected or stale proposal never
+/// picks the EVENT an outbound invite binds to.
+///
+/// # Errors
+///
+/// [`CalendarError::IcsIngest`] on store or stored-claim decode failures.
+pub(crate) fn resolve_admitted_event_by_uid(
+    vault: &Vault,
+    uid: &str,
+) -> Result<Option<EntityId>, CalendarError> {
+    resolve_uid(vault, uid, carries_admitted_uid)
+}
+
+fn resolve_uid(
+    vault: &Vault,
+    uid: &str,
+    vouches: fn(&Vault, &EntityId, &str) -> Result<bool, CalendarError>,
+) -> Result<Option<EntityId>, CalendarError> {
     let digest = passport_digest(uid);
     let indexed = {
         let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
@@ -122,7 +162,7 @@ pub fn resolve_event_by_uid(vault: &Vault, uid: &str) -> Result<Option<EntityId>
     if let Some(id) = indexed
         && vault.get_entity_type(&id)? == Some(ENTITY_TYPE_EVENT)
         && !is_series_exception(vault, &id)?
-        && live_passport_for_uid(vault, &id, uid)?.is_some()
+        && vouches(vault, &id, uid)?
     {
         return Ok(Some(id));
     }
@@ -142,7 +182,7 @@ pub fn resolve_event_by_uid(vault: &Vault, uid: &str) -> Result<Option<EntityId>
     let mut found: Option<EntityId> = None;
     for event_ref in event_ids {
         if !is_series_exception(vault, &event_ref)?
-            && live_passport_for_uid(vault, &event_ref, uid)?.is_some()
+            && vouches(vault, &event_ref, uid)?
             && found.is_none_or(|current| event_ref.as_bytes() < current.as_bytes())
         {
             // Lexicographically smallest id, so every node converges on the
@@ -150,7 +190,9 @@ pub fn resolve_event_by_uid(vault: &Vault, uid: &str) -> Result<Option<EntityId>
             found = Some(event_ref);
         }
     }
-    if let Some(event_ref) = found {
+    if let Some(event_ref) = found
+        && carries_admitted_uid(vault, &event_ref, uid)?
+    {
         index_passport_uid(vault, uid, &event_ref)?;
     }
     Ok(found)
@@ -242,7 +284,7 @@ pub fn index_passport_uid(
     event_ref: &EntityId,
 ) -> Result<(), CalendarError> {
     let digest = passport_digest(uid);
-    vault.try_with_write_txn(|wtxn| {
+    vault.try_with_write_txn_grouped(|wtxn| {
         PASSPORT_INDEX.put(&vault.store, wtxn, &digest, event_ref)?;
         Ok::<_, crate::Error>(())
     })?;
@@ -258,7 +300,8 @@ pub fn index_passport_uid(
 /// is inverted: the UID was minted with the EVENT and indexed there, and the
 /// passport being about to exist is exactly what the caller is asking for. So
 /// this reader answers the narrower question — "what does the index say, and is
-/// it still an EVENT?" — and adds no second index.
+/// it still an EVENT?" — and adds no second index. Its answer stays the
+/// minter's, because no resolver repairs the index from a pending passport.
 ///
 /// # Errors
 ///
@@ -352,18 +395,26 @@ pub fn all_live_inbound_passports_absent(
     Ok(inbound > 0 && inbound == absent)
 }
 
-/// The live passport claim on `event_ref` carrying `uid` from any system.
-fn live_passport_for_uid(
+/// Whether a live passport on `event_ref`, pending or not, carries `uid` from
+/// any system.
+fn carries_live_uid(vault: &Vault, event_ref: &EntityId, uid: &str) -> Result<bool, CalendarError> {
+    Ok(live_passports_for_event(vault, event_ref)?
+        .iter()
+        .any(|(_, value)| value.uid == uid))
+}
+
+/// Whether an admitted passport on `event_ref` carries `uid` from any system.
+pub(super) fn carries_admitted_uid(
     vault: &Vault,
     event_ref: &EntityId,
     uid: &str,
-) -> Result<Option<(EntityId, CalendarPassportValue)>, CalendarError> {
-    for (claim_id, value) in live_passports_for_event(vault, event_ref)? {
-        if value.uid == uid {
-            return Ok(Some((claim_id, value)));
-        }
-    }
-    Ok(None)
+) -> Result<bool, CalendarError> {
+    let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    Ok(
+        admitted_passports_for_event_in_txn(vault, &rtxn, event_ref)?
+            .iter()
+            .any(|(_, value)| value.uid == uid),
+    )
 }
 
 /// Index key digest: SHA-256 of the UID, mirroring `comm.rs::party_index_key`.
@@ -426,82 +477,64 @@ fn is_series_exception(vault: &Vault, event: &EntityId) -> Result<bool, Calendar
 
 #[cfg(test)]
 mod tests {
-    use super::super::claims::CalendarPassportDirection;
     use super::*;
-    use crate::calendar::test_support::open_calendar_vault;
+    use crate::calendar::claims::CalendarPassportDirection;
+    use crate::calendar::test_support::{CalendarEventFixture, open_calendar_vault};
 
-    fn passport(system: &str, uid: &str, sequence: u32) -> CalendarPassportValue {
-        CalendarPassportValue {
-            system: system.to_owned(),
+    #[test]
+    fn passport_uid_index_pins_literal_key_and_survives_vault_reopen() {
+        let uid = "uid-1@example.com";
+        let digest: [u8; 32] = [
+            0x66, 0x56, 0xa0, 0x0b, 0xd3, 0x3b, 0x8a, 0xd1, 0x86, 0xc8, 0x2a, 0x6a, 0xbe, 0xc0,
+            0xc2, 0x74, 0x2d, 0xc4, 0x8b, 0xf5, 0x8c, 0x34, 0xab, 0x07, 0x54, 0x7f, 0x2d, 0x16,
+            0x62, 0x9a, 0x13, 0xbe,
+        ];
+        let key = [b"calendar.passport.v1:".as_slice(), digest.as_slice()].concat();
+        let (dir, vault) = open_calendar_vault();
+        let event = CalendarEventFixture::new(0x52, "UID index fixture", 100, 200).store(&vault);
+        let passport = CalendarPassportValue {
+            system: "fixture".to_owned(),
             uid: uid.to_owned(),
-            last_sequence: sequence,
-            content_hash: [7_u8; 32],
-            direction: CalendarPassportDirection::Inbound,
-            last_seen_at: 1_754_400_000,
+            last_sequence: 3,
+            content_hash: [7; 32],
+            direction: CalendarPassportDirection::Outbound,
+            last_seen_at: 100,
             presence: CalendarPassportPresence::Live,
-        }
-    }
-
-    #[test]
-    fn index_key_is_prefixed_sha256_of_the_uid() {
-        let digest = passport_digest("uid-1@example.com");
-        let key = PASSPORT_INDEX.key_bytes(&digest);
-        assert!(key.starts_with(side_table::CALENDAR_PASSPORT_UID_INDEX.prefix));
-        assert_eq!(
-            key.len(),
-            side_table::CALENDAR_PASSPORT_UID_INDEX.prefix.len() + 32
-        );
-        assert_ne!(digest, passport_digest("uid-2@example.com"));
-        assert_eq!(digest, passport_digest("uid-1@example.com"));
-    }
-
-    #[test]
-    fn encode_passport_value_matches_the_cal00_codec() {
-        let value = passport("google", "uid-1@example.com", 3);
-        let decoded = decode_passport_value(&encode_passport_value(&value)).expect("decode");
-        assert_eq!(decoded, value);
-    }
-
-    #[test]
-    fn resolve_event_by_uid_scans_synced_truth_on_index_miss() {
-        let (_dir, vault) = open_calendar_vault();
-        let event = crate::test_util::entity(0x61);
-        vault
-            .put_entity(
-                &event,
-                ENTITY_TYPE_EVENT,
-                crate::temporal::TimeRange { start: 1, end: 1 },
-                1,
-                b"event",
-            )
-            .expect("put event");
-        let claim_id = crate::test_util::entity(0x62);
+        };
+        let claim = crate::ClaimBody::new(
+            PREDICATE_CALENDAR_PASSPORT,
+            crate::ClaimSubject::Entity(event),
+            encode_passport_value(&passport),
+            1.0,
+            crate::ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        let claim_id = EntityId::now();
         vault
             .put_claim(
                 &claim_id,
-                &crate::claim::ClaimBody::new(
-                    PREDICATE_CALENDAR_PASSPORT,
-                    crate::claim::ClaimSubject::Entity(event),
-                    encode_passport_value(&passport("google", "uid-1@example.com", 3)),
-                    1.0,
-                    crate::claim::ClaimApprovalStatus::Approved,
-                    ClaimLifecycleStatus::Active,
-                )
-                .unwrap(),
-                crate::temporal::TimeRange { start: 1, end: 1 },
-                1,
+                &claim,
+                crate::TimeRange {
+                    start: 100,
+                    end: 100,
+                },
+                100,
             )
-            .expect("put passport claim");
-
-        // No index row at all: resolution scans the live claims, finds the
-        // EVENT, and repairs the shortcut.
-        let resolved = resolve_event_by_uid(&vault, "uid-1@example.com").expect("resolve");
-        assert_eq!(resolved, Some(event));
-        let with_index = resolve_event_by_uid(&vault, "uid-1@example.com").expect("resolve");
-        assert_eq!(with_index, Some(event));
-        assert_eq!(
-            resolve_event_by_uid(&vault, "uid-absent@example.com").expect("resolve"),
-            None
-        );
+            .unwrap();
+        index_passport_uid(&vault, uid, &event).unwrap();
+        {
+            let txn = vault.store.env.read_txn().unwrap();
+            let stored = vault.store.vault_meta.get(&txn, &key).unwrap().unwrap();
+            assert_eq!(stored.as_ref(), event.as_bytes());
+        }
+        drop(vault);
+        let reopened = Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+        {
+            let txn = reopened.store.env.read_txn().unwrap();
+            let stored = reopened.store.vault_meta.get(&txn, &key).unwrap().unwrap();
+            assert_eq!(stored.as_ref(), event.as_bytes());
+        }
+        assert_eq!(resolve_event_by_uid(&reopened, uid).unwrap(), Some(event));
     }
 }

@@ -12,11 +12,14 @@ use super::conflict::{
 use super::wake_plan::PreparedWake;
 
 mod prior;
-mod signals;
+pub(super) use prior::standing;
+pub(super) mod signals;
+pub(crate) use signals::facet as claim_facet;
 mod write;
 use super::partition::ConsolidationPartitionKey;
 use super::provenance::{ConsolidationSink, PromotionCandidate};
 use super::support::invalid_consolidation;
+use super::turn_text::{MessageSpan, TurnText, cited_evidence_bytes};
 use super::watermark::{TurnBodyFacts, decode_turn_body};
 use crate::attempt_queue::AttemptId;
 use crate::claim::{
@@ -25,20 +28,23 @@ use crate::claim::{
 use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_role};
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::federation::record_scope::disclosure_scope_for_stored_row;
 use crate::llm::{LlmResponse, Scope, ScopeResource, StepEffectBinding};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
 };
 use crate::write_envelope::WriteActor;
 use crate::{Result, Vault};
-pub(crate) use write::ConsolidationFence;
 pub use write::ScopedConsolidationWrite;
+pub(crate) use write::{ConsolidationFence, RowRevision};
 
 #[derive(Clone)]
 struct SourcePin {
     resource: ScopeResource,
     entity_type: u8,
     learned_at: u64,
+    /// The source's PROJECT; `None` for a stamp that does not decode.
+    project: Option<EntityId>,
     #[cfg(test)]
     trust_class: Option<crate::claim::ClaimSource>,
 }
@@ -67,6 +73,8 @@ pub(super) struct BranchResources<'a> {
     partition: ConsolidationPartitionKey,
     sources: BTreeMap<EntityId, SourcePin>,
     turns: BTreeSet<EntityId>,
+    /// Each turn's frozen text and the MESSAGE pins behind it.
+    texts: BTreeMap<EntityId, TurnText>,
     bucket: ScopeResource,
     output: ScopeResource,
     scope: Scope,
@@ -74,6 +82,11 @@ pub(super) struct BranchResources<'a> {
     fallback_binding: Cell<Option<FallbackOutputPin>>,
     signals: ScopeResource,
     priors: BTreeMap<EntityId, super::PriorHead>,
+    /// Priors that stand only provisionally: a correction may close them,
+    /// nothing attaches to them.
+    provisional: BTreeSet<EntityId>,
+    /// The known entities the extraction transcript lists.
+    known: super::neighbourhood::Neighbourhood,
     rules: super::routing::PredicateKeyRules,
     /// Every scoped read this branch made, folded. Methods read through
     /// `&self`, so the fold sits behind a lock.
@@ -92,7 +105,9 @@ impl<'a> BranchResources<'a> {
         attempt: AttemptId,
         requested: Option<&Scope>,
     ) -> Result<Self> {
-        Self::open_at_pin(vault, actor, partition, turns, attempt, requested, None)
+        Self::open_at_pin(
+            vault, actor, partition, turns, attempt, requested, None, None,
+        )
     }
 
     /// Consume the exact already-prepared branch; no new scope or source
@@ -112,9 +127,16 @@ impl<'a> BranchResources<'a> {
             plan.attempt_id(),
             plan.scope(),
             Some(wake),
+            Some(plan.neighbourhood()),
         )?;
-        for (id, pin) in &resources.sources {
-            if plan.version(id) != Some(&pin.resource) {
+        let messages = resources.texts.values().flat_map(TurnText::versions);
+        for (id, version) in resources
+            .sources
+            .iter()
+            .map(|(id, pin)| (*id, &pin.resource))
+            .chain(messages)
+        {
+            if plan.version(&id) != Some(version) {
                 return Err(invalid_consolidation(
                     "prepared source version changed or was not admitted",
                 ));
@@ -123,6 +145,10 @@ impl<'a> BranchResources<'a> {
         Ok(resources)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one branch's pinned inputs, each from its own wake or queue source"
+    )]
     pub(super) fn open_at_pin(
         vault: &'a Vault,
         actor: WriteActor,
@@ -131,6 +157,7 @@ impl<'a> BranchResources<'a> {
         attempt: AttemptId,
         requested: Option<&Scope>,
         prepared_wake: Option<&'a PreparedWake>,
+        known: Option<&super::neighbourhood::Neighbourhood>,
     ) -> Result<Self> {
         let actor_key = ScopedReadActorKey::with_actor_class(
             actor.entity_ref().to_hex(),
@@ -152,7 +179,7 @@ impl<'a> BranchResources<'a> {
         let source_ids: Vec<_> = std::iter::once(partition.conversation_ref)
             .chain(turns.iter().copied())
             .collect();
-        let (source_rows, read_receipt): (Vec<_>, _) = if let Some(pin) = prepared_wake {
+        let (source_rows, read_receipt, texts): (Vec<_>, _, _) = if let Some(pin) = prepared_wake {
             // The wake's one scoped read supplied these bytes; its receipt
             // travels with the branch.
             let mut read_receipt = read.read_receipt(None, 0)?;
@@ -162,12 +189,16 @@ impl<'a> BranchResources<'a> {
             (
                 source_ids.iter().map(|id| pin.source(id)).collect(),
                 read_receipt,
+                None,
             )
         } else {
-            let ScopedReadResult { value, receipt } =
-                read.get_entities_parts_with_receipt(&source_ids, None)?;
-            (value, receipt)
+            let ScopedReadResult {
+                value: (rows, texts),
+                receipt,
+            } = super::turn_text::read_sources(&read, &source_ids)?;
+            (rows, receipt, Some(texts))
         };
+        let position_txn = vault.store.env.read_txn()?;
         for (id, row) in source_ids.iter().zip(source_rows) {
             let (entity_type, learned_at, body) =
                 row.ok_or_else(|| invalid_consolidation("branch source is not readable"))?;
@@ -179,6 +210,7 @@ impl<'a> BranchResources<'a> {
             }
             let resource = document_version(*id, &body);
             readable.insert(resource.clone());
+            let project = stored_project(&vault.store, &position_txn, *id, entity_type, &body)?;
             #[cfg(test)]
             let trust_class = (entity_type == ENTITY_TYPE_TURN)
                 .then(|| {
@@ -188,7 +220,7 @@ impl<'a> BranchResources<'a> {
                             facts.speaker.as_deref(),
                             &vault.config.assistant_display_names,
                         ),
-                        false,
+                        facts.imported,
                     )
                 })
                 .flatten();
@@ -198,14 +230,25 @@ impl<'a> BranchResources<'a> {
                     resource,
                     entity_type,
                     learned_at,
+                    project,
                     #[cfg(test)]
                     trust_class,
                 },
             );
         }
+        // One read txn per thread: the admission reads below open their own.
+        drop(position_txn);
+        let texts = match (texts, prepared_wake) {
+            (Some(texts), _) => texts,
+            (None, Some(pin)) => pin.turn_texts(turns)?,
+            (None, None) => return Err(invalid_consolidation("branch turn text not read")),
+        };
+        let messages = texts.values().flat_map(TurnText::versions);
+        readable.extend(messages.map(|(_, version)| version.clone()));
         // The queued/caller scope is an actual upper bound supplied by the
         // trusted host. It binds TURNs to relationship/project slices through
-        // exact versions: neither axis is a TURN or conversation column.
+        // exact versions: neither axis is a conversation column. A TURN's own
+        // project stamp (pinned above) still bounds what it may support.
         let mut granted = Scope {
             world: partition.world_ref,
             facet: partition.facet_ref,
@@ -219,6 +262,15 @@ impl<'a> BranchResources<'a> {
         granted
             .writable
             .insert(super::gap::branch_gap_projection(&partition, &granted));
+        // An unscoped branch holds the heads its neighbourhood lists as exact
+        // priors, read through this actor's scoped read at the wake's pin.
+        for (_, version) in known
+            .into_iter()
+            .flat_map(super::neighbourhood::Neighbourhood::claim_versions)
+        {
+            granted.readable.insert(version.clone());
+            granted.writable.insert(version.clone());
+        }
         // Never replace explicit missing rights with generated defaults. Extra
         // exact documents are the caller's graph/project slice, not source TURNs.
         // A supplied scope is authority, not a request to infer more authority.
@@ -230,6 +282,7 @@ impl<'a> BranchResources<'a> {
             partition,
             sources,
             turns: turns.iter().copied().collect(),
+            texts,
             bucket,
             output,
             scope,
@@ -237,6 +290,8 @@ impl<'a> BranchResources<'a> {
             fallback_binding: Cell::new(None),
             signals,
             priors: BTreeMap::new(),
+            provisional: BTreeSet::new(),
+            known: known.cloned().unwrap_or_default(),
             rules: vault.consolidation_key_rules()?,
             read_receipt: std::sync::Mutex::new(read_receipt),
         };
@@ -248,6 +303,33 @@ impl<'a> BranchResources<'a> {
         }
         resources.admit_priors()?;
         Ok(resources)
+    }
+
+    /// The one PROJECT a claim drawn from these sources may land in: a
+    /// consolidated claim inherits its sources' exposure and never mixes
+    /// scopes (ONE-1592 P3). The default project is a project like any other.
+    /// A project-bound branch restricts the result to its project; it never
+    /// moves a source into it. `None` when the sources span projects, lie
+    /// outside the branch's project, or a project stamp does not decode.
+    pub(in crate::dreamer_consolidation) fn evidence_project(
+        &self,
+        refs: &[EntityId],
+    ) -> Result<Option<EntityId>> {
+        let mut project = self.scope.project;
+        for id in refs {
+            let pin = self
+                .sources
+                .get(id)
+                .ok_or_else(|| invalid_consolidation("unadmitted evidence source"))?;
+            match (pin.project, project) {
+                (None, _) => return Ok(None),
+                (Some(source), Some(project)) if source != project => return Ok(None),
+                (source, _) => project = source,
+            }
+        }
+        Ok(Some(
+            project.unwrap_or_else(crate::claim::default_project_id),
+        ))
     }
 
     pub(super) fn source_version(&self, id: &EntityId) -> Result<ScopeResource> {
@@ -343,9 +425,16 @@ impl<'a> BranchResources<'a> {
         }
         let (_, body) = self.source(scope, id)?;
         let (_, conversation) = self.source(scope, &self.partition.conversation_ref)?;
-        let facts = decode_turn_body(&body);
+        let mut facts = decode_turn_body(&body);
+        let text = self.texts.get(id);
+        facts.text = text
+            .ok_or_else(|| invalid_consolidation("unlisted branch turn"))?
+            .recheck(scope, &self.read, id)?;
         let parent = decode_turn_body(&conversation);
-        let edges = self.read.edges_out(id)?;
+        // Membership is the TURN's ChildOf edge alone. An edge of another
+        // kind may reach a row the Dreamer no longer reads, as a head an
+        // earlier branch of the pass closed, which never refuses the turn.
+        let edges = self.read.edges_out_of_kind(id, EdgeKind::ChildOf)?;
         self.fold_read_receipt(&edges.receipt)?;
         if edges.receipt.suppressed_count != 0 {
             return Err(invalid_consolidation("branch turn graph is incomplete"));
@@ -371,8 +460,27 @@ impl<'a> BranchResources<'a> {
         Ok(facts)
     }
 
+    /// The known entities this branch lists.
+    pub(super) fn known(&self) -> &super::neighbourhood::Neighbourhood {
+        &self.known
+    }
+
+    /// The scope the extraction call asks under: the branch's, less the
+    /// heads it holds that the listing does not show. The model never reads
+    /// those, and a replay's request stays the one its first run memoized.
+    pub(super) fn request_scope(&self) -> Scope {
+        let mut scope = self.scope.clone();
+        for version in self.known.unlisted_versions() {
+            scope.readable.remove(version);
+            scope.writable.remove(version);
+        }
+        scope
+    }
+
+    /// The extraction input: the known entities with the claims this branch
+    /// holds as priors, then each turn.
     pub(super) fn transcript(&self, scope: &Scope, turns: &[EntityId]) -> Result<String> {
-        let mut transcript = String::new();
+        let mut transcript = self.known.render(|id| self.priors.contains_key(id));
         for id in turns {
             let facts = self.turn(scope, id)?;
             transcript.push_str(&format!(
@@ -383,6 +491,15 @@ impl<'a> BranchResources<'a> {
             ));
         }
         Ok(transcript)
+    }
+
+    /// The MESSAGE words a citation names: the slices a witnessed TURN range
+    /// covers, at the revisions this branch froze. Any other source has none.
+    pub(super) fn message_spans(&self, entry: &SwarmEvidenceRef) -> Result<Vec<MessageSpan>> {
+        match self.texts.get(&entry.source_id) {
+            Some(text) if entry.claim_id.is_none() => text.spans(entry.byte_range),
+            _ => Ok(Vec::new()),
+        }
     }
 
     /// Parent-only evidence accounting: one actor-scoped read transaction for
@@ -455,10 +572,14 @@ impl<'a> BranchResources<'a> {
                         facts.speaker.as_deref(),
                         &self.read.vault().config.assistant_display_names,
                     );
-                    turn_trust_class(role, false)
+                    turn_trust_class(role, facts.imported)
                         .ok_or_else(|| invalid_consolidation("inadmissible branch evidence role"))?
                 };
-                let bytes = cited_evidence_bytes(*entry, &body)?;
+                let text = self.texts.get(&entry.source_id);
+                let text = text
+                    .map(|text| text.readable_text(&self.scope))
+                    .transpose()?;
+                let bytes = cited_evidence_bytes(*entry, &body, text.flatten())?;
                 Ok(VerifiedSwarmEvidence {
                     source_id: entry.source_id,
                     content_hash: swarm_evidence_content_hash(&bytes),
@@ -507,6 +628,7 @@ impl<'a> BranchResources<'a> {
                         facts.world,
                         facts.facet,
                         facts.rel,
+                        facts.project,
                         facts.topic.as_deref(),
                     )?
             {
@@ -524,6 +646,11 @@ impl<'a> BranchResources<'a> {
                     self.prior(*id)?;
                     self.source(scope, id)?;
                 }
+            }
+            if self.evidence_project(&candidate.evidence_turn_refs)? != Some(facts.project) {
+                return Err(invalid_consolidation(
+                    "candidate crossed its sources' project",
+                ));
             }
         }
         Ok(())
@@ -559,6 +686,7 @@ impl<'a> BranchResources<'a> {
             self.read.vault(),
             scope,
             &self.partition,
+            &self.write_fence(),
             persisted,
             now,
         )
@@ -599,7 +727,14 @@ impl<'a> BranchResources<'a> {
                 }
             }
         }
-        super::gap::upsert_branch_gap_queue(self.read.vault(), scope, &self.partition, gaps, now)
+        super::gap::upsert_branch_gap_queue(
+            self.read.vault(),
+            scope,
+            &self.partition,
+            &self.write_fence(),
+            gaps,
+            now,
+        )
     }
 
     pub(super) fn accept_verified(
@@ -636,29 +771,6 @@ impl<'a> BranchResources<'a> {
     }
 }
 
-/// A byte range is measured over the exact UTF-8 TURN text the child saw in
-/// the transcript, never over its MessagePack storage framing. Whole TURNs
-/// retain their existing body-hash identity; CLAIM ids name the stored body.
-pub(crate) fn cited_evidence_bytes(locator: SwarmEvidenceRef, body: &[u8]) -> Result<Vec<u8>> {
-    if let Some((start, end)) = locator.byte_range {
-        let text = decode_turn_body(body)
-            .text
-            .ok_or_else(|| invalid_consolidation("cited turn has no text"))?;
-        if start >= end {
-            return Err(invalid_consolidation("empty evidence byte range"));
-        }
-        let bytes = text
-            .as_bytes()
-            .get(start..end)
-            .ok_or_else(|| invalid_consolidation("invalid evidence byte range"))?;
-        std::str::from_utf8(bytes)
-            .map_err(|_| invalid_consolidation("evidence range splits UTF-8 text"))?;
-        Ok(bytes.to_vec())
-    } else {
-        Ok(body.to_vec())
-    }
-}
-
 /// Native TURN source classification at the same bytes the orchestrator
 /// pinned; a generated assistant turn never upgrades the Dreamer floor.
 pub(crate) fn native_turn_source(vault: &Vault, body: &[u8]) -> Result<crate::claim::ClaimSource> {
@@ -667,7 +779,7 @@ pub(crate) fn native_turn_source(vault: &Vault, body: &[u8]) -> Result<crate::cl
         facts.speaker.as_deref(),
         &vault.config.assistant_display_names,
     );
-    turn_trust_class(role, false)
+    turn_trust_class(role, facts.imported)
         .ok_or_else(|| invalid_consolidation("inadmissible evidence turn role"))
 }
 
@@ -708,6 +820,33 @@ pub(super) fn document_version(document: EntityId, body: &[u8]) -> ScopeResource
             bytes_to_hex_lower(&swarm_evidence_content_hash(body))
         ),
     }
+}
+
+/// A stored row's PROJECT: a CLAIM's own body stamp; for any other row its
+/// record position, where both TURN write doors stamp a leader-chat turn's
+/// project, the same stamp the scoped read doors select. The vault default
+/// where the row carries no position; `None` where the position's audience
+/// is not exactly one project.
+pub(crate) fn stored_project(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    body: &[u8],
+) -> Result<Option<EntityId>> {
+    if kind == ENTITY_TYPE_CLAIM {
+        return Ok(Some(
+            crate::claim::decode_claim_body(body, true)?.scope_project,
+        ));
+    }
+    let position = disclosure_scope_for_stored_row(store, txn, id, kind, body)?;
+    Ok(match position.map(|position| position.audience) {
+        None => Some(crate::claim::default_project_id()),
+        Some(crate::federation::ScopeAxis::Some(ids)) if ids.len() == 1 => {
+            ids.into_iter().next().map(|id| id.0)
+        }
+        Some(_) => None,
+    })
 }
 
 /// Named mechanical projection for the real queued TURN slice. Its scope

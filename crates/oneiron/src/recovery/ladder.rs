@@ -250,6 +250,17 @@ pub fn recover_vault_window(
     let candidate = rebuild_vault_window_from_canonical(snapshot)?;
     crate::sync::bridge::preflight_canonical_recovery(vault, materializer, snapshot, &candidate)?;
     let prepared = prepare_recovery(path, snapshot, budget)?;
+    // A task whose fact the source refused reads as a refusal here before
+    // the replay can read its authority.
+    if !snapshot.suppressed_tasks.is_empty() {
+        vault.with_write_txn(|txn| {
+            crate::task_authority::restore_suppressed_in_txn(
+                &vault.store,
+                txn,
+                &snapshot.suppressed_tasks,
+            )
+        })?;
+    }
     let key = crate::sync::types::WindowKey::new(&snapshot.window);
     crate::sync::window::forward_recovery(vault, &prepared.window, materializer, &key, snapshot)?;
     // Forward replay may quarantine semantic/authority failures. Never mark a
@@ -273,16 +284,29 @@ pub fn recover_vault_window(
             let target = crate::EntityId::from_bytes(edge.target)?;
             let kind = crate::EdgeKind::try_from_u8(edge.kind)
                 .ok_or_else(|| invalid("edge kind materialization"))?;
-            if crate::ports::EdgeStoreStaging::port_edge_encoded(
+            let stored = crate::ports::EdgeStoreStaging::port_edge_encoded(
                 &vault.store,
                 &txn,
                 &source,
                 kind,
                 &target,
-            )?
-            .as_deref()
-                != Some(edge.value.as_slice())
-            {
+            )?;
+            // Local invalidation outranks the image's support stamp: the
+            // replay lands it retracted where every local wrapper withdrew.
+            let landed = match stored.as_deref() {
+                Some(stored) => {
+                    stored == edge.value.as_slice()
+                        || crate::provenance::holds_withdrawn_image(
+                            &vault.store,
+                            &txn,
+                            &crate::provenance::EdgeRef::new(source, kind, target),
+                            &edge.value,
+                            stored,
+                        )?
+                }
+                None => false,
+            };
+            if !landed {
                 return Err(invalid("edge materialization incomplete"));
             }
         }

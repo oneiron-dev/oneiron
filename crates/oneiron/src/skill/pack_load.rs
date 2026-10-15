@@ -27,7 +27,7 @@ impl Vault {
     /// MACHINE), even when it loads only shared skills or no skill at all.
     /// The marker is written before terminalization and is immutable.
     pub fn bind_actor_attempt(&self, attempt: AttemptId, actor: &EntityId) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let row = AttemptQueue::new(self)
                 .get_in_txn(txn, attempt)?
                 .ok_or(Error::EntityNotFound)?;
@@ -128,7 +128,7 @@ impl Vault {
         executor_model: Option<&str>,
         at: u64,
     ) -> Result<LoadedSkillPack> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if !crate::vault::live_entity_row_in_txn(&self.store, txn, skill)?.is_live() {
                 return Err(Error::EntityNotFound);
             }
@@ -275,7 +275,7 @@ impl Vault {
         resident: Option<EntityId>,
         at: u64,
     ) -> Result<ClaimBody> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let body = self
                 .get_claim_in_txn(txn, claim)?
                 .ok_or(Error::EntityNotFound)?;

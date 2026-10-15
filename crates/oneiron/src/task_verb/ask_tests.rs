@@ -720,7 +720,7 @@ fn consult_result_with_an_option_settles_its_member_task() -> Result<()> {
             option: Some(yes.clone()),
             evidence_refs: vec![fixture.question],
         },
-        completed_at: 1_001,
+        completed_at: 1_000,
     };
     fixture
         .vault
@@ -751,7 +751,7 @@ fn consult_result_replay_requires_the_stored_ask_option() -> Result<()> {
             option: Some(TaskAskOptionId::new("yes")?),
             evidence_refs: vec![fixture.question],
         },
-        completed_at: 1_001,
+        completed_at: 1_000,
     };
     let first = memory.land_consult_result(task, &input)?;
     assert!(!first.idempotent_replay);
@@ -809,7 +809,7 @@ fn consult_result_without_an_option_on_an_options_ask_is_refused_before_the_writ
             option: None,
             evidence_refs: vec![fixture.question],
         },
-        completed_at: 1_001,
+        completed_at: 1_000,
     };
     let refused = fixture
         .vault
@@ -890,6 +890,67 @@ fn ask_decided_despite_an_uncounted_word_binds_its_outcome() -> Result<()> {
         TaskAskDecision::Answer(TaskAskOptionId::new("yes")?)
     );
     assert!(result.settlement.outcome_answer_ref.is_some());
+    Ok(())
+}
+
+// H328: one ask counts once on the asker's own ask window, whatever its
+// recipients; its replay never counts again. It counts beside the create
+// window, never in it.
+#[test]
+fn an_ask_counts_once_on_the_askers_own_window() -> Result<()> {
+    let fixture = RuledAskFixture::new(2)?;
+    let spec = fixture.spec();
+    let handle = fixture.ask(&spec)?;
+    assert_eq!(fixture.ask(&spec)?, handle);
+    assert_eq!(
+        fixture.vault.task_ask_count_for_test(fixture.owner, 60)?,
+        1,
+        "H328: an ask was not counted on the asker's window"
+    );
+    assert_eq!(
+        fixture.vault.task_create_count(fixture.owner, 60)?,
+        0,
+        "an ask counted on the create window"
+    );
+    Ok(())
+}
+
+// H331: a collection whose only reply lacks a required source is not a
+// completed collection; the same reply citing the source still is.
+#[test]
+fn a_collection_with_no_counted_word_is_not_collected() -> Result<()> {
+    let collect = |cite_source: bool| -> Result<_> {
+        let fixture = RuledAskFixture::new(1)?;
+        let mut spec = fixture.spec();
+        let mut class = fixture.policy(false);
+        class.required_sources = [fixture.question].into();
+        spec.class = Some(class);
+        spec.decide = None;
+        let handle = fixture.ask(&spec)?;
+        let sources = if cite_source {
+            [fixture.question].into()
+        } else {
+            Default::default()
+        };
+        fixture.word_with_sources(handle, 0, "yes", sources)?;
+        fixture.clock.set(1_101);
+        fixture.result(handle)
+    };
+    let uncounted = collect(false)?;
+    assert_eq!(
+        uncounted
+            .evidence
+            .iter()
+            .map(|entry| entry.reason)
+            .collect::<Vec<_>>(),
+        [TaskAskEvidenceReason::MissingSource]
+    );
+    assert_ne!(uncounted.decision, TaskAskDecision::Collected);
+    assert!(uncounted.fallback.is_some());
+
+    let counted = collect(true)?;
+    assert_eq!(counted.decision, TaskAskDecision::Collected);
+    assert_eq!(counted.fallback, None);
     Ok(())
 }
 
@@ -1178,6 +1239,28 @@ fn ask_human_no_dominates_companion_inform_yes_in_the_same_revision() -> Result<
     Ok(())
 }
 
+/// F11 / H218: the ask door completed a member consult past its deadline
+/// before the expiry sweep ran. The late word still counts under the ask's
+/// cutoff; the overdue member consult stays open for the sweep.
+#[test]
+fn an_overdue_member_consult_is_left_for_the_sweep() -> Result<()> {
+    let fixture = RuledAskFixture::new(2)?;
+    let handle = fixture.ask(&fixture.all())?;
+    let on_time = fixture.word(handle, 0, "yes")?;
+    fixture.clock.set(1_101);
+    let late = fixture.word(handle, 1, "yes")?;
+    let member = |answer: &TaskAskAnswer| -> Result<_> {
+        Ok(
+            super::wire_decode::task_verb_body(&fixture.vault, answer.task_ref)?
+                .expect("member task"),
+        )
+    };
+    assert!(member(&on_time)?.terminal().is_some());
+    assert!(member(&late)?.terminal().is_none());
+    assert_eq!(fixture.result(handle)?.evidence.len(), 2);
+    Ok(())
+}
+
 #[test]
 fn ask_cutoff_includes_word_admitted_after_timer_fires_before_close() -> Result<()> {
     let fixture = RuledAskFixture::new(2)?;
@@ -1397,6 +1480,14 @@ fn ask_authority_schema_matches_the_serialized_scope_not_its_private_fields() ->
 /// Agent A, an auto-ceiling asker holding one live TASK whose spec binds the
 /// fixture's governance class over both people.
 fn governed_agent(fixture: &RuledAskFixture) -> Result<(EntityId, TaskAskClass)> {
+    governed_agent_in(fixture, None)
+}
+
+/// An auto-ceiling agent assigned one governed TASK, born in `world`.
+fn governed_agent_in(
+    fixture: &RuledAskFixture,
+    world: Option<EntityId>,
+) -> Result<(EntityId, TaskAskClass)> {
     let agent = EntityId::now();
     fixture.vault.put_entity(
         &agent,
@@ -1420,7 +1511,7 @@ fn governed_agent(fixture: &RuledAskFixture) -> Result<(EntityId, TaskAskClass)>
         &rmp_serde::to_vec_named(&manifest)?,
     )?;
     let class = fixture.policy(true);
-    assign_governed_task(fixture, agent, &class)?;
+    assign_governed_task(fixture, agent, &class, world)?;
     Ok((agent, class))
 }
 
@@ -1428,20 +1519,26 @@ fn assign_governed_task(
     fixture: &RuledAskFixture,
     agent: EntityId,
     class: &TaskAskClass,
+    world: Option<EntityId>,
 ) -> Result<()> {
     let value = rmpv::decode::read_value(&mut rmp_serde::to_vec_named(class)?.as_slice())?;
-    fixture
-        .vault
-        .memory(fixture.owner, EdgeActorClass::Human)
-        .tasks_create(
-            &TaskCreateSpec::new(
-                rmpv::Value::Map(vec![(rmpv::Value::from("ask_class"), value)]),
-                None,
-                None,
-                Some(1_000),
-            )
-            .with_assignee(TaskAssignee::Peer { actor_ref: agent }),
-        )?;
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let memory = match world {
+        Some(world) => memory.with_birth_position(crate::federation::record_scope::BirthPosition {
+            world: Some(world),
+            facet: None,
+        }),
+        None => memory,
+    };
+    memory.tasks_create(
+        &TaskCreateSpec::new(
+            rmpv::Value::Map(vec![(rmpv::Value::from("ask_class"), value)]),
+            None,
+            None,
+            Some(1_000),
+        )
+        .with_assignee(TaskAssignee::Peer { actor_ref: agent }),
+    )?;
     Ok(())
 }
 
@@ -1509,7 +1606,7 @@ fn omitted_task_ref_cannot_admit_proceed_on_a_governed_task() -> Result<()> {
 fn omitted_task_ref_is_refused_when_two_governed_tasks_could_bind() -> Result<()> {
     let fixture = RuledAskFixture::new(2)?;
     let (agent, class) = governed_agent(&fixture)?;
-    assign_governed_task(&fixture, agent, &class)?;
+    assign_governed_task(&fixture, agent, &class, None)?;
     let mut spec = fixture.all();
     spec.default = TaskAskDefault::Hold;
     let refused = fixture
@@ -3014,5 +3111,442 @@ fn manifest_retry_limit_bounds_pending_notice_work() -> Result<()> {
         fixture.vault.retry_pending_ask_soft_confirms(usize::MAX)?,
         1
     );
+    Ok(())
+}
+
+/// ASTRA-9A-2-R2 F7: a task's ask class bounds every ask bound to the task. A
+/// restore over the vault from before the owner narrowed it is refused.
+#[test]
+fn a_restore_never_widens_a_task_ask_class_narrowed_since() -> Result<()> {
+    let fixture = RuledAskFixture::new(2)?;
+    let spec = |class: &TaskAskClass| -> Result<rmpv::Value> {
+        let value = rmpv::decode::read_value(&mut rmp_serde::to_vec_named(class)?.as_slice())?;
+        Ok(rmpv::Value::Map(vec![(
+            rmpv::Value::from("ask_class"),
+            value,
+        )]))
+    };
+    let class = fixture.policy(false);
+    let task = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .tasks_create(&TaskCreateSpec::new(spec(&class)?, None, None, Some(1_000)))?
+        .task_ref
+        .expect("task ref");
+    let backups = crate::test_support::restore_tempdir();
+    let image = backups.path().join("backup");
+    fixture.vault.snapshot_checkpoint(&image, 100)?;
+
+    let mut narrowed = class;
+    let dropped = fixture.people[0];
+    narrowed.allowed_recipients.remove(&dropped);
+    narrowed.required_people.remove(&dropped);
+    narrowed.disclosure.remove(&dropped);
+    narrowed.minimum_responses -= 1;
+    let mut body =
+        super::wire_decode::task_verb_body(&fixture.vault, task)?.expect("typed task body");
+    body.spec = spec(&narrowed)?;
+    let now = 1_005;
+    fixture.vault.put_entity(
+        &task,
+        crate::registry::ENTITY_TYPE_TASK,
+        crate::temporal::TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+        &super::wire_encode::encode_task_verb_body(body),
+    )?;
+
+    let destination = backups.path().join("restored");
+    let error = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        fixture.vault.config.clone(),
+        &fixture.vault,
+        200,
+    )
+    .err()
+    .expect("the restore must be refused");
+    assert!(error.to_string().contains("task authority"), "{error}");
+    assert!(!destination.exists());
+    Ok(())
+}
+
+/// Sol R7 F3: an ask answers from the class of the TASK it names, so it lists
+/// that TASK among the rows its answer was derived from. Once the TASK's
+/// world is device-local, a caller off this device reads it as no TASK and
+/// takes no class from it; on this device the ask still reads it.
+#[test]
+fn an_ask_off_this_device_takes_nothing_from_a_device_local_task() -> Result<()> {
+    use crate::claim::CallerLocality;
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let world = EntityId::now();
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"world",
+    )?;
+    let task = vault
+        .memory(owner, EdgeActorClass::Human)
+        .with_birth_position(crate::federation::record_scope::BirthPosition {
+            world: Some(world),
+            facet: None,
+        })
+        .tasks_create(&TaskCreateSpec::new(
+            rmpv::Value::from("orchid errand"),
+            None,
+            None,
+            None,
+        ))?
+        .task_ref
+        .unwrap();
+    let mut input = spec(&vault, owner, "device-local");
+    input.task_ref = Some(task);
+    let question = input.what.reference.entity_ref();
+    let can = |locality| {
+        let producers = crate::memory::ProducerRows::default();
+        let preflight = vault
+            .memory(owner, EdgeActorClass::Human)
+            .at(locality)
+            .listing_producers(&producers)
+            .tasks_can_ask(&input);
+        (
+            preflight.map_err(|error| format!("{error:?}")),
+            producers.take(),
+        )
+    };
+    let (portable, listed) = can(CallerLocality::OffDevice);
+    let portable = portable?;
+    assert_eq!(listed, vec![task, question]);
+
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    let (kept, listed) = can(CallerLocality::OffDevice);
+    assert!(kept.is_err(), "{kept:?}");
+    assert_eq!(listed, vec![task]);
+    let (here, listed) = can(CallerLocality::OnDevice);
+    assert_eq!(here?, portable);
+    assert_eq!(listed, vec![task, question]);
+    Ok(())
+}
+
+/// Sol R8 F2: an agent's omitted ask target is the human who assigned it a
+/// live TASK, so the ask lists that TASK among the rows its answer was
+/// derived from. Off this device a device-local assignment names no
+/// principal; on this device it still does.
+#[test]
+fn an_agents_omitted_target_lists_the_assignment_it_comes_from() -> Result<()> {
+    use crate::claim::CallerLocality;
+    let (_dir, vault) = super::tests::support::open_vault();
+    let human = vault.ensure_embedded_owner_actor()?;
+    let agent = super::tests::support::own_agent(&vault);
+    let question = super::tests::support::consult_turn(&vault, 0x81);
+    let world = EntityId::now();
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"world",
+    )?;
+    let assignment = vault
+        .memory(human, EdgeActorClass::Human)
+        .with_birth_position(crate::federation::record_scope::BirthPosition {
+            world: Some(world),
+            facet: None,
+        })
+        .tasks_create(
+            &TaskCreateSpec::new(rmpv::Value::from("owned assignment"), None, None, None)
+                .with_assignee(TaskAssignee::Peer { actor_ref: agent }),
+        )?
+        .task_ref
+        .unwrap();
+    let spec = TaskAskSpec::shorthand(
+        None,
+        TaskAskQuestion::new(question),
+        Some(u64::MAX),
+        TaskAskDefault::Hold,
+    );
+    let can = |locality| {
+        let producers = crate::memory::ProducerRows::default();
+        let preflight = vault
+            .memory(agent, EdgeActorClass::Agent)
+            .at(locality)
+            .listing_producers(&producers)
+            .tasks_can_ask(&spec);
+        (
+            preflight.map_err(|error| format!("{error:?}")),
+            producers.take(),
+        )
+    };
+    let (portable, listed) = can(CallerLocality::OffDevice);
+    let portable = portable?;
+    assert_eq!(portable.recipients[0].who, human);
+    assert_eq!(listed, vec![assignment, question.entity_ref()]);
+
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    let (kept, listed) = can(CallerLocality::OffDevice);
+    assert!(kept.is_err(), "{kept:?}");
+    assert!(listed.is_empty(), "{listed:?}");
+    let (here, listed) = can(CallerLocality::OnDevice);
+    assert_eq!(here?, portable);
+    assert_eq!(listed, vec![assignment, question.entity_ref()]);
+    Ok(())
+}
+
+/// Sol R8 F5: an ask's status is settled from every member TASK, so a read
+/// of it through its handle lists them all.
+#[test]
+fn an_asks_status_lists_every_member_task() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let input = spec(&vault, owner, "members");
+    let receipt = vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_ask(&input)?;
+    let producers = crate::memory::ProducerRows::default();
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .listing_producers(&producers)
+        .tasks_ask_status(receipt.handle)?;
+    let mut members = receipt.task_refs;
+    members.push(input.what.reference.entity_ref());
+    assert_eq!(producers.take(), members);
+    Ok(())
+}
+
+/// Sol R9 F1, F2: an ask is derived from its question and context rows, so
+/// a preflight lists them, and so does each of its handle's reads of the
+/// ask. Once a context CLAIM's world is device-local, a caller off this
+/// device reads that CLAIM as no row: it can neither preflight nor ask with
+/// it, and an ask holding it reads as no ask. On this device each still
+/// stands.
+#[test]
+fn an_ask_off_this_device_reads_no_device_local_context_claim() -> Result<()> {
+    use crate::claim::CallerLocality;
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    super::tests::support::permit_outcome_fixture_predicates(&vault, owner)?;
+    let world = EntityId::now();
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"world",
+    )?;
+    let context = EntityId::now();
+    let mut body = crate::ClaimBody::new(
+        "profile.orchid",
+        crate::ClaimSubject::Entity(owner),
+        rmpv::Value::from("orchid ledger"),
+        0.8,
+        crate::ClaimApprovalStatus::Approved,
+        crate::ClaimLifecycleStatus::Active,
+    )?;
+    body.world = Some(world);
+    vault.put_claim(&context, &body, crate::TimeRange { start: 1, end: 1 }, 1)?;
+    let with_context = |key: &str| {
+        let mut input = spec(&vault, owner, key);
+        input.what.context_refs = vec![ConsultPayloadRef::Claim(context)];
+        input
+    };
+    let input = with_context("context");
+    let receipt = vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_ask(&input)?;
+    let read = |locality, status: bool| {
+        let producers = crate::memory::ProducerRows::default();
+        let memory = vault
+            .memory(owner, EdgeActorClass::Human)
+            .at(locality)
+            .listing_producers(&producers);
+        let read = if status {
+            memory.tasks_ask_status(receipt.handle).map(|_| ())
+        } else {
+            memory.tasks_can_ask(&input).map(|_| ())
+        };
+        (read.map_err(|error| format!("{error:?}")), producers.take())
+    };
+    for status in [false, true] {
+        let (portable, listed) = read(CallerLocality::OffDevice, status);
+        portable?;
+        assert!(listed.contains(&context), "{status}: {listed:?}");
+    }
+
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+    for status in [false, true] {
+        let (kept, listed) = read(CallerLocality::OffDevice, status);
+        assert!(kept.is_err(), "{status}: {kept:?}");
+        assert!(listed.contains(&context), "{status}: {listed:?}");
+        let (here, _) = read(CallerLocality::OnDevice, status);
+        here?;
+    }
+    let asked = vault
+        .memory(owner, EdgeActorClass::Human)
+        .at(CallerLocality::OffDevice)
+        .tasks_ask(&with_context("context-again"));
+    assert!(asked.is_err(), "{asked:?}");
+    Ok(())
+}
+
+/// Wonder R10 F1: an ask that omits `task_ref` takes its class from the
+/// caller's governed TASK, so its group keeps that TASK and each read of the
+/// ask through its handle lists it. Once the TASK's world is device-local, a
+/// caller off this device reads the ask as no ask; on this device it still
+/// reads it. Sol R11 F1: a group stored before groups kept that TASK reads
+/// as no ask on this device too, so no answer kept for a later replay is
+/// derived from a TASK it cannot list.
+#[test]
+fn an_ask_off_this_device_takes_no_class_from_a_device_local_governed_task() -> Result<()> {
+    use crate::claim::CallerLocality;
+    let fixture = RuledAskFixture::new(2)?;
+    let world = EntityId::now();
+    fixture.vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"world",
+    )?;
+    let (agent, class) = governed_agent_in(&fixture, Some(world))?;
+    let mut spec = fixture.all();
+    spec.default = TaskAskDefault::Hold;
+    let receipt = fixture
+        .vault
+        .memory(agent, EdgeActorClass::Agent)
+        .tasks_ask(&spec)?;
+    let txn = fixture.vault.store.env.read_txn()?;
+    let group = super::ask_record::read_group(&fixture.vault, &txn, receipt.handle.group_ref)?
+        .ok_or("stored ask group")?;
+    drop(txn);
+    assert_eq!(group.context_class, Some(class));
+    let governed = group.governed_task.ok_or("the governed TASK is kept")?;
+    let status = |locality| {
+        let producers = crate::memory::ProducerRows::default();
+        let status = fixture
+            .vault
+            .memory(agent, EdgeActorClass::Agent)
+            .at(locality)
+            .listing_producers(&producers)
+            .tasks_ask_status(receipt.handle);
+        (
+            status.map_err(|error| format!("{error:?}")),
+            producers.take(),
+        )
+    };
+    let (portable, listed) = status(CallerLocality::OffDevice);
+    let portable = portable?;
+    assert!(listed.contains(&governed), "{listed:?}");
+
+    fixture
+        .vault
+        .keep_world_on_this_machine_for_test(world, true)?;
+    let (kept, listed) = status(CallerLocality::OffDevice);
+    assert!(kept.is_err(), "{kept:?}");
+    assert!(listed.contains(&governed), "{listed:?}");
+    let (here, _) = status(CallerLocality::OnDevice);
+    assert_eq!(here?, portable);
+
+    let txn = fixture.vault.store.env.read_txn()?;
+    let raw = fixture
+        .vault
+        .get_raw_in(&txn, &receipt.handle.group_ref)?
+        .ok_or("stored ask group")?;
+    drop(txn);
+    let (header, body) = raw.split_at(crate::batch::ENTITY_METADATA_HEADER_LEN);
+    let rmpv::Value::Map(fields) = rmpv::decode::read_value(&mut &body[..])? else {
+        return Err("an ask group is a map".into());
+    };
+    let older = rmpv::Value::Map(
+        fields
+            .into_iter()
+            .filter(|(key, _)| key.as_str() != Some("governed_task"))
+            .collect(),
+    );
+    let mut stored = header.to_vec();
+    rmpv::encode::write_value(&mut stored, &older)?;
+    fixture.vault.with_write_txn(|wtxn| {
+        fixture
+            .vault
+            .store
+            .entities
+            .put(wtxn, receipt.handle.group_ref.as_bytes(), &stored)?;
+        Ok(())
+    })?;
+    let (here, _) = status(CallerLocality::OnDevice);
+    assert!(here.is_err(), "{here:?}");
+    Ok(())
+}
+
+/// Sol R8 F1, F3: the TASK scans an ask and a room thread read take place
+/// at the caller's locality. Off this device a TASK a device-local world
+/// keeps takes no place in a page, a scan cap or the room census guard, so
+/// none of their refusals counts it; on this device each still does.
+#[test]
+fn task_scans_off_this_device_count_no_device_local_task() -> Result<()> {
+    use crate::claim::CallerLocality;
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let world = EntityId::now();
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"world",
+    )?;
+    // The cap fits the TASKs the vault opened with and no more.
+    let cap = vault
+        .entities_by_type(crate::registry::ENTITY_TYPE_TASK)?
+        .len()
+        + 1;
+    let root = EntityId::now();
+    for _ in 0..2 {
+        vault
+            .memory(owner, EdgeActorClass::Human)
+            .with_birth_position(crate::federation::record_scope::BirthPosition {
+                world: Some(world),
+                facet: None,
+            })
+            .tasks_create(&TaskCreateSpec::new(
+                rmpv::Value::Map(vec![(
+                    rmpv::Value::from("thread_ref"),
+                    rmpv::Value::from(root.to_hex()),
+                )]),
+                None,
+                None,
+                None,
+            ))?;
+    }
+    vault.keep_world_on_this_machine_for_test(world, true)?;
+
+    let exhausted = |locality| -> Result<bool> {
+        let txn = vault.store.env.read_txn()?;
+        let scan = super::presence_pages::scan_admitted_tasks_with_limits_in(
+            &vault, &txn, locality, cap, cap,
+        )?;
+        Ok(scan.source_exhausted)
+    };
+    assert!(exhausted(CallerLocality::OffDevice)?);
+    assert!(!exhausted(CallerLocality::OnDevice)?);
+
+    let roots = std::collections::BTreeMap::from([(root, root)]);
+    let members = std::collections::BTreeSet::from([owner.to_hex()]);
+    let census = |locality| {
+        let memory = vault.memory(owner, EdgeActorClass::Human).at(locality);
+        super::room_thread::thread_tasks_capped(&memory, &roots, &members, 1, 1)
+            .map(|tasks| tasks.len())
+            .map_err(|error| format!("{error:?}"))
+    };
+    assert_eq!(census(CallerLocality::OffDevice)?, 0);
+    assert!(census(CallerLocality::OnDevice).is_err());
     Ok(())
 }

@@ -11,6 +11,7 @@ mod tombstone_pass;
 use std::collections::HashSet;
 
 use super::bridge::Materializer;
+use super::loro_support::TombstoneIndex;
 use super::quarantine;
 use super::queue::scrub_receiver_outbox_on_remote_hard_delete_in_txn;
 use super::types::WindowKey;
@@ -29,7 +30,8 @@ struct RematCtx<'a> {
     trusted: Option<&'a crate::recovery::CanonicalSnapshot>,
     entities_map: LoroMap,
     edges_map: LoroMap,
-    tombstones_map: LoroMap,
+    /// The tombstones map indexed once for every pass of this rematerialization (H15).
+    tombstones: TombstoneIndex,
 }
 
 /// Cross-pass mutable ledgers: the `marked` snapshot plus the accumulators
@@ -79,6 +81,7 @@ fn forward_with_recovery(
     window_key: &WindowKey,
     trusted: Option<&crate::recovery::CanonicalSnapshot>,
 ) -> Result<u32> {
+    let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     if window_key.world().is_some() {
         let mut witnesses = Vec::new();
         doc.get_map("retained_claim_worlds").for_each(|raw, value| {
@@ -105,6 +108,7 @@ fn forward_with_recovery(
                 vault,
                 &txn,
                 doc,
+                &tombstones,
                 &id,
                 &blob,
                 window_key,
@@ -145,7 +149,6 @@ fn forward_with_recovery(
     let lease_vault_id = materializer.lease_vault_id();
     let entities_map = doc.get_map("entities");
     let edges_map = doc.get_map("edges");
-    let tombstones_map = doc.get_map("tombstones");
 
     // Entity-scoped retry markers pending for this window, loaded up front:
     // the entity/edge passes discharge a marker only via an actual healing
@@ -163,7 +166,7 @@ fn forward_with_recovery(
         trusted,
         entities_map,
         edges_map,
-        tombstones_map,
+        tombstones,
     };
     let mut ledger = RematLedger {
         marked,
@@ -194,7 +197,7 @@ fn forward_with_recovery(
         let witnesses = doc.get_map("retained_claim_worlds");
         let mut rows = Vec::new();
         witnesses.for_each(|raw, _| rows.push(raw.to_owned()));
-        vault.with_write_txn(|txn| {
+        vault.with_write_txn_grouped(|txn| {
             for raw in &rows {
                 let id = EntityId::from_hex(raw)?;
                 let Some(blob) =
@@ -208,6 +211,7 @@ fn forward_with_recovery(
                     vault,
                     txn,
                     doc,
+                    &ctx.tombstones,
                     &id,
                     &blob,
                     window_key,
@@ -226,12 +230,12 @@ fn forward_with_recovery(
             Ok(())
         })?;
     }
-    crate::recovery::materialize_retained_shells(vault, doc)?;
+    crate::recovery::materialize_retained_shells(vault, doc, &ctx.tombstones)?;
     if let Some(snapshot) = trusted.filter(|_| window_key.world().is_some()) {
         // The validated canonical artifact binds every retained soft shell
         // to this world. Persist that address before the edge pass and the
         // next ordinary reopen consult the same durable proof.
-        vault.with_write_txn(|txn| {
+        vault.with_write_txn_grouped(|txn| {
             for shell in &snapshot.retained_claim_worlds {
                 let id = EntityId::from_bytes(shell.id)?;
                 vault.store.sync_state.put(
@@ -246,7 +250,7 @@ fn forward_with_recovery(
     edge_pass::run(&ctx, &mut ledger)?;
     // A SESSION/SpawnedBy or ChildOf in this window can satisfy a bounded
     // Parent obligation left by a different window whose doc is not loaded.
-    vault.with_write_txn(|txn| super::bridge::retry_in_txn(vault, txn))?;
+    vault.with_write_txn_grouped(|txn| super::bridge::retry_in_txn(vault, txn))?;
     let tombstone_outcome = tombstone_pass::run(&ctx, &mut ledger);
 
     // An edge outcome is not proof that its source claim's missing actor or
@@ -270,7 +274,7 @@ fn forward_with_recovery(
         || !ledger.terminal_quarantines.is_empty()
         || !tombstone_outcome.receiver_scrub_candidates.is_empty()
     {
-        let marker_result = vault.with_write_txn(|wtxn| {
+        let marker_result = vault.with_write_txn_grouped(|wtxn| {
             // Clear BEFORE set so set wins: an id that both succeeded and
             // failed in one pass (case-shifted tombstone aliases with
             // divergent reasons) must KEEP its marker — losing it would
@@ -360,6 +364,9 @@ fn forward_with_recovery(
             for id in &tombstone_outcome.purge_failures {
                 quarantine::set_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
             }
+            for (id, value) in &tombstone_outcome.unapplied {
+                vault.fence_unapplied_delete_in_txn(wtxn, id, value)?;
+            }
             if !tombstone_outcome.receiver_scrub_candidates.is_empty() {
                 scrub_receiver_outbox_on_remote_hard_delete_in_txn(
                     vault,
@@ -379,13 +386,16 @@ fn forward_with_recovery(
                     error = %err,
                     "forward remat: receiver outbox scrub/bookkeeping txn FAILED after hard tombstone replay; flagging entity-scoped rm: markers for durable retry"
                 );
-                vault.with_write_txn(|wtxn| {
+                vault.with_write_txn_grouped(|wtxn| {
                     for id in tombstone_outcome
                         .purge_failures
                         .iter()
                         .chain(tombstone_outcome.receiver_scrub_candidates.iter())
                     {
                         quarantine::set_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
+                    }
+                    for (id, value) in &tombstone_outcome.unapplied {
+                        vault.fence_unapplied_delete_in_txn(wtxn, id, value)?;
                     }
                     Ok(())
                 })?;

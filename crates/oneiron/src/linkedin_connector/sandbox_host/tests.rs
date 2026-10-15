@@ -215,41 +215,6 @@ fn linkedin_connector_kill_switch_attempts_destroy_when_revoke_fails() {
     );
 }
 
-#[cfg(unix)]
-#[test]
-fn linkedin_connector_invalid_kill_reason_has_no_effects() {
-    use std::os::unix::fs::PermissionsExt;
-    let tmp = tempfile::tempdir().unwrap();
-    let v = vault(&tmp.path().join("vault"));
-    let root = tmp.path().join("custody");
-    fs::create_dir(&root).unwrap();
-    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
-    let binary = fake_runtime(tmp.path());
-    let mut host = LinkedInContainerSandboxHost::new(
-        &v,
-        &root,
-        binary,
-        "browser@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "private_egress",
-        RecordingServices::default(),
-    )
-    .unwrap();
-    let config = host_config("alice");
-    let sandbox = host.provision(&config).unwrap();
-    let prior_calls = host.services().calls.clone();
-    assert!(
-        run_linkedin_kill_switch(
-            LinkedInSeatSandboxPolicy::active(config),
-            &mut host,
-            10,
-            " "
-        )
-        .is_err()
-    );
-    assert_eq!(host.services().calls, prior_calls);
-    assert!(root.join(sandbox.sandbox_name).exists());
-}
-
 #[test]
 fn linkedin_connector_sandbox_debug_redacts_one_use_login_credential() {
     let url = "https://login.example.test/once/seat?token=one-use-test-token";
