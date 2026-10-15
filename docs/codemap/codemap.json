@@ -124,7 +124,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AccessRequest",
@@ -3711,7 +3711,7 @@
      "path": "src/blob_artifact/esign/ledger.rs",
      "purpose": "Claims are the document state machine",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 3
      }
     },
@@ -3769,7 +3769,7 @@
      "path": "src/blob_artifact/esign/model.rs",
      "purpose": "Typed document, recipient, field and event vocabulary for ARCH-0064",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 9,
       "struct": 10
      }
@@ -7578,7 +7578,7 @@
      "purpose": "Rule and rule-set types for channel-identity selection law",
      "surface": {
       "crate-vis": 8,
-      "fn": 4,
+      "fn": 3,
       "struct": 3
      }
     },
@@ -8012,7 +8012,7 @@
      "path": "src/claim/projection_index.rs",
      "purpose": "Rebuildable claim projections maintained at the shared put chokepoint",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -10950,7 +10950,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/connector_key/events/tests.rs",
@@ -11343,8 +11343,8 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 18,
-      "fn": 18,
+      "crate-vis": 19,
+      "fn": 22,
       "struct": 2
      }
     },
@@ -18335,7 +18335,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "crate-vis": 10,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 2,
       "struct": 1
@@ -19743,7 +19743,7 @@
      "path": "src/git_wire/mod.rs",
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 10
      }
     },
@@ -19825,7 +19825,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GitWireRepo",
@@ -19834,7 +19834,7 @@
      "path": "src/git_wire/repo.rs",
      "purpose": "Proven repository identity plus the cross-thread, cross-process repository lock",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 9,
       "fn": 6,
       "struct": 2
      }
@@ -20192,6 +20192,69 @@
      "purpose": "Shared graph, heap, and beam option types",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HardEraseWork",
+      "HostOnlyReason",
+      "HousekeepingBudget",
+      "HousekeepingReport",
+      "HousekeepingSweep",
+      "SweepOutcome",
+      "SweepReport",
+      "SweepWork"
+     ],
+     "path": "src/housekeeping/mod.rs",
+     "purpose": "The engine's housekeeping pass: every sweep the engine relies on, run when due",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 4,
+      "fn": 13,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/housekeeping/schedule.rs",
+     "purpose": "The housekeeping schedule: one LIVE row per engine sweep",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/housekeeping/sweeps.rs",
+     "purpose": "Each engine sweep, called through its own door, within its own bound",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/housekeeping/tests.rs",
+     "purpose": "Done-means for the pass's schedule: a restart in the middle of a pass resumes the right sweeps, with no…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/housekeeping/wake.rs",
+     "purpose": "Wake deadlines: when a retirement sweep next has work, read without a scan",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -22009,7 +22072,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 18,
-      "mod": 175,
+      "mod": 176,
       "re-export": 72
      }
     },
@@ -23414,7 +23477,7 @@
      "purpose": "Builder flags, run() dispatch, and the aggregate maintenance report",
      "surface": {
       "crate-vis": 1,
-      "fn": 11,
+      "fn": 12,
       "struct": 2
      }
     },
@@ -25958,7 +26021,9 @@
      "notable": [],
      "path": "src/origin/smart_http/exchange_tests.rs",
      "purpose": "One exchange's lifetime: a push whose client is gone before its response begins, or whose exchange unwinds…",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "m",
@@ -26039,6 +26104,28 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ServedRepositoryMaintenance"
+     ],
+     "path": "src/origin/smart_http/maintain.rs",
+     "purpose": "Maintenance of the served repositories",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/origin/smart_http/maintain_tests.rs",
+     "purpose": "Done-means for served repository maintenance: a repository past git's own threshold is maintained; one a…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -26046,7 +26133,7 @@
      "purpose": "Git smart-HTTP serving over the vault (ARCH-0068 Phase A, ONE-1908)",
      "surface": {
       "crate-vis": 1,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -28732,13 +28819,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ppr/cache_evict.rs",
+     "purpose": "Bounded, resumable eviction of the PPR cache for a serving host",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ppr/cache_store.rs",
      "purpose": "PPR cache constants, TTL policy, cache IO, and binary codec",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 29
      }
     },
     {
@@ -28758,7 +28855,7 @@
      "path": "src/ppr/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -31263,7 +31360,7 @@
      "path": "src/secret_lease/doors.rs",
      "purpose": "T0/T1/T2 Vault doors: inject, materialize, register, revoke, expire",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 7
      }
     },
@@ -35114,7 +35211,7 @@
      "path": "src/sweep/run.rs",
      "purpose": "Sweep driver, run state, and race-injection hooks",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -36293,6 +36390,16 @@
      "purpose": "Server-side `sync_state` persistence per the ARCH-0023b key layout",
      "surface": {
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/sweep_fence.rs",
+     "purpose": "Windows a sweep holds closed while it rewrites their persisted state",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -37532,7 +37639,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/tests/consult_fanout.rs",
@@ -37753,7 +37860,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 30
      }
     },
     {
@@ -38322,7 +38429,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/vault/open/mod.rs",
@@ -41204,6 +41311,13 @@
      "layout": "dir",
      "purpose": "HNSW graph index over the persisted neighbor graph"
     },
+    "housekeeping": {
+     "files": 5,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The engine's housekeeping pass: every sweep the engine relies on, run when due"
+    },
     "human_task": {
      "files": 7,
      "impl_vault": false,
@@ -41352,7 +41466,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "origin": {
-     "files": 53,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41450,7 +41564,7 @@
      "purpose": "Shared Beta posterior bandit seam"
     },
     "ppr": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41751,7 +41865,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 124,
+     "files": 125,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -41837,7 +41951,7 @@
     "vault": {
      "files": 29,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…"
     },
@@ -41898,10 +42012,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 42,
+   "over_bar": 41,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2535,
-   "test_files": 829
+   "source_files": 2542,
+   "test_files": 831
   },
   "oneiron-android": {
    "files": [
@@ -51910,7 +52024,7 @@
      "path": "src/api/transfer.rs",
      "purpose": "Bounded transfers between an HTTP body and a blocking worker, shared by the git smart-HTTP and LFS bridges",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -52087,6 +52201,7 @@
       "ImportDecisionArgs",
       "ImportNotesArgs",
       "ImportSourceArgs",
+      "MaintainArgs",
       "RecoverClockArgs",
       "RecoverWindowArgs",
       "RestoreArgs",
@@ -52103,10 +52218,10 @@
       "WhoamiArgs"
      ],
      "path": "src/cli/owner_args.rs",
-     "purpose": "Flags for the owner's own commands: doctor, backup, restore, window recovery, export, the secret scan…",
+     "purpose": "Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret…",
      "surface": {
       "enum": 5,
-      "struct": 17
+      "struct": 18
      }
     },
     {
@@ -52121,7 +52236,7 @@
       "const": 1,
       "crate-vis": 1,
       "fn": 11,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 1
      }
     },
@@ -52263,6 +52378,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/maintain.rs",
+     "purpose": "`maintain`: the owner's \"run housekeeping now\" on a stopped vault",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -52289,7 +52414,7 @@
      "path": "src/commands/owner.rs",
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "fn": 11
      }
     },
@@ -54622,6 +54747,24 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/housekeeping.rs",
+     "purpose": "The host's half of the engine's housekeeping",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/server/housekeeping_tests.rs",
+     "purpose": "Done-means for host housekeeping: a running server, its lifecycle loop on a short tick over a vault on a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/leases.rs",
      "purpose": "Receipt-attestation registry: historical device keys, revocation and mirroring",
      "surface": {
@@ -54633,9 +54776,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/server/lifecycle.rs",
-     "purpose": "Periodic lifecycle jobs: lease expiry and reassert-drain with debounce",
+     "purpose": "Periodic lifecycle jobs: lease expiry, reassert-drain with debounce, and the engine's housekeeping pass",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 15
      }
     },
     {
@@ -54655,7 +54798,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 2
      }
     },
@@ -54727,7 +54870,7 @@
      "path": "src/server/windows.rs",
      "purpose": "Window serving: snapshots, exports, and the local-change broadcast bridge",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -55109,6 +55252,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/it/maintain_cli.rs",
+     "purpose": "`oneiron maintain` on a stopped vault: every housekeeping sweep runs now, the typed report prints as JSON…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/it/managed_ledger_wire.rs",
      "purpose": "The managed wake ledger's push, through its real Unix-socket path: the frame an independent peer receives…",
      "surface": {}
@@ -55273,7 +55424,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 25,
+     "files": 26,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -55427,7 +55578,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 15,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -55471,8 +55622,8 @@
    },
    "over_bar": 11,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 347,
-   "test_files": 158
+   "source_files": 349,
+   "test_files": 160
   },
   "oneiron-spawn": {
    "files": [
