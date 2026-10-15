@@ -48,10 +48,9 @@ pub(crate) fn encode_embedded_owner_actor_body() -> Result<Vec<u8>> {
 }
 
 impl Vault {
-    // NOTE (ONE-1133): the bare non-txn `purge_entity_active_store` wrapper
-    // was removed — both sync replay surfaces now route through the
-    // reason-aware `apply_replayed_tombstone`, and a bare purge entry point
-    // would be an invitation to bypass the ARCH-0038 reason semantics.
+    // NOTE (ONE-1133): the bare non-txn `purge_entity_active_store` wrapper was removed — both sync
+    // replay surfaces now route through the reason-aware `apply_replayed_tombstone`, and a bare
+    // purge entry point would be an invitation to bypass the ARCH-0038 reason semantics.
 
     // -----------------------------------------------------------------
     // ARCH-0050 R6 L2 code-memory doors (ONE-1608).
