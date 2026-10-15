@@ -27,9 +27,8 @@ use super::super::loro_support::{
 };
 use super::super::types::WindowKey;
 use super::egress::{
-    export_history_free_window_snapshot, history_free_window_required, scrub_local_claim_carriers,
-    scrub_local_only_carriers, scrub_redacted_attribution_carriers,
-    scrub_withdrawn_delete_carriers,
+    history_free_window_required, scrub_local_claim_carriers, scrub_local_only_carriers,
+    scrub_redacted_attribution_carriers, scrub_withdrawn_delete_carriers,
 };
 use super::reverse::{is_delegated_channel_identity_carrier, is_unsyncable_secret_custody};
 use crate::Vault;
@@ -56,15 +55,21 @@ impl WindowExport {
     }
 }
 
-/// Decides whether a range of a pinned window's history may ship as ordinary operations.
+/// Decides whether a range of a pinned window's history, or the state at a snapshot's root, may
+/// ship.
 ///
-/// An entity-map insert is held back when its body is one a scrub keeps off the wire (a custody,
+/// An entity-map value is held back when its body is one a scrub keeps off the wire (a custody,
 /// diagnostic, delegated-identity or LFS chunk carrier, a claim no replay door accepts, an
-/// attribution of a redacted author), whatever the live state holds. Any root-map insert is held
-/// back when its key is gone from the live map, unless a soft tombstone took the entity out: a
-/// scrub, a hard delete, a withdrawn delete and a dropped NOTE proposal all remove keys, and the
-/// bytes they removed stay in history. An overwritten value and a removal ship as for an unpinned
-/// window. An operation on anything but a root map never ships.
+/// attribution of a redacted author), whatever the live state holds. A scrub removes keys (a hard
+/// or withdrawn delete, a dropped NOTE) or rewrites values in place (a NOTE proposal's redacted
+/// explainer, a deleted entity's retained shell), and the bytes it took out stay in history and
+/// in an old root's state. So a value whose key is gone is held back, unless a soft tombstone
+/// took the entity out without erasing its body; and only the live value ships of a NOTE
+/// workflow map (a refresh rewrites its rows from the vault's own state), a tombstoned entity, or
+/// any map this check does not know. An overwritten edge, world witness or untombstoned entity
+/// ships, as for an unpinned window: an ordinary edit took it out, and a window with concurrent
+/// edits has no clean root without it. Tombstone values and removals always ship. An operation on
+/// anything but a root map never ships.
 pub(crate) struct HistoryCheck {
     redacted: BTreeSet<(EntityId, [u8; 32])>,
     /// Entities whose CRDT tombstone is soft while this vault holds them deleted.
@@ -126,6 +131,41 @@ impl HistoryCheck {
             })
     }
 
+    /// Whether `doc`'s state at `frontiers`, the root a snapshot would carry, holds only what
+    /// may ship. A shallow snapshot encodes its root's state whole beside the operations past it,
+    /// so a value a scrub took out after the root would ride along.
+    pub(crate) fn root_ships(&self, doc: &LoroDoc, frontiers: &Frontiers) -> bool {
+        if frontiers.is_empty() {
+            return true;
+        }
+        let at_root = doc.fork();
+        if at_root.checkout(frontiers).is_err() {
+            return false;
+        }
+        let LoroValue::Map(roots) = at_root.get_value() else {
+            return false;
+        };
+        roots.iter().all(|(name, root)| {
+            let LoroValue::Container(ContainerID::Root {
+                container_type: ContainerType::Map,
+                ..
+            }) = root
+            else {
+                return false;
+            };
+            let mut ships = true;
+            at_root.get_map(name.as_str()).for_each(|key, value| {
+                ships &= match value {
+                    loro::ValueOrContainer::Value(value) => {
+                        self.insert_ships(doc, name, key, &value)
+                    }
+                    loro::ValueOrContainer::Container(_) => false,
+                };
+            });
+            ships
+        })
+    }
+
     fn insert_ships(&self, doc: &LoroDoc, map: &str, key: &str, value: &LoroValue) -> bool {
         if matches!(value, LoroValue::Container(_)) {
             return false;
@@ -136,13 +176,31 @@ impl HistoryCheck {
         {
             return false;
         }
-        if map == "tombstones" || doc.get_map(map).get(key).is_some() {
+        if map == "tombstones" {
             return true;
         }
-        map == "entities"
-            && EntityId::from_hex(key)
-                .is_ok_and(|id| id.to_hex() == key && !self.erased.contains(&id))
-            && soft_tombstoned(doc, key)
+        match doc.get_map(map).get(key) {
+            Some(loro::ValueOrContainer::Value(live)) if live == *value => true,
+            Some(loro::ValueOrContainer::Value(_)) => match map {
+                "entities" => {
+                    EntityId::from_hex(key).is_ok_and(|id| id.to_hex() == key)
+                        && super::super::loro_support::map_get_bytes(
+                            &doc.get_map("tombstones"),
+                            key,
+                        )
+                        .is_none()
+                }
+                "edges" | "retained_claim_worlds" => true,
+                _ => false,
+            },
+            Some(loro::ValueOrContainer::Container(_)) => false,
+            None => {
+                map == "entities"
+                    && EntityId::from_hex(key)
+                        .is_ok_and(|id| id.to_hex() == key && !self.erased.contains(&id))
+                    && soft_tombstoned(doc, key)
+            }
+        }
     }
 
     fn withheld_body(&self, key: &str, blob: &[u8]) -> bool {
@@ -163,7 +221,7 @@ fn soft_tombstoned(doc: &LoroDoc, key: &str) -> bool {
 }
 
 /// The version of the state at a shallow root: `start` excludes the root's own operations.
-fn root_state(start: &VersionVector, frontiers: &Frontiers) -> VersionVector {
+pub(super) fn root_state(start: &VersionVector, frontiers: &Frontiers) -> VersionVector {
     let mut state = start.clone();
     for id in frontiers.iter() {
         let end = id.counter + 1;
@@ -175,11 +233,11 @@ fn root_state(start: &VersionVector, frontiers: &Frontiers) -> VersionVector {
 }
 
 /// A history-free snapshot of `doc`. It keeps the doc's own root (all of its history, for a full
-/// doc) when `check` ships everything past that root, else roots at the newest operation; either
-/// way the root never comes before `baseline`. Loro may root a snapshot earlier than asked when
-/// branches run concurrent with the requested root, so the root actually encoded is the one
-/// checked. `check` is `None` for a window that is not pinned: its history ships as it would to a
-/// peer that holds the root.
+/// doc) when `check` ships that root's state and everything past it, else roots at the newest
+/// operation; either way the root never comes before `baseline`. Loro may root a snapshot earlier
+/// than asked when branches run concurrent with the requested root, so the root actually encoded
+/// is the one checked. `check` is `None` for a window that is not pinned: its history ships as it
+/// would to a peer that holds the root.
 pub(crate) fn history_free_snapshot(
     doc: &LoroDoc,
     check: Option<&HistoryCheck>,
@@ -188,12 +246,31 @@ pub(crate) fn history_free_snapshot(
     doc.commit();
     let admits = |start: &VersionVector, frontiers: &Frontiers| {
         baseline.is_none_or(|floor| root_state(start, frontiers).includes_vv(floor))
-            && check.is_none_or(|check| check.ships_past(doc, start))
+            && check.is_none_or(|check| {
+                check.root_ships(doc, frontiers) && check.ships_past(doc, start)
+            })
     };
     let own_root = doc.shallow_since_vv().to_vv();
     if admits(&own_root, &doc.shallow_since_frontiers()) {
         return export_snapshot(doc);
     }
+    let (bytes, start, frontiers) = newest_rooted_snapshot(doc)?;
+    if admits(&start, &frontiers) {
+        return Ok(bytes);
+    }
+    Err(root_unavailable())
+}
+
+fn root_unavailable() -> Error {
+    Error::Sync(SyncError::SyncProtocolError {
+        context: SyncProtocolValidation::HistoryFreeRootUnavailable,
+    })
+}
+
+/// A snapshot of `doc` rooted at its newest operation, with the root Loro actually encoded: the
+/// version operations start after, and the root's frontiers.
+fn newest_rooted_snapshot(doc: &LoroDoc) -> Result<(Vec<u8>, VersionVector, Frontiers)> {
+    doc.commit();
     let bytes = doc
         .export(ExportMode::shallow_snapshot(&doc.oplog_frontiers()))
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportShallowSnapshot, e))?;
@@ -203,23 +280,41 @@ pub(crate) fn history_free_snapshot(
             source,
         })
     })?;
-    if admits(&meta.partial_start_vv, &meta.start_frontiers) {
-        return Ok(bytes);
-    }
-    Err(Error::Sync(SyncError::SyncProtocolError {
-        context: SyncProtocolValidation::HistoryFreeRootUnavailable,
-    }))
+    Ok((bytes, meta.partial_start_vv, meta.start_frontiers))
 }
 
-/// Whether `doc` cannot take `update` as history because the update builds on operations
-/// `doc` does not hold: ones its own shallow root cut away, or ones it never had. No update
-/// brings such a document level; its holder needs, or must make its peer take, a replacement.
-pub fn update_needs_replacement(doc: &LoroDoc, update: &[u8]) -> bool {
-    match doc.fork().import(update) {
-        Ok(status) => status.pending.is_some(),
-        Err(loro::LoroError::ImportUpdatesThatDependsOnOutdatedVersion) => true,
-        Err(_) => false,
+/// The replacement an empty receiver gets of a window whose history inserted something a
+/// device-only world keeps: rooted at the newest operation, as long as neither that root nor
+/// what the snapshot retains past it carries such an insert, or anything `check` holds back, and
+/// the root is not before `baseline`.
+fn device_only_history_snapshot(
+    vault: &Vault,
+    doc: &LoroDoc,
+    check: Option<&HistoryCheck>,
+    baseline: Option<&VersionVector>,
+) -> Result<Vec<u8>> {
+    let (bytes, start, frontiers) = newest_rooted_snapshot(doc)?;
+    let clean = baseline.is_none_or(|floor| root_state(&start, &frontiers).includes_vv(floor))
+        && check
+            .is_none_or(|check| check.root_ships(doc, &frontiers) && check.ships_past(doc, &start))
+        && !super::device_only::delta_carries_device_only(vault, doc, &start)?;
+    if clean {
+        Ok(bytes)
+    } else {
+        Err(root_unavailable())
     }
+}
+
+/// Whether `update` builds on operations `doc`'s own shallow root cut away. No update brings
+/// such a document level; its holder needs, or must make its peer take, a replacement. An update
+/// that merely arrives ahead of history `doc` has not received yet is not one: the version
+/// exchange brings that.
+pub fn update_reaches_below_root(doc: &LoroDoc, update: &[u8]) -> bool {
+    doc.is_shallow()
+        && matches!(
+            doc.fork().import(update),
+            Err(loro::LoroError::ImportUpdatesThatDependsOnOutdatedVersion)
+        )
 }
 
 /// The floor a residence connection promoting `doc` now gets: the version of the state at the
@@ -227,14 +322,8 @@ pub fn update_needs_replacement(doc: &LoroDoc, update: &[u8]) -> bool {
 /// snapshot at the newest version every operation is ordered against, so the floor is a root a
 /// later replacement can always be cut at, unless an operation concurrent with it arrives.
 pub fn promotion_baseline(doc: &LoroDoc) -> Result<VersionVector> {
-    let bytes = export_history_free_window_snapshot(doc)?;
-    let meta = LoroDoc::decode_import_blob_meta(&bytes, false).map_err(|source| {
-        Error::Sync(SyncError::CrdtDecodeError {
-            context: "decode promotion snapshot root",
-            source,
-        })
-    })?;
-    Ok(root_state(&meta.partial_start_vv, &meta.start_frontiers))
+    let (_, start, frontiers) = newest_rooted_snapshot(doc)?;
+    Ok(root_state(&start, &frontiers))
 }
 
 /// THE full-window version-vector export door: every arm that answers a peer's version vector
@@ -265,13 +354,14 @@ pub fn export_window_since(
     if super::device_only::export_withheld(vault, key, doc, &remote)? {
         return super::device_only::withheld_window_update().map(WindowExport::Update);
     }
-    let check = match scrub_for_export(vault, key, doc, &remote)? {
-        Scrubbed::DeviceOnlyHistory => {
-            return export_history_free_window_snapshot(doc).map(WindowExport::Replacement);
-        }
-        Scrubbed::Pinned(check) => Some(check),
-        Scrubbed::Unpinned => None,
-    };
+    let Scrubbed {
+        check,
+        device_only_history,
+    } = scrub_for_export(vault, key, doc, &remote)?;
+    if device_only_history {
+        return device_only_history_snapshot(vault, doc, check.as_ref(), baseline)
+            .map(WindowExport::Replacement);
+    }
     let holds_floor = remote.includes_vv(&doc.shallow_since_vv().to_vv())
         && baseline.is_none_or(|floor| remote.includes_vv(floor));
     if holds_floor
@@ -307,20 +397,22 @@ pub fn export_window_replacement(
     if super::device_only::export_withheld(vault, key, doc, &nothing)? {
         return Ok(None);
     }
-    let check = match scrub_for_export(vault, key, doc, &nothing)? {
-        Scrubbed::DeviceOnlyHistory => return export_history_free_window_snapshot(doc).map(Some),
-        Scrubbed::Pinned(check) => Some(check),
-        Scrubbed::Unpinned => None,
-    };
+    let Scrubbed {
+        check,
+        device_only_history,
+    } = scrub_for_export(vault, key, doc, &nothing)?;
+    if device_only_history {
+        return device_only_history_snapshot(vault, doc, check.as_ref(), baseline).map(Some);
+    }
     history_free_snapshot(doc, check.as_ref(), baseline).map(Some)
 }
 
-/// What the export scrubs left: whether the window is pinned history-free (with the check its
-/// history must pass), or carries device-only history an empty receiver must not get.
-enum Scrubbed {
-    Unpinned,
-    Pinned(HistoryCheck),
-    DeviceOnlyHistory,
+/// What the export scrubs left.
+struct Scrubbed {
+    /// The check a pinned window's history must pass; `None` for a window not pinned.
+    check: Option<HistoryCheck>,
+    /// Whether an empty receiver's range carries an insert a device-only world keeps.
+    device_only_history: bool,
 }
 
 /// Refreshes NOTE carriers and runs every egress scrub over `doc`, as each export does.
@@ -335,16 +427,19 @@ fn scrub_for_export(
     let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
     let authors_scrubbed = scrub_redacted_attribution_carriers(vault, key, doc)?;
     let withdrawn_scrubbed = scrub_withdrawn_delete_carriers(vault, key, doc)?;
-    if remote.is_empty() && super::device_only::delta_carries_device_only(vault, doc, remote)? {
-        return Ok(Scrubbed::DeviceOnlyHistory);
-    }
-    if secret_scrubbed
+    let check = if secret_scrubbed
         || claims_scrubbed
         || authors_scrubbed
         || withdrawn_scrubbed
         || history_free_window_required(vault, key)?
     {
-        return HistoryCheck::read(vault, doc).map(Scrubbed::Pinned);
-    }
-    Ok(Scrubbed::Unpinned)
+        Some(HistoryCheck::read(vault, doc)?)
+    } else {
+        None
+    };
+    Ok(Scrubbed {
+        check,
+        device_only_history: remote.is_empty()
+            && super::device_only::delta_carries_device_only(vault, doc, remote)?,
+    })
 }

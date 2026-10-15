@@ -693,9 +693,9 @@ fn window_broadcast_allowed(
     }
 }
 
-/// Whether `frame` is a window UPDATE this server now withholds as
-/// device-only. Read at the socket, since the flag may turn after the frame
-/// was queued for this connection.
+/// Whether `frame` is a window UPDATE or REPLACEMENT this server now
+/// withholds as device-only. Read at the socket, since the flag may turn
+/// after the frame was queued for this connection.
 fn window_update_withheld(server: &SyncServer, frame: &[u8]) -> bool {
     if frame.first() != Some(&protocol::TAG_WINDOW_SYNC) {
         return false;
@@ -704,8 +704,10 @@ fn window_update_withheld(server: &SyncServer, frame: &[u8]) -> bool {
         .get(1..)
         .and_then(|payload| protocol::decode_window_sync(payload).ok())
         .is_some_and(|(key, sub_tag, update)| {
-            sub_tag == protocol::window_sub_tags::UPDATE
-                && crate::server::withheld_from_peers(&server.reassert_manager, key, update)
+            matches!(
+                sub_tag,
+                protocol::window_sub_tags::UPDATE | protocol::window_sub_tags::REPLACEMENT
+            ) && crate::server::withheld_from_peers(&server.reassert_manager, key, update)
         })
 }
 

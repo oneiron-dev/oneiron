@@ -237,11 +237,24 @@ pub(super) async fn handle_window_sync(
                 update,
                 &key,
             ) {
-                // The device's update builds on history the home does not hold, or that the
-                // home's own shallow root cut away. The home never installs a device's window:
-                // the device takes the home's and writes its own state on top, and an old device
-                // that cannot is refused.
-                if oneiron::sync::window::update_needs_replacement(&doc, update) {
+                // The home's own shallow root cut away what the device's update builds on. The
+                // home never installs a device's window: the device takes the home's and writes
+                // its own state on top, and an old device that cannot is refused.
+                if oneiron::sync::window::update_reaches_below_root(&doc, update) {
+                    // The window goes out whole only as a version request's answer would.
+                    if protocol::is_residence_version(conn_state.protocol_version) {
+                        let selector = conn_state
+                            .promoted_windows
+                            .get(&key)
+                            .ok_or(ProtocolError::InvalidPayload("window not promoted"))?;
+                        authorize_promoted_window(
+                            server,
+                            require_bound_app_auth(server, conn_state)?,
+                            &key,
+                            selector,
+                            &doc,
+                        )?;
+                    }
                     if let Some(frame) = replacement_frame(server, conn_state, &key, &doc)? {
                         let _ = direct_tx.send(frame);
                     }

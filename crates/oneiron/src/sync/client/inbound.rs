@@ -361,10 +361,9 @@ impl SyncClient {
                 }
                 match self.import_window_update(window_key, payload, super::ImportTier::OwnDevice) {
                     Ok(()) => Ok(Vec::new()),
-                    // The update builds on history this window does not hold, or that its own
-                    // shallow root cut away: no update can bring it level, the server's
-                    // replacement can.
-                    Err(_) if self.update_needs_replacement(&key, payload) => {
+                    // The update builds on history this window's own shallow root cut away: no
+                    // update can bring it level, the server's replacement can.
+                    Err(_) if self.update_reaches_below_root(&key, payload) => {
                         self.staged_world_updates
                             .retain(|(staged, bytes)| staged != &key || bytes != payload);
                         Ok(vec![replacement_request(window_key)?])
@@ -1020,11 +1019,11 @@ impl SyncClient {
         windows.iter().map(|key| replacement_request(key)).collect()
     }
 
-    /// Whether `update` failed on this device because it builds on history the live window
-    /// does not hold.
-    fn update_needs_replacement(&self, key: &WindowKey, update: &[u8]) -> bool {
+    /// Whether `update` failed on this device because it builds on history below the live
+    /// window's own shallow root.
+    fn update_reaches_below_root(&self, key: &WindowKey, update: &[u8]) -> bool {
         self.manager.window(key).is_some_and(|window| {
-            crate::sync::window::update_needs_replacement(&window.doc, update)
+            crate::sync::window::update_reaches_below_root(&window.doc, update)
         })
     }
 }

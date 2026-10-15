@@ -55,27 +55,39 @@ pub(crate) fn scrub_window_updates_in_txn(
     Ok(u32::try_from(doomed.len()).unwrap_or(u32::MAX))
 }
 
-/// Retires every queued send addressed to `window_key`, delete-bearing rows and their `d:`
-/// sidecars included, in the transaction that installs the window's replacement. Their
-/// operations depend on history the replacement does not hold, and the replacement already
-/// carries their effects as its own operations, which sync by version vector like any other.
-pub(crate) fn retire_window_rows_in_txn(
+/// Every queued send addressed to `window_key`, as `(seq, update bytes)`.
+pub(crate) fn queued_window_updates(
     vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
     window_key: &str,
-) -> Result<()> {
-    let mut doomed = Vec::new();
-    for row in vault.store.sync_queue.prefix_iter(&*wtxn, UPDATE_PREFIX)? {
+) -> Result<Vec<(u64, Vec<u8>)>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut queued = Vec::new();
+    for row in vault.store.sync_queue.prefix_iter(&rtxn, UPDATE_PREFIX)? {
         let (key, value) = row?;
-        if let (Ok(seq), Ok((row_window, _))) =
+        if let (Ok(seq), Ok((row_window, update))) =
             (decode_update_key(&key), decode_update_value_parts(&value))
             && row_window == window_key
         {
-            doomed.push((key.to_vec(), seq));
+            queued.push((seq, update.to_vec()));
         }
     }
-    for (key, seq) in &doomed {
-        vault.store.sync_queue.delete(wtxn, key)?;
+    Ok(queued)
+}
+
+/// Retires the queued sends `seqs`, delete-bearing rows and their `d:` sidecars included, in the
+/// transaction that installs a window's replacement. Their operations depend on history the
+/// replacement does not hold, and the replacement carries their effects as its own operations,
+/// which sync by version vector like any other.
+pub(crate) fn retire_queued_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    seqs: &[u64],
+) -> Result<()> {
+    for seq in seqs {
+        vault
+            .store
+            .sync_queue
+            .delete(wtxn, &super::codec::encode_update_key(*seq))?;
         vault
             .store
             .sync_queue

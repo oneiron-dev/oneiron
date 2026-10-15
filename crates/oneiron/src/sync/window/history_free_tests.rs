@@ -21,7 +21,6 @@ use crate::claim::{
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::Result;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
 };
@@ -84,6 +83,47 @@ fn history_sets(doc: &LoroDoc, key: &str) -> bool {
         .any(|op| matches!(&op.content, JsonOpContent::Map(MapOp::Insert { key: set, .. }) if set == key))
 }
 
+/// Whether the state at `doc`'s own shallow root holds `key` in any root map: a snapshot carries
+/// that state beside the operations past it.
+fn root_state_holds(doc: &LoroDoc, key: &str) -> bool {
+    if !doc.is_shallow() {
+        return false;
+    }
+    let at_root = doc.fork();
+    at_root.checkout(&doc.shallow_since_frontiers()).unwrap();
+    let mut held = false;
+    for name in ["entities", "note_proposals"] {
+        held |= at_root.get_map(name).get(key).is_some();
+    }
+    held
+}
+
+/// Whether any value `doc` holds, in its live state, its root's state or any operation it keeps,
+/// contains `marker`.
+fn holds_bytes(doc: &LoroDoc, marker: &[u8]) -> bool {
+    let contains = |value: &LoroValue| matches!(value, LoroValue::Binary(bytes) if bytes.windows(marker.len()).any(|w| w == marker));
+    let in_state = |state: &LoroDoc| {
+        let LoroValue::Map(roots) = state.get_deep_value() else {
+            return false;
+        };
+        roots
+            .values()
+            .any(|root| matches!(root, LoroValue::Map(map) if map.values().any(contains)))
+    };
+    let at_root = doc.fork();
+    if doc.is_shallow() {
+        at_root.checkout(&doc.shallow_since_frontiers()).unwrap();
+    }
+    in_state(doc)
+        || in_state(&at_root)
+        || doc
+            .export_json_updates(&VersionVector::default(), &doc.oplog_vv())
+            .changes
+            .iter()
+            .flat_map(|change| &change.ops)
+            .any(|op| matches!(&op.content, JsonOpContent::Map(MapOp::Insert { value, .. }) if contains(value)))
+}
+
 /// Why a window keeps its history to itself.
 #[derive(Clone, Copy, Debug)]
 enum PinCause {
@@ -101,9 +141,17 @@ enum PinCause {
     NoteRefresh,
     /// No pin: the window is already shallow, rooted past the peer.
     AlreadyShallow,
+    /// A scrub rewrote a value it keeps under its key, as a NOTE proposal's explainer is
+    /// redacted in place.
+    RewrittenValue,
+    /// The window is shallow and its root's state holds a diagnostic a scrub then removed.
+    CarrierInRootState,
+    /// After a scrub, two concurrent ordinary edits leave the window with two heads, so Loro
+    /// roots any snapshot before both and its root state holds the values they overwrote.
+    ConcurrentEdits,
 }
 
-const PIN_CAUSES: [PinCause; 7] = [
+const PIN_CAUSES: [PinCause; 10] = [
     PinCause::WithdrawnDelete,
     PinCause::RedactedAttribution,
     PinCause::Custody,
@@ -111,6 +159,9 @@ const PIN_CAUSES: [PinCause; 7] = [
     PinCause::LocalClaim,
     PinCause::NoteRefresh,
     PinCause::AlreadyShallow,
+    PinCause::RewrittenValue,
+    PinCause::CarrierInRootState,
+    PinCause::ConcurrentEdits,
 ];
 
 /// A window in `vault` with a shared prefix, two later rows and `cause` applied.
@@ -122,7 +173,10 @@ struct Pinned {
     /// The window's history at the prefix, as a peer holds it.
     prefix: Vec<u8>,
     rows: Vec<String>,
+    /// The key of the entity carrier the pin withholds, if any.
     carrier: Option<String>,
+    /// Bytes the pin withholds, found nowhere a peer receives.
+    marker: Option<&'static [u8]>,
 }
 
 fn pinned(cause: PinCause) -> Pinned {
@@ -142,18 +196,20 @@ fn pinned(cause: PinCause) -> Pinned {
     rows.push(write_row(&doc, at + 1, b"first survivor"));
     rows.push(write_row(&doc, at + 2, b"second survivor"));
     let entities = doc.get_map("entities");
-    let mut carrier = Some(EntityId::now().to_hex());
-    let id = || EntityId::from_hex(carrier.as_deref().unwrap()).unwrap();
+    let fresh = EntityId::now();
+    let mut carrier = Some(fresh.to_hex());
+    let mut marker: Option<&'static [u8]> = None;
     match cause {
         PinCause::WithdrawnDelete => {
-            let erased = id();
+            let erased = fresh;
+            marker = Some(b"placeholder erased body");
             vault
                 .put_entity(
                     &erased,
                     ENTITY_TYPE_TURN,
                     TimeRange { start: at, end: at },
                     at,
-                    b"erased body",
+                    b"placeholder erased body",
                 )
                 .unwrap();
             map_insert_bytes(
@@ -174,21 +230,19 @@ fn pinned(cause: PinCause) -> Pinned {
         PinCause::Custody => {
             let (custody, raw) = device_bound_secret(&vault, at);
             carrier = Some(custody.to_hex());
+            marker = Some(b"placeholder value");
             map_insert_bytes(&entities, &custody.to_hex(), &raw).unwrap();
         }
-        PinCause::LocalOnly => {
-            map_insert_bytes(
-                &entities,
-                &id().to_hex(),
-                &blob(ENTITY_TYPE_DIAGNOSTIC, at, b"diag"),
-            )
-            .unwrap();
+        PinCause::LocalOnly | PinCause::CarrierInRootState => {
+            marker = Some(b"placeholder diagnostic");
+            let diagnostic = blob(ENTITY_TYPE_DIAGNOSTIC, at, b"placeholder diagnostic");
+            map_insert_bytes(&entities, &fresh.to_hex(), &diagnostic).unwrap();
         }
         PinCause::LocalClaim => {
             let body = ClaimBody::new(
                 "esign.signature",
                 ClaimSubject::Entity(author),
-                rmpv::Value::from("signed"),
+                rmpv::Value::from("placeholder signature"),
                 1.0,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
@@ -199,7 +253,8 @@ fn pinned(cause: PinCause) -> Pinned {
                 at,
                 &crate::claim::encode_claim_body(&body).unwrap(),
             );
-            map_insert_bytes(&entities, &id().to_hex(), &claim).unwrap();
+            map_insert_bytes(&entities, &fresh.to_hex(), &claim).unwrap();
+            marker = Some(b"placeholder signature");
         }
         PinCause::NoteRefresh => {
             let note = note.unwrap();
@@ -216,10 +271,45 @@ fn pinned(cause: PinCause) -> Pinned {
                 )
                 .unwrap();
         }
+        PinCause::ConcurrentEdits => {
+            marker = Some(b"placeholder diagnostic");
+            let diagnostic = blob(ENTITY_TYPE_DIAGNOSTIC, at, b"placeholder diagnostic");
+            map_insert_bytes(&entities, &fresh.to_hex(), &diagnostic).unwrap();
+            doc.commit();
+            assert!(
+                super::egress::scrub_local_only_carriers(&vault, &key, &doc).unwrap(),
+                "fixture: the diagnostic scrubbed"
+            );
+            doc.commit();
+            let branch = doc.fork();
+            let theirs = blob(ENTITY_TYPE_TURN, at + 1, b"first survivor, edited");
+            map_insert_bytes(&branch.get_map("entities"), &rows[1], &theirs).unwrap();
+            branch.commit();
+            let ours = blob(ENTITY_TYPE_TURN, at + 2, b"second survivor, edited");
+            map_insert_bytes(&entities, &rows[2], &ours).unwrap();
+            doc.commit();
+            doc.import(&branch.export(ExportMode::all_updates()).unwrap())
+                .unwrap();
+            assert_eq!(doc.oplog_frontiers().len(), 2, "fixture: two heads");
+        }
         PinCause::AlreadyShallow => carrier = None,
+        PinCause::RewrittenValue => {
+            // The key stays, so only the rewritten bytes are withheld.
+            carrier = None;
+            marker = Some(b"placeholder private explainer");
+            let proposals = doc.get_map("note_proposals");
+            let proposal = fresh.to_hex();
+            map_insert_bytes(&proposals, &proposal, b"placeholder private explainer").unwrap();
+            doc.commit();
+            map_insert_bytes(&proposals, &proposal, b"redacted").unwrap();
+            crate::sync::window::require_history_free_window(&vault, &key).unwrap();
+        }
     }
     doc.commit();
-    let doc = if matches!(cause, PinCause::AlreadyShallow) {
+    let doc = if matches!(
+        cause,
+        PinCause::AlreadyShallow | PinCause::CarrierInRootState
+    ) {
         LoroDoc::from_snapshot(
             &doc.export(ExportMode::shallow_snapshot(&doc.oplog_frontiers()))
                 .unwrap(),
@@ -236,6 +326,7 @@ fn pinned(cause: PinCause) -> Pinned {
         prefix,
         rows,
         carrier,
+        marker,
     }
 }
 
@@ -349,6 +440,7 @@ fn a_peer_behind_a_history_free_window_comes_level_without_what_it_withholds() {
         let mut peer = LoroDoc::new();
         peer.import(&fx.prefix).unwrap();
         let mut replaced = false;
+        let mut received = Vec::new();
         for _ in 0..5 {
             if peer.oplog_vv() == fx.doc.oplog_vv() {
                 break;
@@ -358,6 +450,7 @@ fn a_peer_behind_a_history_free_window_comes_level_without_what_it_withholds() {
             {
                 WindowExport::Update(update) => {
                     let status = peer.import(&update).unwrap();
+                    received.push(update);
                     assert!(
                         status.pending.is_none(),
                         "{cause:?}: an update the peer cannot apply"
@@ -365,6 +458,7 @@ fn a_peer_behind_a_history_free_window_comes_level_without_what_it_withholds() {
                 }
                 WindowExport::Replacement(snapshot) => {
                     peer = LoroDoc::from_snapshot(&snapshot).unwrap();
+                    received.push(snapshot);
                     replaced = true;
                 }
             }
@@ -386,9 +480,22 @@ fn a_peer_behind_a_history_free_window_comes_level_without_what_it_withholds() {
         }
         if let Some(carrier) = &fx.carrier {
             assert!(
-                peer.get_map("entities").get(carrier).is_none() && !history_sets(&peer, carrier),
+                peer.get_map("entities").get(carrier).is_none()
+                    && !history_sets(&peer, carrier)
+                    && !root_state_holds(&peer, carrier),
                 "{cause:?}: the withheld carrier reached the peer"
             );
+        }
+        if let Some(marker) = fx.marker {
+            assert!(
+                !holds_bytes(&peer, marker)
+                    && !received
+                        .iter()
+                        .any(|bytes| bytes.windows(marker.len()).any(|window| window == marker)),
+                "{cause:?}: withheld bytes reached the peer"
+            );
+        }
+        if !matches!(cause, PinCause::AlreadyShallow) {
             assert!(
                 history_free_window_required(&fx.vault, &fx.key).unwrap(),
                 "{cause:?}: the scrub pinned the window"
@@ -414,6 +521,15 @@ enum LocalWork {
     /// An edit of a row the hub also edited, by a writer the receiver has not fully seen, both
     /// below the receiver's root.
     Conflict,
+    /// An unsent edit that lost to a later hub edit the receiver took in, before the hub edited
+    /// the row again: the hub's newest value stands.
+    LostToHub,
+    /// An unsent edit of a row the hub edited concurrently, where the hub's edit lies below the
+    /// replacement's root: no order can be read, so the hub's value stands and the edit is named.
+    Concurrent,
+    /// The same, with the hub's edit past the replacement's root and the receiver's edit later
+    /// in Loro's order: it ends where an ordinary merge would.
+    ConcurrentOrdered,
 }
 
 /// S2 done-means: a receiver that shares the hub's prefix and then did `LocalWork` installs the
@@ -427,12 +543,16 @@ fn a_replacement_keeps_every_write_the_hub_never_saw() {
         LocalWork::PastRoot,
         LocalWork::BelowRoot,
         LocalWork::Conflict,
+        LocalWork::LostToHub,
+        LocalWork::Concurrent,
+        LocalWork::ConcurrentOrdered,
     ] {
         let (_dir, vault) = test_vault();
         let at = vault.store.clock.now_recorded_at();
         let key = WindowKey::from_timestamp(at);
         let hub = create_window_doc("hub", &key);
         let shared = write_row(&hub, at, b"shared prefix");
+        let prefix = hub.oplog_frontiers();
         let materializer = Arc::new(Materializer::new());
         let receiver = LoadedWindow::new("receiver", key.clone(), &vault, &materializer);
         receiver
@@ -445,9 +565,10 @@ fn a_replacement_keeps_every_write_the_hub_never_saw() {
         ];
         let mut local = Vec::new();
         let mut contested = None;
+        let mut newest = None;
         match work {
-            LocalWork::PastRoot | LocalWork::BelowRoot => {
-                for n in 0..2 {
+            LocalWork::PastRoot | LocalWork::BelowRoot | LocalWork::ConcurrentOrdered => {
+                for n in 0..3 {
                     let id = EntityId::now();
                     vault
                         .put_entity(
@@ -467,8 +588,26 @@ fn a_replacement_keeps_every_write_the_hub_never_saw() {
                     receiver.doc.commit();
                     local.push(id);
                 }
+                if matches!(work, LocalWork::ConcurrentOrdered) {
+                    let theirs = blob(ENTITY_TYPE_TURN, at + 3, b"hub edit");
+                    map_insert_bytes(&hub.get_map("entities"), &shared, &theirs).unwrap();
+                    hub.commit();
+                    let ours = blob(ENTITY_TYPE_TURN, at + 4, b"receiver edit");
+                    map_insert_bytes(&receiver.doc.get_map("entities"), &shared, &ours).unwrap();
+                    receiver.doc.commit();
+                    let merged = hub.fork();
+                    merged
+                        .import(&receiver.doc.export(ExportMode::all_updates()).unwrap())
+                        .unwrap();
+                    assert_eq!(
+                        map_get_bytes(&merged.get_map("entities"), &shared),
+                        Some(ours.clone()),
+                        "fixture: an ordinary merge keeps the receiver's edit"
+                    );
+                    newest = Some(ours);
+                }
             }
-            LocalWork::Conflict => {
+            LocalWork::Conflict | LocalWork::Concurrent => {
                 let theirs = blob(ENTITY_TYPE_TURN, at + 3, b"hub edit");
                 map_insert_bytes(&hub.get_map("entities"), &shared, &theirs).unwrap();
                 hub.commit();
@@ -477,8 +616,38 @@ fn a_replacement_keeps_every_write_the_hub_never_saw() {
                 receiver.doc.commit();
                 contested = Some((theirs, ours));
             }
+            LocalWork::LostToHub => {
+                let ours = blob(ENTITY_TYPE_TURN, at + 4, b"receiver edit");
+                map_insert_bytes(&receiver.doc.get_map("entities"), &shared, &ours).unwrap();
+                receiver.doc.commit();
+                let winner = blob(ENTITY_TYPE_TURN, at + 5, b"hub edit the receiver took in");
+                map_insert_bytes(&hub.get_map("entities"), &shared, &winner).unwrap();
+                hub.commit();
+                receiver
+                    .doc
+                    .import(
+                        &hub.export(ExportMode::updates(&receiver.doc.oplog_vv()))
+                            .unwrap(),
+                    )
+                    .unwrap();
+                assert_eq!(
+                    map_get_bytes(&receiver.doc.get_map("entities"), &shared),
+                    Some(winner),
+                    "fixture: the hub's edit wins on the receiver"
+                );
+                let last = blob(ENTITY_TYPE_TURN, at + 6, b"newest hub edit");
+                map_insert_bytes(&hub.get_map("entities"), &shared, &last).unwrap();
+                hub.commit();
+                newest = Some(last);
+            }
         }
-        let old = if matches!(work, LocalWork::PastRoot) {
+        let old = if matches!(
+            work,
+            LocalWork::PastRoot
+                | LocalWork::LostToHub
+                | LocalWork::Concurrent
+                | LocalWork::ConcurrentOrdered
+        ) {
             receiver.doc.fork()
         } else {
             LoroDoc::from_snapshot(
@@ -493,9 +662,12 @@ fn a_replacement_keeps_every_write_the_hub_never_saw() {
         };
         drop(receiver);
         hub.commit();
-        let snapshot = hub
-            .export(ExportMode::shallow_snapshot(&hub.oplog_frontiers()))
-            .unwrap();
+        let root = if matches!(work, LocalWork::ConcurrentOrdered) {
+            prefix
+        } else {
+            hub.oplog_frontiers()
+        };
+        let snapshot = hub.export(ExportMode::shallow_snapshot(&root)).unwrap();
 
         let prepared = prepare_replacement(
             &vault,
@@ -536,6 +708,14 @@ fn a_replacement_keeps_every_write_the_hub_never_saw() {
                     "{work:?}: the edit it could not keep is not named"
                 );
             }
+            None if newest.is_some() => {
+                assert_eq!(
+                    map_get_bytes(&entities, &shared),
+                    newest,
+                    "{work:?}: a stale value"
+                );
+                assert!(prepared.conflicts.is_empty(), "{work:?}");
+            }
             None => assert!(
                 prepared.conflicts.is_empty(),
                 "{work:?}: {:?}",
@@ -559,8 +739,8 @@ fn a_replacement_keeps_every_write_the_hub_never_saw() {
             "{work:?}: persisted state"
         );
         assert_eq!(
-            reloaded.get_deep_value(),
-            prepared.doc.get_deep_value(),
+            crate::sync::loro_support::replicated_deep_value(&reloaded),
+            crate::sync::loro_support::replicated_deep_value(&prepared.doc),
             "{work:?}"
         );
     }

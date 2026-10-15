@@ -578,7 +578,7 @@ pub(crate) fn exchange_docs(a_name: &str, doc_a: &LoroDoc, b_name: &str, doc_b: 
 /// export door. The device imports the hub's updates, and the hub the device's. Whenever only a
 /// replacement could bring them level, the device installs the hub's: when the hub's door
 /// answers with one, when the device's door would (a device never pushes one on the hub), and
-/// when either side cannot apply the other's update. Panics if either
+/// when either side cannot apply the other's update past its own shallow root. Panics if either
 /// side is still behind after five rounds, the bound past which ARCH-0023b re-bootstraps.
 pub(crate) fn sync_through_doors(hub: &TestNode, device: &mut TestNode) {
     let key = WindowKey::new(WINDOW);
@@ -631,10 +631,10 @@ pub(crate) fn sync_through_doors(hub: &TestNode, device: &mut TestNode) {
     );
 }
 
-/// Imports `update` into `doc`; `true` when it builds on history `doc` does not hold, so the
-/// device must rebase on the hub.
+/// Imports `update` into `doc`; `true` when it builds on history `doc`'s own shallow root cut
+/// away, so the device must rebase on the hub.
 fn imports_or_rebases(doc: &LoroDoc, update: &[u8]) -> bool {
-    if window::update_needs_replacement(doc, update) {
+    if window::update_reaches_below_root(doc, update) {
         return true;
     }
     doc.import(update).unwrap();

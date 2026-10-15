@@ -11,12 +11,16 @@ pub(crate) use oneiron::sync::{
 
 // Re-export tag constants from shared transport (avoid redefinition).
 pub(crate) use oneiron::sync::transport::{
-    APP_TIER_PROTOCOL_VERSION_VERSION, CHUNK_FULL_WINDOW_PROTOCOL_VERSION, LEASE_STATUS_GRANTED,
-    LEASE_STATUS_REJECTED, LEGACY_FULL_WINDOW_PROTOCOL_VERSION, LEGACY_SELECTOR_PROTOCOL_VERSION,
-    PROTOCOL_VERSION, RESIDENCE_PROTOCOL_VERSION, TAG_EPHEMERAL, TAG_LEASE_REQUEST,
-    TAG_LFS_CHUNK_SYNC, TAG_RPC, TAG_SUB, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR,
-    decode_lease_request, decode_protocol_hello, encode_ephemeral, encode_lease_granted,
-    installs_window_replacements, is_owner_window_version, is_residence_version,
+    APP_TIER_PROTOCOL_VERSION_VERSION, LEASE_STATUS_GRANTED, LEASE_STATUS_REJECTED,
+    LEGACY_FULL_WINDOW_PROTOCOL_VERSION, LEGACY_SELECTOR_PROTOCOL_VERSION, PROTOCOL_VERSION,
+    TAG_EPHEMERAL, TAG_LEASE_REQUEST, TAG_LFS_CHUNK_SYNC, TAG_RPC, TAG_SUB, TAG_SYNC_UPDATE,
+    TAG_VERSION_VECTOR, decode_lease_request, decode_protocol_hello, encode_ephemeral,
+    encode_lease_granted, installs_window_replacements, is_owner_window_version,
+    is_residence_version,
+};
+#[cfg(test)]
+pub(crate) use oneiron::sync::transport::{
+    CHUNK_FULL_WINDOW_PROTOCOL_VERSION, RESIDENCE_PROTOCOL_VERSION,
 };
 
 /// Sub-tags within WindowSync messages.
