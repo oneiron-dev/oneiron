@@ -329,30 +329,31 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                 })?;
             }
             ConsolidationReader::GraphSignal => {
+                // The Dreamer opens the branch, as a consolidation pass does.
                 let conversation = test_id(0x49);
-                put_raw_entity_row(
-                    &vault,
+                vault.put_entity(
                     &conversation,
                     crate::registry::ENTITY_TYPE_SESSION,
+                    test_time(1),
+                    1,
                     b"session",
                 )?;
-                crate::test_util::authorize_readers(&vault, &[&principal.to_hex()]);
                 vault.put_edge(&claim, EdgeKind::ClaimOf, &subject, 1.0)?;
-                let actor = WriteActor::new(principal, EdgeActorClass::Human);
+                let actor = vault.dreamer_authority()?;
                 check_transition(&vault, claim, reader, |v, id| {
                     v.graph_source_in_slice_for_test(actor, conversation, id)
                 })?;
             }
             ConsolidationReader::ExplicitPrior => {
                 let conversation = test_id(0x49);
-                put_raw_entity_row(
-                    &vault,
+                vault.put_entity(
                     &conversation,
                     crate::registry::ENTITY_TYPE_SESSION,
+                    test_time(1),
+                    1,
                     b"session",
                 )?;
-                crate::test_util::authorize_readers(&vault, &[&principal.to_hex()]);
-                let actor = WriteActor::new(principal, EdgeActorClass::Human);
+                let actor = vault.dreamer_authority()?;
                 check_transition(&vault, claim, reader, |v, id| {
                     Ok(v.explicit_prior_ids_for_test(actor, conversation, *id)?
                         .contains(id))

@@ -152,13 +152,15 @@ impl<F: Fn(&DocsSegment) -> Result<()>> DocsDeepExtractor for CallbackNer<F> {
     }
 }
 
-/// Installs the shipped policy with an explicit, receipted `Auto` permit for
-/// imported claims and a rule declaring `docs.*` normal, so a deep pass's
-/// derived claims land `Auto` and read as live facts. Without the rule, an
-/// undeclared `docs.topic` takes the criticality floor and waits in the tray.
+/// Adds an explicit, receipted `Auto` permit for imported claims to the
+/// vault's default policy, and a rule declaring `docs.*` normal, so a deep
+/// pass's derived claims land `Auto` and read as live facts. Without the rule,
+/// an undeclared `docs.topic` takes the criticality floor and waits in the
+/// tray.
 fn trust_imported_claims(vault: &crate::Vault) -> Result<()> {
     use rmpv::Value;
-    let bytes = crate::gate::default_policy_manifest_with_scoped_grants(Vec::new())?;
+    let id = crate::gate::default_policy_manifest_id()?;
+    let bytes = vault.get(&id)?.ok_or(crate::Error::EntityNotFound)?;
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice())
         .map_err(|_| crate::Error::InvalidClaimBody("policy manifest"))?
     else {
@@ -182,31 +184,11 @@ fn trust_imported_claims(vault: &crate::Vault) -> Result<()> {
         }
         _ => entries.push((Value::from("source_trust"), Value::Map(vec![permit]))),
     }
-    let docs_normal = Value::Map(vec![
-        (Value::from("prefix"), Value::from("docs.")),
-        (
-            Value::from("axes"),
-            Value::Map(vec![
-                (Value::from("criticality"), Value::from("normal")),
-                (Value::from("sensitivity"), Value::from("normal")),
-            ]),
-        ),
-    ]);
-    match entries
-        .iter_mut()
-        .find(|(key, _)| key.as_str() == Some("rules"))
-    {
-        Some((_, Value::Array(rules))) => rules.push(docs_normal),
-        _ => entries.push((Value::from("rules"), Value::Array(vec![docs_normal]))),
-    }
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &Value::Map(entries))
         .map_err(|_| crate::Error::InvalidClaimBody("policy manifest"))?;
-    crate::test_util::put_policy_manifest_bytes(
-        vault,
-        crate::gate::default_policy_manifest_id()?,
-        &data,
-    )
+    crate::test_util::put_policy_manifest_bytes(vault, id, &data)?;
+    crate::test_util::declare_predicates_normal(vault, &["docs."])
 }
 
 fn grant_core_read(vault: &crate::Vault, actor_ref: &str) -> Result<()> {
