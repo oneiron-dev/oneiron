@@ -381,3 +381,82 @@ fn a_body_the_write_door_refuses_is_withheld_whole_from_every_context_output() -
     }
     Ok(())
 }
+
+#[test]
+fn a_write_accepted_body_of_wide_numbers_hydrates_its_numbers() -> Result<()> {
+    let (_dir, vault, subject) = fixture();
+    let id = crate::vault::embedded_owner_actor_id()?;
+    let owner =
+        vault.authenticate_owner(id, &id.to_hex(), true, crate::store::GateDecisionId::now())?;
+    vault.set_secret_scan_mode(&owner, crate::batch::secret_scan::SecretScanMode::Off, 10)?;
+    let encode = |value: &rmpv::Value| {
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, value).unwrap();
+        bytes
+    };
+    // Sol R12-1: each word's first four letters as the bits of a float a
+    // single width holds exactly, stored wide, the rest of the word in
+    // byte-sized integers after it. Only the narrow width spells the phrase.
+    let mut measurements = Vec::new();
+    for word in PHRASE.split(' ') {
+        let (head, rest) = word.as_bytes().split_at(4);
+        let bits = u32::from_be_bytes(head.try_into().unwrap());
+        measurements.push(rmpv::Value::F64(f64::from(f32::from_bits(bits))));
+        measurements.extend(rest.iter().copied().map(rmpv::Value::from));
+    }
+    // The phrase's letters after a string and a line break, each stored
+    // after a one-byte header: only their narrowest re-encoding spells it.
+    // Stored at that width, the write door refuses them.
+    let letters: Vec<u8> = std::iter::once(b'\n').chain(PHRASE.bytes()).collect();
+    let body = |header: &[u8]| {
+        let mut body = vec![0x82];
+        body.extend(encode(&"measurements".into()));
+        body.extend(encode(&rmpv::Value::Array(measurements.clone())));
+        body.extend(encode(&"letters".into()));
+        body.push(0xdc);
+        body.extend(u16::try_from(letters.len() + 1).unwrap().to_be_bytes());
+        body.extend(encode(&"notes".into()));
+        for letter in &letters {
+            body.extend_from_slice(header);
+            body.push(*letter);
+        }
+        body
+    };
+    let (wide, narrow) = (body(&[0xcc]), body(&[]));
+    assert!(crate::batch::secret_scan::scan_write_payload(&wide).is_ok());
+    assert!(crate::batch::secret_scan::scan_write_payload(&narrow).is_err());
+    for (at, body) in [(0x63, &wide), (0x64, &narrow)] {
+        let asset = crate::test_util::entity(at);
+        vault
+            .batch()
+            .put(
+                &asset,
+                ENTITY_TYPE_ASSET,
+                TimeRange { start: 1, end: 1 },
+                1,
+                body,
+            )
+            .text(&asset, &[("body", "l2needle")])
+            .commit()?;
+    }
+    let json = |value: rmpv::Value| {
+        serde_json::to_string(&crate::context_pack::hydration::rmpv_to_json(&value)).unwrap()
+    };
+    let numbers = json(rmpv::Value::Array(measurements));
+    let mut letter_values = vec![rmpv::Value::from("notes")];
+    letter_values.extend(letters.iter().copied().map(rmpv::Value::from));
+    let letter_numbers = json(rmpv::Value::Array(letter_values));
+    let text = String::from_utf8(
+        assembly(&vault, subject)
+            .field_profile(crate::context_pack::FieldProfile::Full)
+            .max_item_tokens(0)
+            .format(PackFormat::Json)
+            .run_serialized()?,
+    )
+    .unwrap();
+    // Each number of the body the write door accepts, once: the one it
+    // refuses hydrates no field.
+    assert_eq!(text.matches(&numbers).count(), 1, "{text}");
+    assert_eq!(text.matches(&letter_numbers).count(), 1, "{text}");
+    Ok(())
+}

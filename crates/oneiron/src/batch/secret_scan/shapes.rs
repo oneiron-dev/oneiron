@@ -18,19 +18,23 @@ pub(super) enum Door {
 }
 
 pub(super) fn blocklisted(text: &str) -> bool {
+    blocklist().any(|entry| text.contains(entry))
+}
+
+/// The longest blocklist entry, in bytes.
+pub(super) fn blocklist_longest() -> usize {
+    blocklist().map(str::len).max().unwrap_or(0)
+}
+
+fn blocklist() -> impl Iterator<Item = &'static str> {
     BLOCKLIST
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .any(|entry| text.contains(entry))
 }
 
 /// BIP39 phrase lengths: 128 to 256 bits of entropy in 32-bit steps.
 const PHRASE_WORDS: [usize; 5] = [12, 15, 18, 21, 24];
-/// The most words a phrase holds. Past it no word sequence is a phrase, so
-/// the detector keeps one word more than this of any segment or wrapped run
-/// (enough to know it is too long) and never a whole line's worth.
-const MAX_PHRASE_WORDS: usize = 24;
 /// The longest word on the BIP39 English list.
 const MAX_LIST_WORD_LEN: usize = 8;
 
@@ -46,45 +50,86 @@ const MAX_LIST_WORD_LEN: usize = 8;
 /// Seed-labelled fields are separately refused even when incomplete or
 /// misspelled.
 pub(super) fn mnemonic(text: &str) -> bool {
-    let mut group = PureSegments::default();
-    let mut wrapped = WrappedLines::default();
-    let mut segment: Vec<u16> = Vec::new();
-    let mut pure = true;
-    let mut blank_only = true;
-    let mut chars = text.char_indices().peekable();
-    while let Some((start, ch)) = chars.next() {
-        if !ch.is_ascii_alphabetic() {
+    let mut stream = MnemonicStream::default();
+    stream.feed(text) || stream.finish()
+}
+
+/// [`mnemonic`] over text read in parts, in order: it finds what one read of
+/// the whole finds, a word or a run cut by an edge included. What it keeps is
+/// bounded, since past [`MAX_RUN`] words no run can hold a phrase.
+#[derive(Default)]
+pub(super) struct MnemonicStream {
+    group: PureSegments,
+    wrapped: WrappedLines,
+    segment: Vec<u16>,
+    /// The segment holds a word off the list.
+    impure: bool,
+    /// The segment holds something other than words and blanks.
+    filled: bool,
+    /// The word the text so far ends in, kept to one letter past the longest
+    /// list word.
+    word: String,
+}
+
+/// The most words any run of a phrase can span: the longest phrase, and a
+/// label on either edge.
+const MAX_RUN: usize = 26;
+
+impl MnemonicStream {
+    /// Reads `text` on; `true` once a phrase is found.
+    pub(super) fn feed(&mut self, text: &str) -> bool {
+        for ch in text.chars() {
+            if ch.is_ascii_alphabetic() {
+                if self.word.len() <= MAX_LIST_WORD_LEN {
+                    self.word.push(ch);
+                }
+                continue;
+            }
+            self.end_word();
             if segment_break(ch) {
                 let line_break = matches!(ch, '\n' | '\r');
-                if wrapped.close(&segment, pure && blank_only, line_break)
-                    || group.close(std::mem::take(&mut segment), pure)
+                let segment = std::mem::take(&mut self.segment);
+                if self
+                    .wrapped
+                    .close(&segment, !self.impure && !self.filled, line_break)
+                    || self.group.close(segment, !self.impure)
                 {
                     return true;
                 }
-                pure = true;
-                blank_only = true;
+                self.impure = false;
+                self.filled = false;
             } else if !matches!(ch, ' ' | '\t') {
-                blank_only = false;
+                self.filled = true;
             }
-            continue;
         }
-        let mut end = start + 1;
-        while let Some(&(at, next)) = chars.peek() {
-            if !next.is_ascii_alphabetic() {
-                break;
-            }
-            end = at + 1;
-            chars.next();
-        }
-        match list_word_index(&text[start..end]) {
-            Some(index) if segment.len() <= MAX_PHRASE_WORDS => segment.push(index),
-            Some(_) => {}
-            None => pure = false,
-        }
+        false
     }
-    wrapped.close(&segment, pure && blank_only, false)
-        || group.close(segment, pure)
-        || group.finish()
+
+    /// Reads the end of the text; `true` when a phrase ends it.
+    pub(super) fn finish(&mut self) -> bool {
+        self.end_word();
+        let segment = std::mem::take(&mut self.segment);
+        let found = self
+            .wrapped
+            .close(&segment, !self.impure && !self.filled, false)
+            || self.group.close(segment, !self.impure)
+            || self.group.finish();
+        *self = Self::default();
+        found
+    }
+
+    fn end_word(&mut self) {
+        if self.word.is_empty() {
+            return;
+        }
+        match list_word_index(&self.word) {
+            // A segment past the longest run reads as any longer one does.
+            Some(index) if self.segment.len() < MAX_RUN => self.segment.push(index),
+            Some(_) => {}
+            None => self.impure = true,
+        }
+        self.word.clear();
+    }
 }
 
 /// One phrase wrapped over lines that hold only list words and blanks (`a b c
@@ -109,9 +154,8 @@ impl WrappedLines {
         if !wraps || words.is_empty() {
             return self.finish();
         }
-        let room = (MAX_PHRASE_WORDS + 1).saturating_sub(self.words.len());
-        self.words
-            .extend_from_slice(&words[..words.len().min(room)]);
+        let room = (MAX_RUN + 1).saturating_sub(self.words.len());
+        self.words.extend(words.iter().take(room));
         self.lines += 1;
         !line_break && self.finish()
     }
@@ -125,13 +169,7 @@ impl WrappedLines {
 /// Consecutive segments made only of list words, between impure segments.
 #[derive(Default)]
 struct PureSegments {
-    /// The run's words, one per segment, while the run can still hold a
-    /// phrase. A run counts whole or less one word at either edge, so a run
-    /// two words past the longest phrase holds none, and its words are no
-    /// longer kept.
-    words: Vec<u16>,
-    /// The segments in the run, counted past the words kept.
-    count: usize,
+    segments: Vec<Vec<u16>>,
     /// A segment of several words joined the run: the run is prose-shaped
     /// (`**a b c** (d, e)`), so only single segments count inside it.
     multi_word: bool,
@@ -152,9 +190,9 @@ impl PureSegments {
             return true;
         }
         self.multi_word |= words.len() > 1;
-        self.count += 1;
-        if !self.multi_word && self.count <= MAX_PHRASE_WORDS + 2 {
-            self.words.extend_from_slice(&words);
+        // A run past the longest one a phrase spans reads as any longer one.
+        if self.segments.len() <= MAX_RUN {
+            self.segments.push(words);
         }
         false
     }
@@ -163,11 +201,11 @@ impl PureSegments {
     /// either edge (a list word used as a label). Never an arbitrary window: a
     /// long list of common words must not offer a checksum many chances.
     fn finish(&mut self) -> bool {
-        let words = std::mem::take(&mut self.words);
-        let count = std::mem::take(&mut self.count);
-        if std::mem::take(&mut self.multi_word) || count > MAX_PHRASE_WORDS + 2 {
+        let segments = std::mem::take(&mut self.segments);
+        if std::mem::take(&mut self.multi_word) {
             return false;
         }
+        let count = segments.len();
         [
             (0, count),
             (1, count),
@@ -176,7 +214,11 @@ impl PureSegments {
         ]
         .into_iter()
         .filter(|(first, last)| first < last)
-        .any(|(first, last)| phrase(&words[first..last]))
+        .any(|(first, last)| {
+            let words = &segments[first..last];
+            PHRASE_WORDS.contains(&words.iter().map(Vec::len).sum::<usize>())
+                && phrase(&words.concat())
+        })
     }
 }
 
@@ -565,18 +607,80 @@ pub(super) fn sensitive_assignment(text: &str, door: Door) -> bool {
         let Some((key, value)) = line.split_once(['=', ':']) else {
             return false;
         };
-        let key = key
-            .trim()
-            .trim_start_matches("export ")
-            .trim()
-            .trim_matches(['\"', '\'']);
-        let value = value.trim().trim_matches(['\"', '\'']);
-        sensitive_key(key)
+        let value = assigned_value(value);
+        sensitive_key(assigned_key(key))
             && match door {
                 Door::Write => secret_material(value),
                 Door::Release => !placeholder(value),
             }
     })
+}
+
+/// The name an assignment's key text reads as.
+fn assigned_key(key: &str) -> &str {
+    key.trim()
+        .trim_start_matches("export ")
+        .trim()
+        .trim_matches(['"', '\''])
+}
+
+/// The value an assignment's value text reads as.
+fn assigned_value(value: &str) -> &str {
+    value.trim().trim_matches(['"', '\''])
+}
+
+/// The longest ending [`sensitive_key`] reads, and some.
+const KEY_ENDING: usize = 16;
+
+/// The write door's assignment rule over one line a reader kept in parts,
+/// its middle dropped: its key, or its `head` and end when the key's middle
+/// was dropped, and its value's start (`value_cut`: more of the value was
+/// dropped; else `value` is the whole value). `None` when the parts cannot
+/// tell what the whole line reads as: the key's reading trims through a
+/// part it was cut at (a run of `export `, quotes or blanks), or the value
+/// word a sensitive key's rule reads runs past the cut.
+pub(super) fn cut_assignment(
+    head: Option<&str>,
+    key: &str,
+    value: &str,
+    value_cut: bool,
+) -> Option<bool> {
+    let sensitive = match head {
+        None => sensitive_key(assigned_key(key)),
+        Some(head) => {
+            // A key cut in the middle is longer than any name, so only its
+            // ending can read as one, once its own ends are trimmed as whole.
+            // A head left as the start of another `export ` may strip on past
+            // the cut, and so may one whose last character the cut split (read
+            // as U+FFFD, it may have been a blank).
+            let head = head
+                .strip_suffix(char::REPLACEMENT_CHARACTER)
+                .unwrap_or(head);
+            let exported = head.trim_start().trim_start_matches("export ");
+            let start = exported.trim_start().trim_start_matches(['"', '\'']);
+            let ending = key.trim_end().trim_end_matches(['"', '\'']);
+            if "export ".starts_with(exported) || start.is_empty() || ending.len() < KEY_ENDING {
+                return None;
+            }
+            sensitive_key(ending)
+        }
+    };
+    if !sensitive || !value_cut {
+        return Some(sensitive && secret_material(assigned_value(value)));
+    }
+    // The rule reads the value's first word, and the next after an auth
+    // scheme: each must end, at a blank, before the cut.
+    let read = value.trim_start().trim_start_matches(['"', '\'']);
+    let words: Vec<&str> = read.split_whitespace().take(3).collect();
+    let complete = if words.len() == 3 || read.ends_with(char::is_whitespace) {
+        words.len()
+    } else {
+        words.len().saturating_sub(1)
+    };
+    let scheme = words
+        .first()
+        .is_some_and(|word| AUTH_SCHEMES.contains(&trim_value(word).to_ascii_lowercase().as_str()));
+    (complete > usize::from(scheme)).then(|| secret_material(assigned_value(value)))
 }
 
 /// A string value under a credential field name that the door still treats as
