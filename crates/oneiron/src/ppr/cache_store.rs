@@ -397,7 +397,7 @@ fn invalidate_ppr_caches(store: &Store, wtxn: &mut RwTxn<'_>, entity_id: &Entity
 
     Ok(())
 }
-fn seed_is_live_for_ppr(
+pub(super) fn seed_is_live_for_ppr(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     entity_id: &EntityId,
@@ -746,7 +746,7 @@ fn decode_u32(raw: &[u8], context: &'static str) -> Result<u32> {
     let bytes: [u8; 4] = raw.try_into().map_err(|_| Error::CorruptedIndex(context))?;
     Ok(u32::from_le_bytes(bytes))
 }
-fn decode_dep_key(dep_key: &[u8]) -> Result<(EntityId, [u8; SEED_HASH_LEN])> {
+pub(super) fn decode_dep_key(dep_key: &[u8]) -> Result<(EntityId, [u8; SEED_HASH_LEN])> {
     if dep_key.len() != CACHE_DEP_KEY_LEN {
         return Err(Error::CorruptedIndex("ppr cache dep"));
     }

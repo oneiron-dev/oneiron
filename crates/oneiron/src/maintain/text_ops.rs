@@ -1,9 +1,16 @@
 //! Text-index clear, PPR cleanup, and postings compaction.
 
-use crate::Vault;
 use crate::error::Result;
+use crate::ports::EntityStoreRead;
 use crate::ppr;
+use crate::side_table::{self, Named, SideTable};
 use crate::vault::write_text_index_manifest;
+use crate::{EntityId, Vault};
+
+/// The text each document was indexed with, kept beside the index so it can
+/// be built again. Key: id16.
+const INDEX_SOURCE_TEXT: SideTable<EntityId, Vec<(String, String)>, Named> =
+    SideTable::new(&side_table::INDEX_SOURCE_TEXT);
 
 pub(super) struct ClearTextIndexCounts {
     pub(super) postings: u64,
@@ -11,9 +18,13 @@ pub(super) struct ClearTextIndexCounts {
     pub(super) forward: u64,
     pub(super) doc_field_lengths: u64,
     pub(super) field_stats: u64,
+    pub(super) reindexed: u64,
 }
 
-pub(super) fn clear_text_index(vault: &Vault) -> Result<ClearTextIndexCounts> {
+/// Drops the text index and rewrites its manifest. With `reindex`, the same
+/// transaction indexes every live document again from the text it was
+/// indexed with, so the index is never seen half built.
+pub(super) fn clear_text_index(vault: &Vault, reindex: bool) -> Result<ClearTextIndexCounts> {
     let mut wtxn = vault.store.env.write_txn()?;
 
     let postings = vault.store.text_postings.len(&wtxn)?;
@@ -33,6 +44,17 @@ pub(super) fn clear_text_index(vault: &Vault) -> Result<ClearTextIndexCounts> {
 
     write_text_index_manifest(&vault.store, &mut wtxn, &vault.analyzer)?;
 
+    let mut reindexed = 0;
+    if reindex {
+        for (id, fields) in INDEX_SOURCE_TEXT.scan(&vault.store, &wtxn)? {
+            if vault.store.port_entity_raw(&wtxn, &id)?.is_none() {
+                continue;
+            }
+            crate::bm25::index_text(&vault.store, &mut wtxn, &vault.analyzer, &id, &fields)?;
+            reindexed += 1;
+        }
+    }
+
     wtxn.commit()?;
 
     // The on-disk manifest now matches the in-memory analyzer; subsequent
@@ -48,6 +70,7 @@ pub(super) fn clear_text_index(vault: &Vault) -> Result<ClearTextIndexCounts> {
         forward,
         doc_field_lengths,
         field_stats,
+        reindexed,
     })
 }
 

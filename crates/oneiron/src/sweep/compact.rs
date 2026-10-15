@@ -2,9 +2,11 @@
 
 use std::collections::BTreeSet;
 
-use super::run::{HardEraseSweepRun, WindowSweepState};
 #[cfg(all(feature = "sync", test))]
-use super::run::{INJECT_RACE_BEFORE_COMPACT_WRITE, RACE_BENIGN_MARKER, RaceInjection};
+use super::run::{
+    BEFORE_COMPACT_WRITE, INJECT_RACE_BEFORE_COMPACT_WRITE, RACE_BENIGN_MARKER, RaceInjection,
+};
+use super::run::{HardEraseSweepRun, WindowSweepState};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -70,7 +72,7 @@ fn persisted_window_labels(vault: &Vault) -> Result<(BTreeSet<String>, bool)> {
             None => {
                 // A u:w: row that does not address a window cannot be
                 // proven payload-free — fail closed, block completion.
-                tracing::error!(key = %format_args!("u:w:{rest}"), "sweep: malformed u:w: row key");
+                tracing::error!("sweep: malformed u:w: row key");
                 malformed = true;
             }
         }
@@ -149,7 +151,7 @@ pub(super) fn compact_all_windows(
         if parse_window_key_str(label).is_none() {
             // Engine-written labels always validate; a foreign/corrupt row
             // cannot be loaded or proven payload-free — fail closed.
-            tracing::error!(window = %label, "sweep: invalid persisted window label");
+            tracing::error!("sweep: invalid persisted window label");
             if matches!(state, WindowSweepState::AllCompacted) {
                 state =
                     WindowSweepState::Failed(format!("{:?}", crate::error::ErrorKind::InvalidKey));
@@ -161,24 +163,25 @@ pub(super) fn compact_all_windows(
         // OPEN or retained-handle windows are deferred (pinned): the live doc
         // keeps the full history in memory and its next full-snapshot persist
         // would resurrect the carrier over the shallow row, even after forced
-        // deregistration removed the manager registry entry.
-        if vault_window_is_live(vault, &key) {
-            tracing::warn!(window = %label, "sweep: window live or retained — deferred");
+        // deregistration removed the manager registry entry. A closed window
+        // stays closed while it compacts: an open waits, then reads the
+        // compacted window, rather than registering the history dropped here.
+        let Some(compacted) =
+            vault.while_window_closed(&key, || compact_window(vault, &key, erased))
+        else {
+            tracing::warn!("sweep: window live or retained — deferred");
             run.windows_deferred_live += 1;
             if matches!(state, WindowSweepState::AllCompacted) {
                 state = WindowSweepState::Deferred;
             }
             continue;
-        }
+        };
 
-        match compact_window(vault, &key, erased) {
+        match compacted {
             Ok(CompactOutcome::Compacted) => run.windows_compacted += 1,
             Ok(CompactOutcome::Empty) => {}
             Ok(CompactOutcome::RacedDefer) => {
-                tracing::warn!(
-                    window = %label,
-                    "sweep: window raced between read and compaction write — deferred"
-                );
+                tracing::warn!("sweep: window raced between read and compaction write — deferred");
                 run.windows_deferred_raced += 1;
                 // Outcome precedence (pinned): Failed > Deferred(raced) >
                 // Deferred(live) > AllCompacted. A raced window downgrades
@@ -191,7 +194,6 @@ pub(super) fn compact_all_windows(
             }
             Err(err) => {
                 tracing::error!(
-                    window = %label,
                     kind = ?err.kind(),
                     "sweep: window compaction FAILED — obligation kept for retry"
                 );
@@ -234,11 +236,6 @@ pub(super) fn compact_all_windows(
         return Ok(WindowSweepState::Deferred);
     }
     Ok(WindowSweepState::AllCompacted)
-}
-
-#[cfg(feature = "sync")]
-fn vault_window_is_live(vault: &Vault, key: &crate::sync::types::WindowKey) -> bool {
-    vault.live_window_for_sweep(key)
 }
 
 /// Compacts one CLOSED window: load `d:w:` + pending `u:w:` rows, scrub
@@ -318,6 +315,10 @@ fn compact_window(
     // guards below have something to catch (one-shot).
     #[cfg(test)]
     inject_race_before_compact_write(vault, key, &snapshot_bytes)?;
+    #[cfg(test)]
+    if let Some(hook) = BEFORE_COMPACT_WRITE.with(|hook| hook.borrow_mut().take()) {
+        hook();
+    }
 
     // ABORT-ONLY raced-defer signal: the write closure returns `Err` (so
     // `with_write_txn` rolls the txn back, committing NOTHING) and sets this
