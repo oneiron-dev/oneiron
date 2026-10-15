@@ -65,22 +65,12 @@ impl ConnState {
     }
 
     /// The machine this socket proved at upgrade, while the vault's fold
-    /// still holds it live. The socket outlives that instant: a machine
-    /// removed, poisoned or gone stale since is an unknown destination, as
-    /// is one the fold cannot be read for. `Unknown` is never this machine or
-    /// the owner's.
+    /// still holds it on the key it proved. The socket outlives that instant:
+    /// a machine removed, poisoned, gone stale or trusted under other keys
+    /// since is an unknown destination, as is one the fold cannot be read
+    /// for. `Unknown` is never this machine or the owner's.
     pub(super) fn peer_machine(&self, vault: &oneiron::Vault) -> oneiron::authority::PeerMachine {
-        match self.proven_machine {
-            oneiron::authority::PeerMachine::Proven(machine)
-                if vault.authority_fold().is_ok_and(|fold| {
-                    fold.machine(machine)
-                        .is_some_and(oneiron::authority::FoldedMachine::is_live)
-                }) =>
-            {
-                oneiron::authority::PeerMachine::Proven(machine)
-            }
-            _ => oneiron::authority::PeerMachine::Unknown,
-        }
+        vault.peer_machine_stands(self.proven_machine)
     }
 
     /// Pushes `key`'s changes to this socket from now on, after a valid version exchange. Only an

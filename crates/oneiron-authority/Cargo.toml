@@ -10,6 +10,7 @@ homepage.workspace = true
 
 [dependencies]
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+oneiron-crypto = { version = "0.1.0", path = "../oneiron-crypto" }
 blake3 = { workspace = true }
 ed25519-dalek = { workspace = true }
 p256 = { workspace = true }
