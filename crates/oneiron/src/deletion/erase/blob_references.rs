@@ -55,8 +55,8 @@ impl Vault {
     /// while the bytes it names are erased is the leak.
     ///
     /// The walk holds no count bound and refuses nothing for size: it touches a few rows per
-    /// reference, inside the one write transaction. A held gate partition on a scrubbed carrier
-    /// refuses the whole erase, as it does for a redirect shell.
+    /// reference, inside the one write transaction. A held gate partition on a scrubbed carrier or
+    /// on the ASSET refuses the whole erase, as it does for a redirect shell.
     pub(in crate::deletion) fn cascade_hard_erase_to_blob_references_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -91,7 +91,7 @@ impl Vault {
             references,
             scrubbed,
         } = walk;
-        for carrier in &scrubbed {
+        for carrier in scrubbed.iter().chain(&assets) {
             self.store
                 .reject_held_gate_partition_in_txn(wtxn, carrier.as_bytes())?;
         }
@@ -173,15 +173,16 @@ impl Vault {
     }
 
     /// Refuses a hard erase of `id` BEFORE its tombstone publishes when a carrier its blob-reference
-    /// walk would scrub sits in a held gate partition, as `reject_held_redirect_shells_in_txn`
-    /// does for a redirect shell. The walk re-checks in the transaction that tears.
+    /// walk would scrub, or the ASSET it would release, sits in a held gate partition, as
+    /// `reject_held_redirect_shells_in_txn` does for a redirect shell. The walk re-checks in the
+    /// transaction that tears.
     pub(in crate::deletion) fn reject_held_blob_references_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<()> {
         if let Some(walk) = self.blob_reference_walk_in_txn(txn, id)? {
-            for carrier in walk.scrubbed {
+            for carrier in walk.scrubbed.iter().chain(&walk.assets) {
                 self.store
                     .reject_held_gate_partition_in_txn(txn, carrier.as_bytes())?;
             }
