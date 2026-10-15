@@ -203,9 +203,10 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             super::forks::validate_actor(self, txn, birth_actor)?;
             let authorizer = match authorization {
-                DocAuthorization::Owner(owner) => {
-                    WriteActor::new(owner.actor(), crate::edge::EdgeActorClass::Human)
-                }
+                DocAuthorization::Owner(owner) => WriteActor::new(
+                    owner.revalidate_in_txn(self, txn)?,
+                    crate::edge::EdgeActorClass::Human,
+                ),
                 _ => birth_actor,
             };
             super::forks::authorize(self, txn, authorization, entity, authorizer)?;

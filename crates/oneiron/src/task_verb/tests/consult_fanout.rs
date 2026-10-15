@@ -91,6 +91,15 @@ fn fanout_approve_policy_deny_resume_exact_digest_and_gate_receipts() {
     // Visible after process loss, not only present in an in-memory sink.
     drop(vault);
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("reopen paused run");
+    // A proof binds to the open it was minted on: the reopened vault takes a fresh one.
+    let human = vault
+        .authenticate_owner(
+            human.actor(),
+            human.principal_ref(),
+            true,
+            GateDecisionId::now(),
+        )
+        .expect("fresh proof");
     let facade = vault.memory(actor, EdgeActorClass::Agent);
     assert_eq!(
         facade
@@ -563,6 +572,44 @@ fn fanout_missing_manifest_threshold_uses_shipped_row_and_malformed_refuses() {
     assert!(facade.get_consult_fanout_policy().is_err());
     assert!(facade.fan_out_counted_consults(&input, "research").is_err());
     assert_eq!(task_entity_census(&vault), 1);
+}
+
+/// F18 (H397): owner doors take their actor from a proof this vault
+/// authenticated. Another vault's proof for the same PERSON id acts on nothing.
+mod foreign_owner_proof {
+    use super::*;
+
+    #[test]
+    fn a_foreign_owner_proof_releases_no_paused_fan_out() {
+        let (_dir, vault) = open_vault();
+        let actor = own_agent(&vault);
+        let human = owner(&vault);
+        let (_other_dir, _other, foreign) =
+            crate::test_util::foreign_owner_proof(human.actor(), human.principal_ref());
+        let input = plan(&vault, 26);
+        let facade = vault.memory(actor, EdgeActorClass::Agent);
+        let paused = facade.fan_out_consults(&input).unwrap();
+
+        let refused = facade
+            .resume_fan_out_consults(
+                paused.correlation_ref,
+                paused.meter.plan_digest,
+                ConsultFanOutChoice::ApproveOnce,
+                &foreign,
+            )
+            .expect_err("another vault's proof releases nothing");
+        assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+        assert_eq!(task_entity_census(&vault), 0);
+        let released = facade
+            .resume_fan_out_consults(
+                paused.correlation_ref,
+                paused.meter.plan_digest,
+                ConsultFanOutChoice::ApproveOnce,
+                &human,
+            )
+            .unwrap();
+        assert_eq!(released.task_refs.len(), 26);
+    }
 }
 
 /// Rule 5: an actor's fan-out requests are counted, never refused for rate.
