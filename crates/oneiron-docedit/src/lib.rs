@@ -10,6 +10,7 @@
 
 pub mod deck;
 pub mod design_plan;
+pub mod graphic;
 pub mod ooxml;
 pub mod retained_opc;
 pub mod xlfn;
