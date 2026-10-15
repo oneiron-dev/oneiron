@@ -27,6 +27,7 @@ fn at(t: u64) -> TimeRange {
 struct Shared {
     _dir: tempfile::TempDir,
     vault: Vault,
+    person: EntityId,
     erased: EntityId,
     erased_version: BlobArtifactVersion,
     other: EntityId,
@@ -67,6 +68,7 @@ impl Shared {
         Ok(Self {
             _dir: dir,
             vault,
+            person,
             erased,
             erased_version,
             other,
@@ -369,17 +371,6 @@ fn a_replica_pierces_the_bytes_in_every_arrival_order() -> Result<()> {
     let asset = origin.asset()?;
     let hash = origin.shared.content_hash;
     let (erased_claim, other_claim) = (origin.erased_version.claim_id, origin.shared.claim_id);
-    let rows = |ids: &[EntityId]| ids.to_vec();
-    let person = {
-        let txn = source.store.env.read_txn()?;
-        let mut people = Vec::new();
-        for id in source.entities_by_type(ENTITY_TYPE_PERSON)? {
-            if crate::ports::EntityStoreRead::port_entity_raw(&source.store, &txn, &id)?.is_some() {
-                people.push(id);
-            }
-        }
-        people
-    };
     let mut tombstone = vec![crate::deletion::TombstoneReason::GdprDelete.wire_byte()];
     tombstone.extend_from_slice(&60_u64.to_le_bytes());
     tombstone.extend_from_slice(&[0xE5; 16]);
@@ -390,13 +381,13 @@ fn a_replica_pierces_the_bytes_in_every_arrival_order() -> Result<()> {
                 .map(|_| ())
         })
     };
-    let before = rows(&[
+    let before = [
         origin.erased,
         origin.other,
         erased_claim,
         other_claim,
         asset,
-    ]);
+    ];
     // Claims first, tombstone after; tombstone first, the erased artifact's claim before the other
     // artifact's reference and the bytes; tombstone first, its claim last.
     let orders: [&[&[EntityId]]; 3] = [
@@ -412,7 +403,7 @@ fn a_replica_pierces_the_bytes_in_every_arrival_order() -> Result<()> {
     ];
     for (n, order) in orders.iter().enumerate() {
         let (_dir, replica) = open_test_vault_with(embedding_test_config());
-        replicate(source, &replica, &person)?;
+        replicate(source, &replica, &[origin.person])?;
         if n > 0 {
             erase_on(&replica)?;
         }
