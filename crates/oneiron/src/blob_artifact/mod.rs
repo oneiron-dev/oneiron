@@ -24,7 +24,6 @@
 //! resolves storage for another tenant, even when byte-identical.
 
 mod body;
-mod erase;
 mod lifecycle;
 mod provenance;
 mod references;
@@ -38,27 +37,11 @@ pub use self::body::{
     BLOB_ARTIFACT_OPTIONAL_BODY_KEYS, BlobArtifactBody, decode_blob_artifact_body,
     encode_blob_artifact_body,
 };
-pub(crate) use self::erase::{
-    Holding, asset_holding_in_txn, bytes_erased, claim_holding_in_txn, erase_holds_in_txn,
-    erased_derivation_pending, holdings_in_txn, mark_erased_artifact_in_txn,
-    mark_erased_assets_in_txn, other_versions_in_txn, record_erase_scope_in_txn, references_in_txn,
-    release_erased_bytes_in_txn, take_erase_scope_in_txn, unerased_holdings_in_txn,
-};
-#[cfg(any(feature = "sync", test))]
-pub(crate) use self::erase::{
-    LateReach, LateReference, discharge_erased_derivation_in_txn, late_reference_in_txn,
-};
-#[cfg(feature = "sync")]
-pub(crate) use self::erase::{asset_erased, record_erased_derivation_in_txn};
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 pub use self::provenance::BlobVersionProvenance;
-#[cfg(any(feature = "sync", test))]
-pub(crate) use self::references::mark_late_probe_in_txn;
-pub(crate) use self::references::{
-    claimed_hash_rows_exist, erase_fenced, fence_erased_carrier, record_version_claim,
-};
+pub(crate) use self::references::{claimed_hash_rows_exist, record_version_claim};
 #[cfg(feature = "sync")]
-pub(crate) use self::references::{fenced_without_pin, readmit_held_asset_in_txn};
+pub(crate) use self::references::{readmit_held_asset_in_txn, release_fenced_only};
 pub(crate) use self::store_keys::require_entity_type;
 pub use self::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;

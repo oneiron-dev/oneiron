@@ -269,6 +269,5 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
         fork_of_version,
         export_name,
         export_media_type,
-        erased: false,
     })
 }

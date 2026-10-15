@@ -193,8 +193,7 @@ fn a_version_claim_deleted_first_still_takes_its_bytes_with_the_artifact() -> Re
     replicate(&origin.vault, &replica, &claims)?;
     let rows = projection(&replica)?;
 
-    // A plain delete: a hard erase of the claim takes the bytes it names at once (ARCH-0005a).
-    replica.delete_entity_with_reason(&claims[0], DeleteReason::UserDelete)?;
+    replica.delete_entity_with_reason(&claims[0], DeleteReason::UserHardDelete)?;
     assert_eq!(
         projection(&replica)?,
         rows,
@@ -223,8 +222,7 @@ fn a_version_claim_arriving_after_its_artifact_delete_takes_the_bytes() -> Resul
     let asset = asset_of(VERSION_BYTES[0])?;
     let (_replica_dir, replica) = open_test_vault_with(embedding_test_config());
     replicate(&origin.vault, &replica, &[origin.person, artifact, asset])?;
-    // A plain delete: a version of an artifact a hard erase took is a late reference (ARCH-0005a).
-    replica.delete_entity_with_reason(&artifact, DeleteReason::UserDelete)?;
+    replica.delete_entity_with_reason(&artifact, DeleteReason::UserHardDelete)?;
     assert!(
         stored(&replica, &asset)?,
         "no claim names the bytes yet, so the delete had nothing to release"
@@ -251,11 +249,10 @@ fn a_live_artifact_claim_lifts_the_fence_before_the_bytes_arrive() -> Result<()>
     let (_replica_dir, replica) = open_test_vault_with(embedding_test_config());
     replicate(&origin.vault, &replica, &[origin.person, gone, asset])?;
     replicate(&origin.vault, &replica, &gone_claims)?;
-    // Plain deletes: bytes a hard erase took are never stored again (ARCH-0005a).
     origin
         .vault
-        .delete_entity_with_reason(&gone, DeleteReason::UserDelete)?;
-    replica.delete_entity_with_reason(&gone, DeleteReason::UserDelete)?;
+        .delete_entity_with_reason(&gone, DeleteReason::UserHardDelete)?;
+    replica.delete_entity_with_reason(&gone, DeleteReason::UserHardDelete)?;
     assert!(!stored(&replica, &asset)? && fenced(&replica, &asset)?);
 
     let (again, again_claims) = origin.artifact(&VERSION_BYTES[..1], 20)?;
@@ -301,8 +298,7 @@ fn a_claim_deleted_before_its_artifact_arrives_still_takes_the_bytes() -> Result
     let (_replica_dir, replica) = open_test_vault_with(embedding_test_config());
     replicate(&origin.vault, &replica, &[origin.person, asset])?;
     replicate(&origin.vault, &replica, &claims)?;
-    // A plain delete: a hard erase of the claim takes the bytes it names at once (ARCH-0005a).
-    replica.delete_entity_with_reason(&claims[0], DeleteReason::UserDelete)?;
+    replica.delete_entity_with_reason(&claims[0], DeleteReason::UserHardDelete)?;
     assert!(stored(&replica, &asset)?);
 
     replica.with_write_txn_grouped(|txn| {
@@ -342,8 +338,7 @@ fn a_claim_rewritten_to_another_artifact_keeps_both_holders() -> Result<()> {
     rewritten.scope_facet = stamped.scope_facet;
     put_claim(&replica, &claim, &rewritten, 31)?;
 
-    // A plain delete; a hard erase takes every holder's reference with the bytes (ARCH-0005a).
-    replica.delete_entity_with_reason(&first, DeleteReason::UserDelete)?;
+    replica.delete_entity_with_reason(&first, DeleteReason::UserHardDelete)?;
     assert!(
         stored(&replica, &asset)?,
         "deleting one holder took the bytes another live artifact holds"

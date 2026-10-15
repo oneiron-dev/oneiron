@@ -109,8 +109,6 @@ pub enum ErrorKind {
     PersonaSnapshotConsentStale,
     InvalidCodeArtifactBody,
     InvalidBlobArtifactBody,
-    BlobVersionErased,
-    BlobContentErased,
     InvalidLfsObject,
     InvalidNoteBody,
     InvalidWitnessMessageBody,

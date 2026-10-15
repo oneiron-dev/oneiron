@@ -12,8 +12,8 @@ use super::super::rendezvous::{
 };
 use super::super::sweep_queue::HardEraseSweepExtras;
 use super::super::tombstone::{
-    DeleteReason, HARD_DELETE_MARKER, IDENTITY_SOFT_DELETE_MARKER, TombstoneValueV2,
-    window_label_from_timestamp,
+    DeleteReason, HARD_DELETE_MARKER, IDENTITY_SOFT_DELETE_MARKER, ROW_DELETION_FENCE,
+    TombstoneValueV2, window_label_from_timestamp,
 };
 use super::super::topology_delete_intent::{
     TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
@@ -159,33 +159,9 @@ impl Vault {
             return Ok(DeleteEntityOutcome::missing());
         }
         let mut affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
-        let mut scope = RedactionScope::entity(id);
-        let mut pierced_carriers = Vec::new();
-        if reason.active_store_hard_purge_v1() {
-            // ARCH-0005a: HardErase pierces refcounting, headerless leg (an artifact's
-            // replicated version claims can outlive its row).
-            let pierced = self.cascade_hard_erase_to_blob_references_in_txn(
-                &mut wtxn,
-                id,
-                &tombstone.encode(),
-                true,
-            )?;
-            affected.extend(pierced.changed);
-            let mut carriers =
-                crate::blob_artifact::take_erase_scope_in_txn(&self.store, &mut wtxn, id)?;
-            carriers.extend(pierced.carriers);
-            carriers.sort_unstable();
-            carriers.dedup();
-            scope
-                .entity_ids
-                .extend(carriers.iter().map(EntityId::to_hex));
-            pierced_carriers = pierced.tombstoned;
-        }
         let (existed, citing) =
             self.purge_entity_active_store_in_txn(&mut wtxn, id, Some(&tombstone.request_id))?;
         affected.extend(citing);
-        let tombstoned =
-            self.stage_pierced_tombstones_in_txn(&mut wtxn, pierced_carriers, &tombstone)?;
         // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
         self.append_deletion_gate_decision_in_purge_txn(
@@ -199,7 +175,7 @@ impl Vault {
             // A headerless soft deletion still retires proposals. Its
             // cancellation and this evidence must become visible together.
             IDENTITY_SOFT_DELETE_MARKER.put(&self.store, &mut wtxn, &HexId(*id), &Vec::new())?;
-            crate::deletion::tombstone::fence_deleted_row_in_txn(&self.store, &mut wtxn, id)?;
+            ROW_DELETION_FENCE.put(&self.store, &mut wtxn, &HexId(*id), &Vec::new())?;
         }
         if reason.active_store_hard_purge_v1() {
             // `dt:` local hard-delete marker (pinned: presence-only 25 B
@@ -223,7 +199,6 @@ impl Vault {
             if crdt_persisted {
                 self.finish_published_topology_delete(&window_label, id, &tombstone)?;
             }
-            self.publish_pierced_tombstones(&tombstoned, &tombstone)?;
             return Ok(DeleteEntityOutcome {
                 existed,
                 receipt_id: None,
@@ -243,7 +218,7 @@ impl Vault {
                 actor_principal: gate.as_ref().map(|gate| gate.actor_principal()),
                 room_authority: gate.as_ref().and_then(|gate| gate.room_authority()),
                 request_id: request_uuid.to_string(),
-                scope,
+                scope: RedactionScope::entity(id),
                 reason,
                 requested_at,
                 soft_complete_at: hard_purge_complete_at,
@@ -259,7 +234,6 @@ impl Vault {
         if crdt_persisted {
             self.finish_published_topology_delete(&window_label, id, &tombstone)?;
         }
-        self.publish_pierced_tombstones(&tombstoned, &tombstone)?;
         Ok(DeleteEntityOutcome {
             existed,
             receipt_id: Some(receipt_id),

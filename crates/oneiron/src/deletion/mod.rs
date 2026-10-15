@@ -22,10 +22,7 @@ pub use coop_request::{
     SignedCooperativeDeletionRequest, decode_and_verify_cooperative_deletion_request,
     encode_cooperative_deletion_request_body, encode_signed_cooperative_deletion_request,
 };
-pub use delete::{
-    DeleteEntityOptions, DeleteEntityOutcome, DeleteEntityPreview, DeleteHeldBytes,
-    DeleteOtherVersion,
-};
+pub use delete::{DeleteEntityOptions, DeleteEntityOutcome, DeleteEntityPreview};
 // A source's dependents go in bounded batches (`Vault::finish_dependent_walks`).
 pub use crate::ports::{
     DEFAULT_DEPENDENT_WALK_BATCH, DEFAULT_DEPENDENT_WALK_CHECK_THRESHOLD, DependentWalkCheck,
@@ -56,9 +53,7 @@ pub(crate) use tombstone::{
     LOCAL_HARD_DELETE_PREFIX, PENDING_TOMBSTONE, ROW_DELETION_FENCE, archive_tombstone_key,
     local_hard_delete_key,
 };
-pub(crate) use topology_delete_intent::{
-    hard_delete_in_flight_in_txn, topology_delete_reservation_in_txn,
-};
+pub(crate) use topology_delete_intent::topology_delete_reservation_in_txn;
 // The replay outcome is read by sync production (`sync::quarantine`) and by
 // the white-box test modules that pin the base replay law; a plain
 // no-feature library reaches neither.

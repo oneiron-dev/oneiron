@@ -112,7 +112,7 @@ impl Vault {
             IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
             // Also for an id with no row here: a peer's later put of it is a
             // withdrawn delete, not a recreation.
-            crate::deletion::tombstone::fence_deleted_row_in_txn(&self.store, wtxn, id)?;
+            ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
             if let Some(request) = decoded.request_id.as_ref() {
                 clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
             }
@@ -189,17 +189,6 @@ impl Vault {
         // the shell edges with it, in the caller's transaction.
         let (cascaded_shells, mut changed_documents) =
             self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id)?;
-        // ARCH-0005a on the RECEIVING side: this replica's own references to the erased
-        // artifact's bytes go with them, before the purge drops the claim pairs that find them.
-        let pierced =
-            self.cascade_hard_erase_to_blob_references_in_txn(wtxn, id, &marker_value, false)?;
-        changed_documents.extend(pierced.changed);
-        // A local erase whose first scrub committed before a crash kept what that scrub took.
-        let mut erased_blob_carriers =
-            crate::blob_artifact::take_erase_scope_in_txn(&self.store, wtxn, id)?;
-        erased_blob_carriers.extend(pierced.carriers);
-        erased_blob_carriers.sort_unstable();
-        erased_blob_carriers.dedup();
         let (_existed, citing) =
             self.purge_entity_active_store_in_txn(wtxn, id, decoded.request_id.as_ref())?;
         changed_documents.extend(citing);
@@ -239,9 +228,6 @@ impl Vault {
         scope
             .entity_ids
             .extend(cascaded_shells.iter().map(EntityId::to_hex));
-        scope
-            .entity_ids
-            .extend(erased_blob_carriers.iter().map(EntityId::to_hex));
         let sweep_key = self.write_redaction_receipt_and_sweep_in_txn(
             wtxn,
             &receipt_id,

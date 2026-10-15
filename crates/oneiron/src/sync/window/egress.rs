@@ -344,9 +344,9 @@ pub(in crate::sync) fn withdrawn_delete_carriers(
 /// The window is pinned history-free first, so neither the body nor the
 /// withdrawal's operations ship. Returns whether it pinned.
 ///
-/// A carrier only a blob-artifact release (H125) or a hard erase's scrub of a
-/// reference to the bytes it took fences is dropped with an ordinary delete and
-/// does not pin: nobody withdrew a delete there. Their old set operation stays in
+/// A carrier only a blob-artifact release fences (H125) is dropped with an
+/// ordinary delete and does not pin: nobody withdrew a delete there, the bytes
+/// went because no live artifact holds them. Their old set operation stays in
 /// Loro history until the sweep's shallow compaction, as for any deleted row.
 /// A pin would answer every later version request with a snapshot rooted at
 /// this vault's newest operation, which a peer even one change behind cannot
@@ -361,7 +361,7 @@ pub(super) fn scrub_withdrawn_delete_carriers(
         let withdrawn = withdrawn_delete_carriers(vault, &rtxn, doc)?;
         let mut pin = false;
         for (_, id) in &withdrawn {
-            if !crate::blob_artifact::fenced_without_pin(&vault.store, &rtxn, id)? {
+            if !crate::blob_artifact::release_fenced_only(&vault.store, &rtxn, id)? {
                 pin = true;
                 break;
             }

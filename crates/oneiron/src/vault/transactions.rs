@@ -44,19 +44,6 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
             "identity-topology authorship is written only by its carrier".to_owned(),
         ));
     }
-    // ARCH-0005a: a hard erase's own fence is never lowered to one a put can clear.
-    if [
-        crate::deletion::ROW_DELETION_FENCE.decl().prefix,
-        crate::deletion::HARD_DELETE_MARKER.decl().prefix,
-    ]
-    .iter()
-    .any(|prefix| key.as_bytes().starts_with(prefix))
-    {
-        return Err(Error::InvalidConfig(
-            "deletion fences and hard-delete markers are written only by the delete doors"
-                .to_owned(),
-        ));
-    }
     Ok(())
 }
 

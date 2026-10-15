@@ -60,14 +60,6 @@ pub(crate) fn invalidate_blob_fingerprint(
     FINGERPRINT.delete(store, txn, id)?;
     Ok(())
 }
-/// The bytes hash `id`'s tree was computed over, when it has one.
-pub(crate) fn blob_fingerprint_asset_hash(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<Option<[u8; 32]>> {
-    Ok(load(store, txn, id)?.map(|tree| tree.asset_hash))
-}
 fn load(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Option<Tree>> {
     FINGERPRINT.get(store, txn, id)
 }

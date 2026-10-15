@@ -76,39 +76,10 @@ side_tables! {
     /// `BLOB_ARTIFACT_VERSION_CLAIM` keyed by artifact, so an artifact's delete reads its own
     /// bytes without a scan. Key: id16 (artifact) + bytes32.
     BLOB_ARTIFACT_CLAIMED_HASH: VaultMeta b"blob_artifact:claimed_hash:v1:" Raw;
-    /// The carriers a hard erase's first destructive transaction took with the bytes, kept for
-    /// the transaction that writes its receipt and sweep row. Key: id16 (the erased record);
-    /// value: the carriers' id16s.
-    BLOB_ARTIFACT_ERASE_SCOPE: VaultMeta b"blob_artifact:erase_scope:v1:" Raw;
-    /// The artifacts a hard erase tore here (a BLOB_ARTIFACT row), each valued with that erase's
-    /// tombstone wire value: a version of one that arrives later is a late reference. Key: id16
-    /// (artifact).
-    BLOB_ARTIFACT_ERASED_ARTIFACT: VaultMeta b"blob_artifact:erased_artifact:v1:" Raw;
-    /// The ASSETs carrying bytes a hard erase's walk took here, each valued with that erase's
-    /// tombstone wire value: a text derived from one goes with it. Never another kind's row. Key:
-    /// id16 (ASSET).
-    BLOB_ARTIFACT_ERASED_ASSET: VaultMeta b"blob_artifact:erased_asset:v1:" Raw;
-    /// Version bytes a hard erase took, each valued with that erase's tombstone wire value: a
-    /// later reference to them arrives erased, and they are never stored again. Key: bytes32.
-    BLOB_ARTIFACT_ERASED_CONTENT: VaultMeta b"blob_artifact:erased_content:v1:" Raw;
-    /// The texts a DerivedFrom edge named as derived from an erased ASSET before their bodies
-    /// arrived: each is scrubbed and fenced on arrival. Key: id16 (the text); value: id16 (the
-    /// ASSET).
-    BLOB_ARTIFACT_ERASED_DERIVATION: VaultMeta b"blob_artifact:erased_derivation:v1:" Raw;
-    /// `blob.version` claims a hard erase took with the bytes they name, each valued with that
-    /// erase's tombstone wire value. Key: id16 (claim).
-    BLOB_ARTIFACT_ERASED_REFERENCE: VaultMeta b"blob_artifact:erased_reference:v1:" Raw;
     /// Blob artifact head version. Key: id16.
     BLOB_ARTIFACT_HEAD: VaultMeta b"blob_artifact:head:v1:" Raw;
     /// Monotonic last version, retained after deletion. Key: id16; value: u64be.
     BLOB_ARTIFACT_HIGHWATER: VaultMeta b"blob_artifact:highwater:v1:" Raw;
-    /// The carriers a hard erase's walk tombstoned inside a sync ingest transaction, kept until
-    /// their tombstones publish. Local, never replicated. Key: id16; value: learned_at, the
-    /// tombstone value and the window label.
-    BLOB_ARTIFACT_LATE_PIERCED: VaultMeta b"blob_artifact:late_pierced:v1:" Raw;
-    /// Set only inside the savepoint the ingest gate probes a late reference's put in, which is
-    /// always rolled back. Key: ().
-    BLOB_ARTIFACT_LATE_PROBE: VaultMeta b"blob_artifact:late_probe:v1" Raw;
     /// Edit proposal settlement ledger row. Key: id16 + hash32.
     EDIT_SETTLE_RECORD: VaultMeta b"blob_artifact:settlement:v1:" Raw;
     /// Blob artifact version record. Key: id16 + u64be.

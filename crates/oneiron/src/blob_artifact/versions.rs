@@ -110,10 +110,6 @@ pub struct BlobArtifactVersion {
     pub parent_version: Option<u64>,
     /// The selected base of an explicit fork; absent on ordinary head appends.
     pub fork_of_version: Option<u64>,
-    /// A hard erase took this version's bytes (ARCH-0005a). A listing shows it at its place in
-    /// the tree with no hash, name, media type or calculator stamp, and reading it answers
-    /// [`ArtifactError::BlobVersionErased`]. Never stored: the version's claim says it.
-    pub erased: bool,
 }
 
 pub const BLOB_ARTIFACT_VERSION_RECORD_KEYS: [&str; 12] = [
@@ -357,11 +353,6 @@ impl Vault {
             )));
         }
         let content_hash = *blake3::hash(bytes).as_bytes();
-        // Bytes a hard erase took are never stored here again (ARCH-0005a) until the owner
-        // re-admits them.
-        if super::erase::content_erased(&self.store, wtxn, &content_hash)?.is_some() {
-            return Err(Error::Artifact(ArtifactError::BlobContentErased));
-        }
         let claim_id = EntityId::from_bytes(self.store.clock.ulid()?)?;
 
         require_entity_type(
@@ -468,7 +459,6 @@ impl Vault {
             export_media_type: body.media_type,
             parent_version,
             fork_of_version: fork_parent,
-            erased: false,
         };
         let recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         crate::ports::ChangeLogStore::port_changelog_append(
@@ -495,24 +485,16 @@ impl Vault {
         Ok(record)
     }
 
-    /// The head version. A head a hard erase took reads as erased
-    /// ([`ArtifactError::BlobVersionErased`]).
     pub fn blob_artifact_head(
         &self,
         artifact_id: &EntityId,
     ) -> Result<Option<BlobArtifactVersion>> {
         let rtxn = self.store.env.read_txn()?;
-        let head = read_blob_artifact_head_in_txn(&self.store, &rtxn, artifact_id)?;
-        if let Some(record) = &head {
-            require_unerased(&self.store, &rtxn, record)?;
-        }
-        Ok(head)
+        read_blob_artifact_head_in_txn(&self.store, &rtxn, artifact_id)
     }
 
     /// Returns the full version tree in append order. Verifies contiguous
-    /// scalar versions, earlier existing parents, and the current head. A
-    /// version a hard erase took keeps its place, marked
-    /// [`BlobArtifactVersion::erased`] and stripped of what named its bytes.
+    /// scalar versions, earlier existing parents, and the current head.
     pub fn blob_artifact_versions(
         &self,
         artifact_id: &EntityId,
@@ -552,18 +534,6 @@ impl Vault {
         } else if !versions.is_empty() {
             return Err(Error::CorruptedIndex("blob artifact version head"));
         }
-        for record in &mut versions {
-            if super::erase::reference_erased(&self.store, &rtxn, &record.claim_id)? {
-                record.content_hash = [0; BLOB_ARTIFACT_CONTENT_HASH_LEN];
-                record.calc_engine = None;
-                record.export_name.clear();
-                record.export_media_type.clear();
-                if let super::BlobVersionProvenance::AgentRun { run_ref } = &mut record.provenance {
-                    run_ref.clear();
-                }
-                record.erased = true;
-            }
-        }
         Ok(versions)
     }
 
@@ -595,7 +565,6 @@ impl Vault {
         if record.version != version {
             return Err(Error::CorruptedIndex("blob artifact version record"));
         }
-        require_unerased(&self.store, rtxn, &record)?;
         let claim = self
             .get_claim_in_txn(rtxn, &record.claim_id)?
             .ok_or(Error::CorruptedIndex("blob artifact version claim"))?;
@@ -636,7 +605,6 @@ impl Vault {
         let Some(record) = VERSIONS.get(&self.store, rtxn, &(*artifact_id, version))? else {
             return Ok(None);
         };
-        require_unerased(&self.store, rtxn, &record)?;
         read_blob_asset_in_txn(self, rtxn, &record.content_hash).map(Some)
     }
 }
@@ -721,31 +689,12 @@ fn read_blob_artifact_highwater_in_txn(
     Ok(Some(version))
 }
 
-/// Whether a version chain was ever recorded here for `artifact`: its high-water mark outlives
-/// the artifact's delete, and only an artifact's own append writes one.
-pub(super) fn versioned_here(
-    store: &Store,
-    rtxn: &RoTxn<'_>,
-    artifact_id: &EntityId,
-) -> Result<bool> {
-    HIGHWATER.contains(store, rtxn, artifact_id)
-}
-
 pub(crate) fn read_blob_artifact_head_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,
     artifact_id: &EntityId,
 ) -> Result<Option<BlobArtifactVersion>> {
     HEAD.get(store, rtxn, artifact_id)
-}
-
-/// Refuses a version a hard erase took with its bytes (`super::erase`): it reads as erased, the
-/// same answer on every retry.
-fn require_unerased(store: &Store, rtxn: &RoTxn<'_>, record: &BlobArtifactVersion) -> Result<()> {
-    if super::erase::reference_erased(store, rtxn, &record.claim_id)? {
-        return Err(Error::Artifact(ArtifactError::BlobVersionErased));
-    }
-    Ok(())
 }
 
 fn read_blob_asset_in_txn(

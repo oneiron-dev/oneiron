@@ -1,6 +1,6 @@
 //! Blob artifact delete path: version-chain, head, and asset-ref cleanup.
 
-use heed::{RoTxn, RwTxn};
+use heed::RwTxn;
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -35,8 +35,7 @@ pub(crate) struct BlobArtifactLifecycleCleanup {
 /// here (an artifact whose delete arrived first), never for another kind of
 /// row a claim names. Bytes stay while an `asset_ref` row (one per
 /// content-hash × local artifact pair) or a live artifact's version claim
-/// still holds them, unless a hard erase took every other hold on them first
-/// (`super::erase`). Runs inside every entity delete path (batch delete,
+/// still holds them. Runs inside every entity delete path (batch delete,
 /// purge, soft erase, remote tombstone replay).
 ///
 /// A released ASSET gets a deletion fence, never a tombstone: its id is the
@@ -52,10 +51,25 @@ pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
     crate::ingest::invalidate_blob_fingerprint(store, wtxn, id)?;
     crate::artifact_hosting::remove_blob_pointers_in_txn(store, wtxn, id)?;
     let mut cleanup = BlobArtifactLifecycleCleanup::default();
-    let hashes = held_hashes(store, wtxn, id)?;
     let mut keys = Vec::new();
+    let mut hashes: Vec<[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN]> = Vec::new();
     for entry in VERSIONS.iter_from(store, wtxn, id.as_bytes())? {
-        keys.push(entry?.0);
+        let (key, record) = entry?;
+        if !hashes.contains(&record.content_hash) {
+            hashes.push(record.content_hash);
+        }
+        keys.push(key);
+    }
+    let claims_count = store
+        .entities
+        .get(wtxn, id.as_bytes())?
+        .is_none_or(|raw| raw.first() == Some(&ENTITY_TYPE_BLOB_ARTIFACT));
+    if claims_count {
+        for content_hash in claimed_hashes(store, wtxn, id)? {
+            if !hashes.contains(&content_hash) {
+                hashes.push(content_hash);
+            }
+        }
     }
     forget_claimed_hashes(store, wtxn, id)?;
     HEAD.delete(store, wtxn, id)?;
@@ -69,35 +83,6 @@ pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
     cleanup.neighbors.sort_unstable();
     cleanup.neighbors.dedup();
     Ok(cleanup)
-}
-
-/// The bytes `id` holds: its chain's hashes plus every hash its replicated `blob.version` claims
-/// name. Those claims count only for an artifact row, or for an id with no row here (an artifact
-/// whose delete arrived first), never for another kind of row a claim names.
-pub(super) fn held_hashes(
-    store: &Store,
-    txn: &RoTxn<'_>,
-    id: &EntityId,
-) -> Result<Vec<[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN]>> {
-    let mut hashes: Vec<[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN]> = Vec::new();
-    for entry in VERSIONS.iter_from(store, txn, id.as_bytes())? {
-        let (_, record) = entry?;
-        if !hashes.contains(&record.content_hash) {
-            hashes.push(record.content_hash);
-        }
-    }
-    let claims_count = store
-        .entities
-        .get(txn, id.as_bytes())?
-        .is_none_or(|raw| raw.first() == Some(&ENTITY_TYPE_BLOB_ARTIFACT));
-    if claims_count {
-        for content_hash in claimed_hashes(store, txn, id)? {
-            if !hashes.contains(&content_hash) {
-                hashes.push(content_hash);
-            }
-        }
-    }
-    Ok(hashes)
 }
 
 /// Releases the bytes under `content_hash` once `artifact` lets go of them, unless an
