@@ -743,7 +743,8 @@
       "HealerSlot",
       "HealerSlotOutcome",
       "KillOutcome",
-      "KillProposal"
+      "KillProposal",
+      "KillerLease"
      ],
      "path": "src/agent_dispatch/types.rs",
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
@@ -752,7 +753,7 @@
       "crate-vis": 14,
       "enum": 5,
       "fn": 7,
-      "struct": 7
+      "struct": 8
      }
     },
     {
@@ -26084,7 +26085,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -30830,7 +30831,7 @@
      "path": "src/saved_query/lifecycle.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -37151,7 +37152,7 @@
      "path": "src/task_verb/presence_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 19
      }
     },
     {
@@ -37370,7 +37371,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/tests/board_ack.rs",

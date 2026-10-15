@@ -76,7 +76,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/resident_tests.rs` | test | s | — | — | — |
 | `src/agent_dispatch/tests.rs` | test | XL | — | — | AGENT-3 (ONE-1445) tests, mapped 1:1 to the brief's acceptance criteria: snapshot round-trip, system-preset… |
 | `src/agent_dispatch/tests/widen.rs` | test | m | — | — | Propose-widen is inert until an authenticated holder of the board above acts |
-| `src/agent_dispatch/types.rs` | src | m | 7 struct · 5 enum · 7 fn · 6 const · 14 crate-vis | AgentDispatchInput, AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget, AgentSpawnContext, AttenuatedDispatchTarget, DispatchAgent, DispatchHealer +4 | Dispatch domain types, outcome enums, and pinned key/sentinel constants |
+| `src/agent_dispatch/types.rs` | src | m | 8 struct · 5 enum · 7 fn · 6 const · 14 crate-vis | AgentDispatchInput, AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget, AgentSpawnContext, AttenuatedDispatchTarget, DispatchAgent, DispatchHealer +5 | Dispatch domain types, outcome enums, and pinned key/sentinel constants |
 | `src/agent_dispatch/widen.rs` | src | m | 2 fn · 4 crate-vis | — | Fail-closed propose-widen and owner-authenticated, TASK-bound board approval |
 | `src/agent_dispatch/widen_record.rs` | src | s | 1 struct · 18 crate-vis | ContextWidenProposal | Exact, durable widen intents |
 | `src/agent_dispatch/workflow.rs` | src | m | 4 crate-vis | — | Atomic saved-workflow admission |
@@ -2111,7 +2111,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/smart_http/tests.rs` | test | m | 25 crate-vis | — | Shared test harness: fixtures, temp vault, seeded repos, the capturing sink, and the stock-git test origin |
 | `src/origin/tree.rs` | src | s | 1 struct · 1 fn | OriginTreeFile | Bounded, byte-preserving projection of Git trees |
 | `src/outbound/capability.rs` | src | m | 5 struct · 4 enum · 10 fn · 3 const · 2 crate-vis | OutboundCapabilityManifest, OutboundCapabilityPermission, OutboundDeliverySemantics, OutboundDeliverySemanticsKind, OutboundInterruptionClass, OutboundPermissionState, OutboundRetryClass, OutboundVerbContract +1 | — |
-| `src/outbound/connector_task.rs` | src | m | 1 struct · 1 enum · 4 fn · 1 const · 20 crate-vis | ConnectorSendTask, ConnectorSendTaskOutcome | — |
+| `src/outbound/connector_task.rs` | src | m | 1 struct · 1 enum · 4 fn · 1 const · 21 crate-vis | ConnectorSendTask, ConnectorSendTaskOutcome | — |
 | `src/outbound/dispatch_attempt_id.rs` | src | s | 1 crate-vis | — | — |
 | `src/outbound/dispatch_pipeline/admission.rs` | src | s | 3 crate-vis | — | Pure execute-time admission: one decision consumed by freeze and gate paths |
 | `src/outbound/dispatch_pipeline/effect.rs` | src | s | 2 crate-vis | — | Admitted effect: only this lane enters the replay-first chokepoint |
@@ -2523,7 +2523,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/saved_query/evaluator.rs` | src | m | 3 struct · 3 fn · 2 const · 6 crate-vis | EvaluationRequest, SavedQueryEvaluator, SavedQueryJudgeBinding | — |
 | `src/saved_query/evidence.rs` | src | s | 7 struct · 1 enum · 5 fn · 1 const | EvaluationOutcome, MatchDecision, MatchVerdict, RelevantEvidence, SavedQueryDerivationEnvelope, VerdictMemoKey, VerdictMemoRow, WakeEvaluationReport | — |
 | `src/saved_query/filter.rs` | src | m | 1 struct · 3 enum · 5 fn · 1 crate-vis | ClaimComparison, EvidenceDependencies, FilterAst, MatcherSpec | — |
-| `src/saved_query/lifecycle.rs` | src | s | 4 fn · 2 crate-vis | — | — |
+| `src/saved_query/lifecycle.rs` | src | s | 4 fn · 3 crate-vis | — | — |
 | `src/saved_query/membership.rs` | src | m | 2 struct · 3 enum · 8 fn · 1 const · 1 crate-vis | MembershipCause, MembershipCommitOutcome, MembershipEvent, MembershipTransition, MembershipWritePlan | — |
 | `src/saved_query/memory_watch.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | MemoryWatch | Owner-bound per-claim watches stored as SAVED_QUERY definitions |
 | `src/saved_query/mod.rs` | src | s | 8 re-export · 1 crate-vis | — | SAVED_QUERY — durable standing queries with staged evaluation (CA-02) |
@@ -3058,7 +3058,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/policy_change_followup.rs` | src | m | 2 crate-vis | — | Atomic, idempotent human TASK notification for one landed policy change |
 | `src/task_verb/presence_diagnostics.rs` | src | s | 3 crate-vis | — | Typed per-row presence read failures for the bounded TASKS projection |
 | `src/task_verb/presence_pages.rs` | src | s | 5 crate-vis | — | The TASK type index in bounded pages, as the board's presence scan reads it |
-| `src/task_verb/presence_scan.rs` | src | m | 16 crate-vis | — | — |
+| `src/task_verb/presence_scan.rs` | src | m | 19 crate-vis | — | — |
 | `src/task_verb/production_ports_tests.rs` | test | m | — | — | — |
 | `src/task_verb/query_facade.rs` | src | m | 6 fn · 2 crate-vis | — | — |
 | `src/task_verb/rate_limit.rs` | src | s | 1 fn · 10 crate-vis | — | — |
@@ -3075,7 +3075,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/terminal_state.rs` | src | s | 1 struct · 4 enum · 4 fn · 3 crate-vis | ConsultResultPresence, ConsultResultSummary, TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord | — |
 | `src/task_verb/tests/addressable_consults.rs` | test | s | — | — | — |
 | `src/task_verb/tests/authority_asks.rs` | test | m | — | — | — |
-| `src/task_verb/tests/board_ack.rs` | test | L | — | — | Task verb tests: Ack, cancel-vs-retry truth, owner proofs, board folding and poison-row isolation |
+| `src/task_verb/tests/board_ack.rs` | test | XL | — | — | Task verb tests: Ack, cancel-vs-retry truth, owner proofs, board folding and poison-row isolation |
 | `src/task_verb/tests/cancel.rs` | test | L | — | — | Task verb tests: Cancel ladder, spawn and agent-dispatch cancel, sibling cancel, force hard-cancel and… |
 | `src/task_verb/tests/code_lead.rs` | test | s | — | — | — |
 | `src/task_verb/tests/consult_fanout.rs` | test | m | — | — | OF-393 facade oracles: paused plans create no TASKs; rulings bind exact work |
