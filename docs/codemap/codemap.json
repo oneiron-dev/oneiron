@@ -124,7 +124,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AccessRequest",
@@ -4266,7 +4266,7 @@
      "path": "src/bm25/query.rs",
      "purpose": "Query-side: term collection, prefix expansion, search entry points, hint collapse",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -7578,7 +7578,7 @@
      "purpose": "Rule and rule-set types for channel-identity selection law",
      "surface": {
       "crate-vis": 8,
-      "fn": 4,
+      "fn": 3,
       "struct": 3
      }
     },
@@ -10950,7 +10950,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/connector_key/events/tests.rs",
@@ -11343,8 +11343,8 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 18,
-      "fn": 18,
+      "crate-vis": 19,
+      "fn": 22,
       "struct": 2
      }
     },
@@ -13644,7 +13644,7 @@
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
       "crate-vis": 18,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -18664,13 +18664,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/gate/fanout_policy.rs",
      "purpose": "Manifest-backed fan-out policy composition; no executable defaults",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 16
      }
     },
     {
@@ -28300,6 +28300,41 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DependentWalkCheck",
+      "DependentWalkPolicy",
+      "DependentWalkProgress"
+     ],
+     "path": "src/ports/dependent_walk.rs",
+     "purpose": "A source's dependents are withdrawn in bounded batches, never refused for how many records were derived from…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 10,
+      "fn": 5,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ports/dependent_walk/mark.rs",
+     "purpose": "A walk row and the marks it holds: what each mark of a source covers, and the worlds a row is withdrawn for",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ports/dependent_walk/tests.rs",
+     "purpose": "Done-means for the batched dependent walk (rule 5: no erase refuses for its count of dependents): every door…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -28316,7 +28351,7 @@
      "path": "src/ports/integrity.rs",
      "purpose": "Source-prefix dependency index and deletion invalidation in the caller's transaction",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 21
      }
     },
     {
@@ -28505,8 +28540,8 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 13,
-      "re-export": 6
+      "crate-vis": 14,
+      "re-export": 7
      }
     },
     {
@@ -28568,7 +28603,7 @@
      "path": "src/ports/regeneration.rs",
      "purpose": "Generation-fenced completion of derived artifacts",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -28601,6 +28636,14 @@
       "crate-vis": 1,
       "fn": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ports/tests/dependent_cap.rs",
+     "purpose": "A source with more dependents than the old 100,000-row scan cap reads and erases without a count refusal…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -30032,6 +30075,16 @@
      "purpose": "The restore class of every canonical `vault_meta`, `s` to `z` family, in declaration order",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/test_hooks.rs",
+     "purpose": "Test hooks that fail or panic a restore at a chosen step",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -34142,7 +34195,7 @@
      "path": "src/store/gate_decision/checkpoint_custody.rs",
      "purpose": "What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038…",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -34330,7 +34383,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 1,
       "re-export": 13
      }
@@ -34686,7 +34739,7 @@
      "path": "src/store/root_directory.rs",
      "purpose": "Descriptor-bound directory identity shared by store opens and writer leases",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 5,
       "struct": 1
      }
@@ -34741,7 +34794,7 @@
      "path": "src/store/test_hooks.rs",
      "purpose": "The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 29
      }
     },
     {
@@ -34761,7 +34814,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "VaultWriterLease"
@@ -34770,13 +34823,13 @@
      "purpose": "Process-owner writer lease, shared by the server and embedded SDK",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 4,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/store/writer_lease/tests.rs",
@@ -36334,7 +36387,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/egress.rs",
@@ -36673,7 +36726,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "TaskAuthorityFact",
@@ -36684,7 +36737,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities",
      "surface": {
       "const": 2,
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 1,
       "fn": 3,
       "re-export": 1,
@@ -37265,7 +37318,7 @@
      "path": "src/task_verb/rate_limit.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -37479,7 +37532,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/tests/consult_fanout.rs",
@@ -37700,7 +37753,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 30
      }
     },
     {
@@ -38256,6 +38309,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/open/lease_door.rs",
+     "purpose": "The open a restore uses for its copy: under the writer lease the restore took when it made the copy's…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -41373,7 +41436,7 @@
      "purpose": "Policy classification over two planes"
     },
     "ports": {
-     "files": 38,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41450,7 +41513,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 53,
+     "files": 54,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -41704,7 +41767,7 @@
     "task_authority": {
      "files": 3,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
@@ -41772,7 +41835,7 @@
      "purpose": "—"
     },
     "vault": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -41835,10 +41898,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 40,
+   "over_bar": 42,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2531,
-   "test_files": 827
+   "source_files": 2535,
+   "test_files": 829
   },
   "oneiron-android": {
    "files": [

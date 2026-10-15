@@ -1,4 +1,5 @@
 //! One behavioral suite, two transaction implementations.
+mod dependent_cap;
 mod step21_conformance;
 mod step22_conformance;
 mod step23_conformance;

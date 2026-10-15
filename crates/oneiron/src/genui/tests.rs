@@ -58,8 +58,8 @@ fn evaluate_ask_action(
     card: &ConsentAskCard,
     request: &ConsentActionRequest,
 ) -> Result<ConsentActionEvaluation> {
-    let (_dir, _vault, owner) = owner_context();
-    card.evaluate_action(request, &owner)
+    let (_dir, vault, owner) = owner_context();
+    card.evaluate_action(&vault, request, &owner)
 }
 
 #[test]
@@ -136,13 +136,13 @@ fn voice_path_cannot_borrow_a_store_authenticated_owner_handle() -> Result<()> {
     )?;
 
     assert_eq!(
-        card.evaluate_action(&request, &attacker)
+        card.evaluate_action(&vault, &request, &attacker)
             .expect_err("caller voice claim must not authenticate another principal")
             .kind(),
         crate::error::ErrorKind::ConsentUnauthenticatedActor
     );
     assert_eq!(
-        card.evaluate_action(&request, &owner)
+        card.evaluate_action(&vault, &request, &owner)
             .expect_err("voice claim cannot borrow a device-authenticated handle")
             .kind(),
         crate::error::ErrorKind::ConsentUnauthenticatedActor
@@ -169,15 +169,48 @@ fn principal_self_attestation_is_refused_and_store_authenticated_actor_succeeds(
     )?;
 
     assert_eq!(
-        card.evaluate_action(&request, &attacker)
+        card.evaluate_action(&vault, &request, &attacker)
             .expect_err("self-attested owner text must not authenticate")
             .kind(),
         crate::error::ErrorKind::ConsentUnauthenticatedActor
     );
     assert_eq!(
-        card.evaluate_action(&request, &owner)?.decision,
+        card.evaluate_action(&vault, &request, &owner)?.decision,
         ConsentActionDecision::ApprovedOnce,
         "the same actor text succeeds only with the store-authenticated owner"
+    );
+    Ok(())
+}
+
+/// F18 (H397): the owner check of a card revalidates the proof on the vault
+/// the act lands in. Another vault's proof for the same principal approves
+/// nothing here.
+#[test]
+fn a_foreign_owner_proof_approves_no_consent_card() -> Result<()> {
+    let card = ask_card()?;
+    let (_dir, vault, owner) = owner_context();
+    let (_other_dir, _other, foreign) =
+        crate::test_util::foreign_owner_proof(owner.actor(), owner.principal_ref());
+    let request = ConsentActionRequest::new(
+        "ask-1",
+        "approve_once",
+        ConsentActionKind::Approve,
+        ConsentActorIdentity::SurfaceActor {
+            actor_ref: "owner".to_owned(),
+        },
+        ConsentSurface::CompanionConversation,
+        104,
+    )?;
+
+    assert_eq!(
+        card.evaluate_action(&vault, &request, &foreign)
+            .expect_err("another vault's proof approves nothing")
+            .kind(),
+        crate::error::ErrorKind::ConsentOwnerNotAuthenticated
+    );
+    assert_eq!(
+        card.evaluate_action(&vault, &request, &owner)?.decision,
+        ConsentActionDecision::ApprovedOnce
     );
     Ok(())
 }

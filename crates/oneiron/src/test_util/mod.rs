@@ -342,6 +342,93 @@ pub(crate) fn bind_test_owner(vault: &Vault, owner: EntityId) {
         .expect("owner binding");
 }
 
+/// An owner proof another vault authenticated for `actor` under `principal`,
+/// with `actor` a live PERSON there as in the vault under test: what a door
+/// of that vault must refuse. The other vault's `TempDir` and handle come
+/// back with it, for the proof's lifetime.
+pub(crate) fn foreign_owner_proof(
+    actor: EntityId,
+    principal: &str,
+) -> (tempfile::TempDir, Vault, crate::consent::AuthenticatedOwner) {
+    let (dir, other) = open_test_vault_with(VaultConfig::device());
+    other
+        .put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"owner",
+        )
+        .expect("the shared person");
+    let proof = other
+        .authenticate_owner(actor, principal, true, crate::store::GateDecisionId::now())
+        .expect("the other vault's proof");
+    (dir, other, proof)
+}
+
+/// The vault owner's proof bound to a full owner slip the test host minted
+/// for it under `context`, as an owner route carries one, with that slip's
+/// id. Roots the vault under the test host first.
+pub(crate) fn credentialed_owner_proof(
+    vault: &Vault,
+    context: &[u8],
+) -> (crate::consent::AuthenticatedOwner, [u8; 32]) {
+    let issuer = test_host_issuer();
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    let mut claims = vault
+        .ensure_host_root_slip(&issuer)
+        .expect("root slip")
+        .claims;
+    if !crate::authority::actor_binding_is_active(
+        &vault.authority_fold().expect("authority fold"),
+        &owner,
+        "human",
+    ) {
+        bind_test_owner(vault, owner);
+    }
+    claims.slip_id = *blake3::hash(context).as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = owner.to_hex();
+    claims.actor_class = Some("human".into());
+    let slip = vault
+        .mint_capability_slip(&issuer, claims)
+        .expect("the owner's slip");
+    let verified = vault
+        .verify_capability_slip(
+            &issuer.public_key(),
+            &slip,
+            context,
+            &issuer.binding_proof(&slip, context).expect("binding proof"),
+        )
+        .expect("verify the slip");
+    let proof = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("authenticate the owner");
+    let bound = vault
+        .bind_owner_credential(proof, verified)
+        .expect("bind the owner's slip");
+    (bound, slip.claims.slip_id)
+}
+
+/// Revokes `slip_id` when this thread next opens a write transaction, after
+/// the door's own early checks and before it takes LMDB's writer: the
+/// revocation commits while the act waits for the writer.
+pub(crate) fn revoke_before_the_next_write(vault: &std::rc::Rc<Vault>, slip_id: [u8; 32]) {
+    let vault = std::rc::Rc::clone(vault);
+    crate::store::arm_after_seal_check(move || {
+        vault
+            .revoke_capability_slip(&test_host_issuer(), slip_id)
+            .expect("revoke the owner's slip");
+    });
+}
+
 /// Roots the vault under the test host and binds `agent` as one of the
 /// vault's own agents (an active `agent` binding). The host key holds one
 /// live binding, so this is the vault's only bound actor.
