@@ -90,6 +90,15 @@ fn fanout_approve_policy_deny_resume_exact_digest_and_gate_receipts() {
     // Visible after process loss, not only present in an in-memory sink.
     drop(vault);
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("reopen paused run");
+    // A proof binds to the open it was minted on: the reopened vault takes a fresh one.
+    let human = vault
+        .authenticate_owner(
+            human.actor(),
+            human.principal_ref(),
+            true,
+            GateDecisionId::now(),
+        )
+        .expect("fresh proof");
     let facade = vault.memory(actor, EdgeActorClass::Agent);
     assert_eq!(
         facade
