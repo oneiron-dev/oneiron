@@ -1253,6 +1253,7 @@ fn context_pack_telemetry_finalization_failure_returns_no_run_id() -> Result<()>
 #[test]
 fn a_rooms_context_pack_fails_when_its_finalize_cannot_land() -> Result<()> {
     let (_dir, vault) = open_test_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
 
     let id = EntityId::from_bytes_unchecked([0x7C; 16]);
     put_text_entity(
@@ -1279,7 +1280,7 @@ fn a_rooms_context_pack_fails_when_its_finalize_cannot_land() -> Result<()> {
         .telemetry_run_id
         .expect("the room's provisional registration landed");
 
-    session.flip_on_record()?;
+    session.flip_on_record_as(&proof)?;
 
     let surfaced_result_ids: Vec<[u8; 16]> = run
         .pack
@@ -2288,4 +2289,60 @@ fn a_stale_worlds_task_is_no_neighbor() -> Result<()> {
         "a stale world's TASK came in as a neighbor"
     );
     Ok(())
+}
+
+/// F16 H233: the stored-profile companion section is one more row of the
+/// pack. A profile is Tier A to every non-owner audience, so under an absence
+/// clamp the section reads exactly as a profile that was never stored, with no
+/// profile text and no staleness detail; the owner alone reads it.
+#[test]
+fn a_clamped_pack_reads_the_psych_profile_as_missing() {
+    use crate::psych_profile::{
+        PsychProfile, PsychProfileConfidence, PsychProfileKey, psych_profile_entity_id,
+    };
+    let (_dir, vault) = open_test_vault();
+    let person = disclosure_id(0x51);
+    let key = PsychProfileKey {
+        person,
+        facet: None,
+        world: None,
+    };
+    let profile = PsychProfile::new(
+        person,
+        "fast compact profile",
+        "retrieval-friendly profile text",
+        "A warm narrative profile.",
+        vec![disclosure_id(0xC1)],
+        PsychProfileConfidence::new(0.8, 0.7, 0.6).expect("valid confidence"),
+    )
+    .expect("valid profile");
+    vault
+        .put_psych_profile(&psych_profile_entity_id(&key), &profile)
+        .expect("store profile");
+    let contact = disclosure_id(0xB1);
+    seed_disclosure_contact(&vault, contact, "kenji@example.com");
+
+    let (_, owner) = vault
+        .context_pack()
+        .psych_profile_key(key)
+        .run_with_psych_profile()
+        .expect("owner pack");
+    assert_ne!(owner.expect("section").status, "missing");
+
+    let (_, clamped) = vault
+        .context_pack()
+        .disclosure_context(absence_ctx_for_contact(&vault, contact))
+        .psych_profile_key(key)
+        .run_with_psych_profile()
+        .expect("clamped pack");
+    let clamped = clamped.expect("section");
+    assert_eq!(
+        (
+            clamped.status.as_str(),
+            clamped.profile,
+            clamped.stale_reason
+        ),
+        ("missing", None, None),
+        "a profile the clamp withholds reads as one never stored"
+    );
 }

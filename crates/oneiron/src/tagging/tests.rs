@@ -1177,6 +1177,7 @@ fn a_promoted_off_record_turn_owes_one_marker_committed_with_the_promotion() {
     const SESSION: &str = "sess-tagging-promote";
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(dir.path(), true);
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let session = vault
         .off_record_session_vault()
         .enter(SESSION, OffRecordBackendClass::Local)
@@ -1205,8 +1206,9 @@ fn a_promoted_off_record_turn_owes_one_marker_committed_with_the_promotion() {
         .expect("overlay snapshot")
         .plan_promotion(promoted)
         .expect("promotion plan");
+    let initiator = crate::off_record::PromoteInitiator::owner(&vault, &proof).unwrap();
     let aborted = vault.with_write_txn(|wtxn| {
-        FloorWrites::new(&vault.store).promote(&vault, wtxn, SESSION, &plan, NOW)?;
+        FloorWrites::new(&vault.store).promote(&vault, wtxn, SESSION, &plan, &initiator, NOW)?;
         Err::<(), _>(crate::Error::InvalidConfig("fixture abort".into()))
     });
     assert!(aborted.is_err());
@@ -1215,7 +1217,7 @@ fn a_promoted_off_record_turn_owes_one_marker_committed_with_the_promotion() {
         "an aborted promotion owes nothing"
     );
 
-    session.promote_turn(&promoted).expect("promote");
+    session.promote_turn_as(&proof, &promoted).expect("promote");
     let owed = markers(&vault);
     assert_eq!(owed.len(), 1);
     assert_eq!(owed[0].state, AttemptState::Queued);
@@ -1231,7 +1233,9 @@ fn a_promoted_off_record_turn_owes_one_marker_committed_with_the_promotion() {
         pass.traces[0].outcome,
         TaggingOutcome::Shadowed { .. }
     ));
-    session.promote_turn(&promoted).expect("promote retry");
+    session
+        .promote_turn_as(&proof, &promoted)
+        .expect("promote retry");
     assert!(
         markers(&vault).is_empty(),
         "a retried promotion owes nothing"

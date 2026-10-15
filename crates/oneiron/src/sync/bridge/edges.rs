@@ -530,6 +530,30 @@ pub(super) fn materialize_edges_from_delta(
                             .iter()
                             .any(|value| crate::deletion::decode_tombstone_value(value).is_hard())
                     });
+                    // A task authority fact's link is permanent: a replicated
+                    // removal is never evidence that a door removed it, so it
+                    // is quarantined. A hard delete of either end takes the
+                    // link with its row, so that echo is dropped, not applied.
+                    if kind == EdgeKind::ScopedTo
+                        && crate::task_authority::is_task_authority_fact_in(
+                            &vault.store,
+                            &*wtxn,
+                            &src,
+                        )?
+                    {
+                        if !hard_deleted {
+                            quarantine_rejected_op_in_txn(
+                                vault,
+                                wtxn,
+                                window_key,
+                                QuarantineContainer::Edges,
+                                key,
+                                &crate::task_authority::fact_removal_refused(),
+                                &[],
+                            )?;
+                        }
+                        continue;
+                    }
                     if let Err(reserved) = crate::edge::validate_public_edge_kind(kind)
                         && (kind == EdgeKind::Blocks
                             || (kind == EdgeKind::AddressedTo
@@ -610,6 +634,13 @@ pub(super) fn materialize_edges_from_delta(
         Ok(affected)
     });
 
+    if result.is_ok() {
+        // A hydrated endpoint was written where no row was stored: a birth a
+        // federated import may be watching (Sol R11 F1 on #1432).
+        for (id, blob) in &hydrated_endpoints {
+            crate::sync::ingest::note_born(vault, *id, blob);
+        }
+    }
     if result.is_ok()
         && let Err(e) = scrub_local_only_companions_from_crdt(doc, &pending_companion_scrubs)
     {

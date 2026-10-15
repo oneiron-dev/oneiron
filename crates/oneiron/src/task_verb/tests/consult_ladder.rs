@@ -75,6 +75,7 @@ fn an_interrupted_register_admits_only_a_deferring_ladder_terminal() {
                 counter_task_ref,
                 finished_at: LADDER_NOW + 1,
             }),
+            consent_required: false,
         });
         let live_state = live.state.clone();
         let decoded = decode_task_verb_body(&encode_task_verb_body(live));
@@ -161,6 +162,7 @@ fn an_interrupted_register_admits_only_a_deferring_ladder_terminal() {
             counter_task_ref: Some(ladder_id(0xB2)),
             finished_at: LADDER_NOW + 1,
         }),
+        consent_required: false,
     });
     assert!(
         matches!(
@@ -562,6 +564,7 @@ fn counter_leaves_an_escalated_original_byte_identical() {
     assert!(body.terminal().is_none(), "the task remains live");
     let Some(TaskExecutionState::Interrupted {
         ladder: Some(persisted),
+        ..
     }) = body.state.as_ref()
     else {
         panic!("the task retains its settled escalation");
@@ -670,6 +673,7 @@ fn an_escalated_ladder_refuses_a_cas_that_expects_a_plain_interruption() {
                 counter_task_ref: None,
                 finished_at: LADDER_NOW + 1,
             }),
+            consent_required: false,
         })
     );
 }
@@ -695,6 +699,7 @@ fn a_late_consult_result_refuses_to_overwrite_a_settled_ladder() {
     assert!(body.terminal().is_none(), "the task remains live");
     let Some(TaskExecutionState::Interrupted {
         ladder: Some(persisted),
+        ..
     }) = body.state.as_ref()
     else {
         panic!("the task retains its settled escalation");
@@ -745,6 +750,7 @@ fn a_late_generic_result_refuses_to_overwrite_a_settled_ladder() {
     assert!(body.terminal().is_none(), "the task remains live");
     let Some(TaskExecutionState::Interrupted {
         ladder: Some(persisted),
+        ..
     }) = body.state.as_ref()
     else {
         panic!("the task retains its settled escalation");
@@ -781,6 +787,7 @@ fn the_deadline_sweep_leaves_an_escalated_consult_settled() {
     assert!(body.terminal().is_none(), "the task remains live");
     let Some(TaskExecutionState::Interrupted {
         ladder: Some(persisted),
+        ..
     }) = body.state.as_ref()
     else {
         panic!("the task retains its settled escalation");
@@ -838,5 +845,331 @@ fn a_consent_required_interruption_cannot_be_resumed_durably() {
             .terminal()
             .map(|state| state.disposition),
         Some(LadderTerminalDisposition::Approved)
+    );
+}
+
+/// H219: a consult's ladder is moved by the consult's own parties, its asker
+/// or the actor it was addressed to. A third actor in the same vault that can
+/// read the ladder state still cannot settle it.
+#[test]
+fn a_third_actor_cannot_settle_a_consult_ladder() {
+    let (_dir, vault) = open_vault();
+    let (task_ref, peer, _question) = open_consult(&vault);
+    let working = ConsultLadderState::Working(WorkingState {
+        started_at: LADDER_NOW,
+        decision_round: 0,
+    });
+    seed_ladder_state(&vault, task_ref, &working);
+
+    let refused = vault
+        .memory(other_actor(&vault), EdgeActorClass::Agent)
+        .compare_and_set_consult_ladder(
+            task_ref,
+            &working,
+            LadderTransition::Finish(LadderTerminalState {
+                disposition: LadderTerminalDisposition::Approved,
+                result_ref: ladder_id(0xA7),
+                counter_task_ref: None,
+                finished_at: LADDER_NOW + 1,
+            }),
+        )
+        .expect_err("a third actor cannot settle another actor's consult");
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
+    let body = task_verb_body(&vault, task_ref)
+        .expect("decode consult")
+        .expect("consult is typed");
+    assert_eq!(
+        body.state,
+        Some(project_consult_ladder_state(&working)),
+        "the refused move wrote nothing"
+    );
+
+    // The addressed assignee still moves the ladder of a consult sent to it.
+    vault
+        .memory(peer, EdgeActorClass::Agent)
+        .compare_and_set_consult_ladder(
+            task_ref,
+            &working,
+            LadderTransition::Interrupt(InterruptedState {
+                kind: InterruptionKind::Contested,
+                consent_required: false,
+                case_ref: ladder_id(0xA8),
+                interrupted_at: LADDER_NOW + 2,
+            }),
+        )
+        .expect("the addressed assignee moves its consult's ladder");
+}
+
+/// Gives `actor` an Auto task ceiling beside the shipped one, so a refusal
+/// below comes from the party rule and never from the ceiling.
+fn grant_auto_ceiling(vault: &Vault, actor: EntityId) {
+    let bytes = crate::gate::default_policy_manifest().expect("default policy");
+    let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("decode policy");
+    manifest["actor_ceilings"]
+        .as_array_mut()
+        .expect("actor ceilings")
+        .push(serde_json::json!({
+            "actor_class": "agent",
+            "actor_ref": actor.to_hex(),
+            "ceiling": "auto",
+        }));
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id().expect("policy id"),
+        &rmp_serde::to_vec_named(&manifest).expect("encode policy"),
+    )
+    .expect("install policy");
+}
+
+/// F24 review (H219): a counter terminalizes its open parent, so it is a
+/// second door onto the same settlement. A third actor with its own Auto
+/// ceiling and a valid delta of its own cannot counter, and so close, a
+/// consult between two others.
+#[test]
+fn a_third_actor_cannot_counter_another_actors_consult() {
+    let (_dir, vault) = open_vault();
+    let fixture = cross_actor_fixture(&vault);
+    let CrossActorRoute::ConsultOwner { receipt } = vault
+        .memory(fixture.proposer, EdgeActorClass::Agent)
+        .route_entity_delta(
+            ladder_delta(
+                fixture.target,
+                fixture.delta_ref,
+                fixture.proposer,
+                fixture.owner,
+            ),
+            None,
+            LADDER_DEADLINE,
+            LADDER_NOW,
+        )
+        .expect("cross-actor delta routes")
+    else {
+        panic!("expected an owner consult");
+    };
+    let original = receipt.task_ref.expect("consult minted");
+    let third = ladder_id(0xE6);
+    put_person(&vault, third);
+    grant_auto_ceiling(&vault, third);
+    let census = task_entity_census(&vault);
+
+    let refused = vault
+        .memory(third, EdgeActorClass::Agent)
+        .mint_counter_task(
+            original,
+            ladder_delta(fixture.target, fixture.delta_ref, third, fixture.owner),
+            LADDER_DEADLINE,
+            LADDER_NOW + 5,
+        )
+        .expect_err("a third actor cannot counter another actor's consult");
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
+    assert!(
+        refused.message.contains("asker or its addressed assignee"),
+        "refused by the party rule, not the ceiling: {refused:?}"
+    );
+    let body = task_verb_body(&vault, original)
+        .expect("decode consult")
+        .expect("consult is typed");
+    assert!(body.terminal().is_none(), "the consult stays open");
+    assert_eq!(task_entity_census(&vault), census, "no counter was minted");
+}
+
+/// F24 review (H219): who a consult is addressed to is fixed when it is
+/// minted. A raw TASK write that rewrites the body's `assignee` changes what
+/// the board shows, never who may move the ladder: the new name cannot, and
+/// the party it was addressed to still can.
+#[test]
+fn a_rewritten_assignee_never_moves_a_consult() {
+    let (_dir, vault) = open_vault();
+    let (task_ref, peer, _question) = open_consult(&vault);
+    let working = ConsultLadderState::Working(WorkingState {
+        started_at: LADDER_NOW,
+        decision_round: 0,
+    });
+    seed_ladder_state(&vault, task_ref, &working);
+    let third = other_actor(&vault);
+    let mut body = task_verb_body(&vault, task_ref)
+        .expect("decode consult")
+        .expect("consult is typed");
+    body.assignee = Some(TaskAssignee::Peer { actor_ref: third });
+    vault
+        .put_entity(
+            &task_ref,
+            crate::registry::ENTITY_TYPE_TASK,
+            TimeRange {
+                start: LADDER_NOW,
+                end: LADDER_NOW,
+            },
+            LADDER_NOW,
+            &encode_task_verb_body(body),
+        )
+        .expect("raw TASK rewrite of the assignee");
+    let finish = LadderTransition::Finish(LadderTerminalState {
+        disposition: LadderTerminalDisposition::Approved,
+        result_ref: ladder_id(0xA9),
+        counter_task_ref: None,
+        finished_at: LADDER_NOW + 1,
+    });
+
+    let refused = vault
+        .memory(third, EdgeActorClass::Agent)
+        .compare_and_set_consult_ladder(task_ref, &working, finish)
+        .expect_err("a rewritten assignee is display, not a party");
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
+    vault
+        .memory(peer, EdgeActorClass::Agent)
+        .compare_and_set_consult_ladder(task_ref, &working, finish)
+        .expect("the party the consult was addressed to still moves it");
+}
+
+/// F24 review (H219): a consent-required interruption keeps asking for the
+/// human verdict whatever the party expects. Expecting the same interruption
+/// without consent, or re-interrupting it without consent, waives nothing; an
+/// interruption that never asked still resumes.
+#[test]
+fn a_party_cannot_expect_a_required_consent_away() {
+    let waiting = InterruptedState {
+        kind: InterruptionKind::Critical,
+        consent_required: true,
+        case_ref: ladder_id(0xF8),
+        interrupted_at: LADDER_NOW,
+    };
+    let unasked = InterruptedState {
+        consent_required: false,
+        ..waiting
+    };
+    let resume = LadderTransition::Resume(WorkingState {
+        started_at: LADDER_NOW + 1,
+        decision_round: 1,
+    });
+    let (_dir, vault) = open_vault();
+    let (task_ref, _peer, _question) = open_consult(&vault);
+    let facade = vault.memory(own_agent(&vault), EdgeActorClass::Agent);
+    seed_ladder_state(&vault, task_ref, &ConsultLadderState::Interrupted(waiting));
+
+    assert!(
+        facade
+            .compare_and_set_consult_ladder(
+                task_ref,
+                &ConsultLadderState::Interrupted(unasked),
+                resume
+            )
+            .is_err(),
+        "expecting an interruption without consent waives nothing"
+    );
+    assert!(
+        facade
+            .compare_and_set_consult_ladder(
+                task_ref,
+                &ConsultLadderState::Interrupted(waiting),
+                LadderTransition::Interrupt(unasked),
+            )
+            .is_err(),
+        "re-interrupting without consent waives nothing"
+    );
+    let body = task_verb_body(&vault, task_ref)
+        .expect("decode consult")
+        .expect("consult is typed");
+    assert_eq!(
+        body.state,
+        Some(project_consult_ladder_state(
+            &ConsultLadderState::Interrupted(waiting)
+        )),
+        "the consent-required interruption stands"
+    );
+
+    let (_open_dir, open) = open_vault();
+    let (open_ref, _open_peer, _open_question) = open_consult(&open);
+    seed_ladder_state(&open, open_ref, &ConsultLadderState::Interrupted(unasked));
+    open.memory(own_agent(&open), EdgeActorClass::Agent)
+        .compare_and_set_consult_ladder(open_ref, &ConsultLadderState::Interrupted(unasked), resume)
+        .expect("an interruption that never asked for consent resumes");
+}
+
+/// F24 review (H219): a party is a party only while its authority binding is
+/// live. Once the vault is rooted and the asker's binding is revoked, it
+/// neither settles nor counters its own consult.
+#[test]
+fn a_revoked_party_cannot_settle_or_counter_its_consult() {
+    let (_dir, vault) = open_vault();
+    let fixture = cross_actor_fixture(&vault);
+    let facade = vault.memory(fixture.proposer, EdgeActorClass::Agent);
+    let delta = ladder_delta(
+        fixture.target,
+        fixture.delta_ref,
+        fixture.proposer,
+        fixture.owner,
+    );
+    let CrossActorRoute::ConsultOwner { receipt } = facade
+        .route_entity_delta(delta.clone(), None, LADDER_DEADLINE, LADDER_NOW)
+        .expect("cross-actor delta routes")
+    else {
+        panic!("expected an owner consult");
+    };
+    let original = receipt.task_ref.expect("consult minted");
+    let working = ConsultLadderState::Working(WorkingState {
+        started_at: LADDER_NOW,
+        decision_round: 0,
+    });
+    seed_ladder_state(&vault, original, &working);
+    let revoke = crate::subject_model::tests::authorization::root_owner(
+        &vault,
+        crate::WriteActor::new(fixture.proposer, EdgeActorClass::Agent),
+        0xEA,
+    )
+    .expect("root the vault with the asker bound");
+    let interrupted = facade
+        .compare_and_set_consult_ladder(
+            original,
+            &working,
+            LadderTransition::Interrupt(InterruptedState {
+                kind: InterruptionKind::Contested,
+                consent_required: false,
+                case_ref: ladder_id(0xAA),
+                interrupted_at: LADDER_NOW + 1,
+            }),
+        )
+        .expect("positive control: a bound party moves its consult")
+        .ladder_state;
+    vault
+        .put_authority_log_entries(&[(
+            revoke,
+            TimeRange {
+                start: 102,
+                end: 102,
+            },
+            102,
+        )])
+        .expect("revoke the asker's binding");
+
+    let census = task_entity_census(&vault);
+    assert!(
+        facade
+            .compare_and_set_consult_ladder(
+                original,
+                &interrupted,
+                LadderTransition::Finish(LadderTerminalState {
+                    disposition: LadderTerminalDisposition::Approved,
+                    result_ref: ladder_id(0xAB),
+                    counter_task_ref: None,
+                    finished_at: LADDER_NOW + 2,
+                }),
+            )
+            .is_err(),
+        "a revoked party settles nothing"
+    );
+    assert!(
+        facade
+            .mint_counter_task(original, delta, LADDER_DEADLINE, LADDER_NOW + 5)
+            .is_err(),
+        "a revoked party counters nothing"
+    );
+    assert_eq!(task_entity_census(&vault), census, "nothing was minted");
+    let body = task_verb_body(&vault, original)
+        .expect("decode consult")
+        .expect("consult is typed");
+    assert_eq!(
+        body.state,
+        Some(project_consult_ladder_state(&interrupted)),
+        "the consult stays where the bound party left it"
     );
 }

@@ -190,7 +190,7 @@ impl Vault {
             )));
         }
         self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, &*txn)?;
+            let actor = owner.revalidate_in_txn(self, &*txn)?;
             let grant_ref = bound.digest().to_hex();
             if let Some(grant) = self.consent_grant_in_txn(&*txn, &grant_ref)?
                 && grant.is_active()
@@ -206,7 +206,7 @@ impl Vault {
                     let (key, rule) = entry?;
                     check(&key, &rule)?;
                     if !rule.retired
-                        && rule.actor == *owner.actor().as_bytes()
+                        && rule.actor == *actor.as_bytes()
                         && rule.actor == *grant.owner_stamp.actor.as_bytes()
                         && rule.authentication_id == grant.owner_stamp.decision_id.as_bytes()
                         && grant.grant.bound() == bound
@@ -227,7 +227,7 @@ impl Vault {
                 grant_ref: grant_ref.clone(),
                 reason: reason.to_owned(),
                 decision_id: receipt.decision_id().as_bytes(),
-                actor: owner.actor().as_bytes().to_owned(),
+                actor: actor.as_bytes().to_owned(),
                 authentication_id: owner.decision_id().as_bytes(),
                 retired: false,
             };
@@ -259,7 +259,7 @@ impl Vault {
             return Err(Error::Gate(GateError::ConsentGrantNotFound));
         }
         self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, &*txn)?;
+            let owner_actor = owner.revalidate_in_txn(self, &*txn)?;
             let key = RuleKey {
                 grant_ref: action.grant_ref.clone(),
                 decision_id: action.rule_decision_id.as_bytes(),
@@ -270,7 +270,7 @@ impl Vault {
             check(&key, &row)?;
             if row.retired
                 || row.decision_id != action.rule_decision_id.as_bytes()
-                || row.actor != *owner.actor().as_bytes()
+                || row.actor != *owner_actor.as_bytes()
             {
                 return Err(Error::Gate(GateError::ConsentGrantNotFound));
             }

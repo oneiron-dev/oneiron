@@ -36,6 +36,7 @@ fn principal(fixture: &Fixture, org: oneiron::EntityId) -> PairingPrincipal {
         holder_ref: Some(fixture.actor.to_hex()),
         actor_class: Some("human".into()),
         org_ref: Some(org.to_hex()),
+        write_facet: None,
     }
 }
 fn org_scope() -> Scope {

@@ -393,6 +393,15 @@ pub enum SyncError {
         window_start_secs: u64,
         quota_window_secs: u64,
     },
+    /// A federated `FacetOf` stamp sent ahead of its row was not held: its
+    /// sender already holds the most stamps, or stamp bytes, one sender may.
+    /// The rest of the update is admitted as it would be without it.
+    #[cfg(feature = "sync")]
+    #[error(
+        "facet stamp onto {} not held: its sender holds the most stamps one sender may",
+        src.to_hex()
+    )]
+    HeldFacetStampsFull { src: EntityId },
     /// A REDACTION_AUDIT blob arriving through a sync replay door
     /// failed structural validation against the pinned contracts.ts
     /// `redactionAuditReceipt` field set (request_id, scope, reason,
@@ -527,6 +536,8 @@ impl SyncError {
             Self::MaintenanceIngestQuotaExceeded { .. } => {
                 ErrorKind::MaintenanceIngestQuotaExceeded
             }
+            #[cfg(feature = "sync")]
+            Self::HeldFacetStampsFull { .. } => ErrorKind::HeldFacetStampsFull,
             Self::InvalidRedactionReceiptBody(_) => ErrorKind::InvalidRedactionReceiptBody,
             #[cfg(feature = "sync")]
             Self::RedactionReceiptDivergence { .. } => ErrorKind::RedactionReceiptDivergence,

@@ -400,12 +400,13 @@ fn taint_guard_releases_after_session_close() -> Result<()> {
 #[test]
 fn session_apply_refuses_a_route_minted_before_a_mode_flip() -> Result<()> {
     let (_dir, vault) = open_raw_test_vault();
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let session = vault
         .off_record_session_vault()
         .enter("sess-apply-stale-route", OffRecordBackendClass::Local)?;
     let route = session.write_route()?;
     // The flip republishes the mode generation, stranding the route above.
-    session.flip_on_record()?;
+    session.flip_on_record_as(&proof)?;
     session.flip_off_record()?;
 
     let turn = EntityId::now();

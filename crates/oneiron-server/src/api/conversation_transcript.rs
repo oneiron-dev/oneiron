@@ -73,7 +73,7 @@ pub(crate) async fn get_core_conversation_transcript(
     query: Result<Query<TranscriptQuery>, QueryRejection>,
 ) -> Result<Json<TranscriptResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_lane_record_scope()?;
     // The read is not bounded by a room's ceiling, so a request made inside a
     // room turn is refused rather than read outside it.
     if headers.contains_key(ROOM_TURN_HEADER) {

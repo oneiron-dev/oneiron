@@ -23,7 +23,7 @@ fn restore_refuses_to_bring_back_a_room_role_narrowed_since() {
     vault
         .set_room_role(room, bob, RoomRole::Admin, owner)
         .unwrap();
-    let backups = tempfile::tempdir().unwrap();
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100).unwrap();
 
@@ -68,7 +68,7 @@ fn restore_refuses_to_reopen_room_history_narrowed_since() {
         .join_member(room, bob, owner, 3, HistoryChoice::Share)
         .unwrap();
     assert!(audience_admits(&vault, before.id, bob).unwrap());
-    let backups = tempfile::tempdir().unwrap();
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100).unwrap();
     vault
@@ -98,7 +98,7 @@ fn restore_refuses_to_widen_a_room_history_default_narrowed_since() {
         ..ConversationBody::default()
     };
     vault.create_conversation(room, &group, owner, 1).unwrap();
-    let backups = tempfile::tempdir().unwrap();
+    let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100).unwrap();
     let mut direct = vault.conversation_body(room).unwrap();

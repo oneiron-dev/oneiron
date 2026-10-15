@@ -277,6 +277,13 @@ impl ResidenceRpc {
     }
 }
 
+/// The home is a peer, so its promotion snapshot passes the same carrier
+/// admission as a raw window update before any byte reaches the window.
+pub(super) fn import_promotion_snapshot(doc: &loro::LoroDoc, snapshot: &[u8]) -> bool {
+    crate::sync::window::validate_window_update_locality(doc, snapshot).is_ok()
+        && doc.import(snapshot).is_ok()
+}
+
 fn refused() -> TransportError {
     TransportError::InvalidPayload("opened-item RPC unavailable")
 }
@@ -463,7 +470,7 @@ impl SyncClient {
                 "unpromoted window has local CRDT history",
             ));
         }
-        if loaded.doc.import(&snapshot).is_err() {
+        if !import_promotion_snapshot(&loaded.doc, &snapshot) {
             self.manager.discard_window(window);
             return Err(refused());
         }

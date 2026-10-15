@@ -16,4 +16,8 @@ pub(in crate::outbound) struct DispatchVerdict {
     pub(in crate::outbound) outcome: OutboundDispatchOutcome,
     pub(in crate::outbound) execution: Option<OutboundExecutionOutcome>,
     pub(in crate::outbound) suppression_receipt: Option<ReceiptRecord>,
+    /// The count a seat ceiling held this send at, read under the admission
+    /// writer lock. The pipeline folds it into the seat decision the receipt
+    /// carries.
+    pub(in crate::outbound) ceiling_count: Option<u32>,
 }
