@@ -186,8 +186,8 @@ use stale_roster::{apply_stale_roster_window, next_stale_roster_deadline};
 use tier_floor::*;
 pub use world_key_fold::{FoldedWorldKey, WORLD_KEY_WRAPS_PER_RECIPIENT, WrappedKey};
 pub(crate) use world_key_support::{
-    key_record_head, next_sequence, own_world_key_records_in_txn, owner_root_record_in_txn,
-    owner_root_records_in_txn, sign_side_entry, standing_rows,
+    next_sequence, own_world_key_records_in_txn, owner_root_record_in_txn,
+    owner_root_records_in_txn, scope_head, sign_side_entry, standing_rows,
 };
 pub use world_privacy::{
     Destination, EffectiveModelOrder, EffectiveRead, EffectiveWorldPrivacy, FoldedWorld,

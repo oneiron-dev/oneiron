@@ -256,11 +256,17 @@ impl Vault {
                 fold.append_heads.clone()
             }
         };
+        // Each row this machine signs in the world names its previous one
+        // there, a settings edit or a key record, and each share names the
+        // one before it: one chain in one sequence scope, so a later row that
+        // arrives first vouches for the earlier (Astra #1422c).
+        let chain = super::scope_head(&fold, &signer, world);
         let author = |standing_rows: &BTreeSet<AuthorityEntryHash>| {
             let mut live = live.iter().map(|(_, hash)| *hash);
             let mut seq = seq;
             let mut entries = Vec::new();
             let mut parents = standing_rows.clone();
+            parents.extend(chain);
             while parents.len() + live.len() > MAX_PARENTS {
                 if standing != WorldEditStanding::Holds && !picks_this_machine {
                     return Err(refused(

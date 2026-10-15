@@ -90,10 +90,10 @@ pub struct AuthorityFold {
     pub(super) append_heads: BTreeSet<AuthorityEntryHash>,
     /// Each unpinned anchor's own heads, which only that anchor's rows name.
     pub(super) anchor_heads: BTreeMap<[u8; 32], BTreeSet<AuthorityEntryHash>>,
-    /// Each signer's latest valid key record of each world, with its
-    /// sequence: the parent that signer's next key record of the world names
-    /// (Astra #1422b F1).
-    pub(super) key_record_heads: BTreeMap<(AuthorityKey, EntityId), (u64, AuthorityEntryHash)>,
+    /// Each signer's latest valid row of each world, a settings edit or a key
+    /// record, with its sequence: the parent that signer's next row of the
+    /// world names (Astra #1422b F1, #1422c).
+    pub(super) scope_heads: BTreeMap<(AuthorityKey, EntityId), (u64, AuthorityEntryHash)>,
     pub(super) append_sequences: BTreeMap<AuthorityKey, u64>,
     /// Historical actor/class pairs affected by a key revocation, including rebind-away.
     pub actor_revocation_affected_writers: BTreeSet<(EntityId, String)>,

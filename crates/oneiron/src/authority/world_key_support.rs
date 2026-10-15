@@ -19,14 +19,15 @@ pub(crate) fn next_sequence(fold: &AuthorityFold, signer: &AuthorityKey) -> Resu
     }
 }
 
-/// The key record `signer` last wrote for `world` on `fold`, which its next
-/// key record of the world names (Astra #1422b F1).
-pub(crate) fn key_record_head(
+/// The row `signer` last wrote in `world` on `fold`, a settings edit or a
+/// key record, which its next row of the world names: one signer's rows of a
+/// world are one chain, in one sequence scope (Astra #1422b F1, #1422c).
+pub(crate) fn scope_head(
     fold: &AuthorityFold,
     signer: &AuthorityKey,
     world: EntityId,
 ) -> Option<AuthorityEntryHash> {
-    fold.key_record_heads
+    fold.scope_heads
         .get(&(signer.clone(), world))
         .map(|(_, hash)| *hash)
 }

@@ -68,6 +68,11 @@ pub enum Withheld {
     /// machine merges the world's settings, a re-run of the door wraps it
     /// where this machine still reads the world.
     FrontierWide,
+    /// Only machines removed here signed the key's counted records, and this
+    /// machine signed none: it is never current, and no door here wraps it
+    /// again, since that record would make it current. A kit restore lists it
+    /// as usable instead (the Engine's Q2 on Astra #1422c).
+    SignerRemoved,
 }
 
 /// A world this install holds whose settings the pin change made differ.
@@ -131,6 +136,8 @@ impl Reach {
 pub(crate) struct RepinStart {
     old: AuthorityView,
     reached: BTreeMap<WorldKeyId, Reached>,
+    /// The keys this machine signed a record of itself.
+    own_keys: BTreeSet<WorldKeyId>,
     /// Each held world's earlier settings and the earlier frontier's signers.
     earlier: BTreeMap<EntityId, (EffectiveWorldPrivacy, Vec<EntityId>)>,
     /// The admitter the pin singleton keeps as `earlier` once the pin moves.
@@ -188,6 +195,7 @@ impl Vault {
         }
         let to_me = WrapRecipient::Machine(me);
         let mut own = own_world_key_records_in_txn(&self.store, txn, &old, me, my_key)?;
+        let own_keys = own.iter().map(|(_, record)| record.key).collect();
         own.retain(|(_, record)| record.wraps.iter().any(|(to, _)| *to == to_me));
         let mut reached = BTreeMap::new();
         for key in old.all_world_keys() {
@@ -235,6 +243,7 @@ impl Vault {
         Ok(RepinStart {
             old,
             reached,
+            own_keys,
             earlier,
             earlier_admitter,
         })
@@ -301,6 +310,19 @@ impl Vault {
                 && fold.world_privacy(world).read != EffectiveRead::Everywhere
                 && fold.world_readable_on(world, Destination::Machine(me))
         };
+        // A key that only removed machines signed counted records of, before
+        // the pin moved and after, gets no record here unless this machine
+        // signed one itself: this door's record would make it current (the
+        // Engine's Q2 on Astra #1422c). It is still opened, and a kit restore
+        // keeps it usable. A key that counts under the old pin alone, its
+        // signers left out of the new one, is not such a key.
+        let stands_in = |fold: &AuthorityFold, id: &WorldKeyId| {
+            fold.world_key(id)
+                .is_some_and(|key| fold.world_key_stands(key))
+        };
+        let stands = |id: &WorldKeyId| {
+            start.own_keys.contains(id) || stands_in(&start.old, id) || stands_in(&mid, id)
+        };
         let my_public = door.secret.secret.public_key().clone();
         let mut seq = SequenceCounter::new();
         // Keys whose world outgrew one record, in the pre-wrap and in the
@@ -315,6 +337,7 @@ impl Vault {
                 continue;
             };
             if !pre_wrap.contains(id)
+                || !stands(id)
                 || mid.world_privacy(id.world).read == EffectiveRead::Everywhere
                 || reads(&mid, id.world)
             {
@@ -380,7 +403,7 @@ impl Vault {
             let Some(key) = reached.key.opened() else {
                 continue;
             };
-            if !reads(&mid, id.world) {
+            if !reads(&mid, id.world) || !stands(id) {
                 continue;
             }
             let counted = mid.world_key(id);
@@ -468,6 +491,14 @@ impl Vault {
                     continue;
                 }
             };
+            if !stands(&id) {
+                if door.restore {
+                    finish.usable.push(key);
+                } else {
+                    finish.report.withheld.push((id, Withheld::SignerRemoved));
+                }
+                continue;
+            }
             let wrapped = held.is_some_and(|held| {
                 held.wraps.contains_key(&to_root)
                     && held.wraps.contains_key(&WrapRecipient::Machine(me))

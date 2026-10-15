@@ -27,21 +27,12 @@ pub(super) fn fold_as_install(
     let standing = local
         .machine_standing
         .unwrap_or(&super::machine_standing::every_chain);
-    let no_vouch = NoVouch::of(
-        entries,
-        first_seen_at_secs,
-        now_secs,
-        peer_consent_roots,
-        consent_arm,
-        local,
-    );
-    let context = FoldContext {
+    // This install's floors with no vouch and no hold: the context in which
+    // causal ancestry clears what it can before any vouch is judged.
+    let bare = FoldContext {
         sequence_floors,
-        floor_vouched: local
-            .observations
-            .filter(|observations| !observations.unvouched)
-            .map(|observations| &observations.vouched),
-        install_held: no_vouch.as_ref().map(|no_vouch| &no_vouch.held),
+        floor_vouched: None,
+        install_held: None,
         entry_ancestors: None,
         peer_consent_roots,
         consent_arm,
@@ -49,6 +40,15 @@ pub(super) fn fold_as_install(
         machine_standing: standing,
         pre_handoff_entries: local.pre_handoff_entries,
         pin: local.pin,
+    };
+    let no_vouch = NoVouch::of(entries, first_seen_at_secs, now_secs, local, bare);
+    let context = FoldContext {
+        floor_vouched: local
+            .observations
+            .filter(|observations| !observations.unvouched)
+            .map(|observations| &observations.vouched),
+        install_held: no_vouch.as_ref().map(|no_vouch| &no_vouch.held),
+        ..bare
     };
     // Staleness is this install's own projection, which the structural fold
     // never sees, and so is a roster left with no settled root. A machine
@@ -137,13 +137,13 @@ pub(super) fn fold_as_install(
             .entry(entry.signer.public_key.clone())
             .and_modify(|seq| *seq = (*seq).max(entry.seq))
             .or_insert(entry.seq);
-        if let AuthorityOp::WorldKeyWraps(record) = &entry.op
+        if let Some(world) = super::world_privacy::side_world(&entry.op)
             && let Ok(hash) = authority_entry_hash(entry)
             && fold.valid_entries.contains(&hash)
         {
             let head = fold
-                .key_record_heads
-                .entry((entry.signer.public_key.clone(), record.key.world))
+                .scope_heads
+                .entry((entry.signer.public_key.clone(), world))
                 .or_insert((entry.seq, hash));
             if entry.seq > head.0 {
                 *head = (entry.seq, hash);
@@ -212,13 +212,13 @@ struct NoVouch {
 }
 
 impl NoVouch {
+    /// `bare` is this install's fold context with no vouch and no hold.
     fn of(
         entries: &[AuthorityLogEntry],
         first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
         now_secs: Option<u64>,
-        peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
-        consent_arm: fn(&FoldedDevice) -> bool,
         local: FoldLocalInputs<'_>,
+        bare: FoldContext<'_>,
     ) -> Option<Self> {
         let (Some(observations), Some(handoffs)) = (local.observations, local.handoff_candidates)
         else {
@@ -232,22 +232,30 @@ impl NoVouch {
             .filter_map(|entry| authority_entry_hash(entry).ok().map(|hash| (hash, entry)))
             .collect();
         // Only a row a floor would refuse needs a vouch. A removal vouches for
-        // its own branch, whichever rows that holds.
-        let refused = |hash: &AuthorityEntryHash| {
-            by_hash
-                .get(hash)
-                .zip(observations.sequence_floors.get(hash))
-                .is_some_and(|(entry, floor)| {
-                    entry.seq < *floor
-                        && !super::entry_transition::lands_restriction_only(&entry.op)
-                })
-        };
+        // its own branch, whichever rows that holds. A row causal ancestry
+        // already admits needs none, so the floors are the ones the fold keeps
+        // once later rows of the same signer and scope vouch for what they
+        // can (Astra #1422c F1). Clearing only drops floors, so the receipts
+        // alone rule out most folds first.
         let removal = by_hash
             .values()
             .any(|entry| super::revoke_proof::removes_machine(&entry.op));
-        let rescues = observations.vouched.iter().any(refused)
-            || (removal && observations.sequence_floors.keys().any(refused));
-        if !rescues {
+        let rescues = |floors: &BTreeMap<AuthorityEntryHash, u64>| {
+            let refused = |hash: &AuthorityEntryHash| {
+                by_hash
+                    .get(hash)
+                    .zip(floors.get(hash))
+                    .is_some_and(|(entry, floor)| {
+                        entry.seq < *floor
+                            && !super::entry_transition::lands_restriction_only(&entry.op)
+                    })
+            };
+            observations.vouched.iter().any(refused) || (removal && floors.keys().any(refused))
+        };
+        if !rescues(&observations.sequence_floors)
+            || !super::fold_engine::causal_floors_of(entries, bare)
+                .is_some_and(|floors| rescues(&floors))
+        {
             return None;
         }
         let unvouched = observations.without_vouch();
@@ -255,8 +263,8 @@ impl NoVouch {
             entries,
             first_seen_at_secs,
             now_secs,
-            peer_consent_roots,
-            consent_arm,
+            bare.peer_consent_roots,
+            bare.consent_arm,
             FoldLocalInputs {
                 observations: Some(&unvouched),
                 retire_device_ops: true,
@@ -313,6 +321,9 @@ impl NoVouch {
     /// only when the fold with no vouch counts it, through some chain, with
     /// the same keys, unless its trusted chain's head is such a fresh revision
     /// (the Engine's held-chain ruling, guard 3). Otherwise every chain is held.
+    /// A chain both folds end in one removal is not held: the removal lands
+    /// alike in both, and a hold would reach back into every earlier state,
+    /// where the machine's own records were counted (Astra #1422c F1).
     fn uncounted(
         &self,
         fold: &AuthorityFold,
@@ -338,7 +349,9 @@ impl NoVouch {
             .filter(|(admitter, head)| {
                 !self.fresh(fold, &head.entry)
                     && !counted_there.iter().any(|(other, counted)| {
-                        other == admitter && counted.entry == head.entry && counted.is_live()
+                        other == admitter
+                            && counted.entry == head.entry
+                            && (counted.is_live() || (counted.removed && head.removed))
                     })
             })
             .map(|(admitter, _)| admitter)

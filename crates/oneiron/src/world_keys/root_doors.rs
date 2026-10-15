@@ -57,7 +57,9 @@ pub struct AnchoredMachine {
 /// What a kit restore did with each key wrapped to the kit's root.
 #[derive(Debug, Default)]
 pub struct RootRestore {
-    /// Readable here: opened, wrapped to this machine, in the session.
+    /// Readable here: opened, wrapped to this machine, in the session. A key
+    /// only machines removed here signed is opened and in the session but
+    /// gets no wrap, and is never current (the Engine's Q2 on Astra #1422c).
     pub usable: Vec<WorldKeyId>,
     /// Kept on another machine: recoverable, not usable here (P11).
     pub needs_rehome: Vec<WorldKeyId>,

@@ -19,6 +19,15 @@
 //! fills a recipient's slots. That only withholds; the pin doors wrap again.
 //! Validity is pin-free: a record no chain of its machine admits under the
 //! key that signed it is invalid on every install.
+//!
+//! A key is current only while a machine whose chain is not removed in this
+//! install's trust set signed one of its counted records. A removed
+//! machine's install key can still sign a record above the floor this
+//! install keeps of it, which lands as honest late arrival does; it never
+//! chooses the world's key, and no honest row that descends from it lends it
+//! that standing (Astra #1422c F2, the Engine's Q1). Such a key stays in the
+//! map, for reading and for the kit, and the next ensure on a machine of the
+//! owner's mints afresh.
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -44,6 +53,8 @@ pub(super) struct WorldKeyState {
     /// Per recipient, the records whose wraps count, by causal rank, each
     /// with the settings revision it was wrapped under.
     wraps: BTreeMap<WrapRecipient, BTreeMap<SlotRank, PolicyRevision>>,
+    /// The machines whose counted records of the key folded.
+    signers: BTreeSet<EntityId>,
 }
 
 /// A wrap slot's place: how many entries its record descends from, then the
@@ -61,6 +72,8 @@ pub struct FoldedWorldKey {
     pub conflicted: bool,
     /// At most four counted envelopes per recipient.
     pub wraps: BTreeMap<WrapRecipient, Vec<WrappedKey>>,
+    /// The machines that signed its counted records.
+    pub signers: BTreeSet<EntityId>,
 }
 
 /// One counted envelope of a key for one recipient.
@@ -100,10 +113,28 @@ impl AuthorityFold {
     }
 
     /// The current key: the greatest `(generation, mint)` that is not
-    /// conflicted.
+    /// conflicted and that a machine not removed here stands behind.
     #[must_use]
     pub fn current_world_key(&self, world: EntityId) -> Option<&FoldedWorldKey> {
-        self.world_keys(world).filter(|key| !key.conflicted).last()
+        self.world_keys(world)
+            .filter(|key| !key.conflicted && self.world_key_stands(key))
+            .last()
+    }
+
+    /// A machine whose chain is not removed in this install's trust set
+    /// signed one of `key`'s counted records. A machine left out of a pin
+    /// move is not removed.
+    #[must_use]
+    pub fn world_key_stands(&self, key: &FoldedWorldKey) -> bool {
+        let local = self.local_admitter();
+        key.signers.iter().any(|machine| {
+            self.machine(*machine).is_some_and(|folded| {
+                folded
+                    .trust_chains(&local)
+                    .iter()
+                    .all(|(_, chain)| !chain.removed)
+            })
+        })
     }
 }
 
@@ -144,6 +175,7 @@ pub(super) fn apply_world_key_wraps(
             commitment: record.commitment,
             conflicted: false,
             wraps: BTreeMap::new(),
+            signers: BTreeSet::new(),
         })
     });
     let key = Arc::make_mut(key);
@@ -151,6 +183,7 @@ pub(super) fn apply_world_key_wraps(
         key.conflicted = true;
         return Ok(());
     }
+    key.signers.insert(record.machine);
     // Every slot the parent state holds is an ancestor of this record and
     // ranks before it, so with four slots full this record is the one left
     // out.
@@ -224,6 +257,7 @@ pub(super) fn merge_world_keys(
                     key.conflicted || held.commitment != key.commitment || held.owner != key.owner;
                 held.commitment = held.commitment.min(key.commitment);
                 held.owner = held.owner.min(key.owner);
+                held.signers.extend(key.signers.iter().copied());
                 for (recipient, wraps) in &key.wraps {
                     let slots = held.wraps.entry(*recipient).or_default();
                     slots.extend(wraps.iter().map(|(rank, policy)| (*rank, *policy)));
@@ -286,6 +320,7 @@ pub(super) fn folded_world_keys(
                     commitment: key.commitment,
                     conflicted: key.conflicted,
                     wraps,
+                    signers: key.signers.clone(),
                 },
             )
         })

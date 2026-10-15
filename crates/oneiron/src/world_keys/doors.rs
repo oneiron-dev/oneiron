@@ -20,7 +20,7 @@ use super::{
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, AuthorityLogEntry, AuthorityOp, Destination, EffectiveRead,
     FoldedWorldKey, MAX_PARENTS, RecoveryRootId, WORLD_KEY_WRAPS_MAX, WorldKeyWrapsRecord,
-    invalid_authority, key_record_head, next_sequence, owner_root_record_in_txn, sign_side_entry,
+    invalid_authority, next_sequence, owner_root_record_in_txn, scope_head, sign_side_entry,
     standing_rows,
 };
 use crate::consent::AuthenticatedOwner;
@@ -55,12 +55,12 @@ pub(crate) struct MachineSecret {
     pub(crate) secret: HybridSecretKey,
 }
 
-/// The parents one key record names beside its signer's previous record of
-/// the world.
+/// The parents one key record names beside its signer's previous row of the
+/// world.
 const RECORD_PARENTS: usize = MAX_PARENTS - 1;
 
 /// One machine's next sequences inside one door transaction, and the last
-/// key record it wrote there for each world.
+/// row it wrote there for each world.
 pub(crate) struct SequenceCounter {
     last: Option<u64>,
     chained: BTreeMap<EntityId, AuthorityEntryHash>,
@@ -84,10 +84,11 @@ impl SequenceCounter {
         Ok(next)
     }
 
-    /// The machine's previous key record of `world`, which its next one
-    /// names. A machine's key records of a world thus form one chain, and a
-    /// receiver that stores a later one first still admits the earlier one
-    /// under its sequence floor (Astra #1422b F1).
+    /// The machine's previous row of `world`, a settings edit or a key
+    /// record, which its next key record names. A machine's rows of a world
+    /// thus form one chain in one sequence scope, and a receiver that stores
+    /// a later one first still admits the earlier ones under its floor
+    /// (Astra #1422b F1, #1422c).
     fn chain(
         &self,
         fold: &AuthorityFold,
@@ -98,7 +99,7 @@ impl SequenceCounter {
         self.chained
             .get(&world)
             .copied()
-            .or_else(|| key_record_head(fold, &signer, world))
+            .or_else(|| scope_head(fold, &signer, world))
     }
 }
 

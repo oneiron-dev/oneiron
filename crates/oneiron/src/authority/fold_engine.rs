@@ -284,11 +284,14 @@ fn has_re_root_ancestor(
     false
 }
 
-pub(super) fn fold_authority_log_once(
+/// The entries a fold of `entries` judges, by hash: each well signed, none
+/// hanging off another branch's side entry. With the issues found.
+fn judged_entries(
     entries: &[AuthorityLogEntry],
-    context: FoldContext<'_>,
-    handoffs: Option<&BTreeSet<AuthorityEntryHash>>,
-) -> AuthorityFold {
+) -> (
+    BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    Vec<AuthorityFoldIssue>,
+) {
     let mut by_hash = BTreeMap::<AuthorityEntryHash, AuthorityLogEntry>::new();
     let mut issues = Vec::new();
     for entry in entries {
@@ -306,6 +309,26 @@ pub(super) fn fold_authority_log_once(
         by_hash.remove(&hash);
         issues.push(AuthorityFoldIssue::InvalidEntry(hash));
     }
+    (by_hash, issues)
+}
+
+/// The floors a fold of `entries` under `context` applies, once causal
+/// ancestry has vouched for every row it can (`sequence_ancestry`).
+pub(super) fn causal_floors_of(
+    entries: &[AuthorityLogEntry],
+    context: FoldContext<'_>,
+) -> Option<BTreeMap<AuthorityEntryHash, u64>> {
+    let (by_hash, _) = judged_entries(entries);
+    let ancestors = entry_ancestor_index(&by_hash);
+    super::sequence_ancestry::causal_sequence_floors(&by_hash, &ancestors, context)
+}
+
+pub(super) fn fold_authority_log_once(
+    entries: &[AuthorityLogEntry],
+    context: FoldContext<'_>,
+    handoffs: Option<&BTreeSet<AuthorityEntryHash>>,
+) -> AuthorityFold {
+    let (by_hash, mut issues) = judged_entries(entries);
     let entry_ancestors = entry_ancestor_index(&by_hash);
     let causal_floors =
         super::sequence_ancestry::causal_sequence_floors(&by_hash, &entry_ancestors, context);
@@ -464,7 +487,7 @@ pub(super) fn fold_authority_log_once(
         return AuthorityFold {
             append_heads: BTreeSet::new(),
             anchor_heads: BTreeMap::new(),
-            key_record_heads: BTreeMap::new(),
+            scope_heads: BTreeMap::new(),
             append_sequences: BTreeMap::new(),
             actor_revocation_affected_writers: BTreeSet::new(),
             actor_write_frontiers: BTreeMap::new(),
@@ -543,7 +566,7 @@ pub(super) fn fold_authority_log_once(
     AuthorityFold {
         append_heads: BTreeSet::new(),
         anchor_heads: BTreeMap::new(),
-        key_record_heads: BTreeMap::new(),
+        scope_heads: BTreeMap::new(),
         append_sequences: BTreeMap::new(),
         actor_revocation_affected_writers: super::causal_write::revocation_affected_writers(
             &states,
