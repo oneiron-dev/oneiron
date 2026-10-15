@@ -19,7 +19,7 @@ use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, lock_repository};
 use crate::origin::lfs::{LfsOid, LfsPushedPointer, lfs_repo_id};
 use crate::origin::residence::OriginAuthorityStamp;
-use crate::origin::scan_check::{OriginScan, ScanCount};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
 use heed::RwTxn;
@@ -326,8 +326,8 @@ impl Vault {
             ScanCount::start(
                 &self.store,
                 &rtxn,
-                OriginScan::ReceivePackIntents,
-                Some(lfs_repo_id(&repo_identity_hex)?),
+                EngineScan::ReceivePackIntents,
+                lfs_repo_id(&repo_identity_hex)?.as_bytes(),
             )?
         };
         let mut pending = Vec::new();

@@ -15,6 +15,5 @@ pub mod change_index;
 pub mod conflict_tree;
 pub mod export;
 pub mod residence;
-pub use crate::scan_check;
 pub mod secret_manifest;
 pub mod tree;
