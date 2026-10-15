@@ -222,7 +222,10 @@ fn a_bound_human_who_owns_nothing_drills_nothing_and_the_owner_does() -> Result<
 /// revoked.
 #[test]
 fn a_co_owner_drills_only_while_the_authority_root_binds_them() -> Result<()> {
-    let (_dir, vault) = open_vault();
+    // Sharing resolves the default policy manifest, which `open_vault`'s
+    // legacy opener clears.
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
     let co_owner = crate::test_util::co_owner_proof(&vault);
     let agent = put_scope_agent(&vault, 0xba, "custom.co-owner")?;
     let leased = leased_dispatch(&vault, agent, 10)?;

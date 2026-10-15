@@ -88,6 +88,7 @@ pub enum ErrorKind {
     InvalidConsentEffectFacts,
     ConsentOwnerNotAuthenticated,
     ConsentUnauthenticatedActor,
+    ConsentGuestNotRecorded,
     ConsentCatastropheNotRememberable,
     ConsentGrantNotFound,
     ConsentGrantRevoked,

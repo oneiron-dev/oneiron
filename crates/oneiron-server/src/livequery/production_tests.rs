@@ -2194,7 +2194,6 @@ async fn erasing_a_folded_message_refreshes_the_live_recall_of_its_turn() {
         let lunch = id_of(&receipt.message_short_ids[1]);
 
         // The owner edits the other message: its text moves into its document.
-        crate::test_credentials::bind_owner(server.vault(), SECRET, actor);
         let owner_id = server.vault().ensure_embedded_owner_actor().unwrap();
         // The vault is rooted: the owner's edit needs their own binding.
         crate::test_credentials::bind_owner(server.vault(), SECRET, owner_id);

@@ -142,7 +142,8 @@ fn voice_path_cannot_borrow_a_store_authenticated_owner_handle() -> Result<()> {
         card.evaluate_action(&vault, &request, &attacker)
             .expect_err("caller voice claim must not authenticate another principal")
             .kind(),
-        crate::error::ErrorKind::ConsentUnauthenticatedActor
+        // A non-owner's proof stops at the owner tier, before its claim.
+        crate::error::ErrorKind::ConsentOwnerNotAuthenticated
     );
     assert_eq!(
         card.evaluate_action(&vault, &request, &owner)
@@ -175,7 +176,8 @@ fn principal_self_attestation_is_refused_and_store_authenticated_actor_succeeds(
         card.evaluate_action(&vault, &request, &attacker)
             .expect_err("self-attested owner text must not authenticate")
             .kind(),
-        crate::error::ErrorKind::ConsentUnauthenticatedActor
+        // A non-owner's proof stops at the owner tier, before its claim.
+        crate::error::ErrorKind::ConsentOwnerNotAuthenticated
     );
     assert_eq!(
         card.evaluate_action(&vault, &request, &owner)?.decision,

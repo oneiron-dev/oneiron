@@ -376,17 +376,15 @@ fn agent_chat_action_needs_host_owner_proof_then_v1_policy_runs() -> Result<()> 
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let (_foreign_dir, foreign) = open_test_vault_with(embedding_test_config());
     let agent_id = entity(0x51);
-    let owner_id = entity(0x52);
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
     let foreign_owner_id = foreign.ensure_embedded_owner_actor().unwrap();
-    for id in [agent_id, owner_id] {
-        vault.put_entity(
-            &id,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"person",
-        )?;
-    }
+    vault.put_entity(
+        &agent_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"person",
+    )?;
     let agent = WriteActor::new(agent_id, EdgeActorClass::Agent);
     let read = ScopedReadActorKey::with_actor_class(agent_id.to_hex(), "agent")
         .ok_or_else(|| invalid("agent reader"))?;

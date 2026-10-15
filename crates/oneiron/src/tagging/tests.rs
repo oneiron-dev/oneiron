@@ -1080,7 +1080,7 @@ fn a_settled_message_fork_marks_its_turn_and_moves_no_clock_floor() {
             .memory(writer, EdgeActorClass::Human)
             .witness(&turn(None, vec![first.clone()]))
             .expect("witness");
-        let owner = crate::test_util::embedded_owner_proof(&vault);
+        let owner = crate::test_util::embedded_owner_proof(vault);
         vault
             .migrate_entity_text(
                 &message,
@@ -1131,7 +1131,7 @@ fn a_settled_message_fork_marks_its_turn_and_moves_no_clock_floor() {
                 &EntityId::from_bytes(PROPOSAL).expect("proposal id"),
                 SettleVerb::Merge,
                 &DocAuthorization::Owner(owner),
-                actor,
+                WriteActor::new(owner.actor(), EdgeActorClass::Human),
                 NOW + 30,
             )
             .expect("merge");

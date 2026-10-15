@@ -431,7 +431,7 @@ fn a_delegate_lands_a_policy_row_only_under_a_live_grant_naming_it() -> TestResu
             ActorBound::new(delegate.actor().to_hex())?.with_actor_class("human")?,
             ActionClass::new("policy.change")?,
             ActionEnvelope::new(["owner_policy_rows".to_owned()])?
-                .with_target(&policy_row_grant_target(&scope, row_ref))?,
+                .with_target(policy_row_grant_target(&scope, row_ref))?,
         )
     };
     let add = change(

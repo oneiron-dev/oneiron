@@ -12,6 +12,12 @@ fn refused<T: std::fmt::Debug>(result: crate::error::Result<T>) -> bool {
     )
 }
 
+/// A named door and a call of it with one proof.
+type Door<'a> = (
+    &'a str,
+    &'a dyn Fn(&AuthenticatedOwner) -> crate::error::Result<()>,
+);
+
 /// The vault owner's proof, and a live non-owner person's on the same vault.
 fn owner_and_person() -> (
     tempfile::TempDir,
@@ -43,10 +49,7 @@ fn a_non_owner_persons_proof_opens_no_owner_door() {
         group_by_facet: true,
         urgent_breakthrough: true,
     };
-    let doors: [(
-        &str,
-        &dyn Fn(&AuthenticatedOwner) -> crate::error::Result<()>,
-    ); 6] = [
+    let doors: [Door<'_>; 6] = [
         ("consent: create_standing_grant", &|proof| {
             vault
                 .create_standing_grant(proof, action_bound("agent-a", "send", &["channel:email"]))
