@@ -711,9 +711,11 @@ fn a_second_change_mid_walk_withdraws_what_the_first_passed_by() -> Result<()> {
     Ok(())
 }
 
-/// A source erased, recreated in no world, and erased again while its first
-/// walk is pending: what only the second mark covers is withdrawn for the
-/// worlds that mark read, none of the first's (Astra R3 on #1471).
+/// A source erased, recreated in no world and erased again mid-walk: what
+/// only the second mark covers takes none of the first's worlds (Astra R3 on
+/// #1471). Sync only: without it the first erase's topology reservation
+/// stays until a sync boot, and the recreated source is not erased again.
+#[cfg(feature = "sync")]
 #[test]
 fn a_second_mark_lends_its_rows_none_of_the_first_marks_worlds() -> Result<()> {
     use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
@@ -787,10 +789,7 @@ fn a_source_changed_again_and_again_mid_walk_keeps_a_bounded_walk() -> Result<()
         super::WALK.get(&vault.store, &txn, &source)?
     }
     .expect("the walk is pending");
-    assert!(
-        walk.earlier.is_empty(),
-        "the latest mark answers for every earlier one"
-    );
+    assert!(walk.earlier.is_empty(), "the latest answers for all");
     vault.finish_dependent_walks()?;
     for dependent in &dependents {
         assert!(withdrawn(&vault, dependent)?);
