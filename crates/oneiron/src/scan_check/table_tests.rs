@@ -161,12 +161,21 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         | EngineScan::DreamerRetryPeers => None,
         EngineScan::MentionRows => {
             let seed = id(0x60, 0);
+            // `Mentions` is semantic: the strict read refuses a structural value.
+            let value = crate::edge::encode_edge_value(
+                EdgeKind::Mentions,
+                0.9,
+                1,
+                crate::Vad::NEUTRAL,
+                None,
+            )
+            .expect("mention value");
             vault
                 .with_write_txn(|wtxn| {
                     for index in 1..=PAST {
                         let key =
                             Store::encode_edge_key(&seed, EdgeKind::Mentions, &id(0x60, index));
-                        vault.store.edges_in.put(wtxn, &key, &edge_value())?;
+                        vault.store.edges_in.put(wtxn, &key, &value)?;
                     }
                     Ok(())
                 })
