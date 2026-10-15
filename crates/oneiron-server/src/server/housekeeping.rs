@@ -54,6 +54,20 @@ pub(crate) fn admit_every_pass() -> HousekeepingAdmission {
 pub(crate) struct HousekeepingPasses {
     stop: Arc<AtomicBool>,
     running: std::sync::Mutex<Vec<JoinHandle<()>>>,
+    /// The lifecycle tick's steps, in the order it took them.
+    #[cfg(test)]
+    pub(super) tick_steps: std::sync::Mutex<Vec<&'static str>>,
+}
+
+impl HousekeepingPasses {
+    /// Notes that the lifecycle tick took `step`.
+    #[cfg(test)]
+    pub(super) fn note_tick_step(&self, step: &'static str) {
+        self.tick_steps
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(step);
+    }
 }
 
 impl HousekeepingPasses {
@@ -93,6 +107,8 @@ impl SyncServer {
     /// stop, unless the last pass is still running, the host is stopping, or
     /// the host's gate refused the tick.
     pub(super) async fn start_housekeeping_pass(self: &Arc<Self>, admit: &HousekeepingAdmission) {
+        #[cfg(test)]
+        self.housekeeping_passes.note_tick_step("housekeeping pass");
         if self.housekeeping_passes.stopping()
             || !self
                 .begin_lifecycle_job(LifecycleJobKind::Housekeeping)

@@ -516,3 +516,31 @@ async fn a_running_server_demotes_a_critical_confirm_past_its_window() {
     })
     .await;
 }
+
+/// The lifecycle tick finishes the dependent walks main's #1471 left past
+/// their first batch before it starts the housekeeping pass, on every tick
+/// (Engine merge check on #1456).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_tick_finishes_dependent_walks_before_it_starts_the_pass() {
+    let mut running = Running::seeded(|_, _| {});
+    let steps = |running: &Running| {
+        running
+            .server
+            .housekeeping_passes
+            .tick_steps
+            .lock()
+            .expect("steps")
+            .clone()
+    };
+
+    running.serve();
+    eventually("two ticks", || steps(&running).len() >= 4).await;
+
+    let steps = steps(&running);
+    assert!(
+        steps
+            .chunks_exact(2)
+            .all(|tick| tick == ["dependent walks", "housekeeping pass"]),
+        "{steps:?}"
+    );
+}

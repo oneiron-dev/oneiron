@@ -143,6 +143,8 @@ impl SyncServer {
     /// Finishes the dependent walks an erase, a purge or a changed source
     /// left past its first batch; reads honour them until then.
     async fn finish_dependent_walks_once(&self) {
+        #[cfg(test)]
+        self.housekeeping_passes.note_tick_step("dependent walks");
         let vault = std::sync::Arc::clone(self.vault());
         match tokio::task::spawn_blocking(move || vault.finish_dependent_walks()).await {
             Ok(Ok(())) => {}
