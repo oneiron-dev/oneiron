@@ -121,7 +121,8 @@ fn linkedin_send_dm_plan_target_mismatch_fails_before_send()
             1_061,
             OutboundDeliveryWindowDecision::DeliverNow,
         )
-        .counterparty_ref("linkedin:member:mallory"),
+        .counterparty_ref("linkedin:member:mallory")
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
         &mut sink,
     )?;
 
@@ -183,7 +184,8 @@ fn linkedin_send_dm_send_failure_is_ambiguous_without_verification()
             actor,
             "outbound:intent:linkedin-send-failed",
             "intent:linkedin-send-failed",
-        ),
+        )
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
         &mut sink,
     )?;
 
@@ -269,7 +271,8 @@ fn linkedin_send_dm_observed_absent_produces_ambiguous_receipt_without_phantom_s
             actor,
             "outbound:intent:linkedin-absent",
             "intent:linkedin-absent",
-        ),
+        )
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
         &mut sink,
     )?;
 
@@ -358,7 +361,8 @@ fn a_recipient_echo_is_never_a_delivered_receipt()
             actor,
             "outbound:intent:linkedin-echo",
             "intent:linkedin-echo",
-        ),
+        )
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
         &mut sink,
     )?;
 
@@ -399,7 +403,8 @@ fn a_retry_guard_never_counts_a_recipient_echo_as_delivered()
             actor,
             "outbound:intent:linkedin-echo-guard",
             "intent:linkedin-echo-guard",
-        ),
+        )
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
         &mut sink,
     )?;
 
@@ -431,7 +436,8 @@ fn send_attributed(
     let mut sink = LinkedInMcpVerifiedSendSink::new(linkedin_adapter()?, transport)
         .with_plan(intent_ref, plan)?;
     Ok(vault.dispatch_outbound_intent(
-        linkedin_send_request(actor, &format!("outbound:{intent_ref}"), intent_ref),
+        linkedin_send_request(actor, &format!("outbound:{intent_ref}"), intent_ref)
+            .linkedin_sandbox_policy(active_linkedin_policy()?),
         &mut sink,
     )?)
 }
@@ -522,7 +528,8 @@ fn a_message_without_a_provider_id_is_never_delivery_evidence()
             linkedin_sender(&vault, 0xBB)?,
             "outbound:intent:linkedin-idless-guard",
             "intent:linkedin-idless-guard",
-        ),
+        )
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
         &mut sink,
     )?;
     assert_eq!(guarded.outcome, OutboundDispatchOutcome::Ambiguous);
@@ -707,7 +714,8 @@ fn a_retry_guard_never_claims_an_older_own_message_as_this_send()
             linkedin_sender(&vault, 0xC4)?,
             "outbound:intent:linkedin-own-guard",
             "intent:linkedin-own-guard",
-        ),
+        )
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
         &mut sink,
     )?;
     assert_eq!(guarded.outcome, OutboundDispatchOutcome::Ambiguous);
@@ -796,7 +804,8 @@ fn only_the_message_the_send_names_proves_delivery()
             linkedin_sender(&vault, 0xC8)?,
             "outbound:intent:linkedin-named",
             "intent:linkedin-named",
-        ),
+        )
+        .linkedin_sandbox_policy(active_linkedin_policy()?),
         &mut sink,
     )?;
     assert_eq!(
@@ -837,13 +846,74 @@ fn a_named_id_beside_mcp_content_still_proves_delivery()
                 linkedin_sender(&vault, seed)?,
                 &format!("outbound:{intent}"),
                 &intent,
-            ),
+            )
+            .linkedin_sandbox_policy(active_linkedin_policy()?),
             &mut sink,
         )?;
         assert_eq!(
             delivered.outcome,
             OutboundDispatchOutcome::DeliveredToChannel,
             "case {seed:#x}"
+        );
+    }
+    Ok(())
+}
+
+/// Security pack 2, F14 H132: a LinkedIn send dispatched with no seat policy
+/// has no seat verdict, so the kill switch, the daily cap and the cadence never
+/// ran. It is held before the transport, never sent, under any channel
+/// spelling the capability lookup accepts.
+#[test]
+fn a_linkedin_send_with_no_seat_policy_is_held()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault) = temp_vault();
+    let actor = OutboundDispatchActor::agent(entity(0xB3));
+    vault.put_entity(
+        &entity(0xB3),
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"dispatch actor",
+    )?;
+    allow_linkedin_send(&vault, &actor)?;
+    for (spelling, intent) in [
+        ("linkedin", "linkedin-no-policy"),
+        (" LinkedIn ", "linkedin-no-policy-spelled"),
+    ] {
+        let plan = LinkedInVerifiedSendPlan::new(
+            "linkedin:member:jane-doe",
+            "2-jane-doe-abc",
+            "Happy to share more details.",
+        )?;
+        let mut sink = LinkedInMcpVerifiedSendSink::new(
+            linkedin_adapter()?,
+            ScriptedLinkedInTransport::new(vec![linkedin_conversation(
+                "2-jane-doe-abc",
+                "Jane Doe\n10:01 AM\nThanks for reaching out.",
+            )]),
+        )
+        .with_plan(format!("intent:{intent}"), plan)?;
+        let mut request = linkedin_send_request(
+            actor.clone(),
+            &format!("outbound:intent:{intent}"),
+            &format!("intent:{intent}"),
+        );
+        request.intent.channel = spelling.to_owned();
+        let result = vault.dispatch_outbound_intent(request, &mut sink)?;
+
+        assert!(
+            sink.transport().send_calls.is_empty(),
+            "H132: a send with no seat policy ({spelling:?}) reached the transport ({:?})",
+            result.outcome
+        );
+        assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
+        assert_eq!(
+            result
+                .receipt
+                .fields
+                .get("linkedin_engine_policy_reason")
+                .map(String::as_str),
+            Some("linkedin.seat_policy_missing")
         );
     }
     Ok(())
