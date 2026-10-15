@@ -27,13 +27,23 @@ pub(super) async fn exchange(
     let principal = auth.require_registered_principal()?;
     let principal = oneiron::EntityId::from_hex(principal)
         .map_err(|_| ApiError::forbidden_scope("registered chunk principal"))?;
-    // An LFS transfer like any other: its worker holds the permit until the
-    // reply is built, whether or not its caller is still there, and hands it
-    // on to the reply. It waits on its headers and reads its body at its
-    // turn, so a request in line holds none of it.
+    // It reads its request and builds its reply whole, so it takes room for
+    // both in the frame row first; then it is an LFS transfer like any
+    // other. Its worker holds both until the reply is built, whether or not
+    // its caller is still there, and hands them on to the reply. It waits on
+    // its headers and reads its body at its turn, so a request in line holds
+    // none of it.
+    let Ok(room) = server
+        .transfers
+        .admit_lfs_frames(auth.principal_ref())
+        .await
+    else {
+        return Ok(lfs_waited_out());
+    };
     let Ok(permit) = server.transfers.admit_lfs(auth.principal_ref()).await else {
         return Ok(lfs_waited_out());
     };
+    let permit = (room, permit);
     let body = read_whole(body, oneiron::sync::chunks::MAX_CHUNK_SYNC_FRAME).await?;
     let vault = Arc::clone(&server.vault);
     let scope = crate::handler::selector_grant_scope();
@@ -73,14 +83,15 @@ pub(super) async fn exchange(
         .into_response())
 }
 
-/// The reply, handed out a piece at a time by a task that holds the transfer
-/// permit until the last piece is taken, or until the client has taken none
-/// for `idle`. Only the pieces already handed out outlive it.
+/// The reply, handed out a piece at a time by a task that holds the frame
+/// room and the transfer permit until the last piece is taken, or until the
+/// client has taken none for `idle`. Only the pieces already handed out
+/// outlive it.
 fn reply(
     vault: Arc<Vault>,
     object: LfsOid,
     bytes: Vec<u8>,
-    permit: Permit,
+    permit: (Permit, Permit),
     idle: Duration,
 ) -> Body {
     let (pieces, receiver) = mpsc::channel::<Bytes>(2);

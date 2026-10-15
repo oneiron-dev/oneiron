@@ -70,6 +70,8 @@ pub enum LimitRow {
     GitExchanges,
     /// LFS transfer workers at once.
     LfsTransfers,
+    /// Bytes LFS chunk exchanges' whole frames hold at once.
+    LfsFrameBytes,
     /// Bytes stored LFS objects and uploads in flight come to.
     LfsQuota,
     /// One LFS object's size.
@@ -87,10 +89,11 @@ pub enum LimitRow {
 }
 impl LimitRow {
     /// Every row, the list every permit site and byte check is built from.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Connections,
         Self::GitExchanges,
         Self::LfsTransfers,
+        Self::LfsFrameBytes,
         Self::LfsQuota,
         Self::LfsObjectSize,
         Self::CodeRuns,
@@ -106,6 +109,7 @@ impl LimitRow {
             Self::Connections => "limits.max_connections",
             Self::GitExchanges => "limits.git_exchanges",
             Self::LfsTransfers => "limits.lfs_transfers",
+            Self::LfsFrameBytes => "limits.lfs_frame_bytes",
             Self::LfsQuota => "limits.lfs_quota_bytes",
             Self::LfsObjectSize => "max_lfs_object_bytes",
             Self::CodeRuns => "models.code_mode.max_runs",

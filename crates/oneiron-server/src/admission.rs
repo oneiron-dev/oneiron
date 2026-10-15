@@ -41,6 +41,9 @@ pub(crate) struct Admission<K> {
 struct Pool<K> {
     queue: Mutex<Queue<K>>,
     bound: usize,
+    /// What one permit stands for in the row's own unit: 1 for a count,
+    /// the room each piece of work takes for a byte row.
+    unit: u64,
     wait: Duration,
     /// The row this bound is, and where its crossing is asked; `None` for a
     /// turn that is exclusive by nature rather than a threshold.
@@ -88,16 +91,34 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
         bound: usize,
         wait: Duration,
     ) -> Self {
-        Self::build(Some((row, questions)), bound, wait)
+        Self::build(Some((row, questions)), bound, 1, wait)
+    }
+
+    /// A pool for work that takes `each` bytes of a `bytes` row: as many
+    /// permits as fit, at least one. Its crossing asks in bytes.
+    pub(crate) fn of_bytes(
+        row: LimitRow,
+        questions: Arc<LimitQuestions>,
+        bytes: u64,
+        each: u64,
+        wait: Duration,
+    ) -> Self {
+        let bound = usize::try_from(bytes / each.max(1)).unwrap_or(usize::MAX);
+        Self::build(Some((row, questions)), bound, each.max(1), wait)
     }
 
     /// One turn at a time: an exclusive resource's queue, which is not a
     /// threshold and asks no question when it is busy.
     pub(crate) fn exclusive(wait: Duration) -> Self {
-        Self::build(None, 1, wait)
+        Self::build(None, 1, 1, wait)
     }
 
-    fn build(row: Option<(LimitRow, Arc<LimitQuestions>)>, bound: usize, wait: Duration) -> Self {
+    fn build(
+        row: Option<(LimitRow, Arc<LimitQuestions>)>,
+        bound: usize,
+        unit: u64,
+        wait: Duration,
+    ) -> Self {
         Self {
             pool: Arc::new(Pool {
                 queue: Mutex::new(Queue {
@@ -108,6 +129,7 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
                     asked: false,
                 }),
                 bound: bound.max(1),
+                unit,
                 wait,
                 row,
             }),
@@ -206,7 +228,12 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
         let observed = queue.held + queue.waiters();
         drop(queue);
         if first && let Some((row, questions)) = &self.pool.row {
-            questions.ask(*row, self.pool.bound as u64, observed as u64);
+            let unit = self.pool.unit;
+            questions.ask(
+                *row,
+                (self.pool.bound as u64).saturating_mul(unit),
+                (observed as u64).saturating_mul(unit),
+            );
         }
         Entry::Queued(Place {
             pool: Arc::clone(&self.pool),

@@ -37,14 +37,15 @@
 //! (queries, a vault's document batches) and large ones each have their own,
 //! so a recall never waits behind an upload. An answer takes room for its
 //! rows and their encoding in the `embedder_answer_bytes` row of `[limits]`
-//! before the model makes it, and keeps it until it is delivered. Past the
-//! `embedder_requests` row, past a full budget or answer row, and past the
-//! few requests the model works on at once, a request with the key waits
-//! its turn in order, each wait up to the queue deadline; it is never
-//! refused for how many wait (the owner's rate law, ARCH-0044 C5). Crossing
-//! a row or a budget asks whether everything is okay (OF-520). A body that
-//! does not arrive in time gives its budget back, and an answer its reader
-//! stops taking gives its room back at the idle limit, so however many
+//! before the model makes it, and keeps it until it is delivered; the
+//! endpoint does not start when the row cannot hold its model's largest
+//! answer. Past the `embedder_requests` row, past a full budget or answer
+//! row, and past the few requests the model works on at once, a request with
+//! the key waits its turn in order, each wait up to the queue deadline; it is
+//! never refused for how many wait (the owner's rate law, ARCH-0044 C5).
+//! Crossing a row or a budget asks whether everything is okay (OF-520). A
+//! body that does not arrive in time gives its budget back, and an answer its
+//! reader stops taking gives its room back at the idle limit, so however many
 //! callers wait, the server holds little more than the budgets and the
 //! answer row.
 
@@ -72,7 +73,7 @@ use crate::config::{EmbedderConfig, EmbedderProvider};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
 mod budget;
-use budget::{BodyBudget, BodyBytes};
+use budget::{BodyBudget, BodyBytes, answer_bytes};
 
 /// Inputs one request may carry, as OpenAI caps them.
 const MAX_INPUTS: usize = 2_048;
@@ -150,7 +151,7 @@ pub(crate) async fn run(config: EmbedderConfig, listen: Listen) -> anyhow::Resul
         listen.aliases,
         listen.key,
         &listen.limits,
-    ));
+    )?);
     let questions = Arc::clone(&served.questions);
     crate::http_listener::serve(
         listener,
@@ -248,17 +249,28 @@ struct Served {
 }
 
 impl Served {
+    /// Fails when the answer row cannot hold the model's largest answer:
+    /// such an answer would never fit, and a smaller claim would not bound
+    /// what it holds.
     fn new(
         embedder: Arc<dyn ServedModel>,
         aliases: Vec<String>,
         key: Option<Zeroizing<String>>,
         limits: &crate::config::LimitsConfig,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
+        let largest = answer_bytes(MAX_INPUTS, embedder.dimensions());
+        let answers = usize::try_from(limits.embedder_answer_bytes).unwrap_or(usize::MAX);
+        if answers < largest {
+            anyhow::bail!(
+                "limits.embedder_answer_bytes is {answers}, under the {largest} bytes one answer of {MAX_INPUTS} inputs at {} dimensions holds; raise it",
+                embedder.dimensions()
+            );
+        }
         let mut names = vec![embedder.model_id().to_owned()];
         names.extend(aliases.into_iter().filter(|alias| !alias.is_empty()));
         let questions = Arc::new(LimitQuestions::default());
         let wait = limits.queue_wait();
-        Self {
+        Ok(Self {
             embedder,
             names,
             key,
@@ -272,13 +284,11 @@ impl Served {
             queries: Arc::new(tokio::sync::Semaphore::new(QUERY_REQUESTS)),
             small_bodies: BodyBudget::new(SMALL_BODIES_BYTES),
             large_bodies: BodyBudget::new(LARGE_BODIES_BYTES),
-            answers: BodyBudget::answers(
-                usize::try_from(limits.embedder_answer_bytes).unwrap_or(usize::MAX),
-            ),
+            answers: BodyBudget::answers(answers),
             questions,
             wait,
             idle: Duration::from_millis(limits.transfer_idle_timeout_ms),
-        }
+        })
     }
 
     /// Body bytes held now: reserved for bodies being read, or kept by
@@ -296,12 +306,15 @@ fn router(
     aliases: Vec<String>,
     key: Option<Zeroizing<String>>,
 ) -> Router {
-    routes(Arc::new(Served::new(
-        embedder,
-        aliases,
-        key,
-        &crate::config::LimitsConfig::default(),
-    )))
+    routes(Arc::new(
+        Served::new(
+            embedder,
+            aliases,
+            key,
+            &crate::config::LimitsConfig::default(),
+        )
+        .expect("the default answer row holds a test model's answers"),
+    ))
 }
 
 /// Every request's key is checked from its headers first, before any route
@@ -726,24 +739,6 @@ fn answer_body(answer: Vec<u8>, held: (Permit, BodyBytes), idle: Duration) -> ax
         },
     ))
 }
-
-/// What an answer of `inputs` rows of `dimensions` floats may hold until it
-/// is delivered: the rows as the model returns them (4 bytes a float), and
-/// at the same time their encoding, at most 16 bytes a float as JSON (an
-/// f32's shortest form and its comma; base64 takes under 6), with room for
-/// each row's own fields and the answer's.
-fn answer_bytes(inputs: usize, dimensions: usize) -> usize {
-    inputs
-        .saturating_mul(dimensions.saturating_mul(4 + 16).saturating_add(ROW_FIELDS))
-        .saturating_add(ANSWER_FIELDS)
-}
-
-/// One answer row's fields past its floats, counted generously.
-const ROW_FIELDS: usize = 256;
-
-/// An answer's fields past its rows (the model, its transform, profile and
-/// provenance), counted generously.
-const ANSWER_FIELDS: usize = 16 * 1024;
 
 /// The refusal for a request without the configured bearer key; `None` when
 /// no key is configured or the request carries it.

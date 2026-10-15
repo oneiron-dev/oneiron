@@ -39,6 +39,12 @@ pub struct LimitsConfig {
     /// LFS uploads and downloads at once, each one blocking worker. Past it,
     /// transfers queue.
     pub lfs_transfers: usize,
+    /// Bytes LFS chunk exchanges may hold at once: each reads its request
+    /// and builds its reply whole, so it takes room for both before it reads
+    /// a byte, and keeps it until its reply is delivered. Past it, exchanges
+    /// queue. A memory bound sized from the machine (a sixteenth of its
+    /// memory), not a count.
+    pub lfs_frame_bytes: u64,
     /// Requests `embedder serve` holds at once, reading their bodies, waiting
     /// for the model or embedding. Past it, requests queue. The model itself
     /// works on a few at a time whatever this is; the rest wait their turn.
@@ -74,6 +80,7 @@ impl Default for LimitsConfig {
             body_idle_timeout_ms: 60_000,
             git_exchanges: 2_048,
             lfs_transfers: 2_048,
+            lfs_frame_bytes: frame_floor(),
             embedder_requests: 2_048,
             embedder_answer_bytes: 256 * 1024 * 1024,
             lfs_quota_bytes: 64 * 1024 * 1024 * 1024,
@@ -87,11 +94,19 @@ impl Default for LimitsConfig {
 }
 
 /// Half the descriptors this process may open, for sockets; the other half
-/// stays for the vault, spools and git children. Raising the open-file limit
+/// stays for the vault, spools and git children, and the transfer rows are
+/// held to what it leaves (`Transfers::new`). Raising the open-file limit
 /// (`LimitNOFILE=`) raises it.
 fn descriptor_floor() -> usize {
     let limit = crate::machine::open_file_limit().unwrap_or(8_192);
     usize::try_from(limit / 2).unwrap_or(usize::MAX).max(64)
+}
+
+/// A sixteenth of the machine's memory for LFS chunk exchanges' frames, at
+/// least 256 MiB; 1 GiB when the platform does not say.
+fn frame_floor() -> u64 {
+    const MIB: u64 = 1024 * 1024;
+    crate::machine::memory_bytes().map_or(1_024 * MIB, |memory| (memory / 16).max(256 * MIB))
 }
 
 impl LimitsConfig {
@@ -119,6 +134,7 @@ impl LimitsConfig {
             body_idle_timeout_ms,
             git_exchanges,
             lfs_transfers,
+            lfs_frame_bytes,
             embedder_requests,
             embedder_answer_bytes,
             lfs_quota_bytes,
@@ -135,6 +151,7 @@ impl LimitsConfig {
         set(&mut self.body_idle_timeout_ms, body_idle_timeout_ms);
         set(&mut self.git_exchanges, git_exchanges);
         set(&mut self.lfs_transfers, lfs_transfers);
+        set(&mut self.lfs_frame_bytes, lfs_frame_bytes);
         set(&mut self.embedder_requests, embedder_requests);
         set(&mut self.embedder_answer_bytes, embedder_answer_bytes);
         set(&mut self.lfs_quota_bytes, lfs_quota_bytes);
@@ -157,6 +174,7 @@ impl LimitsConfig {
             ("body_idle_timeout_ms", self.body_idle_timeout_ms),
             ("git_exchanges", self.git_exchanges as u64),
             ("lfs_transfers", self.lfs_transfers as u64),
+            ("lfs_frame_bytes", self.lfs_frame_bytes),
             ("embedder_requests", self.embedder_requests as u64),
             ("embedder_answer_bytes", self.embedder_answer_bytes),
             ("lfs_quota_bytes", self.lfs_quota_bytes),
@@ -187,6 +205,7 @@ pub(super) struct LimitsConfigOverride {
     pub(super) body_idle_timeout_ms: Option<u64>,
     pub(super) git_exchanges: Option<usize>,
     pub(super) lfs_transfers: Option<usize>,
+    pub(super) lfs_frame_bytes: Option<u64>,
     pub(super) embedder_requests: Option<usize>,
     pub(super) embedder_answer_bytes: Option<u64>,
     pub(super) lfs_quota_bytes: Option<u64>,

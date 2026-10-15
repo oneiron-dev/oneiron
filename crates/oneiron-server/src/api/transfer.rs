@@ -28,6 +28,22 @@ use crate::wire_telemetry::{LimitQuestions, LimitRow};
 /// The largest page LMDB writes in (`MAX_PAGESIZE`).
 const LARGEST_PAGE: u64 = 32 * 1024;
 
+/// The most one LFS chunk exchange holds at once, in frames: its request as
+/// read and as decoded, the chunks it answers with, and its reply as encoded
+/// and as sent, each at most a frame, with room for the buffers' growth.
+pub(crate) const LFS_FRAME_ROOM: u64 = 6 * oneiron::sync::chunks::MAX_CHUNK_SYNC_FRAME as u64;
+
+/// Descriptors the process keeps whatever its transfers do (the vault's
+/// files, the listener, the runtime's own), counted generously.
+pub(crate) const OWN_DESCRIPTORS: u64 = 256;
+
+/// Descriptors one git exchange holds: its child's three pipes, and two more
+/// while the child starts.
+pub(crate) const GIT_DESCRIPTORS: u64 = 5;
+
+/// Descriptors one LFS transfer holds: an upload's spool.
+const LFS_DESCRIPTORS: u64 = 1;
+
 /// The permits remotely started transfers take, and how long either side of
 /// one may wait for the other.
 pub(crate) struct Transfers {
@@ -38,6 +54,9 @@ pub(crate) struct Transfers {
     pushes: Mutex<HashMap<PathBuf, Arc<Admission<String>>>>,
     /// One LFS upload or download worker each, keyed by principal.
     lfs: Admission<String>,
+    /// Room for one LFS chunk exchange's whole frames each
+    /// ([`LFS_FRAME_ROOM`]), keyed by principal.
+    lfs_frames: Admission<String>,
     /// Bytes past which LFS storage asks whether everything is okay.
     lfs_quota: u64,
     /// Bytes uploads in flight have reserved against `lfs_quota`.
@@ -65,18 +84,24 @@ impl Transfers {
         vault: &oneiron::Vault,
     ) -> Self {
         let wait = limits.queue_wait();
+        let (git, lfs) = descriptor_bounds(limits, crate::machine::open_file_limit());
+        if git < limits.git_exchanges || lfs < limits.lfs_transfers {
+            tracing::warn!(
+                kind = "transfer_descriptor_room",
+                git_exchanges = git,
+                lfs_transfers = lfs,
+                "the open-file limit leaves room for fewer transfers than their rows; past it they queue"
+            );
+        }
         Self {
-            git: Admission::new(
-                LimitRow::GitExchanges,
-                Arc::clone(&questions),
-                limits.git_exchanges,
-                wait,
-            ),
+            git: Admission::new(LimitRow::GitExchanges, Arc::clone(&questions), git, wait),
             pushes: Mutex::default(),
-            lfs: Admission::new(
-                LimitRow::LfsTransfers,
+            lfs: Admission::new(LimitRow::LfsTransfers, Arc::clone(&questions), lfs, wait),
+            lfs_frames: Admission::of_bytes(
+                LimitRow::LfsFrameBytes,
                 Arc::clone(&questions),
-                limits.lfs_transfers,
+                limits.lfs_frame_bytes,
+                LFS_FRAME_ROOM,
                 wait,
             ),
             lfs_quota: limits.lfs_quota_bytes,
@@ -161,6 +186,19 @@ impl Transfers {
             .await
     }
 
+    /// Room for one LFS chunk exchange's frames, keyed as
+    /// [`Self::admit_git`] is. Take it before the exchange's transfer
+    /// permit, so an exchange waiting for room holds no permit an upload
+    /// could use.
+    pub(super) async fn admit_lfs_frames(
+        &self,
+        principal: Option<&str>,
+    ) -> Result<Permit, WaitTimedOut> {
+        self.lfs_frames
+            .admit(principal.unwrap_or_default().to_owned())
+            .await
+    }
+
     /// Reserves `bytes` of the LFS quota for one upload, judged against what
     /// the vault's objects hold now and what other uploads have reserved. An
     /// upload past the quota still lands; the quota row asks. The upload's
@@ -183,6 +221,31 @@ impl Transfers {
         reservation.grow(vault, bytes)?;
         Ok(reservation)
     }
+}
+
+/// The git and LFS bounds the open-file limit leaves room for once the
+/// sockets (`max_connections`) and the process's own descriptors are counted:
+/// half of what is left for each, and never more than its row. Past either,
+/// transfers queue as they do past the row, so admitted work never opens
+/// more descriptors than the process has.
+fn descriptor_bounds(limits: &LimitsConfig, open_files: Option<u64>) -> (usize, usize) {
+    let Some(open_files) = open_files else {
+        return (limits.git_exchanges, limits.lfs_transfers);
+    };
+    let room = open_files
+        .saturating_sub(limits.max_connections as u64)
+        .saturating_sub(OWN_DESCRIPTORS)
+        / 2;
+    let bound = |row: usize, each: u64| {
+        usize::try_from(room / each)
+            .unwrap_or(usize::MAX)
+            .min(row)
+            .max(1)
+    };
+    (
+        bound(limits.git_exchanges, GIT_DESCRIPTORS),
+        bound(limits.lfs_transfers, LFS_DESCRIPTORS),
+    )
 }
 
 /// Room an upload in flight holds against the LFS quota.

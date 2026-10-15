@@ -111,6 +111,7 @@ header_read_timeout_ms = 30000    # headers must arrive within it; also idle kee
 body_idle_timeout_ms = 60000      # a request body may pause this long between pieces
 git_exchanges = 2048              # git smart-HTTP exchanges at once (one child each); past it they queue
 lfs_transfers = 2048              # LFS uploads, downloads and verifies at once; past it they queue
+lfs_frame_bytes = 1073741824      # bytes LFS chunk exchanges' frames hold at once (default: a sixteenth of memory)
 embedder_requests = 2048          # requests `embedder serve` holds at once; past it they queue
 embedder_answer_bytes = 268435456 # bytes `embedder serve`'s answers hold until delivered; past it they queue
 lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; past it the row asks
@@ -122,7 +123,11 @@ disk_reserve_bytes = 2147483648   # free bytes the vault's disk keeps; uploads s
 Only the machine's own floors and the anonymous surface hold work back. Past
 `max_connections` the server stops accepting, so new sockets wait in the
 kernel's backlog; raising the open-file limit (`LimitNOFILE=`) raises the
-default. A connection from off this device that has not yet authenticated
+default. The descriptors the sockets leave hold the transfer rows too: half
+of what is left past the server's own (256) bounds git exchanges at five
+descriptors each, and the other half LFS transfers at one each, so a
+1,024-descriptor limit runs 25 git exchanges at once and queues the rest; a
+log line (`transfer_descriptor_room`) says so at start. A connection from off this device that has not yet authenticated
 counts toward its address's `max_unauthenticated_connections_per_peer` (never
 more than half of `max_connections`, so one address cannot fill the floor), and
 one past that share is shed with a 503; it leaves the share as soon as a
@@ -249,12 +254,14 @@ most 32 MiB), so neither strangers nor key holders can make it hold more. A
 body must declare its `Content-Length` (411 otherwise). It reads `[limits]`
 from the same config: an answer takes room for its vectors and their encoding
 in `embedder_answer_bytes` before the model makes it, and keeps it until it is
-delivered. Past `embedder_requests`, past a full budget or
-`embedder_answer_bytes`, and past the few requests the model works on at once,
-a request with the key waits its turn in order and is never refused for how
-many wait. Each wait ends at `queue_wait_timeout_ms` (503, to retry, nothing
-started), and crossing a row or a budget logs a `limit_crossed` question. A body has 120 s to arrive
-once its budget is reserved (408 after).
+delivered. The endpoint does not start when that row cannot hold its model's
+largest answer (2,048 inputs at its dimensions: about 160 MiB at 4,096). Past
+`embedder_requests`, past a full budget or `embedder_answer_bytes`, and past
+the few requests the model works on at once, a request with the key waits its
+turn in order and is never refused for how many wait. Each wait ends at
+`queue_wait_timeout_ms` (503, to retry, nothing started), and crossing a row
+or a budget logs a `limit_crossed` question. A body has 120 s to arrive once
+its budget is reserved (408 after).
 
 On a GPU host, build with candle's CUDA kernels (the CUDA toolkit's `nvcc` on
 `PATH`) and ask for the device:

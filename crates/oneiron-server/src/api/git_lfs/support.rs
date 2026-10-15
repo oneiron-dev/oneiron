@@ -106,7 +106,8 @@ pub(super) fn lfs_waited_out() -> Response {
 /// A request body read whole, at most `limit` bytes. A request that waits
 /// for a transfer permit reads its body only at its turn, so one in line
 /// holds none of it; the listener ends a body that pauses past its idle
-/// limit.
+/// limit. The buffer grows by doubling but never past `limit`, so what a
+/// frame row counts for it holds.
 pub(super) async fn read_whole(body: Body, limit: usize) -> Result<Vec<u8>, ApiError> {
     let mut pieces = body.into_data_stream();
     let mut whole = Vec::new();
@@ -117,6 +118,10 @@ pub(super) async fn read_whole(body: Body, limit: usize) -> Result<Vec<u8>, ApiE
         let length = whole.len().saturating_add(piece.len());
         if length > limit {
             return Err(ApiError::payload_too_large("body", limit, length));
+        }
+        if length > whole.capacity() {
+            let grown = length.max(whole.capacity().saturating_mul(2)).min(limit);
+            whole.reserve_exact(grown - whole.len());
         }
         whole.extend_from_slice(&piece);
     }

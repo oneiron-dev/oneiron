@@ -71,15 +71,20 @@ impl BodyBudget {
 
     /// Reserves `bytes`, at once or at its turn: requests that find the
     /// budget full wait in order, each up to `wait`, and the first to wait
-    /// when none did crosses the row and asks. `None` when the wait ran out.
+    /// when none did crosses the row and asks. `None` when the wait ran out,
+    /// or at once for more bytes than the whole budget: those are never
+    /// held under a smaller claim. The endpoint sizes its budgets so no
+    /// request asks for that: a body is at most a budget, and the answer
+    /// row is checked against the model's largest answer at start.
     pub(super) async fn reserve(
         &self,
         bytes: usize,
         wait: Duration,
         questions: &LimitQuestions,
     ) -> Option<BodyBytes> {
-        // Every size fits its budget: the caller picks the budget by size.
-        let bytes = bytes.min(self.total);
+        if bytes > self.total {
+            return None;
+        }
         let mut place = {
             let mut budget = lock(&self.budget);
             // A waiter holds back every later request, so free bytes with
@@ -210,6 +215,24 @@ impl Drop for BodyBytes {
         budget.grant();
     }
 }
+
+/// What an answer of `inputs` rows of `dimensions` floats may hold until it
+/// is delivered: the rows as the model returns them (4 bytes a float), and
+/// at the same time their encoding, at most 16 bytes a float as JSON (an
+/// f32's shortest form and its comma; base64 takes under 6), with room for
+/// each row's own fields and the answer's.
+pub(super) fn answer_bytes(inputs: usize, dimensions: usize) -> usize {
+    inputs
+        .saturating_mul(dimensions.saturating_mul(4 + 16).saturating_add(ROW_FIELDS))
+        .saturating_add(ANSWER_FIELDS)
+}
+
+/// One answer row's fields past its floats, counted generously.
+const ROW_FIELDS: usize = 256;
+
+/// An answer's fields past its rows (the model, its transform, profile and
+/// provenance), counted generously.
+const ANSWER_FIELDS: usize = 16 * 1024;
 
 /// The budget's counts and line change in one step each under its lock, so
 /// a holder that panicked left them whole.
