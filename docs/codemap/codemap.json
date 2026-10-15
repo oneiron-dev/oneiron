@@ -154,7 +154,7 @@
      "purpose": "Vault doors for AccessGrant put, create, revoke, read, and calendar registry",
      "surface": {
       "crate-vis": 1,
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -12460,7 +12460,7 @@
      "purpose": "What a pack run produces and how its telemetry row is finalized or discarded",
      "surface": {
       "crate-vis": 6,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -25772,6 +25772,7 @@
      "path": "src/origin/publication/mod.rs",
      "purpose": "The origin publication protocol (ARCH-0068 RA2–RA5, ONE-1910)",
      "surface": {
+      "crate-vis": 1,
       "re-export": 2
      }
     },
@@ -25782,28 +25783,28 @@
      "path": "src/origin/publication/publication_codec.rs",
      "purpose": "Key builders, journal row codec, bounded-failure helper, and deterministic ids and claim builders",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/origin/publication/publication_journal.rs",
-     "purpose": "Journal access: repo identity, row scans, visible-ref rows, owner counts plus advance/receipt/validate helpers",
-     "surface": {
-      "crate-vis": 14
      }
     },
     {
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/origin/publication/publication_journal.rs",
+     "purpose": "Journal access: repo identity, row scans, visible-ref rows, owner counts plus advance/receipt/validate helpers",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
      "path": "src/origin/publication/publication_machine.rs",
      "purpose": "State machine: stage, advance, CAS, finish/refuse/finalize T2, availability gate, pin release and orphan sweep",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 13
      }
     },
     {
@@ -25842,6 +25843,7 @@
       "OriginCensusDisposition",
       "OriginCensusReport",
       "OriginKeepRefKind",
+      "OriginPublicationAnswer",
       "OriginPublicationReceipt",
       "OriginPublicationRecord",
       "OriginPublicationRequest",
@@ -25851,7 +25853,7 @@
      "purpose": "Pinned constants, protocol enums with string tables, and request/record/receipt/report types",
      "surface": {
       "const": 10,
-      "enum": 3,
+      "enum": 4,
       "fn": 9,
       "struct": 4
      }
@@ -26057,7 +26059,7 @@
      "path": "src/origin/smart_http/intent.rs",
      "purpose": "The crash-durable per-ref intent journal and its reconcile/resume path",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -26076,11 +26078,13 @@
      "kind": "src",
      "notable": [
       "ReceivePackAttribution",
+      "ReceivePackCertificate",
       "ReceivePackLanding"
      ],
      "path": "src/origin/smart_http/landing.rs",
      "purpose": "The single-writer landing: apply path, per-ref publication fan-out, and wire-outcome mapping",
      "surface": {
+      "enum": 1,
       "fn": 3,
       "struct": 2
      }
@@ -26154,6 +26158,14 @@
      "notable": [],
      "path": "src/origin/smart_http/push_cert_tests.rs",
      "purpose": "Ticket 7: `git receive-pack` writes a push certificate into the object store as a blob before any hook runs…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/origin/smart_http/recreate_tests.rs",
+     "purpose": "A ref deleted and pushed again at a tip it was already published at lands on that earlier publication: the…",
      "surface": {}
     },
     {
@@ -35482,7 +35494,7 @@
      "path": "src/sync/client/inbound.rs",
      "purpose": "Inbound wire dispatch, window-update import, and bulk history transfer",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 3
      }
     },
@@ -35552,7 +35564,7 @@
      "path": "src/sync/client/sync_frames.rs",
      "purpose": "Initial-connect and re-bootstrap sync frame builders",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 4
      }
     },
@@ -35922,6 +35934,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/manager/replacement.rs",
+     "purpose": "Installing a peer's window replacement in place of the live window",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/sync/manager/tests.rs",
@@ -36139,7 +36161,7 @@
      "path": "src/sync/queue/scrub.rs",
      "purpose": "Carrier scrubs plus test injection hook",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -36227,7 +36249,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/sync/residence/tests.rs",
@@ -36421,9 +36443,9 @@
      "path": "src/sync/transport.rs",
      "purpose": "Wire protocol encoding/decoding for WebSocket transport",
      "surface": {
-      "const": 35,
+      "const": 40,
       "enum": 1,
-      "fn": 21,
+      "fn": 27,
       "mod": 1,
       "re-export": 1,
       "struct": 2
@@ -36494,14 +36516,14 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/egress.rs",
      "purpose": "Window egress: packing policy, local-only scrub, exports, and mirror replay",
      "surface": {
       "crate-vis": 10,
-      "fn": 4
+      "fn": 3
      }
     },
     {
@@ -36559,6 +36581,28 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "WindowExport"
+     ],
+     "path": "src/sync/window/history_free.rs",
+     "purpose": "History-free window transport: what a window pinned history-free, or already shallow, ships to a peer that…",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 7
+     }
+    },
+    {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "src/sync/window/history_free_tests.rs",
+     "purpose": "The stall ticket's invariants over the code's own list of pin causes and replacement steps",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "LoadedWindow"
      ],
      "path": "src/sync/window/mod.rs",
@@ -36567,8 +36611,22 @@
       "crate-vis": 16,
       "fn": 6,
       "mod": 1,
-      "re-export": 6,
+      "re-export": 8,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PreparedReplacement",
+      "ReplacementConflict"
+     ],
+     "path": "src/sync/window/replacement.rs",
+     "purpose": "Installing a window replacement: a peer's history-free snapshot takes the place of this vault's window, and…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -40403,7 +40461,7 @@
      "path": "tests/it_sync/sync_harness/mod.rs",
      "purpose": "Two-vault sync test harness (ONE-1136 / M4-14)",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 38
      }
     },
     {
@@ -40412,6 +40470,14 @@
      "notable": [],
      "path": "tests/it_sync/sync_maintenance_quota.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it_sync/sync_pinned_window_catchup.rs",
+     "purpose": "The stall ticket: a window this vault pinned history-free still brings a peer that is behind it level…",
      "surface": {}
     },
     {
@@ -41466,9 +41532,9 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "origin": {
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
@@ -41865,7 +41931,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 125,
+     "files": 129,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -42014,8 +42080,8 @@
    },
    "over_bar": 41,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2542,
-   "test_files": 831
+   "source_files": 2545,
+   "test_files": 834
   },
   "oneiron-android": {
    "files": [
@@ -51622,7 +51688,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/context_pack_disclosure.rs",
@@ -53180,7 +53246,7 @@
      "path": "src/handler/conn_state.rs",
      "purpose": "Per-connection budgets, quotas, and sync-mode binding",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -53270,7 +53336,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/handler/residence_socket_tests.rs",
@@ -53297,12 +53363,20 @@
     },
     {
      "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/handler/window_row_tests.rs",
+     "purpose": "`max_windows_per_connection` is a row, never a refusal (rule 5, OF-520): a socket past it is served, keeps a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/handler/window_sync.rs",
      "purpose": "WindowSync sub-tag dispatcher with selector and VV paths",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -54608,7 +54682,7 @@
      "path": "src/protocol.rs",
      "purpose": "Custom Oneiron sync protocol — server-side extensions",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 29
      }
     },
     {
@@ -55087,6 +55161,9 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "LimitQuestions",
+      "LimitRow",
+      "WireLimitQuestion",
       "WireQuestion",
       "WireQuestionKind",
       "WireTelemetry",
@@ -55096,10 +55173,10 @@
      "path": "src/wire_telemetry.rs",
      "purpose": "RC42 observation-only wire counters",
      "surface": {
-      "crate-vis": 5,
-      "enum": 1,
-      "fn": 8,
-      "struct": 4
+      "crate-vis": 6,
+      "enum": 2,
+      "fn": 12,
+      "struct": 6
      }
     },
     {
@@ -55473,7 +55550,7 @@
      "purpose": "Deployment-selected feedback transport"
     },
     "handler": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -55623,7 +55700,7 @@
    "over_bar": 11,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 349,
-   "test_files": 160
+   "test_files": 161
   },
   "oneiron-spawn": {
    "files": [

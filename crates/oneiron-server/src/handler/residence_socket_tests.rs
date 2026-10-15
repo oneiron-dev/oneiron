@@ -789,8 +789,22 @@ impl WorldResidence {
     /// The device's v12 socket, bound and holding a root that lists the
     /// world-month window.
     async fn device_socket(&self, client: &mut SyncClient, jti: &str) -> Socket {
+        self.device_socket_speaking(client, jti, None).await
+    }
+
+    /// [`Self::device_socket`], its hello replaced by `hello` when given.
+    async fn device_socket_speaking(
+        &self,
+        client: &mut SyncClient,
+        jti: &str,
+        hello: Option<Vec<u8>>,
+    ) -> Socket {
         let mut socket = upgraded_socket(&self.server, &self.url, jti).await;
-        for frame in client.generate_initial_sync() {
+        let mut frames = client.generate_initial_sync();
+        if let Some(hello) = hello {
+            frames[0] = hello;
+        }
+        for frame in frames {
             socket.send(Message::Binary(frame.into())).await.unwrap();
         }
         tokio::time::timeout(Duration::from_secs(10), async {
@@ -1196,5 +1210,338 @@ async fn v11_owner_client_gets_no_residence_sub_tags() {
             .into_result()
             .unwrap();
     assert_socket_refused(&mut second, residence_update, "RESIDENCE_UPDATE").await;
+    fixture.server_task.abort();
+}
+
+/// Whether `bytes`, imported into an empty document, set `id`'s entity carrier anywhere in the
+/// history they carry.
+fn history_sets_entity(bytes: &[u8], id: EntityId) -> bool {
+    let doc = loro::LoroDoc::new();
+    if doc.import(bytes).is_err() {
+        return false;
+    }
+    let entities = loro::ContainerID::new_root("entities", loro::ContainerType::Map);
+    doc.export_json_updates(&loro::VersionVector::default(), &doc.oplog_vv())
+        .changes
+        .iter()
+        .flat_map(|change| &change.ops)
+        .any(|op| {
+            op.container == entities
+                && matches!(
+                    &op.content,
+                    loro::json::JsonOpContent::Map(loro::json::MapOp::Insert { key, .. })
+                        if *key == id.to_hex()
+                )
+        })
+}
+
+/// What a socket received for one window: each window frame's sub-tag and payload, and the
+/// close frame's code and reason if the server closed it.
+#[derive(Debug, Default)]
+struct Replies {
+    frames: Vec<(u8, Vec<u8>)>,
+    close: Option<(u16, String)>,
+}
+
+impl Replies {
+    fn tags(&self) -> Vec<u8> {
+        self.frames.iter().map(|(tag, _)| *tag).collect()
+    }
+}
+
+/// Reads `window`'s frames off `socket` until one tagged `until` arrives, the server closes the
+/// socket, or the stream goes quiet for two seconds.
+async fn window_replies(socket: &mut Socket, window: &WindowKey, until: u8) -> Replies {
+    let mut replies = Replies::default();
+    let _ = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let message = match tokio::time::timeout(Duration::from_secs(2), socket.next()).await {
+                Ok(Some(Ok(message))) => message,
+                Ok(None | Some(Err(_))) | Err(_) => return,
+            };
+            match message {
+                Message::Close(frame) => {
+                    replies.close =
+                        frame.map(|frame| (u16::from(frame.code), frame.reason.to_string()));
+                    return;
+                }
+                Message::Binary(frame) if frame.first() == Some(&transport::TAG_WINDOW_SYNC) => {
+                    let (key, tag, payload) = transport::decode_window_sync(&frame[1..]).unwrap();
+                    if key == window.as_str() {
+                        replies.frames.push((tag, payload.to_vec()));
+                        if tag == until {
+                            return;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    })
+    .await;
+    replies
+}
+
+/// The hello a socket speaks, for the old-peer rows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Speaks {
+    Current,
+    Old,
+}
+
+/// A version vector a socket answers with.
+#[derive(Clone, Copy, Debug)]
+enum Holds {
+    Nothing,
+    BehindFloor,
+    Level,
+}
+
+/// What the home must answer: history, a replacement, or the old-peer refusal.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Answer {
+    Update,
+    Replacement,
+    Refused,
+}
+
+fn assert_answer(row: &str, replies: &Replies, answer: Answer) {
+    let tags = replies.tags();
+    match answer {
+        Answer::Update => {
+            assert!(replies.close.is_none(), "{row}: closed: {replies:?}");
+            assert!(tags.contains(&window_sub_tags::UPDATE), "{row}: {tags:?}");
+            assert!(
+                !tags.contains(&window_sub_tags::REPLACEMENT),
+                "{row}: {tags:?}"
+            );
+        }
+        Answer::Replacement => {
+            assert!(replies.close.is_none(), "{row}: closed: {replies:?}");
+            assert!(
+                tags.contains(&window_sub_tags::REPLACEMENT),
+                "{row}: {tags:?}"
+            );
+            assert!(!tags.contains(&window_sub_tags::UPDATE), "{row}: {tags:?}");
+        }
+        Answer::Refused => {
+            let (code, reason) = replies
+                .close
+                .clone()
+                .unwrap_or_else(|| panic!("{row}: not closed: {tags:?}"));
+            assert_eq!(
+                code,
+                crate::protocol::close_codes::VERSION_MISMATCH,
+                "{row}"
+            );
+            assert!(
+                reason.contains("history-free floor") && reason.contains("hello v13+"),
+                "{row}: the refusal must say what to do: {reason}"
+            );
+        }
+    }
+}
+
+/// Bug repro (SOL-R6-001 / ASTRA-R6-003) and done-means (S3), per hello and per version vector:
+/// home erased a CLAIM in the world-month window before the device promoted it, so the erased
+/// body sits in the window's history. A promoted connection behind its promotion baseline gets
+/// the baseline snapshot: as its first update when it holds nothing, as a replacement when it
+/// holds part of the window, or, an old device that cannot install one, the old-peer refusal.
+/// It never gets that history. A connection level with
+/// the baseline keeps getting history, old hello included.
+#[tokio::test]
+async fn a_promoted_connection_gets_no_history_from_before_its_promotion() {
+    let fixture = WorldResidence::start(false).await;
+    let home_doc = fixture
+        .server
+        .get_or_create_window(&fixture.window)
+        .await
+        .unwrap();
+    let behind = home_doc.oplog_vv();
+    assert!(
+        !behind.is_empty(),
+        "fixture: the window holds history before the erase"
+    );
+    let subject = EntityId::now();
+    fixture
+        .home
+        .put_entity(
+            &subject,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            fixture.at(),
+            fixture.now,
+            b"erased subject",
+        )
+        .unwrap();
+    let mut body = ClaimBody::new(
+        "test.world_residence",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("erased world fact"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(fixture.world);
+    let erased = EntityId::now();
+    fixture
+        .home
+        .put_claim(&erased, &body, fixture.at(), fixture.now)
+        .unwrap();
+    if !window_map_has(&home_doc, erased) {
+        let raw = fixture.home.get_raw(&erased).unwrap().unwrap();
+        home_doc
+            .get_map("entities")
+            .insert(&erased.to_hex(), raw.as_slice())
+            .unwrap();
+        home_doc.commit();
+    }
+    fixture
+        .home
+        .delete_entity_with_reason(&erased, oneiron::DeleteReason::GdprDelete)
+        .unwrap();
+    assert!(!window_map_has(&home_doc, erased));
+    assert!(
+        history_sets_entity(
+            &home_doc.export(loro::ExportMode::all_updates()).unwrap(),
+            erased
+        ),
+        "fixture: the erased body stays in home's window history"
+    );
+    let level = home_doc.oplog_vv();
+
+    let rows = [
+        (Speaks::Current, Holds::Nothing, Answer::Update),
+        (Speaks::Current, Holds::BehindFloor, Answer::Replacement),
+        (Speaks::Current, Holds::Level, Answer::Update),
+        (Speaks::Old, Holds::Nothing, Answer::Update),
+        (Speaks::Old, Holds::BehindFloor, Answer::Refused),
+        (Speaks::Old, Holds::Level, Answer::Update),
+    ];
+    for (n, (speaks, holds, answer)) in rows.into_iter().enumerate() {
+        let row = format!("{speaks:?}/{holds:?}");
+        let (mut client, _events) =
+            SyncClient::new(fixture.manager.clone(), fixture.config.clone()).unwrap();
+        let hello = (speaks == Speaks::Old).then(transport::encode_residence_protocol_hello);
+        let mut socket = fixture
+            .device_socket_speaking(
+                &mut client,
+                &format!("residence-promotion-baseline-{n}"),
+                hello,
+            )
+            .await;
+        let vv = match holds {
+            Holds::Nothing => loro::VersionVector::default(),
+            Holds::BehindFloor => behind.clone(),
+            Holds::Level => level.clone(),
+        };
+        for (tag, payload) in [
+            (
+                window_sub_tags::PROMOTION_REQUEST,
+                oneiron::sync::encode_sync_selector(&fixture.selector).unwrap(),
+            ),
+            (window_sub_tags::VV_REQUEST, vv.encode()),
+        ] {
+            let frame = transport::encode_window_sync(fixture.window.as_str(), tag, &payload)
+                .into_result()
+                .unwrap();
+            socket.send(Message::Binary(frame.into())).await.unwrap();
+        }
+        let replies =
+            window_replies(&mut socket, &fixture.window, window_sub_tags::VV_RESPONSE).await;
+        assert!(
+            replies.tags().contains(&window_sub_tags::PROMOTION_GRANTED),
+            "{row}: home refused the promotion itself: {replies:?}"
+        );
+        for (_, payload) in &replies.frames {
+            assert!(
+                !history_sets_entity(payload, erased),
+                "{row}: a promoted connection received the body home erased before its promotion"
+            );
+        }
+        assert_answer(&row, &replies, answer);
+    }
+    fixture.server_task.abort();
+}
+
+/// S1 and the old-peer rule on the home's two version-vector arms: a window the home keeps
+/// history-free answers a socket whose vector does not cover its floor with a replacement (a
+/// current owner device) or the old-peer refusal (a v11 device), never with history the
+/// receiver cannot apply or must not hold; a socket level with it gets history, v11 included.
+#[tokio::test]
+async fn the_home_vector_arms_answer_a_peer_behind_a_pinned_window_with_a_replacement() {
+    let fixture = WorldResidence::start(false).await;
+    let home_doc = fixture
+        .server
+        .get_or_create_window(&fixture.window)
+        .await
+        .unwrap();
+    let behind = home_doc.oplog_vv();
+    let carrier = EntityId::now();
+    let mut diagnostic = vec![oneiron::registry::ENTITY_TYPE_DIAGNOSTIC];
+    for _ in 0..3 {
+        diagnostic.extend_from_slice(&fixture.now.to_be_bytes());
+    }
+    diagnostic.extend_from_slice(b"device diagnostic");
+    home_doc
+        .get_map("entities")
+        .insert(&carrier.to_hex(), diagnostic.as_slice())
+        .unwrap();
+    home_doc.commit();
+    // The home's export door scrubs the carrier and pins the window.
+    let _ = oneiron::sync::window::export_window_updates_since(
+        &fixture.home,
+        &fixture.window,
+        &home_doc,
+        &behind.encode(),
+    )
+    .unwrap();
+    assert!(
+        oneiron::sync::window::history_free_window_required(&fixture.home, &fixture.window)
+            .unwrap()
+    );
+    let level = home_doc.oplog_vv();
+
+    let mut n = 0;
+    for arm in [window_sub_tags::VV_REQUEST, window_sub_tags::VV_RESPONSE] {
+        for (speaks, holds, answer) in [
+            (Speaks::Current, Holds::BehindFloor, Answer::Replacement),
+            (Speaks::Current, Holds::Level, Answer::Update),
+            (Speaks::Old, Holds::BehindFloor, Answer::Refused),
+            (Speaks::Old, Holds::Level, Answer::Update),
+        ] {
+            n += 1;
+            let row = format!("arm {arm}/{speaks:?}/{holds:?}");
+            let mut socket =
+                upgraded_socket(&fixture.server, &fixture.url, &format!("owner-arm-{n}")).await;
+            let hello = match speaks {
+                Speaks::Current => transport::encode_replacement_full_window_protocol_hello(),
+                Speaks::Old => transport::encode_chunk_full_window_protocol_hello(),
+            };
+            let vv = match holds {
+                Holds::BehindFloor => behind.clone(),
+                Holds::Level | Holds::Nothing => level.clone(),
+            };
+            let frame = transport::encode_window_sync(fixture.window.as_str(), arm, &vv.encode())
+                .into_result()
+                .unwrap();
+            for frame in [hello, frame] {
+                socket.send(Message::Binary(frame.into())).await.unwrap();
+            }
+            let until = if arm == window_sub_tags::VV_REQUEST {
+                window_sub_tags::VV_RESPONSE
+            } else {
+                window_sub_tags::UPDATE
+            };
+            let replies = window_replies(&mut socket, &fixture.window, until).await;
+            for (_, payload) in &replies.frames {
+                assert!(
+                    !history_sets_entity(payload, carrier),
+                    "{row}: the scrubbed carrier shipped"
+                );
+            }
+            assert_answer(&row, &replies, answer);
+        }
+    }
     fixture.server_task.abort();
 }

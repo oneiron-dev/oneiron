@@ -145,7 +145,7 @@ impl<'a> ContextPackBuilder<'a> {
             telemetry_run_id: run.telemetry_run_id,
             telemetry: run.telemetry,
             total_in_scope: run.total_in_scope,
-            clamped_out: run.clamped_out,
+            clamped: run.clamped,
             replay_config: run.replay_config,
         };
         lane.end_recall_plan()?;
@@ -201,7 +201,7 @@ impl<'a> ContextPackBuilder<'a> {
             telemetry_run_id: run.telemetry_run_id,
             telemetry: run.telemetry,
             total_in_scope: run.total_in_scope,
-            clamped_out: run.clamped_out,
+            clamped: run.clamped,
             replay_config: run.replay_config,
         })
     }
@@ -302,7 +302,7 @@ impl<'a> ContextPackBuilder<'a> {
             // reaches hydration, results, or stats.
             let clamp = self.disclosure.as_ref();
             let mut scored = scored;
-            let mut clamped_out: u64 = 0;
+            let mut clamped = Vec::new();
             if let Some(ctx) = clamp
                 && ctx.mode() != DisclosureMode::OwnerAlone
             {
@@ -317,7 +317,7 @@ impl<'a> ContextPackBuilder<'a> {
                     )? {
                         kept.push(entry);
                     } else {
-                        clamped_out = clamped_out.saturating_add(1);
+                        clamped.push(entry.id);
                     }
                 }
                 scored = kept;
@@ -624,7 +624,7 @@ impl<'a> ContextPackBuilder<'a> {
                 telemetry_run_id,
                 telemetry,
                 total_in_scope,
-                clamped_out,
+                clamped,
                 replay_config,
             })
         })();
