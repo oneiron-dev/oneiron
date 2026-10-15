@@ -252,14 +252,23 @@ fn person_fallback_label(person_ref: &EntityId) -> String {
 /// Collapses line-break runs to single spaces so vault text can never open a
 /// new markdown block (heading, list item, code fence) inside the card. A
 /// break is CR, LF, or any separator a consumer may split lines on: VT, FF,
-/// NEL, and the Unicode line and paragraph separators (F31).
+/// the file, group and record separators, NEL, and the Unicode line and
+/// paragraph separators (F31), the set Python's `str.splitlines` honours.
 pub(super) fn markdown_safe_line(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut in_break = false;
     for ch in text.chars() {
         if matches!(
             ch,
-            '\n' | '\r' | '\u{0b}' | '\u{0c}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+            '\n' | '\r'
+                | '\u{0b}'
+                | '\u{0c}'
+                | '\u{1c}'
+                | '\u{1d}'
+                | '\u{1e}'
+                | '\u{85}'
+                | '\u{2028}'
+                | '\u{2029}'
         ) {
             in_break = true;
             continue;

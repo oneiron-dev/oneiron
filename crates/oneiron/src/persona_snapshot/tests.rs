@@ -545,11 +545,13 @@ fn markdown_render_collapses_multiline_text() -> Result<()> {
 
 /// F31 (H126): every caller-controlled field of the card stays on its own
 /// line and inside its own markup, for a consumer that also splits lines on
-/// VT, FF, NEL and the Unicode line and paragraph separators.
+/// VT, FF, the file, group and record separators, NEL and the Unicode line
+/// and paragraph separators.
 #[test]
 fn markdown_card_keeps_every_caller_field_on_its_own_line() -> Result<()> {
     let separators = [
-        '\n', '\r', '\u{0b}', '\u{0c}', '\u{85}', '\u{2028}', '\u{2029}',
+        '\n', '\r', '\u{0b}', '\u{0c}', '\u{1c}', '\u{1d}', '\u{1e}', '\u{85}', '\u{2028}',
+        '\u{2029}',
     ];
     let forged = |markdown: &str| {
         markdown
@@ -581,7 +583,9 @@ fn markdown_card_keeps_every_caller_field_on_its_own_line() -> Result<()> {
             include_agent_takes: true,
             agent_takes: vec![PersonaSnapshotAgentTake {
                 actor_ref: take_actor.to_owned(),
-                text: "take text".to_owned(),
+                text:
+                    "take text\u{1c}# forged by a file separator\u{1d}- forged item\u{1e}## forged"
+                        .to_owned(),
                 about_ref: None,
             }],
             ..PersonaSnapshotCompileOptions::default()

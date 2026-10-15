@@ -5,6 +5,9 @@ const token = fragmentToken ? fragmentToken[1] : "";
 // target holds, so no server or proxy log sees it (F37). It must not remain
 // in browser history or in referrers either. Subsequent calls use POST bodies.
 history.replaceState(null, "", "/sign");
+// Another invitation opened in this tab changes only the fragment, which
+// reruns nothing here: reload, so it starts its own ceremony, never this one.
+window.addEventListener("hashchange", () => location.reload());
 const status = document.getElementById("status");
 const fields = document.getElementById("fields");
 async function post(path, value) {
