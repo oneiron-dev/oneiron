@@ -330,7 +330,7 @@ impl Vault {
             // The proof is rechecked where the decision commits: an owner
             // whose person, credential or ownership went away while the call
             // waited for the writer decides nothing.
-            owner.revalidate_in_txn(self, &*wtxn)?;
+            let actor = owner.revalidate_in_txn(self, &*wtxn)?;
             let members = gate_consent_bundle_members_in_txn(&self.store, &*wtxn, dreamer_run_id)?;
             if members.is_empty() {
                 return Err(Error::EntityNotFound);
@@ -345,7 +345,7 @@ impl Vault {
             }
 
             let policy = resolve_policy_manifest(&self.store, &*wtxn)?;
-            let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
+            let actor = WriteActor::new(actor, EdgeActorClass::Human);
             let bundle_ref = gate_consent_bundle_ref(&bundle_id);
             let (member_outcome, member_reason) = match action {
                 GateConsentBundleAction::Approve => (
@@ -520,7 +520,7 @@ impl Vault {
                 receipt_reasons: Vec::new(),
                 system_notices: Vec::new(),
                 actor_class: edge_actor_class_str(EdgeActorClass::Human).to_owned(),
-                actor_ref: Some(owner.actor().to_hex()),
+                actor_ref: Some(actor.entity_ref().to_hex()),
                 content_kind: GATE_BUNDLE_CONTENT_KIND.to_owned(),
                 policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
                 claim_id: None,
