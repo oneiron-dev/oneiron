@@ -107,7 +107,7 @@ fn mine(server: &SyncServer, machine: oneiron::EntityId) -> Option<bool> {
         .authority_fold()
         .unwrap()
         .machine(machine)
-        .map(oneiron::authority::FoldedMachine::is_mine)
+        .map(|folded| folded.is_mine(None))
 }
 
 #[tokio::test]
@@ -155,7 +155,7 @@ async fn the_owners_answer_at_pairing_decides_mine() {
 
 async fn probe(axum::Extension(machine): axum::Extension<PeerMachine>) -> Json<Value> {
     Json(match machine {
-        PeerMachine::Proven(id) => json!(id.to_hex()),
+        PeerMachine::Proven { machine: id, .. } => json!(id.to_hex()),
         PeerMachine::Unknown => Value::Null,
     })
 }
