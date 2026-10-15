@@ -43,6 +43,7 @@ mod engine_machine;
 mod entry_transition;
 mod first_seen_clock;
 mod fold_engine;
+mod fold_project;
 mod fold_schedule;
 mod fold_state;
 mod handoff_equivocation;
