@@ -555,16 +555,18 @@ pub fn is_comm_claim_predicate(predicate: &str) -> bool {
 /// (`mint_send_override`, which checks a stored human actor) may write one. Any other door that would land an ACTIVE override (the public
 /// claim door, a raw batch put, a generic lifecycle transition) is refused;
 /// retracting or superseding one is a restriction and always lands.
-/// Replication carries rulings the owner's own devices already admitted.
+/// Replication carries rulings the owner's own devices already admitted; a
+/// federated import (restamped `Imported`) is another vault's word and is
+/// refused even there.
 pub(crate) fn guard_send_override_put(
     body: &ClaimBody,
     typed_door: bool,
     replicated: bool,
 ) -> Result<()> {
+    let imported = body.source == Some(ClaimSource::Imported);
     if body.predicate == PREDICATE_COMM_SEND_OVERRIDE
         && body.lifecycle == ClaimLifecycleStatus::Active
-        && !typed_door
-        && !replicated
+        && (imported || (!typed_door && !replicated))
     {
         return Err(Error::InvalidClaimBody(
             "comm.send_override is ruled only through mint_send_override",
