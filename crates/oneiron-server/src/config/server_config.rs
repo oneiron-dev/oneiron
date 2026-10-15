@@ -12,6 +12,7 @@ use super::limits::LimitsConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
 use super::oneironer::OneironerConfig;
 use super::recall::RecallConfig;
+use super::trusted_proxy::TrustedProxy;
 use crate::runtime::RuntimeConfig;
 use crate::usage::UsageMode;
 
@@ -57,6 +58,10 @@ pub struct SyncServerConfig {
     /// Explicit CORS origins allowed to call the HTTP API. Empty is
     /// fail-closed: no cross-origin browser access is granted.
     pub allowed_origins: Vec<String>,
+    /// Reverse proxies whose `X-Forwarded-For` the server believes when it
+    /// keys a request by client address. Empty: every caller is keyed by its
+    /// own connection, whatever headers it sends.
+    pub trusted_proxies: Vec<TrustedProxy>,
     /// Numeric vault scope for root lease registration/revocation.
     /// Hosted deployments must set a distinct value per tenant/vault; `0`
     /// preserves the legacy local single-vault scope.
@@ -103,6 +108,7 @@ impl Default for SyncServerConfig {
             oauth_resource_indicator: None,
             allow_unauthenticated: false,
             allowed_origins: Vec::new(),
+            trusted_proxies: Vec::new(),
             lease_vault_id: 0,
             max_frame_size: 4 * 1024 * 1024,     // 4 MB
             max_update_payload: 2 * 1024 * 1024, // 2 MB
@@ -165,6 +171,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
+            .field("trusted_proxies", &self.trusted_proxies)
             .field("lease_vault_id", &self.lease_vault_id)
             .field("max_frame_size", &self.max_frame_size)
             .field("max_update_payload", &self.max_update_payload)
@@ -207,6 +214,7 @@ pub struct ServeConfig {
     pub oauth_resource_indicator: Option<String>,
     pub allow_unauthenticated: bool,
     pub allowed_origins: Vec<String>,
+    pub trusted_proxies: Vec<TrustedProxy>,
     pub lease_vault_id: u64,
     pub dimensions: usize,
     pub map_size: usize,
@@ -278,6 +286,7 @@ impl Default for ServeConfig {
             oauth_resource_indicator: server.oauth_resource_indicator,
             allow_unauthenticated: server.allow_unauthenticated,
             allowed_origins: server.allowed_origins,
+            trusted_proxies: server.trusted_proxies,
             lease_vault_id: server.lease_vault_id,
             dimensions: vault.dimensions,
             map_size: vault.map_size,
@@ -326,6 +335,7 @@ impl fmt::Debug for ServeConfig {
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
+            .field("trusted_proxies", &self.trusted_proxies)
             .field("lease_vault_id", &self.lease_vault_id)
             .field("dimensions", &self.dimensions)
             .field("map_size", &self.map_size)
@@ -389,6 +399,7 @@ impl ServeConfig {
             oauth_resource_indicator: self.oauth_resource_indicator.clone(),
             allow_unauthenticated: self.allow_unauthenticated,
             allowed_origins: self.allowed_origins.clone(),
+            trusted_proxies: self.trusted_proxies.clone(),
             lease_vault_id: self.lease_vault_id,
             max_frame_size: self.max_frame_size,
             max_update_payload: self.max_update_payload,

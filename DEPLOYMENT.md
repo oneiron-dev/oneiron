@@ -84,6 +84,15 @@ lists the host's assistant voice names. Stored turns spoken under one of those
 names count as assistant turns during consolidation, beside the generic
 `assistant`, `agent`, `ai`, and `model` speakers. The default is empty.
 
+`trusted_proxies` (flag `--trusted-proxies`, env `ONEIRON_TRUSTED_PROXIES`,
+comma-separated `ip` or `ip/prefix`) names the reverse proxies whose
+`X-Forwarded-For` the server believes when it keys per-address booking quotas.
+Behind such a proxy each client is charged as itself; from any other peer the
+header is ignored. Every address in a listed block is believed when it names a
+client, so list proxy hosts only, never a client network. An entry that does
+not parse, a `/0` block, or an address with bits set past its prefix stops
+startup. The default is empty: every caller is keyed by its own connection.
+
 `[limits]` bounds the work a caller can start. Every bound is finite, and a
 zero is a config error. The count rows sit far above fleet scale (each is at
 least ten times the 200 agents a fleet plans for, many of them on one

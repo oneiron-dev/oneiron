@@ -104,6 +104,8 @@ pub use self::types::{
 
 #[cfg(test)]
 use self::files::file_write_fault_hook;
+#[cfg(all(test, unix))]
+use self::files::path_swap_hook;
 #[cfg(test)]
 use self::storage::{receipt_fault_hook, registration_fault_hook};
 
