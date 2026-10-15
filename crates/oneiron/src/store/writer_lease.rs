@@ -171,8 +171,9 @@ impl VaultWriterLease {
     /// [`Self::acquire`] on `directory`, a vault root this process already
     /// holds open: the lock file is opened through that descriptor, never
     /// following a link, so nothing is created, locked or written in a
-    /// directory moved in under `vault_dir`'s name. Refuses unless
-    /// `vault_dir` still names `directory`.
+    /// directory moved in under `vault_dir`'s name. A link at the lock's name
+    /// is refused with an I/O error that names it. Refuses unless `vault_dir`
+    /// still names `directory`.
     #[cfg(unix)]
     pub(crate) fn acquire_held(directory: std::fs::File, vault_dir: &Path) -> Result<Self> {
         use rustix::fs::{Mode, OFlags, openat};
@@ -184,7 +185,18 @@ impl VaultWriterLease {
                 OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC,
                 Mode::from_raw_mode(0o600),
             )
-            .map_err(std::io::Error::from)?,
+            .map_err(|errno| {
+                let error = std::io::Error::from(errno);
+                // The name has one component, so a loop is the name itself:
+                // a link, never followed. Say so, so its owner knows to remove it.
+                if errno == rustix::io::Errno::LOOP {
+                    let cause = format!(
+                        "the vault's writer lock {VAULT_WRITER_LOCK_FILE} is a symbolic link; remove it"
+                    );
+                    return std::io::Error::new(error.kind(), cause);
+                }
+                error
+            })?,
         );
         Self::lock_file(&file)?;
         // A lease from here: a refusal below unlocks before it closes, so a
