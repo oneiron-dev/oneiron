@@ -395,6 +395,38 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                         ]),
                     ),
                 ]),
+                // The origin's own record of what it published and admitted.
+                // Only engine doors write it (`repo.*` is reserved), and a
+                // publication still needs its grant, lease, measured outcome
+                // and ref CAS, so an owner review is not its barrier.
+                Value::Map(vec![
+                    (Value::from(RULE_PREFIX_KEY), Value::from("repo.")),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                // A shared vault's admin ruling is decided by its own ruling
+                // law: a live admin grant and the holder's human envelope,
+                // checked at the claim put seam for every door. An owner
+                // review on top would strand a ruling that law decided.
+                Value::Map(vec![
+                    (
+                        Value::from(RULE_PREFIX_KEY),
+                        Value::from(crate::federation::RULING_PREDICATE),
+                    ),
+                    (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
                 Value::Map(vec![
                     (Value::from(RULE_PREFIX_KEY), Value::from("calendar.")),
                     (

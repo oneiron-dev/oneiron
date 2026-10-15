@@ -86,8 +86,11 @@ pub(crate) mod tests {
     ) -> EntityId {
         let id = EntityId::now();
         let body = origin_publication_intent_claim(request).unwrap();
+        // `repo.*` is engine-owned: the fixture writes through the reserved door.
         vault
-            .put_claim(&id, &body, occurred(), LEARNED_AT)
+            .with_write_txn(|wtxn| {
+                vault.put_reserved_claim_in_txn(wtxn, &id, &body, occurred(), LEARNED_AT)
+            })
             .expect("durable target-bound fixture provenance");
         id
     }
@@ -136,6 +139,48 @@ pub(crate) mod tests {
     /// crash before the CAS looks like from the journal's point of view.
     pub(in crate::origin::publication) fn force_ref(root: &Path, oid: &GitOid) {
         git(root, &["update-ref", "refs/heads/main", oid.as_str()]);
+    }
+
+    /// `repo.*` is engine-owned. The generic claim door refuses the statement a
+    /// publication cites, and only the engine's door writes it.
+    #[test]
+    fn only_the_engine_door_writes_a_publication_intent() {
+        let (_vault_dir, vault) = test_vault();
+        let (_repo_dir, root, base) = seeded_repo();
+        let next = commit(&root, "next", "next\n");
+        force_ref(&root, &base);
+        let wire = GitWire::new(&vault).expect("wire");
+        let repo = open_repo(&wire, &root, &base);
+        let repo_id = repo_id_of(&vault, &repo);
+        let ask = request(&vault, &repo, repo_id, Some(base.clone()), next);
+        let body = origin_publication_intent_claim(&ask).unwrap();
+        let refused = vault
+            .put_claim(
+                &ask.provenance_claim_id,
+                &body,
+                ask.occurred,
+                ask.learned_at,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                crate::Error::Claim(crate::error::ClaimError::ReservedPredicate { .. })
+            ),
+            "FAILBEFORE Q2 repo: a generic put wrote a publication intent: {refused:?}"
+        );
+        assert!(vault.get_raw(&ask.provenance_claim_id).unwrap().is_none());
+        vault
+            .put_origin_publication_intent(&ask)
+            .expect("the engine door");
+        assert_eq!(
+            vault
+                .get_claim(&ask.provenance_claim_id)
+                .unwrap()
+                .expect("the intent")
+                .approval,
+            crate::claim::ClaimApprovalStatus::Auto
+        );
     }
 
     #[test]

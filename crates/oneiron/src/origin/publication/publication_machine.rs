@@ -460,7 +460,13 @@ impl Vault {
                         "origin publication has no claim id",
                     ))?;
                 let body = publication_claim_body(&terminal)?;
-                self.put_claim_in_txn(wtxn, &claim_id, &body, terminal.occurred, learned_at)?;
+                self.put_reserved_claim_in_txn(
+                    wtxn,
+                    &claim_id,
+                    &body,
+                    terminal.occurred,
+                    learned_at,
+                )?;
                 let change_id = self.put_origin_change_in_txn(wtxn, &terminal, learned_at)?;
                 // Transfer reachability to the durable change-index before releasing
                 // the temporary publication owner. The physical root already exists.

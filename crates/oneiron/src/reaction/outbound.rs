@@ -60,15 +60,18 @@ fn outbound_target_in(
 /// nothing acts on a claim awaiting its owner (ARCH-0026 §G3). The Clear sends
 /// the held put, once, under the reaction's own dedupe key. A decline or a
 /// timeout demotion never reaches here, and a reaction removed meanwhile, or
-/// one whose record has left its room, is not sent.
+/// one whose record has left its room, is not sent. Only a first-party
+/// reaction is ever sent: a mirrored or machine-written one never loops back
+/// to its provider, whoever cleared it.
 pub(crate) fn release_cleared_reaction_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     claim_id: EntityId,
     body: &crate::claim::ClaimBody,
 ) -> Result<()> {
-    if body.predicate != super::value::PREDICATE_CONVERSATION_REACTION
-        || !crate::claim::claim_surfaceable(body)
+    if !crate::claim::claim_surfaceable(body)
+        || super::value::machine_written(body)
+        || super::value::decode_reaction(body).is_none_or(|value| value.external_id.is_some())
     {
         return Ok(());
     }
