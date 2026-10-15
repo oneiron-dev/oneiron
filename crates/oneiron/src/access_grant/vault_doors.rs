@@ -76,32 +76,59 @@ impl Vault {
         self.revoke_admitted_access_grant(id, revoked_at, |_| Ok(()))
     }
 
+    /// Revokes a companion-profile grant through the companion surface. A
+    /// grant this door may not revoke is `EntityNotFound`, as a missing or
+    /// deleted one is: a grant of another scope, or, when `principal` binds
+    /// the caller, another principal's grant. The admission and the rewrite
+    /// share one write transaction, so the record this door admits is
+    /// exactly the record it revokes.
+    pub fn revoke_companion_access_grant(
+        &self,
+        grant_ref: &EntityId,
+        revoked_at: u64,
+        principal: Option<EntityId>,
+    ) -> Result<AccessGrant> {
+        self.revoke_admitted_access_grant(grant_ref, revoked_at, |grant| {
+            if grant.scope.companion_profile_refs().is_some()
+                && principal.is_none_or(|bound| grant.principal_ref == bound)
+            {
+                Ok(())
+            } else {
+                Err(Error::EntityNotFound)
+            }
+        })
+    }
+
     /// Revokes the record at `id` only when `admit` accepts the grant that the
-    /// write transaction itself read.
+    /// write transaction itself read. A deleted grant is no grant left to
+    /// revoke.
     ///
     /// The admission check rides the same `wtxn` as the rewrite: no second
     /// snapshot exists for [`Vault::put_access_grant`] to replace between the
-    /// decision and the write.
+    /// decision and the write. It runs before any other check, so a refused
+    /// grant tells nothing of its scope.
     fn revoke_admitted_access_grant(
         &self,
         id: &EntityId,
         revoked_at: u64,
         admit: impl FnOnce(&AccessGrant) -> Result<()>,
     ) -> Result<AccessGrant> {
+        use crate::vault::LiveEntityRow;
         let mut wtxn = self.store.env.write_txn()?;
-        let raw = self
-            .store
-            .port_entity_record(&wtxn, id)?
-            .map(|row| row.encode())
-            .ok_or(Error::EntityNotFound)?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_ACCESS_GRANT {
-            return Err(Error::InvalidEntityType(header.entity_type));
-        }
-        let grant = decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        crate::share::check_generic_grant_write(self, &wtxn, id, &grant)?;
+        let grant = match crate::vault::live_entity_row_in_txn(&self.store, &wtxn, id)? {
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_ACCESS_GRANT,
+                body,
+            } => decode_access_grant_body(&body)?,
+            LiveEntityRow::Live { entity_type, .. } => {
+                return Err(Error::InvalidEntityType(entity_type));
+            }
+            LiveEntityRow::Absent | LiveEntityRow::DeletedShell => {
+                return Err(Error::EntityNotFound);
+            }
+        };
         admit(&grant)?;
+        crate::share::check_generic_grant_write(self, &wtxn, id, &grant)?;
         let revoked = grant.revoked(revoked_at)?;
         let data = encode_access_grant_body(&revoked)?;
         self.apply_access_grant_body(&mut wtxn, id, revoked_at, data)?;

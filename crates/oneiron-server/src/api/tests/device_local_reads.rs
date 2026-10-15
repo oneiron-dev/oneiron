@@ -396,8 +396,13 @@ fn exported_ids(document: &Value) -> std::collections::BTreeSet<String> {
     ids
 }
 
+/// The read receipt's count. No visible stat counts a withheld claim at all
+/// (F19): it reads zero wherever a pack serves one.
 fn suppression_counts(body: &Value) -> Vec<u64> {
-    ["/stats/claims_suppressed", "/narrowing/suppressed_count"]
+    if let Some(stat) = body.pointer("/stats/claims_suppressed") {
+        assert_eq!(stat, &Value::from(0), "{body}");
+    }
+    ["/narrowing/suppressed_count"]
         .into_iter()
         .filter_map(|pointer| body.pointer(pointer).and_then(Value::as_u64))
         .collect()

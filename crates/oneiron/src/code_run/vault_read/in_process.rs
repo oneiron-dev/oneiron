@@ -446,23 +446,24 @@ fn apply_context_pack_response_retrieval_budget(
 
 /// Accepted visible-stat scrub, copied from the accepted route's
 /// `scrub_context_pack_visible_stats`: the counters a caller can see describe
-/// the pack it actually received, never the wider internal retrieval.
+/// the pack it actually received, never the wider internal retrieval. Every
+/// empty pack reads alike whether or not a match its reader cannot read
+/// exists: no key reads every row, so a reason would tell them apart (F19).
 pub(super) fn scrub_context_pack_visible_stats(pack: &mut ContextPack) {
+    // How many claims the scope withheld is a count of rows the caller may
+    // not read: it never leaves as a stat (F19).
+    pack.stats.claims_suppressed = 0;
     pack.stats.candidates_considered = pack.results.len();
     pack.stats.entities_hydrated = pack.results.len();
     pack.stats.neighbors_hydrated = pack.neighbors.len();
 
     if pack.results.is_empty() && pack.neighbors.is_empty() {
-        if let Some(empty) = pack.empty.as_mut() {
-            empty.total_in_scope = 0;
-        } else {
-            pack.empty = Some(EmptyContext {
-                retrieval_quality: pack.retrieval_quality.clone(),
-                reason: EmptyReason::FilterMatchedNone,
-                total_in_scope: 0,
-                hint: "Try removing filters or widening the world, type, or time scope".to_owned(),
-            });
-        }
+        pack.empty = Some(EmptyContext {
+            retrieval_quality: pack.retrieval_quality.clone(),
+            reason: EmptyReason::FilterMatchedNone,
+            total_in_scope: 0,
+            hint: "Try removing filters or widening the world, type, or time scope".to_owned(),
+        });
     } else {
         pack.empty = None;
     }
