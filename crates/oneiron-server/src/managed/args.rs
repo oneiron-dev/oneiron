@@ -359,6 +359,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.port.is_some(),
         ArgvUse::Refused(NO_HOST_PORT_REASON),
     ),
+    (
+        "artifact-port",
+        |args| args.artifact_port.is_some(),
+        ArgvUse::Refused(NO_HOST_PORT_REASON),
+    ),
     // The auth layer: the supervisor's, not this child's.
     (
         "auth-secret",

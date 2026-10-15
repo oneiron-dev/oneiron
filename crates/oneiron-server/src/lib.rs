@@ -86,6 +86,14 @@ pub fn build_app(server: Arc<SyncServer>) -> Router {
         .merge(api::api_routes(server))
 }
 
+/// Builds the artifact-only app: `/a/` and nothing else, for a listener of
+/// its own, so a code bundle's scripts run on an origin that holds no API.
+/// Serve it beside [`build_app`] over the same server, and record its port
+/// with [`SyncServer::with_artifact_listener`] before the server is shared.
+pub fn build_artifact_app(server: Arc<SyncServer>) -> Router {
+    api::artifact_app(server)
+}
+
 #[cfg(test)]
 #[path = "../tests/support/fake_llm.rs"]
 mod fake_llm;

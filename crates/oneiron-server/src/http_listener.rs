@@ -58,12 +58,29 @@ const SATURATED_RESPONSE: &[u8] = b"HTTP/1.1 503 Service Unavailable\r\nretry-af
 /// once they have closed. A WebSocket is not waited for: it ends with the
 /// process.
 pub(crate) async fn serve(
-    mut listener: TcpListener,
+    listener: TcpListener,
     app: Router,
     limits: ConnectionLimits,
     shutdown: impl Future<Output = ()>,
 ) {
-    let admission = Admission::new(limits.max_connections, limits.max_connections_per_peer);
+    let admission = connection_admission(limits);
+    serve_with_admission(listener, app, &admission, limits, shutdown).await;
+}
+
+/// The one connection pool a listener's limits describe. Listeners that share
+/// it share its bounds: two of them never hold twice the connections.
+pub(crate) fn connection_admission(limits: ConnectionLimits) -> Admission<IpAddr> {
+    Admission::new(limits.max_connections, limits.max_connections_per_peer)
+}
+
+/// [`serve`], taking its connection permits from `admission`.
+pub(crate) async fn serve_with_admission(
+    mut listener: TcpListener,
+    app: Router,
+    admission: &Admission<IpAddr>,
+    limits: ConnectionLimits,
+    shutdown: impl Future<Output = ()>,
+) {
     let (stopping, stop) = watch::channel(false);
     let (open, open_watch) = watch::channel(());
     let mut shutdown = pin!(shutdown);

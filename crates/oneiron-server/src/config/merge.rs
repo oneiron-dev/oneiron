@@ -76,6 +76,7 @@ impl EnvConfig {
         values.vault_path = lookup_path(&mut lookup, "ONEIRON_VAULT_PATH");
         values.host = lookup("ONEIRON_HOST");
         values.port = lookup_parse(&mut lookup, "ONEIRON_PORT")?;
+        values.artifact_port = lookup_parse(&mut lookup, "ONEIRON_ARTIFACT_PORT")?;
         values.auth_secret = lookup("ONEIRON_AUTH_SECRET");
         values.oauth_issuer = lookup("ONEIRON_OAUTH_ISSUER");
         values.oauth_jwks_uri = lookup("ONEIRON_OAUTH_JWKS_URI");
@@ -448,6 +449,7 @@ struct FileServeConfig {
     vault_path: Option<PathBuf>,
     host: Option<String>,
     port: Option<u16>,
+    artifact_port: Option<u16>,
     auth_secret: Option<String>,
     oauth_issuer: Option<String>,
     oauth_jwks_uri: Option<String>,
@@ -496,6 +498,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             vault_path: value.vault_path,
             host: value.host,
             port: value.port,
+            artifact_port: value.artifact_port,
             auth_secret: value.auth_secret,
             oauth_issuer: value.oauth_issuer,
             oauth_jwks_uri: value.oauth_jwks_uri,
@@ -545,6 +548,7 @@ struct PartialServeConfig {
     vault_path: Option<PathBuf>,
     host: Option<String>,
     port: Option<u16>,
+    artifact_port: Option<u16>,
     auth_secret: Option<String>,
     oauth_issuer: Option<String>,
     oauth_jwks_uri: Option<String>,
@@ -594,6 +598,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("vault_path", &self.vault_path)
             .field("host", &self.host)
             .field("port", &self.port)
+            .field("artifact_port", &self.artifact_port)
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field("oauth_issuer", &self.oauth_issuer)
             .field("oauth_jwks_uri", &self.oauth_jwks_uri)
@@ -661,6 +666,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.port {
             resolved.port = value;
+        }
+        if let Some(value) = self.artifact_port {
+            resolved.artifact_port = value;
         }
         if let Some(value) = self.auth_secret {
             resolved.auth_secret = Some(value);
@@ -806,6 +814,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             vault_path: value.vault_path.clone().or_else(|| value.data_dir.clone()),
             host: value.host.clone(),
             port: value.port,
+            artifact_port: value.artifact_port,
             auth_secret: value.auth_secret.clone(),
             oauth_issuer: value.oauth_issuer.clone(),
             oauth_jwks_uri: value.oauth_jwks_uri.clone(),

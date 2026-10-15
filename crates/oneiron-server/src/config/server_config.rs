@@ -208,6 +208,9 @@ pub struct ServeConfig {
     pub vault_path: PathBuf,
     pub host: String,
     pub port: u16,
+    /// The artifact-only listener's port on `host`; `0` takes any free one,
+    /// which `/api/health` advertises as `artifact_port`.
+    pub artifact_port: u16,
     pub auth_secret: Option<String>,
     pub oauth_issuer: Option<String>,
     pub oauth_jwks_uri: Option<String>,
@@ -280,6 +283,7 @@ impl Default for ServeConfig {
             vault_path: PathBuf::from(LEGACY_DEFAULT_VAULT_PATH),
             host: "0.0.0.0".to_owned(),
             port: 9090,
+            artifact_port: 0,
             auth_secret: server.auth_secret,
             oauth_issuer: server.oauth_issuer,
             oauth_jwks_uri: server.oauth_jwks_uri,
@@ -332,6 +336,7 @@ impl fmt::Debug for ServeConfig {
             .field("vault_path", &self.vault_path)
             .field("host", &self.host)
             .field("port", &self.port)
+            .field("artifact_port", &self.artifact_port)
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)

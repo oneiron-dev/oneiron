@@ -93,6 +93,21 @@ client, so list proxy hosts only, never a client network. An entry that does
 not parse, a `/0` block, or an address with bits set past its prefix stops
 startup. The default is empty: every caller is keyed by its own connection.
 
+`artifact_port` (flag `--artifact-port`, env `ONEIRON_ARTIFACT_PORT`) is the
+port of a second listener, on the same host, that serves hosted artifacts
+(`/a/...`) and nothing else. A code bundle runs its own scripts, so it gets
+that origin rather than the API's: there it keeps its module scripts and
+fonts, and no route it can reach holds API data. The API still answers `/a/`,
+but sandboxes a code bundle into an opaque origin there, where module scripts
+and fonts do not load. The default `0` takes any free port, which
+`/api/health` reports as `artifact_port`; clients open artifacts at the API's
+scheme and host with that port. Set a fixed port for links that outlive a
+restart. Behind a reverse proxy, publish that port on its own origin as well,
+and never list it in `allowed_origins`. Both listeners share the `[limits]`
+connection bounds. Managed serve (`--managed-by-hypnos`) binds no artifact
+listener and refuses the flag; its `/a/` is unchanged until the supervisor
+routes an artifact origin.
+
 `[limits]` bounds the work a caller can start; the connection bounds hold
 before any credential is read. Every bound is finite, and a zero is a config
 error. A caller past a bound is refused at once with a 503 and `retry-after`,
