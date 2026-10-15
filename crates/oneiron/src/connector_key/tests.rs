@@ -2296,3 +2296,71 @@ mod foreign_owner_proof {
         Ok(())
     }
 }
+
+/// F28 (H148): a charter's major-unit spend cap compiles by the currency's
+/// ISO-4217 minor-unit exponent (list one, published 2026-09-17), never by a
+/// default of two decimals for any three-letter code.
+#[test]
+fn charter_spend_caps_compile_by_each_iso_4217_exponent() {
+    let cap = |unit: &str| {
+        compile_connector_charter(&format!("cap spend 7 {unit} per day on payments"))
+            .map(|compiled| compiled.compiled.channel_caps[0].limit)
+    };
+    // Every code ISO lists with a minor unit other than two, and some at two.
+    let exponent_0 = [
+        "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF", "UGX", "UYI", "VND",
+        "VUV", "XAF", "XOF", "XPF",
+    ];
+    let exponent_3 = ["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"];
+    let exponent_4 = ["CLF", "UYW"];
+    let exponent_2 = ["USD", "EUR", "GBP", "MGA", "MRU", "XCG"];
+    for (codes, minor_units) in [
+        (&exponent_0[..], 7),
+        (&exponent_3[..], 7_000),
+        (&exponent_4[..], 70_000),
+        (&exponent_2[..], 700),
+    ] {
+        for code in codes {
+            assert_eq!(cap(code).ok(), Some(minor_units), "{code}");
+        }
+    }
+    // No minor unit (metals, SDR, test and no-currency codes), withdrawn
+    // (BGN, HRK) or never issued: refused, not compiled at two decimals.
+    for code in ["XAU", "XAG", "XDR", "XTS", "XXX", "BGN", "HRK", "QQQ"] {
+        assert!(cap(code).is_err(), "{code} compiled as a currency");
+    }
+    // Provider units stay opaque integers.
+    assert_eq!(cap("tokens").ok(), Some(7));
+}
+
+/// F28 (H148): a stamped 100 CLP/day cap suspends the key once 100 pesos
+/// settle on it; before the fix the cap compiled to 10_000 and 101 pesos
+/// left the key active.
+#[test]
+fn charter_clp_cap_suspends_the_key_past_100_pesos() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xC6);
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active("payments", None, Vec::new(), 1_000),
+    )?;
+    let pending =
+        vault.propose_connector_charter(&id, "cap spend 100 CLP per day on payments", 1_001)?;
+    vault.approve_connector_charter(&id, pending.compiled_hash, "owner", 1_002)?;
+    let row = CONNECTOR_KEY_CHARTER_ROW_BASE;
+
+    let read = vault.settle_connector_spend(&id, row, 99, 1_003, "settle:clp-99")?;
+    assert_eq!(read.used, 99);
+    assert_eq!(
+        vault.get_connector_key(&id)?.expect("record").status,
+        ConnectorKeyStatus::Active,
+        "99 pesos stay under a 100-peso cap"
+    );
+    vault.settle_connector_spend(&id, row, 2, 1_004, "settle:clp-101")?;
+    assert_eq!(
+        vault.get_connector_key(&id)?.expect("record").status,
+        ConnectorKeyStatus::Suspended,
+        "101 pesos exhaust a 100-peso cap"
+    );
+    Ok(())
+}
