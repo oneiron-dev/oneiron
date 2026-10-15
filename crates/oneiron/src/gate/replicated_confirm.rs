@@ -19,7 +19,10 @@ use super::resolution::{GateRetentionContext, resolve_policy_manifest};
 /// An ordinary pending row this device holds reviewed an earlier body, so it
 /// cannot hold the arriving Auto revision: this device's own confirm replaces
 /// it. A critical-confirm row already holds the claim, and an invalidated
-/// ceremony stays held by its durable invalidation.
+/// ceremony stays held by its durable invalidation. A reserved predicate and
+/// `comm.*` never take the confirm road on this device either: only their
+/// owning doors write the first, past the criticality ladder, and the second
+/// pends outright.
 pub(crate) fn attach_replicated_critical_confirm_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -29,6 +32,7 @@ pub(crate) fn attach_replicated_critical_confirm_in_txn(
     if body.lifecycle != ClaimLifecycleStatus::Active
         || body.approval != ClaimApprovalStatus::Auto
         || body.predicate.starts_with("comm.")
+        || crate::claim::is_reserved_predicate(&body.predicate)
         || store
             .pending_gate_consent_in_txn(wtxn, claim_id)?
             .is_some_and(|row| {
