@@ -450,6 +450,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "IDENTITY_DEVICE_SK",
         "IDENTITY_MACHINE_ID",
         "IDENTITY_MACHINE_SK",
+        "IDENTITY_TOPOLOGY_AUTHORED_HERE",
         "IDENTITY_TOPOLOGY_MINE_SIGNERS",
         "IDENTITY_TOPOLOGY_SEALED_HERE",
         "INGEST_DOCS_DEEP_CEILING",
