@@ -1323,10 +1323,16 @@ async fn an_unread_chunk_reply_keeps_its_frame_room_and_the_next_exchange_waits_
     let (want, token, _) = chunk_want(&server, &bytes);
     let unread = unread_exchange(&server, &token, want).await;
 
-    // The body is sent only when this test says so.
+    // The body is sent only when this test says so, and it tells when it is
+    // first read.
     let (send, sent) = tokio::sync::oneshot::channel::<Vec<u8>>();
-    let body = Body::from_stream(futures_util::stream::once(async move {
-        Ok::<_, std::io::Error>(axum::body::Bytes::from(sent.await.unwrap_or_default()))
+    let read = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let body = Body::from_stream(futures_util::stream::once({
+        let read = Arc::clone(&read);
+        async move {
+            read.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok::<_, std::io::Error>(axum::body::Bytes::from(sent.await.unwrap_or_default()))
+        }
     }));
     let waiting = {
         let server = Arc::clone(&server);
@@ -1338,16 +1344,22 @@ async fn an_unread_chunk_reply_keeps_its_frame_room_and_the_next_exchange_waits_
         );
         tokio::spawn(async move { route(&server, request).await.0 })
     };
-    until_asked(
-        &server,
-        crate::wire_telemetry::LimitRow::LfsMemoryBytes,
-        "the next exchange waits for room in memory before its body arrives",
+    // Each exchange here is larger than the half and asks as it runs alone,
+    // so the question is no witness of a wait: the line is.
+    until_waiting(
+        server.transfers.lfs_reads(),
+        1,
+        "the next exchange waits for room in memory",
     )
     .await;
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     assert!(
-        !waiting.is_finished(),
-        "it waits while the unread reply holds the room"
+        !waiting.is_finished() && !read.load(std::sync::atomic::Ordering::SeqCst),
+        "it waits, its body unread, while the unread reply holds the room"
+    );
+    assert!(
+        asked(&server, crate::wire_telemetry::LimitRow::LfsMemoryBytes),
+        "the row asks"
     );
 
     // Once the unread reply's reader goes, the next exchange reads its body
@@ -1382,7 +1394,12 @@ pub(crate) async fn cross_the_frames(callers: usize) -> crate::admission::Crossi
             tokio::spawn(async move { route(&server, request).await.0 })
         })
         .collect();
-    until_asked(&server, LimitRow::LfsMemoryBytes, "the exchanges wait").await;
+    until_waiting(
+        server.transfers.lfs_reads(),
+        callers,
+        "the exchanges wait for room in memory",
+    )
+    .await;
     drop(unread);
     let mut refused = 0;
     for call in calls {
@@ -1413,12 +1430,8 @@ async fn a_spooled_upload_waits_for_room_in_memory_to_install() {
         let server = Arc::clone(&server);
         tokio::spawn(async move { put(&server, &writer_token(), &bytes).await })
     };
-    until_asked(
-        &server,
-        LimitRow::LfsMemoryBytes,
-        "the spooled upload waits for room to install",
-    )
-    .await;
+    until_waiting(&installs, 1, "the spooled upload waits for room to install").await;
+    assert!(asked(&server, LimitRow::LfsMemoryBytes), "the row asks");
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     assert!(!waiting.is_finished(), "nothing is stored while it waits");
 
